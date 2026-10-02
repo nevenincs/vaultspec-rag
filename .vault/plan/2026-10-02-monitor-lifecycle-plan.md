@@ -10,7 +10,7 @@ related:
   - '[[2026-09-30-monitor-tooling-adr]]'
 modified: '2026-10-02'
 body_schema: body-v2
-body_hash: 'sha256:c0619fdf3e0961ed924be5a15134f0699b4b52215a4c2e15149262e434aef1e8'
+body_hash: 'sha256:ea21c131e7e832090a74e406b12ed8b17f0f9c1e426e1f989c8813c010e486a6'
 ---
 
 # `monitor-lifecycle` plan
@@ -34,11 +34,7 @@ The user's follow-up explicitly authorizes focused user-documentation edits and 
 
 ## Parallelization
 
-## Parallelization
-
 No delegated workers. S02 can finish independently while S01 awaits the compiled artifact. The delivery session owns compilation, pinning, installation layout, embedded assets and CI. This session owns Python daemon/CLI supervision, assignment state and lifecycle verification. Until S01 closes, delivery should coordinate edits to `monitor_process.py` and the bridge interpreter seam to avoid overwriting the prepared integration.
-
-## Verification
 
 ## Verification
 

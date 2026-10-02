@@ -2,13 +2,8 @@
 
 from __future__ import annotations
 
-import json
-import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
-
-from ._error_payload import error_payload
 
 
 def read_inventory(operation: str, parameters: dict[str, str]) -> dict[str, object]:
@@ -50,41 +45,3 @@ def read_inventory(operation: str, parameters: dict[str, str]) -> dict[str, obje
             source="disk",
         )
     )
-
-
-def main() -> None:
-    """Emit one bounded inventory response; never create or operate a service."""
-    try:
-        operation, raw_parameters = sys.argv[1:]
-        if len(raw_parameters.encode("utf-8")) > 8192:
-            raise ValueError("Inventory parameters are too large.")
-        decoded: object = json.loads(raw_parameters)
-        if not isinstance(decoded, dict):
-            raise ValueError("Inventory parameters must be an object.")
-        parameters = cast("dict[object, object]", decoded)
-        if any(
-            not isinstance(key, str) or not isinstance(value, str)
-            for key, value in parameters.items()
-        ):
-            raise ValueError("Inventory parameters must be strings.")
-        allowed = {"root", "limit"}
-        if operation == "storage/survey":
-            allowed.update(("status", "fresh"))
-        if parameters.keys() - allowed:
-            raise ValueError("Unknown inventory parameter.")
-        payload = read_inventory(operation, cast("dict[str, str]", parameters))
-    except ValueError as exc:
-        print(json.dumps(error_payload("bad_request", str(exc))))
-        raise SystemExit(2) from exc
-    except OSError as exc:
-        print(
-            json.dumps(
-                {"ok": False, "error": "inventory_unavailable", "message": str(exc)}
-            )
-        )
-        raise SystemExit(3) from exc
-    print(json.dumps(payload))
-
-
-if __name__ == "__main__":
-    main()

@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:82bf4f815d6f6b7caa7af02fc2f860db6953ecf8b0711b27d262eba4d599b528'
+body_hash: 'sha256:e8b09f4ac9e97dd014bae94aee9cb4bc4ba0ef7c87e9b266ab280285f94af385'
 related:
   - "[[2026-10-02-monitor-lifecycle-reference]]"
   - "[[2026-09-30-monitor-browser-adr]]"
@@ -43,6 +43,8 @@ Publish additive monitor port/PID/incarnation diagnostics in the canonical daemo
 
 This is an explicit managed-runtime exception to fixed manifest ports and independent source-development lifecycle in monitor-tooling and monitor-browser. Their shared development harness, declared network/origin policy, server-only credentials, service behavior owners and standalone dev/preview commands continue to govern source development.
 
+Installed release bundles supply the compiled command under monitor-delivery. The daemon uses that command through this same supervisor and readiness/parent-pipe contract; delivery introduces no second lifecycle owner. Standalone source dev/preview retain their existing fixed manifest ports and shared development harness.
+
 ## Implementation
 
 The HTTP daemon constructs one torch-free Python supervisor, starts it after singleton acquisition, publishes its assignment, and stops it during rollback/shutdown. Canonical CLI stop also performs verified orphan cleanup and fails if the frontend survives. Canonical start output reports the assigned monitor URL.
@@ -58,3 +60,5 @@ Owning the monitor beneath the daemon ties its lifetime to the requested service
 ## Consequences
 
 Managed service startup requires the installed compiled monitor command. Frontend source tooling remains confined to development and compilation. The lifecycle implementation cannot complete delivered-binary validation until the other session builds the artifact. Stopping through a managed browser ends that browser's web server as well as the backend; standalone development monitors retain their own lifecycle.
+
+The producer prerequisite is now fulfilled on Windows: real compiled lifecycle integration and cleanup mutation proofs pass. Historical artifact-unavailable observations above remain the rationale for the checkpoint split. Other native platforms and public acquisition retain their delivery-plan verification obligations.

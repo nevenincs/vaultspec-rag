@@ -154,6 +154,9 @@ async def test_selected_job_and_request_logs_update_without_reselection(
 async def test_focused_logs_report_the_actual_tail_and_server_truncation(
     monitor_http: tuple[int, Path],
 ) -> None:
+    """An unconditional queued resize tail-scroll failed the retained top
+    assertion (exit 1); honoring current follow state passed it (exit 0).
+    """
     port, directory = monitor_http
     job_id = record_start(JobSource.CODE, "tool", project_root=directory)
     path = directory / get_config().log_file
@@ -176,8 +179,14 @@ async def test_focused_logs_report_the_actual_tail_and_server_truncation(
             assert "refreshed" in painted
             log_view = app._log_view()
             assert log_view is not None and log_view.max_scroll_y > 0
+            # Queue the same tail callback used after a resize, then let the
+            # reader navigate before the framework delivers that callback.
+            log_view.call_after_refresh(log_view.scroll_followed_tail)
             log_view.jump_top()
             await pilot.pause()
+            assert log_view.scroll_offset.y == 0, (
+                "queued tail scroll overrode navigation"
+            )
             with path.open("a", encoding="utf-8") as log:
                 log.write(f"job_id={job_id} latest-while-reading\n")
             app.refresh_focused_logs()

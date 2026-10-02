@@ -15,6 +15,7 @@ import hashlib
 import logging
 import os
 import shutil
+import stat
 import sys
 import tarfile
 import urllib.error
@@ -38,7 +39,6 @@ from ._constants import (
     QDRANT_SERVER_VERSION,
     ProvisionReport,
 )
-from ._resolve import asset_for_platform, binary_filename, qdrant_bin_dir, read_manifest
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -109,6 +109,16 @@ def file_sha256(path: Path) -> str:
         while chunk := fh.read(_DOWNLOAD_CHUNK_BYTES):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def verify_native_binary(binary: Path, expected_sha256: str) -> None:
+    """Rehash a regular executable immediately before a supervised launch."""
+    if (
+        binary.is_symlink()
+        or not binary.is_file()
+        or file_sha256(binary) != expected_sha256
+    ):
+        raise RuntimeError(f"Native executable pin mismatch: {binary}")
 
 
 class _HostPinnedRedirect(urllib.request.HTTPRedirectHandler):
@@ -265,8 +275,8 @@ def _open_extract_dest(path: Path) -> IO[bytes]:
     return os.fdopen(os.open(path, flags, 0o600), "wb")
 
 
-def _extract_binary_member(archive: Path, dest_dir: Path) -> Path:
-    """Extract the qdrant executable from *archive* into *dest_dir*.
+def _extract_binary_member(archive: Path, dest_dir: Path, target_name: str) -> Path:
+    """Extract one unique regular executable from *archive* into *dest_dir*.
 
     Handles both the Windows ``.zip`` (single ``qdrant.exe`` entry)
     and the Unix ``.tar.gz`` (single ``qdrant`` entry) shapes. Only
@@ -277,30 +287,56 @@ def _extract_binary_member(archive: Path, dest_dir: Path) -> Path:
     Raises:
         RuntimeError: When no qdrant executable member exists.
     """
-    target_name = binary_filename()
+    if (
+        not target_name
+        or target_name in {".", ".."}
+        or Path(target_name).name != target_name
+        or "\\" in target_name
+    ):
+        raise ValueError("The executable name must be a basename")
     out_path = dest_dir / target_name
+    invalid_member = RuntimeError(
+        f"Archive {archive.name} requires one regular {target_name} member"
+    )
 
     # The download stages the archive under an extra ``.partial``
     # suffix; strip it before sniffing the archive format.
     effective_name = archive.name.removesuffix(".partial")
     if effective_name.endswith(".zip"):
         with zipfile.ZipFile(archive) as zf:
-            for info in zf.infolist():
-                if Path(info.filename).name == target_name and not info.is_dir():
-                    with zf.open(info) as src, _open_extract_dest(out_path) as out:
-                        shutil.copyfileobj(src, out, _DOWNLOAD_CHUNK_BYTES)
-                    return out_path
-    else:
-        with tarfile.open(archive, "r:gz") as tf:
-            for member in tf:
-                if Path(member.name).name == target_name and member.isfile():
-                    src = tf.extractfile(member)
-                    if src is None:
-                        continue
-                    with src, _open_extract_dest(out_path) as out:
-                        shutil.copyfileobj(src, out, _DOWNLOAD_CHUNK_BYTES)
-                    return out_path
-    raise RuntimeError(f"Archive {archive.name} contains no {target_name} member")
+            matches = [
+                info
+                for info in zf.infolist()
+                if Path(info.filename.replace("\\", "/")).name == target_name
+            ]
+            if len(matches) != 1:
+                raise invalid_member
+            info = matches[0]
+            if info.is_dir() or stat.S_IFMT(info.external_attr >> 16) not in (
+                0,
+                stat.S_IFREG,
+            ):
+                raise invalid_member
+            with zf.open(info) as src, _open_extract_dest(out_path) as out:
+                shutil.copyfileobj(src, out, _DOWNLOAD_CHUNK_BYTES)
+            return out_path
+    with tarfile.open(archive, "r:gz") as tf:
+        matches = [
+            member
+            for member in tf.getmembers()
+            if Path(member.name.replace("\\", "/")).name == target_name
+        ]
+        if len(matches) != 1:
+            raise invalid_member
+        member = matches[0]
+        if not member.isfile():
+            raise invalid_member
+        src = tf.extractfile(member)
+        if src is None:
+            raise invalid_member
+        with src, _open_extract_dest(out_path) as out:
+            shutil.copyfileobj(src, out, _DOWNLOAD_CHUNK_BYTES)
+        return out_path
 
 
 def extract_verified_archive(
@@ -309,6 +345,7 @@ def extract_verified_archive(
     dest_dir: Path,
     *,
     on_progress: Callable[[str], None] = _no_progress,
+    binary_name: str | None = None,
 ) -> tuple[Path, str]:
     """Verify *archive* against *expected_sha256*, then extract.
 
@@ -337,7 +374,11 @@ def extract_verified_archive(
         raise ChecksumMismatchError(archive, expected_sha256, actual)
 
     on_progress("Extracting the Qdrant server...")
-    binary = _extract_binary_member(archive, dest_dir)
+    if binary_name is None:
+        from ._resolve import binary_filename
+
+        binary_name = binary_filename()
+    binary = _extract_binary_member(archive, dest_dir, binary_name)
     if sys.platform != "win32":
         # Owner-only rwx: the service runs as one user; a world-executable
         # managed binary needlessly widens who can run it on a shared host.
@@ -376,6 +417,8 @@ def _existing_install_state(version_dir: Path, expected_sha256: str) -> str:
         are present, ``"stale"`` when a binary exists but the manifest
         is absent or disagrees with the pin, ``"absent"`` otherwise.
     """
+    from ._resolve import binary_filename, read_manifest
+
     binary = version_dir / binary_filename()
     if not binary.is_file():
         return "absent"
@@ -397,6 +440,8 @@ def _provision_operator_binary(
     previously: str,
 ) -> ProvisionReport:
     """Register an operator-supplied binary into the managed dir."""
+    from ._resolve import binary_filename
+
     target = version_dir / binary_filename()
     if dry_run:
         return ProvisionReport(
@@ -450,6 +495,8 @@ def _provision_operator_binary(
 
 def _download_and_install(request: _DownloadInstallRequest) -> ProvisionReport:
     """Download, verify, extract, and record the pinned binary."""
+    from ._resolve import binary_filename
+
     url, asset, expected_sha256, version_dir, previously, on_progress = (
         request.url,
         request.asset,
@@ -547,6 +594,8 @@ def provision(
     Returns:
         A :class:`ProvisionReport` in the sync vocabulary.
     """
+    from ._resolve import asset_for_platform, binary_filename, qdrant_bin_dir
+
     asset = asset_for_platform()
     expected = QDRANT_ASSET_SHA256[asset]
     url = f"{QDRANT_RELEASE_BASE_URL}/v{QDRANT_SERVER_VERSION}/{asset}"
@@ -625,6 +674,8 @@ def provisioned_versions() -> list[dict[str, object]]:
         One entry per version dir that contains a qdrant binary, newest
         version string first, capped at 10 entries.
     """
+    from ._resolve import binary_filename, qdrant_bin_dir, read_manifest
+
     base = qdrant_bin_dir().parent
     if not base.is_dir():
         return []
@@ -659,6 +710,8 @@ def clean_provisioned(*, keep_current: bool = False) -> list[str]:
     Returns:
         The version strings removed.
     """
+    from ._resolve import qdrant_bin_dir
+
     base = qdrant_bin_dir().parent
     if not base.is_dir():
         return []

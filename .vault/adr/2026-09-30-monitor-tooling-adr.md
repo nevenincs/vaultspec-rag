@@ -5,7 +5,7 @@ tags:
 date: '2026-09-30'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:1d89bc05833d796bfaac60f1cded968c03db6788b2c4ba6cfb6b66898c6527d7'
+body_hash: 'sha256:588b5f31fb0e2c1ce318eb9c27cdcc632607fb92dd8d8cf44c615c3b54afafea'
 related:
   - "[[2026-09-30-monitor-tooling-reference]]"
   - '[[2026-09-21-automatic-merge-gate-adr]]'
@@ -86,6 +86,8 @@ interface. Reserving a frontend home does not replace it or authorize a second
 implementation of service behavior. The local automatic browser transport and bounded independent polling are now
 settled in `2026-09-30-monitor-browser-adr`; the service-domain contracts remain
 unchanged. The user's 2026-10-01 correction explicitly requires the monitor manifest to bind dev and preview to 0.0.0.0 and enable access for Tailscale nodes. Both strict-port services use that declared host. Local automatic service connection remains internal to the workstation; the browser's network reach follows the shared devservers reverse-proxy and tailnet configuration.
+
+The npm lockfile and Vite build remain canonical. For release delivery, monitor-delivery adds Bun solely for native server compilation and embedded asset packaging; the compiled command does not require npm, Node, Vite or the shared development harness at launch.
 
 ## Implementation
 

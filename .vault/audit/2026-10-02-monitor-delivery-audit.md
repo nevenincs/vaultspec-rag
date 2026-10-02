@@ -1,0 +1,69 @@
+---
+tags:
+  - '#audit'
+  - '#monitor-delivery'
+date: '2026-10-02'
+modified: '2026-10-02'
+body_schema: 'body-v2'
+body_hash: 'sha256:e28be05994e64cbdc116d403bd68cfa0f41c544247aea4f839db1fd1a38217b6'
+related:
+  - "[[2026-10-02-monitor-delivery-plan]]"
+---
+
+# `monitor-delivery` audit: `Integrated frontend delivery and acquisition review`
+
+## Scope
+
+2026-10-02 review: completed S07, S08, S01-S05 and S10. Diff base `7ede984314b0eb54081105041fbf697f692ecd45`, reviewed target `f7798008` before the bounded extractor correction below. Full implementation and affected test diffs reviewed against the accepted delivery, browser, tooling, binary bundle, release-standard and merge-gate constraints. The reviewer is the single executor; this review was not independent.
+
+Trace: npm lock and one Vite inventory -> committed native Bun pins -> embedded node:http/shared bridge -> resource/signing/floor finalization -> native asset/browser/port/bounds/shutdown evidence -> exact three-command bundle v2 -> channel installation -> actual draft proof and reviewed committed catalog -> independent PyPI admission -> public acquisition. The old Linux loader coverage remains for all backend commands, without running their bootstrappers. No remote dispatch, publication, channel write or default-branch operation occurred.
+
+Verification coverage: reuse the S01-S05 ledger's separately passing Ruff, format, ty/basedpyright, frontend lint/type/format, actionlint/Prettier, affected tests and intentional guard-failure/restoration proofs. Latest combined relevant suite: 176 passing tests at S05. S10 Markdown, generated CLI, version/convention and citation checks pass, with 13 convention tests. The finalized Windows prototype from producer `7f74275b0e28fa5d2f4c786655361760bafd75d6`, version 0.5.1, Bun 1.4.2, SHA256 `89ee0e214637356d99d49f448f414bbe96b560025167bbc3c0ea00f4d05cb7f5`, passes all 94 served assets, native browser rendering, unavailable backend, foreign-origin denial, strict port refusal, upward managed allocation, ignored ambient configuration, request bounds, cancellation recovery and bounded EOF with a partial request. Its smoke report is retained with that owned temporary binary. It is prototype evidence, not a completed release or a current-head four-platform bundle.
+
+Verdict: **PENDING**. No critical or high defect identified. S09 and S06 remain open; the following required evidence is unresolved.
+
+## Findings
+
+### zip-member-mode | medium | Shared extractor admits ZIP special-file modes
+
+At `src/vaultspec_rag/qdrant_runtime/_provision.py:314`, ZIP admission excludes directories and symlinks but does not reject FIFO, device or socket mode bits. The containing archive is independently pinned, and public bundle validation already excludes non-file members, so this is a defense-contract gap rather than an unpinned execution path. Tighten the canonical extractor to regular/unspecified ZIP modes and prove refusal before writing.
+
+### lifecycle-integration | medium | Canonical supervisor is still owned by an unmerged workstream
+
+`tools/monitor/release.py:25` requires the wheel's exact lifecycle, inventory and CLI owners before the frontend job. The original monitor worktree still has uncommitted `monitor_process.py` and daemon/discovery integration, so S09 cannot yet merge the completed owner commit. Earlier real compiled interop used the stable in-flight owner and is not evidence of a merged implementation. Two expected lifecycle ADR links remain dangling in this isolated worktree until that merge. Preserve owner work and review the combined runtime, generated CLI and decision reconciliation after it commits.
+
+### native-offline-proof | medium | Remaining native platforms and OS egress denial are unproven
+
+The Windows prototype proves executable behavior, all local assets and browser rendering. The browser driver blocks external document requests, but neither it nor an empty PATH proves OS-level outbound network denial for the executable. The accepted delivery constraint still requires that isolated condition. Linux x64/ARM64 and macOS ARM64 compilation, loader/signing and native browser results are also absent. `binaries.yml` requires four native reports and prevents a shell-only/source-render result from satisfying archive admission. Obtain those actual host results and executable egress-denial evidence before final PASS.
+
+### public-acquisition-proof | medium | No independently reviewed public release is available yet
+
+`tools/monitor/release-pins.json` intentionally has no entries. Unit guards prove committed authority, producer-before-extraction, unique checksum and publication ordering, but no approved public monitor release has been downloaded and launched. The candidate-only handoff and verifier-only retry are documented in `RELEASING.md`; the first release must independently review the exact four native artifact hashes, land its catalog entry, and then provide public acquisition reports. Keep this evidence gap separate from pre-draft native proof.
+
+### zip-member-mode-resolution | low | Regular ZIP admission is corrected and proven
+
+2026-10-02 follow-up at `3cfbc0c2`: S01 now admits only regular or unspecified ZIP file modes, preserving unique flattened members and verification before extraction. Reviewed the correction and its interactions with Bun provisioning, public acquisition and Qdrant. Ruff across qdrant_runtime/binary tooling, affected formatting, ty and strict basedpyright pass. The combined monitor, packaging, workflow, Bun, Qdrant and CLI progress suite passes 176 tests. An uninterrupted bypass removed the mode predicate: five intended DID NOT RAISE assertions failed; exact source bytes were restored and the same five guards passed. This resolves zip-member-mode. Other reviewed runtime/workflow inputs are unchanged; lifecycle/native-offline/public evidence gaps keep the verdict PENDING.
+
+### windows-current-producer | low | Fresh 0.6.0 Windows bytes pass native and owner interoperability probes
+
+2026-10-02 follow-up: clean committed producer `957962b342ae1433eee014baa58cff86cb6f942a` rebuilt the Vite handoff once at the current project version 0.6.0 (typecheck and production build pass), frontend manifest SHA256 `10fc6859be3733098492512319a99bec381534ca50d16fa78646f71b80c324d6`. Committed Bun archive/executable pins were verified before native compilation, then Windows resources finalized before hashing. The resulting monitor SHA256 is `64c1aad61d42efd0885932c9707746e9d872f4d0b3b071d88308322ba666898c`. `tools.monitor.release native-smoke` passed version/source/lock/frontend identity, 94 embedded asset hashes/MIME, browser rendering with external requests blocked, isolated home/PATH, unavailable backend, foreign-origin rejection, request bounds, cancellation, strict port refusal, managed upward allocation and bounded EOF shutdown with a partial request. The local handoff is `dist-bin/vaultspec-rag-monitor-x86_64-pc-windows-msvc.exe`, with checksum sidecar and `dist-bin/monitor-smoke.json`; its copied digest was verified. These private staging files are ignored by Git and are not a public bundle.
+
+Real interop reused the unmodified in-flight canonical MonitorProcess owner, source SHA256 `ea26ac35b9b4f0b48d523ce991afe513b9a1f7d277db7296ffa103a3ba718c83`, against these finalized 0.6.0 bytes: managed allocation/readiness, initialized absolute Python CLI, stopped lifecycle status, persisted inventory and identity cleanup passed with temporary status/storage roots. No search service/GPU bootstrap occurred. The source remained unchanged during the probe. This strengthens Windows interoperability evidence but does not replace S09's owner commit and merged-runtime review, the remaining platform/offline condition or public acquisition. Verdict remains **PENDING**.
+
+### integrated-owner | low | Delivery and lifecycle now share the existing monitor PR
+
+S09 integrates the delivery producer into the user's existing feature/monitor worktree and PR #570, following their explicit instruction to land all monitor work on main. The lifecycle owner is checkpointed at `8b18fb079ab075fa9b999b57f39027026156dc33`. Shared bridge resolution preserves the packaged owner and initialized managed interpreter while deleting the duplicate resolver. The browser/tooling ADR conflicts preserve both accepted lifecycle and delivery constraints; Git's conflicting existing hash values were resolved mechanically and the owning edit verb computed the final record hash. Both previously dangling lifecycle links now resolve. The generated CLI reference remains current.
+
+### ci-test-producer | low | Canonical test jobs now admit actual compiled bytes
+
+The existing Linux and Windows correctness jobs compile the native monitor before their canonical accelerator-free suite. One `tools/monitor/build.py` implementation reuses the pinned release compiler, canonical Vite handoff and finalization, marks test bytes as development builds, and exports the absolute path through GITHUB_ENV. Real `just build-monitor-test` on Windows produced SHA256 `ccc2b857d4c05de58bf1369cdc5522a4e5717b9351f712df379105db95a1fa41`; its smoke report proves 94 embedded assets, native browser rendering, isolated startup, port refusal, bounds, cancellation and EOF/partial-request shutdown. This is local integration evidence, not a release artifact. Independently removing each CI producer failed its intended admission assertion, and exact restoration passed.
+
+### integration-corrections | low | Reading position and extractor complexity are verified
+
+The 414-test combined monitor, packaging and workflow run passed 413 tests and exposed an existing queued TUI resize callback overriding a reader's jump to the top. The callback now checks current follow state when delivered. The regression explicitly schedules that ordering; removing the check fails the named navigation assertion, exact restoration passes. The shared archive extractor also breached the unchanged cognitive-complexity limit after regular ZIP admission was added. Early refusals reduce nesting while preserving unique regular-file admission, destination containment and verification order. The covering TUI/archive follow-up passed 81 tests. Five ZIP mode refusal guards were repeated against this refactor, each failing with admission removed and passing after restoration.
+
+Integrated S09 review verdict: **PASS** for source integration, runtime behavior and CI admission, with the applicable 413 combined results, 81 affected follow-up tests, real compiled lifecycle and smoke evidence, guard mutation proofs, Python lint/format/type/complexity, frontend gates, workflow lint, documentation generation/conventions/format and citation checks. No high or critical issue remains in this integration. The final S06 release evidence verdict stays **PENDING** for the previously recorded remaining native hosts, OS-level executable egress denial and first reviewed public acquisition. The main-merge request authorizes landing the code and these explicit follow-up obligations; no release was cut or published.
+
+## Recommendations
+
+Zip-member-mode is resolved through the approved S01 extractor scope. Leave the final verdict pending until the lifecycle owner commits and S09 merges it, all native and offline evidence arrives, and the first reviewed public acquisition completes. Then append the changed interactions/results to this audit without repeating unchanged analysis.

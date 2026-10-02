@@ -5,7 +5,7 @@ tags:
 date: '2026-09-30'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:a9d4a7121c1c2efeb49706c59ed2f181b4cc959c16b6ed7237c48eeb4f1781ba'
+body_hash: 'sha256:f259a28922870ca1735ef477b98f886ce4ab4e6dc0df09b8fdc1859ce3fe1475'
 related:
   - "[[2026-09-30-monitor-tooling-adr]]"
   - "[[2026-09-30-monitor-refinement-audit]]"
@@ -51,7 +51,7 @@ Use pinned official @carbon/react and Sass, Carbon Grid at all breakpoints, IBM 
 
 ## Implementation
 
-Implement a small server-only Vite middleware in src/monitor/server, shared by dev and preview. It performs bounded local HTTP forwarding with no-store responses. Browser code calls relative monitor routes, validates projections and renders health/TypeSafe, indexing, serving and focused/global logs as separate operator surfaces. Existing exact lifecycle controls remain scoped to the selected indexing job.
+Implement one server-side local bridge shared by Vite dev/preview and the packaged monitor server; it forwards bounded service operations and invokes portable canonical owner commands without exposing credentials. Browser code calls relative monitor routes, validates projections and renders health/TypeSafe, indexing, serving and focused/global logs as separate operator surfaces. Existing exact lifecycle controls remain scoped to the selected indexing job.
 
 ## Rationale
 
@@ -59,4 +59,4 @@ A local automatic adapter gives the browser the same operator connection as the 
 
 ## Consequences
 
-Standalone npm dev/preview owns the local browser process through the existing harness. The user's 2026-10-02 request authorizes managed server start/stop to own an additional monitor instance under `2026-10-02-monitor-lifecycle-adr`, including dynamic backend-relative allocation and scratch-state discovery. Both entry paths reuse the existing bridge and network/origin policy; stopping the managed instance ends its browser web server. A built static bundle needs that local adapter to read the service. A public or multi-user dashboard, persistent retention or alternate transport requires fresh decision assessment. The operations expansion below authorizes bounded service read projections and in-memory returned query evidence. Tailnet Serve enablement is an external Tailscale prerequisite; the client never invents a successful proxy mapping when that prerequisite is absent. No resident service, GPU workload or provider call is needed for implementation verification.
+Standalone npm dev/preview owns the local browser process through the existing harness. The user's 2026-10-02 request authorizes managed server start/stop to own an additional monitor instance under `2026-10-02-monitor-lifecycle-adr`, including dynamic backend-relative allocation and scratch-state discovery. Both entry paths reuse the existing bridge and network/origin policy; stopping the managed instance ends its browser web server. Release delivery supplies this shared adapter in the compiled monitor server with embedded frontend assets under monitor-delivery; static assets alone remain insufficient. A public or multi-user dashboard, persistent retention or alternate transport requires fresh decision assessment. The operations expansion below authorizes bounded service read projections and in-memory returned query evidence. Tailnet Serve enablement is an external Tailscale prerequisite; the client never invents a successful proxy mapping when that prerequisite is absent. No resident service, GPU workload or provider call is needed for implementation verification.

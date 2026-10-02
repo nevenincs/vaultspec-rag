@@ -118,6 +118,11 @@ check-monitor-type:
 build-monitor:
     npm run build
 
+# Compile the native monitor used by accelerator-free lifecycle tests.
+[group('build')]
+build-monitor-test:
+    uv run --no-sync python -m tools.monitor.build test --outdir dist-bin
+
 # ===========================================================================
 #  setup
 #
@@ -507,9 +512,22 @@ check-docs-cli:
 release-binaries tag rust_target outdir='dist-bin' wheel_dir='dist':
     uv run --no-project --python 3.13 -- python -m tools.binaries.build_pyapp --tag {{tag}} --target {{rust_target}} --outdir {{outdir}} --wheel-dir {{wheel_dir}}
 
-# Package finalized target-qualified executables as the public archive consumed
-# by release publication and the distribution channels. The bundle command
-# verifies the finished archive before writing its sidecar checksum.
+# Build and record the exact frontend handoff once per release producer.
+[group('release')]
+release-monitor-frontend tag producer_revision frontend_dir='dist-monitor-frontend':
+    uv run --no-project --python 3.13 -- python -m tools.monitor.build frontend --tag {{tag}} --source-revision {{producer_revision}} --outdir "{{frontend_dir}}"
+
+# Compile the common frontend handoff using the verified native Bun compiler.
+[group('release')]
+release-monitor tag producer_revision frontend_digest frontend_dir='dist-monitor-frontend' outdir='dist-bin':
+    uv run --no-project --python 3.13 -- python -m tools.monitor.build compile --tag {{tag}} --source-revision {{producer_revision}} --frontend "{{frontend_dir}}" --frontend-sha256 {{frontend_digest}} --outdir "{{outdir}}"
+
+# Render and probe finalized bytes before packaging or publication.
+[group('release')]
+release-monitor-smoke binary digest version producer_revision browser report='dist-bin/monitor-smoke.json':
+    uv run --no-project --python 3.13 -- python -m tools.monitor.smoke --binary "{{binary}}" --expected-sha256 {{digest}} --version {{version}} --source-revision {{producer_revision}} --browser "{{browser}}" --report "{{report}}"
+
+# Package finalized executables as the validated public target archive.
 [group('release')]
 release-bundle tag rust_target raw_dir='dist-bin' outdir='dist-bundles':
     uv run --no-project --python 3.13 -- python -m tools.packaging.bundles --tag {{tag}} --target {{rust_target}} --raw-dir {{raw_dir}} --outdir {{outdir}}

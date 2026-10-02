@@ -133,7 +133,7 @@ class LogPanesMixin(_MixinBase):
         # error-jump keys in the footer have to follow.
         self._refresh_log_title()
         if follow_tail:
-            self.call_after_refresh(log.scroll_end, animate=False)
+            self.call_after_refresh(log.scroll_followed_tail)
         else:
             self.call_after_refresh(log.scroll_to, y=position, animate=False)
         self.refresh_bindings()

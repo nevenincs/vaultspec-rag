@@ -51,10 +51,6 @@ def _ports(count: int = 1) -> Generator[list[socket.socket]]:
             try:
                 sockets[0].bind(("0.0.0.0", port))
                 for offset in range(1, count):
-                    if socket.has_ipv6:
-                        with socket.socket(socket.AF_INET6) as ipv6:
-                            ipv6.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
-                            ipv6.bind(("::", port + offset))
                     listener = socket.socket()
                     if os.name == "nt":
                         listener.setsockopt(

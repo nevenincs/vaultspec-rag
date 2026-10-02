@@ -1,25 +1,28 @@
-// Render the production monitor in an installed browser against real local routes.
+// Render the monitor in an installed browser against real local routes.
 import { spawn } from "node:child_process";
 import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
-import { createServer } from "vite";
-import config from "../vite.config.ts";
 
-const [executable, directory] = process.argv.slice(2);
+const [executable, directory, deliveredURL] = process.argv.slice(2);
 if (!executable || !directory)
   throw new Error(
     "Pass the installed browser and an isolated profile directory.",
   );
 await mkdir(directory, { recursive: true });
-const server = await createServer({
-  ...config,
-  configFile: false,
-  cacheDir: join(directory, "vite-cache"),
-  logLevel: "error",
-  server: { ...config.server, port: 0, strictPort: true, host: "127.0.0.1" },
-});
+let server;
+if (!deliveredURL) {
+  const { createServer } = await import("vite");
+  const { default: config } = await import("../vite.config.ts");
+  server = await createServer({
+    ...config,
+    configFile: false,
+    cacheDir: join(directory, "vite-cache"),
+    logLevel: "error",
+    server: { ...config.server, port: 0, strictPort: true, host: "127.0.0.1" },
+  });
+}
 let browser;
 let socket;
 const pending = new Map();
@@ -27,6 +30,7 @@ const errors = [];
 const network = [];
 let backgroundTarget;
 let sequence = 0;
+let closing = false;
 const send = (method, params = {}, timeout = 10000) =>
   new Promise((resolve, reject) => {
     const id = ++sequence;
@@ -51,9 +55,9 @@ const evaluate = async (expression, timeout) => {
   return result.result.value;
 };
 try {
-  await server.listen();
-  const address = server.httpServer.address();
-  const url = `http://127.0.0.1:${address.port}`;
+  await server?.listen();
+  const address = server?.httpServer.address();
+  const url = deliveredURL ?? `http://127.0.0.1:${address.port}`;
   browser = spawn(
     executable,
     [
@@ -103,6 +107,25 @@ try {
       else reply.resolve(message.result);
     } else if (message.method === "Runtime.exceptionThrown")
       errors.push(message.params.exceptionDetails);
+    else if (message.method === "Fetch.requestPaused") {
+      const target = new URL(message.params.request.url);
+      const permitted =
+        ["data:", "blob:"].includes(target.protocol) ||
+        target.origin === new URL(url).origin;
+      if (!permitted)
+        errors.push(`Outbound browser request blocked: ${target.href}`);
+      void send(permitted ? "Fetch.continueRequest" : "Fetch.failRequest", {
+        requestId: message.params.requestId,
+        ...(permitted ? {} : { errorReason: "InternetDisconnected" }),
+      }).catch((error) => {
+        if (!closing) errors.push(error.message);
+      });
+    } else if (
+      message.method === "Network.responseReceived" &&
+      message.params.response.status >= 400 &&
+      !message.params.response.url.includes("/api/monitor/")
+    )
+      errors.push(message.params.response);
     else if (
       message.method === "Network.requestWillBeSent" &&
       message.params.request.url.includes("/api/monitor/")
@@ -124,6 +147,8 @@ try {
   await send("Runtime.enable");
   await send("Page.enable");
   await send("Network.enable");
+  if (deliveredURL)
+    await send("Fetch.enable", { patterns: [{ urlPattern: "*" }] });
   await send("Page.navigate", { url });
   process.stdout.write(`${JSON.stringify({ ready: true, url })}\n`);
   const input = createInterface({ input: process.stdin });
@@ -179,6 +204,7 @@ try {
         }
       } else if (command.operation === "evidence") value = { errors, network };
       else if (command.operation === "close") {
+        closing = true;
         input.close();
         break;
       } else throw new Error("Unknown browser check operation.");
@@ -190,11 +216,20 @@ try {
     }
   }
 } finally {
+  closing = true;
   if (socket?.readyState === WebSocket.OPEN) {
     await send("Browser.close").catch(() => {});
     socket.close();
   }
-  browser?.kill();
-  await server.close();
+  if (browser && browser.exitCode === null) {
+    await new Promise((resolve) => {
+      const deadline = setTimeout(() => browser.kill(), 5000);
+      browser.once("exit", () => {
+        clearTimeout(deadline);
+        resolve();
+      });
+    });
+  }
+  await server?.close();
   process.stdin.destroy();
 }

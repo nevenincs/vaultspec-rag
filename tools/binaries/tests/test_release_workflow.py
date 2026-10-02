@@ -355,15 +355,18 @@ def test_published_bundle_acquisition_checks_digests_and_producer_commit(
         encoding="utf-8"
     )
 
-    assert "${tag}-${TRIPLE}${ARCHIVE_SUFFIX}" in acquisition
-    assert '"${release_url}/SHA256SUMS"' in acquisition
-    assert 'sha256sum -c "${archive}.sha256"' in acquisition
-    assert "producer_sha=$(jq -er '.source_revision" in acquisition
-    assert '[ "${producer_sha}" = "${TARGET_SHA}" ]' in acquisition
-    assert 'tar -xOzf "${archive}"' in acquisition
-    assert 'unzip -p "${archive}"' in acquisition
-    assert "vaultspec-rag-${TRIPLE}" not in acquisition
-    assert "vaultspec-search-mcp-${TRIPLE}" not in acquisition
+    assert "python -m tools.monitor.acquire" in acquisition
+    assert "ref: main" in acquisition
+    assert "npm ci" not in acquisition
+    acquire_source = (repo_root / "tools/monitor/acquire.py").read_text(
+        encoding="utf-8"
+    )
+    pins_source = (repo_root / "tools/monitor/pins.py").read_text(encoding="utf-8")
+    assert "catalog_at_commit(ROOT)" in acquire_source
+    assert "extract_verified_archive(" in acquire_source
+    assert "probe(" in acquire_source
+    assert "require_unique=True" in acquire_source
+    assert '"git", "show", f"{revision}:{CATALOG}"' in pins_source
 
     document = _load(repo_root, "acquisition.yml")
     assert set(document.get("on", document.get(True))) == {
@@ -498,3 +501,79 @@ def test_checksum_merge_reads_legacy_names_bare(repo_root: Path, workflow: str) 
         f"{digest}  vaultspec_rag-1.0.0.tar.gz\n"
         f"{digest}  vaultspec-rag-v1.0.0-x86_64-pc-windows-msvc.zip\n"
     )
+
+
+def test_monitor_frontend_is_built_once_and_native_proof_precedes_publication(
+    repo_root: Path,
+) -> None:
+    jobs = _load(repo_root, "binaries.yml")["jobs"]
+    frontend = jobs["frontend"]
+    assert "matrix" not in frontend
+    assert frontend["needs"] == "wheel"
+    assert set(jobs["build"]["needs"]) == {"wheel", "frontend"}
+    front_scripts = "\n".join(str(s.get("run", "")) for s in frontend["steps"])
+    assert front_scripts.count("just release-monitor-frontend") == 1
+    assert "npm ci" in front_scripts
+    assert "sha256sum package-lock.json" in front_scripts
+    assert "sha256sum dist-monitor-frontend/frontend.json" in front_scripts
+    build_steps = jobs["build"]["steps"]
+    download = next(
+        s
+        for s in build_steps
+        if s.get("name") == "Download the common frontend handoff"
+    )
+    assert download["with"]["name"] == "${{ needs.frontend.outputs.artifact }}"
+    scripts = [str(s.get("run", "")) for s in build_steps]
+    compile_index = next(
+        i for i, run in enumerate(scripts) if "just release-monitor " in run
+    )
+    smoke = next(i for i, run in enumerate(scripts) if "release native-smoke " in run)
+    bundle = next(i for i, run in enumerate(scripts) if "just release-bundle " in run)
+    # Deleting or moving native smoke must fail this ordered admission assertion.
+    assert compile_index < smoke < bundle
+    assert "FRONTEND_SHA256" in scripts[compile_index]
+    assert not any("release-monitor-frontend" in run for run in scripts)
+    release_scripts = [str(s.get("run", "")) for s in jobs["release"]["steps"]]
+    verify = next(
+        i for i, run in enumerate(release_scripts) if "release verify-set " in run
+    )
+    upload = next(
+        i for i, run in enumerate(release_scripts) if "gh release upload " in run
+    )
+    assert verify < upload
+    draft = jobs["verify-release-assets"]["steps"]
+    gate = next(
+        s
+        for s in draft
+        if s.get("name") == "Require every declared target on the draft release"
+    )
+    assert "release verify-set " in gate["run"]
+    wheel = jobs["wheel"]["steps"]
+    assert any("release wheel " in str(s.get("run", "")) for s in wheel)
+
+
+def test_reviewed_release_pins_precede_publication_and_cover_acquisition(
+    repo_root: Path,
+) -> None:
+    binaries = _workflow(repo_root)
+    draft = binaries.index("- name: Require every declared target on the draft release")
+    handoff = binaries.index(_HANDOFF)
+    gate = binaries[draft:handoff]
+    assert "tools.monitor.pins validate" in gate
+    assert "fetch --no-tags origin main" in gate
+    assert '--catalog-revision "$catalog_sha"' in gate
+    assert "tools.monitor.pins propose" in binaries
+    assert "monitor-pin-proposal-${{ inputs.target_sha }}" in binaries
+    assert "git push" not in binaries
+    publication = _load(repo_root, "publish.yml")["jobs"]["publish-pypi"]
+    publish = next(
+        s["run"] for s in publication["steps"] if "uv publish" in str(s.get("run", ""))
+    )
+    # Removing or moving reviewed-pin admission fails this ordered assertion.
+    assert publish.index("tools.monitor.pins validate") < publish.index("uv publish")
+    acquisition = _load(repo_root, "acquisition.yml")["jobs"]["acquire"]
+    from tools.packaging.products import VAULTSPEC_RAG
+
+    assert {
+        leg["target"] for leg in acquisition["strategy"]["matrix"]["include"]
+    } == set(VAULTSPEC_RAG.supported_targets)

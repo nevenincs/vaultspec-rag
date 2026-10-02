@@ -74,7 +74,7 @@ on:
         default: full
         type: string
   schedule:
-    - cron: '47 5 * * 3'
+    - cron: "47 5 * * 3"
   workflow_dispatch:
     inputs:
       ref:
@@ -306,6 +306,9 @@ jobs:
       - name: Restore monitor dependencies for installed-browser checks
         run: just init-monitor
 
+      - name: Compile the native monitor for lifecycle tests
+        run: just build-monitor-test
+
       - name: Run tests
         run: just test-python
 
@@ -375,6 +378,9 @@ jobs:
 
       - name: Restore monitor dependencies for installed-browser checks
         run: just init-monitor
+
+      - name: Compile the native monitor for lifecycle tests
+        run: just build-monitor-test
 
       - name: Run full test suite
         run: just test-python

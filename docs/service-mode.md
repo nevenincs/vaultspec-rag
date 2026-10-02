@@ -42,6 +42,25 @@ Other start flags control the port, automatic updates, update timing, and the ma
 
 ## Confirm it is running
 
+### Monitor the service in a browser
+
+The binary installation includes `vaultspec-rag-monitor`. Put the archive's extracted
+directory on `PATH` before starting the service. A Python host installation can select
+that executable with `VAULTSPEC_RAG_MONITOR_BINARY`, set to its absolute path.
+
+The service supervisor launches the monitor after backend readiness, beginning at the
+backend port plus one and choosing the next available higher port. It records the
+chosen address with service discovery and stops its owned monitor when the service
+stops. The monitor uses the service's initialized Python runtime for lifecycle and
+persisted inventory operations.
+
+For a separate diagnostic session, run `vaultspec-rag-monitor --port 5420` and open
+`http://127.0.0.1:5420`. This directly launched process uses a strict port and is stopped
+with Ctrl+C. Its frontend remains useful while the backend is unavailable; search and
+backend control retain the host installation's accelerator and bootstrap requirements.
+
+### Read service status
+
 ```
 uv run vaultspec-rag server status
 ```
@@ -255,6 +274,12 @@ just init-monitor
 just build-monitor
 just dev
 ```
+
+For the accelerator-free lifecycle tests, run `just build-monitor-test` and
+set `VAULTSPEC_RAG_MONITOR_BINARY` to the absolute executable path it prints
+before running `just test-python`. This uses the pinned release compiler and
+embedded Vite assets, marks the local executable as a development build, and
+writes it under `dist-bin`. The CI test jobs prepare and select it automatically.
 
 Open `http://127.0.0.1:5420`. The monitor automatically connects to the local
 service recorded in the managed status directory. It requires no login,

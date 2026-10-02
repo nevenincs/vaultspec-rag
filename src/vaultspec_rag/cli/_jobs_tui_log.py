@@ -625,6 +625,11 @@ class JobsLogView(RetainedLog[LogEntry]):
         self.auto_scroll = True
         self.scroll_end(animate=False)
 
+    def scroll_followed_tail(self) -> None:
+        """Honor manual navigation that happened after a tail scroll was queued."""
+        if self.auto_scroll:
+            self.scroll_end(animate=False)
+
     def jump_next_error(self) -> bool:
         """Scroll to the error after the last one jumped to, wrapping."""
         if not self._error_offsets:
@@ -659,7 +664,7 @@ class JobsLogView(RetainedLog[LogEntry]):
         ):
             self._paint()
         if self.auto_scroll:
-            self.call_after_refresh(self.scroll_end, animate=False)
+            self.call_after_refresh(self.scroll_followed_tail)
         else:
             self.call_after_refresh(self.scroll_to, y=position, animate=False)
 
