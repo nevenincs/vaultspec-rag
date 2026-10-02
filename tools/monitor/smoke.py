@@ -114,6 +114,38 @@ def get(url: str) -> tuple[int, str, bytes]:
         )
 
 
+def drive_browser(process: subprocess.Popen[str]) -> None:
+    ready = json.loads(output_line(process))
+    if not ready.get("ready") or process.stdin is None:
+        raise RuntimeError("The browser probe did not become ready")
+    for command in (
+        {
+            "operation": "wait",
+            "expression": "document.readyState === 'complete' && "
+            "document.querySelector('#root')?.textContent.includes('Dashboard')",
+        },
+        {
+            "operation": "wait",
+            "expression": "document.fonts.ready.then(() => "
+            "getComputedStyle(document.querySelector('header'))"
+            ".position === 'fixed')",
+        },
+        {"operation": "evidence"},
+        {"operation": "close"},
+    ):
+        process.stdin.write(json.dumps(command) + "\n")
+        process.stdin.flush()
+        if command["operation"] != "close":
+            result = json.loads(output_line(process))
+            if not result.get("ok") or (
+                command["operation"] == "evidence" and result["value"]["errors"]
+            ):
+                raise RuntimeError(f"Delivered-page browser check failed: {result}")
+    process.wait(timeout=15)
+    if process.returncode:
+        raise RuntimeError(f"The browser driver exited {process.returncode}")
+
+
 def browser_probe(url: str, executable: Path, directory: Path) -> None:
     node = shutil.which("node")
     if node is None:
@@ -121,58 +153,35 @@ def browser_probe(url: str, executable: Path, directory: Path) -> None:
             "The browser probe needs Node; the delivered monitor does not"
         )
     script = Path(__file__).resolve().parents[2] / "dev/monitor-browser.mjs"
-    process = subprocess.Popen(
-        [node, str(script), str(executable), str(directory / "browser"), url],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-    )
-    try:
-        ready = json.loads(output_line(process))
-        if not ready.get("ready") or process.stdin is None:
-            raise RuntimeError("The browser probe did not become ready")
-        for command in (
-            {
-                "operation": "wait",
-                "expression": "document.readyState === 'complete' && "
-                "document.querySelector('#root')?.textContent.includes('Dashboard')",
-            },
-            {
-                "operation": "wait",
-                "expression": "document.fonts.ready.then(() => "
-                "getComputedStyle(document.querySelector('header'))"
-                ".position === 'fixed')",
-            },
-            {"operation": "evidence"},
-            {"operation": "close"},
-        ):
-            process.stdin.write(json.dumps(command) + "\n")
-            process.stdin.flush()
-            if command["operation"] != "close":
-                result = json.loads(output_line(process))
-                if not result.get("ok") or (
-                    command["operation"] == "evidence" and result["value"]["errors"]
-                ):
-                    raise RuntimeError(f"Delivered-page browser check failed: {result}")
-        process.wait(timeout=15)
-        if process.returncode:
-            detail = process.stderr.read() if process.stderr else ""
-            raise RuntimeError(f"The delivered-page browser probe failed: {detail}")
-    finally:
-        if process.poll() is None:
-            if process.stdin:
-                process.stdin.close()
-            try:
-                process.wait(timeout=20)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=10)
-        for stream in (process.stdin, process.stdout, process.stderr):
-            if stream:
-                stream.close()
+    with (
+        tempfile.TemporaryFile(mode="w+", encoding="utf-8") as errors,
+        subprocess.Popen(
+            [node, str(script), str(executable), str(directory / "browser"), url],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=errors,
+            text=True,
+            encoding="utf-8",
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        ) as process,
+    ):
+        try:
+            drive_browser(process)
+        except (RuntimeError, ValueError, OSError, subprocess.TimeoutExpired) as error:
+            errors.seek(0)
+            detail = errors.read(65536)
+            raise RuntimeError(
+                f"Delivered-page browser probe failed: {error}; {detail}"
+            ) from error
+        finally:
+            if process.poll() is None:
+                if process.stdin:
+                    process.stdin.close()
+                try:
+                    process.wait(timeout=20)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=10)
 
 
 def probe_assets(url: str, expected: dict[str, object]) -> int:

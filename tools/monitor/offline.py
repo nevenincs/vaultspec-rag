@@ -135,6 +135,9 @@ def windows_probe(
         check=True,
         timeout=15,
     )
+    copied_binary = directory / binary.name
+    shutil.copy2(binary, copied_binary)
+    verify_native_binary(copied_binary, digest)
     bun = provision_bun(
         Path(tempfile.gettempdir()) / "vaultspec-bun", host_target_triple()
     )
@@ -148,7 +151,7 @@ def windows_probe(
         json.dumps(
             {
                 "group": group,
-                "programs": [str(binary), str(control)],
+                "programs": [str(copied_binary.resolve()), str(control.resolve())],
             }
         ),
         encoding="utf-8",
@@ -169,7 +172,7 @@ def windows_probe(
             raise RuntimeError(
                 "OS offline proof refused: blocked control still connects"
             )
-        return probe(binary, digest, identity, browser)
+        return probe(copied_binary, digest, identity, browser)
     finally:
         environment["MONITOR_FIREWALL_ACTION"] = "remove"
         subprocess.run(

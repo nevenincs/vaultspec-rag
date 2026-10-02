@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:78149abb6ccfad7a26ac5e198b321fb45f61d7113eb0382ab3775fd6f6afa63c'
+body_hash: 'sha256:aef24127c62f88bdddad883ffc43cadfbbba4c27479cad91f46adc650776c495'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -236,6 +236,7 @@ related:
 - `S06` `verify:` `Linux x64 clean finalized native and OS-offline smoke=pass; macOS native smoke 110857268226=pass; macOS harness-wide OS smoke=fail; affected tests 33=pass; Ruff lint,format=pass; ty=pass; offline/admission mutation fail-restore-pass` -> `pass`
 - `S06` `verify:` `macOS ARM64 native/browser/offline CI=pass; Linux x64 native/browser/offline CI=pass; clean Windows native/browser/offline actual firewall and cleanup=pass; affected tests 33 and workflow checks 47=pass; Ruff/type/format/docs/workflow` -> `pass`
 - `S06` `verify:` `private common frontend 37016154365 attempts 1,2=fail; workflow actionlint,Prettier and affected guards` -> `pass`
+- `S06` `verify:` `affected tooling/workflow/archive tests 93=pass; Windows corrected actual OS smoke and cleanup=pass; initial Windows negative-control bound=fail; Ruff/type/format/workflow=pass; full Windows 37014474575` -> `fail`
 
 ## Notes
 
@@ -264,3 +265,4 @@ related:
 - `S06` macOS target and network control now use Seatbelt launch prefix; browser harness remains outside policy, matching Linux scope. All gates retained. Corrected native rerun pending.
 - `S06` Immutable native ARM64 browser container and disposable Windows acquisition host address external fleet prerequisites. Same three-platform common frontend proof retained. ARM64 host execution, canonical release host prerequisites and first pinned public acquisition still pending.
 - `S06` Pinned npm subprocess aborts before Vite on shared macOS; fresh native Linux common producer preserves one exact handoff. No native verification or publication gate changed.
+- `S06` Keep all bounds and denial checks. Native hosted path and ARM64 namespace reruns pending. Full Windows monitor/fixture failures require focused investigation before merge.

@@ -109,7 +109,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     container:
       image: ${{ matrix.browser_image }}
-      options: --user 1001 --security-opt seccomp=unconfined --security-opt apparmor=unconfined
+      options: --user 1001 --cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined
     env:
       CI_EXEC_BUDGET_MINUTES: 30
     steps:

@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:227f73bb78b2d2c61fa23448b55e3dd0114aa7a4a74ea159f5b12fc01cf2c7db'
+body_hash: 'sha256:9b539ebe1da567ddafa332e42d06a78503764f2a00a149d6a6699965d9d8b9a1'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -137,3 +137,11 @@ ARM64's fleet image has neither a browser nor an enabled usable job-container da
 ### Common frontend host correction | low | Shared macOS npm process aborts before Vite
 
 Private candidate 37016154365 at 75f9f4db54fba363f750e38d00093be022cef0e0 failed in its common frontend producer twice (including one failed-job retry): npm dependency restore succeeds, then the pinned npm build subprocess aborts with SIGABRT before Vite output. The cause is not established; no runtime check was skipped. Use a fresh native GitHub Ubuntu 24.04 producer for this platform-neutral common handoff, preserving the fixed commit, pinned Node/npm lock, canonical build owner and exact artifact shared by all native jobs. Release's existing common frontend producer is already Linux. Native macOS execution retains the enrolled macOS host and its own independent proof. Canonical workflow lint, Prettier and affected workflow guards pass. Full CI for source 90102037 is still running its CPU suites; its full lint and advisory jobs pass. ARM64/Windows disposable-host execution remains pending because the common producer failed before those jobs could start. S06 remains open.
+
+### Disposable native host diagnostics | low | Preserve browser sandbox and isolate firewall target paths
+
+At 67fe681d, the fresh common Linux frontend and both enrolled Linux x64/macOS native OS-offline jobs pass (run 37016995767). The hosted Windows job has firewall elevation and enabled profiles but rejects a New-NetFirewallRule program argument with error 87; its exact cause is not established. Copy the finalized monitor into the owned temporary directory, reverify its SHA256 and resolve both monitor/control paths before policy creation. This also ensures no unrelated monitor using the original build path receives the rule. The corrected local Windows native/offline smoke passes, with no test rules remaining. Its first local negative-control rerun reached the unchanged 15-second bound; the next actual rerun passed without relaxing any timeout or denial assertion.
+
+The ARM64 job successfully compiles native bytes, discovers the pinned image browser and reaches the browser phase, but its namespace capability probe cannot write uid_map and browser startup times out. Add the browser's namespace capability only to that disposable test container; retain browser sandboxing and the separate monitor seccomp denial. Capture browser stderr to a managed temporary file instead of an undrained pipe, include at most 65,536 characters on failure and retain bounded teardown. Resource ownership and the existing browser protocol are separated to keep configured branch limits satisfied. Actual Windows smoke exercises the shared refactor. Ninety-three affected tooling/workflow/archive cases pass; Ruff, formatting, ty, actionlint and Prettier pass. The new ARM64/container and hosted Windows path checks still require their native rerun.
+
+Full Windows run 37014474575 at 90102037 completes with 6 failed, 5994 passed and 2 browser-fixture errors. The previously corrected acquisition guard/quiesce fixture and bounded watcher pass. New failures include an oversized Windows subprocess command line, inventory HTTP deadlines, browser readiness/evaluation failures, queued log scrolling and another unread-POST fixture reset. These are unresolved evidence requiring focused investigation and correction before merge. Full Linux 3.14, lint and dependency audit pass; Linux 3.13 is still running. S06 remains open and no complete/release-ready verdict is issued.
