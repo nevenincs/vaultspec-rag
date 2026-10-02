@@ -378,9 +378,12 @@ Read the failed matrix leg first. Restore the runner or correct the build
 input, then rerun `RAG Binaries` for the same tag and its release commit:
 
 ```sh
-gh workflow run binaries.yml --repo "$REPO" --ref main --field tag="$TAG" \
+gh workflow run binaries.yml --repo "$REPO" --ref "$TAG" --field tag="$TAG" \
   --field target_sha="$(git rev-parse "$TAG^{commit}")"
 ```
+
+The dispatch ref must be the release tag. Binaries verifies that its workflow
+commit, the remote tag and `target_sha` agree before any build job runs.
 
 Do not remove a target from the matrix just to make a release green. If the
 supported target set intentionally changes, update the product model, channel

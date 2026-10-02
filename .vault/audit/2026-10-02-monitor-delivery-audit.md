@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:c9324cec3eded6a8777e963013b8b99bc3bd7b756f8cd213a7865f7bc96d9203'
+body_hash: 'sha256:ecdbf81478452d44d1aefa74dbccf8629b0dd442577a93109f5d82882a56549e'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -85,6 +85,16 @@ The combined release/developer-guard run initially passed 151 tests with one sta
 ### loopback-lifecycle-resolution | low | Lifecycle port reservations are confined to loopback
 
 S09 corrective follow-up to the medium CodeQL annotation at `d5114a9d`: the bounded test helper reserves only 127.0.0.1, retaining exclusive Windows binds and the non-ephemeral port range. Those reservations still conflict with the compiled server's wildcard listener, so the real upward-allocation and strict-port assertions remain exercised. The 12-test lifecycle suite passes against the verified Windows compiled monitor, including actual backend HTTP, discovery, parent death and identity-safe cleanup. Package Ruff, affected formatting and ty/basedpyright pass. S09 corrective review is **PASS**. Both Python wildcard test listeners are now removed; current-head remote security and merge-gate results remain required before landing. S06 release evidence remains **PENDING**.
+
+### release-workflow-context | high | Dynamic checkout still fails security admission
+
+The CodeQL result at `c76433d2` clears both Python listener findings but retains the high checkout finding at needs.validate.outputs.sha. The query identifies dynamic checkout references through data flow and SHA-field heuristics; shell validation does not establish that checkout as the workflow's own trusted commit. S04 reopened again. The tag-based parent contract already requires each lane to build from the release tag. Bind the workflow dispatch itself to that tag, prove the workflow SHA matches its remote commit, and check out the workflow's fixed GitHub SHA. Verdict **REVISION REQUIRED** until this boundary is verified.
+
+### release-workflow-context-resolution | low | Workflow and product source are bound to the same release tag
+
+S04 correction reviewed against `c76433d2`: Publish dispatches Binaries with the release tag as its ref. Before any action or checkout, the existing resolver requires GITHUB_REF to name that tag and GITHUB_SHA to match the independently resolved remote tag as well as target_sha. Checkouts use github.sha; provenance and artifact handoffs retain the validated equal SHA. Failed validation prevents every consumer, including the always-running draft verifier, from executing. The manual repair command now selects the same tag. This follows the accepted release-standard requirement that every lane builds from the tag and keeps dispatch-only triggers. It additionally fixes the workflow revision for the release instead of accepting another dynamic source under a default-branch run. [GitHub's dispatch context documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch) defines that SHA as the dispatched branch or tag commit.
+
+The real resolver accepted the matching remote tag and refused a mismatched requested SHA, a main-branch dispatch, and a different workflow SHA, with no output in each refused case. The raw-frontend-reference mutation failed the intended assertion; exact bytes were restored and the guard passed. All 152 release and developer guards pass. Package/tooling Ruff, affected formatting, ty/basedpyright, canonical actionlint and Prettier for both workflows, RELEASING.md Markdown and documentation conventions pass. Earlier native lifecycle and loopback smoke results remain applicable because runtime and probe source are unchanged. Corrective review is **PASS** locally, with new current-head CodeQL and merge-gate admission still required. No remote release was dispatched, retagged or published. S06 remains **PENDING** for its recorded release evidence.
 
 ## Recommendations
 

@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:eb374a5f09496626e5479e80cd01d9536c695bd8b900b98a3c2af6c280ae0736'
+body_hash: 'sha256:2bd70f87345699689990e7a6305f35a52dee2effde73f85611af2a2fddccc401'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -187,6 +187,19 @@ related:
 - `S09` `verify:` `affected format` -> `pass`
 - `S09` `verify:` `ty and strict basedpyright affected helper` -> `pass`
 - `S09` `verify:` `actual compiled monitor lifecycle 12 tests` -> `pass`
+- `S04` `M` `.github/workflows/publish.yml`
+- `S04` `M` `RELEASING.md`
+- `S04` `verify:` `Ruff package binary monitor tooling` -> `pass`
+- `S04` `verify:` `affected format` -> `pass`
+- `S04` `verify:` `ty and strict basedpyright affected guard` -> `pass`
+- `S04` `verify:` `canonical actionlint both workflows` -> `pass`
+- `S04` `verify:` `Prettier both workflows` -> `pass`
+- `S04` `verify:` `release workflow and developer guards 152 tests` -> `pass`
+- `S04` `verify:` `raw frontend SHA guard mutation` -> `fail`
+- `S04` `verify:` `raw frontend SHA guard exact restore` -> `pass`
+- `S04` `verify:` `real remote resolver matching tag and all three mismatch cases` -> `pass`
+- `S04` `verify:` `RELEASING Markdown and documentation conventions` -> `pass`
+- `S04` `verify:` `PR570 CodeQL at c76433d2` -> `fail`
 
 ## Notes
 
@@ -207,3 +220,4 @@ related:
 - `S04` Reopened S04 for current-head CodeQL cache-poisoning finding; explicitly opt out of setup-node automatic caching and leave explicit cache absent. Local corrective review PASS. Parsed YAML helper annotations and optional triggers now satisfy strict typing without suppressions. CodeQL must rerun at the next pushed head before authorized main merge. S06 release evidence remains pending.
 - `S04` Explicit cache opt-out retained; existing validated remote tag SHA now crosses the job boundary through resolver output, all build and evidence consumers bind to it, and always-running draft verification requires validation success. One stale exact dependency guard corrected to the intended shape; final 152 tests pass. Native smoke socket restricted to loopback; unchanged verified test binary passes complete probe. Corrective local review PASS, fresh CodeQL still required before merge. Lifecycle socket helper medium finding assigned to S09.
 - `S09` Reopened S09 to resolve CodeQL medium wildcard-listener annotation. Test reservations now bind loopback only, preserving exclusive Windows socket admission and avoiding the ephemeral range. Real compiled allocation, backend HTTP and cleanup checks pass. Corrective review PASS; fresh remote checks still required before authorized merge. S06 remains pending release evidence.
+- `S04` Bind binary workflow dispatch to the existing release tag contract. Existing resolver additionally refuses a different workflow ref or SHA, checkouts use its fixed GitHub commit and all provenance uses the equal proven SHA. Update the publication caller and manual repair command together. Query source reviewed to establish why dynamic outputs remained flagged; no dismissal or suppression. Local corrective review PASS, fresh remote CodeQL required before merge. Existing native smoke and lifecycle evidence remains applicable; S06 release evidence pending.

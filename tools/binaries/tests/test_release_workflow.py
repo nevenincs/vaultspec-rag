@@ -181,7 +181,7 @@ def test_release_artifacts_stay_bound_to_one_exact_commit(repo_root: Path) -> No
         in binaries_text
     )
     assert "pattern: binaries-${{ needs.validate.outputs.sha }}-*" in binaries_text
-    assert "ref: ${{ needs.validate.outputs.sha }}" in binaries_text
+    assert "ref: ${{ github.sha }}" in binaries_text
     assert "git rev-parse HEAD" in binaries_text
 
 
@@ -584,7 +584,7 @@ def test_release_frontend_cannot_write_dependency_cache(repo_root: Path) -> None
 
 
 def test_binary_consumers_use_the_validated_remote_revision(repo_root: Path) -> None:
-    """Build jobs consume the resolver's proven SHA rather than raw input.
+    """Build jobs consume the proven workflow commit rather than raw input.
 
     Mutation proof: replacing the frontend checkout with inputs.target_sha
     failed the named raw-input assertion; exact restoration passed.
@@ -597,6 +597,12 @@ def test_binary_consumers_use_the_validated_remote_revision(repo_root: Path) -> 
     assert validate["outputs"]["sha"] == "${{ steps.commit.outputs.sha }}"
     commit = next(step for step in validate["steps"] if step.get("id") == "commit")
     script = str(commit["run"])
+    assert script.index('[ "${GITHUB_REF}" != "refs/tags/${TAG}" ]') < script.index(
+        'echo "sha=${sha}" >> "$GITHUB_OUTPUT"'
+    ), "resolver does not prove the dispatched release tag"
+    assert script.index('[ "${GITHUB_SHA}" != "${sha}" ]') < script.index(
+        'echo "sha=${sha}" >> "$GITHUB_OUTPUT"'
+    ), "resolver does not prove the dispatched release commit"
     assert script.index('[ "${sha}" != "${TARGET_SHA}" ]') < script.index(
         'echo "sha=${sha}" >> "$GITHUB_OUTPUT"'
     ), "resolver emits its SHA before it proves the release request"
@@ -611,10 +617,18 @@ def test_binary_consumers_use_the_validated_remote_revision(repo_root: Path) -> 
             if str(step.get("uses", "")).startswith("actions/checkout@")
         ]
         assert checkouts, f"{name} does not check out the release"
-        assert all(
-            step["with"]["ref"] == "${{ needs.validate.outputs.sha }}"
-            for step in checkouts
-        ), f"{name} does not check out the validated release SHA"
+        assert all(step["with"]["ref"] == "${{ github.sha }}" for step in checkouts), (
+            f"{name} does not check out the proven workflow commit"
+        )
+    publication = _load(repo_root, "publish.yml")["jobs"]["github-release"]
+    dispatch = next(
+        str(step["run"])
+        for step in publication["steps"]
+        if "gh workflow run binaries.yml" in str(step.get("run", ""))
+    )
+    assert '--ref "${TAG}"' in dispatch, (
+        "binary caller does not dispatch the release tag"
+    )
 
 
 def test_reviewed_release_pins_precede_publication_and_cover_acquisition(
