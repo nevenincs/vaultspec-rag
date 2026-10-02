@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:c90b086733a6a17fef557efa6dc3ff2c30dcaf9aa396d8483fd2cca81c8fb1e0'
+body_hash: 'sha256:50d25826693d3e8eeff3062618e5cedab349475dec72b165a8fd121e5bb99b12'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -137,6 +137,17 @@ related:
 - `S10` `verify:` `CPU affected stream queue checkpoint ledger parity53 passed1existingtorch-only deselected exit0` -> `pass`
 - `S10` `verify:` `eight process-only production mutation intended-fail restored-fresh-pass pairs unchanged7 owned hashes` -> `pass`
 - `S10` `by:` `vaultspec-high-executor`
+- `S11` `M` `src/vaultspec_rag/indexer/_route_migration.py`
+- `S11` `M` `src/vaultspec_rag/store_catalog.py`
+- `S11` `M` `src/vaultspec_rag/store_ingest.py`
+- `S11` `A` `src/vaultspec_rag/tests/test_content_route_migration.py`
+- `S11` `M` `src/vaultspec_rag/tests/integration/test_content_route_migration.py`
+- `S11` `verify:` `package Ruff lint and format868 files exit0` -> `pass`
+- `S11` `verify:` `strict basedpyright and Ty five changed paths exit0` -> `pass`
+- `S11` `verify:` `configured Pylint nesting cognitive Xenon changed-path gates exit0` -> `pass`
+- `S11` `verify:` `affected CPU route storage identity donor reads search57 tests exit0` -> `pass`
+- `S11` `verify:` `17 process-only actual production mutations intended fail then fresh restored pass unchanged six hashes` -> `pass`
+- `S11` `by:` `vaultspec-high-executor`
 
 ## Notes
 

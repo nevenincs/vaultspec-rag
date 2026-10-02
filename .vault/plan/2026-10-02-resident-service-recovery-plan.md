@@ -22,9 +22,12 @@ related:
   - '[[2026-07-25-index-resume-drift-race-adr]]'
   - '[[2026-07-21-index-backpressure-storage-hygiene-adr]]'
   - '[[2026-07-21-code-document-index-boundary-adr]]'
+  - '[[2026-07-24-service-quiesce-adr]]'
+  - '[[2026-07-21-service-job-control-adr]]'
+  - '[[2026-06-12-service-concurrency-adr]]'
 modified: '2026-10-02'
 body_schema: body-v2
-body_hash: 'sha256:89455318cd4296d0ddeecd186605962db09cb38755696fea7d68db00ac0b8c53'
+body_hash: 'sha256:f815f838940c0d27d730d6e44ef67053e4048fab92fc6a211a8add6d307abd67'
 ---
 
 # `resident-service-recovery` plan
@@ -45,6 +48,8 @@ The first live linked code retry exposed S10: checkpoint selection removes alrea
 
 S11 follows a live ingest code rebuild that confirmed every source file, bound its replacement collection, then failed during payload-only route reconciliation against the old-model document origin. The accepted sparse replacement and storage conformance rules still prohibit reading or reusing incompatible vectors; routing metadata and destination-confirmed origin cleanup require a vector-free storage seam. This correction retains existing destination-first migration journals, publication authority, and strict vector search/write/donor checks without changing persisted schemas or public service protocols. Exact traceback and source reads ground the fallback after semantic code discovery failed during replacement.
 
+S12 repairs two confirmed control defects under the accepted service-quiesce, job-control and concurrency decisions: paused desired-running jobs are stranded after an aborted global pause, and unstarted workers waiting for index capacity cannot acknowledge control until unrelated protected work releases the limiter. Recovery must preserve logical identity and operator intent, and cancellation must never abandon an already-running worker. Isolated in-memory canonical components reproduced both failures. Semantic discovery was attempted but the affected index remains unavailable during replacement; bounded exact traces and existing recovery paths ground this repair. No persisted schema or public protocol change is needed.
+
 ## Steps
 
 - [x] `S01` - Preserve terminal rebuild refusals and accurate watcher status through events, failures, and restart, and reconcile successful verified operator rebuilds; `watcher retry, controller, intake, execution and runtime, jobs.py completion hook, affected watcher and job tests`.
@@ -56,7 +61,8 @@ S11 follows a live ingest code rebuild that confirmed every source file, bound i
 - [x] `S08` - Prove lifecycle target identity and process incarnation across stop, reclaim and reaping, preserve successor discovery during cleanup, and retain unknown machine presence on probe faults; `src/vaultspec_rag/_process_probe.py, _machine_lock.py, cli/_process.py, cli/_service_stop.py, cli/_service_start.py, cli/_status_render.py, serviceclient/_discovery.py and focused CPU lifecycle, machine presence, discovery cleanup and compatibility tests`.
 - [ ] `S09` - Prevent CI resident restart while a dependent native attempt is active and roll out the corrected admission runtime after that attempt releases; `isolated ci-fleet resident, protected task compilation and fleet.yml probe declaration, engine/supervisor grant and preparation readiness, runtime/server wiring and affected CPU tests, resident-service ADR refinement and trusted idle local authority deployment`.
 - [x] `S10` - Preserve canonical weighted-stream framing while resuming committed segment gaps, with real-ledger interrupted-run regressions and guarded boundary rejection; `indexer/_consumer_pipeline.py, _run_checkpoint.py, _slicing.py and _streaming_types.py as needed, focused CPU weighted stream and real-ledger resume tests`.
-- [ ] `S11` - Allow vector-free cross-kind route reconciliation against an old-model origin without weakening destination evidence or vector conformance; `indexer/_route_migration.py, store_catalog.py and store_ingest.py plus collection owner only as needed, CPU real-Qdrant and ledger migration and strict conformance regressions`.
+- [x] `S11` - Allow vector-free cross-kind route reconciliation against an old-model origin without weakening destination evidence or vector conformance; `indexer/_route_migration.py, store_catalog.py and store_ingest.py plus collection owner only as needed, CPU real-Qdrant and ledger migration and strict conformance regressions`.
+- [ ] `S12` - Recover desired-running paused jobs after aborted quiesce and let unstarted capacity waiters acknowledge control without starting workers; `jobs control quiesce recovery, attempt capacity admission and token checkpoint integration, focused real-component CPU job and quiesce regressions`.
 - [ ] `S04` - Deploy the current checkout as the resident daemon, repair affected publications through explicit rebuild jobs when required, and verify service health, search, and watcher convergence; `resident service lifecycle, affected root ledgers and admitted jobs, plan verification and final audit`.
 
 ## Parallelization
@@ -72,6 +78,8 @@ S09 runs in an isolated ci-fleet worktree. The watcher worker owns resident.py, 
 For S10, the recovery worker owns resumed weighted-stream framing and checkpoint selection plus their CPU tests. S10 may run concurrently with S09 in disjoint repositories and S04 observation of existing admitted jobs. The supervisor owns all lifecycle, job-control, Git/vault and shared verification actions. Process-only mutation checks never change checkout source bytes. Deployment of S10 waits for controlled checkpoint settlement and then resumes jobs against its committed source.
 
 S11 is assigned to the watcher worker in the monitor checkout, owning cross-kind route reconciliation and vector-free storage metadata/delete seams plus their CPU regressions. Its source paths are disjoint from S10 and may proceed concurrently. The supervisor owns all shared gates, vault/Git changes, runtime control and final rollout.
+
+S12 is assigned to the recovery worker, owning quiesce recovery, attempt capacity admission and their CPU regressions. It may proceed concurrently with S11 checkpoint metadata and S04 observation because source ownership is disjoint. The supervisor owns shared package gates, serialized Git/vault writes, job/lifecycle operations and rollout. No worker uses the live resident or GPU; process-only mutation checks preserve checkout source bytes.
 
 ## Verification
 

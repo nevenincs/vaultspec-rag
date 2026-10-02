@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:0062274c7e4e4c919633635cbecebfbedce50cdf5cfd31a5588601008e9fdc86'
+body_hash: 'sha256:dd15d8d8103583623608e29e79299cf4dbe2af3a4a28ad97599b174eee3f6092'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -147,6 +147,22 @@ Package Ruff lint/format (868 files), strict basedpyright/Ty on all seven change
 The first misplaced integration-tier invocation requested canonical service quiesce at 22:29:48Z; its drain timed out at 22:30:08Z and was aborted back to running, with no GPU borrower granted. The large clean rebuild remains inside its protected publication interval and continues confirming units. Final selections use the proper CPU tier. The owned automatic CI-hold restoration deadline was extended from 2026-10-03 00:58:11Z to 02:30:00Z for measured large rebuild progress plus source rollout; earlier restoration remains required when rollout completes. No active CI work was cancelled.
 
 Independent S09 source and verification review passed at CI commit `7386cc3`, confirming all final tests and 22 mutation/restoration pairs against current hashes. Only trusted live authority deployment remains pending for S09.
+
+### S11 source verification
+
+Cross-kind origin scans and exact journaled ID deletion now use bounded, noncreating, vector-free administrative operations restricted to this root's active CODE/DOCUMENT collections. Destination completeness is checked through the canonical ledger and existing point evidence before its selected collection passes strict vector conformance. An absent or incompatible destination retains origin points. Same-kind purge, ordinary reads/writes and donor access preserve their normal compatibility checks. Real-model integration remains in the integration tier; pure ledger and storage routing regressions now run in the CPU tier.
+
+The affected CPU suite passed 57 tests, including 24 migration cases; nine genuine integration cases were deselected. Package Ruff lint/format (868 files), strict basedpyright and Ty on five changed paths, and configured design, nesting and complexity gates exited zero. Seventeen actual production-method mutations failed the intended assertions, and every restored fresh subprocess passed. The six monitored source hashes match the final checkout. Complete proof and logs are copied into the incident archive's s11-route-proof directory. Source review is clear; actual linked finalization replay remains S04 work.
+
+### Aborted quiesce strands paused desired-running jobs | high | S12
+
+Read-only follow-up reproduced a canonical paused job with desired RUNNING after the global pause aborted. The abort path calls recover_running_quiesced_resume, whose claim admits QUEUED only; this paused job is never prepared or dispatched. Accepted service-quiesce recovery requires PAUSED plus QUEUED desired-running work, preserving logical identity and operator paused/cancelled intent. The reproduction used isolated in-memory canonical components only.
+
+### Unstarted capacity waiters retain control tickets | high | S12
+
+A second isolated real-AnyIO reproduction held the index limiter with job1, then paused job2 before its worker entered. Job2 remained PAUSING with its compute ticket until job1 released the slot, because the first token checkpoint runs inside a worker after the limiter wait. The capacity wait itself must observe control without cancelling or abandoning an already-running worker. S12 owns both control repairs under the existing service-quiesce, job-control and concurrency rulings.
+
+The current 11 PAUSING/desired-RUNNING jobs are distinct: their retained quiesce signals have a valid late-acknowledgement path after protected work completes. Controller abort reopens admissions; safe acknowledgement releases resources and schedules a same-ID attempt. Their pending projection is truthful, and no lost work was established for those jobs.
 
 ## Recommendations
 

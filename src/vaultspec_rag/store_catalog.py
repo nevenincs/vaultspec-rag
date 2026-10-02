@@ -426,15 +426,17 @@ class _VaultCatalogMixin:
         *,
         limit: int,
         offset: PointId | None,
+        source_paths: set[str] | None = None,
     ) -> tuple[list[dict[str, Any]], PointId | None]:
-        """Read one bounded raw payload page without reconciling storage.
+        """Read one bounded administrative payload page without vector access.
 
         Exact verification must observe the backend as it is. Calling an
         ``ensure_*`` function here would repair payload indexes or create an
         absent collection before the audit could report that disagreement.
         The collection is therefore restricted to this store's three active
         source projections and scrolled directly through the read-only point
-        primitive.
+        primitive. Route-origin reconciliation may select source paths from
+        code or document payloads; it must not require compatible origin vectors.
         """
         if collection not in {
             self.TABLE_NAME,
@@ -448,11 +450,28 @@ class _VaultCatalogMixin:
             raise ValueError("index audit scroll limit must be a positive integer")
         if limit > 1000:
             raise ValueError("index audit scroll limit must not exceed 1000")
+        scroll_filter = None
+        if source_paths is not None:
+            if collection not in {self.CODE_TABLE_NAME, self.DOCUMENT_TABLE_NAME}:
+                raise ValueError("source paths require a code or document projection")
+            if not source_paths:
+                return [], None
+            from qdrant_client import models
+
+            path_key = "path" if collection == self.CODE_TABLE_NAME else "source_path"
+            scroll_filter = models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key=path_key, match=models.MatchAny(any=sorted(source_paths))
+                    )
+                ]
+            )
         if not self._collection_exists(collection):
             return [], None
         with self._point_lock(collection):
             records, next_offset = self._scroll(
                 collection_name=collection,
+                scroll_filter=scroll_filter,
                 limit=limit,
                 offset=offset,
                 with_payload=True,

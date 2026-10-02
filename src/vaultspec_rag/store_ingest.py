@@ -66,6 +66,7 @@ class _VaultIngestMixin:
 
     if TYPE_CHECKING:
         TABLE_NAME: str
+        CODE_TABLE_NAME: str
         DOCUMENT_TABLE_NAME: str
         _server_mode: bool
         _storage_probe_path: Path
@@ -83,6 +84,8 @@ class _VaultIngestMixin:
         def ensure_code_table(self, collection: str | None = None) -> None: ...
 
         def ensure_document_table(self) -> None: ...
+
+        def _collection_exists(self, name: str) -> bool: ...
 
         def _point_lock(self, collection: str) -> AbstractContextManager[object]: ...
 
@@ -562,6 +565,31 @@ class _VaultIngestMixin:
                 points_selector=models.PointIdsList(points=point_ids),
             )
         logger.info("Deleted %d document chunk(s)", len(ids))
+
+    def delete_migration_origin_points(
+        self, collection: str, ids: Sequence[str]
+    ) -> None:
+        """Delete journaled origin identities without reading or relabelling vectors.
+
+        The route owner confirms a current destination before invoking this
+        administrative cleanup. Normal deletes retain their conformance guard.
+        An absent origin is already reconciled and is never recreated.
+        """
+        if collection not in {self.CODE_TABLE_NAME, self.DOCUMENT_TABLE_NAME}:
+            raise ValueError("migration origin is not an active content projection")
+        if not ids or not self._collection_exists(collection):
+            return
+        from qdrant_client import models
+
+        with self._point_lock(collection):
+            point_ids: list[int | str | UUID] = [
+                self._stable_id(value) for value in ids
+            ]
+            self._delete_points(
+                collection_name=collection,
+                points_selector=models.PointIdsList(points=point_ids),
+            )
+        logger.info("Deleted %d confirmed migration origin point(s)", len(ids))
 
     def delete_document_sources(self, source_paths: set[str]) -> None:
         """Remove every document chunk belonging to the selected sources."""
