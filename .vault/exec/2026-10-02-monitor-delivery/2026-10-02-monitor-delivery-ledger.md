@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:d31eeb635f0f1086ac06b297aaa3e931aca06ca8afd870b0828a4f37907597a8'
+body_hash: 'sha256:3aabd079f01343e22ead9203f4d9265f8503baff6fedcf6eda1612f58d128081'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -250,6 +250,11 @@ related:
 - `S06` `verify:` `tail-scroll guard mutations jump_end/scroll_followed_tail/per-line write each fail own label then pass` -> `pass`
 - `S06` `verify:` `pytest jobs TUI and monitor log suites (140)` -> `pass`
 - `S06` `verify:` `ruff check/format, ty, complexity, nesting, size` -> `pass`
+- `S06` `M` `src/vaultspec_rag/tests/_ports.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_monitor_process_integration.py`
+- `S06` `verify:` `linux container: held listener raises errno 98, server-side TIME_WAIT binds` -> `pass`
+- `S06` `verify:` `windows monitor allocation test: held port fails at helper, restored passes` -> `pass`
+- `S06` `verify:` `ruff check/format, ty, monitor process and port helper users (98)` -> `pass`
 
 ## Notes
 
