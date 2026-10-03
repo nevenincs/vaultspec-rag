@@ -292,6 +292,10 @@ class RunLedgerFileMethods:
         already been written: a storage query returns the superseded points and
         the replacement points together, and dropping that union would delete
         the very content the re-record is about to claim.
+
+        Unit-first CROSS JOIN pins the requested path's indexed lookup before
+        point traversal; join reordering can otherwise scan every point in the
+        generation before applying the path predicate.
         """
         validate_rel_path(rel_path)
         with ledger_connection(self.path) as connection:
@@ -299,10 +303,10 @@ class RunLedgerFileMethods:
                 connection,
                 """
                 SELECT points.point_id
-                FROM commit_point_ids AS points
-                JOIN commit_units AS units
-                  ON units.generation_id = points.generation_id
-                 AND units.unit_id = points.unit_id
+                FROM commit_units AS units
+                CROSS JOIN commit_point_ids AS points
+                  ON points.generation_id = units.generation_id
+                 AND points.unit_id = units.unit_id
                 WHERE units.generation_id = ? AND units.rel_path = ?
                   AND units.unit_kind = ? AND units.source_digest = ?
                 ORDER BY units.segment_ordinal, points.point_ordinal,

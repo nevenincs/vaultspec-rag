@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:a208c0dbfc78dd11f97eb7274204918f2917b5d5345fbea606815092c7d501e7'
+body_hash: 'sha256:fba818874dc57731c5df45fbb6d98693a1b45cdd4e151318816ea7225a11f3a4'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -571,6 +571,21 @@ related:
 - `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S28\verify.py mutant previous_checkpoint_leak src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_pre_checkpoint_cancellation_keeps_original_outcome` -> `fail`
 - `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_pre_checkpoint_cancellation_keeps_original_outcome -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
 - `S28` `by:` `root`
+- `S29` `M` `src/vaultspec_rag/indexer/_run_ledger_files.py`
+- `S29` `A` `src/vaultspec_rag/tests/test_index_run_ledger_drift_lookup.py`
+- `S29` `verify:` `uv run --no-sync ruff format src/vaultspec_rag/indexer/_run_ledger_files.py src/vaultspec_rag/tests/test_index_run_ledger_drift_lookup.py` -> `pass`
+- `S29` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/indexer/_run_ledger_files.py src/vaultspec_rag/tests/test_index_run_ledger_drift_lookup.py` -> `pass`
+- `S29` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/indexer/_run_ledger_files.py src/vaultspec_rag/tests/test_index_run_ledger_drift_lookup.py` -> `pass`
+- `S29` `verify:` `uv run --no-sync ty check src/vaultspec_rag/indexer/_run_ledger_files.py src/vaultspec_rag/tests/test_index_run_ledger_drift_lookup.py` -> `pass`
+- `S29` `verify:` `uv run --no-sync basedpyright src/vaultspec_rag/indexer/_run_ledger_files.py src/vaultspec_rag/tests/test_index_run_ledger_drift_lookup.py` -> `pass`
+- `S29` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_index_run_ledger_drift_lookup.py` -> `pass`
+- `S29` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_code_pipeline_retained_ids.py src/vaultspec_rag/tests/test_weighted_code_resume.py src/vaultspec_rag/tests/test_index_run_ledger_commit_units.py src/vaultspec_rag/tests/test_index_run_ledger_generations.py src/vaultspec_rag/tests/test_index_run_ledger_concurrency.py` -> `pass`
+- `S29` `verify:` `uv run --no-sync python C:\Users\hello\AppData\Local\Temp\vaultspec-rag-incident-20261002-203057\perf-profiling\drift-lookup-guard\runner.py C:\Users\hello\AppData\Local\Temp\vaultspec-rag-incident-20261002-203057\perf-profiling\drift-lookup-guard` -> `pass`
+- `S29` `verify:` `uv run --no-sync ruff check src/vaultspec_rag` -> `pass`
+- `S29` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag` -> `pass`
+- `S29` `verify:` `git diff --check` -> `pass`
+- `S29` `verify:` `uv run --no-sync python -m dev.complexity gate` -> `pass`
+- `S29` `by:` `root`
 
 ## Notes
 
