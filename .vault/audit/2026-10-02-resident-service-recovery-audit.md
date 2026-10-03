@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:312941cacd73c79bfa8f395494f9d5ed832e577ea2f27557973ce6f90a248a45'
+body_hash: 'sha256:b7b69af64ab6dc1798a589ee138c314decf120b51453b71e75cd78406810e796'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -237,3 +237,9 @@ Both monitor and TUI ledgers were preserved through SQLite consistent read-only 
 ## Final S16 source checkpoint
 
 Independent SOURCE+CPU review passes expanded S16 against both frozen hashes:13 focused and190 affected CPU cases, seven changed gates exit0 and five intended production mutation failures followed by fresh restored passes. Real local-Qdrant and complete-archive tests prove autoprune off preserves eligible generations and expired/over-cap archives, with byte-for-byte archive preservation, while still recording grace observations and running independently configured reconciliation. Enabled autoprune and explicit dry-run retain their accepted behaviors. Neither this repair nor incident investigation deleted any live backend storage or archive.
+
+## Final S17 and integrated source checkpoint
+
+Independent SOURCE+CPU review passes expanded S17 against all five frozen hashes:22 focused and220 affected CPU cases, seven configured gates exit0 and21 intended production mutation failures followed by fresh restored passes. Exact model maps, all per-kind count fields, generation unknown/empty/debt and published temp-root true/false facts survive service-to-CLI adaptation and applicable human rendering; malformed/legacy evidence retains conservative fallback.
+
+The integrated S14-S18 review passes with every source finding in that batch closed. S01/S07 watcher behavior and temporal guards, S10 stream guards, and S13 search readiness/conformance were refreshed where applicable. All28 final source/test hashes match shared package lint/format/diff evidence. S09 trusted authority deployment and S04 actual fresh publication, search and watcher convergence remain open; the resident will restart only from these committed repairs.

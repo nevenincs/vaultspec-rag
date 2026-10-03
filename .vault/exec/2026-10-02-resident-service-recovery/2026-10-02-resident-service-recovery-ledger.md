@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:45bc98b94b480ee4bcbd3833f12324d7c2aa2fac033e63053904fb07f1f2abed'
+body_hash: 'sha256:02a1fba1fac9c48697692a003f45c77e9c6772aeeae8d11ac0c63b84da19d0c3'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -232,6 +232,17 @@ related:
 - `S16` `verify:` `S16 five production mutation fail fresh restored pass pairs` -> `pass`
 - `S16` `verify:` `integrated S16 source and CPU review` -> `pass`
 - `S16` `by:` `root`
+- `S17` `M` `src/vaultspec_rag/generation_survey.py`
+- `S17` `M` `src/vaultspec_rag/storage_survey.py`
+- `S17` `M` `src/vaultspec_rag/server/_routes_storage.py`
+- `S17` `M` `src/vaultspec_rag/cli/_service_storage.py`
+- `S17` `A` `src/vaultspec_rag/tests/test_cli_storage_generation_diagnostics.py`
+- `S17` `verify:` `package Ruff lint format and all28 frozen hashes` -> `pass`
+- `S17` `verify:` `S17 seven configured changed gates each exit0` -> `pass`
+- `S17` `verify:` `S17 focused CPU22 and affected220 cases` -> `pass`
+- `S17` `verify:` `S17 twenty-one production mutation fail fresh restored pass pairs` -> `pass`
+- `S17` `verify:` `integrated S14-S18 source and CPU review` -> `pass`
+- `S17` `by:` `root`
 
 ## Notes
 
@@ -241,3 +252,4 @@ related:
 - `S18` Live monitor missing356 points shares the reproduced drift mechanism; individual attribution of every missing ID remains unproven. Served collections and damaged-build storage were preserved; fresh admitted rebuild verification remains S04.
 - `S15` Malformed embedded-NUL root and `project_root` filters now return bounded `bad_request400;` live Windows path-alias watcher convergence remains S04.
 - `S16` Existing zero reclaim cap now disables generation and archive destruction; independently configured reconciliation and positive-cap retention remain active. No live storage or archive was removed.
+- `S17` The CLI carries canonical per-namespace facts; intentional HTTP envelope freshness/totals remain outside scope. No GPU or live service was used for these proofs.

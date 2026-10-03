@@ -95,23 +95,6 @@ def _fetch_surveys() -> list[NamespaceSurvey]:
         client.close()
 
 
-def _generation_fields(report: RootGenerations | None) -> dict[str, Any]:
-    """Shape one namespace's served-collection and generation-debt fields.
-
-    ``None`` - an unattributable namespace, or a root whose served pointer
-    could not be read - reports ``null`` for both rather than an empty debt
-    list. "Nothing is known about this root" and "this root is carrying
-    nothing" are different facts, and a consumer that flattened them would
-    read an offline share as a clean bill of health.
-    """
-    if report is None:
-        return {"served_code_collection": None, "unreferenced_generations": None}
-    return {
-        "served_code_collection": report.served,
-        "unreferenced_generations": list(report.unreferenced),
-    }
-
-
 def _shape_survey_payload(request: _SurveyPayloadRequest) -> dict[str, Any]:
     """Shape a classified survey as the bounded route response.
 
@@ -190,7 +173,7 @@ def _backend_rollup(surveys: list[NamespaceSurvey]) -> dict[str, object]:
     observability so unbounded growth (and unread state) is visible before it
     is expensive, never a threshold anything downstream compares against.
     """
-    from ..storage_survey import is_temp_rooted
+    from ..storage_survey import namespace_temp_rooted
     from ..storage_survey_ops import backend_totals
 
     return {
@@ -199,7 +182,7 @@ def _backend_rollup(surveys: list[NamespaceSurvey]) -> dict[str, object]:
         "ephemeral_backlog_bytes": sum(
             s.footprint_bytes
             for s in surveys
-            if s.status == "orphaned" and is_temp_rooted(s.root)
+            if s.status == "orphaned" and namespace_temp_rooted(s)
         ),
         "points_unverified_namespaces": sum(
             1 for s in surveys if not s.points_verified
@@ -256,7 +239,8 @@ def _namespace_entry(
     survey: NamespaceSurvey, generations: RootGenerations | None
 ) -> dict[str, Any]:
     """Shape one namespace as the route reports it."""
-    from ..storage_survey import is_temp_rooted
+    from ..generation_survey import generation_fields
+    from ..storage_survey import namespace_temp_rooted
 
     return {
         "prefix": survey.prefix,
@@ -274,8 +258,8 @@ def _namespace_entry(
         # survey has always reported how much is stored, and this is the first
         # thing it can say about what made it.
         "models": survey.models,
-        "temp_rooted": is_temp_rooted(survey.root),
-        **_generation_fields(generations),
+        "temp_rooted": namespace_temp_rooted(survey),
+        **generation_fields(generations),
     }
 
 

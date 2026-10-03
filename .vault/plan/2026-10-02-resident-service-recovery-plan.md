@@ -32,7 +32,7 @@ related:
   - '[[2026-09-08-qdrant-collection-sprawl-adr]]'
 modified: '2026-10-03'
 body_schema: body-v2
-body_hash: 'sha256:32ad9594590da3f602d5ae333ed9c3ecc7199b87700b2c861d4260f7edb7f6d2'
+body_hash: 'sha256:b42096c3f22db29911dbe2a55fc01f686afd2365cc809cdd15040b91d799cb3d'
 ---
 
 # `resident-service-recovery` plan
@@ -86,7 +86,7 @@ The S16 final review found archive age/size eviction bypassing the same disable 
 - [x] `S14` - Preserve explicit rebuild replacement authority across global quiesce and logical job resume before any source worker has started; `canonical job resume clean/mode mapping and source handoff as needed, CPU queued-quiesce and paused rebuild replacement regressions`.
 - [x] `S15` - Use one canonical watcher root identity for Windows path filters, unregistration and bounded active-root release; `watcher root-key owner, server watcher route and scheduler lifecycle, CPU path-alias filter and active registration/release regressions`.
 - [x] `S16` - Honor disabled automatic pruning at superseded-generation and archive destruction stages while retaining classification and independently enabled reconciliation; `canonical reclamation policy, generation stage and archive retention, CPU disabled-policy real-storage and archive regressions`.
-- [ ] `S17` - Preserve canonical namespace generation, model, per-kind count and temp-root classification facts through CLI survey decoding and JSON/human rendering; `CLI namespace survey projection, canonical survey record and fact accessors, CPU service-to-CLI fact round-trip and legacy fallback regressions`.
+- [x] `S17` - Preserve canonical namespace generation, model, per-kind count and temp-root classification facts through CLI survey decoding and JSON/human rendering; `CLI namespace survey projection, canonical survey record and fact accessors, CPU service-to-CLI fact round-trip and legacy fallback regressions`.
 - [x] `S18` - Preserve republished shared chunk identities during resume drift retirement and exclude historical deletion evidence from retained upsert accumulation; `indexer canonical drift owner and consumer retained-ID accumulation, ledger iterator selection only as needed, CPU actual chunking real-local-storage interrupted partial-edit and deletion-history regressions`.
 - [ ] `S04` - Deploy the current checkout as the resident daemon, repair affected publications through explicit rebuild jobs when required, and verify service health, search, and watcher convergence; `resident service lifecycle, affected root ledgers and admitted jobs, plan verification and final audit`.
 

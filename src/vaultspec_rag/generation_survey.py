@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import pathlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple, cast
 
 from ._store_models import read_served_pointer
 from ._timestamps import parse_iso_timestamp
@@ -37,6 +37,8 @@ __all__ = [
     "RootGenerations",
     "advance_generation_stamps",
     "decide_generation_reclaim",
+    "decode_generation_fields",
+    "generation_fields",
     "survey_generations",
 ]
 
@@ -58,6 +60,35 @@ class RootGenerations(NamedTuple):
     def has_debt(self) -> bool:
         """Whether this root is carrying generations nothing points at."""
         return bool(self.unreferenced)
+
+
+def generation_fields(report: RootGenerations | None) -> dict[str, object]:
+    """Carry served-collection/debt facts, preserving unknown versus known empty."""
+    if report is None:
+        return {"served_code_collection": None, "unreferenced_generations": None}
+    return {
+        "served_code_collection": report.served,
+        "unreferenced_generations": list(report.unreferenced),
+    }
+
+
+def decode_generation_fields(
+    root: str | None, payload: Mapping[str, object]
+) -> RootGenerations | None:
+    """Read published generation facts without recomputing namespace authority."""
+    served = payload.get("served_code_collection")
+    unreferenced = payload.get("unreferenced_generations")
+    if (
+        not root
+        or not isinstance(served, str)
+        or not served
+        or not isinstance(unreferenced, list)
+    ):
+        return None
+    names = cast("list[object]", unreferenced)
+    if not all(isinstance(name, str) and name for name in names):
+        return None
+    return RootGenerations(root, served, tuple(cast("str", name) for name in names))
 
 
 def survey_generations(
