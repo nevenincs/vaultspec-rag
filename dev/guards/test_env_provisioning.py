@@ -2,15 +2,18 @@
 
 A worktree's `.env` is written by `dev.init.dotenv` and by nothing else, so
 what that module promises is what an operator's credentials depend on: the
-structure is the example's, a new file is seeded from the default-branch
-worktree, an existing file keeps its own values, and no value is dropped on
-any path. Each promise is exercised against real files and a real repository
-with a linked worktree; nothing here is replaced by a stand-in.
+structure is the example's, a new file is seeded with the declared values of
+the default-branch worktree, an existing file keeps its own values, and
+nothing an operator's own file holds is dropped. Each promise is exercised
+against real files and a real repository with a linked worktree; nothing here
+is replaced by a stand-in.
 
-The refusal guard was proven able to fail: the unreadable-line check was
-removed from ``read_values``, ``test_an_unreadable_line_refuses_the_rewrite``
-was run alone and failed on the exit-code assertion, the check was restored,
-and the test passed.
+Both guards were proven able to fail, each run alone and restored afterwards.
+With the unreadable-line check removed from ``read_values``,
+``test_an_unreadable_line_refuses_the_rewrite`` failed on the exit-code
+assertion. With the declared-names filter removed from ``provision``,
+``test_a_seed_value_the_example_does_not_declare_is_not_copied`` failed on the
+content assertion.
 """
 
 from __future__ import annotations
@@ -23,7 +26,7 @@ import pytest
 from dev.init import plan
 from dev.init.dotenv import (
     DEFAULT_BRANCH,
-    declared_names,
+    TEMPLATE_ASSIGNMENT,
     provision,
     render,
     seed_source,
@@ -104,13 +107,29 @@ def test_a_new_file_takes_the_seed_values_in_the_example_structure(
     )
 
 
-def test_an_undeclared_value_is_carried_not_dropped(tmp_path: Path) -> None:
+def test_a_seed_value_the_example_does_not_declare_is_not_copied(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A name nothing reads does not spread into every new worktree."""
     example = _example(tmp_path)
     seed = tmp_path / "seed.env"
-    seed.write_text("ALPHA=2\nSTRAY_TOKEN=keep-me\n", encoding="utf-8")
+    seed.write_text("ALPHA=2\nSTRAY_TOKEN=do-not-copy\n", encoding="utf-8")
     target = tmp_path / ".env"
 
     assert provision(example, target, seed) == 0
+
+    assert target.read_text(encoding="utf-8") == EXAMPLE.replace("# ALPHA=1", "ALPHA=2")
+    assert "not copied: STRAY_TOKEN" in capsys.readouterr().out
+    assert "do-not-copy" in seed.read_text(encoding="utf-8")
+
+
+def test_an_undeclared_value_in_an_existing_file_is_kept(tmp_path: Path) -> None:
+    """Restructuring never deletes from the operator's own file."""
+    example = _example(tmp_path)
+    target = tmp_path / ".env"
+    target.write_text("ALPHA=2\nSTRAY_TOKEN=keep-me\n", encoding="utf-8")
+
+    assert provision(example, target) == 0
 
     text = target.read_text(encoding="utf-8")
     assert text.startswith(EXAMPLE.replace("# ALPHA=1", "ALPHA=2"))
@@ -205,7 +224,11 @@ def test_the_committed_example_survives_its_own_rendering() -> None:
     fresh `.env` differ from the file it was provisioned from.
     """
     text = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
-    names = declared_names(text)
+    names = [
+        match.group(1)
+        for line in text.splitlines()
+        if (match := TEMPLATE_ASSIGNMENT.match(line)) is not None
+    ]
 
     assert render(text, {}).text == text
     rendering = render(text, dict.fromkeys(names, "value"))

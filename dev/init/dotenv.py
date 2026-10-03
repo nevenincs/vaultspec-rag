@@ -13,13 +13,17 @@ Where the values come from depends on whether the file exists:
 - An absent `.env` is seeded from the `.env` of the worktree checked out on
   the default branch. A new worktree is a second view of a project the
   operator has already configured once; starting it on defaults leaves its
-  credential-scoped commands silently under-configured.
+  credential-scoped commands silently under-configured. Only the names the
+  example declares are taken: a name it does not declare is one nothing in
+  this repository reads, and copying it would spread a setting that
+  configures nothing into every new worktree.
 - A present `.env` keeps its own values and is only restructured. Nothing is
   pulled over it, so a value deliberately changed or removed in one worktree
   stays that way.
 
-No value is ever dropped. An assignment the example does not declare is
-carried into a trailing block rather than discarded, and a file holding a line
+No value an operator's own file holds is ever dropped. An assignment the
+example does not declare stays in that file, in a trailing block, rather than
+being deleted on the operator's behalf, and a file holding a line
 this module cannot read as a comment or an assignment is refused and left
 byte-for-byte alone, because rewriting around a line it does not understand is
 how a multi-line secret gets truncated. A rewrite goes through a sibling
@@ -61,8 +65,8 @@ _UNDECLARED_BANNER: Final = (
     "# ---------------------------------------------------------------------------",
     "# Not declared in .env.example",
     "# ---------------------------------------------------------------------------",
-    "# Carried over so that no value is lost. The example does not declare these",
-    "# names: declare the ones this repository reads, and delete the rest.",
+    "# Kept so that no value is lost. Nothing in this repository reads these",
+    "# names, and they are not copied into new worktrees. Delete them.",
 )
 
 
@@ -91,24 +95,6 @@ class Rendering:
     text: str
     placed: tuple[str, ...]
     undeclared: tuple[str, ...]
-
-
-def declared_names(example_text: str) -> list[str]:
-    """Return every variable the example assigns, in file order.
-
-    Args:
-        example_text: The content of the example file.
-
-    Returns:
-        One name per assignment line, repeats included, so a caller can tell a
-        variable declared twice from one declared once.
-    """
-    names: list[str] = []
-    for line in example_text.splitlines():
-        match = TEMPLATE_ASSIGNMENT.match(line)
-        if match is not None:
-            names.append(match.group(1))
-    return names
 
 
 def read_values(path: Path) -> dict[str, str]:
@@ -219,9 +205,9 @@ def provision(example: Path, target: Path, seed: Path | None = None) -> int:
     Args:
         example: The committed example file.
         target: The operator's local file.
-        seed: The file a new ``target`` takes its values from, or ``None`` to
-            start one on the example's defaults. Ignored when ``target``
-            exists.
+        seed: The file a new ``target`` takes its declared values from, or
+            ``None`` to start one on the example's defaults. Ignored when
+            ``target`` exists.
 
     Returns:
         0 when the target is in the example's structure on return, 1 when the
@@ -248,7 +234,17 @@ def provision(example: Path, target: Path, seed: Path | None = None) -> int:
         )
         return 1
 
-    rendering = render(example.read_text(encoding="utf-8"), values)
+    template = example.read_text(encoding="utf-8")
+    skipped: list[str] = []
+    if not existing:
+        declared = {
+            match.group(1)
+            for line in template.splitlines()
+            if (match := TEMPLATE_ASSIGNMENT.match(line)) is not None
+        }
+        skipped = sorted(set(values) - declared)
+        values = {name: value for name, value in values.items() if name in declared}
+    rendering = render(template, values)
     if existing and target.read_bytes() == rendering.text.encode("utf-8"):
         print(f"{target.name} already matches {example.name}.", flush=True)
         return 0
@@ -263,9 +259,11 @@ def provision(example: Path, target: Path, seed: Path | None = None) -> int:
     else:
         outcome = f"Created {target.name} from {example.name} on its defaults"
     print(f"{outcome}.", flush=True)
-    if rendering.undeclared:
+    unread = [*rendering.undeclared, *skipped]
+    if unread:
+        action = "kept, but nothing reads" if existing else "not copied"
         print(
-            f"  {example.name} does not declare: {', '.join(rendering.undeclared)}",
+            f"  {example.name} does not declare, so {action}: {', '.join(unread)}",
             flush=True,
         )
     return 0
