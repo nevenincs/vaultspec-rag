@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:fba818874dc57731c5df45fbb6d98693a1b45cdd4e151318816ea7225a11f3a4'
+body_hash: 'sha256:aa35a1d7ba036a6aa7f2967a2a1fcf45c64521ad1d23e9aa59f73daf86a350bf'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -586,6 +586,29 @@ related:
 - `S29` `verify:` `git diff --check` -> `pass`
 - `S29` `verify:` `uv run --no-sync python -m dev.complexity gate` -> `pass`
 - `S29` `by:` `root`
+- `S30` `M` `src/vaultspec_rag/server/_lifespan.py`
+- `S30` `A` `src/vaultspec_rag/tests/test_lifespan_storage_tasks.py`
+- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_lifespan_storage_tasks.py` -> `pass`
+- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ruff format --check src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_lifespan_storage_tasks.py` -> `pass`
+- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m basedpyright src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_lifespan_storage_tasks.py` -> `pass`
+- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ty check src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_lifespan_storage_tasks.py` -> `pass`
+- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pylint src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_lifespan_storage_tasks.py --rcfile=pyproject.toml --score=n` -> `pass`
+- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_lifespan_storage_tasks.py --select PLR1702 --preview` -> `pass`
+- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\complexipy.exe src/vaultspec_rag/server/_lifespan.py --failed` -> `pass`
+- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\xenon.exe vaultspec_rag/server/_lifespan.py --max-absolute C --max-modules C --max-average A` -> `pass`
+- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_lifespan_storage_tasks.py -m "not integration and not cuda and not mps and not subprocess_gpu" -q` -> `pass`
+- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_lifespan_storage_tasks.py src/vaultspec_rag/tests/test_lifespan_machine_lock.py src/vaultspec_rag/tests/test_storage_maintenance_tick.py src/vaultspec_rag/tests/test_generation_autoprune_policy.py src/vaultspec_rag/tests/test_service_registry_recovery.py -m "not integration and not cuda and not mps and not subprocess_gpu" -q` -> `pass`
+- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-incident-20261002-203057\s30-proof\guards.py child prune_only_creation` -> `fail`
+- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_lifespan_storage_tasks.py::test_lifespan_schedules_independently_enabled_storage_maintenance[server-reconcile-only] -m "not integration and not cuda and not mps and not subprocess_gpu" -q` -> `pass`
+- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-incident-20261002-203057\s30-proof\guards.py child both_disabled_creation` -> `fail`
+- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_lifespan_storage_tasks.py::test_lifespan_schedules_independently_enabled_storage_maintenance[server-neither] -m "not integration and not cuda and not mps and not subprocess_gpu" -q` -> `pass`
+- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-incident-20261002-203057\s30-proof\guards.py child omitted_startup_call` -> `fail`
+- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_lifespan_storage_tasks.py::test_component_startup_includes_storage_tasks -m "not integration and not cuda and not mps and not subprocess_gpu" -q` -> `pass`
+- `S30` `verify:` `uv run --no-sync ruff check src/vaultspec_rag` -> `pass`
+- `S30` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag` -> `pass`
+- `S30` `verify:` `git diff --check` -> `pass`
+- `S30` `verify:` `uv run --no-sync python -m dev.complexity gate` -> `pass`
+- `S30` `by:` `root`
 
 ## Notes
 

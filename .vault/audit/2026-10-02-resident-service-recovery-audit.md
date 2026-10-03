@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:f80e1f7f07b028a9864c052920d4ed2601ad0adfcc4f11089f4e39d18728b758'
+body_hash: 'sha256:61fbd6869a754459735c0fd8770bb73c1cfd021618d3a0a7ef5978567e8ac24b'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -237,6 +237,10 @@ The final source/CPU integration review passes S26-S28 with no remaining finding
 ### S29 | high | Changed-path point lookup scanned unrelated generation evidence; corrected
 
 Independent Sol xhigh source/CPU review reports PASS with no remaining source finding. Unit-first indexed traversal preserves generation, path, UPSERT, digest and ordered point identity filters, while the existing drift owner still excludes confirmed replacement IDs and deletes storage before reopening ledger evidence. The actual production guard grows unrelated paths and proves deterministic bounded SQL work. Replacing CROSS JOIN with JOIN in memory fails the named assertion at 369 versus 45,425 VM steps with exit one; restoration in finally followed by a fresh normal subprocess passes with exit zero and 879 package hashes unchanged. Fifty-four affected tests and two focused tests passed. Changed-file ty and basedpyright, final focused lint/format, root package lint/format/diff and the canonical full complexity gate passed. Final production and test hashes are bound in perf-profiling/s29-handoff.json and the final guard manifest. The later explanatory test-docstring edit is covered by final lint/format and the fresh restored production guard; executable semantics and affected dependencies are unchanged. The isolated 144,000-point benchmark is diagnostic, not live throughput acceptance. S29 source verification is complete; loading this fix and final service acceptance remain S04.
+
+### S30 | high | Disabled pruning suppressed independent and later-enabled reconciliation; corrected
+
+Independent Sol xhigh integrated review reports source/CPU PASS with no remaining finding. The late startup caller reads fresh configuration and the canonical scheduler retains the existing delayed maintenance loop for every effective server backend. The tick alone owns independent stage enabling and destructive-disable checks, including startup with both flags disabled followed by runtime enablement. Local backends remain excluded and the existing task collection is cancelled and awaited during shutdown. Fourteen focused CPU tests and 33 affected CPU tests passed, including the actual component-start caller and real periodic-loop enablement against an isolated malformed endpoint that refuses before networking. Ten assigned checks and root package lint/format/diff plus canonical full complexity passed. Three production-only mutations for pruning-only creation, both-disabled creation and omitted startup call each failed the named assertion with exit one, restored in finally and passed in a fresh ordinary subprocess with exit zero. Final source and dependency hashes match s30-proof/final-verification.json and guard-evidence.json; shared root gates bind all four S29/S30 source and test files. This corrects maintenance delivery without granting deletion authority and is not attributed as the cause of native Qdrant startup latency. Live source loading and final acceptance remain S04.
 
 ## Live performance investigation on 2026-10-03
 

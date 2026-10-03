@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from starlette.applications import Starlette
     from starlette.requests import Request
 
+    from ..config._settings import VaultSpecConfigWrapper
     from ..job_manager.manager import JobManager
     from ..job_manager.models import JobShutdownResult
     from ..qdrant_runtime._constants import QdrantRuntimeState
@@ -574,20 +575,24 @@ async def _start_components(
             exc_info=True,
         )
 
-    # Scheduled storage maintenance: server-mode only and knob-gated at
-    # task creation (the tick re-checks both cheaply, so a config flip is
-    # honoured without a restart either way). The loop itself delays one
-    # full interval before the first cycle - a fresh daemon serves before
-    # it sweeps.
-    if get_config().effective_server_mode() and bool(get_config().storage_autoprune):
-        tasks.append(asyncio.create_task(_m._maintenance_loop()))
+    tasks.extend(_start_storage_tasks(get_config()))
+
+    return tasks
+
+
+def _start_storage_tasks(cfg: VaultSpecConfigWrapper) -> list[asyncio.Task[None]]:
+    """Schedule server storage work while preserving independent stage controls."""
+    tasks: list[asyncio.Task[None]] = []
+    if not cfg.effective_server_mode():
+        return tasks
+    # Stage enable checks belong to the tick so runtime changes take effect
+    # even when both stages started disabled. The first cycle is delayed.
+    tasks.append(asyncio.create_task(_m._maintenance_loop()))
     # Survey snapshot warmer: server-mode only, but deliberately NOT gated on
     # the autoprune knob - the /storage/survey route serves from the snapshot
     # regardless of whether scheduled reclamation is enabled. One-shot and
     # read-only; a failure leaves the route on its fresh-compute fallback.
-    if get_config().effective_server_mode():
-        tasks.append(asyncio.create_task(_m._survey_warmup_task()))
-
+    tasks.append(asyncio.create_task(_m._survey_warmup_task()))
     return tasks
 
 
