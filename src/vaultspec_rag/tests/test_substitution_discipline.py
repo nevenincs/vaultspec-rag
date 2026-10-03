@@ -597,6 +597,27 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "tests hold dispatch so the created job stays put while the real "
         "manager and the real durable policy settle it",
     ),
+    "test_watcher_filter_offload.py": (
+        10,
+        "the intake loop is driven by the operating system's change "
+        "notifications, which cannot be made to deliver an exact batch - a "
+        "control file together with an ignored path, a deletion and a path "
+        "outside the root - in a chosen order and then stop, so the native "
+        "notifier is replaced with a queue that hands over those batches and "
+        "ends the watch. Three further sites keep the loop standalone: the "
+        "bindings are built from real retry policies, slots and controllers "
+        "but supplied directly, because the real initialiser needs a served "
+        "root, and controller unregistration and the scheduler wake-up are "
+        "silenced because no scheduler runs here. Four sites wrap the real "
+        "filter, the real classifier, the real policy-file read and the real "
+        "persist step and call straight through: three hold a worker at a "
+        "barrier so the test can observe the event loop still turning, which "
+        "a real disk read is too fast to show, and one records which paths "
+        "were accepted. The remaining two replace the stored-ownership read "
+        "with a recorder, because real stored owners need an index "
+        "publication this intake-only test never makes; what is asserted is "
+        "that the read is not reached for a rejected path",
+    ),
     "test_watcher_index_resilience.py": (
         2,
         "substitutes the external encoder forward with a fixed-vector stand-in so "
