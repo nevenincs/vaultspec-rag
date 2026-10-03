@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:da5f9c71f3db04d512253301329cbdf414985381f9c45d5c376fcef6e38e4b0e'
+body_hash: 'sha256:ae66f0c0ff06019e35d7f961f66b39863c41f174ca315feb8e5e52f3d0c41c64'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -727,6 +727,32 @@ related:
 - `S40` `verify:` `S40 frozen independent integrated review` -> `pass`
 - `S40` `verify:` `S40 root handoff and artifact binding` -> `pass`
 - `S40` `by:` `root`
+- `S41` `M` `src/vaultspec_rag/_job_progress.py`
+- `S41` `M` `src/vaultspec_rag/progress.py`
+- `S41` `M` `src/vaultspec_rag/jobs.py`
+- `S41` `M` `src/vaultspec_rag/indexer/_consumer_pipeline.py`
+- `S41` `M` `src/vaultspec_rag/server/_routes_jobs.py`
+- `S41` `A` `src/vaultspec_rag/tests/test_confirmed_chunk_progress.py`
+- `S41` `M` `src/vaultspec_rag/tests/test_code_consumer_progress.py`
+- `S41` `M` `src/vaultspec_rag/tests/test_jobs_degradation.py`
+- `S41` `M` `src/vaultspec_rag/tests/test_progress_unit.py`
+- `S41` `M` `src/vaultspec_rag/tests/test_stat_gate.py`
+- `S41` `M` `src/vaultspec_rag/tests/integration/test_indexer_progress_integration.py`
+- `S41` `M` `.vault/audit/2026-10-02-resident-service-recovery-audit.md`
+- `S41` `M` `.vault/plan/2026-10-02-resident-service-recovery-plan.md`
+- `S41` `verify:` `python -m ruff check owned S41 paths` -> `pass`
+- `S41` `verify:` `python -m ruff format --check owned S41 paths` -> `pass`
+- `S41` `verify:` `python -m basedpyright --pythonpath pinned CPU Python owned S41 paths` -> `pass`
+- `S41` `verify:` `python -m ty check --python pinned CPU Python owned S41 paths` -> `pass`
+- `S41` `verify:` `isolated python -m pytest focused S41 selectors 111 tests` -> `pass`
+- `S41` `verify:` `isolated python -m pytest affected S41 selectors 133 tests` -> `pass`
+- `S41` `verify:` `isolated python s41-proof/guards.py 22 actual-production named fail-restore-pass pairs` -> `pass`
+- `S41` `verify:` `uv run --no-sync ruff check src/vaultspec_rag in isolated candidate` -> `pass`
+- `S41` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag in isolated candidate` -> `pass`
+- `S41` `verify:` `git diff --check HEAD in isolated candidate` -> `pass`
+- `S41` `verify:` `uv run --no-sync python -m dev.complexity gate in isolated candidate` -> `pass`
+- `S41` `verify:` `independent frozen S41 integrated review handoff 6db93000` -> `pass`
+- `S41` `by:` `root`
 
 ## Notes
 

@@ -752,7 +752,7 @@ class TestRateBaselineVerdict:
         makes this fail on the ``degradation == "degraded"`` assertion below,
         not on an import or a collection error; restoring it returns to green.
         """
-        job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
+        job_id = record_start(JobSource.DOCUMENT, "tool", command="reindex_codebase")
         record_progress(job_id, _ENCODING_STEP, 0, _CORPUS, now=0.0)
         at, done = _replay_rate(
             job_id,
@@ -796,7 +796,7 @@ class TestRateBaselineVerdict:
         assert ratio <= RATE_COLLAPSE_RATIO
 
     def test_the_collapse_is_named_in_the_evidence_block(self) -> None:
-        job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
+        job_id = record_start(JobSource.DOCUMENT, "tool", command="reindex_codebase")
         record_progress(job_id, _ENCODING_STEP, 0, _CORPUS, now=0.0)
         at, done = _replay_rate(
             job_id,
@@ -824,7 +824,7 @@ class TestRateBaselineVerdict:
     def test_a_steady_run_at_the_same_cadence_is_healthy(self) -> None:
         # The control for the replay above: identical reporting, identical
         # recency, no collapse - so the verdict must not fire.
-        job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
+        job_id = record_start(JobSource.DOCUMENT, "tool", command="reindex_codebase")
         record_progress(job_id, _ENCODING_STEP, 0, _CORPUS, now=0.0)
         at, _done = _replay_rate(
             job_id,
@@ -845,7 +845,7 @@ class TestRateBaselineVerdict:
         # A median over a handful of observations describes a moment, not a
         # run. Until the service has enough of them it states no baseline,
         # which is what stops one slow stretch early in a run from firing.
-        job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
+        job_id = record_start(JobSource.DOCUMENT, "tool", command="reindex_codebase")
         record_progress(job_id, _ENCODING_STEP, 0, _CORPUS, now=0.0)
         at, done = _replay_rate(
             job_id,
@@ -873,7 +873,7 @@ class TestRateBaselineVerdict:
     def test_a_changed_step_starts_a_new_baseline(self) -> None:
         # Steps have very different per-unit costs, so a baseline carried
         # from one into the next would report every transition as a collapse.
-        job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
+        job_id = record_start(JobSource.DOCUMENT, "tool", command="reindex_codebase")
         record_progress(job_id, _ENCODING_STEP, 0, _CORPUS, now=0.0)
         at, _done = _replay_rate(
             job_id,

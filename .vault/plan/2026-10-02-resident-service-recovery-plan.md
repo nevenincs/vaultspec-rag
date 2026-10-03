@@ -31,9 +31,10 @@ related:
   - '[[2026-09-01-generation-accounting-adr]]'
   - '[[2026-09-08-qdrant-collection-sprawl-adr]]'
   - '[[2026-07-24-worktree-index-reuse-adr]]'
+  - '[[2026-07-29-encode-batch-adaptivity-adr]]'
 modified: '2026-10-03'
 body_schema: body-v2
-body_hash: 'sha256:cda4c919231cbe498f4573631b96a46d050650da7e1fedb31ceea7e9604373f6'
+body_hash: 'sha256:8f8185a2887e6c7789fd35a1c3f258addc8d6f77adf5b0f460aa897cb802edf0'
 ---
 
 # `resident-service-recovery` plan
@@ -155,7 +156,8 @@ S40 is a source checkpoint for avoidable retry-state lock occupancy: its canonic
 - [x] `S38` - Repair donor admission ordering and verify complete CODE embedding input; `Source checkpoint in canonical _donor_candidates.py, _reuse.py and _slicing.py with focused isolated CPU donor admission and context tests, dated accepted reuse ADR clarification, actual mutation guards, independent source review and shared gates. Final vector donors remain three with at most six candidate pointer and proof inspections. Changed class, function, path or body input must never reuse an old vector despite matching raw content or point IDs. S04 retains the measured idle source reload and integrated live acceptance obligation.`.
 - [x] `S39` - Defer generation reclamation safely across concurrent publication proof conflicts; `Canonical generation_survey.py with focused real-ledger CPU survey and reclamation regressions and actual mutation guards. Reuse the canonical unreadable-publication error contract around both proof acquisition and token validation. Omit an unverifiable root and reset its generation grace clocks through existing conservative reclamation behavior while unrelated roots continue. Preserve publication fencing and all deletion, retention and resource authority. Root owns shared gates, source commit and S04 final measured reload.`.
 - [x] `S40` - Reject obsolete rebuild reconciliation before publication IO under the retry-state lock; `Source repair checkpoint limited to watcher_retry_policy.py and existing watcher rebuild reconciliation tests. Canonical eligibility predicate rejects obsolete starts before proof IO while preserving equality and owner and publication fences. Actual CPU regressions and guard restoration and shared gates and independent review are complete. S04 owns measured idle reload and final runtime acceptance.`.
-- [ ] `S04` - Deploy the current checkout as the resident daemon, repair affected publications through explicit rebuild jobs when required, and verify service health, search, and watcher convergence; `resident service lifecycle, affected root ledgers and admitted jobs, plan verification and final audit`.
+- [x] `S41` - Use declared confirmed chunk throughput for CODE degradation while preserving file progress and ETA; `Fix unequal-file health misclassification using explicit acknowledged CODE confirmed_chunks rate and recency. Preserve file counters and timestamps and ETA and median policy. Public jobs and root status soft60s and stalled300s thresholds use truthful fresh work acknowledgement while canonical durable900s control deadline stays untouched. Prove grain and actual ACK and rollback and phase fences and all canonical projections. Exclude pending P90 and concurrent foreign files. S04 owns committed-source rollout.`.
+- [ ] `S04` - Deploy the checksum-bound reviewed recovery source as the resident daemon, repair affected publications through explicit rebuild jobs when required, and verify service health, search, and watcher convergence; `Resident lifecycle and isolated committed recovery source preserve concurrently committed and dirty foreign work. Affected root ledgers and admitted jobs require physical current publication verification. Final watcher and search and strict health checks precede trusted admission deployment and maintenance restoration and integrated audit.`.
 
 ## Parallelization
 
@@ -208,6 +210,10 @@ The embedding investigator alone owns S38 _donor_candidates.py, _reuse.py, _slic
 After the S38 source checkpoint, the embedding investigator alone owns S39 generation_survey.py and focused real-ledger generation survey/reclamation CPU tests. The startup/storage investigator performs read-only independent review and timeout investigation. The indexing investigator owns read-only policy/measurement evidence in the isolated incident directory and never alters TUI files. Root owns all plan/audit/ledger/Git mutations, shared checks, profiling, service/store/admission operations and the final measured idle source reload. These disjoint assignments may run concurrently. Workers remain CPU-only and preserve all others' edits.
 
 For S40, the embedding architecture investigator owns only `watcher_retry_policy.py` and the existing `test_watcher_rebuild_reconciliation.py` CPU regression file. The investigator remains CPU-only and never reads live retry files or calls live service, storage, CUDA, Git or vault tools. A separate reviewer checks the frozen integrated evidence. The supervisor owns all shared checks, source checkpoints, retry-state evidence capture, service and admission operations, profiling and S04 rollout. The active externally admitted TUI rebuild and all existing watcher attempts are preserved.
+
+For S41, the embedding architecture investigator owns canonical progress telemetry in `_job_progress.py` and `progress.py`, CODE acknowledgement in `indexer/_consumer_pipeline.py`, the service projection in `server/_routes_jobs.py`, and narrowly necessary CPU tests of those paths. Any additional production module requires the supervisor to confirm ownership before edit. The investigator never edits the concurrently changed config/schema/settings/types/native-supervision or documentation files. All work stays CPU-only, with no live service/store/GPU/Torch/Git/vault access. The independent reviewer checks the frozen integrated evidence. The supervisor owns shared checks, Core/Git checkpoints, isolated committed-source startup, maintenance and final rollout.
+
+S41 ownership additionally includes `jobs.py`, the canonical `JobProgressReporter` and durable/live record-copy owner. It supplies the real confirmed-chunk reporter operation, attempt/phase fencing and exclusion of the new private bounded rate sampler from durable snapshots. Confirmed chunks denote acknowledged chunk work including reuse, not unique stored point IDs or durable segments. No other production ownership is expanded.
 
 ## Verification
 
