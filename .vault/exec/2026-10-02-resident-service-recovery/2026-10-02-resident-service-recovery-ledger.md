@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:a8ff76829f0a7c8fa3bceaf2c197730b7933eb42cad0853c342e364655309ad6'
+body_hash: 'sha256:5de6ce104fc310b72ba2b4502aec57ac08a413972af8b5c2ca89d12496ba2863'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -705,6 +705,13 @@ related:
 - `S38` `verify:` `CPU perf-profiling/shared_gates.py s38-final package lint format whitespace and complexity` -> `pass`
 - `S38` `verify:` `Independent frozen S38 source and evidence review` -> `pass`
 - `S38` `by:` `root`
+- `S39` `M` `src/vaultspec_rag/generation_survey.py`
+- `S39` `M` `src/vaultspec_rag/tests/test_generation_survey.py`
+- `S39` `verify:` `CPU s39-proof/verify.py six owned lint format type focused and affected checks` -> `pass`
+- `S39` `verify:` `CPU s39-proof/guards.py eight actual-production named-failure and fresh-restored guard pairs` -> `pass`
+- `S39` `verify:` `CPU perf-profiling/shared_gates.py s39-final four shared package checks on corrected hashes` -> `pass`
+- `S39` `verify:` `Independent frozen S39 integrated source and evidence review` -> `pass`
+- `S39` `by:` `root`
 
 ## Notes
 

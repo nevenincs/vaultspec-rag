@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
@@ -11,7 +12,12 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import CollectionsResponse
+
+    from .._publication_state import PublicationSnapshot
     from ..generation_survey import GenerationReclaim
+    from ..indexer._run_ledger_models import PublicationReceipt
     from ..storage_survey import NamespaceSurvey
 
 pytestmark = [pytest.mark.unit]
@@ -360,6 +366,261 @@ class TestGenerationDebtInTheSurveyPayload:
 
         assert namespace["served_code_collection"] is None
         assert namespace["unreferenced_generations"] is None
+
+
+def _reserve_code_receipt(snapshot: PublicationSnapshot) -> PublicationReceipt:
+    """Reserve through an independent real ledger writer, preserving its parent."""
+    from ..indexer._run_ledger_models import RunOperation
+    from ..indexer._run_ledger_runtime import RunLedger
+
+    writer = RunLedger(snapshot.ledger.path)
+    parent = writer.generation(snapshot.proof.generation_id)
+    successor = writer.start_generation(
+        replace(parent.signature, operation=RunOperation.INCREMENTAL, clean=False)
+    )
+    return writer.reserve_publication_receipt(
+        snapshot.proof.compatibility_key,
+        successor.generation_id,
+        expected_parent_revision=snapshot.proof.revision,
+    )
+
+
+@dataclass
+class _PublicationConflict:
+    root: Path
+    derived: str
+    served: str
+    retired: str
+    phase: str
+    snapshot: PublicationSnapshot
+    receipts: list[PublicationReceipt] = field(default_factory=list)
+    captured: list[PublicationSnapshot] = field(default_factory=list)
+
+    def roll_back(self) -> None:
+        from ..indexer._run_ledger_runtime import RunLedger
+
+        writer = RunLedger(self.snapshot.ledger.path)
+        writer.begin_publication_rollback(self.receipts[0].receipt_id)
+        writer.roll_back_publication_receipt(
+            self.receipts[0].receipt_id, compensated_units=()
+        )
+
+
+@pytest.fixture(params=["acquisition", "validation-open", "validation-closed"])
+def publication_conflict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> _PublicationConflict:
+    """Only the reader/writer scheduling seam is controlled; all proof I/O is real."""
+    from .. import _publication_state
+    from .._source_types import PublicSourceType
+    from .._store_models import (
+        generation_code_collection,
+        publish_served_code_collection,
+        root_collection_prefix,
+    )
+
+    root = tmp_path / "busy"
+    root.mkdir()
+    generation = _publish_code_proof(root)
+    derived = root_collection_prefix(root) + "codebase_docs"
+    served = generation_code_collection(derived, generation)
+    publish_served_code_collection(root, served)
+    original_acquire = _publication_state.acquire_publication_snapshot
+    snapshot = original_acquire(root, PublicSourceType.CODE)
+    snapshot.validate()
+    case = _PublicationConflict(
+        root, derived, served, derived + "_gretired", str(request.param), snapshot
+    )
+    if case.phase == "acquisition":
+        case.receipts.append(_reserve_code_receipt(snapshot))
+        case.captured.append(snapshot)
+    else:
+
+        def acquire_then_write(
+            requested_root: Path, source: PublicSourceType
+        ) -> PublicationSnapshot:
+            acquired = original_acquire(requested_root, source)
+            if requested_root == root and not case.receipts:
+                case.captured.append(acquired)
+                case.receipts.append(_reserve_code_receipt(acquired))
+                if case.phase == "validation-closed":
+                    case.roll_back()
+            return acquired
+
+        monkeypatch.setattr(
+            _publication_state, "acquire_publication_snapshot", acquire_then_write
+        )
+    return case
+
+
+def test_publication_conflict_omits_busy_root_and_continues_survey(
+    publication_conflict: _PublicationConflict, tmp_path: Path
+) -> None:
+    from .._publication_state import acquire_publication_snapshot
+    from .._source_types import PublicSourceType
+    from .._store_models import root_collection_prefix
+    from ..generation_survey import survey_generations
+    from ..indexer._publication_proof import ProofReadConflictError
+    from ..storage_survey import NamespaceSurvey
+
+    case = publication_conflict
+    healthy = tmp_path / "healthy"
+    healthy.mkdir()
+    _publish_code_proof(healthy)
+    healthy_derived = root_collection_prefix(healthy) + "codebase_docs"
+    healthy_retired = healthy_derived + "_gretired"
+    roots = {str(case.root): case.derived, str(healthy): healthy_derived}
+    conflict: ProofReadConflictError | None = None
+    reports = ()
+    try:
+        reports = survey_generations(
+            roots, [case.derived, case.served, case.retired, healthy_retired]
+        )
+    except ProofReadConflictError as exc:
+        conflict = exc
+    assert conflict is None, (
+        f"{case.phase} proof conflict aborted unrelated-root survey"
+    )
+    assert len(reports) == 1, (
+        "busy root received generation authority despite an invalid proof fence"
+    )
+    assert [report.root for report in reports] == [str(healthy)], (
+        "busy root received generation authority despite an invalid proof fence"
+    )
+    assert reports[0].unreferenced == (healthy_retired,)
+    assert len(case.receipts) == len(case.captured) == 1
+    if case.phase == "acquisition":
+        with pytest.raises(ProofReadConflictError, match="open receipt"):
+            acquire_publication_snapshot(case.root, PublicSourceType.CODE)
+    with pytest.raises(ProofReadConflictError, match="changed during the backend read"):
+        case.captured[0].validate()
+    if case.phase == "validation-closed":
+        assert (
+            case.snapshot.ledger.active_publication_receipt(
+                case.snapshot.proof.compatibility_key
+            )
+            is None
+        )
+    else:
+        namespace = _namespace_of(
+            _shape(
+                [
+                    NamespaceSurvey(
+                        prefix=case.derived.removesuffix("codebase_docs"),
+                        root=str(case.root),
+                        status="live",
+                        collections=[case.served, case.retired],
+                    )
+                ]
+            ),
+            str(case.root),
+        )
+        assert namespace["served_code_collection"] is None
+        assert namespace["unreferenced_generations"] is None, (
+            "busy publication was projected as known-empty generation debt"
+        )
+
+
+@dataclass
+class _GenerationTransport:
+    live: set[str]
+    deleted: list[str] = field(default_factory=list)
+
+    def get_collections(self) -> CollectionsResponse:
+        from qdrant_client import models
+
+        return models.CollectionsResponse(
+            collections=[
+                models.CollectionDescription(name=name) for name in sorted(self.live)
+            ]
+        )
+
+    def delete_collection(self, collection_name: str) -> bool:
+        self.deleted.append(collection_name)
+        self.live.remove(collection_name)
+        return True
+
+
+def test_publication_conflict_holds_generations_and_restarts_reclaim_grace(
+    publication_conflict: _PublicationConflict, tmp_path: Path
+) -> None:
+    from .._store_models import generation_code_collection, root_collection_prefix
+    from ..indexer._publication_proof import ProofReadConflictError
+    from ..storage_reclamation import (
+        GenerationReclaimRequest,
+        reclaim_superseded_generations,
+    )
+
+    case = publication_conflict
+    healthy = tmp_path / "healthy"
+    healthy.mkdir()
+    generation = _publish_code_proof(healthy)
+    healthy_derived = root_collection_prefix(healthy) + "codebase_docs"
+    healthy_proof = generation_code_collection(healthy_derived, generation)
+    healthy_retired = healthy_derived + "_gretired"
+    transport = _GenerationTransport(
+        {
+            case.derived,
+            case.served,
+            case.retired,
+            healthy_derived,
+            healthy_proof,
+            healthy_retired,
+        }
+    )
+    now = datetime(2026, 10, 3, 12, tzinfo=UTC)
+    stamps = dict.fromkeys(
+        (case.derived, case.served, case.retired, healthy_retired),
+        "2026-09-01T00:00:00+00:00",
+    )
+
+    def reader_present(root: str) -> bool:
+        del root
+        return False
+
+    request = GenerationReclaimRequest(
+        client=cast("QdrantClient", transport),
+        roots={str(case.root): case.derived, str(healthy): healthy_derived},
+        stamps=stamps,
+        now=now,
+        grace_hours=24.0,
+        reader_present=reader_present,
+        dry_run=False,
+    )
+    conflict: ProofReadConflictError | None = None
+    results = []
+    advanced: dict[str, str] = {}
+    try:
+        results, advanced = reclaim_superseded_generations(request)
+    except ProofReadConflictError as exc:
+        conflict = exc
+    assert conflict is None, (
+        f"{case.phase} proof conflict aborted unrelated-root reclamation"
+    )
+    assert transport.deleted == [healthy_retired], (
+        "busy or served generation reached deletion despite unknown proof authority"
+    )
+    assert {case.derived, case.served, case.retired, healthy_proof} <= transport.live
+    assert [(result.prefix, result.status) for result in results] == [
+        (healthy_retired, "removed")
+    ]
+    assert not any(name.startswith(case.derived) for name in advanced), (
+        "unknown proof observation retained a busy-root grace clock"
+    )
+    if case.phase != "validation-closed":
+        case.roll_back()
+    results, restarted = reclaim_superseded_generations(
+        replace(request, stamps=advanced)
+    )
+    assert transport.deleted == [healthy_retired], (
+        "restored proof reused a pre-conflict deletion clock"
+    )
+    assert restarted[case.retired] == now.isoformat(), (
+        "restored proof failed to restart its grace window"
+    )
+    assert [(result.prefix, result.status, result.reason) for result in results] == [
+        (case.retired, "skipped", "grace_started")
+    ]
 
 
 class TestGenerationReclaimGates:

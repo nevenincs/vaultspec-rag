@@ -158,19 +158,20 @@ def _proof_referenced(
     turns out not to exist costs nothing: reclamation only ever acts on names
     storage actually reports.
     """
-    from ._publication_state import acquire_publication_snapshot
+    from ._publication_state import (
+        UNREADABLE_PUBLICATION_ERRORS,
+        acquire_publication_snapshot,
+    )
     from ._source_types import PublicSourceType
     from ._store_models import generation_code_collection
-    from .indexer._publication_proof import ProofUnverifiableError
-    from .indexer._run_ledger_models import RunLedgerError
 
     try:
         snapshot = acquire_publication_snapshot(
             pathlib.Path(root), PublicSourceType.CODE
         )
-    except (ProofUnverifiableError, RunLedgerError):
+        snapshot.validate()
+    except UNREADABLE_PUBLICATION_ERRORS:
         return None
-    snapshot.validate()
     referenced: list[str] = []
     for base in dict.fromkeys((derived, served)):
         try:
