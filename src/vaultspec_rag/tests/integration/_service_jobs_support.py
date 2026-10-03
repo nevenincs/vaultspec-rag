@@ -30,7 +30,7 @@ import pytest
 import uvicorn
 from typer.testing import CliRunner
 
-import vaultspec_rag.mcp._admin_client as admin
+import vaultspec_rag.tests._admin_client as admin
 
 from ... import jobs as _jobs
 from ... import jobs as _managed_jobs

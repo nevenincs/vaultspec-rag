@@ -56,11 +56,6 @@ class RootGenerations(NamedTuple):
     served: str
     unreferenced: tuple[str, ...]
 
-    @property
-    def has_debt(self) -> bool:
-        """Whether this root is carrying generations nothing points at."""
-        return bool(self.unreferenced)
-
 
 def generation_fields(report: RootGenerations | None) -> dict[str, object]:
     """Carry served-collection/debt facts, preserving unknown versus known empty."""

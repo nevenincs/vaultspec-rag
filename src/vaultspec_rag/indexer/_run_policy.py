@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 import math
-import queue
 import threading
 import time
 from contextlib import contextmanager
@@ -26,7 +25,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator
 
 __all__ = [
-    "CleanupQueuePutOutcome",
     "DurableProgressKind",
     "RunPolicy",
     "RunPolicySnapshot",
@@ -35,13 +33,6 @@ __all__ = [
 
 _POLL_INTERVAL_SECONDS = 0.05
 logger = logging.getLogger(__name__)
-
-
-class CleanupQueuePutOutcome(StrEnum):
-    """Bounded cleanup result for transferring one queue item."""
-
-    DELIVERED = "delivered"
-    TIMED_OUT = "timed_out"
 
 
 class DurableProgressKind(StrEnum):
@@ -269,75 +260,6 @@ class RunPolicy:
             )
             self.checkpoint("interruptible wait")
         self.checkpoint("interruptible wait")
-
-    def queue_put[T](
-        self,
-        target: queue.Queue[T],
-        item: T,
-        *,
-        label: str,
-    ) -> None:
-        """Put one item into a bounded real queue without an unbounded wait."""
-        _require_label(label)
-        while True:
-            self.checkpoint(label)
-            timeout = min(_POLL_INTERVAL_SECONDS, self.remaining_seconds())
-            try:
-                target.put(item, timeout=timeout)
-            except queue.Full:
-                continue
-            # Successful put transfers ownership to the queue. Delivering a
-            # signal here would report failure after mutation and invite a
-            # duplicate enqueue during reconciliation; the caller checks at
-            # its next safe production boundary instead.
-            return
-
-    def queue_get[T](self, target: queue.Queue[T], *, label: str) -> T:
-        """Get one item from a real queue while polling control and liveness."""
-        _require_label(label)
-        while True:
-            self.checkpoint(label)
-            timeout = min(_POLL_INTERVAL_SECONDS, self.remaining_seconds())
-            try:
-                item = target.get(timeout=timeout)
-            except queue.Empty:
-                continue
-            # Successful get transfers ownership to the caller. Do not raise
-            # after removing the item or the current attempt would silently
-            # lose it; the caller checkpoints before acting on the item.
-            return item
-
-    def queue_put_for_cleanup[T](
-        self,
-        target: queue.Queue[T],
-        item: T,
-        *,
-        timeout_seconds: float,
-        label: str,
-    ) -> CleanupQueuePutOutcome:
-        """Transfer one cleanup item under an independent hard cap.
-
-        Once ordinary production has been interrupted, a latched deadline or
-        pending operator signal must not prevent the coordinator from sending
-        a shutdown sentinel. This method therefore ignores both and polls only
-        until ``timeout_seconds`` expires. It returns immediately after a
-        successful put, so the item is delivered exactly once.
-        """
-        hard_cap = _finite_nonnegative_seconds("timeout_seconds", timeout_seconds)
-        _require_label(label)
-        cleanup_deadline = time.monotonic() + hard_cap
-        while True:
-            remaining = max(0.0, cleanup_deadline - time.monotonic())
-            try:
-                target.put(
-                    item,
-                    timeout=min(_POLL_INTERVAL_SECONDS, remaining),
-                )
-            except queue.Full:
-                if remaining <= 0.0:
-                    return CleanupQueuePutOutcome.TIMED_OUT
-                continue
-            return CleanupQueuePutOutcome.DELIVERED
 
     def join_thread(
         self,

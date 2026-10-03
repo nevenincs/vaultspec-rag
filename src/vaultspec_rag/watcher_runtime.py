@@ -68,15 +68,6 @@ class WatcherChangeRouting:
 
 
 @dataclass(frozen=True, slots=True)
-class WatcherReconciliation:
-    """Timing and cache dependencies shared by one convergence pass."""
-
-    cooldown: float
-    now: float
-    graph_cache: GraphCache
-
-
-@dataclass(frozen=True, slots=True)
 class UnstartedFailure:
     """The manager and durable-retry identity of one dispatch failure."""
 
@@ -163,10 +154,6 @@ class WatcherConvergenceSlot:
         """Record a new generation without merging it into a running attempt."""
         with self.lock:
             self.pending_paths.add(path)
-
-    def has_work(self) -> bool:
-        with self.lock:
-            return bool(self.held_paths or self.pending_paths)
 
     def pending_count(self) -> int:
         with self.lock:
@@ -457,36 +444,6 @@ def _log_managed_transition(
             or f"job reached {snapshot.state.value} without recording an error",
             pending_paths=context.pending_count,
         )
-
-
-def release_missing_job(
-    slot: WatcherConvergenceSlot,
-    job_id: str,
-    *,
-    now: float,
-) -> None:
-    """Recover conservatively when bounded terminal history lost an exact ID."""
-    with slot.lock:
-        if slot.job_id != job_id:
-            return
-        slot.pending_paths.update(slot.held_paths)
-        slot.held_paths.clear()
-        slot.job_id = None
-        slot.watcher_owned = False
-        slot.observed_state = None
-        delay = slot.defer_replacement(now)
-        pending_count = len(slot.pending_paths)
-    log_event(
-        logger,
-        "service.watcher",
-        "replacement_scheduled",
-        severity=logging.WARNING,
-        source=slot.source.value,
-        job_id=job_id,
-        reason="job_snapshot_missing",
-        replacement_backoff_seconds=f"{delay:.0f}",
-        pending_paths=pending_count,
-    )
 
 
 async def reconcile_restarted_slot(

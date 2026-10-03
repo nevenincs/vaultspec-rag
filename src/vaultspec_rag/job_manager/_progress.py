@@ -13,7 +13,6 @@ from ..job_models import (
     JobOutcome,
     JobOutcomeStatus,
     JobProgress,
-    JobResourceSnapshot,
     JobState,
     ProcessResourceSnapshot,
 )
@@ -408,27 +407,6 @@ class JobManagerProgress(JobManagerState):
             # ownership in memory lets finish/acknowledge immediately retry
             # the complete generation instead of restoring stale held flags.
             return persistence_error is None
-
-    def set_execution_resources(
-        self,
-        job_id: str,
-        *,
-        task: asyncio.Task[AttemptExit],
-        resources: JobResourceSnapshot,
-    ) -> bool:
-        """Publish resource ownership for the exact currently running attempt."""
-        with self._lock:
-            backup = self._capture_state_locked()
-            managed = self._active.get(job_id)
-            if managed is None or managed.runtime.task is not task:
-                return False
-            managed.snapshot = replace(managed.snapshot, resources=resources)
-            persistence_error = self._persist_locked()
-            if persistence_error is not None:
-                if not persistence_error.published:
-                    self._restore_state_locked(backup)
-                return False
-            return True
 
 
 def _normalized_progress(update: ProgressUpdate) -> JobProgress | str:

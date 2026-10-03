@@ -746,19 +746,3 @@ class VaultIncrementalMixin:
             else 0,  # Approximate
             reuse=outcome.reuse.snapshot() if outcome.reuse is not None else None,
         )
-
-    def _process_changed_vault_path(
-        self,
-        path: pathlib.Path,
-        docs_dir: pathlib.Path,
-        prev_meta: dict[str, str],
-        to_hash: dict[str, pathlib.Path],
-        delete_ids: set[str],
-    ) -> None:
-        doc_id = self._vault_doc_id(path, docs_dir)
-        if doc_id is None:
-            return
-        if path.is_file() and get_doc_type(path, self.root_dir) is not None:
-            to_hash[doc_id] = path
-        elif doc_id in prev_meta:
-            delete_ids.add(doc_id)

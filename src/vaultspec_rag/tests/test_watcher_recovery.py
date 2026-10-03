@@ -135,7 +135,7 @@ async def test_restart_recognizes_already_succeeded_generation(
     assert not policy.state.convergence_pending
     assert policy.state.captured_paths == ()
     assert policy.state.attempt_job_id is None
-    assert not slot.has_work()
+    assert not (slot.held_paths or slot.pending_paths)
 
 
 @pytest.mark.asyncio

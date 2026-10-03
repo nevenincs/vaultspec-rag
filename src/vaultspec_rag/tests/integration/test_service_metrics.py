@@ -124,7 +124,7 @@ def test_reset_zeroes_counters(_clean_metrics: None) -> None:
 # --------------------------------------------------------------------------- #
 
 
-import vaultspec_rag.mcp._admin_client as admin_tools  # noqa: E402
+import vaultspec_rag.tests._admin_client as admin_tools  # noqa: E402
 
 
 async def _reindex_vault_to_completion(root: Path) -> None:

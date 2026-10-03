@@ -12,7 +12,7 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
-import vaultspec_rag.mcp._admin_client as admin
+import vaultspec_rag.tests._admin_client as admin
 
 from ...cli import app
 from ._service_jobs_support import (

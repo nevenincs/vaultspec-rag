@@ -88,7 +88,6 @@ class TestGenerationSurvey:
         assert len(reports) == 1
         assert reports[0].served == f"{_DERIVED}_gnew"
         assert reports[0].unreferenced == (f"{_DERIVED}_gold",)
-        assert reports[0].has_debt is True
 
     def test_the_generation_the_proof_names_is_never_unreferenced(
         self, tmp_path: Path

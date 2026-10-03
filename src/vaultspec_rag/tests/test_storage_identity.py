@@ -267,7 +267,7 @@ def test_unstamped_collection_is_unverifiable_not_conforming() -> None:
         None, expected=_identity(), live_dense_dim=1024
     )
     assert verdict.verdict == store_schema.UNVERIFIABLE
-    assert not verdict.is_conforming
+    assert verdict.verdict != store_schema.CONFORMING
 
 
 def test_same_width_model_swap_is_nonconforming_but_not_fatal() -> None:
@@ -476,7 +476,10 @@ class TestStoreVerifiesOnEnsure:
             else:
                 pytest.fail("sparse incompatibility did not reach clean recovery")
             assert reopened.client.count(collection_name=collection).count == 0
-            assert reopened.conformance_verdicts()[collection].is_conforming
+            assert (
+                reopened.conformance_verdicts()[collection].verdict
+                == store_schema.CONFORMING
+            )
         finally:
             reopened.close()
 
@@ -661,7 +664,7 @@ def test_served_verdicts_switch_only_at_verified_publication(
         before = store.conformance_verdicts()
         assert set(before) == unchanged | {old}, "private build became served"
         assert before[old].verdict == store_schema.NONCONFORMING
-        assert store._conformance[target].is_conforming
+        assert store._conformance[target].verdict == store_schema.CONFORMING
         indexer._lifecycle.publish(
             checkpoint,
             build_target=target,
@@ -670,7 +673,7 @@ def test_served_verdicts_switch_only_at_verified_publication(
         )
         after = store.conformance_verdicts()
         assert set(after) == unchanged | {target}, "superseded verdict still served"
-        assert after[target].is_conforming
+        assert after[target].verdict == store_schema.CONFORMING
         assert all(after[name] == before[name] for name in unchanged)
         assert store._conformance[old] == before[old], "retained evidence was erased"
         assert store.client.count(collection_name=old).count == 1

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-import vaultspec_rag.mcp._admin_client as admin
+import vaultspec_rag.tests._admin_client as admin
 
 from ... import server
 from ...config._settings import reset_config

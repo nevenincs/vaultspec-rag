@@ -121,7 +121,7 @@ def test_code_worker_refuses_a_document_targeted_rule(tmp_path: Path) -> None:
     source.write_bytes(b"\x00\x01binary")
     prep = _context(tmp_path)
     with pytest.raises(ValueError, match="non-code extraction rule"):
-        _chunk_worker.chunk_file(source, tmp_path, prep)
+        _chunk_worker.chunk_file_with_status(source, tmp_path, prep)
     with pytest.raises(ValueError, match="non-code extraction rule"):
         _chunk_worker.chunk_and_hash_file(source, tmp_path, prep)
 
@@ -179,7 +179,7 @@ def test_unmatched_file_chunks_normally(tmp_path: Path) -> None:
     source = tmp_path / "module.py"
     source.write_text("def foo():\n    return 1\n", encoding="utf-8")
     prep = _context(tmp_path, pattern="*.pdf")
-    chunks = _chunk_worker.chunk_file(source, tmp_path, prep)
+    chunks = _chunk_worker.chunk_file_with_status(source, tmp_path, prep).chunks
     assert chunks
     assert all(c.preprocessor_id is None for c in chunks)
 

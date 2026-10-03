@@ -285,7 +285,7 @@ class TestASTChunkerFallback:
         content = "key: value\nlist:\n  - item1\n  - item2\n"
         src.write_text(content, encoding="utf-8")
 
-        chunks = _chunk_worker.chunk_file(src, tmp_path)
+        chunks = _chunk_worker.chunk_file_with_status(src, tmp_path).chunks
         assert len(chunks) >= 1
         assert chunks[0].language == "yaml"
         # ID should still carry the emit ordinal and the hash suffix.

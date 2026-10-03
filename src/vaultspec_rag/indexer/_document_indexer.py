@@ -189,34 +189,6 @@ class _DocumentResourceBudget:
         self.rss_bytes = max(self.rss_bytes, rss_bytes)
         self.cuda_bytes = max(self.cuda_bytes, cuda_bytes)
 
-    def record_runtime_resources(
-        self,
-        *,
-        rss_bytes: int,
-        cuda_bytes: int,
-        cuda_allocated_bytes: int | None = None,
-        label: str = "document supplied resource observation",
-    ) -> None:
-        """Record measured peaks and enforce both independent ceilings."""
-        from .._units import bytes_to_mib
-
-        allocated_bytes = (
-            cuda_bytes if cuda_allocated_bytes is None else cuda_allocated_bytes
-        )
-        try:
-            snapshot = self.memory_budget.observe(
-                label=label,
-                rss_mib=bytes_to_mib(rss_bytes),
-                cuda_allocated_mib=bytes_to_mib(allocated_bytes),
-                cuda_reserved_mib=bytes_to_mib(cuda_bytes),
-            )
-        except JobError:
-            snapshot = self.memory_budget.snapshot
-            if snapshot is not None:
-                self._retain_snapshot(snapshot)
-            raise
-        self._retain_snapshot(snapshot)
-
     def fail_cuda_oom(self, label: str, exc: BaseException) -> None:
         """Translate allocator exhaustion into the admitted typed outcome."""
         self.memory_budget.fail_cuda_oom(label=label, detail=str(exc))

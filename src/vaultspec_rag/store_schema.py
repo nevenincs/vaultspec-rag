@@ -321,10 +321,6 @@ DOCUMENT_QUERY_FILTER_KEYS: tuple[str, ...] = (
     "locator_value_str",
 )
 
-#: Filter keys whose payload field is spelled differently. ``tag`` filters one
-#: value against the ``tags`` list, so the caller's singular and the payload's
-#: plural are both correct and the translation is recorded rather than assumed.
-FILTER_KEY_PAYLOAD_FIELD: dict[str, str] = {"tag": "tags"}
 
 # Payload field names per collection, derived once from the TypedDicts so the
 # descriptor and the drift test share one source. ``__optional_keys__`` carries
@@ -698,11 +694,6 @@ class ConformanceVerdict:
     reason: str
     geometry_fatal: bool = False
     sparse_model_fatal: bool = False
-
-    @property
-    def is_conforming(self) -> bool:
-        """Whether the collection matched on every compared field."""
-        return self.verdict == CONFORMING
 
 
 def _identity_descriptor(identity: CollectionIdentity) -> dict[str, Any]:

@@ -40,8 +40,6 @@ from vaultspec_core.core.workspace_mode import (
     write_package_declaration,
 )
 
-from .._process_probe import SERVER_LAUNCH_MARKER
-
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
@@ -57,13 +55,6 @@ logger = logging.getLogger(__name__)
 #: argument to every core ``workspace_mode`` call so rag resolves, persists, and
 #: renders its own entry and never core's sibling entry.
 RAG_DISTRIBUTION_NAME = "vaultspec-rag"
-
-#: The runnable module rag's MCP server launches as ``python -m``. Matches the
-#: ``_vaultspec_mode_module`` token in rag's mode-neutral MCP builtin so the
-#: observed-shape matcher and the renderer reconstruct the same launch. Taken
-#: from the launch marker the process probe recognises, so the command that
-#: starts a process and the matchers that later name it cannot drift apart.
-RAG_MCP_MODULE = SERVER_LAUNCH_MARKER[1]
 
 
 def resolve_rag_mode(target: Path, explicit: InstallMode | None) -> ResolvedMode:

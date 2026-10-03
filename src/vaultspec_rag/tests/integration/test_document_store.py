@@ -149,9 +149,6 @@ def _assert_document_round_trip(store: VaultStore) -> None:
     assert payload["locator_value_int"] == 7
     assert payload["document_metadata"] == {"category": "reference"}
 
-    store.delete_document_sources({chunk.payload.source_path})
-    assert store.count_document() == 0
-    store.upsert_document_content_chunks([chunk], write_policy=None)
     store.delete_document_content_chunks([chunk.id])
     assert store.count_document() == 0
 

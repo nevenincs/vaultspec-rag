@@ -595,7 +595,7 @@ class TestChunkIdentityUniqueness:
         path = tmp_path / "generated_blob.py"
         path.write_text(source, encoding="utf-8")
 
-        chunks = _chunk_worker.chunk_file(path, tmp_path)
+        chunks = _chunk_worker.chunk_file_with_status(path, tmp_path).chunks
 
         # More than one chunk (the leaf was split), and every id distinct.
         assert len(chunks) > 1
@@ -609,7 +609,7 @@ class TestChunkIdentityUniqueness:
         path = tmp_path / "generated_blob.py"
         path.write_text(source, encoding="utf-8")
 
-        chunks = _chunk_worker.chunk_file(path, tmp_path)
+        chunks = _chunk_worker.chunk_file_with_status(path, tmp_path).chunks
         digest = hashlib.blake2b(source.encode("utf-8")).hexdigest()
 
         # Plurality matters: if the oversized leaf ever stopped being split,
@@ -734,7 +734,7 @@ class TestNewlineParity:
             b"    return a * b\r\n",
         )
         # New single-read path.
-        new_chunks = _chunk_worker.chunk_file(crlf, tmp_path)
+        new_chunks = _chunk_worker.chunk_file_with_status(crlf, tmp_path).chunks
         # Reference: the pre-rework behaviour decoded via Path.read_text, which
         # applies universal-newline translation.
         ref_content = crlf.read_text(encoding="utf-8")
@@ -775,8 +775,12 @@ class TestNewlineParity:
             body.replace("\n", "\r\n").encode("utf-8")
         )
 
-        lf_chunks = _chunk_worker.chunk_file(lf_root / "twin_module.py", lf_root)
-        crlf_chunks = _chunk_worker.chunk_file(crlf_root / "twin_module.py", crlf_root)
+        lf_chunks = _chunk_worker.chunk_file_with_status(
+            lf_root / "twin_module.py", lf_root
+        ).chunks
+        crlf_chunks = _chunk_worker.chunk_file_with_status(
+            crlf_root / "twin_module.py", crlf_root
+        ).chunks
 
         assert lf_chunks, "the twin module must produce chunks"
         assert [c.id for c in crlf_chunks] == [c.id for c in lf_chunks]

@@ -615,15 +615,3 @@ class _VaultIngestMixin:
                 points_selector=models.PointIdsList(points=point_ids),
             )
         logger.info("Deleted %d confirmed migration origin point(s)", len(ids))
-
-    def delete_document_sources(self, source_paths: set[str]) -> None:
-        """Remove every document chunk belonging to the selected sources."""
-        if not source_paths:
-            return
-        self._delete_by_payload_any(
-            collection=self.DOCUMENT_TABLE_NAME,
-            ensure=self.ensure_document_table,
-            key="source_path",
-            values=sorted(source_paths),
-        )
-        logger.info("Deleted document chunks for %d source(s)", len(source_paths))

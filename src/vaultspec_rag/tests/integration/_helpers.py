@@ -65,8 +65,8 @@ async def seed_vault_publication(port: int, root: Path) -> None:
     from typing import cast
 
     from ...indexer._run_ledger_models import RunAuthority
-    from ...mcp import _admin_client as admin_tools
     from ...serviceclient._transport import _try_http_reindex
+    from .. import _admin_client as admin_tools
 
     response = await asyncio.to_thread(
         _try_http_reindex,

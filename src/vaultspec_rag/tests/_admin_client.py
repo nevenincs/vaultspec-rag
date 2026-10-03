@@ -1,17 +1,10 @@
-"""Async admin/observability client for the running RAG daemon.
+"""Async client over the daemon's admin routes, for the service tests.
 
-These are **not** MCP tools. The MCP search surface is narrowed to search,
-index-refresh, and read-only retrieval; the
-mutating and observability admin verbs - project listing/eviction, watcher
-control, service-state, storage survey, jobs, and logs - are CLI-only on the
-public surface and are not registered on the MCPServer instance.
-
-The thin async wrappers below survive only as a programmatic client over the
-daemon's admin routes (the same ``/admin`` routes the CLI uses through
-:func:`vaultspec_rag.serviceclient._try_http_admin`). They centralise the
-tool-name-to-route argument shaping in one place for the service integration
-tests that drive those routes; production lifecycle and observability flow
-through the CLI.
+These are not MCP tools: the MCP surface is search, index refresh and
+read-only retrieval, and the admin verbs are CLI-only in production. The
+wrappers here shape a tool name and its arguments onto the same ``/admin``
+routes the CLI reaches, so a service test can drive a route and assert on
+what the daemon did.
 """
 
 from __future__ import annotations
@@ -20,11 +13,11 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Any, TypedDict, Unpack
 
-from ..serviceclient._transport import _try_http_admin
-from ._tools import (
-    _delegate,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
-    _require_port,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
+from ..mcp._tools import (
+    _delegate,  # pyright: ignore[reportPrivateUsage]  # test client over the delegation seam
+    _require_port,  # pyright: ignore[reportPrivateUsage]  # test client over the delegation seam
 )
+from ..serviceclient._transport import _try_http_admin
 
 
 class _JobQueryOptions(TypedDict, total=False):
@@ -63,16 +56,6 @@ async def _admin(
     return await _delegate(
         partial(_try_http_admin, tool_name, args, port, timeout=timeout)
     )
-
-
-async def list_projects() -> dict[str, Any]:
-    """Return a snapshot of every active project slot."""
-    return await _admin("list_projects", {})
-
-
-async def evict_project(root: str) -> dict[str, Any]:
-    """Force-evict the project slot for *root*."""
-    return await _admin("evict_project", {"root": root})
 
 
 async def _admin_for_root(tool: str, project_root: str | None) -> dict[str, Any]:
@@ -123,42 +106,6 @@ async def stop_watcher(root: str) -> dict[str, Any]:
 async def get_service_state(project_root: str | None = None) -> dict[str, Any]:
     """Return a consolidated read-only snapshot of the service's state."""
     return await _admin_for_root("get_service_state", project_root)
-
-
-async def survey_storage(
-    status: str | None = None,
-    limit: int | None = None,
-    root: str | None = None,
-) -> dict[str, Any]:
-    """Survey stored RAG index namespaces (live / orphaned / unknown).
-
-    With ``root``, the survey narrows to that root's namespace and the
-    response carries ``queried_root`` with the authoritative collection
-    prefix computed by the service - callers never derive the hash
-    themselves.
-    """
-    args: dict[str, object] = {}
-    if status:
-        args["status"] = status
-    if limit is not None:
-        args["limit"] = limit
-    if root:
-        args["root"] = root
-    return await _admin("get_storage_survey", args)
-
-
-async def get_logs(
-    lines: int = 200,
-    job_id: str | None = None,
-    contains: str | None = None,
-) -> dict[str, Any]:
-    """Return the last *lines* of the rotated service log."""
-    args: dict[str, object] = {"lines": lines}
-    if job_id:
-        args["job_id"] = job_id
-    if contains:
-        args["contains"] = contains
-    return await _admin("get_logs", args)
 
 
 async def get_jobs(**options: Unpack[_JobQueryOptions]) -> dict[str, Any]:

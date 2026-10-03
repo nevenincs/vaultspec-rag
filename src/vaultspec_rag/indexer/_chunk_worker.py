@@ -1039,20 +1039,6 @@ def chunk_file_with_status(
     return ScopedChunkResult(chunks)
 
 
-def chunk_file(
-    path: pathlib.Path,
-    root_dir: pathlib.Path,
-    prep: PreprocessContext | None = None,
-    execution_policy: ChunkExecutionPolicy = _DEFAULT_EXECUTION_POLICY,
-) -> list[CodeChunk]:
-    """Chunk one file and return just its chunks (thin wrapper over status form).
-
-    Retained for callers and tests that only need the chunk list; the
-    chunk-identity logic lives in :func:`chunk_file_with_status`.
-    """
-    return chunk_file_with_status(path, root_dir, prep, execution_policy).chunks
-
-
 def chunk_and_hash_file(
     path: pathlib.Path,
     root_dir: pathlib.Path,

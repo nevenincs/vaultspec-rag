@@ -401,14 +401,10 @@ class TestManagedJobTransitions:
                 task=task,
                 active=True,
             )
-            assert running_manager.set_execution_resources(
+            assert running_manager.update_execution_resources(
                 running.job.id,
                 task=task,
-                resources=JobResourceSnapshot(
-                    started=None,
-                    finished=None,
-                    pipeline_active=True,
-                ),
+                update=ResourceUpdate(pipeline_active=True),
             )
             running_manager.set_desired_state(
                 running.job.id,
@@ -436,10 +432,10 @@ class TestManagedJobTransitions:
                 task=task,
                 active=False,
             )
-            assert running_manager.set_execution_resources(
+            assert running_manager.update_execution_resources(
                 running.job.id,
                 task=task,
-                resources=JobResourceSnapshot(started=None, finished=None),
+                update=ResourceUpdate(pipeline_active=False),
             )
             acknowledged = running_manager.acknowledge_control(
                 running.job.id,

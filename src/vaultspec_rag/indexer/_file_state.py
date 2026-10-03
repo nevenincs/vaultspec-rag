@@ -260,15 +260,6 @@ class FileState:
         """Return whether this state intrinsically requires service retry."""
         return self.state is FileStateKind.EXTRACT_RETRYABLE
 
-    @property
-    def stable_reason(self) -> str:
-        """Return one stable reason token for structured adapters."""
-        if self.admission_reason is not None:
-            return self.admission_reason.value
-        if self.error_kind is not None:
-            return self.error_kind.value
-        return self.state.value
-
     @classmethod
     def indexed(
         cls,

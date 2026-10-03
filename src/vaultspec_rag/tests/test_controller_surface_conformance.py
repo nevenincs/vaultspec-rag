@@ -13,7 +13,6 @@ from .. import jobs
 from .._root_identity import canonical_root_key
 from ..api import controller_snapshot_envelope, get_service_state
 from ..job_models import JobSource
-from ..mcp import _admin_client
 from ..server import ServerRouteRuntime, _watcher, create_http_app
 from ..server._watcher import _WatcherScheduler
 from ..service import ServiceRegistry
@@ -26,6 +25,7 @@ from ..watcher_controller import (
     WatcherController,
 )
 from ..watcher_retry import WatcherSource
+from . import _admin_client
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
