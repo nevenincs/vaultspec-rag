@@ -18,11 +18,14 @@ from starlette.responses import JSONResponse
 import vaultspec_rag.server as _m
 
 from .._error_payload import error_payload
-from .._root_identity import canonical_root_key
+from .._root_identity import canonical_root_key, canonical_root_path
+from ..config._schema import checked_setting
 from ._auth import require_token
 from ._runtime import get_request_runtime
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from starlette.requests import Request
 
 __all__ = [
@@ -33,6 +36,28 @@ __all__ = [
     "start_watcher_route",
     "stop_watcher_route",
 ]
+
+
+async def _root_payload(request: Request) -> tuple[dict[str, object], Path]:
+    """Validate root administration input before any lifecycle operation."""
+    from ._routes import job_payload
+
+    payload = await job_payload(request, required=True)
+    root = payload.get("root")
+    if not isinstance(root, str) or not root.strip():
+        raise ValueError("root must be a non-empty path.")
+    return payload, canonical_root_path(root)
+
+
+def _watcher_timing(payload: dict[str, object]) -> tuple[int | None, float | None]:
+    """Validate overrides through the same bounds as watcher settings."""
+    debounce = payload.get("debounce_ms")
+    cooldown = payload.get("cooldown_s")
+    if debounce is not None:
+        debounce = checked_setting("watch_debounce_ms", debounce, None)
+    if cooldown is not None:
+        cooldown = checked_setting("watch_cooldown_s", cooldown, None)
+    return cast("int | None", debounce), cast("float | None", cooldown)
 
 
 async def list_projects_route(request: Request) -> JSONResponse:
@@ -50,17 +75,8 @@ async def evict_project_route(request: Request) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
         return denied
-    from pathlib import Path
-
     try:
-        raw_payload: object = await request.json()
-        if not isinstance(raw_payload, dict):
-            raise ValueError("Eviction must be a JSON object.")
-        payload = cast("dict[str, object]", raw_payload)
-        root = payload.get("root")
-        if not isinstance(root, str) or not root.strip():
-            raise ValueError("root must be a non-empty path.")
-        target = Path(root).resolve()
+        _, target = await _root_payload(request)
     except (OSError, ValueError) as exc:
         return JSONResponse(
             error_payload("bad_request", str(exc)),
@@ -147,14 +163,13 @@ async def start_watcher_route(request: Request) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
         return denied
-    payload = await request.json()
-    root = payload.get("root")
-    from pathlib import Path
-
     from ..config._settings import get_config
 
+    try:
+        _, target = await _root_payload(request)
+    except (OSError, ValueError) as exc:
+        return JSONResponse(error_payload("bad_request", str(exc)), status_code=400)
     cfg = get_config()
-    target = Path(root).resolve()
     outcome = _m._ensure_watcher(target, get_request_runtime(request).registry)
     return JSONResponse(
         {
@@ -170,11 +185,10 @@ async def stop_watcher_route(request: Request) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
         return denied
-    payload = await request.json()
-    root = payload.get("root")
-    from pathlib import Path
-
-    target = Path(root).resolve()
+    try:
+        _, target = await _root_payload(request)
+    except (OSError, ValueError) as exc:
+        return JSONResponse(error_payload("bad_request", str(exc)), status_code=400)
     with _m._watcher_lock:
         was_running = target in _m._watcher_tasks
     _m._stop_watcher(target)
@@ -192,16 +206,14 @@ async def reconfigure_watcher_route(request: Request) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
         return denied
-    payload = await request.json()
-    root = payload.get("root")
-    debounce_ms = payload.get("debounce_ms")
-    cooldown_s = payload.get("cooldown_s")
-    from pathlib import Path
-
     from ..config._settings import get_config
 
     cfg = get_config()
-    target = Path(root).resolve()
+    try:
+        payload, target = await _root_payload(request)
+        debounce_ms, cooldown_s = _watcher_timing(payload)
+    except (OSError, ValueError, OverflowError) as exc:
+        return JSONResponse(error_payload("bad_request", str(exc)), status_code=400)
     _m._stop_watcher(target)
     outcome = _m._ensure_watcher(
         target,

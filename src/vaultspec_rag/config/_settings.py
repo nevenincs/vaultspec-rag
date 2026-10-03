@@ -21,7 +21,12 @@ from vaultspec_core.logging_config import resolve_log_level
 from .._sparse_profile import SPARSE_MODEL_ID
 from ._paths import read_persisted_local_only
 from ._registry import entry
-from ._schema import ENV_OVERRIDE_MAP, SETTING_BOUNDS, setting_rejection
+from ._schema import (
+    ENV_OVERRIDE_MAP,
+    SETTING_BOUNDS,
+    checked_setting,
+    setting_rejection,
+)
 from ._types import STATUS_DIR_DEFAULT, VALID_PREPROCESS_MODES, EnvVar, PreprocessMode
 
 if TYPE_CHECKING:
@@ -882,28 +887,6 @@ class VaultSpecConfigWrapper:
                 raise setting_rejection(name, bound.shape, raw, source) from None
         return raw
 
-    def _checked(self, name: str, value: object, source: EnvVar | None) -> object:
-        """Return *value* narrowed to the key's declared range.
-
-        Args:
-            name: The settings key being resolved.
-            value: The resolved value, from any source.
-            source: The environment variable it came from, when it came from one.
-
-        Returns:
-            The value narrowed to the declared type, or unchanged when the key
-            declares no range.
-
-        Raises:
-            ValueError: If the key declares a range and *value* is outside it.
-        """
-        bound = SETTING_BOUNDS.get(name)
-        if bound is None:
-            return value
-        if not bound.admits(value):
-            raise setting_rejection(name, bound.shape, value, source)
-        return bound.narrow(value)
-
     def _raw_rag_setting(self, name: str) -> tuple[object, EnvVar | None]:
         """Resolve *name* through the precedence chain without validating it."""
         # 1. CLI override
@@ -939,7 +922,7 @@ class VaultSpecConfigWrapper:
 
     def _resolve_rag_default(self, name: str) -> Any:
         value, source = self._raw_rag_setting(name)
-        return self._checked(name, value, source)
+        return checked_setting(name, value, source)
 
     def _validate_settings(self) -> None:
         """Reject every unusable setting at construction, all of them at once.
@@ -1110,7 +1093,7 @@ class VaultSpecConfigWrapper:
     # but it gives the type checker a declared member to resolve the read
     # against, so `cfg.qdrant_port` types as ``int`` instead of ``Any``
     # without a property method body per key. The type of every entry here
-    # is not a guess: it is exactly what ``_checked``/``_resolve_rag_default``
+    # is not a guess: it is exactly what ``checked_setting``/``_resolve_rag_default``
     # already narrows the value to, via ``SETTING_BOUNDS`` (numeric and
     # choice bounds) or the declared-bool defaults in ``_RAG_DEFAULTS``
     # itself; a key with neither stays the type of its shipped default.

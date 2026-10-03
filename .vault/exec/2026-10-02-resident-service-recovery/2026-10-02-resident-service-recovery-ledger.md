@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:bf358c33bb9fb130d80bf2e7fd51b6a8e349127eb6c3bc82493daa2c1ff9fd90'
+body_hash: 'sha256:f0233fb6a08e09fe761a50b05ae0f036a2b0f63511fe430e94b249b9dcca6c68'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -346,6 +346,65 @@ related:
 - `S23` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag` -> `pass`
 - `S23` `verify:` `git diff --check` -> `pass`
 - `S23` `by:` `root`
+- `S24` `M` `src/vaultspec_rag/_root_identity.py`
+- `S24` `M` `src/vaultspec_rag/config/_schema.py`
+- `S24` `M` `src/vaultspec_rag/config/_settings.py`
+- `S24` `M` `src/vaultspec_rag/server/_routes_registry.py`
+- `S24` `M` `src/vaultspec_rag/tests/test_watcher_start_contract.py`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/_root_identity.py src/vaultspec_rag/config/_schema.py src/vaultspec_rag/config/_settings.py src/vaultspec_rag/server/_routes_registry.py src/vaultspec_rag/tests/test_watcher_start_contract.py` -> `pass`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ruff format --check src/vaultspec_rag/_root_identity.py src/vaultspec_rag/config/_schema.py src/vaultspec_rag/config/_settings.py src/vaultspec_rag/server/_routes_registry.py src/vaultspec_rag/tests/test_watcher_start_contract.py` -> `pass`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m basedpyright src/vaultspec_rag/_root_identity.py src/vaultspec_rag/config/_schema.py src/vaultspec_rag/config/_settings.py src/vaultspec_rag/server/_routes_registry.py src/vaultspec_rag/tests/test_watcher_start_contract.py` -> `pass`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pylint src/vaultspec_rag/_root_identity.py src/vaultspec_rag/config/_schema.py src/vaultspec_rag/config/_settings.py src/vaultspec_rag/server/_routes_registry.py src/vaultspec_rag/tests/test_watcher_start_contract.py --rcfile=pyproject.toml --score=n` -> `pass`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/_root_identity.py src/vaultspec_rag/config/_schema.py src/vaultspec_rag/config/_settings.py src/vaultspec_rag/server/_routes_registry.py src/vaultspec_rag/tests/test_watcher_start_contract.py --select PLR1702 --preview` -> `pass`
+- `S24` `verify:` `uv run --no-sync python -m dev.complexity gate` -> `pass`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py src/vaultspec_rag/tests/test_watcher_root_identity.py src/vaultspec_rag/tests/test_watcher_route_projection.py src/vaultspec_rag/tests/test_config.py src/vaultspec_rag/tests/test_config_watcher.py src/vaultspec_rag/tests/test_config_backend.py src/vaultspec_rag/tests/test_operator_repositories.py src/vaultspec_rag/tests/test_search_availability.py src/vaultspec_rag/tests/test_search_readiness.py src/vaultspec_rag/tests/test_search_conformance_refusal.py src/vaultspec_rag/tests/test_http_search_errors.py -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 0` -> `fail`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[invalid-json-start] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 1` -> `fail`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[array-body-start] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 2` -> `fail`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[wrong-root-key-start] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 3` -> `fail`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[invalid-path-start] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 4` -> `fail`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_root_resolution_error_before_dispatch[start] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 5` -> `fail`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_authentication_precedes_body_validation[start] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 6` -> `fail`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[invalid-json-stop] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 7` -> `fail`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[array-body-stop] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 8` -> `fail`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[wrong-root-key-stop] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 9` -> `fail`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[invalid-path-stop] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 10` -> `fail`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_root_resolution_error_before_dispatch[stop] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 11` -> `fail`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_authentication_precedes_body_validation[stop] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 12` -> `fail`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[invalid-json-reconfigure] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 13` -> `fail`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[array-body-reconfigure] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 14` -> `fail`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[wrong-root-key-reconfigure] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 15` -> `fail`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[invalid-path-reconfigure] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 16` -> `fail`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_root_resolution_error_before_dispatch[reconfigure] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 17` -> `fail`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_authentication_precedes_body_validation[reconfigure] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 18` -> `fail`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_reconfigure_rejects_invalid_timing_before_stopping[debounce_ms--1] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 19` -> `fail`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_reconfigure_rejects_invalid_timing_before_stopping[cooldown_s--1] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 20` -> `fail`
+- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_reconfigure_rejects_invalid_timing_before_stopping[debounce_ms--1] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `uv run --no-sync python -m ruff check src/vaultspec_rag` -> `pass`
+- `S24` `verify:` `uv run --no-sync python -m ruff format --check src/vaultspec_rag` -> `pass`
+- `S24` `verify:` `git diff --check` -> `pass`
+- `S24` `by:` `root`
 
 ## Notes
 
@@ -361,3 +420,4 @@ related:
 - `S21` Unchanged Torch-dependent vector conversion case excluded from the CPU-only affected rerun; initial failure preserved. No claim of new above-floor GPU benchmark capability. Live corrected-build recovery remains S04 work.
 - `S22` Three deliberate process-only production mutations failed their named regressions before finally restoration and fresh normal passes. Runtime rollout remains assigned S04.
 - `S23` Supplemental standalone Xenon applies project-average A to one allowed-B module and fails identically for original/current calls; canonical unchanged production package complexity gate passes. Two deliberate process-only handoff-removal guards fail their intended assertions, restore in finally and pass in fresh normal subprocesses. Exact two live health timeouts remain unattributed; runtime reload remains S04.
+- `S24` The twenty-one fail entries are intentional actual-production mutation proofs, each followed by finally restoration and a fresh normal pass; eight dependency hashes stayed unchanged. CPU-only source verification is frozen, and final service loading remains S04. One accidental earlier live discovery call was disclosed and reconciled separately in the audit.

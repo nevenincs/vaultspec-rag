@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:6c50dfaf84a6f606e4236710e0a1e2ad1e9b1cdec340907f42fd3e92f5e1d6e2'
+body_hash: 'sha256:446eb3b98f5bf2d965bd96893e255aa7bf33345cf40e0ba696fc76408a83d2f5'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -202,6 +202,10 @@ The async health_handler calls synchronous ServiceRegistry.health on the HTTP ev
 
 An actual malformed stop-watcher payload containing project_root instead of the required root produced HTTP 500 with Path(None) TypeError. The canonical watcher POST boundary must reject invalid JSON/body/root values as bad_request before lifecycle dispatch, consistent with adjacent registry/root validation. Start, stop and reconfigure share this repair. Valid request behavior and aliases remain governed by S15. Reconfigure must also validate timing overrides before stopping the current watcher; a conversion error cannot first mutate lifecycle state. This correction has no public protocol or persisted schema change.
 
+### Current conformance after generation replacement | medium | Retained old CODE verdict still degrades current service
+
+At 04:17:59 UTC the CI CODE replacement job had succeeded, and independent ledger/read-token/backend point-ID verification proved clean current Linkup generation 2c9ed37898434d8fbb2467f3f6806b34 with exactly 4579 points. Health nevertheless still named retained old generation g7fd28d8a55f64b20 as nonconforming. ServiceRegistry.health projects every cached store conformance verdict, including unserved retained generations. S25 will make current degradation track served namespaces through the canonical store owner, without deleting retained generations or concealing genuinely active incompatibility. Final source and live verification are pending.
+
 ## Recommendations
 
 Complete the open code Steps, verify their negative guards and integrated CPU behavior, then deploy the checkout through its separate locked GPU environment. Point the existing on-demand resident lifecycle tasks at that environment so CI restarts preserve the repair. Respect live CI ownership; repair affected publication domains through admitted explicit rebuild jobs, verify search and watcher convergence, and append the final review and rollout results here.
@@ -337,3 +341,11 @@ At 03:52:07 UTC health truthfully reported the newly registered ci-fleet/main ol
 A worker accidentally called semantic code discovery against the live monitor root during its CPU-only S24 assignment, request 8b8732832d95480393d2ba8580fdf383 at approximately 03:55-03:57 UTC. That call warmed its watcher early. Root immediately stopped the monitor watcher and cooperatively cancelled its two unstarted CODE/VAULT watcher attempts 711df6fe91cc4a2bb1eb74d3bda3d852 and 9005d1ac2f6f4597b29e45f5bd12250b before resource acquisition, preserving the protected explicit rebuild. The no-live boundary was reinforced; no source defect is inferred from automatic watcher warmup. Any retained scope/proof convergence will be verified after replacement.
 
 The owned admission maintenance restoration deadline was extended from 04:30 to 05:00 UTC and its scheduled StartBoundary independently verified. The extension is bounded by actual remaining protected replacements and the final S22/S23/S24 source restart. Start and Probe stay enabled, Stop remains disabled only within this owned hold, and restoration/deployment will remove only the owned hold. At 03:59:40 UTC eight of fifteen repair leaves had succeeded with no failures; monitor VAULT was committing generation 29e03151785c42cb9a60aaa5b0318387.
+
+## S24 formal source checkpoint and live observation
+
+Independent integrated source/CPU review PASS with no blocking findings. Five canonical source/test paths reject malformed JSON/object/root/path requests with HTTP 400 before watcher lifecycle dispatch; authentication remains first. Reconfigure checks timing through the unchanged shared setting validator before stop. Root resolution shares the existing NUL and OS-path validation owner and preserves display casing and normcased identity. Six configured gates pass, with 90 focused and 467 affected CPU cases. All 21 actual production mutation pairs fail their exact named assertions with exit 1, restore in finally and pass in fresh normal processes with exit 0. Eight dependency hashes and the five final source hashes remain unchanged. Root package lint/format/diff checks pass with 49 unchanged changed-source/test hashes. Evidence is archived under s24-proof. Runtime loading remains S04.
+
+The CPU rollout poller received one missing job response around 04:12 UTC and exited its strict assertion. Direct read-only recheck at 04:16 UTC succeeded for every manifest leaf, with unchanged daemon/backend PIDs 83668/89504, zero backend restarts and no fatal log data. The original helper and failure are retained; the observer now records missing responses and stops after three incomplete passes rather than mistaking a single transport gap for a job outcome. No exact timeout attribution is claimed. Twelve of fifteen protected leaves succeeded by 04:17:13 UTC, and TUI CODE acquired its actual resources and resumed generation 060330354c214c37bd7a608b0fa7a8bd. TUI VAULT's 23635 and CI VAULT's 454 point IDs match their verified current publications exactly, with valid receipt-free read tokens. CI CODE's physical proof has 4579 exact IDs.
+
+At 04:17 UTC the Stop scheduled task unexpectedly appeared enabled although the owned admission hold remained installed; its last run was still 20:20 UTC on October 2, and no service stop occurred. Root explicitly disabled it again and independently verified State Disabled/Enabled false. The bounded restoration deadline remains 05:00 UTC. The enabling actor is not attributed.
