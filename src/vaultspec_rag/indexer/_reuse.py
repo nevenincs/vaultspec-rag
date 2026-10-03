@@ -4,8 +4,8 @@ One indexing run resolves at most one :class:`DonorReuseContext` (donor
 discovery and eligibility are per-run decisions, never per-slice), and the
 encode seam consults it before every slice encode: the slice's string point
 ids are looked up in the eligible donor collections in rank order, each
-fetched point's stored payload content is compared byte-for-byte against the
-chunk content this run would store, and only verified hits adopt the donor's
+fetched point's stored embedding evidence is compared byte-for-byte against the
+canonical input this run would encode, and only verified hits adopt the donor's
 dense and sparse vectors. Everything else - misses, verify failures, donor
 read errors - degrades to the ordinary GPU encode. Payloads are always
 rebuilt locally; vectors are the only thing reused.
@@ -23,11 +23,18 @@ from typing import TYPE_CHECKING
 
 from .._store_models import CodeChunk, DocumentChunk, VaultChunk
 from ._donor_candidates import (
+    DONOR_CANDIDATE_CAP,
+    DONOR_INSPECTION_CAP,
     CollectionKind,
-    discover_donor_candidates,
     evaluate_donor_eligibility,
+    iter_donor_candidates,
 )
-from ._slicing import vault_embed_input, vault_embed_text
+from ._slicing import (
+    code_embed_input,
+    code_embed_text,
+    vault_embed_input,
+    vault_embed_text,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -106,16 +113,12 @@ def _chunk_point_identity(
 ) -> tuple[str, str]:
     """Return one chunk's (string point id, expected donor evidence) pair.
 
-    Must mirror the store's upsert identity and payload exactly: code chunks
-    key on ``chunk.id`` and store ``chunk.content``; vault chunks key on
-    ``chunk.point_key``; document chunks key on ``chunk.id`` and store
-    ``chunk.payload.content``. A vault chunk's expected evidence is its whole
-    embedding input, because its document title shapes the vector and can
-    change while the chunk's own text does not. Any drift here makes reuse
-    verification fail (a hit-rate regression), never adopt a wrong vector.
+    Code and vault chunks verify their complete canonical embedding input,
+    including context that can change while body and point id remain equal.
+    Document chunks retain their payload-content evidence contract.
     """
     if isinstance(chunk, CodeChunk):
-        return chunk.id, chunk.content
+        return chunk.id, code_embed_text(chunk)
     if isinstance(chunk, VaultChunk):
         return chunk.point_key, vault_embed_text(chunk)
     return chunk.id, chunk.payload.content
@@ -126,16 +129,34 @@ def _donor_evidence(
 ) -> str | None:
     """Rebuild, from a donor's stored payload, what its vectors were made from.
 
-    Mirrors :func:`_chunk_point_identity`: a vault donor's evidence is the
-    embedding input rebuilt from its stored title and content.
+    Mirrors :func:`_chunk_point_identity`: code and vault evidence includes
+    their canonical embedding context as well as the stored body.
     """
     content = payload.get("content")
     if not isinstance(content, str):
         return None
+    if isinstance(chunk, CodeChunk):
+        return _code_donor_evidence(payload, content)
     if isinstance(chunk, VaultChunk):
         title = payload.get("title")
         return vault_embed_input(title, content) if isinstance(title, str) else None
     return content
+
+
+def _code_donor_evidence(payload: dict[str, object], content: str) -> str | None:
+    """Rebuild code input only when every canonical context field is known."""
+    if not {"path", "class_name", "function_name", "content"}.issubset(payload):
+        return None
+    path = payload["path"]
+    class_name = payload["class_name"]
+    function_name = payload["function_name"]
+    if not isinstance(path, str):
+        return None
+    if class_name is not None and not isinstance(class_name, str):
+        return None
+    if function_name is not None and not isinstance(function_name, str):
+        return None
+    return code_embed_input(path, class_name, function_name, content)
 
 
 def _verify_and_adopt(
@@ -205,8 +226,8 @@ class DonorReuseContext:
         """Adopt donor vectors onto verified hits; return the per-chunk mask.
 
         A point is a hit only when a donor stores it under the identical
-        string id AND its stored payload ``content`` equals the chunk's
-        expected content byte-for-byte AND (when this run writes sparse
+        string id AND its complete stored embedding evidence equals the chunk's
+        expected evidence byte-for-byte AND (when this run writes sparse
         vectors) the donor point carries a sparse vector. Everything else,
         including a donor read failure, stays a miss for the caller to
         encode. The returned mask is index-aligned with ``chunks``.
@@ -289,12 +310,15 @@ def resolve_donor_reuse(
     """
     from ..config._settings import get_config
 
-    if not bool(get_config().index_reuse_enabled):
+    cfg = get_config()
+    if not bool(cfg.index_reuse_enabled):
         return None, None
     stats = ReuseStats()
-    backend = "server" if get_config().effective_server_mode() else "local"
+    backend = "server" if cfg.effective_server_mode() else "local"
     try:
-        candidates = discover_donor_candidates(root, kind, backend=backend)
+        candidates = iter_donor_candidates(
+            root, kind, backend=backend, cap=DONOR_INSPECTION_CAP
+        )
     except Exception:
         logger.warning("Donor discovery failed; indexing without reuse", exc_info=True)
         stats.donor_absent = True
@@ -306,6 +330,9 @@ def resolve_donor_reuse(
                 candidate,
                 kind=kind,
                 expected_content_epoch=expected_content_epoch,
+            )
+            supported = verdict.eligible and store.supports_donor_reads(
+                candidate.collection
             )
         except Exception:
             logger.warning(
@@ -321,9 +348,11 @@ def resolve_donor_reuse(
                 ",".join(reason.value for reason in verdict.reasons),
             )
             continue
-        if not store.supports_donor_reads(candidate.collection):
+        if not supported:
             continue
         eligible.append(candidate.collection)
+        if len(eligible) == DONOR_CANDIDATE_CAP:
+            break
     if not eligible:
         stats.donor_absent = True
         return stats, None

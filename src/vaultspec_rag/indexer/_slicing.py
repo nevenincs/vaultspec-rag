@@ -541,6 +541,18 @@ def _embed_text(context: list[str], content: str) -> str:
     return _EMBED_CONTEXT_SEPARATOR.join(context) + _EMBED_HEADER_SEPARATOR + content
 
 
+def code_embed_input(
+    path: str, class_name: str | None, function_name: str | None, content: str
+) -> str:
+    """Compose code embedding input from its stored context and body."""
+    parts = [path]
+    if class_name:
+        parts.append(class_name)
+    if function_name:
+        parts.append(function_name)
+    return _embed_text(parts, content)
+
+
 def code_embed_text(chunk: CodeChunk) -> str:
     """Build the embedding input for a code chunk.
 
@@ -550,12 +562,9 @@ def code_embed_text(chunk: CodeChunk) -> str:
     stored payload keeps the raw chunk content; only the embedding
     input carries the header.
     """
-    parts = [chunk.path]
-    if chunk.class_name:
-        parts.append(chunk.class_name)
-    if chunk.function_name:
-        parts.append(chunk.function_name)
-    return _embed_text(parts, chunk.content)
+    return code_embed_input(
+        chunk.path, chunk.class_name, chunk.function_name, chunk.content
+    )
 
 
 def document_embed_text(chunk: DocumentChunk) -> str:

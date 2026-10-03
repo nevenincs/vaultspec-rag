@@ -30,9 +30,10 @@ related:
   - '[[2026-07-25-archive-restore-contract-adr]]'
   - '[[2026-09-01-generation-accounting-adr]]'
   - '[[2026-09-08-qdrant-collection-sprawl-adr]]'
+  - '[[2026-07-24-worktree-index-reuse-adr]]'
 modified: '2026-10-03'
 body_schema: body-v2
-body_hash: 'sha256:75cb799d553534c9ef41bd53be48584f6a69add53c0d07207ee253e1d1ce8a2c'
+body_hash: 'sha256:8ace9a04051f966cf5cbea97c400d538d37550a5d03b225da0d8998513a9ada8'
 ---
 
 # `resident-service-recovery` plan
@@ -107,6 +108,8 @@ The S36 actual no-op DOCUMENT regression also found an empty reservation already
 
 S37 follows a live 359-chunk VAULT payload refresh occupying 27.502 seconds and a pinned py-spy stack waiting on a Qdrant response through the one-request-per-chunk owner. Accepted true incremental vault refresh, bounded publication cost and storage-first confirmation cover ordered payload-operation batches under the existing VAULT slice cap. The writer preserves full replacement payloads, point IDs, vectors, per-document confirmation, locks, disk guard and caller retry/deadline policy. Batch results must all be complete before confirmation. This does not attribute the entire phase to network time or alter transport, schemas, GPU/encoding or configuration policy.
 
+S38 follows two source-proven reuse defects during continued performance investigation: three incompatible ranked donors can hide a compatible fourth because discovery truncates before eligibility, and CODE raw-body verification can adopt vectors encoded with different class/function context despite an identical chunk ID. The accepted worktree-index-reuse ADR receives a dated clarification under the user's authorization: final eligible vector donors remain limited to three, candidate admission/pointer/proof inspections are explicitly bounded to six, and per-point evidence must match the full canonical embedding input. Encoder recipes, point IDs, geometry, precision, schemas and publication authority remain unchanged. No historical wrong-vector adoption or current-run donor starvation is established, so no blanket historical reindex is inferred.
+
 ## Steps
 
 - [x] `S01` - Preserve terminal rebuild refusals and accurate watcher status through events, failures, and restart, and reconcile successful verified operator rebuilds; `watcher retry, controller, intake, execution and runtime, jobs.py completion hook, affected watcher and job tests`.
@@ -145,6 +148,7 @@ S37 follows a live 359-chunk VAULT payload refresh occupying 27.502 seconds and 
 - [x] `S35` - Credit the process allocator reservation in shared automatic CUDA capacity admission; `src/vaultspec_rag/memory_probe.py canonical guarded device observation and auto ceiling resolver plus focused CPU resource-ceiling tests and the dated accepted shared-device ADR clarification. Use one free/total/own-reservation observation, conservative resident-baseline fallback, authoritative overrides and existing total/profile clamps. Preserve post-flush ordering, headroom, floor, real job-local peak enforcement, OOM backoff, encode policy and strict incomplete-receipt refusal. Indexing investigator alone owns this source and its focused tests. Root owns ADR/Core, shared checks, Git, live measurements, source reload and publication recovery.`.
 - [x] `S36` - Reset attempt-owned CODE and DOCUMENT telemetry and preserve document no-op publication; `indexer/_support_budget.py, indexer/_codebase_indexer.py, indexer/_document_indexer.py, job_dispatch.py and focused actual-worker CPU tests. Reset memory telemetry before managed observation/preflight and report unobserved peaks as unknown. Skip unscoped destructive reconciliation only for an empty selected DOCUMENT path set, preserving canonical rolled-back empty receipt and unchanged parent proof authority. Real no-op physical IDs, proof and receipt checks plus mutation guards. Preserve nonempty reconciliation, sealed effective-read refusal, admission/sampling and lock order. Startup investigator owns source/tests. Root owns metadata/Git/live/shared verification`.
 - [x] `S37` - Batch vault payload overwrites through bounded confirmed storage operations; `store_ingest.py canonical overwrite_vault_chunk_payloads and isolated test_vault_payload_batching.py. Freeze existing VAULT embedding_batch_size count bound once, submit ordered OverwritePayloadOperation slices with wait=true and existing retry/deadline/write lock/disk guard. Require exact complete result cardinality and COMPLETED statuses before caller confirmation. Preserve per-document proof/ledger boundaries, point IDs, full payload replacement, vectors, model/encoding/configuration and single writer. Startup investigator alone owns source/tests CPU parity/RPC-count/error guards. Root owns Core, shared gates, Git, live source rollout and measured native comparison`.
+- [x] `S38` - Repair donor admission ordering and verify complete CODE embedding input; `Source checkpoint in canonical _donor_candidates.py, _reuse.py and _slicing.py with focused isolated CPU donor admission and context tests, dated accepted reuse ADR clarification, actual mutation guards, independent source review and shared gates. Final vector donors remain three with at most six candidate pointer and proof inspections. Changed class, function, path or body input must never reuse an old vector despite matching raw content or point IDs. S04 retains the measured idle source reload and integrated live acceptance obligation.`.
 - [ ] `S04` - Deploy the current checkout as the resident daemon, repair affected publications through explicit rebuild jobs when required, and verify service health, search, and watcher convergence; `resident service lifecycle, affected root ledgers and admitted jobs, plan verification and final audit`.
 
 ## Parallelization
@@ -192,6 +196,8 @@ The recovery worker owns S26 consumer resume progress and actual-ledger CPU regr
 The recovery worker owns S27 full rebuild reconciliation and real-storage regressions after finishing S26's CPU gates and guards. The watcher worker owns S28 watcher completion resilience and focused real-component CPU tests, disjoint from S26 and S27. S28 may run while the recovery worker finishes S26 checks. All workers remain CPU-only and never use live RAG, services, storage or CUDA. The supervisor owns serialized Git/vault changes, shared checks, maintenance, protected checkpoint recovery and final source rollout after all three repairs pass.
 
 The supervisor owns the reopened S26 zero-chunk progress extension and its tests while the recovery worker owns S27. Final process-only guards bind the frozen S26-S28 production and test hashes; shared package checks and source rollout follow all three handoffs.
+
+The embedding investigator alone owns S38 _donor_candidates.py, _reuse.py, _slicing.py and focused donor admission/context CPU tests. Other investigators review frozen code and evidence with no source writes. Root owns the dated accepted ADR clarification, all plan/audit/Git mutations, shared gates and live profiling/control. The admitted protected writer continues on its loaded source. The final idle resident reload loads S38 after its source review and all admitted writers settle. No worker touches live storage, services, CUDA, Git or vault records.
 
 ## Verification
 

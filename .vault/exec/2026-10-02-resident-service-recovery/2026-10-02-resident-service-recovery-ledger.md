@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:414564ae43829a3048499712a18f6503ce3c34aa32cc75de14a22a23fd3c4298'
+body_hash: 'sha256:a8ff76829f0a7c8fa3bceaf2c197730b7933eb42cad0853c342e364655309ad6'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -694,6 +694,17 @@ related:
 - `S37` `verify:` `python -m pytest test_vault_readiness_publication.py test_vault_progress_phases.py test_vault_payload_batching.py` -> `pass`
 - `S37` `verify:` `Independent Sol xhigh S37 and integrated S29-S37 source review` -> `pass`
 - `S37` `by:` `root`
+- `S38` `M` `src/vaultspec_rag/indexer/_donor_candidates.py`
+- `S38` `M` `src/vaultspec_rag/indexer/_reuse.py`
+- `S38` `M` `src/vaultspec_rag/indexer/_slicing.py`
+- `S38` `A` `src/vaultspec_rag/tests/test_donor_admission.py`
+- `S38` `A` `src/vaultspec_rag/tests/test_donor_embedding_identity.py`
+- `S38` `M` `.vault/adr/2026-07-24-worktree-index-reuse-adr.md`
+- `S38` `verify:` `CPU s38-proof/verify.py six owned checks` -> `pass`
+- `S38` `verify:` `CPU s38-proof/guards.py nineteen actual-production named-failure and fresh-restored guard pairs` -> `pass`
+- `S38` `verify:` `CPU perf-profiling/shared_gates.py s38-final package lint format whitespace and complexity` -> `pass`
+- `S38` `verify:` `Independent frozen S38 source and evidence review` -> `pass`
+- `S38` `by:` `root`
 
 ## Notes
 
