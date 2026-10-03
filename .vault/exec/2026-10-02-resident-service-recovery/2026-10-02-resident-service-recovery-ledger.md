@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:bb0ba7b83b0bc63888d3d0ff723849891d12035d9278c46f4c66a84c223c3e2e'
+body_hash: 'sha256:de70cb7f7d2ae9145b6d2fba119f7ad3ea573f9be42eb6bd2f1971f0815752d6'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -753,6 +753,61 @@ related:
 - `S41` `verify:` `uv run --no-sync python -m dev.complexity gate in isolated candidate` -> `pass`
 - `S41` `verify:` `independent frozen S41 integrated review handoff 6db93000` -> `pass`
 - `S41` `by:` `root`
+- `S42` `M` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S42` `A` `src/vaultspec_rag/tests/test_incremental_failure_classification.py`
+- `S42` `verify:` `ruff check owned production and regression files` -> `pass`
+- `S42` `verify:` `ruff format --check owned production and regression files` -> `pass`
+- `S42` `verify:` `basedpyright owned files` -> `pass`
+- `S42` `verify:` `ty check owned files` -> `pass`
+- `S42` `verify:` `pytest six focused and53 affected CPU cases` -> `pass`
+- `S42` `verify:` `four production mutation fail1 restored-fresh0 pairs` -> `pass`
+- `S42` `verify:` `four isolated shared gates stable50ownedfingerprints` -> `pass`
+- `S42` `verify:` `independent review83artifacts61dependencies893sourcepins` -> `pass`
+- `S42` `verify:` `current main AST unwrap foreign index preservation` -> `pass`
+- `S42` `verify:` `isolated committed runtime8d6d8357 prepared962file snapshot` -> `pass`
+- `S42` `by:` `root`
+- `S43` `M` `src/vaultspec_rag/indexer/_checkpoint_common.py`
+- `S43` `A` `src/vaultspec_rag/tests/test_checkpoint_ledger_connection_lifetime.py`
+- `S43` `verify:` `isolated author lint format strict typing ten focused and fifty-nine affected cases` -> `pass`
+- `S43` `verify:` `actual idle ledger guard baseline mutation restoration fresh rerun` -> `pass`
+- `S43` `verify:` `independent combined source review` -> `pass`
+- `S43` `verify:` `final integrated main seven checks with nineteen focused cases and stable source binding` -> `pass`
+- `S43` `by:` `root`
+- `S44` `M` `src/vaultspec_rag/watcher_intake.py`
+- `S44` `A` `src/vaultspec_rag/tests/test_watcher_filter_offload.py`
+- `S44` `verify:` `isolated author six checks seven focused sixty-nine affected and nine actual guards` -> `pass`
+- `S44` `verify:` `independent combined source review and four shared package checks` -> `pass`
+- `S44` `verify:` `final integrated main seven checks with nineteen focused cases and stable source binding` -> `pass`
+- `S44` `by:` `root`
+- `S46` `M` `src/vaultspec_rag/watcher_intake.py`
+- `S46` `M` `src/vaultspec_rag/tests/test_watcher_filter_offload.py`
+- `S46` `verify:` `isolated six checks nine focused sixty-nine affected and eleven actual guards` -> `pass`
+- `S46` `verify:` `root four shared package checks stable fifty-four pins` -> `pass`
+- `S46` `verify:` `independent reviewed source evidence and 1157 bindings` -> `pass`
+- `S46` `verify:` `final integrated main seven checks with nineteen focused cases and stable source binding` -> `pass`
+- `S46` `by:` `root`
+- `S47` `M` `src/vaultspec_rag/qdrant_runtime/_supervise.py`
+- `S47` `M` `src/vaultspec_rag/tests/test_qdrant_store_resilience.py`
+- `S47` `verify:` `isolated six owned gates twenty-two focused sixty-five affected two actual guards` -> `pass`
+- `S47` `verify:` `four shared package gates with fifty-six stable pins` -> `pass`
+- `S47` `verify:` `independent source review 435 bindings and integrated main review 1163 bindings` -> `pass`
+- `S47` `verify:` `main lint format strict typing sixty-two CPU cases diff and complexity` -> `pass`
+- `S47` `verify:` `pinned source native startup restored monitor collections no quarantine no restart fatal log empty` -> `pass`
+- `S47` `by:` `root`
+- `S45` `R` `C:/Users/hello/.vaultspec-rag/qdrant-server/storage` -> `C:/Users/hello/.vaultspec-rag/qdrant-server/storage-before-recovery-20261003`
+- `S45` `R` `C:/Users/hello/.vaultspec-rag/qdrant-server/archive` -> `C:/Users/hello/.vaultspec-rag/qdrant-server/archive-before-recovery-20261003`
+- `S45` `R` `C:/Users/hello/.vaultspec-rag/qdrant-server/snapshots` -> `C:/Users/hello/.vaultspec-rag/qdrant-server/snapshots-before-recovery-20261003`
+- `S45` `A` `H:/vaultspec-rag-resident-data-20261003/storage`
+- `S45` `A` `H:/vaultspec-rag-resident-data-20261003/archive`
+- `S45` `A` `H:/vaultspec-rag-resident-data-20261003/snapshots`
+- `S45` `A` `C:/Users/hello/.vaultspec-rag/qdrant-server/storage`
+- `S45` `A` `C:/Users/hello/.vaultspec-rag/qdrant-server/archive`
+- `S45` `A` `C:/Users/hello/.vaultspec-rag/qdrant-server/snapshots`
+- `S45` `verify:` `managed-data-full-sha256-manifest 21165 files 83932024140 bytes` -> `pass`
+- `S45` `verify:` `independent metadata ACL attributes mtimes 30189 paired paths` -> `pass`
+- `S45` `verify:` `managed-data-cutover-verified original lock inode identity and all backup bytes retained` -> `pass`
+- `S45` `verify:` `canonical warmed final-source lifecycle original anchor physical H storage and READY` -> `pass`
+- `S45` `by:` `root`
 
 ## Notes
 
@@ -774,3 +829,4 @@ related:
 - `S26` Reopened before first source commit for durably resolved zero-chunk outcome omission and confirmed producer/consumer publication-order race. Final frozen proof supersedes initial source evidence while retaining it as history. Twelve actual production mutants intentionally fail their named behavioural assertions and are restored in finally before fresh normal passes; no checkout mutation. Independent integrated source/CPU review passes; live source rollout remains S04.
 - `S27` Actual TUI clean rebuild failed after72514 confirmed units by requesting old served proof with the replacement model key. Real full-entry regressions also reproduced removed partial UPSERT paths and storage deletion interrupted before ledger retirement. Existing canonical storage-first drift retirement now runs on absent own shadow paths before replay seeding; strict incremental receipt checks and exact apply barriers remain. Nine production mutants intentionally fail the exact named assertions, restore in finally and pass fresh ordinary processes. Independent integrated source/CPU review passes; live protected retry remains S04.
 - `S28` S19 canonical projector consolidation left cold watcher imports of removed names; actual INGEST CODE and TUI DOCUMENT physically completed then their managed jobs failed. Exact-attempt review also found previous checkpoint facts leaking into no-op/pre-open outcomes. Final projection now reuses the one canonical projector with captured admission facts and only a newly opened checkpoint, preserving retry overlay and failure isolation. Eleven production mutants intentionally fail named behavioural assertions, restore in finally and pass fresh ordinary processes;339 hashes unchanged. Independent integrated source/CPU review passes; actual loaded-source completion acceptance remains S04.
+- `S45` Rejected first whole-parent H copy retained unused after intervening installed UV restart; no original data deletion.
