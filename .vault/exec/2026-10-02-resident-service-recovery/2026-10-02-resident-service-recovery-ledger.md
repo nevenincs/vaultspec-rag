@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:03ffd67e452a56a34255bad2b7d73a6836767aa0101f3fb18d9042d0c3dc0284'
+body_hash: 'sha256:4e9b704fbbb61e0e85feeec672c01426aa2eb97ff3df2e537eb120693546218c'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -665,6 +665,26 @@ related:
 - `S36` `verify:` `root package Ruff/format/diff/full complexity` -> `pass`
 - `S36` `verify:` `independent Sol xhigh S36 review binding22dependencies and8artifacts` -> `pass`
 - `S36` `by:` `root`
+- `S34` `M` `src/vaultspec_rag/server/_search_readiness.py`
+- `S34` `M` `src/vaultspec_rag/server/_routes_search.py`
+- `S34` `M` `src/vaultspec_rag/server/_search_route_availability.py`
+- `S34` `M` `src/vaultspec_rag/_public_search.py`
+- `S34` `M` `src/vaultspec_rag/service.py`
+- `S34` `M` `src/vaultspec_rag/indexer/_vault_indexer.py`
+- `S34` `M` `src/vaultspec_rag/indexer/_vault_incremental.py`
+- `S34` `A` `src/vaultspec_rag/tests/test_search_readiness_restore.py`
+- `S34` `A` `src/vaultspec_rag/tests/test_vault_readiness_publication.py`
+- `S34` `A` `src/vaultspec_rag/tests/test_search_readiness_responsiveness.py`
+- `S34` `M` `src/vaultspec_rag/tests/test_search_readiness.py`
+- `S34` `M` `.vault/audit/2026-10-02-resident-service-recovery-audit.md`
+- `S34` `verify:` `focused restart/publication/responsiveness CPU (38 passed)` -> `pass`
+- `S34` `verify:` `affected readiness/publication/phase CPU (141 passed)` -> `pass`
+- `S34` `verify:` `changed Ruff/format/basedpyright/ty` -> `pass`
+- `S34` `verify:` `20 actual production mutation pairs named fail1 finally restore fresh0 stable39deps` -> `pass`
+- `S34` `verify:` `reused S33 phase guard named3/2 and4/2 fail1 restore0 stable12deps` -> `pass`
+- `S34` `verify:` `independent Sol xhigh S34 review binding39dependencies and54artifacts` -> `pass`
+- `S34` `verify:` `root package Ruff/format/diff/full complexity gates` -> `pass`
+- `S34` `by:` `root`
 
 ## Notes
 

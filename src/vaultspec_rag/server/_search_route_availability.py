@@ -122,12 +122,17 @@ class SearchAvailabilityRequestFacts:
             if isinstance(integrity, dict)
             else None
         )
+        snapshot = self.readiness_snapshot
         integrity_verified = (
             integrity_block is not None
             and integrity_block.get("verdict") == IntegrityVerdict.CONSISTENT
+            and snapshot is not None
+            and snapshot.published_generation is not None
+            and integrity_block.get("generation_id") == snapshot.published_generation
         )
-        snapshot = self.readiness_snapshot
-        target = self.readiness_target
+        target = self.readiness_target or (
+            snapshot.publication_target() if snapshot is not None else None
+        )
         return SearchAvailabilityContext(
             before_snapshot=self.job_snapshot_before,
             after_snapshot=after_snapshot,
@@ -140,23 +145,11 @@ class SearchAvailabilityRequestFacts:
                 served_generation=(
                     snapshot.published_generation if snapshot is not None else None
                 ),
-                desired_generation=(
-                    target.generation
-                    if target is not None
-                    else snapshot.desired_generation
-                    if snapshot is not None
-                    else None
-                ),
+                desired_generation=(target.generation if target is not None else None),
                 publication_revision=(
                     snapshot.publication_revision if snapshot is not None else None
                 ),
-                desired_revision=(
-                    target.revision
-                    if target is not None
-                    else snapshot.controller_revision
-                    if snapshot is not None
-                    else None
-                ),
+                desired_revision=(target.revision if target is not None else None),
                 collection_present=True,
                 target_matches=index_state.get("target_matches") is True,
                 integrity_verified=integrity_verified,

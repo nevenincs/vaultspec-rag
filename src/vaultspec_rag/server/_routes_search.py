@@ -930,8 +930,6 @@ def _capture_publication_targets(
     readiness: ReadinessRevisionRegistry,
 ) -> tuple[PublicationTarget, ...] | None:
     """Capture immutable per-source convergence targets at request admission."""
-    from ._search_readiness import PublicationTarget, ReadinessSourceKey
-
     sources: tuple[IndexSource, ...] = (
         INDEX_SOURCES
         if search_request.search_type is PublicSourceType.COMBINED
@@ -940,21 +938,10 @@ def _capture_publication_targets(
     targets: list[PublicationTarget] = []
     for source in sources:
         snapshot = readiness.snapshot(search_request.root, source)
-        if snapshot.controller_revision is not None:
-            revision = snapshot.controller_revision
-            generation = snapshot.desired_generation
-        elif snapshot.publication_revision is not None:
-            revision = snapshot.publication_revision
-            generation = snapshot.published_generation
-        else:
+        target = snapshot.publication_target()
+        if target is None:
             return None
-        targets.append(
-            PublicationTarget(
-                key=ReadinessSourceKey.from_root(search_request.root, source),
-                revision=revision,
-                generation=generation,
-            )
-        )
+        targets.append(target)
     return tuple(targets)
 
 
@@ -974,7 +961,12 @@ async def _admit_requested_freshness(
             raise
         return FreshnessAdmission(FreshnessAdmissionOutcome.UNAVAILABLE)
     try:
-        targets = _capture_publication_targets(search_request, readiness)
+        targets = await _run_in_thread(
+            _capture_publication_targets,
+            search_request,
+            readiness,
+            limiter=get_search_limiter(),
+        )
         if targets is None:
             return FreshnessAdmission(
                 FreshnessAdmissionOutcome.UNVERIFIABLE, readiness=readiness
@@ -986,9 +978,12 @@ async def _admit_requested_freshness(
         )
         waited_seconds = time.perf_counter() - wait_started
         if not satisfied:
-            snapshots = tuple(
-                readiness.snapshot(target.key.canonical_root, target.key.source)
-                for target in targets
+            snapshots = await _run_in_thread(
+                lambda: tuple(
+                    readiness.snapshot(target.key.canonical_root, target.key.source)
+                    for target in targets
+                ),
+                limiter=get_search_limiter(),
             )
             return FreshnessAdmission(
                 FreshnessAdmissionOutcome.TIMEOUT,
@@ -999,7 +994,12 @@ async def _admit_requested_freshness(
             )
         target = targets[0] if len(targets) == 1 else None
         snapshot = (
-            readiness.snapshot(search_request.root, target.key.source)
+            await _run_in_thread(
+                readiness.snapshot,
+                search_request.root,
+                target.key.source,
+                limiter=get_search_limiter(),
+            )
             if target is not None
             else None
         )
@@ -1155,10 +1155,12 @@ async def _execute_search_route(
             readiness_snapshot=(
                 admission.snapshot
                 if admission.readiness is not None
-                else _readiness_snapshot(
+                else await _run_in_thread(
+                    _readiness_snapshot,
                     registry,
                     search_request.root,
                     search_request.search_type.value,
+                    limiter=get_search_limiter(),
                 )
             ),
             readiness_target=admission.target,

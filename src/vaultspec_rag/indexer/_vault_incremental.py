@@ -222,6 +222,8 @@ class VaultIncrementalMixin:
             self,
         ) -> tuple[ReuseStats | None, DonorReuseContext | None]: ...
 
+        def _publish_generation(self, checkpoint: VaultRunCheckpoint) -> None: ...
+
         def _purge_shrunk_chunk_tails(
             self,
             existing_counts: dict[str, int],
@@ -723,8 +725,7 @@ class VaultIncrementalMixin:
         # the changed hashes, and drop the deleted ids. Never recompute the
         # whole map (that is what the full scan is for).
         with controlled_phase(reporter, run_control, "write metadata", 1):
-            checkpoint.publish_proof_transition()
-            checkpoint.publish_generation()
+            self._publish_generation(checkpoint)
             total = checkpoint.ledger.publication_proof(
                 checkpoint.receipt.compatibility_key
             ).aggregate.indexed_identities

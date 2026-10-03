@@ -143,11 +143,16 @@ async def _wait_until_registered(
     *,
     count: int = 1,
 ) -> None:
-    for _ in range(10):
-        if len(registry._observers) == count:
-            return
-        await asyncio.sleep(0)
-    raise AssertionError(f"expected {count} registered readiness observer(s)")
+    # Admission can read a durable proof in a worker before registering its
+    # observer. Give that worker a bounded scheduling window.
+    try:
+        async with asyncio.timeout(1):
+            while len(registry._observers) != count:
+                await asyncio.sleep(0.001)
+    except TimeoutError as exc:
+        raise AssertionError(
+            f"expected {count} registered readiness observer(s)"
+        ) from exc
 
 
 async def _wait_until_calls(
@@ -496,8 +501,10 @@ async def test_revision_is_monotonic_and_equal_revision_checks_generation(
         (_target(tmp_path, "code", 2, "not-second"),), timeout_seconds=0
     )
 
-    assert not conflict
-    assert not older_conflict
+    assert not conflict, "explicit known generation mismatch must remain unsatisfied"
+    assert not older_conflict, (
+        "explicit known generation mismatch must remain unsatisfied"
+    )
     assert matching.publication_revision == 4
     assert older_matching
 

@@ -42,7 +42,7 @@ from ._vault_prep import IndexResult
 if TYPE_CHECKING:
     import pathlib
     import threading
-    from collections.abc import Generator, Iterable
+    from collections.abc import Callable, Generator, Iterable
 
     from ..embeddings import EmbeddingModel
     from ..job_control import RunControl
@@ -71,6 +71,7 @@ class VaultIndexer(VaultIncrementalMixin):
         store: VaultStore,
         *,
         gpu_lock: threading.Lock | None = None,
+        publish_readiness: Callable[[pathlib.Path, str], object] | None = None,
     ) -> None:
         """Initialize the indexer with a workspace root, embedding model, and store.
 
@@ -88,6 +89,7 @@ class VaultIndexer(VaultIncrementalMixin):
         self.model = model
         self.store = store
         self._gpu_lock = gpu_lock
+        self._publish_readiness = publish_readiness
         # Indexer-level writer lock that serializes full_index and
         # incremental_index against each other and against themselves.
         # Without this, two concurrent MCP / CLI / watcher reindex
@@ -423,8 +425,7 @@ class VaultIndexer(VaultIncrementalMixin):
                     reporter.advance(len(stale_ids))
 
             with controlled_phase(reporter, run_control, "write metadata", 1):
-                checkpoint.publish_proof_transition()
-                checkpoint.publish_generation()
+                self._publish_generation(checkpoint)
                 reporter.advance(1)
         run_control.checkpoint()
 
@@ -637,8 +638,7 @@ class VaultIndexer(VaultIncrementalMixin):
         with controlled_phase(reporter, run_control, "write metadata", 1):
             # The publication's own count, so the reported total and the
             # breadth claim beside it describe one instant of the collection.
-            checkpoint.publish_proof_transition()
-            checkpoint.publish_generation()
+            self._publish_generation(checkpoint)
             total = checkpoint.ledger.publication_proof(
                 receipt.compatibility_key
             ).aggregate.indexed_identities
@@ -657,6 +657,13 @@ class VaultIndexer(VaultIncrementalMixin):
             files=len(current_docs),
             reuse=outcome.reuse.snapshot() if outcome.reuse is not None else None,
         )
+
+    def _publish_generation(self, checkpoint: VaultRunCheckpoint) -> None:
+        """Notify only after proof and generation publication are durable."""
+        checkpoint.publish_proof_transition()
+        published = checkpoint.publish_generation()
+        if self._publish_readiness is not None:
+            self._publish_readiness(self.root_dir, published.generation_id)
 
     def _prepare_collection(
         self,

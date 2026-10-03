@@ -10,7 +10,7 @@ from threading import RLock
 from typing import TYPE_CHECKING, Final, Protocol, cast
 
 from .._root_identity import canonical_root_key
-from .._source_types import INDEX_SOURCES, IndexSource
+from .._source_types import INDEX_SOURCES, IndexSource, PublicSourceType
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -154,6 +154,18 @@ class ReadinessRevisionSnapshot:
         _revision(self.publication_revision, field="publication_revision")
         _revision(self.controller_revision, field="controller_revision")
 
+    def publication_target(self) -> PublicationTarget | None:
+        """Capture the controller target, or the publication already served."""
+        if self.controller_revision is not None:
+            return PublicationTarget(
+                self.key, self.controller_revision, self.desired_generation
+            )
+        if self.publication_revision is not None:
+            return PublicationTarget(
+                self.key, self.publication_revision, self.published_generation
+            )
+        return None
+
 
 @dataclass(frozen=True, slots=True)
 class PublicationTarget:
@@ -235,11 +247,38 @@ class ReadinessRevisionRegistry:
     def snapshot(
         self, root: str | Path, source: IndexSource
     ) -> ReadinessRevisionSnapshot:
-        """Return current immutable evidence without performing external work."""
+        """Restore missing publication evidence from its receipt-free authority."""
+        from .._publication_state import (
+            UNREADABLE_PUBLICATION_ERRORS,
+            acquire_publication_snapshot,
+        )
+
         key = ReadinessSourceKey.from_root(root, source)
         with self._lock:
             self._require_live_locked()
-            return self._snapshots.get(key, ReadinessRevisionSnapshot(key=key))
+            current = self._snapshots.get(key, ReadinessRevisionSnapshot(key=key))
+            if current.publication_revision is not None:
+                return current
+        generation = None
+        try:
+            publication = acquire_publication_snapshot(
+                Path(root).expanduser(), PublicSourceType(source)
+            )
+            publication.validate()
+            generation = publication.proof.generation_id
+        except UNREADABLE_PUBLICATION_ERRORS:
+            pass
+        with self._lock:
+            self._require_live_locked()
+            current = self._snapshots.get(key, ReadinessRevisionSnapshot(key=key))
+            if current.publication_revision is None and generation is not None:
+                # This predates every controller notification in this lifetime.
+                # Durable proof revisions belong to a different sequence.
+                current = replace(
+                    current, published_generation=generation, publication_revision=0
+                )
+                self._snapshots[key] = current
+            return current
 
     def publish_next(
         self,

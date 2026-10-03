@@ -224,23 +224,23 @@ def _combined_source_fact(
             snapshot = readiness.snapshot(root, concrete_source)
         except ReadinessRegistryClosedError:
             snapshot = None
+    target = snapshot.publication_target() if snapshot is not None else None
     evidence = CanonicalSearchEvidence(
         served_generation=(
             snapshot.published_generation if snapshot is not None else None
         ),
-        desired_generation=(
-            snapshot.desired_generation if snapshot is not None else None
-        ),
+        desired_generation=(target.generation if target is not None else None),
         publication_revision=(
             snapshot.publication_revision if snapshot is not None else None
         ),
-        desired_revision=(
-            snapshot.controller_revision if snapshot is not None else None
-        ),
+        desired_revision=(target.revision if target is not None else None),
         collection_present=True if observation is not None else None,
         target_matches=True,
         integrity_verified=observation is not None
-        and observation.verdict is IntegrityVerdict.CONSISTENT,
+        and observation.verdict is IntegrityVerdict.CONSISTENT
+        and snapshot is not None
+        and snapshot.published_generation is not None
+        and observation.generation_id == snapshot.published_generation,
     )
     classification = classify_search_response(
         {},
