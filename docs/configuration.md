@@ -191,12 +191,10 @@ It does not configure remote servers or alter shard and segment load concurrency
 
 ### Project and data locations
 
-| Variable                        | Type | Default                   | Controls                                                                  | CLI flag        |
-| ------------------------------- | ---- | ------------------------- | ------------------------------------------------------------------------- | --------------- |
-| `VAULTSPEC_RAG_DATA_DIR`        | path | `.vault/data/search-data` | Directory holding the on-disk store and index metadata                    | `--data-dir`    |
-| `VAULTSPEC_RAG_QDRANT_DIR`      | path | `qdrant`                  | On-disk store subdirectory inside the data dir                            | `--storage-dir` |
-| `VAULTSPEC_RAG_INDEX_META`      | path | `index_meta.json`         | Declared setting with no reading consumer today; setting it has no effect | -               |
-| `VAULTSPEC_RAG_CODE_INDEX_META` | path | `code_index_meta.json`    | Declared setting with no reading consumer today; setting it has no effect | -               |
+| Variable                   | Type | Default                   | Controls                                               | CLI flag        |
+| -------------------------- | ---- | ------------------------- | ------------------------------------------------------ | --------------- |
+| `VAULTSPEC_RAG_DATA_DIR`   | path | `.vault/data/search-data` | Directory holding the on-disk store and index metadata | `--data-dir`    |
+| `VAULTSPEC_RAG_QDRANT_DIR` | path | `qdrant`                  | On-disk store subdirectory inside the data dir         | `--storage-dir` |
 
 ### Service runtime and logging
 

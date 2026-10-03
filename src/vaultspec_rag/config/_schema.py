@@ -175,8 +175,6 @@ def checked_setting(name: str, value: object, source: EnvVar | None) -> object:
 ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "data_dir": EnvVar.DATA_DIR,
     "qdrant_dir": EnvVar.QDRANT_DIR,
-    "index_metadata_file": EnvVar.INDEX_META,
-    "code_index_metadata_file": EnvVar.CODE_INDEX_META,
     "status_dir": EnvVar.STATUS_DIR,
     "log_file": EnvVar.LOG_FILE,
     "mcp_port": EnvVar.PORT,

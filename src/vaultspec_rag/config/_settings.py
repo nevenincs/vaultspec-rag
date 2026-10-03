@@ -157,8 +157,6 @@ class VaultSpecConfigWrapper:
         "storage_reconcile_budget_seconds": 300.0,
         "data_dir": ".vault/data/search-data",
         "qdrant_dir": "qdrant",
-        "index_metadata_file": "index_meta.json",
-        "code_index_metadata_file": "code_index_meta.json",
         "status_dir": STATUS_DIR_DEFAULT,
         "log_file": "service.log",
         "graph_ttl_seconds": 300.0,
@@ -1126,8 +1124,6 @@ class VaultSpecConfigWrapper:
     storage_reconcile_budget_seconds: float
     data_dir: str
     qdrant_dir: str
-    index_metadata_file: str
-    code_index_metadata_file: str
     status_dir: str
     log_file: str
     graph_ttl_seconds: float
