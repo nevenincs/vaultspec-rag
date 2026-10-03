@@ -845,7 +845,7 @@ class TestMainTransportSetup:
         )
         monkeypatch.setattr("vaultspec_rag.mcp.mcp", _FakeMcp())
 
-        from ..registry import reset_registry
+        from ._state_fixtures import reset_registry
 
         original_hook = mod._registry._on_close_project
         mod._registry._on_close_project = None

@@ -28,6 +28,7 @@ import vaultspec_rag.mcp._tools as tools
 from ... import server
 from ...server import ServerRouteRuntime, create_http_app
 from ...service import ServiceRegistry
+from .._state_fixtures import reset_metrics
 from ._helpers import _make_root, seed_vault_publication
 from .conftest import _attach_live_service, _live_service_context
 
@@ -42,9 +43,9 @@ if TYPE_CHECKING:
 def _clean_metrics(  # pyright: ignore[reportUnusedFunction]
 ) -> Iterator[None]:
     """Zero the metrics holder before and after each test."""
-    server.reset_metrics()
+    reset_metrics()
     yield
-    server.reset_metrics()
+    reset_metrics()
 
 
 @pytest.fixture
@@ -114,7 +115,7 @@ def test_maintenance_reconcile_metrics_are_registered(_clean_metrics: None) -> N
 @pytest.mark.unit
 def test_reset_zeroes_counters(_clean_metrics: None) -> None:
     server.incr("search_total", 5)
-    server.reset_metrics()
+    reset_metrics()
     text = server.render_prometheus()
     assert "vaultspec_rag_search_total 0" in text
 

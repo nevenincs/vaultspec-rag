@@ -19,9 +19,10 @@ from ..api import clean
 from ..indexer._run_ledger_models import RunAuthority, RunOperation
 from ..indexer._vault_checkpoint import VaultRunCheckpoint
 from ..job_control import NO_RUN_CONTROL
-from ..registry import get_registry, reset_registry
+from ..registry import get_registry
 from ..service import ProjectBusyError, ServiceRegistry
 from ..store_runtime import configured_backend_identity
+from ._state_fixtures import reset_registry
 
 if TYPE_CHECKING:
     from collections.abc import Generator

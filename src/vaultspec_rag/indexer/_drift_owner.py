@@ -125,11 +125,6 @@ class CodeDriftOwner:
         """Return every path left stale for the next generation."""
         return tuple(sorted(self._deferred))
 
-    @property
-    def remediated(self) -> bool:
-        """Return whether this run repaired drift rather than only faulting."""
-        return bool(self._superseded or self._deferred)
-
     def snapshot(self) -> dict[str, object]:
         """Return this run's drift telemetry for the job and status surfaces.
 

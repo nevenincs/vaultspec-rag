@@ -78,7 +78,6 @@ from ._state import (
     observe,
     publish_survey_snapshot,
     render_prometheus,
-    reset_metrics,
     survey_snapshot,
 )
 from ._utils import (
@@ -139,7 +138,6 @@ __all__ = [
     "observe",
     "publish_survey_snapshot",
     "render_prometheus",
-    "reset_metrics",
     "service_lifespan",
     "survey_snapshot",
 ]

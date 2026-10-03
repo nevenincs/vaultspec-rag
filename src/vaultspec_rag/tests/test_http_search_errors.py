@@ -19,7 +19,7 @@ from .._source_types import INDEX_SOURCES, PublicSourceType
 from .._store_locks import VaultStoreLockedError
 from ..config._settings import get_config
 from ..mcp._tools import _validated_search_result
-from ..registry import get_registry, reset_registry
+from ..registry import get_registry
 from ..search._models import SearchResult
 from ..server import (
     ServerRouteRuntime,
@@ -52,6 +52,7 @@ from ._search_readiness_scenarios import (
     SEARCH_READINESS_SCENARIOS,
     canonical_service_envelope,
 )
+from ._state_fixtures import reset_registry
 
 if TYPE_CHECKING:
     from collections.abc import Generator

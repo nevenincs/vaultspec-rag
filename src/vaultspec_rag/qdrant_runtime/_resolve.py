@@ -65,7 +65,6 @@ __all__ = [
     "classify_qdrant_state",
     "decide_qdrant_action",
     "has_provisioned_binary",
-    "owner_pid_is_live_owner",
     "owner_pid_witness_state",
     "probe_qdrant_endpoint",
     "qdrant_bin_dir",
@@ -368,18 +367,6 @@ def read_qdrant_identity() -> QdrantIdentity | None:
     except (KeyError, TypeError, ValueError) as exc:
         logger.debug("qdrant identity sidecar incomplete at %s: %s", path, exc)
         return None
-
-
-def owner_pid_is_live_owner(identity: QdrantIdentity | None) -> bool:
-    """Return whether *identity*'s owner pid is the live original owner.
-
-    Hardens the bare ``pid_alive`` check against pid reuse: a dead owner's pid
-    recycled by an unrelated live process must NOT read as a live owner. The
-    owner is live only when its pid is alive AND its recorded creation time
-    matches the live process's creation time. A legacy record without a recorded
-    start time is unverified and therefore fails closed.
-    """
-    return owner_pid_witness_state(identity) == "live"
 
 
 def owner_pid_witness_state(

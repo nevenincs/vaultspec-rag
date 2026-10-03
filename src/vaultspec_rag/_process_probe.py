@@ -53,7 +53,6 @@ __all__ = [
     "EnvironmentHolders",
     "HolderRelation",
     "LineageEntry",
-    "argv_contains",
     "argv_of",
     "bounded_call",
     "close_process_handle",
@@ -730,16 +729,6 @@ def argv_of(cmdline: object) -> tuple[str, ...]:
     if isinstance(cmdline, list):
         return tuple(str(part) for part in cast("list[object]", cmdline))
     return ()
-
-
-def argv_contains(argv: Sequence[str], marker: Sequence[str]) -> bool:
-    """Whether *marker* appears as a contiguous run inside *argv*."""
-    if not marker or len(marker) > len(argv):
-        return False
-    return any(
-        list(argv[index : index + len(marker)]) == list(marker)
-        for index in range(len(argv) - len(marker) + 1)
-    )
 
 
 @cache

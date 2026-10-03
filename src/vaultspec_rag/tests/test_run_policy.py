@@ -11,7 +11,6 @@ from .._job_errors import JobError, JobErrorKind
 from ..indexer._run_policy import (
     DurableProgressKind,
     RunPolicy,
-    ThreadWaitOutcome,
 )
 from ..job_control import CancelRequested, RunControlToken
 
@@ -119,39 +118,6 @@ def test_protected_span_defers_control_until_its_durable_exit() -> None:
     final = control.snapshot()
     assert final.delivered is not None
     assert final.protected_depth == 0
-
-
-def test_thread_join_reports_exit_and_hard_cleanup_timeout() -> None:
-    release = threading.Event()
-    worker = threading.Thread(
-        target=release.wait,
-        name="run-policy-cleanup-worker",
-    )
-    worker.start()
-    policy = RunPolicy(no_progress_timeout_seconds=0.02)
-
-    try:
-        assert (
-            policy.join_thread(
-                worker,
-                timeout_seconds=0.06,
-                label="consumer cleanup",
-            )
-            is ThreadWaitOutcome.TIMED_OUT
-        )
-        assert worker.is_alive()
-        release.set()
-        assert (
-            policy.join_thread(
-                worker,
-                timeout_seconds=1.0,
-                label="consumer cleanup",
-            )
-            is ThreadWaitOutcome.EXITED
-        )
-    finally:
-        release.set()
-        _join_thread(worker)
 
 
 def test_store_write_capability_uses_the_same_policy_clock() -> None:

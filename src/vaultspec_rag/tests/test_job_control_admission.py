@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ..concurrency import get_encode_limiter, reset_limiters
+from ..concurrency import get_encode_limiter
 from ..indexer._run_ledger_models import RunAuthority
 from ..job_manager.manager import JobManager
 from ..job_manager.models import JobAttemptContext, JobExecutionResult
@@ -24,6 +24,7 @@ from ..job_models import (
 )
 from ..service_quiesce import QuiesceState, ServiceQuiesceController
 from ._job_roots import _TEST_PROJECT_ROOT
+from ._state_fixtures import reset_limiters
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator

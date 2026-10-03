@@ -28,7 +28,6 @@ __all__ = [
     "DurableProgressKind",
     "RunPolicy",
     "RunPolicySnapshot",
-    "ThreadWaitOutcome",
 ]
 
 _POLL_INTERVAL_SECONDS = 0.05
@@ -41,13 +40,6 @@ class DurableProgressKind(StrEnum):
     LEDGER_UNIT_COMMITTED = "ledger_unit_committed"
     FINALIZATION_PHASE_COMMITTED = "finalization_phase_committed"
     RECONCILIATION_BATCH_COMMITTED = "reconciliation_batch_committed"
-
-
-class ThreadWaitOutcome(StrEnum):
-    """Bounded cleanup result for a worker thread."""
-
-    EXITED = "exited"
-    TIMED_OUT = "timed_out"
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,30 +252,6 @@ class RunPolicy:
             )
             self.checkpoint("interruptible wait")
         self.checkpoint("interruptible wait")
-
-    def join_thread(
-        self,
-        thread: threading.Thread,
-        *,
-        timeout_seconds: float,
-        label: str,
-    ) -> ThreadWaitOutcome:
-        """Join a worker under an independent hard cleanup cap.
-
-        Cleanup deliberately does not redeliver the run's latched failure or
-        control signal. The worker itself shares this policy and sees those at
-        production checkpoints; the coordinator must retain a bounded chance
-        to release it before a store can be closed.
-        """
-        hard_cap = _finite_nonnegative_seconds("timeout_seconds", timeout_seconds)
-        _require_label(label)
-        cleanup_deadline = time.monotonic() + hard_cap
-        while thread.is_alive():
-            remaining = cleanup_deadline - time.monotonic()
-            if remaining <= 0.0:
-                return ThreadWaitOutcome.TIMED_OUT
-            thread.join(timeout=min(_POLL_INTERVAL_SECONDS, remaining))
-        return ThreadWaitOutcome.EXITED
 
     def snapshot(self) -> RunPolicySnapshot:
         """Return current state without raising or advancing the clock."""

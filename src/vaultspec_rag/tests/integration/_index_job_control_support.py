@@ -23,7 +23,7 @@ import pytest
 from ... import jobs
 from ..._source_types import PublicSourceType
 from ..._store_writes import workspace_volume_path
-from ...concurrency import limiter_stats, reset_limiters
+from ...concurrency import limiter_stats
 from ...config._settings import get_config
 from ...embeddings import EmbeddingModel  # noqa: TC001
 from ...indexer import CodebaseIndexer, VaultIndexer  # noqa: TC001
@@ -43,10 +43,11 @@ from ...job_models import (
     ResumeStrategy,
 )
 from ...progress import NullProgressReporter
-from ...registry import get_registry, reset_registry
+from ...registry import get_registry
 from ...store_runtime import VaultStore
 from .._config_fixtures import reset_config
 from .._publication_assertions import published_content_identities
+from .._state_fixtures import reset_limiters, reset_registry
 from .._store_fixtures import get_all_ids
 from ._helpers import cpu_backed_embedding_model
 

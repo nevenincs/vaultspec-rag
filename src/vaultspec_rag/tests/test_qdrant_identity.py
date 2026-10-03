@@ -19,7 +19,6 @@ from ..qdrant_runtime._resolve import (
     QdrantEndpointProbe,
     QdrantIdentity,
     classify_qdrant_state,
-    owner_pid_is_live_owner,
     owner_pid_witness_state,
     pid_start_time,
     qdrant_identity_path,
@@ -226,14 +225,14 @@ class TestOwnerPidReuseWitness:
     def test_matching_start_time_is_the_live_owner(self) -> None:
         live = pid_start_time(os.getpid())
         identity = self._identity(os.getpid(), live)
-        assert owner_pid_is_live_owner(identity) is True
+        assert owner_pid_witness_state(identity) == "live"
 
     def test_mismatched_start_time_is_not_the_owner(self) -> None:
         # A live pid (this process) but a recorded start time from a DIFFERENT
         # incarnation: the recycled-pid case. The owner is NOT this process.
         live = pid_start_time(os.getpid())
         identity = self._identity(os.getpid(), live + 10_000.0)
-        assert owner_pid_is_live_owner(identity) is False
+        assert owner_pid_witness_state(identity) != "live"
 
     def test_unreadable_live_owner_is_unverified_not_orphaned(self) -> None:
         live = pid_start_time(os.getpid())
@@ -250,13 +249,13 @@ class TestOwnerPidReuseWitness:
         """A live PID cannot substitute for a missing incarnation witness."""
         identity = self._identity(os.getpid(), 0.0)
         probe = QdrantEndpointProbe(listening=True, ready=True, version="1.18.2")
-        assert owner_pid_is_live_owner(identity) is False
+        assert owner_pid_witness_state(identity) != "live"
         assert owner_pid_witness_state(identity) == "unknown"
         assert classify_qdrant_state(probe, identity) == "owner_unverified"
 
     def test_dead_owner_is_never_the_live_owner(self) -> None:
         identity = self._identity(2_000_000_000, 0.0)
-        assert owner_pid_is_live_owner(identity) is False
+        assert owner_pid_witness_state(identity) != "live"
 
     def test_classify_running_requires_matching_witness(self) -> None:
         # A listening server whose recorded owner pid is live but whose start

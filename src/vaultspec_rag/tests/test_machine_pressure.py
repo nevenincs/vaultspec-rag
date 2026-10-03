@@ -16,12 +16,8 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from ..pressure import (
-    PRESSURE_TIERS,
-    MachinePressureSignals,
-    PressureEvaluator,
-    reset_pressure_evaluator,
-)
+from ..pressure import PRESSURE_TIERS, MachinePressureSignals, PressureEvaluator
+from ._state_fixtures import reset_pressure_evaluator
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

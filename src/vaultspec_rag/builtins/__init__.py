@@ -169,29 +169,4 @@ def list_builtins() -> list[str]:
     )
 
 
-def check_outdated(target_dir: Path) -> list[str]:
-    """Compare bundled builtins against a deployed ``.vaultspec/`` tree.
-
-    Mirrors :func:`vaultspec_core.builtins.check_outdated`.
-
-    Returns:
-        Relative paths (forward-slash) present in the package but missing or
-        content-different at the target.
-    """
-    src_root = _builtins_root()
-    outdated: list[str] = []
-    for src_file in _iter_builtin_files(src_root):
-        rel = str(src_file.relative_to(src_root)).replace("\\", "/")
-        dest = target_dir / rel
-        if not dest.exists():
-            outdated.append(rel)
-            continue
-        try:
-            if src_file.read_bytes() != dest.read_bytes():
-                outdated.append(rel)
-        except OSError:
-            outdated.append(rel)
-    return outdated
-
-
-__all__ = ["check_outdated", "list_builtins", "seed_builtins"]
+__all__ = ["list_builtins", "seed_builtins"]

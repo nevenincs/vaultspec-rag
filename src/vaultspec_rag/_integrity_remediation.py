@@ -54,7 +54,6 @@ __all__ = [
     "REPAIR_REQUEST_MIN_INTERVAL_SECONDS",
     "SHRUNKEN_OBSERVATION_TTL_SECONDS",
     "note_integrity_verdict",
-    "reset_observations",
     "shrunken_observations",
 ]
 
@@ -95,12 +94,6 @@ _OBSERVATIONS: dict[tuple[str, str], _Observation] = {}
 def _observation_key(root: pathlib.Path, source: str) -> tuple[str, str]:
     """Return the canonical registry key for one root and domain."""
     return (os.path.normcase(str(root)), source)
-
-
-def reset_observations() -> None:
-    """Forget every observation (tests only)."""
-    with _STATE_LOCK:
-        _OBSERVATIONS.clear()
 
 
 def _auto_repair_enabled() -> bool:

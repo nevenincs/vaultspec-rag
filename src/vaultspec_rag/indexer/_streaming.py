@@ -21,7 +21,6 @@ from ._slicing import (
     vault_embed_text,
 )
 from ._streaming_types import (
-    CodebaseStreamRequest,
     CodeSliceRequest,
     CpuTransferable,
     DenseRowIterable,
@@ -57,7 +56,6 @@ __all__ = [
     "UnsettledStoreWriterError",
     "_SliceWriter",
     "_release_cuda_cache",
-    "_stream_encode_and_upsert_codebase",
     "_stream_encode_and_upsert_vault",
     "encode_and_upsert_code_slice",
     "encode_and_upsert_document_slice",
@@ -1055,47 +1053,3 @@ def encode_and_upsert_code_slice(request: CodeSliceRequest) -> None:
         _release_vector_fields(request.chunks)
         if request.release_cache:
             _release_cuda_cache()
-
-
-def _stream_encode_and_upsert_codebase(request: CodebaseStreamRequest) -> None:
-    """Encode and publish an in-memory code chunk set in bounded slices."""
-    from ..config._settings import get_config
-    from ..memory_probe import MemoryProbe
-
-    cfg = get_config()
-    encode_batch_size = int(cfg.embedding_code_encode_batch_size)
-    flush_slices = max(1, int(cfg.index_cache_flush_slices))
-    sorted_chunks = sorted(request.chunks, key=lambda chunk: -len(chunk.content))
-    request.store.disk_headroom_preflight(len(sorted_chunks))
-
-    with MemoryProbe(name="codebase-full-index") as probe:
-        request.reporter.phase_start("embed + upsert chunks", len(sorted_chunks))
-        try:
-            for slice_index, offset in enumerate(
-                range(0, len(sorted_chunks), request.slice_size)
-            ):
-                request.run_control.checkpoint()
-                slice_chunks = sorted_chunks[offset : offset + request.slice_size]
-                probe.checkpoint(f"slice-{offset}-before-encode")
-                is_last = offset + request.slice_size >= len(sorted_chunks)
-                release = is_last or (slice_index + 1) % flush_slices == 0
-                encode_and_upsert_code_slice(
-                    CodeSliceRequest(
-                        chunks=slice_chunks,
-                        model=request.model,
-                        store=request.store,
-                        gpu_lock=request.gpu_lock,
-                        release_cache=release,
-                        encode_batch_size=encode_batch_size,
-                        run_control=request.run_control,
-                        reuse=request.reuse,
-                    )
-                )
-                probe.checkpoint(f"slice-{offset}-after-empty-cache")
-                request.reporter.advance(len(slice_chunks))
-                request.run_control.checkpoint()
-        finally:
-            request.reporter.phase_end()
-
-    if probe.samples:
-        logger.info("%s", probe.report())

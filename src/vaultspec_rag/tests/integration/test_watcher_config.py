@@ -19,10 +19,11 @@ import pytest
 from ... import server
 from ...config._settings import get_config
 from ...config._types import EnvVar
-from ...registry import get_registry, reset_registry
+from ...registry import get_registry
 from ...server import WatcherStartOutcome
 from ...watcher_intake import watch_and_reindex
 from .._config_fixtures import reset_config
+from .._state_fixtures import reset_registry
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator

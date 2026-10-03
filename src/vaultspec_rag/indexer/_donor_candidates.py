@@ -34,7 +34,7 @@ import json
 import logging
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypedDict, Unpack
+from typing import TYPE_CHECKING, TypedDict, Unpack
 
 from .. import store_schema
 from .._git_repository import git_common_dir
@@ -84,7 +84,6 @@ __all__ = [
     "current_model_identity",
     "evaluate_donor_eligibility",
     "expected_vector_schema",
-    "index_meta_source",
     "iter_donor_candidates",
     "read_donor_recorded_state",
 ]
@@ -115,22 +114,6 @@ class CollectionKind(enum.Enum):
         if self is CollectionKind.CODE:
             return store_schema.CODE_COLLECTION
         return store_schema.DOCUMENT_COLLECTION
-
-
-def index_meta_source(
-    kind: Literal[CollectionKind.CODE, CollectionKind.VAULT],
-) -> Literal[PublicSourceType.CODE, PublicSourceType.VAULT]:
-    """Return the public source vocabulary member naming *kind*'s corpus.
-
-    Two vocabularies describe the same corpora: a collection kind names what a
-    namespace stores, a public source type names what a caller asked for. Any
-    holder of a kind that needs a reader keyed by source has to cross between
-    them. The type excludes documents because this helper is retained only by
-    the code and vault call sites.
-    """
-    return (
-        PublicSourceType.CODE if kind is CollectionKind.CODE else PublicSourceType.VAULT
-    )
 
 
 class IneligibilityReason(enum.Enum):

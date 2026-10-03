@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING
 import pytest
 
 from .._store_models import (
-    VAULT_BODY_PAYLOAD_KEYS,
     VAULT_STRUCTURAL_PAYLOAD_KEYS,
     VaultDocument,
     _vault_chunk_payload,
@@ -34,6 +33,9 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
+
+#: Payload keys that carry a document's body rather than its metadata.
+_VAULT_BODY_PAYLOAD_KEYS = frozenset({"content", "doc_content"})
 
 
 def _doc() -> VaultDocument:
@@ -65,7 +67,7 @@ class TestSubsetPartitionsThePayload:
         doc = _doc()
         accounted = (
             set(vault_indexed_metadata(doc))
-            | VAULT_BODY_PAYLOAD_KEYS
+            | _VAULT_BODY_PAYLOAD_KEYS
             | VAULT_STRUCTURAL_PAYLOAD_KEYS
         )
         unaccounted = set(vault_doc_payload(doc)) - accounted
@@ -80,7 +82,7 @@ class TestSubsetPartitionsThePayload:
         chunk = split_document(doc, chunk_chars=64)[0]
         accounted = (
             set(vault_indexed_metadata(doc))
-            | VAULT_BODY_PAYLOAD_KEYS
+            | _VAULT_BODY_PAYLOAD_KEYS
             | VAULT_STRUCTURAL_PAYLOAD_KEYS
         )
         unaccounted = set(_vault_chunk_payload(chunk)) - accounted

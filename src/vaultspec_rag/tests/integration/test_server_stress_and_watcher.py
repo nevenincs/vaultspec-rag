@@ -15,7 +15,7 @@ import pytest
 
 from ... import _job_values, jobs, server
 from ..._store_search import HybridSearchRequest
-from ...concurrency import get_encode_limiter, reset_limiters
+from ...concurrency import get_encode_limiter
 from ...config._settings import get_config
 from ...indexer._vault_prep import prepare_document
 from ...job_models import (
@@ -26,7 +26,7 @@ from ...job_models import (
     ResumeStrategy,
 )
 from ...progress import NullProgressReporter
-from ...registry import get_registry, reset_registry
+from ...registry import get_registry
 from ...server import WatcherStartOutcome
 from ...server import _watcher as watcher_lifecycle
 from ...watcher_retry import (
@@ -35,6 +35,7 @@ from ...watcher_retry import (
 from ...watcher_retry_policy import (
     WatcherRetryPolicy,
 )
+from .._state_fixtures import reset_limiters, reset_registry
 from ._watcher_test_support import pending_code_observation, seed_vault_publication
 
 if TYPE_CHECKING:

@@ -26,7 +26,6 @@ from ._render import (
 )
 
 __all__ = [
-    "_truncate_root",
     "service_projects_list",
     "service_projects_unload",
 ]
@@ -67,12 +66,6 @@ def _humanize_duration(seconds: int) -> str:
     if minutes:
         return f"{_counted_unit(hours, 'hour')} {_counted_unit(minutes, 'minute')}"
     return _counted_unit(hours, "hour")
-
-
-def _truncate_root(root: str, width: int = 60) -> str:
-    if len(root) <= width:
-        return root
-    return "…" + root[-(width - 1) :]
 
 
 def _handle_list_not_running(json_mode: bool, port: int | None = None) -> NoReturn:

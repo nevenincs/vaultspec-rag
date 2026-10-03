@@ -31,7 +31,6 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ROOT_COLLECTION_PREFIX_RE",
-    "VAULT_BODY_PAYLOAD_KEYS",
     "VAULT_CHUNK_ONLY_PAYLOAD_KEYS",
     "VAULT_STRUCTURAL_PAYLOAD_KEYS",
     "CodeChunk",
@@ -372,11 +371,6 @@ class CodeChunk:
     locator_end_int: int | None = None
     locator_end_str: str | None = None
 
-
-#: Vault payload keys carrying the document body verbatim. A change to any of
-#: them is a body change by definition, so they are covered by the body digest
-#: rather than the metadata digest and must never enter the subset below.
-VAULT_BODY_PAYLOAD_KEYS: Final = frozenset({"content", "doc_content"})
 
 #: Vault payload keys that address a point rather than describe its document.
 #: They are derived from the document's identity, its body and its chunk
