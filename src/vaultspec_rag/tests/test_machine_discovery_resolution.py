@@ -188,7 +188,7 @@ class TestTypedMachineResolution:
         assert resolution.state == DISCOVERY_STATE_ABSENT
         assert resolution.source == DISCOVERY_SOURCE_NONE
         assert resolution.is_ready is False
-        assert resolution.is_degraded is False
+        assert resolution.state != DISCOVERY_STATE_DEGRADED
         assert resolution.port is None
         assert resolution.reason is None
 
@@ -226,7 +226,7 @@ class TestTypedMachineResolution:
         assert resolution.reason == DISCOVERY_REASON_POINTER_MISSING
         assert resolution.holder_pid == os.getpid()
         assert resolution.port is None
-        assert resolution.is_degraded is True
+        assert resolution.state == DISCOVERY_STATE_DEGRADED
 
     def test_unparseable_pointer_is_degraded(self) -> None:
         """Corrupt pointer bytes under a live holder never resolve an address."""

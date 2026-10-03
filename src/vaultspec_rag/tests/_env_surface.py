@@ -132,7 +132,7 @@ def template_assignments() -> list[tuple[int, str, str]]:
     return found
 
 
-def _is_test_module(path: Path) -> bool:
+def is_test_module(path: Path) -> bool:
     relative = path.relative_to(REPO_ROOT)
     if not _SKIPPED_PARTS.isdisjoint(relative.parts):
         return True
@@ -353,7 +353,7 @@ def source_surface() -> Surface:
     for path in _candidate_files():
         if not path.is_file() or not _is_source(path):
             continue
-        if _is_test_module(path):
+        if is_test_module(path):
             continue
         relative = path.relative_to(REPO_ROOT).as_posix()
         text = path.read_text(encoding="utf-8")

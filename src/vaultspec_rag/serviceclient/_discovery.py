@@ -496,11 +496,6 @@ class MachineResolution:
         """Whether this resolution carries a usable service address."""
         return self.state == DISCOVERY_STATE_READY and self.port is not None
 
-    @property
-    def is_degraded(self) -> bool:
-        """Whether a live holder exists whose published pointer was refused."""
-        return self.state == DISCOVERY_STATE_DEGRADED
-
     def evidence(self) -> str:
         """Render a one-line operator-facing account of this resolution."""
         if self.state == DISCOVERY_STATE_READY:

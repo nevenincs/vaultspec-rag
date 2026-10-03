@@ -30,7 +30,6 @@ if TYPE_CHECKING:
 
     from ..config._types import PreprocessMode
     from ._content_policy import ContentKind, RootContentPolicy
-    from ._preprocess_config import PreprocessRule
     from ._resolved_policy import ResolvedPreprocessRule
 
 __all__ = [
@@ -155,11 +154,6 @@ def _digest(payload: object) -> str:
         default=str,
     )
     return hashlib.blake2b(canonical.encode("utf-8")).hexdigest()
-
-
-def _preprocess_patterns(rules: Sequence[PreprocessRule]) -> list[str]:
-    """Return the rule patterns in resolved-precedence order."""
-    return [rule.pattern for rule in rules]
 
 
 def resolved_policy_fingerprints(

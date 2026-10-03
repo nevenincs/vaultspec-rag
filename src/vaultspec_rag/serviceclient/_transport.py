@@ -70,7 +70,6 @@ if TYPE_CHECKING:
     # Annotation-only, so the client does not import the domain at runtime.
     from ..indexer._run_ledger_models import RunAuthority
     from ..job_models import DesiredJobState, JobMode, JobSource
-    from ._discovery import MachineResolution
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +78,6 @@ __all__ = [
     "DEFAULT_REINDEX_TIMEOUT_SECONDS",
     "DEFAULT_SEARCH_TIMEOUT_SECONDS",
     "MAX_SERVICE_RESPONSE_BYTES",
-    "ServiceUnavailableError",
     "_do_http_call",
     "_get_admin_timeout",
     "_is_connection_refused",
@@ -294,35 +292,6 @@ class SearchCallRequest:
     like_ids: list[str | int] | None = None
     unlike_ids: list[str | int] | None = None
     document_filters: DocumentSearchFilters | None = None
-
-
-class ServiceUnavailableError(RuntimeError):
-    """No usable service address, carrying the discovery evidence behind it.
-
-    Raised instead of returning a bare "service down": a live singleton holder
-    whose published address cannot be trusted is a different operator problem
-    from a machine with nothing running, and the caller cannot tell them apart
-    from an absent port alone.
-    """
-
-    def __init__(self, resolution: MachineResolution) -> None:
-        self.resolution = resolution
-        super().__init__(resolution.evidence())
-
-    @property
-    def is_degraded(self) -> bool:
-        """Whether a live holder exists whose publication was refused."""
-        return self.resolution.is_degraded
-
-    @property
-    def reason(self) -> str | None:
-        """The named refusal reason, when the resolution was degraded."""
-        return self.resolution.reason
-
-    @property
-    def holder_pid(self) -> int:
-        """The live singleton holder, or zero when none is held."""
-        return self.resolution.holder_pid
 
 
 class ServiceResponseTooLargeError(ValueError):
