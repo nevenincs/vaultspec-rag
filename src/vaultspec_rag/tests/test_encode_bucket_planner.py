@@ -15,12 +15,10 @@ from ..embeddings import (
     EncodeBucketProgress,
     plan_encode_buckets,
 )
-from ._embeddings_fixtures import encode_documents
 
 if TYPE_CHECKING:
     from types import ModuleType
 
-    import numpy as np
     import torch
     from sentence_transformers import SentenceTransformer
 
@@ -264,8 +262,9 @@ class _BucketRecordingDenseModel:
 
     ``oom_on_first`` names text lists whose first encode attempt raises a
     simulated CUDA OOM; any later attempt (a replanned smaller bucket)
-    succeeds. Each returned row carries its input text's length so tests
-    can prove row-to-input alignment across bucket boundaries.
+    succeeds. ``gpu_lock``, when supplied, must be held for the duration
+    of every forward. Each returned row carries its input text's length
+    so tests can prove row-to-input alignment across bucket boundaries.
     """
 
     def __init__(
@@ -273,47 +272,12 @@ class _BucketRecordingDenseModel:
         oom_on_first: list[list[str]] | None = None,
         *,
         oom_error: type[BaseException] | None = None,
+        gpu_lock: threading.Lock | None = None,
     ) -> None:
         self.calls: list[list[str]] = []
         self.batch_sizes: list[int] = []
         self._oom_pending = [list(entry) for entry in (oom_on_first or [])]
         self._oom_error = oom_error
-
-    def encode(
-        self,
-        texts: list[str],
-        *,
-        batch_size: int,
-        show_progress_bar: bool,
-        normalize_embeddings: bool,
-    ) -> np.ndarray:
-        # Mirrors the production call site's keyword set; a double that
-        # accepts only batch_size fails on the call rather than on the
-        # behaviour the test is actually about.
-        del show_progress_bar, normalize_embeddings
-        import numpy as np
-        import torch
-
-        self.calls.append(list(texts))
-        self.batch_sizes.append(batch_size)
-        if list(texts) in self._oom_pending:
-            self._oom_pending.remove(list(texts))
-            if self._oom_error is not None:
-                raise self._oom_error("simulated allocator OOM")
-            raise torch.cuda.OutOfMemoryError("simulated CUDA OOM")
-        return np.array([[float(len(t))] * 2 for t in texts], dtype=np.float32)
-
-
-class _LockAssertingTensorDenseModel:
-    """Tensor-returning dense double that requires the GPU lock be held.
-
-    Exercises the on-device output mode: the production call passes the
-    tensor-retention keywords, and each bucket's forward must run inside
-    its own hold of the supplied lock.
-    """
-
-    def __init__(self, gpu_lock: threading.Lock) -> None:
-        self.calls: list[list[str]] = []
         self._gpu_lock = gpu_lock
 
     def encode(
@@ -325,12 +289,22 @@ class _LockAssertingTensorDenseModel:
         normalize_embeddings: bool,
         **retention: bool,
     ) -> torch.Tensor:
-        del batch_size, show_progress_bar, normalize_embeddings
+        # Mirrors the production call site's keyword set; a double that
+        # accepts only batch_size fails on the call rather than on the
+        # behaviour the test is actually about.
+        del show_progress_bar, normalize_embeddings
         assert retention == {"convert_to_numpy": False, "convert_to_tensor": True}
         import torch
 
-        assert self._gpu_lock.locked(), "bucket forward ran outside the GPU lock"
+        if self._gpu_lock is not None:
+            assert self._gpu_lock.locked(), "bucket forward ran outside the GPU lock"
         self.calls.append(list(texts))
+        self.batch_sizes.append(batch_size)
+        if list(texts) in self._oom_pending:
+            self._oom_pending.remove(list(texts))
+            if self._oom_error is not None:
+                raise self._oom_error("simulated allocator OOM")
+            raise torch.cuda.OutOfMemoryError("simulated CUDA OOM")
         return torch.tensor([[float(len(t))] * 2 for t in texts])
 
 
@@ -408,19 +382,19 @@ class TestBucketedDenseEncode:
         fake = _BucketRecordingDenseModel()
         model = _model_shell(token_budget=100)
         model._dense_model = cast("SentenceTransformer", fake)
-        result = encode_documents(model, texts)
+        result = model.encode_documents_on_device(texts)
         assert fake.calls == [texts[0:2], texts[2:4]]
         # The bucket is handed over as a single library sub-batch, so the
         # library's internal loop degenerates to exactly one forward.
         assert fake.batch_sizes == [2, 2]
-        assert result.shape == (4, 2)
+        assert tuple(result.shape) == (4, 2)
 
     def test_oom_discards_only_the_failing_bucket(self):
         texts = _distinct_texts(6)
         fake = _BucketRecordingDenseModel(oom_on_first=[texts[2:4]])
         model = _model_shell(token_budget=100)
         model._dense_model = cast("SentenceTransformer", fake)
-        result = encode_documents(model, texts)
+        result = model.encode_documents_on_device(texts)
         # Catches the retry scope regressing from the bucket to the whole
         # call: a slice-wide retry discards completed outputs and replans
         # from the first text, so the completed [t0, t1] bucket shows up
@@ -436,14 +410,17 @@ class TestBucketedDenseEncode:
             [texts[4]],
             [texts[5]],
         ]
-        # Every input still comes back exactly once, in input order.
-        # ndarray.tolist() stubs to Any; `result` is the (N, 2) array the
-        # dense double above returns, so each row is genuinely `list[float]`.
-        rows = cast("list[list[float]]", result.tolist())
-        assert [row[0] for row in rows] == [200.0] * 6
+        # Every input still comes back exactly once, in input order. The
+        # result stays a tensor, so read the first column back element-wise,
+        # which is typed, rather than through the untyped whole-tensor
+        # ``tolist``.
+        first_column = [float(result[index][0].item()) for index in range(len(texts))]
+        assert first_column == [200.0] * 6
 
     def test_mps_oom_retries_and_releases_the_mps_cache(self):
         from types import SimpleNamespace
+
+        import torch
 
         from .._gpu import AcceleratorContext
 
@@ -464,7 +441,11 @@ class TestBucketedDenseEncode:
         model._accelerator = AcceleratorContext(
             torch=cast(
                 "ModuleType",
-                SimpleNamespace(mps=mps, OutOfMemoryError=MpsOutOfMemoryError),
+                SimpleNamespace(
+                    mps=mps,
+                    OutOfMemoryError=MpsOutOfMemoryError,
+                    cat=torch.cat,
+                ),
             ),
             backend="mps",
             device="mps",
@@ -473,9 +454,9 @@ class TestBucketedDenseEncode:
         )
         model._dense_model = cast("SentenceTransformer", fake)
 
-        result = encode_documents(model, texts)
+        result = model.encode_documents_on_device(texts)
 
-        assert result.shape == (4, 2)
+        assert tuple(result.shape) == (4, 2)
         assert cache_releases == [None]
         assert fake.calls == [texts[0:2], texts[2:4], [texts[2]], [texts[3]]]
 
@@ -487,7 +468,7 @@ class TestBucketedDenseEncode:
         model = _model_shell(token_budget=100)
         model._dense_model = cast("SentenceTransformer", fake)
         with pytest.raises(torch.cuda.OutOfMemoryError):
-            encode_documents(model, texts)
+            model.encode_documents_on_device(texts)
         # A one-text bucket cannot shrink, so there is no retry attempt.
         assert fake.calls == [texts[0:1]]
 
@@ -496,9 +477,9 @@ class TestBucketedDenseEncode:
         fake = _BucketRecordingDenseModel(oom_on_first=[texts[2:4]])
         model = _model_shell(token_budget=100)
         model._dense_model = cast("SentenceTransformer", fake)
-        encode_documents(model, texts)
+        model.encode_documents_on_device(texts)
         first_call_count = len(fake.calls)
-        encode_documents(model, texts)
+        model.encode_documents_on_device(texts)
         # Catches the ceiling resetting between calls: an unclamped second
         # call would replan two-item 100-token buckets and rediscover the
         # OOM; under the learned 50-token ceiling it plans single-item
@@ -511,34 +492,32 @@ class TestBucketedDenseEncode:
         fake = _BucketRecordingDenseModel()
         model = _model_shell(token_budget=100)
         model._dense_model = cast("SentenceTransformer", fake)
-        result = encode_documents(model, texts)
+        result = model.encode_documents_on_device(texts)
         # Estimates 75/50/25/13 plan buckets [t0], [t1, t2], [t3]; the
         # concatenated rows must still follow the input order.
         assert fake.calls == [texts[0:1], texts[1:3], texts[3:4]]
-        # See the same ndarray.tolist() note above.
-        rows = cast("list[list[float]]", result.tolist())
-        assert [row[0] for row in rows] == [float(n) for n in lengths]
+        # See the same element-wise note above.
+        first_column = [float(result[index][0].item()) for index in range(len(texts))]
+        assert first_column == [float(n) for n in lengths]
 
     def test_empty_input_is_one_library_call(self):
         fake = _BucketRecordingDenseModel()
         model = _model_shell()
         model._dense_model = cast("SentenceTransformer", fake)
-        result = encode_documents(model, [])
+        result = model.encode_documents_on_device([])
         assert fake.calls == [[]]
         assert result.shape[0] == 0
 
-    def test_on_device_buckets_hold_the_gpu_lock_and_concatenate(self):
+    def test_bucket_forwards_hold_the_gpu_lock_and_release_it(self):
         gpu_lock = threading.Lock()
-        fake = _LockAssertingTensorDenseModel(gpu_lock)
+        fake = _BucketRecordingDenseModel(gpu_lock=gpu_lock)
         model = _model_shell(token_budget=100)
         model._dense_model = cast("SentenceTransformer", fake)
         texts = _distinct_texts(4)
         result = model.encode_documents_on_device(texts, gpu_lock=gpu_lock)
         assert fake.calls == [texts[0:2], texts[2:4]]
         assert not gpu_lock.locked()
-        # The on-device result stays a tensor: read the first column back
-        # element-wise, which is typed, rather than through the untyped
-        # whole-tensor ``tolist``.
+        # The concatenated result still carries every bucket's rows.
         first_column = [float(result[index][0].item()) for index in range(len(texts))]
         assert first_column == [200.0] * 4
 
@@ -552,12 +531,7 @@ class TestBucketedDenseEncode:
         def observe(phase: str, progress: EncodeBucketProgress) -> None:
             events.append((phase, progress))
 
-        model._encode_documents_output(
-            texts,
-            batch_size=None,
-            retain_on_device=False,
-            on_bucket=observe,
-        )
+        model.encode_documents_on_device(texts, on_bucket=observe)
         _assert_bucket_retry_progress(events, kind="dense")
 
 
@@ -574,7 +548,7 @@ class TestBucketedSparseEncode:
         model._sparse_encode_token_budget = 50
         model._dense_model = cast("SentenceTransformer", dense)
         model._sparse_model = cast("SparseModelAdapter", sparse)
-        encode_documents(model, texts, batch_size=4)
+        model.encode_documents_on_device(texts, batch_size=4)
         model.encode_documents_sparse(texts, batch_size=4)
         # Mutation proof: using the dense budget for sparse failed; restored passed.
         assert dense.calls == [texts]
@@ -781,7 +755,7 @@ class TestBucketedSparseEncode:
         model._sparse_model = cast("SparseModelAdapter", sparse_fake)
         model._dense_model = cast("SentenceTransformer", dense_fake)
         model.encode_documents_sparse(texts)
-        encode_documents(model, texts)
+        model.encode_documents_on_device(texts)
         # The sparse OOM must not clamp the dense budget: dense still
         # plans full two-item 100-token buckets.
         assert dense_fake.calls == [texts[0:2], texts[2:4]]

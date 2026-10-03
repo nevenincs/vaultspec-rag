@@ -6,8 +6,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from .._embeddings_fixtures import encode_documents
-
 if TYPE_CHECKING:
     from ...embeddings import EmbeddingModel, SparseResult
     from ..conftest import RagComponentsWithManifest
@@ -30,7 +28,7 @@ class TestEmbeddingModel:
     ) -> None:
         model = rag_components["model"]
         texts = ["This is a test document about architecture decisions."]
-        vectors = encode_documents(model, texts)
+        vectors = model.encode_documents_on_device(texts)
         assert vectors.shape[0] == 1
         assert vectors.shape[1] == model.dimension
 
@@ -49,10 +47,13 @@ class TestEmbeddingModel:
 
         model = rag_components["model"]
 
-        doc_vec = encode_documents(
-            model,
-            ["LanceDB is an embedded vector database for semantic search"],
-        )[0]
+        doc_vec = (
+            model.encode_documents_on_device(
+                ["LanceDB is an embedded vector database for semantic search"],
+            )[0]
+            .cpu()
+            .numpy()
+        )
         related_query = model.encode_query("vector database for search")
         unrelated_query = model.encode_query("chocolate cake recipe")
 
@@ -73,7 +74,7 @@ class TestEmbeddingModel:
             "Second document about testing.",
             "Third document about performance.",
         ]
-        vectors = encode_documents(model, texts, batch_size=2)
+        vectors = model.encode_documents_on_device(texts, batch_size=2)
         assert vectors.shape[0] == 3
         assert vectors.shape[1] == model.dimension
 

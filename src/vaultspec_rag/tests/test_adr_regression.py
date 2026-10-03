@@ -964,7 +964,7 @@ class TestEncodeRecoveryStaysBounded:
 
         from .. import embeddings
 
-        encode_paths = ("_encode_documents_output", "encode_documents_sparse")
+        encode_paths = ("encode_documents_on_device", "encode_documents_sparse")
         tree = ast.parse(inspect.getsource(embeddings))
         functions = {
             node.name: node

@@ -16,7 +16,6 @@ import pytest
 
 from ...config._types import EnvVar
 from .._config_fixtures import reset_config
-from .._embeddings_fixtures import encode_documents
 
 
 @pytest.mark.integration
@@ -35,7 +34,7 @@ class TestDenseBackendFallback:
             # construction fails and the loader must degrade to torch.
             with caplog.at_level(logging.WARNING, logger="vaultspec_rag.embeddings"):
                 model = EmbeddingModel()
-            vecs = encode_documents(model, ["def f(x):\n    return x + 1\n"])
+            vecs = model.encode_documents_on_device(["def f(x):\n    return x + 1\n"])
             assert vecs.shape[0] == 1
             assert vecs.shape[1] == model.dimension
             # Pin the test to the fallback path: a future ONNX dep must not
