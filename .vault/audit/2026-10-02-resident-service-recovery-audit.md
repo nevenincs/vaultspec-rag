@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:921600264831521e7404b54bbc06c6db4f83de9c38d18df931d33ec6d756a871'
+body_hash: 'sha256:d43ca3c6da4c4bd34499ae250911c786e95a07265edede5baa11e8c4af748d2c'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -471,3 +471,11 @@ Every lazy proof capture from an async HTTP route uses the existing thread/searc
 The seven production and four test files are frozen. Ruff, format, basedpyright and ty pass; 38 focused and 141 affected CPU cases pass. Twenty actual production mutations fail their named assertions, finally restore and pass fresh, with 39 declared dependency hashes stable. The S33 production phase omission proof remains valid with its 12 dependencies unchanged. Independent Sol xhigh source/evidence review passes and root package Ruff/format/diff/full complexity gates pass. Exact source/evidence hashes and commands are retained in `s34-proof/handoff.json` and `perf-profiling/s34-final-shared-gates.json`. Final runtime acceptance remains required after the combined source reload.
 
 Read-only native metrics from the same resident/backend lifetime report 400 payload-overwrite requests and cumulative response-duration sum 2.967939 seconds; these include the measured 359-chunk refresh, so the 27.502-second phase includes substantial work outside those reported native request durations. This does not assign that remainder solely to network. Ten idle control calls show native health median0.000675 seconds/max0.017429 and quiesced resident health median0.029677/max0.045900. These tiny health controls are distinct from payload writes and active search. S37 is testing bounded operation batching against real local storage. The owned CI restoration deadline is extended to 11:00 UTC to cover the final guarded reload, measured interrupted TUI rebuild and trusted deployment, with the existing timed restoration retained.
+
+## S37 formal source checkpoint and integrated source review
+
+S37 replaces one request per VAULT chunk payload with sequential ordered full-overwrite operations bounded by the existing embedding batch size (64 by default), frozen once per call. Each operation retains its canonical payload and stable point ID. The existing caller deadline, disk-headroom checks, collection policy and retry owner remain intact. Exact result cardinality and COMPLETED status for every operation are required inside retry before returning to the unchanged per-document applied/confirmed ledger boundary; acknowledged, waiting or short results cannot advance it. Partial replay remains idempotent and vectors are unchanged.
+
+Real QdrantLocal storage verifies 359 chunks in one fixture require six requests, capped at 64 operations, and multiple document boundaries remain independent. This request-count reduction does not yet establish live throughput. The frozen two-file handoff records 10 focused and 60 affected CPU passes, Ruff/format/strict typing exits zero and eight actual in-memory production guards with named failure, finally restoration and fresh normal success. All 30 declared dependencies and five artifact hashes bind the independent Sol xhigh review. Root package lint, format, diff and complexity gates pass; the final combined VAULT publication/progress/batching CPU interaction check passes. Evidence is in `s37-proof/handoff.json`, `perf-profiling/s37-final-shared-gates.json` and `perf-profiling/s37-final-publication-interaction.log`.
+
+Independent integrated S29–S37 source review passes with no findings. Existing generation/proof/controller fences, deletion authority, bounded work, actual CUDA enforcement, storage-before-ledger ordering and admitted worker ownership remain intact. The source boundary is complete; S04 remains open for measured combined reload, interrupted publication recovery, final current physical/readiness acceptance and trusted fleet runtime deployment.

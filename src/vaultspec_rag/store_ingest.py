@@ -251,22 +251,47 @@ class _VaultIngestMixin:
         if not chunks:
             return
 
+        from qdrant_client import models
+
+        from .config._settings import get_config
+
+        batch_size = max(1, int(get_config().embedding_batch_size))
         ensure_disk_headroom(self._storage_probe_path)
         self.ensure_table()
         description = f"overwrite vault chunk payload in {self.TABLE_NAME}"
         with self._point_write_lock(self.TABLE_NAME, write_policy):
-            for chunk in chunks:
-                payload = cast("dict[str, Any]", _vault_chunk_payload(chunk))
-                point_id = self._stable_id(chunk.point_key)
-                run_store_operation_with_retry(
-                    lambda attempt_timeout, payload=payload, point_id=point_id: (
-                        self.client.overwrite_payload(
-                            collection_name=self.TABLE_NAME,
-                            payload=payload,
-                            points=[point_id],
-                            timeout=attempt_timeout,
+            for start in range(0, len(chunks), batch_size):
+                operations = [
+                    models.OverwritePayloadOperation(
+                        overwrite_payload=models.SetPayload(
+                            payload=cast("dict[str, Any]", _vault_chunk_payload(chunk)),
+                            points=[self._stable_id(chunk.point_key)],
                         )
-                    ),
+                    )
+                    for chunk in chunks[start : start + batch_size]
+                ]
+
+                def attempt(
+                    attempt_timeout: int,
+                    current: list[models.OverwritePayloadOperation] = operations,
+                ) -> None:
+                    results = self.client.batch_update_points(
+                        collection_name=self.TABLE_NAME,
+                        update_operations=current,
+                        wait=True,
+                        timeout=attempt_timeout,
+                    )
+                    if len(results) != len(current) or any(
+                        result.status is not models.UpdateStatus.COMPLETED
+                        for result in results
+                    ):
+                        raise IngestVerificationError(
+                            f"payload overwrite in {self.TABLE_NAME} did not confirm "
+                            f"all {len(current)} operation(s) as completed"
+                        )
+
+                run_store_operation_with_retry(
+                    attempt,
                     description=description,
                     policy=write_policy,
                 )

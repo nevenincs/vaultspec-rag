@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:4e9b704fbbb61e0e85feeec672c01426aa2eb97ff3df2e537eb120693546218c'
+body_hash: 'sha256:414564ae43829a3048499712a18f6503ce3c34aa32cc75de14a22a23fd3c4298'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -685,6 +685,15 @@ related:
 - `S34` `verify:` `independent Sol xhigh S34 review binding39dependencies and54artifacts` -> `pass`
 - `S34` `verify:` `root package Ruff/format/diff/full complexity gates` -> `pass`
 - `S34` `by:` `root`
+- `S37` `M` `src/vaultspec_rag/store_ingest.py`
+- `S37` `A` `src/vaultspec_rag/tests/test_vault_payload_batching.py`
+- `S37` `M` `.vault/audit/2026-10-02-resident-service-recovery-audit.md`
+- `S37` `verify:` `python s37-proof/verify.py` -> `pass`
+- `S37` `verify:` `python s37-proof/guards.py` -> `pass`
+- `S37` `verify:` `python perf-profiling/shared_gates.py s37-final` -> `pass`
+- `S37` `verify:` `python -m pytest test_vault_readiness_publication.py test_vault_progress_phases.py test_vault_payload_batching.py` -> `pass`
+- `S37` `verify:` `Independent Sol xhigh S37 and integrated S29-S37 source review` -> `pass`
+- `S37` `by:` `root`
 
 ## Notes
 
