@@ -170,6 +170,27 @@ def _classify_watcher_changes(
     return _WatcherEventBatch(tuple(classified))
 
 
+def _filter_watcher_changes(
+    changes: Iterable[tuple[Change, str]],
+    *,
+    routing: WatcherChangeRouting,
+) -> set[tuple[Change, str]]:
+    """Select the intake paths admitted by one immutable policy snapshot."""
+    return {
+        (change_type, path)
+        for change_type, path in changes
+        if (
+            is_vault_change(Path(path), routing.vault_dir)
+            or is_code_change(
+                Path(path), routing.root_dir, routing.vault_dir, routing.policy
+            )
+            or is_document_change(
+                Path(path), routing.root_dir, routing.vault_dir, routing.policy
+            )
+        )
+    }
+
+
 def _deleted_prior_owners(
     path: Path,
     *,
@@ -558,21 +579,14 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
         This coroutine does not propagate exceptions from indexing.
         Indexing errors are caught and logged via ``logger.exception``.
     """
-    # Only the two the ``watch_filter`` closure reads on every path event are
-    # bound locally; every other input is read off the configuration where it
-    # is used.
     root_dir = configuration.root_dir
-    vault_dir = configuration.vault_dir
     routing, bindings = await _initialize_watcher_bindings(configuration)
     resolved_root = routing.root_dir
     # One immutable snapshot governs ordinary watcher intake until an
-    # index-shaping control event advances the watcher generation. The list is
-    # a closure cell shared with ``watch_filter``; invalid policy edits retain
-    # the prior intake snapshot while the unconditional control-file event is
-    # still sent to the indexer, whose entry gate then fails closed.
-    code_policy: list[ResolvedIndexPolicy | None] = [
-        _refresh_policy_snapshot(root_dir, None)
-    ]
+    # index-shaping control event advances the watcher generation. Invalid
+    # policy edits retain the prior intake snapshot while the unconditional
+    # control-file event still reaches the indexer's fail-closed entry gate.
+    code_policy = _refresh_policy_snapshot(root_dir, None)
 
     try:
         async for changes in awatch(
@@ -580,21 +594,29 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
             debounce=configuration.debounce,
             rust_timeout=_WATCH_STOP_CHECK_MS,
             stop_event=configuration.stop_event,
-            watch_filter=lambda _change, path: (
-                is_vault_change(Path(path), vault_dir)
-                or is_code_change(Path(path), root_dir, vault_dir, code_policy[0])
-                or is_document_change(Path(path), root_dir, vault_dir, code_policy[0])
-            ),
+            watch_filter=None,
         ):
+            changes = await _run_in_thread(
+                partial(
+                    _filter_watcher_changes,
+                    changes,
+                    routing=replace(routing, policy=code_policy),
+                )
+            )
+            if not changes:
+                continue
             policy_changed = any(
                 Path(path_str).name in CONFIG_FILENAMES
                 for _change_type, path_str in changes
             )
             if policy_changed:
-                code_policy[0] = _refresh_policy_snapshot(root_dir, code_policy[0])
-            batch = _classify_watcher_changes(
-                changes,
-                routing=replace(routing, policy=code_policy[0]),
+                code_policy = _refresh_policy_snapshot(root_dir, code_policy)
+            batch = await _run_in_thread(
+                partial(
+                    _classify_watcher_changes,
+                    changes,
+                    routing=replace(routing, policy=code_policy),
+                )
             )
 
             cancellation_requested = await _persist_and_observe_batch(

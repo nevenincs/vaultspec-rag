@@ -574,9 +574,15 @@ class RunCheckpointBase:
 
     @contextmanager
     def preserve_incomplete_generation(self) -> Generator[None]:
-        """Classify an interrupted attempt without hiding its original failure."""
+        """Preserve interrupted work and scope an idle ledger handle to the attempt.
+
+        The idle handle avoids last-connection WAL cleanup after each writer
+        transaction. It holds no read transaction, and independent writers still
+        commit normally. The context closes the handle on every exit.
+        """
         try:
-            yield
+            with ledger_connection(self.ledger.path):
+                yield
         except BaseException as exc:
             self.generation = classify_interrupted_generation(
                 self.ledger,
