@@ -8,6 +8,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from .. import jobs
+from .._root_identity import canonical_root_key
 from ..job_models import JobSource
 from ..server import ServerRouteRuntime, _watcher, create_http_app
 from ..server._watcher import _WatcherScheduler
@@ -63,7 +64,7 @@ def _register_controller(
     assert scheduler is not None
     controller = WatcherController(
         ControllerSnapshot(
-            canonical_root=str(root),
+            canonical_root=canonical_root_key(root),
             source=source,
             state=state,
             reason=ControllerReason.QUIET_TREE_DEADLINE,
@@ -99,7 +100,7 @@ def test_watcher_route_filters_and_bounds_canonical_envelopes(
     assert body["controllers_total"] == 1
     assert body["controllers_returned"] == 1
     assert body["controllers_truncated"] is False
-    assert body["controllers"][0]["root"] == str(root)
+    assert body["controllers"][0]["root"] == canonical_root_key(root)
     assert body["controllers"][0]["source"] == "code"
     assert body["controllers"][0]["state"] == "ready"
     assert body["controllers"][0]["reason"] == "quiet_tree_deadline"

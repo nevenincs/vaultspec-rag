@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Final
 
 from ._atomic_write import NotDurableError, replace_durably
 from ._job_errors import JobError, JobErrorKind, classify_error_text
+from ._root_identity import canonical_root_key
 from .indexer._publication_proof import ProofProvenance
 from .indexer._run_ledger_models import RunAuthority, RunOperation
 from .job_models import JobMode, JobOperation, JobState
@@ -187,6 +188,20 @@ def _recovery_marker_is_consumable(
     return marker_owner_is_current_process(
         marker
     ) and _same_process_marker_token_is_consumable(token)
+
+
+def _rebuild_matches_watcher(
+    snapshot: JobSnapshot, root: str, source: WatcherSource
+) -> bool:
+    """Require the same explicit full-rebuild root and source authority."""
+    return (
+        snapshot.spec.operation is JobOperation.INDEX
+        and snapshot.spec.mode is JobMode.REBUILD
+        and snapshot.spec.authority is RunAuthority.REBUILD
+        and snapshot.spec.source.value == source.value
+        and snapshot.spec.project_root is not None
+        and canonical_root_key(snapshot.spec.project_root) == root
+    )
 
 
 class WatcherRetryPolicy:
@@ -392,7 +407,7 @@ class WatcherRetryPolicy:
 
         cfg = get_config()
         resolved_root = root.resolve()
-        canonical_root = os.path.normcase(str(resolved_root))
+        canonical_root = canonical_root_key(resolved_root)
         path = resolved_root / cfg.data_dir / STATE_DIRECTORY / f"{source.value}.json"
         return cls(
             path,
@@ -495,15 +510,8 @@ class WatcherRetryPolicy:
         finished = snapshot.timestamps.finished_at
         if (
             snapshot.state is not JobState.SUCCEEDED
-            or snapshot.spec.operation is not JobOperation.INDEX
-            or snapshot.spec.mode is not JobMode.REBUILD
-            or snapshot.spec.authority is not RunAuthority.REBUILD
-            or snapshot.spec.source.value != self._source.value
+            or not _rebuild_matches_watcher(snapshot, self._root, self._source)
             or snapshot.spec.project_root is None
-            or (
-                os.path.normcase(os.path.realpath(snapshot.spec.project_root))
-                != self._root
-            )
             or started is None
             or finished is None
         ):

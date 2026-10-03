@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from .._root_identity import canonical_root_key
 from ..server._watcher import _WatcherScheduler
 from ..watcher_controller import (
     ControllerMeasurement,
@@ -45,7 +46,7 @@ def _controller(
 ) -> WatcherController:
     return WatcherController(
         ControllerSnapshot(
-            canonical_root=str(root.resolve()),
+            canonical_root=canonical_root_key(root),
             source=WatcherSource.CODE,
             state=state,
             reason=ControllerReason.QUIET_TREE_DEADLINE,

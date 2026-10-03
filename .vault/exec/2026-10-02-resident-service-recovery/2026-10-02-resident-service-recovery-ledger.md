@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:2572f77621d0d3ba70e3a64dfe4bd7e20451a9a3fce53ab5b0a2aedfe36c435c'
+body_hash: 'sha256:208d8378cb5a6dee77931e6557058dd7c0a4c695bd4d3b394c567977aa35a68a'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -206,6 +206,24 @@ related:
 - `S18` `verify:` `integrated S18 source and CPU review` -> `pass`
 - `S18` `verify:` `canonical RunLedger retirement exact two damaged unserved generations` -> `pass`
 - `S18` `by:` `root`
+- `S15` `A` `src/vaultspec_rag/_root_identity.py`
+- `S15` `M` `src/vaultspec_rag/watcher_retry_policy.py`
+- `S15` `M` `src/vaultspec_rag/watcher_runtime.py`
+- `S15` `M` `src/vaultspec_rag/server/_watcher.py`
+- `S15` `M` `src/vaultspec_rag/server/_routes_registry.py`
+- `S15` `M` `src/vaultspec_rag/server/_search_readiness.py`
+- `S15` `M` `src/vaultspec_rag/server/_search_availability.py`
+- `S15` `A` `src/vaultspec_rag/tests/test_watcher_root_identity.py`
+- `S15` `M` `src/vaultspec_rag/tests/test_watcher_scheduler.py`
+- `S15` `M` `src/vaultspec_rag/tests/test_watcher_route_projection.py`
+- `S15` `M` `src/vaultspec_rag/tests/test_controller_surface_conformance.py`
+- `S15` `verify:` `package lint and format with frozen S15 hashes` -> `pass`
+- `S15` `verify:` `S15 seven configured changed gates exit0` -> `pass`
+- `S15` `verify:` `S15 focused CPU27 and affected335 cases` -> `pass`
+- `S15` `verify:` `S15 eight production mutation fail restored pass pairs` -> `pass`
+- `S15` `verify:` `S07 three temporal guard pairs refreshed against current predicates` -> `pass`
+- `S15` `verify:` `integrated S15 source and CPU review` -> `pass`
+- `S15` `by:` `root`
 
 ## Notes
 
@@ -213,3 +231,4 @@ related:
 - `S10` An initial mistaken blanket integration invocation issued a canonical drain request and was refused before GPU borrower admission; no GPU lease was granted, service admission was restored, and all final test selections were CPU-only. Live exact linked retries are owned by S04.
 - `S14` Constructor-only integration migrations were strictly checked; GPU integration fixtures were not executed. Live replacement rollout remains S04.
 - `S18` Live monitor missing356 points shares the reproduced drift mechanism; individual attribution of every missing ID remains unproven. Served collections and damaged-build storage were preserved; fresh admitted rebuild verification remains S04.
+- `S15` Malformed embedded-NUL root and `project_root` filters now return bounded `bad_request400;` live Windows path-alias watcher convergence remains S04.

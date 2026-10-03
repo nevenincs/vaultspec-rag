@@ -18,6 +18,7 @@ from starlette.responses import JSONResponse
 import vaultspec_rag.server as _m
 
 from .._error_payload import error_payload
+from .._root_identity import canonical_root_key
 from ._auth import require_token
 from ._runtime import get_request_runtime
 
@@ -92,12 +93,19 @@ async def get_watcher_state_route(request: Request) -> JSONResponse:
         limit = 256
     snapshots, globally_truncated = _controller_snapshots()
     root_filter = request.query_params.get("root") or project_root
+    try:
+        root_key = canonical_root_key(root_filter) if root_filter is not None else None
+        project_key = (
+            canonical_root_key(project_root) if project_root is not None else None
+        )
+    except (OSError, ValueError) as exc:
+        return JSONResponse(error_payload("bad_request", str(exc)), status_code=400)
     source_filter = request.query_params.get("source")
     state_filter = request.query_params.get("state")
     filtered = [
         snapshot
         for snapshot in snapshots
-        if (root_filter is None or snapshot.canonical_root == root_filter)
+        if (root_key is None or snapshot.canonical_root == root_key)
         and (source_filter is None or snapshot.source.value == source_filter)
         and (state_filter is None or snapshot.state.value == state_filter)
     ]
@@ -122,10 +130,8 @@ async def get_watcher_state_route(request: Request) -> JSONResponse:
         },
     }
 
-    if project_root is not None:
-        from pathlib import Path
-
-        state["running"] = str(Path(project_root).resolve()) in roots
+    if project_key is not None:
+        state["running"] = project_key in {canonical_root_key(root) for root in roots}
 
     return JSONResponse(state)
 

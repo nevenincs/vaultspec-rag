@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:3312e5af364b6ad046b73299dd8ccc38a6bfc2d78057158596b880ea325a05c3'
+body_hash: 'sha256:0d66fb4c2833ba7726ff5be9108730f08076d8a10a1e379d478df0c36ed12ff7'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -221,3 +221,9 @@ Independent SOURCE+CPU review passes S18 against four frozen hashes: 85 affected
 At 00:33 UTC, with the resident and managed backend absent and the owned CI hold present, canonical RunLedger APIs invalidated monitor generation81a0c6c67a714492951cef99cec90004 and TUI generation0f2e9d6c33454bfc9246c5393face70d. Original signatures and evidence remain preserved; no served collection or storage was removed. Subsequent actual rebuild generation IDs must differ from both damaged IDs. The accepted drift ADR received a dated implementation clarification for shared chunk identities, preserving its single owner and ordering.
 
 Timed maintenance restoration was extended to 04:30 UTC on 2026-10-03 for reviewed source rollout and fresh large rebuilds, with the same owned hold and cleanup task. Early cleanup remains required once verification finishes. Correct managed backend and service ports8765/8766 were checked unused before canonical retirement and rollout.
+
+## S15 review and additional S16 boundary
+
+Independent SOURCE+CPU review passes final S15:27 focused and335 affected CPU cases, seven recorded changed-file gates exit0, eight production guard fail/fresh-pass pairs including explicit NUL validation, and three refreshed S07 temporal guards against the extracted predicates. All eleven owned hashes match. Real ASGI tests cover Windows path aliases and malformed root/project_root filters, including conflicting valid/invalid filters. The affected suite refreshes S01/S07 recovery and S13 readiness/conformance/availability behavior.
+
+S16 review additionally found archive expiry/size eviction still running while autoprune was disabled. The accepted autoprune decision places archive retention in stage4 of the same configured cycle and declares no independent archive enable; the existing policy documentation promises all destructive stages remain inert when disabled. S16 scope now also gates archive eviction while retaining enabled retention and independently configured reconciliation. Source and CPU review must finish before rollout.

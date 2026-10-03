@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import RLock
@@ -17,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from . import jobs as _jobs
 from ._backoff import capped_exponential
+from ._root_identity import canonical_root_key
 from .job_manager.models import JobExecutionResult  # noqa: TC001
 from .job_models import (
     JobMode,
@@ -501,26 +501,11 @@ async def reconcile_restarted_slot(
         )
     generation = state.attempt_generation
     job_id = state.attempt_job_id
-    if generation is not None and job_id is not None:
-        for completed in manager.terminal():
-            if await asyncio.to_thread(
-                slot.retry_policy.reconcile_rebuild,
-                completed,
-                resolve_abandoned_attempt=True,
-            ):
-                with slot.lock:
-                    slot.pending_paths.update(
-                        slot.root / item.relative_path
-                        for item in slot.retry_policy.state.pending_paths
-                    )
-                return
     if generation is None or job_id is None:
         if state.scope_refusal is not None:
-            for completed in manager.terminal():
-                if await asyncio.to_thread(
-                    slot.retry_policy.reconcile_rebuild, completed
-                ):
-                    break
+            await _reconcile_rebuilt_history(slot, manager, resolve_abandoned=False)
+        return
+    if await _reconcile_rebuilt_history(slot, manager, resolve_abandoned=True):
         return
 
     snapshot = manager.get(job_id)
@@ -562,21 +547,42 @@ async def reconcile_restarted_slot(
     )
 
 
+async def _reconcile_rebuilt_history(
+    slot: WatcherConvergenceSlot,
+    manager: _jobs.JobManager,
+    *,
+    resolve_abandoned: bool,
+) -> bool:
+    """Check terminal rebuild evidence without holding the slot's state lock."""
+    for completed in manager.terminal():
+        if await asyncio.to_thread(
+            slot.retry_policy.reconcile_rebuild,
+            completed,
+            resolve_abandoned_attempt=resolve_abandoned,
+        ):
+            if resolve_abandoned:
+                with slot.lock:
+                    slot.pending_paths.update(
+                        slot.root / item.relative_path
+                        for item in slot.retry_policy.state.pending_paths
+                    )
+            return True
+    return False
+
+
 def _is_exact_watcher_job(slot: WatcherConvergenceSlot, snapshot: JobSnapshot) -> bool:
     """Verify a history record names this exact incremental watcher authority."""
-    canonical_root = os.path.normcase(str(slot.root.resolve()))
+    canonical_root = canonical_root_key(slot.root)
     return (
         snapshot.spec.operation is JobOperation.INDEX
         and snapshot.spec.mode is JobMode.INCREMENTAL
         and snapshot.spec.source is slot.source
         and snapshot.spec.project_root is not None
-        and os.path.normcase(str(Path(snapshot.spec.project_root).resolve()))
-        == canonical_root
+        and canonical_root_key(snapshot.spec.project_root) == canonical_root
         and snapshot.initiator.kind == "watcher"
         and snapshot.initiator.command == slot.command
         and snapshot.initiator.project_root is not None
-        and os.path.normcase(str(Path(snapshot.initiator.project_root).resolve()))
-        == canonical_root
+        and canonical_root_key(snapshot.initiator.project_root) == canonical_root
     )
 
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -11,6 +10,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from qdrant_client.http.exceptions import UnexpectedResponse
 
+from .._root_identity import canonical_root_key
 from .._search_state import (
     MAX_SEARCH_EVIDENCE_ITEMS,
     AbsenceAuthority,
@@ -174,10 +174,9 @@ def _normalized_root(value: object) -> str | None:
     if isinstance(value, str) and not value.strip():
         return None
     try:
-        resolved = Path(value).expanduser().resolve(strict=False)
+        return canonical_root_key(Path(value).expanduser())
     except (OSError, RuntimeError, ValueError):
         return None
-    return os.path.normcase(str(resolved))
 
 
 def _normalized_mode(value: object) -> JobMode | None:

@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from dataclasses import dataclass, replace
 from math import isfinite
 from pathlib import Path
 from threading import RLock
 from typing import TYPE_CHECKING, Final, Protocol, cast
 
+from .._root_identity import canonical_root_key
 from .._source_types import INDEX_SOURCES, IndexSource
 
 if TYPE_CHECKING:
@@ -88,10 +88,9 @@ def _canonical_root(value: object) -> str:
     ):
         raise ValueError("root must be a non-empty path")
     try:
-        resolved = Path(value).expanduser().resolve(strict=False)
+        return canonical_root_key(Path(value).expanduser())
     except (OSError, RuntimeError, ValueError) as error:
         raise ValueError("root must be a valid path") from error
-    return os.path.normcase(str(resolved))
 
 
 def _concrete_source(value: object) -> IndexSource:

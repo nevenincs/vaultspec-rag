@@ -10,6 +10,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from .. import jobs
+from .._root_identity import canonical_root_key
 from ..api import controller_snapshot_envelope, get_service_state
 from ..job_models import JobSource
 from ..mcp import _admin_client
@@ -43,7 +44,7 @@ def fixture_controller_surfaces(
     root = (tmp_path / "project").resolve()
     job_id = jobs.record_start(JobSource.CODE, "watcher", project_root=root)
     snapshot = ControllerSnapshot(
-        canonical_root=str(root),
+        canonical_root=canonical_root_key(root),
         source=WatcherSource.CODE,
         state=ControllerState.REFUSED,
         reason=ControllerReason.FULL_REINDEX_REQUIRED,

@@ -26,9 +26,12 @@ related:
   - '[[2026-07-21-service-job-control-adr]]'
   - '[[2026-06-12-service-concurrency-adr]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
+  - '[[2026-07-14-storage-autoprune-safety-adr]]'
+  - '[[2026-07-25-archive-restore-contract-adr]]'
+  - '[[2026-09-01-generation-accounting-adr]]'
 modified: '2026-10-03'
 body_schema: body-v2
-body_hash: 'sha256:fe113926eda187be52a29fbbc0274aae8b44fcb75551a3c85b652ff796bd2113'
+body_hash: 'sha256:1edfbba85303ba21f5d2c2bfa45713e1eb81212806c5e1ab381991be844175e5'
 ---
 
 # `resident-service-recovery` plan
@@ -78,8 +81,8 @@ S18 follows a strict live ingest barrier rejecting 14,897 expected versus 14,541
 - [x] `S12` - Recover desired-running paused jobs after aborted quiesce, let unstarted capacity waiters acknowledge control, and preserve operator pause intent during global unwind; `job_manager quiesce recovery, attempt capacity admission and desired-state/capability owner, _service_residency.py and service_quiesce.py recovery failure ordering, focused real-component CPU control regressions`.
 - [x] `S13` - Map storage conformance refusals to canonical search rebuild-required facts and HTTP outcomes without erasing combined source failures; `service-domain search availability and combined outcome conformance mapping, server search route as needed, focused CPU route and search regressions`.
 - [x] `S14` - Preserve explicit rebuild replacement authority across global quiesce and logical job resume before any source worker has started; `canonical job resume clean/mode mapping and source handoff as needed, CPU queued-quiesce and paused rebuild replacement regressions`.
-- [ ] `S15` - Use one canonical watcher root identity for Windows path filters, unregistration and bounded active-root release; `watcher root-key owner, server watcher route and scheduler lifecycle, CPU path-alias filter and active registration/release regressions`.
-- [ ] `S16` - Honor disabled automatic pruning at the superseded-generation destruction stage while retaining classification and independently enabled reconciliation; `canonical reclamation policy and generation stage, CPU disabled-policy stage and safe-generation evaluator regressions`.
+- [x] `S15` - Use one canonical watcher root identity for Windows path filters, unregistration and bounded active-root release; `watcher root-key owner, server watcher route and scheduler lifecycle, CPU path-alias filter and active registration/release regressions`.
+- [ ] `S16` - Honor disabled automatic pruning at superseded-generation and archive destruction stages while retaining classification and independently enabled reconciliation; `canonical reclamation policy, generation stage and archive retention, CPU disabled-policy real-storage and archive regressions`.
 - [ ] `S17` - Preserve canonical generation diagnostics through CLI storage survey decoding and JSON emission; `CLI namespace survey projection and shared survey record as needed, CPU unknown known-empty and generation-debt round-trip regressions`.
 - [x] `S18` - Preserve republished shared chunk identities during resume drift retirement and exclude historical deletion evidence from retained upsert accumulation; `indexer canonical drift owner and consumer retained-ID accumulation, ledger iterator selection only as needed, CPU actual chunking real-local-storage interrupted partial-edit and deletion-history regressions`.
 - [ ] `S04` - Deploy the current checkout as the resident daemon, repair affected publications through explicit rebuild jobs when required, and verify service health, search, and watcher convergence; `resident service lifecycle, affected root ledgers and admitted jobs, plan verification and final audit`.

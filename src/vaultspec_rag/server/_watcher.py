@@ -33,6 +33,7 @@ __all__ = [
 
 import vaultspec_rag.server as _m
 
+from .._root_identity import canonical_root_key
 from .._workspace_layout import (
     VAULT_DIR,
 )
@@ -212,7 +213,7 @@ class _WatcherScheduler:
 
     def unregister_root(self, root: Path) -> None:
         """Remove every source controller belonging to one canonical root."""
-        canonical_root = str(root.resolve())
+        canonical_root = canonical_root_key(root)
         self._registrations = {
             key: registration
             for key, registration in self._registrations.items()
@@ -229,7 +230,7 @@ class _WatcherScheduler:
 
     async def wait_root_released(self, root: Path, deadline: float) -> bool:
         """Boundedly join callbacks that already claimed one root."""
-        canonical_root = str(root.resolve())
+        canonical_root = canonical_root_key(root)
         while any(key[0] == canonical_root for key in self._active):
             remaining = deadline - self._monotonic()
             if remaining <= 0:
