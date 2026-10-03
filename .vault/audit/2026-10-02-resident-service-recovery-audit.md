@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:8cbdaf3e0b37542fbd02b951faa7c610028d3d164d2731002ebfaebfdbb8f67e'
+body_hash: 'sha256:6c50dfaf84a6f606e4236710e0a1e2ad1e9b1cdec340907f42fd3e92f5e1d6e2'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -198,6 +198,10 @@ The live MCP VAULT resumed attempt reports its current started reading beside th
 
 The async health_handler calls synchronous ServiceRegistry.health on the HTTP event loop. That owner holds its registry RLock while awaiting each store lifecycle lock, and collection ensure holds that lifecycle lock across backend collection and payload-index operations. Thus slow storage can starve independent HTTP work. The exact 03:24:46 and 03:25:41 UTC health timeouts remain unattributed without lock-duration capture: document discovery and the long payload-only route scan do not hold this lifecycle lock. S23 reuses the existing anyio thread seam for the registry projection, retaining conformance results and existing bounded caller uncertainty without claiming a new health latency guarantee or caching success.
 
+### Watcher administration validation | medium | S24
+
+An actual malformed stop-watcher payload containing project_root instead of the required root produced HTTP 500 with Path(None) TypeError. The canonical watcher POST boundary must reject invalid JSON/body/root values as bad_request before lifecycle dispatch, consistent with adjacent registry/root validation. Start, stop and reconfigure share this repair. Valid request behavior and aliases remain governed by S15. Reconfigure must also validate timing overrides before stopping the current watcher; a conversion error cannot first mutate lifecycle state. This correction has no public protocol or persisted schema change.
+
 ## Recommendations
 
 Complete the open code Steps, verify their negative guards and integrated CPU behavior, then deploy the checkout through its separate locked GPU environment. Point the existing on-demand resident lifecycle tasks at that environment so CI restarts preserve the repair. Respect live CI ownership; repair affected publication domains through admitted explicit rebuild jobs, verify search and watcher convergence, and append the final review and rollout results here.
@@ -321,3 +325,15 @@ At 03:42:28 UTC the real MCP VAULT generation remained running after more than 9
 ## S22 formal review
 
 Independent integrated source review: PASS, no blocking findings. Both frozen hashes, ten gates, 187 CPU passes and all three intended production mutation failure/restored-pass pairs were independently checked. Shared package gates and all 44 hashes matched. The resumed-resource finding is resolved in source; the final idle restart remains part of S04. S23 and final S04/S09 runtime proof remain pending.
+
+## S23 formal source checkpoint
+
+Independent integrated source/CPU review: PASS, no blocking findings. The only production change awaits the existing anyio thread seam for synchronous registry.health; typed health and conformance facts retain their existing owners. Four focused and 28 affected CPU tests pass. Six changed-file gates pass, and the canonical unchanged production complexipy/Xenon gate passes. The supplemental single-file Xenon check fails identically for the original synchronous call and the changed call because it applies the project-average A threshold to an allowed-B module; that failure, baseline and identical Radon blocks are retained, without threshold changes. Two fresh-process production handoff-removal guards each fail the named real-lock responsiveness assertion, restore in finally, and pass in a fresh normal subprocess. All production dependency and owned test hashes remain unchanged. Root shared Ruff/format/diff checks pass with 46 hashes. Exact live timeout attribution and a new health response-latency guarantee are not claimed. Runtime reload remains S04.
+
+## Fifth-root publication recovery and bounded maintenance
+
+At 03:52:07 UTC health truthfully reported the newly registered ci-fleet/main old-model CODE collection as nonconforming; daemon/backend PIDs stayed 83668/89504 with zero restarts and an empty fatal log. This is an expected strict conformance refusal, not a crash or S23 failure. S04 now explicitly replaces this fifth root's CODE, VAULT and DOCUMENT domains. The canonical CI-root watcher was stopped, and its unstarted watcher job b6e9a2b55ed34a8c923c0a2e811ed810 was cooperatively cancelled with no capacity/project/writer/pipeline resources held. Three explicit REBUILD leaves were admitted and saved immediately: CODE 68dc7784-89ad-4c94-b0fa-6018349b4c42, VAULT 2e9ceaaa-26b5-49c1-88e8-b5e6068ec7e5, DOCUMENT d40bb32c-59a5-4af7-8c81-458ca8c06ccb. The final matrix is fifteen leaves across five roots; proof/search/watcher producers derive it from the authoritative incident manifest.
+
+A worker accidentally called semantic code discovery against the live monitor root during its CPU-only S24 assignment, request 8b8732832d95480393d2ba8580fdf383 at approximately 03:55-03:57 UTC. That call warmed its watcher early. Root immediately stopped the monitor watcher and cooperatively cancelled its two unstarted CODE/VAULT watcher attempts 711df6fe91cc4a2bb1eb74d3bda3d852 and 9005d1ac2f6f4597b29e45f5bd12250b before resource acquisition, preserving the protected explicit rebuild. The no-live boundary was reinforced; no source defect is inferred from automatic watcher warmup. Any retained scope/proof convergence will be verified after replacement.
+
+The owned admission maintenance restoration deadline was extended from 04:30 to 05:00 UTC and its scheduled StartBoundary independently verified. The extension is bounded by actual remaining protected replacements and the final S22/S23/S24 source restart. Start and Probe stay enabled, Stop remains disabled only within this owned hold, and restoration/deployment will remove only the owned hold. At 03:59:40 UTC eight of fifteen repair leaves had succeeded with no failures; monitor VAULT was committing generation 29e03151785c42cb9a60aaa5b0318387.

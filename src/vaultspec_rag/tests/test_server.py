@@ -20,7 +20,9 @@ if TYPE_CHECKING:
 
     import httpx
     from starlette.requests import Request
-    from starlette.responses import Response
+    from starlette.responses import JSONResponse, Response
+
+    from ..store_runtime import VaultStore
 
 from ..capabilities import BackendCapabilities
 from ..config._settings import reset_config
@@ -883,8 +885,106 @@ class TestServiceRegistryIntegration:
         assert isinstance(_registry.gpu_lock, threading.Lock)
 
 
+def _mark_health_document_nonconforming(store: VaultStore) -> str:
+    """Record a real dense-model disagreement through the storage owner."""
+    from dataclasses import replace
+
+    from ..storage_identity import record_identity
+
+    store.ensure_document_table()
+    record_identity(
+        store.root_dir,
+        backend="local",
+        collection=store.DOCUMENT_TABLE_NAME,
+        local_dir=store.db_path,
+        identity=replace(
+            store._expected_identity(), dense_model="previous/dense-model"
+        ),
+    )
+    store._ensured.pop(store.DOCUMENT_TABLE_NAME)
+    store.ensure_document_table()
+    return f"{store.root_dir.resolve()}:{store.DOCUMENT_TABLE_NAME}"
+
+
 class TestHealthHandler:
     """Test the health_handler async function."""
+
+    @pytest.mark.parametrize("lock_owner", ["registry", "store"])
+    async def test_health_lock_wait_keeps_event_loop_responsive(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        lock_owner: str,
+    ) -> None:
+        """Real health waits retain their facts without holding the loop."""
+        from starlette.requests import Request
+
+        from .. import server as server_module
+        from ..operator_state._models import HealthReport
+        from ..operator_state._service import DegradationReason, HealthVerdict
+        from ..server._lifespan import health_handler
+        from .conftest import managed_env
+
+        # Device inspection is an external CUDA boundary, unrelated to the
+        # real registry/store locking and conformance owner exercised here.
+        monkeypatch.setattr(
+            "vaultspec_rag._gpu_admission.device_load_reading", lambda: None
+        )
+        monkeypatch.setattr(server_module, "_start_time", 0.0)
+        with managed_env(
+            **{EnvVar.QDRANT_URL.value: None, EnvVar.LOCAL_ONLY.value: "1"}
+        ):
+            registry = ServiceRegistry()
+            slot = registry.peek_project(tmp_path)
+            store = slot.store
+            assert store._server_mode is False
+            expected_collection = _mark_health_document_nonconforming(store)
+            app = create_http_app(
+                ServerRouteRuntime(
+                    token="health-lock-test-token", registry=registry, port=8765
+                ),
+                lifespan=None,
+            )
+            lock = registry._lock if lock_owner == "registry" else store._lifecycle_lock
+            entered = threading.Event()
+            release = threading.Event()
+            expired = threading.Event()
+
+            def hold_lock() -> None:
+                with lock:
+                    entered.set()
+                    # A broken synchronous handoff must fail, never hang the
+                    # test process waiting for an event-loop-owned release.
+                    if not release.wait(timeout=2.0):
+                        expired.set()
+
+            owner = threading.Thread(target=hold_lock, name="health-lock-owner")
+            owner.start()
+            assert entered.wait(timeout=2.0), "the real health lock was not held"
+            health = asyncio.create_task(
+                health_handler(Request({"type": "http", "app": app}))
+            )
+            try:
+                await asyncio.sleep(0)
+                assert not expired.is_set(), (
+                    "event-loop responsiveness required releasing the health lock"
+                )
+                assert not health.done(), "health bypassed the held canonical lock"
+            finally:
+                release.set()
+                response = cast("JSONResponse", await health)
+                owner.join(timeout=2.0)
+                registry.close_project(tmp_path)
+            assert not owner.is_alive(), "the health lock owner did not stop"
+            report = HealthReport.model_validate_json(bytes(response.body))
+            assert report.status is HealthVerdict.ERROR
+            assert report.models_loaded is False
+            assert report.project_count == 1
+            assert report.nonconforming == (expected_collection,)
+            assert DegradationReason.NONCONFORMING in {
+                degradation.reason for degradation in report.degradations
+            }
+            assert report.service_token == "health-lock-test-token"
 
     def test_health_handler_returns_json(self):
         """health_handler returns a JSONResponse with expected keys."""

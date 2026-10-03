@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:5e3ee7f08d72b8fd199d25c98eadcf495bdd287514f9251c460e28f4dcdb7fef'
+body_hash: 'sha256:bf358c33bb9fb130d80bf2e7fd51b6a8e349127eb6c3bc82493daa2c1ff9fd90'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -325,6 +325,27 @@ related:
 - `S22` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag` -> `pass`
 - `S22` `verify:` `git diff --check` -> `pass`
 - `S22` `by:` `root`
+- `S23` `M` `src/vaultspec_rag/server/_lifespan.py`
+- `S23` `M` `src/vaultspec_rag/tests/test_server.py`
+- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_server.py` -> `pass`
+- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ruff format --check src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_server.py` -> `pass`
+- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m basedpyright src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_server.py` -> `pass`
+- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pylint src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_server.py --rcfile=pyproject.toml --score=n` -> `pass`
+- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_server.py --select PLR1702 --preview` -> `pass`
+- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\complexipy.exe src/vaultspec_rag/server/_lifespan.py --failed` -> `pass`
+- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\xenon.exe vaultspec_rag/server/_lifespan.py --max-absolute C --max-modules C --max-average A` -> `fail`
+- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_server.py::TestHealthHandler -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_server.py::TestHealthHandler src/vaultspec_rag/tests/test_server.py::TestHealthInfoReduction src/vaultspec_rag/tests/test_lifespan_device_load.py src/vaultspec_rag/tests/test_health_degraded_clears.py src/vaultspec_rag/tests/test_undispatched_job_health.py src/vaultspec_rag/tests/test_quiesce_state_projections.py src/vaultspec_rag/tests/test_jobs_quiesce_projection.py -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S23` `verify:` `uv run --no-sync python -m dev.complexity gate` -> `pass`
+- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\xenon.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-health-handoff-proof\_lifespan_original_call.py --max-absolute C --max-modules C --max-average A` -> `fail`
+- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-health-handoff-proof\guards.py child registry` -> `fail`
+- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_server.py::TestHealthHandler::test_health_lock_wait_keeps_event_loop_responsive[registry] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-health-handoff-proof\guards.py child store` -> `fail`
+- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_server.py::TestHealthHandler::test_health_lock_wait_keeps_event_loop_responsive[store] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S23` `verify:` `uv run --no-sync ruff check src/vaultspec_rag` -> `pass`
+- `S23` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag` -> `pass`
+- `S23` `verify:` `git diff --check` -> `pass`
+- `S23` `by:` `root`
 
 ## Notes
 
@@ -339,3 +360,4 @@ related:
 - `S20` Resident stopped after separate S21 corpus-profile refusal; live S19/S20 loading, preserved job recovery and publication proof remain S04 work.
 - `S21` Unchanged Torch-dependent vector conversion case excluded from the CPU-only affected rerun; initial failure preserved. No claim of new above-floor GPU benchmark capability. Live corrected-build recovery remains S04 work.
 - `S22` Three deliberate process-only production mutations failed their named regressions before finally restoration and fresh normal passes. Runtime rollout remains assigned S04.
+- `S23` Supplemental standalone Xenon applies project-average A to one allowed-B module and fails identically for original/current calls; canonical unchanged production package complexity gate passes. Two deliberate process-only handoff-removal guards fail their intended assertions, restore in finally and pass in fresh normal subprocesses. Exact two live health timeouts remain unattributed; runtime reload remains S04.

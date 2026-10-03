@@ -1371,7 +1371,9 @@ async def health_handler(request: Request) -> object:
     from ..serviceclient._compat import local_package_version
 
     runtime = get_request_runtime(request)
-    reg_health = runtime.registry.health()
+    # Cached conformance still takes store lifecycle locks shared with
+    # collection I/O. A contended snapshot must not hold the serving loop.
+    reg_health = await _run_in_thread(runtime.registry.health)
     quiesce_snapshot = runtime.registry.quiesce_snapshot()
     qdrant_state = _supervise.runtime_state()
     status, degradations = _service_health_status(
