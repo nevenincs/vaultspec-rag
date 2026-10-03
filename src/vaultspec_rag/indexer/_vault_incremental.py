@@ -430,12 +430,13 @@ class VaultIncrementalMixin:
         from ..config._settings import get_config
 
         stored_ordinals = self.store.get_stored_chunk_ordinals(doc_ids)
-        docs = self._prepare_documents_bounded(
-            [id_to_path[doc_id] for doc_id in sorted(doc_ids)],
-            reporter,
-            run_control=run_control,
-            skip_errors=False,
-        )
+        with controlled_phase(reporter, run_control, "prepare payloads", len(doc_ids)):
+            docs = self._prepare_documents_bounded(
+                [id_to_path[doc_id] for doc_id in sorted(doc_ids)],
+                reporter,
+                run_control=run_control,
+                skip_errors=False,
+            )
         prepared = {doc.id for doc in docs}
         deferred = doc_ids - prepared
         chunks: list[VaultChunk] = []
