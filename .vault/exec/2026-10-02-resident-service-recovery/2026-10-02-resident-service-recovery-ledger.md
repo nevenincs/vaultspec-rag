@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:de70cb7f7d2ae9145b6d2fba119f7ad3ea573f9be42eb6bd2f1971f0815752d6'
+body_hash: 'sha256:dd64c7d7a096a012ba424c5d852e82d655c2afe82c983ce9d7a5993b2b097ff2'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -794,15 +794,15 @@ related:
 - `S47` `verify:` `main lint format strict typing sixty-two CPU cases diff and complexity` -> `pass`
 - `S47` `verify:` `pinned source native startup restored monitor collections no quarantine no restart fatal log empty` -> `pass`
 - `S47` `by:` `root`
-- `S45` `R` `C:/Users/hello/.vaultspec-rag/qdrant-server/storage` -> `C:/Users/hello/.vaultspec-rag/qdrant-server/storage-before-recovery-20261003`
-- `S45` `R` `C:/Users/hello/.vaultspec-rag/qdrant-server/archive` -> `C:/Users/hello/.vaultspec-rag/qdrant-server/archive-before-recovery-20261003`
-- `S45` `R` `C:/Users/hello/.vaultspec-rag/qdrant-server/snapshots` -> `C:/Users/hello/.vaultspec-rag/qdrant-server/snapshots-before-recovery-20261003`
+- `S45` `R` `~/.vaultspec-rag/qdrant-server/storage` -> `~/.vaultspec-rag/qdrant-server/storage-before-recovery-20261003`
+- `S45` `R` `~/.vaultspec-rag/qdrant-server/archive` -> `~/.vaultspec-rag/qdrant-server/archive-before-recovery-20261003`
+- `S45` `R` `~/.vaultspec-rag/qdrant-server/snapshots` -> `~/.vaultspec-rag/qdrant-server/snapshots-before-recovery-20261003`
 - `S45` `A` `H:/vaultspec-rag-resident-data-20261003/storage`
 - `S45` `A` `H:/vaultspec-rag-resident-data-20261003/archive`
 - `S45` `A` `H:/vaultspec-rag-resident-data-20261003/snapshots`
-- `S45` `A` `C:/Users/hello/.vaultspec-rag/qdrant-server/storage`
-- `S45` `A` `C:/Users/hello/.vaultspec-rag/qdrant-server/archive`
-- `S45` `A` `C:/Users/hello/.vaultspec-rag/qdrant-server/snapshots`
+- `S45` `A` `~/.vaultspec-rag/qdrant-server/storage`
+- `S45` `A` `~/.vaultspec-rag/qdrant-server/archive`
+- `S45` `A` `~/.vaultspec-rag/qdrant-server/snapshots`
 - `S45` `verify:` `managed-data-full-sha256-manifest 21165 files 83932024140 bytes` -> `pass`
 - `S45` `verify:` `independent metadata ACL attributes mtimes 30189 paired paths` -> `pass`
 - `S45` `verify:` `managed-data-cutover-verified original lock inode identity and all backup bytes retained` -> `pass`
