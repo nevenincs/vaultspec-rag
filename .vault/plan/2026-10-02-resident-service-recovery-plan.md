@@ -32,7 +32,7 @@ related:
   - '[[2026-09-08-qdrant-collection-sprawl-adr]]'
 modified: '2026-10-03'
 body_schema: body-v2
-body_hash: 'sha256:7304459e00d6a2534a75f0c711895f6a03acc19015f5c47ee7f0f927aaaec78c'
+body_hash: 'sha256:c463dc0ff750395c410f10bc339c0c4169a0cca0e11b06b032647dfb40fd3c4e'
 ---
 
 # `resident-service-recovery` plan
@@ -108,7 +108,7 @@ The newly registered ci-fleet/main root exposed an old sparse-model CODE publica
 - [x] `S22` - Clear prior-attempt resource boundary readings when preparing a resumed job while preserving same-attempt pause withdrawal and terminal history; `canonical job resumed-attempt snapshot owner and focused real-manager CPU control regressions`.
 - [x] `S23` - Keep synchronous registry and storage health projection off the HTTP event loop while preserving bounded caller timeout uncertainty and conformance facts; `canonical server health handler and focused real-lock CPU responsiveness regression`.
 - [x] `S24` - Reject malformed watcher administration bodies and root paths as canonical bad requests instead of internal errors; `canonical watcher administration request validation plus shared root identity path and settings numeric validation owners and focused CPU HTTP and existing settings regressions`.
-- [ ] `S25` - Report conformance for current served namespaces after code generation replacement; `src/vaultspec_rag/store_collections.py and src/vaultspec_rag/service.py canonical conformance and health owners as required, src/vaultspec_rag/tests/test_storage_identity.py and src/vaultspec_rag/tests/test_service_registry.py CPU regressions. Exclude retained unserved code generations from current service degradation without deleting retained storage or hiding active nonconforming namespaces. Root manages final source rollout and live five-root evidence.`.
+- [x] `S25` - Report conformance for current served namespaces after code generation replacement; `src/vaultspec_rag/store_collections.py canonical current-namespace conformance owner, src/vaultspec_rag/tests/test_storage_identity.py and src/vaultspec_rag/tests/test_service_registry.py real local storage, publication and CPU health regressions. Exclude retained unserved code generations from current service degradation without deleting retained storage or hiding active nonconforming namespaces. Root manages shared gates, final source rollout and live five-root evidence.`.
 - [ ] `S04` - Deploy the current checkout as the resident daemon, repair affected publications through explicit rebuild jobs when required, and verify service health, search, and watcher convergence; `resident service lifecycle, affected root ledgers and admitted jobs, plan verification and final audit`.
 
 ## Parallelization

@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:446eb3b98f5bf2d965bd96893e255aa7bf33345cf40e0ba696fc76408a83d2f5'
+body_hash: 'sha256:ccbeccfb23f0d9b6097106cb408735070500e44011a56d91c052cc1b4526bc83'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -349,3 +349,19 @@ Independent integrated source/CPU review PASS with no blocking findings. Five ca
 The CPU rollout poller received one missing job response around 04:12 UTC and exited its strict assertion. Direct read-only recheck at 04:16 UTC succeeded for every manifest leaf, with unchanged daemon/backend PIDs 83668/89504, zero backend restarts and no fatal log data. The original helper and failure are retained; the observer now records missing responses and stops after three incomplete passes rather than mistaking a single transport gap for a job outcome. No exact timeout attribution is claimed. Twelve of fifteen protected leaves succeeded by 04:17:13 UTC, and TUI CODE acquired its actual resources and resumed generation 060330354c214c37bd7a608b0fa7a8bd. TUI VAULT's 23635 and CI VAULT's 454 point IDs match their verified current publications exactly, with valid receipt-free read tokens. CI CODE's physical proof has 4579 exact IDs.
 
 At 04:17 UTC the Stop scheduled task unexpectedly appeared enabled although the owned admission hold remained installed; its last run was still 20:20 UTC on October 2, and no service stop occurred. Root explicitly disabled it again and independently verified State Disabled/Enabled false. The bounded restoration deadline remains 05:00 UTC. The enabling actor is not attributed.
+
+## Protected live progress and maintenance extension
+
+At 04:23:49 UTC a real read-only TUI ledger snapshot proved compatible CODE generation 060330354c214c37bd7a608b0fa7a8bd was RUNNING with 12207 durable units and a commit less than one second old. By 04:34:38 UTC its live projection had 26809 committed and 8343 replayed units, with a freshly renewed no-progress clock. The service retains daemon/backend PIDs 83668/89504, zero backend restarts and no fatal data. The only ERROR/CRITICAL log entry in this daemon run is the earlier malformed watcher-stop Path(None) exception fixed by S24; its exact trace and checkout import path were rechecked.
+
+Because the largest protected CODE replacement still has substantial real work, S25 source verification is in progress, and final idle restart/publication/search/convergence/deployment remain, the owned maintenance restoration deadline was extended from 05:00 to 06:00 UTC. The exact scheduled StartBoundary 08:00+02:00 and enabled failsafe were independently verified. Stop remains disabled and the admission authority snapshot remains idle under the same owned hold.
+
+INGEST's watcher captured a legitimate incremental CODE job e731bc90359b4dd2a9cc16507372d0f0 from concurrent file changes while protected replacements were running. Root stopped that already-published root's watcher at 04:33 UTC to bound further maintenance work. The captured job is preserved RUNNING and unstarted with all ownership flags false, rather than cancelling legitimate changes. It must settle before the final idle restart; source freshness will be reconciled during final watcher convergence. Final current proof may legitimately advance beyond the earlier protected rebuild, whose verified physical evidence is retained.
+
+S25's three canonical source/test paths are frozen. Root shared package lint, format and diff checks pass with all 52 changed source/test hashes unchanged. Final affected checks, production mutation sequence and independent review are in progress before source checkpoint and reload.
+
+## S25 formal source checkpoint
+
+Independent integrated source/CPU review PASS, no blocking findings. The canonical conformance owner selects cached current VAULT/CODE/DOCUMENT bindings under its existing lifecycle lock. Canonical CODE publication changes that served binding after the durable pointer transition. Private and superseded cache entries and physical data remain retained, the old active verdict remains before publication, and active sparse incompatibility after publication/reopen still refuses all three domains. Health adds no backend calls or new cache, and S23's unchanged thread handoff remains applicable. All thirteen existing registry test classes retain their explicit integration classification; the new real storage-only class is CPU-unit eligible.
+
+Ten separately captured changed-path gates pass, including 103 affected CPU cases with 43 deselections. Root additionally ran the actual full production complexity gate (uv run --no-sync python -m dev.complexity gate), exit 0. All seven actual production method mutations fail at exact named assertions, restore the original method in finally, and pass in fresh normal processes. The active sparse-refusal mutation fails in all three domains. Fifteen source/dependency hashes match before/after/current. Root package Ruff, formatting and diff checks pass with 52 stable changed source/test hashes. Initial fixture typing and private-mixin bootstrap failures are preserved separately and excluded from guard proof; corrected final checks pass. Evidence is archived in s25-proof, including root canonical complexity results. The medium stale-generation source finding is resolved; final current health after committed-source restart remains S04.

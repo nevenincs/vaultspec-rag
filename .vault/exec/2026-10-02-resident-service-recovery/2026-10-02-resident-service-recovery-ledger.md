@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:f0233fb6a08e09fe761a50b05ae0f036a2b0f63511fe430e94b249b9dcca6c68'
+body_hash: 'sha256:c017d23f36bf3b8fb558b7b7cf23ab16266054e3486728e2a5bc7581b75d9038'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -405,6 +405,38 @@ related:
 - `S24` `verify:` `uv run --no-sync python -m ruff format --check src/vaultspec_rag` -> `pass`
 - `S24` `verify:` `git diff --check` -> `pass`
 - `S24` `by:` `root`
+- `S25` `M` `src/vaultspec_rag/store_collections.py`
+- `S25` `M` `src/vaultspec_rag/tests/test_storage_identity.py`
+- `S25` `M` `src/vaultspec_rag/tests/test_service_registry.py`
+- `S25` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/store_collections.py src/vaultspec_rag/tests/test_storage_identity.py src/vaultspec_rag/tests/test_service_registry.py` -> `pass`
+- `S25` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/store_collections.py src/vaultspec_rag/tests/test_storage_identity.py src/vaultspec_rag/tests/test_service_registry.py` -> `pass`
+- `S25` `verify:` `uv run --no-sync basedpyright --pythonpath C:/Users/hello/.vaultspec-rag/debug-runtime/Scripts/python.exe src/vaultspec_rag/store_collections.py` -> `pass`
+- `S25` `verify:` `PYTHONPATH=Y:\code\vaultspec-rag-worktrees\monitor\.venv\Lib\site-packages uv run --no-sync basedpyright --pythonpath C:/Users/hello/.vaultspec-rag/debug-runtime/Scripts/python.exe src/vaultspec_rag/tests/test_storage_identity.py src/vaultspec_rag/tests/test_service_registry.py` -> `pass`
+- `S25` `verify:` `uv run --no-sync ty check src/vaultspec_rag/store_collections.py src/vaultspec_rag/tests/test_storage_identity.py src/vaultspec_rag/tests/test_service_registry.py` -> `pass`
+- `S25` `verify:` `uv run --no-sync complexipy src/vaultspec_rag/store_collections.py --failed` -> `pass`
+- `S25` `verify:` `uv run --no-sync xenon vaultspec_rag/store_collections.py --max-absolute C --max-modules C --max-average A` -> `pass`
+- `S25` `verify:` `uv run --no-sync pylint src/vaultspec_rag/store_collections.py src/vaultspec_rag/tests/test_storage_identity.py src/vaultspec_rag/tests/test_service_registry.py --rcfile=pyproject.toml --score=n` -> `pass`
+- `S25` `verify:` `git diff --check -- src/vaultspec_rag/store_collections.py src/vaultspec_rag/tests/test_storage_identity.py src/vaultspec_rag/tests/test_service_registry.py` -> `pass`
+- `S25` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_storage_identity.py src/vaultspec_rag/tests/test_service_registry.py src/vaultspec_rag/tests/test_store_schema.py src/vaultspec_rag/tests/test_search_conformance_refusal.py src/vaultspec_rag/tests/test_generation_survey.py src/vaultspec_rag/tests/test_live_checkpoint_resilience.py -m unit and not torch -q --tb=short` -> `pass`
+- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py retained_after_swap mutate` -> `fail`
+- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py retained_after_swap restore` -> `pass`
+- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py private_before_swap mutate` -> `fail`
+- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py private_before_swap restore` -> `pass`
+- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py noncode_preserved mutate` -> `fail`
+- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py noncode_preserved restore` -> `pass`
+- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py active_fatal_preserved mutate` -> `fail`
+- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py active_fatal_preserved restore` -> `pass`
+- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py retained_cache_preserved mutate` -> `fail`
+- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py retained_cache_preserved restore` -> `pass`
+- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py no_backend_reprobe mutate` -> `fail`
+- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py no_backend_reprobe restore` -> `pass`
+- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py lifecycle_lock mutate` -> `fail`
+- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py lifecycle_lock restore` -> `pass`
+- `S25` `verify:` `uv run --no-sync python -m dev.complexity gate` -> `pass`
+- `S25` `verify:` `uv run --no-sync python -m ruff check src/vaultspec_rag` -> `pass`
+- `S25` `verify:` `uv run --no-sync python -m ruff format --check src/vaultspec_rag` -> `pass`
+- `S25` `verify:` `git diff --check` -> `pass`
+- `S25` `by:` `root`
 
 ## Notes
 
@@ -421,3 +453,4 @@ related:
 - `S22` Three deliberate process-only production mutations failed their named regressions before finally restoration and fresh normal passes. Runtime rollout remains assigned S04.
 - `S23` Supplemental standalone Xenon applies project-average A to one allowed-B module and fails identically for original/current calls; canonical unchanged production package complexity gate passes. Two deliberate process-only handoff-removal guards fail their intended assertions, restore in finally and pass in fresh normal subprocesses. Exact two live health timeouts remain unattributed; runtime reload remains S04.
 - `S24` The twenty-one fail entries are intentional actual-production mutation proofs, each followed by finally restoration and a fresh normal pass; eight dependency hashes stayed unchanged. CPU-only source verification is frozen, and final service loading remains S04. One accidental earlier live discovery call was disclosed and reconciled separately in the audit.
+- `S25` Seven fail entries are intended actual-production method mutation proofs, each finally-restored and immediately followed by a fresh normal pass. All fifteen source/dependency hashes are unchanged. Initial test-fixture static typing failures and a private-mixin bootstrap import cycle are preserved separately and excluded from guard proof; corrected final checks pass. Strict test discovery uses CPU pytest site-packages and the resident interpreter for static installed paths only, without changing or executing the resident environment. Runtime verification remains S04.
