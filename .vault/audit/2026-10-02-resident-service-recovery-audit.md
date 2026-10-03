@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:b25b964b322f25b60921ba4286dd6d8e1ff0b062f4c2e341bb3af966686f07ec'
+body_hash: 'sha256:be8ce8aa223f97e1e9a92343885786455542f0a0aeb03c6c3a5dbc21b8569804'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -289,3 +289,9 @@ S20 SOURCE + CPU review PASS at 2026-10-03 02:59 UTC, with no blocking findings.
 Nine frozen source/test hashes match both gate and guard manifests. All ten separate gates passed; the affected CPU suite passed 235 cases with one Torch case deselected. All 22 actual production mutations reached their intended assertion failures (exit 1), then passed immediately in fresh normal interpreters (exit 0). The changed S19 observer isolation and unlock owners and terminal live observation were refreshed; applicable S14/S10 coverage passed. Package lint, format and diff passed with 40 current changed hashes. The broader run exposed stale test-only null policies and abstract checkpoint fixtures; all three were replaced with real CodeRunCheckpoint and RunPolicy rather than weakening production checks. An initial scratch-driver import failure occurred before mutation/test and was excluded, then corrected to use the canonical store entry. Evidence is archived in `s20-proof`. S20's HIGH source finding is resolved. Loading and live validation remain S04 work, and S21's independently confirmed managed corpus-cap finding remains open.
 
 After the S21 controlled stop, consistent read-only SQLite backups preserved the MCP ledger (489,316,352 bytes) and TUI ledger (461,680,640 bytes) before future replay or compaction. `s21-ledger-backups.json` records their paths. No original generation, receipt or storage data was deleted.
+
+## S21 integrated source checkpoint
+
+S21 SOURCE + DECISION + CPU review PASS at 2026-10-03 03:08 UTC, with no blocking findings. Only the managed CODE aggregate weighted cap changes, from 512 to 1,024 GiB; the dated D6 clarification preserves the accepted floor and all cumulative, queue, runtime and embedded-local invariants. Real benchmark/chunker/segmenter/support-budget tests reach 250,872 representative chunks at 1,021,070,531,368 cumulative bytes and reject the first segment exceeding the corrected cap before yield, including across calls. The source finding is resolved; this is not a new above-floor GPU benchmark claim.
+
+All seven separately captured changed-path gates passed, with 23 focused and 61 affected CPU cases passing. The affected run has seven deselections, including the unchanged Torch-dependent conversion test that could not execute in the CPU environment; its initial dependency-failure log is preserved. All three corrected actual production mutation pairs reached named assertion failures (exit 1), restored methods in finally, and passed in fresh normal processes (exit 0). A scratch annotation NameError was rejected as invalid guard evidence and corrected before the complete uninterrupted sequence was rerun. Eight dependency hashes and the shared 42-file package lint/format/diff manifest match current source. Evidence is archived in `s21-proof`. The resident remains stopped pending committed-source startup and compatible build recovery under S04.

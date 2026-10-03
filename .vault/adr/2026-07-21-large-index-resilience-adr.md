@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#large-index-resilience'
 date: '2026-07-21'
-modified: '2026-08-13'
-body_hash: 'sha256:800055fdcaa894bac239c4f17c900800da535a1345b0a49cbb12df50b396cb1c'
+modified: '2026-10-03'
+body_hash: 'sha256:5e36e3dc7206b3b75277f973e42151799653ef85a90a510fa7c74096233f86f9'
 related:
   - "[[2026-07-21-large-index-resilience-research]]"
   - "[[2026-07-21-large-index-resilience-reference]]"
@@ -256,6 +256,16 @@ The same standard governs the durable-state layer generally: a component whose f
 **D11 — A transient kind is only transient where retries are decided.** Classifying contention as its own kind is necessary and not sufficient. The watcher decides retryability from its own set and opens its circuit on anything outside it, so a kind that classifies correctly but is absent from that set pauses automatic indexing on the first occurrence - the exact outcome the classification exists to prevent, reached by a different route. Any kind introduced as transient is added to that set in the same change, and the guard asserts the decision rather than the label.
 
 The same applies to error translation beneath it. The durable-state layer converts database errors into corruption, and a held lock is a database error, so a lock reaching those handlers is reported as damaged durable state the caller cannot recover from. Lock contention is separated out ahead of that conversion on every path that performs it, including the integrity verification the resume path calls precisely when a generation is carrying storage-confirmed work.
+
+### 2026-10-03: managed CODE weight restores the accepted corpus floor
+
+D6's existing managed-service floor remains approximately 84,000 files and 250,872 chunks. The cumulative weighted-byte dimension remains a static corpus-sizing property; full sparse-vocabulary lifetime reservation remains in segment and queue estimates, and RSS/CUDA, source/chunk, hardware and embedded-local limits are unchanged.
+
+The pinned sparse model has 50,370 output dimensions. The canonical estimator reserves 80 lifetime bytes per sparse dimension per chunk, or 4,029,600 sparse bytes. Real chunks from the existing production benchmark generator and chunker weigh 4,070,085, 4,070,085 and 4,070,087 bytes with the default 1,024 dense dimensions. The accepted 83,624-file, 250,872-chunk benchmark floor therefore weighs 1,021,070,531,368 bytes, approximately 950.946 GiB. The previous managed CODE aggregate limit of 512 GiB refuses that fixture at 135,075 chunks and cannot satisfy D6. The live MCP replacement independently reached the same refusal near 134,967 stored points without exhausting process memory or crashing the daemon.
+
+The managed CODE aggregate weighted limit is corrected to 1,024 GiB, matching the existing managed DOCUMENT aggregate weight and rounding the proved floor upward with 78,441,096,408 bytes of margin. This restores the already accepted floor under the pinned vocabulary. It is not benchmark evidence for a new corpus capability above that floor, and independent chunk/source/runtime limits continue to reject their first excess before another unit is admitted. Real CPU fixtures and negative guards establish the floor and boundary behavior; resident recovery establishes the actual interrupted and failed builds. No profile reset, per-run override or estimator weakening is introduced.
+
+Evidence is the canonical CPU reproduction `C:/Users/hello/AppData/Local/Temp/vaultspec-rag-weighted-floor-proof/diagnosis.json` and the rolling resident-service-recovery audit. The reproduction uses actual benchmark source, chunking, estimation and support-budget enforcement and imports no Torch.
 
 ## Rationale
 

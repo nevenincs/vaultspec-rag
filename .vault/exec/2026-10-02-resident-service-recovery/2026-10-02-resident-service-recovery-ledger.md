@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:07d2cc11930bf8f4a5bf5ebbd686b2602e9355130a819345d4c54bb3e0de5ae1'
+body_hash: 'sha256:d16e95ab744ffcac9e7ed393fa61855a2322dde09d315b8946d05268c989c4bc'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -287,6 +287,22 @@ related:
 - `S20` `verify:` `.venv/Scripts/python.exe .pytest-tmp/S20/prove_guards.py --remaining` -> `pass`
 - `S20` `verify:` `Integrated S20 review (235 CPU passes, one Torch deselected, 22 actual-production fail-1/fresh-pass-0 pairs, nine stable hashes)` -> `pass`
 - `S20` `by:` `root`
+- `S21` `M` `src/vaultspec_rag/index_profiles.py`
+- `S21` `M` `src/vaultspec_rag/tests/test_index_profiles.py`
+- `S21` `M` `.vault/adr/2026-07-21-large-index-resilience-adr.md`
+- `S21` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/index_profiles.py src/vaultspec_rag/tests/test_index_profiles.py` -> `pass`
+- `S21` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ruff format --check src/vaultspec_rag/index_profiles.py src/vaultspec_rag/tests/test_index_profiles.py` -> `pass`
+- `S21` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m basedpyright src/vaultspec_rag/index_profiles.py src/vaultspec_rag/tests/test_index_profiles.py` -> `pass`
+- `S21` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pylint src/vaultspec_rag/index_profiles.py src/vaultspec_rag/tests/test_index_profiles.py --rcfile=pyproject.toml --score=n` -> `pass`
+- `S21` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/index_profiles.py src/vaultspec_rag/tests/test_index_profiles.py --select PLR1702 --preview` -> `pass`
+- `S21` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\complexipy.exe src/vaultspec_rag/index_profiles.py --failed` -> `pass`
+- `S21` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\xenon.exe vaultspec_rag/index_profiles.py --max-absolute C --max-modules C --max-average A` -> `pass`
+- `S21` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_index_profiles.py -m 'not integration and not cuda and not mps and not subprocess_gpu' -q` -> `pass`
+- `S21` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_index_profiles.py src/vaultspec_rag/tests/test_large_index_resilience_harness.py src/vaultspec_rag/tests/test_streaming_segments.py src/vaultspec_rag/tests/test_index_resource_ceilings.py -m 'not integration and not cuda and not mps and not subprocess_gpu' -q -k 'not test_real_numpy_and_cpu_torch_rows_convert_to_store_vectors'` -> `pass`
+- `S21` `verify:` `.venv/Scripts/python.exe .pytest-tmp/recovery-shared-gates.py` -> `pass`
+- `S21` `verify:` `.venv/Scripts/python.exe C:/Users/hello/AppData/Local/Temp/vaultspec-rag-weighted-floor-proof/guards.py` -> `pass`
+- `S21` `verify:` `Integrated S21 source, decision and CPU review` -> `pass`
+- `S21` `by:` `root`
 
 ## Notes
 
@@ -299,3 +315,4 @@ related:
 - `S17` The CLI carries canonical per-namespace facts; intentional HTTP envelope freshness/totals remain outside scope. No GPU or live service was used for these proofs.
 - `S19` The managed GPU integration fixture was not executed; four projection caller migrations passed strict static checks and actual-component CPU tests covered the changed behavior. Runtime verification remains in S04.
 - `S20` Resident stopped after separate S21 corpus-profile refusal; live S19/S20 loading, preserved job recovery and publication proof remain S04 work.
+- `S21` Unchanged Torch-dependent vector conversion case excluded from the CPU-only affected rerun; initial failure preserved. No claim of new above-floor GPU benchmark capability. Live corrected-build recovery remains S04 work.

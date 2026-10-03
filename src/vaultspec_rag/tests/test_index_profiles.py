@@ -2,13 +2,16 @@
 
 import pathlib
 from dataclasses import replace
-from typing import cast
+from itertools import repeat
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
 from .._job_errors import JobError, JobErrorKind
+from .._sparse_profile import SPARSE_VOCAB_SIZE
 from .._store_writes import VolumeReading
 from .._units import human_bytes
+from ..config._types import EnvVar
 from ..index_profiles import (
     AdmissionEnvironment,
     IndexDomain,
@@ -18,8 +21,121 @@ from ..index_profiles import (
     index_support_profile_status,
     validate_profile_admission,
 )
+from ..indexer._chunk_worker import chunk_and_hash_file
+from ..indexer._slicing import iter_code_file_segments
+from ..indexer._streaming_types import CodeFileSegment, CodeFileSegmentRequest
+from ..indexer._support_budget import CodeSupportBudget
+from .benchmarks.bench_large_index_resilience import module_source
+from .conftest import managed_env
+
+if TYPE_CHECKING:
+    from ..embeddings import EmbeddingModel
 
 pytestmark = [pytest.mark.unit]
+
+
+@pytest.fixture
+def managed_code_weighted_segment(
+    tmp_path: pathlib.Path,
+) -> tuple[CodeSupportBudget, CodeFileSegment]:
+    """Measure one representative source file through production components.
+
+    Repeating its bounded segment exercises aggregate corpus accounting
+    without encoding vectors or retaining the whole acceptance corpus.
+    """
+    source = tmp_path / "src" / "acceptance_workload" / "000" / "module_000000.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(module_source(0, 3), encoding="utf-8")
+    with managed_env(
+        **{
+            EnvVar.INDEX_SUPPORT_PROFILE.value: "managed-service",
+            EnvVar.INDEX_QUEUE_MAX_BYTES.value: str(128 * 1024**2),
+        }
+    ):
+        result = chunk_and_hash_file(source, tmp_path)
+        assert len(result.chunks) == 3
+        segments = tuple(
+            iter_code_file_segments(
+                CodeFileSegmentRequest(
+                    chunks=result.chunks,
+                    max_chunks=128,
+                    max_bytes=64 * 1024**2,
+                    dense_dimension=1024,
+                    sparse_enabled=True,
+                    sparse_dimension=SPARSE_VOCAB_SIZE,
+                )
+            )
+        )
+        assert len(segments) == 1
+        budget = CodeSupportBudget(cast("EmbeddingModel", None))
+        budget.begin_support_measurement((source,))
+    return budget, segments[0]
+
+
+def test_managed_code_weight_admits_canonical_true_source_floor(
+    managed_code_weighted_segment: tuple[CodeSupportBudget, CodeFileSegment],
+) -> None:
+    budget, segment = managed_code_weighted_segment
+    accepted_files = 83_624
+    assert (
+        sum(
+            1
+            for _segment in budget.measure_code_segments(
+                repeat(segment, accepted_files)
+            )
+        )
+        == accepted_files
+    )
+    measured = budget.measurement
+    assert measured.generated_chunks == 250_872
+    assert measured.weighted_bytes == accepted_files * segment.estimated_bytes
+    # The representative floor crosses the obsolete cap even with no
+    # encoding or native allocations. Its static reservation is not RSS.
+    assert 512 * 1024**3 < measured.weighted_bytes < 1024**4
+    assert get_index_support_profile("managed-service").code.weighted_bytes == 1024**4
+
+
+def test_managed_code_weight_refuses_first_excess_segment_across_calls(
+    managed_code_weighted_segment: tuple[CodeSupportBudget, CodeFileSegment],
+) -> None:
+    budget, segment = managed_code_weighted_segment
+    cap = get_index_support_profile("managed-service").code.weighted_bytes
+    admitted_segments = cap // segment.estimated_bytes
+    first_pass = admitted_segments // 2
+    for count in (first_pass, admitted_segments - first_pass):
+        assert (
+            sum(1 for _segment in budget.measure_code_segments(repeat(segment, count)))
+            == count
+        )
+    assert budget.measurement.weighted_bytes <= cap
+    assert budget.measurement.weighted_bytes == (
+        admitted_segments * segment.estimated_bytes
+    )
+    with pytest.raises(JobError) as raised:
+        next(budget.measure_code_segments((segment,)))
+    assert raised.value.error_kind is JobErrorKind.CORPUS_LIMIT_EXCEEDED
+    assert "weighted_bytes" in raised.value.detail
+    assert budget.measurement.generated_chunks == (admitted_segments + 1) * 3
+    assert budget.measurement.weighted_bytes == (
+        (admitted_segments + 1) * segment.estimated_bytes
+    )
+    assert budget.measurement.weighted_bytes > cap
+
+
+def test_weight_correction_preserves_embedded_and_memory_bounds() -> None:
+    managed = get_index_support_profile("managed-service")
+    embedded = get_index_support_profile("embedded-local")
+    assert embedded.code.weighted_bytes == 64 * 1024**3
+    assert embedded.document.weighted_bytes == 128 * 1024**3
+    assert managed.document.weighted_bytes == 1024**4
+    assert managed.code.queue_bytes == managed.document.queue_bytes == 512 * 1024**2
+    assert managed.code.rss_bytes == managed.document.rss_bytes == 16 * 1024**3
+    assert managed.code.cuda_bytes == managed.document.cuda_bytes == 12 * 1024**3
+    assert managed.minimum_ram_bytes == 16 * 1024**3
+    assert embedded.code.queue_bytes == embedded.document.queue_bytes == 128 * 1024**2
+    assert embedded.code.rss_bytes == embedded.document.rss_bytes == 8 * 1024**3
+    assert embedded.code.cuda_bytes == embedded.document.cuda_bytes == 6 * 1024**3
+    assert embedded.minimum_ram_bytes == 8 * 1024**3
 
 
 def _volume(

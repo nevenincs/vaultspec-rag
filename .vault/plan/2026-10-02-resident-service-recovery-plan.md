@@ -32,7 +32,7 @@ related:
   - '[[2026-09-08-qdrant-collection-sprawl-adr]]'
 modified: '2026-10-03'
 body_schema: body-v2
-body_hash: 'sha256:1cd154b21a5c89c79200ac01a4b412068503f130eed114bf546cb79eee84c68a'
+body_hash: 'sha256:a41e987a77668eea18a307f1638d182422e48326091f14c421fa64debd3a7d99'
 ---
 
 # `resident-service-recovery` plan
@@ -96,7 +96,7 @@ S20 follows a confirmed high-severity vault liveness defect: confirmed chunk uni
 - [x] `S18` - Preserve republished shared chunk identities during resume drift retirement and exclude historical deletion evidence from retained upsert accumulation; `indexer canonical drift owner and consumer retained-ID accumulation, ledger iterator selection only as needed, CPU actual chunking real-local-storage interrupted partial-edit and deletion-history regressions`.
 - [x] `S19` - Publish bounded attempt-owned live checkpoint resilience after durable indexing boundaries and expose accurate running generation, committed/replayed units and no-progress facts without changing file counters or stall policy; `canonical attempt binding, checkpoint/run-policy durable observation and job resilience projection only as needed, CPU paused-before-completion actual-ledger and failure/control regressions`.
 - [x] `S20` - Advance and enforce the vault durable no-progress clock at confirmed chunk and publication boundaries so a progressing long rebuild remains valid and terminal publication cannot be followed by an admission-age timeout; `vault checkpoint confirmed-unit and ingest write-policy wiring including deadline-aware point locks, shared terminal publication ordering and attempt completion only as needed, CPU real-store multi-unit deadline, lock-wait, cleanup and terminal-truth regressions`.
-- [ ] `S21` - Restore the accepted managed CODE corpus floor under the pinned sparse vocabulary without weakening cumulative accounting or queue and runtime safeguards; `managed CODE aggregate weighted-byte limit, canonical real-chunk floor and first-excess boundary regressions, dated D6 coverage clarification and live failed-build recovery`.
+- [x] `S21` - Restore the accepted managed CODE corpus floor under the pinned sparse vocabulary without weakening cumulative accounting or queue and runtime safeguards; `managed CODE aggregate weighted-byte limit, canonical real-chunk floor and first-excess boundary regressions, dated D6 coverage clarification and live failed-build recovery`.
 - [ ] `S04` - Deploy the current checkout as the resident daemon, repair affected publications through explicit rebuild jobs when required, and verify service health, search, and watcher convergence; `resident service lifecycle, affected root ledgers and admitted jobs, plan verification and final audit`.
 
 ## Parallelization
