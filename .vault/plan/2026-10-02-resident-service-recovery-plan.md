@@ -33,7 +33,7 @@ related:
   - '[[2026-07-24-worktree-index-reuse-adr]]'
 modified: '2026-10-03'
 body_schema: body-v2
-body_hash: 'sha256:4aa62d578ae662728e7cf087a099ea6cfeaa189f91d861a5d3286305b719f148'
+body_hash: 'sha256:cda4c919231cbe498f4573631b96a46d050650da7e1fedb31ceea7e9604373f6'
 ---
 
 # `resident-service-recovery` plan
@@ -112,6 +112,8 @@ S38 follows two source-proven reuse defects during continued performance investi
 
 S39 repairs the newly observed scheduled-maintenance failure during a legitimate open publication receipt. Existing accepted storage-autoprune safety and collection-sprawl decisions require per-root conservative deferral and failure isolation. The canonical unreadable-publication error tuple already covers this conflict. Reusing it around acquisition and token validation restores the existing unknown-root behavior and grace-clock reset without any new destruction authority or changed retention policy. The user's explicit all-discovered-bugs authorization covers this correction. S04 retains final measured reload and live acceptance.
 
+S40 is a source checkpoint for avoidable retry-state lock occupancy: its canonical eligibility predicate rejects rebuild starts older than the current refusal cutoff before publication IO, under existing explicit-reindex and adaptive-watcher authority. It preserves equality, live-owner and exact-attempt checks, eligible full publication/generation/token gates and delayed scope. Final source, three named mutation proof pairs, six owned gates and four shared gates passed independent review. The rejected inline complexity candidate and prior evidence remain historical. S04 owns actual reload and performance acceptance, including the unresolved live HTTP timeout attribution.
+
 ## Steps
 
 - [x] `S01` - Preserve terminal rebuild refusals and accurate watcher status through events, failures, and restart, and reconcile successful verified operator rebuilds; `watcher retry, controller, intake, execution and runtime, jobs.py completion hook, affected watcher and job tests`.
@@ -152,6 +154,7 @@ S39 repairs the newly observed scheduled-maintenance failure during a legitimate
 - [x] `S37` - Batch vault payload overwrites through bounded confirmed storage operations; `store_ingest.py canonical overwrite_vault_chunk_payloads and isolated test_vault_payload_batching.py. Freeze existing VAULT embedding_batch_size count bound once, submit ordered OverwritePayloadOperation slices with wait=true and existing retry/deadline/write lock/disk guard. Require exact complete result cardinality and COMPLETED statuses before caller confirmation. Preserve per-document proof/ledger boundaries, point IDs, full payload replacement, vectors, model/encoding/configuration and single writer. Startup investigator alone owns source/tests CPU parity/RPC-count/error guards. Root owns Core, shared gates, Git, live source rollout and measured native comparison`.
 - [x] `S38` - Repair donor admission ordering and verify complete CODE embedding input; `Source checkpoint in canonical _donor_candidates.py, _reuse.py and _slicing.py with focused isolated CPU donor admission and context tests, dated accepted reuse ADR clarification, actual mutation guards, independent source review and shared gates. Final vector donors remain three with at most six candidate pointer and proof inspections. Changed class, function, path or body input must never reuse an old vector despite matching raw content or point IDs. S04 retains the measured idle source reload and integrated live acceptance obligation.`.
 - [x] `S39` - Defer generation reclamation safely across concurrent publication proof conflicts; `Canonical generation_survey.py with focused real-ledger CPU survey and reclamation regressions and actual mutation guards. Reuse the canonical unreadable-publication error contract around both proof acquisition and token validation. Omit an unverifiable root and reset its generation grace clocks through existing conservative reclamation behavior while unrelated roots continue. Preserve publication fencing and all deletion, retention and resource authority. Root owns shared gates, source commit and S04 final measured reload.`.
+- [x] `S40` - Reject obsolete rebuild reconciliation before publication IO under the retry-state lock; `Source repair checkpoint limited to watcher_retry_policy.py and existing watcher rebuild reconciliation tests. Canonical eligibility predicate rejects obsolete starts before proof IO while preserving equality and owner and publication fences. Actual CPU regressions and guard restoration and shared gates and independent review are complete. S04 owns measured idle reload and final runtime acceptance.`.
 - [ ] `S04` - Deploy the current checkout as the resident daemon, repair affected publications through explicit rebuild jobs when required, and verify service health, search, and watcher convergence; `resident service lifecycle, affected root ledgers and admitted jobs, plan verification and final audit`.
 
 ## Parallelization
@@ -203,6 +206,8 @@ The supervisor owns the reopened S26 zero-chunk progress extension and its tests
 The embedding investigator alone owns S38 _donor_candidates.py, _reuse.py, _slicing.py and focused donor admission/context CPU tests. Other investigators review frozen code and evidence with no source writes. Root owns the dated accepted ADR clarification, all plan/audit/Git mutations, shared gates and live profiling/control. The admitted protected writer continues on its loaded source. The final idle resident reload loads S38 after its source review and all admitted writers settle. No worker touches live storage, services, CUDA, Git or vault records.
 
 After the S38 source checkpoint, the embedding investigator alone owns S39 generation_survey.py and focused real-ledger generation survey/reclamation CPU tests. The startup/storage investigator performs read-only independent review and timeout investigation. The indexing investigator owns read-only policy/measurement evidence in the isolated incident directory and never alters TUI files. Root owns all plan/audit/ledger/Git mutations, shared checks, profiling, service/store/admission operations and the final measured idle source reload. These disjoint assignments may run concurrently. Workers remain CPU-only and preserve all others' edits.
+
+For S40, the embedding architecture investigator owns only `watcher_retry_policy.py` and the existing `test_watcher_rebuild_reconciliation.py` CPU regression file. The investigator remains CPU-only and never reads live retry files or calls live service, storage, CUDA, Git or vault tools. A separate reviewer checks the frozen integrated evidence. The supervisor owns all shared checks, source checkpoints, retry-state evidence capture, service and admission operations, profiling and S04 rollout. The active externally admitted TUI rebuild and all existing watcher attempts are preserved.
 
 ## Verification
 

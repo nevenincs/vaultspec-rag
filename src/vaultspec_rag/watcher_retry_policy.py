@@ -174,6 +174,20 @@ def _rebuild_refusal_cutoff(
     return cutoff
 
 
+def _rebuild_candidate_is_eligible(
+    state: WatcherRetryState,
+    *,
+    started: float,
+    refusal_at: float | None,
+) -> bool:
+    """Require reconcilable state and reject rebuilds older than its cutoff."""
+    return (
+        state.attempt_generation is not None
+        or state.scope_refusal is not None
+        or state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+    ) and not (refusal_at is not None and started < refusal_at)
+
+
 def _recovery_marker_is_consumable(
     marker: RecoveryMarker,
     *,
@@ -525,14 +539,13 @@ class WatcherRetryPolicy:
                 if not resolve_abandoned_attempt or _attempt_owner_is_live(state):
                     return False
                 self._require_active_attempt(state, active_generation)
-            elif (
-                state.scope_refusal is None
-                and state.last_error_kind is not JobErrorKind.FULL_REINDEX_REQUIRED
-            ):
-                return False
             refusal_at = _rebuild_refusal_cutoff(
                 state, include_attempt=active_generation is not None
             )
+            if not _rebuild_candidate_is_eligible(
+                state, started=started, refusal_at=refusal_at
+            ):
+                return False
             try:
                 publication = acquire_publication_snapshot(
                     Path(snapshot.spec.project_root),

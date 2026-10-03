@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from threading import Event
 from typing import TYPE_CHECKING
 
 import pytest
@@ -37,6 +39,7 @@ from ..watcher_retry import (
     WatcherCircuitState,
     WatcherPathEvent,
     WatcherPathObservation,
+    WatcherRetryUnavailableError,
     WatcherScopeRefusal,
     WatcherSource,
     write_state,
@@ -58,6 +61,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from .._publication_state import PublicationSnapshot
     from ..indexer._run_ledger_models import RunGeneration
     from ..job_models import JobSnapshot
     from ..watcher_retry import WatcherRetryState
@@ -369,6 +373,112 @@ def test_rebuild_before_a_new_refusal_cannot_clear_it(tmp_path: Path) -> None:
 
     assert not reconcile_completed_rebuild(snapshot)
     assert policy.refresh().scope_refusal is not None
+
+
+@pytest.mark.parametrize("source", list(WatcherSource))
+def test_obsolete_rebuild_does_not_read_publication(
+    tmp_path: Path, source: WatcherSource, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from .. import _publication_state
+
+    root = tmp_path.resolve()
+    snapshot = _published_rebuild(root, source)
+    policy = _refused_policy(root, source)
+    refused = policy.state
+    publication_reads: list[PublicSourceType] = []
+
+    def read_publication(
+        root_dir: Path, source_type: PublicSourceType
+    ) -> PublicationSnapshot:
+        publication_reads.append(source_type)
+        return acquire_publication_snapshot(root_dir, source_type)
+
+    monkeypatch.setattr(
+        _publication_state, "acquire_publication_snapshot", read_publication
+    )
+
+    assert not policy.reconcile_rebuild(snapshot)
+    # Mutation: omitting the early cutoff performs proof I/O for a candidate
+    # that the unchanged complete proof predicate must reject anyway.
+    assert not publication_reads, "obsolete rebuild reached publication I/O"
+    assert policy.refresh() == refused
+
+
+def test_obsolete_rebuild_does_not_hold_retry_lock_for_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from .. import _publication_state
+
+    root = tmp_path.resolve()
+    snapshot = _published_rebuild(root, WatcherSource.CODE)
+    policy = _refused_policy(root, WatcherSource.CODE)
+    refused = policy.state
+    progressed = Event()
+    release_reader = Event()
+    refresh_error: WatcherRetryUnavailableError | None = None
+
+    def read_publication(
+        root_dir: Path, source_type: PublicSourceType
+    ) -> PublicationSnapshot:
+        progressed.set()
+        assert release_reader.wait(5.0), "publication scheduling seam was not released"
+        return acquire_publication_snapshot(root_dir, source_type)
+
+    monkeypatch.setattr(
+        _publication_state, "acquire_publication_snapshot", read_publication
+    )
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        reconciliation = executor.submit(policy.reconcile_rebuild, snapshot)
+        reconciliation.add_done_callback(lambda _completed: progressed.set())
+        try:
+            assert progressed.wait(5.0), (
+                "reconciliation did not reach a bounded outcome"
+            )
+            try:
+                policy.refresh()
+            except WatcherRetryUnavailableError as exc:
+                refresh_error = exc
+        finally:
+            release_reader.set()
+        assert not reconciliation.result(timeout=5.0)
+
+    # Mutation: omitting the early cutoff holds the actual state lock across
+    # the isolated reader pause and makes concurrent actual refresh time out.
+    assert refresh_error is None, "obsolete rebuild blocked concurrent retry refresh"
+    assert policy.refresh() == refused
+
+
+def test_rebuild_at_refusal_cutoff_still_reads_and_validates_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from .. import _publication_state
+
+    root = tmp_path.resolve()
+    policy = _refused_policy(root, WatcherSource.CODE)
+    snapshot = _published_rebuild(root, WatcherSource.CODE)
+    started = snapshot.timestamps.started_at
+    assert started is not None
+    write_state(
+        workspace_volume_path(root) / "watcher-retry" / "code.json",
+        replace(policy.state, last_failure_at=started),
+    )
+    publication_reads: list[PublicSourceType] = []
+
+    def read_publication(
+        root_dir: Path, source_type: PublicSourceType
+    ) -> PublicationSnapshot:
+        publication_reads.append(source_type)
+        return acquire_publication_snapshot(root_dir, source_type)
+
+    monkeypatch.setattr(
+        _publication_state, "acquire_publication_snapshot", read_publication
+    )
+
+    # Mutation: changing the early cutoff to <= rejects the previously eligible
+    # equality boundary without consulting its actual publication authority.
+    assert policy.reconcile_rebuild(snapshot), "equal cutoff rejected eligible rebuild"
+    assert publication_reads == [PublicSourceType.CODE]
+    assert policy.state.scope_refusal is None
 
 
 @pytest.mark.parametrize("sweep", ["inflight", "delayed_generation", "resumed"])

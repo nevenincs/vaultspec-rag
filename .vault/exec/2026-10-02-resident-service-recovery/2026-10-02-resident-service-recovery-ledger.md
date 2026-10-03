@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:5de6ce104fc310b72ba2b4502aec57ac08a413972af8b5c2ca89d12496ba2863'
+body_hash: 'sha256:da5f9c71f3db04d512253301329cbdf414985381f9c45d5c376fcef6e38e4b0e'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -712,6 +712,21 @@ related:
 - `S39` `verify:` `CPU perf-profiling/shared_gates.py s39-final four shared package checks on corrected hashes` -> `pass`
 - `S39` `verify:` `Independent frozen S39 integrated source and evidence review` -> `pass`
 - `S39` `by:` `root`
+- `S40` `M` `src/vaultspec_rag/watcher_retry_policy.py`
+- `S40` `M` `src/vaultspec_rag/tests/test_watcher_rebuild_reconciliation.py`
+- `S40` `M` `.vault/audit/2026-10-02-resident-service-recovery-audit.md`
+- `S40` `M` `.vault/plan/2026-10-02-resident-service-recovery-plan.md`
+- `S40` `verify:` `python -m ruff check owned S40 paths` -> `pass`
+- `S40` `verify:` `python -m ruff format --check owned S40 paths` -> `pass`
+- `S40` `verify:` `python -m basedpyright owned S40 paths` -> `pass`
+- `S40` `verify:` `python -m ty check owned S40 paths` -> `pass`
+- `S40` `verify:` `python -m pytest focused S40 CPU file 41 tests` -> `pass`
+- `S40` `verify:` `python -m pytest affected watcher CPU files 74 tests` -> `pass`
+- `S40` `verify:` `s40-proof/guards.py three actual named fail restore fresh pass pairs` -> `pass`
+- `S40` `verify:` `perf-profiling/shared_gates.py s40-revised four gates` -> `pass`
+- `S40` `verify:` `S40 frozen independent integrated review` -> `pass`
+- `S40` `verify:` `S40 root handoff and artifact binding` -> `pass`
+- `S40` `by:` `root`
 
 ## Notes
 
