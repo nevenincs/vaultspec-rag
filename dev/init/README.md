@@ -13,6 +13,7 @@ The recipes:
 | `just init-python` | The Python environment and its locked dependencies.           |
 | `just init-node`   | The pinned Node dependency graph.                             |
 | `just init-tools`  | Framework enrollment, git hooks, and host-tool diagnosis.     |
+| `just init-env`    | `.env`, in the structure of `.env.example`, keeping values.   |
 | `just init-check`  | Reports whether the worktree is initialized. Mutates nothing. |
 
 The monitor frontend is provisioned separately with `just init-monitor`

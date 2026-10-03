@@ -168,6 +168,17 @@ init-node:
 init-tools:
     uv run --no-project --python 3.13.14 -- python -m dev.init tools
 
+# Every recipe above provisions `.env` before its first phase. `init-env` is
+# that one step on its own, for bringing a local file up to date after
+# `.env.example` changed without paying for a phase. The structure is always the
+# example's and no value is ever dropped: an existing `.env` keeps its own
+# values, and a new one takes them from the `main` worktree's `.env`.
+
+# Provision .env in the structure of .env.example, keeping every value.
+[group('setup')]
+init-env:
+    uv run --no-project --python 3.13.14 -- python -m dev.init.dotenv .env.example .env
+
 # Report whether this worktree is initialized. Mutates nothing; exits 3 if not.
 [group('setup')]
 init-check:
