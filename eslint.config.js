@@ -5,7 +5,17 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default defineConfig(
-  { ignores: ["**/node_modules/**", ".venv/**", "src/monitor/dist/**"] },
+  {
+    ignores: [
+      "**/node_modules/**",
+      ".venv/**",
+      "src/monitor/dist/**",
+      "dist-bin/**",
+      "dist-bundles/**",
+      "dist-monitor-frontend/**",
+      "dist-release-evidence/**",
+    ],
+  },
   {
     files: ["**/*.{js,mjs,cjs}"],
     extends: [js.configs.recommended],
