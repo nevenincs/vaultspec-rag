@@ -72,6 +72,7 @@ from .watcher_runtime import (
 
 if TYPE_CHECKING:
     from .graph_cache import GraphCache
+    from .indexer._checkpoint_common import RunCheckpointBase
     from .indexer._codebase_indexer import CodeExecutionPreflight
     from .indexer._document_indexer import DocumentExecutionPreflight
     from .indexer._vault_prep import IndexResult
@@ -974,13 +975,23 @@ def _run_managed_index_attempt(
         ),
     )
     scope = _resolve_attempt_preflights(slot, context, scope)
-    context.set_resilience(_watcher_attempt_resilience(slot))
+    admitted_resilience = _watcher_attempt_resilience(slot)
+    context.set_resilience(admitted_resilience)
     pipeline_active = slot.source in {JobSource.CODE, JobSource.DOCUMENT}
     registry = slot.registry
     result: IndexResult | None = None
     try:
         with registry.compute_lease(slot.root) as lease:
             runtime = lease.runtime
+            previous_checkpoint = (
+                runtime.code_indexer.last_checkpoint
+                if slot.source is JobSource.CODE
+                else (
+                    runtime.document_indexer.last_checkpoint
+                    if slot.source is JobSource.DOCUMENT
+                    else None
+                )
+            )
             context.set_resources(ResourceUpdate(project_lease_held=True))
             try:
                 context.set_resources(
@@ -998,7 +1009,13 @@ def _run_managed_index_attempt(
                         inputs,
                     )
                 finally:
-                    _publish_watcher_index_resilience(slot, runtime, context)
+                    _publish_watcher_index_resilience(
+                        slot,
+                        runtime,
+                        context,
+                        previous_checkpoint,
+                        admitted_resilience,
+                    )
             finally:
                 context.set_resources(
                     ResourceUpdate(
@@ -1072,24 +1089,29 @@ def _publish_watcher_index_resilience(
     slot: WatcherConvergenceSlot,
     runtime: ProjectComputeRuntime,
     context: JobAttemptContext,
+    previous_checkpoint: RunCheckpointBase | None,
+    admitted: IndexResilienceSnapshot,
 ) -> None:
     """Publish checkpoint evidence for watcher-owned code and document work."""
+    source = slot.source
+    if source not in (JobSource.CODE, JobSource.DOCUMENT):
+        return
+
     # Package-internal resilience projectors, shared with the dispatcher.
     from .job_dispatch import (
-        _code_resilience,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
-        _document_resilience,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
+        _indexer_resilience,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
         _publish_resilience,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
     )
 
-    if slot.source not in {JobSource.CODE, JobSource.DOCUMENT}:
-        return
+    indexer = (
+        runtime.code_indexer if source is JobSource.CODE else runtime.document_indexer
+    )
 
     def snapshot_factory() -> IndexResilienceSnapshot:
-        base = (
-            _code_resilience(runtime.code_indexer)
-            if slot.source is JobSource.CODE
-            else _document_resilience(runtime.document_indexer)
-        )
+        checkpoint = indexer.last_checkpoint
+        base = admitted
+        if checkpoint is not None and checkpoint is not previous_checkpoint:
+            base = _indexer_resilience(indexer, checkpoint, admitted)
         return _retry_resilience(slot.retry_policy.state, base=base)
 
     _publish_resilience(context, snapshot_factory)
