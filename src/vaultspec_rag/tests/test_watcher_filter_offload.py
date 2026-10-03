@@ -7,6 +7,7 @@ import threading
 from collections import deque
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Self, cast
 
 import pytest
@@ -29,7 +30,6 @@ from ..watcher_runtime import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
-    from pathlib import Path
     from types import TracebackType
 
 pytestmark = pytest.mark.unit
@@ -206,6 +206,77 @@ async def test_raw_watch_batches_keep_the_application_filter_authoritative(
     ] == [".git/.gitignore"], (
         "raw event batches must reach the canonical application filter"
     )
+
+
+@pytest.mark.parametrize("stage", ["initial", "control"])
+async def test_policy_discovery_leaves_event_loop_responsive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stage: str,
+) -> None:
+    # Mutation: running either production refresh inline holds the serving
+    # loop while actual policy discovery waits at its filesystem-read boundary.
+    ignore_file = tmp_path / ".gitignore"
+    ignore_file.write_text("ignored.py\n", encoding="utf-8")
+    block_next_read = threading.Event()
+    if stage == "initial":
+        block_next_read.set()
+
+    def before_batch(_index: int) -> None:
+        if stage == "control":
+            block_next_read.set()
+
+    intake = _configure_intake(
+        tmp_path,
+        monkeypatch,
+        [{(Change.modified, str(ignore_file))}],
+        before_batch=before_batch,
+    )
+    actual_read_text = Path.read_text
+    entered = threading.Event()
+    loop_progress = threading.Event()
+    released = threading.Event()
+    progressed_while_blocked: list[bool] = []
+    read_threads: list[int] = []
+    loop = asyncio.get_running_loop()
+    loop_thread = threading.get_ident()
+
+    def read_text(
+        path: Path,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> str:
+        if path == ignore_file and block_next_read.is_set():
+            block_next_read.clear()
+            read_threads.append(threading.get_ident())
+            entered.set()
+            assert released.wait(5.0), "policy-read barrier must remain bounded"
+        return actual_read_text(path, encoding=encoding, errors=errors, newline=newline)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+
+    def release_after_loop_observation() -> None:
+        if entered.wait(5.0):
+            loop.call_soon_threadsafe(loop_progress.set)
+            progressed_while_blocked.append(loop_progress.wait(1.0))
+        released.set()
+
+    observer = threading.Thread(target=release_after_loop_observation, daemon=True)
+    observer.start()
+    try:
+        await watcher_intake.watch_and_reindex(intake.configuration)
+    finally:
+        released.set()
+        await asyncio.to_thread(observer.join, 5.0)
+    assert progressed_while_blocked == [True], (
+        f"{stage} policy refresh must release the serving loop during discovery"
+    )
+    assert read_threads == [read_threads[0]] and read_threads[0] != loop_thread
+    assert [
+        item.relative_path
+        for item in intake.bindings[1].retry_policy.state.pending_paths
+    ] == [".gitignore"]
 
 
 async def test_control_change_preserves_prefilter_and_new_policy_order(

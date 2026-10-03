@@ -586,7 +586,9 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
     # index-shaping control event advances the watcher generation. Invalid
     # policy edits retain the prior intake snapshot while the unconditional
     # control-file event still reaches the indexer's fail-closed entry gate.
-    code_policy = _refresh_policy_snapshot(root_dir, None)
+    code_policy = await _run_in_thread(
+        partial(_refresh_policy_snapshot, root_dir, None)
+    )
 
     try:
         async for changes in awatch(
@@ -610,7 +612,9 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
                 for _change_type, path_str in changes
             )
             if policy_changed:
-                code_policy = _refresh_policy_snapshot(root_dir, code_policy)
+                code_policy = await _run_in_thread(
+                    partial(_refresh_policy_snapshot, root_dir, code_policy)
+                )
             batch = await _run_in_thread(
                 partial(
                     _classify_watcher_changes,
