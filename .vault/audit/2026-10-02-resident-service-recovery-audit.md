@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:b7b69af64ab6dc1798a589ee138c314decf120b51453b71e75cd78406810e796'
+body_hash: 'sha256:4685aacd7c0c52040bf55aaa978f66aba266384a62aba672c56ee1af3ef323cc'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -243,3 +243,15 @@ Independent SOURCE+CPU review passes expanded S16 against both frozen hashes:13 
 Independent SOURCE+CPU review passes expanded S17 against all five frozen hashes:22 focused and220 affected CPU cases, seven configured gates exit0 and21 intended production mutation failures followed by fresh restored passes. Exact model maps, all per-kind count fields, generation unknown/empty/debt and published temp-root true/false facts survive service-to-CLI adaptation and applicable human rendering; malformed/legacy evidence retains conservative fallback.
 
 The integrated S14-S18 review passes with every source finding in that batch closed. S01/S07 watcher behavior and temporal guards, S10 stream guards, and S13 search readiness/conformance were refreshed where applicable. All28 final source/test hashes match shared package lint/format/diff evidence. S09 trusted authority deployment and S04 actual fresh publication, search and watcher convergence remain open; the resident will restart only from these committed repairs.
+
+## Final checkout resident start and repair admission
+
+At 00:59 UTC the authoritative CI snapshot was empty and the owned hold was verified. The current committed checkout5e87f227 restarted through its hidden debug-environment Start task as daemon38488 with managed Qdrant77200. The editable import resolves to this monitor checkout and the pinned monitor checksum matches. Startup completed at01:02:09 UTC in161.92 seconds; the actual scheduled Probe reports presence result2 during warmup. Canonical health then showed models loaded, server backend1.19.0, zero restarts and open admission. Final publication and per-root readiness remain pending.
+
+A vector-free scan of the preserved damaged monitor collection found exactly14,897 ledger IDs versus14,541 live IDs:356 missing and no inferred missing-count gap. All356 missing IDs across25 paths match chunks reconstructed from the actual indexed source snapshot253f1204, with zero unattributed current-source identities. This identifies the lost semantic points precisely; the real drift reproduction establishes the deletion mechanism. Full evidence is in missing-monitor-point-attribution.json beside consistent ledger backups.
+
+Canonical retry created eleven linked children, saving each identity immediately; the already published ingest CODE child remained unchanged. Monitor CODE is now building fresh generation5a74174e98334bb4b199d337b12bb542, distinct from retired81a0c6c67a714492951cef99cec90004, with continued confirmed units and1,011 current source paths. TUI's fresh generation must be checked when its protected worker enters. No damaged generation is being trusted for resumption.
+
+Monitor VAULT childbce9cd71-bd07-4a4a-8e1e-67a59672df19 was paused before worker admission, acknowledged PAUSED promptly with no capacity/project/writer/pipeline ownership, and resumed under the same ID as attempt2. Its actual full replacement and publication remain pending; this deliberately exercises the repaired resume authority boundary. The live CLI survey independently matches all14 published namespace fields, including four stamped model entries and false temporary-root classification, through the actual CLI process. No model loading or storage mutation was needed for that adapter proof.
+
+The new daemon initially has no active project watchers, so its pre-admission watcher listing is empty rather than a path-filter failure. Explicit watcher activation and canonical path-alias convergence will be verified after replacement proofs settle.
