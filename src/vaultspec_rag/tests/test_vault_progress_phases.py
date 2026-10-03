@@ -102,13 +102,14 @@ class _ValidatingJobReporter(JobProgressReporter):
         self.publications: list[JobProgress] = []
         self.rejections: list[tuple[str, int, int | None, str]] = []
 
-    def _publish(self, step: str, *, completed: int, total: int | None) -> None:
+    def _publish(self, step: str, *, completed: int, total: int | None) -> bool:
         try:
             progress = JobProgress(step, completed, total, last_updated=0.0)
         except ValueError as exc:
             self.rejections.append((step, completed, total, str(exc)))
-        else:
-            self.publications.append(progress)
+            return False
+        self.publications.append(progress)
+        return True
 
 
 def _document_text(index: int, *, tags: str = "#sample", body: str = "Body") -> str:

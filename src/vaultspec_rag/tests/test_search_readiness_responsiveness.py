@@ -50,10 +50,6 @@ async def test_concrete_search_heartbeat_runs_while_cold_proof_read_is_blocked(
         finished.set()
         return acquire(root, source)
 
-    def empty_backend(self: ServiceRegistry, root: Path) -> int:
-        del self, root
-        return 0
-
     async def heartbeat() -> bool:
         while not entered.is_set():
             await asyncio.sleep(0)
@@ -62,7 +58,6 @@ async def test_concrete_search_heartbeat_runs_while_cold_proof_read_is_blocked(
     monkeypatch.setattr(
         _publication_state, "acquire_publication_snapshot", blocked_proof_reader
     )
-    monkeypatch.setattr(ServiceRegistry, "document_chunk_count", empty_backend)
     monkeypatch.setattr(_routes, "canonical_job_snapshot", _no_jobs)
     beat = asyncio.create_task(heartbeat())
     searching = asyncio.create_task(

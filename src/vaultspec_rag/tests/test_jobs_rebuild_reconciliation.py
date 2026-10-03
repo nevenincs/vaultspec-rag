@@ -17,30 +17,34 @@ from ..service_quiesce import ServiceQuiesceController
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from types import FrameType
 
     from ..job_manager.models import JobAttemptContext
-    from ..job_models import JobSnapshot
 
 pytestmark = [pytest.mark.unit]
 
 
 async def test_rebuild_completion_reconciles_on_worker_thread(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
+    """Observe the real reconciliation call site; no watcher state means it
+    runs and returns False harmlessly, so nothing needs to be substituted.
+    """
     finished = threading.Event()
     observations: list[tuple[str, int]] = []
     loop_thread = threading.get_ident()
+    reconcile_code = watcher_runtime.reconcile_completed_rebuild.__code__
 
-    def observe(snapshot: JobSnapshot) -> bool:
-        observations.append((snapshot.id, threading.get_ident()))
-        finished.set()
-        return False
+    def observe(frame: FrameType, event: str, _arg: object) -> None:
+        if event == "call" and frame.f_code is reconcile_code:
+            snapshot = frame.f_locals["snapshot"]
+            observations.append((snapshot.id, threading.get_ident()))
+            finished.set()
 
     def runner(context: JobAttemptContext) -> JobExecutionResult:
         del context
         return JobExecutionResult(summary="verified rebuild")
 
-    monkeypatch.setattr(watcher_runtime, "reconcile_completed_rebuild", observe)
     manager = JobManager(
         state_path=None,
         max_nonterminal=1,
@@ -59,9 +63,16 @@ async def test_rebuild_completion_reconciles_on_worker_thread(
     assert created.job is not None
     job_id = created.job.id
     manager.bind_dispatch(job_id, runner, on_finished=jobs._sync_legacy_finished)
-    await manager.dispatch_async(job_id)
-    assert await asyncio.to_thread(finished.wait, 5.0)
+    prior_profile = threading.getprofile()
+    threading.setprofile(observe)
+    try:
+        await manager.dispatch_async(job_id)
+        assert await asyncio.to_thread(finished.wait, 5.0)
+    finally:
+        threading.setprofile(prior_profile)
     assert observations[0][0] == job_id
-    # Calling reconciliation directly in the completion callback makes this
-    # fail at the thread assertion; restoring executor dispatch returns green.
+    # Calling reconciliation inline on the event loop thread never starts a
+    # new profiled thread, so the profile hook is never entered and
+    # ``finished.wait`` above times out and fails instead; restoring executor
+    # dispatch schedules a worker thread and returns both assertions to green.
     assert observations[0][1] != loop_thread
