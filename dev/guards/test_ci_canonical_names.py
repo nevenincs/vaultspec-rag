@@ -1,4 +1,4 @@
-"""The workflows spell the names :mod:`dev.ci_names` defines, and only those.
+"""The workflows spell the names :mod:`dev.guards._ci_names` defines, and only those.
 
 YAML cannot import, so the canon and the workflow are two copies of one fact
 and this guard ties them together. A required check renamed on one side is a
@@ -7,7 +7,7 @@ a label spelled one way where it is pressed and another where it is released
 leaves a button that fires once and never clears.
 
 The ``protect-main`` ruleset's required context lives in repository settings,
-outside the tree. :data:`~dev.ci_names.GATE_CHECK` is its value.
+outside the tree. :data:`~dev.guards._ci_names.GATE_CHECK` is its value.
 """
 
 from __future__ import annotations
@@ -16,7 +16,8 @@ from urllib.parse import unquote
 
 import pytest
 
-from dev.ci_names import (
+from dev.guards import _workflows as workflows
+from dev.guards._ci_names import (
     FULL_RUN_LABEL,
     GATE_CHECK,
     GATE_JOB,
@@ -24,7 +25,6 @@ from dev.ci_names import (
     SAME_REPO_CLAUSE,
     Workflow,
 )
-from dev.guards import _workflows as workflows
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
 
@@ -36,12 +36,12 @@ def _gate() -> workflows.Job:
             return job
     pytest.fail(
         f"{Workflow.MERGE_GATE} has no job `{GATE_JOB}`. The canon names it "
-        "`dev.ci_names.GATE_JOB`; repoint that, and the ruleset with it."
+        "`dev.guards._ci_names.GATE_JOB`; repoint that, and the ruleset with it."
     )
 
 
 def test_every_workflow_file_the_canon_names_exists() -> None:
-    """Every :class:`~dev.ci_names.Workflow` member names a file on disk.
+    """Every :class:`~dev.guards._ci_names.Workflow` member names a file on disk.
 
     A member left behind after a workflow is deleted or renamed is a guard
     reading a file that is not there, which shows up as a guard that stops
@@ -54,7 +54,7 @@ def test_every_workflow_file_the_canon_names_exists() -> None:
     present = {path.name for path in directory.glob("*.yml")}
     missing = sorted(member.value for member in Workflow if member.value not in present)
     assert not missing, (
-        f"`dev.ci_names.Workflow` names {missing}, which no longer exist. A "
+        f"`dev.guards._ci_names.Workflow` names {missing}, which no longer exist. A "
         "guard reading one asserts nothing at all."
     )
 
@@ -75,13 +75,13 @@ def test_every_workflow_file_on_disk_is_in_the_canon() -> None:
         path.name for path in directory.glob("*.yml") if path.name not in known
     )
     assert not unknown, (
-        f"{unknown} are workflows `dev.ci_names.Workflow` does not name, so "
+        f"{unknown} are workflows `dev.guards._ci_names.Workflow` does not name, so "
         "nothing addresses them by name. Add each to the enum."
     )
 
 
 def test_the_gate_carries_the_name_branch_protection_requires() -> None:
-    """The gate job's ``name:`` is :data:`~dev.ci_names.GATE_CHECK`.
+    """The gate job's ``name:`` is :data:`~dev.guards._ci_names.GATE_CHECK`.
 
     This is the copy that costs the most when it drifts: the ruleset requires
     the string, and a job renamed here reports a check the ruleset is not

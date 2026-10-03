@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from dev.ci_names import Workflow
 from dev.guards import _workflows as workflows
+from dev.guards._ci_names import Workflow
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
 

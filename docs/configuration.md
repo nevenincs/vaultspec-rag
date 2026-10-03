@@ -408,7 +408,6 @@ vaultspec-rag downloads its dense, sparse, and reranker model files through the 
 | Variable                         | Type    | Controls                                                                                          |
 | -------------------------------- | ------- | ------------------------------------------------------------------------------------------------- |
 | `HF_HOME`                        | path    | Hub cache root. Read directly when reporting cache location; falls back to `~/.cache/huggingface` |
-| `HF_ENDPOINT`                    | string  | Hub mirror base URL                                                                               |
 | `HF_HUB_DOWNLOAD_TIMEOUT`        | integer | Per-file download timeout. The service defaults it to `300` when unset                            |
 | `HF_HUB_OFFLINE`                 | boolean | Cache-only mode; no network access to the Hub                                                     |
 | `TRANSFORMERS_OFFLINE`           | boolean | Cache-only model loading for Transformers                                                         |

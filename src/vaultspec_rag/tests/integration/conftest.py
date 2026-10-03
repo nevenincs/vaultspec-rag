@@ -39,6 +39,7 @@ from ...config._settings import get_config, reset_config
 from ...config._types import EnvVar
 from ...progress import NullProgressReporter
 from .._model_setup import (
+    HF_ENDPOINT_ENV,
     configured_service_model_ids,
     ensure_model_snapshots,
     model_setup_timeout_seconds,
@@ -244,9 +245,9 @@ def _verify_offline_service_startup(log_path: Path, stages: list[str]) -> str:
     if bool(get_config().reranker_enabled):
         expected_markers.append("(cache-only=True)")
     missing_markers = [marker for marker in expected_markers if marker not in output]
-    hf_endpoint = (
-        os.environ.get(EnvVar.HF_ENDPOINT.value) or "https://huggingface.co"
-    ).rstrip("/")
+    hf_endpoint = (os.environ.get(HF_ENDPOINT_ENV) or "https://huggingface.co").rstrip(
+        "/"
+    )
     if missing_markers or hf_endpoint in output:
         raise AssertionError(
             "Service did not prove cache-only startup without Hugging Face "

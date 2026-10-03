@@ -36,7 +36,7 @@ from ..config._settings import VaultSpecConfigWrapper
 from ..config._types import EnvVar
 from ._env_surface import (
     ENV_EXAMPLE,
-    borrowed_name_is_referenced,
+    borrowed_name_is_touched,
     harness_name_is_read,
     product_setting_is_consumed,
     source_surface,
@@ -57,18 +57,7 @@ _SET_BY_A_PARENT_PROCESS: Final[dict[str, str]] = {
     "GITHUB_ACTIONS": "the Actions runner, on every step",
     "GITHUB_ENV": "the Actions runner, on every step",
     "RUNNER_TOOL_CACHE": "the Actions runner, on every step",
-    "FULL_RUN_LABEL": "the merge-gate workflow, on its own steps",
 }
-
-#: Names the harness spells out and nothing reads. Declaring one would document
-#: behaviour the code does not have, so each stays off the example until a
-#: reader exists - at which point the guard below evicts it from this set.
-_NAMED_WITHOUT_A_READER: Final = frozenset(
-    {
-        "VAULTSPEC_FIX_STRICT",
-        "VAULTSPEC_ALLOW_EMPTY_SELECTION",
-    }
-)
 
 #: Environment accesses whose key cannot be read off the source. Each was read
 #: and found to pass on only names declared elsewhere: the first restores the
@@ -135,7 +124,7 @@ def test_the_example_declares_every_variable_the_source_names() -> None:
     harness module. Observed this assertion fail naming that variable and the
     module.
     """
-    exempt = set(_SET_BY_A_PARENT_PROCESS) | _NAMED_WITHOUT_A_READER | _internal()
+    exempt = set(_SET_BY_A_PARENT_PROCESS) | _internal()
     declared = _declared()
     undeclared = {
         name: sorted(files)
@@ -149,34 +138,44 @@ def test_the_example_declares_every_variable_the_source_names() -> None:
     )
 
 
-def test_the_example_declares_nothing_the_source_does_not_read() -> None:
-    """A declared variable has a reader, or it is a knob that does nothing.
+def _is_read(name: str) -> bool:
+    """Return whether the source reads *name*, by the rule its owner sets."""
+    try:
+        var = EnvVar(name)
+    except ValueError:
+        return harness_name_is_read(name)
+    if entry(var).scope is VariableScope.EXTERNAL:
+        return borrowed_name_is_touched(var)
+    return product_setting_is_consumed(var)
+
+
+def test_nothing_is_declared_or_named_that_the_source_does_not_read() -> None:
+    """A variable with no reader is deleted, not documented and not exempted.
+
+    This covers the example and the source alike. A line in the example for a
+    variable nothing reads advertises a knob that configures nothing; a
+    constant in the source holding such a name is the same claim made in code.
+    Neither is waived: the fix is to delete the declaration, or wire the
+    reader.
 
     What counts as a reader depends on who owns the name. A variable this
     project defines must be acted on by shipped code - mapping it onto a
-    settings key nobody reads is not that. A variable another project owns is
-    declared to keep its literal in one place, so being referenced anywhere
-    earns it. A harness variable must reach an environment access.
+    settings key nobody reads is not that. A variable another project owns
+    must be read or set outside the tests. A harness variable must reach an
+    environment access.
 
     Mutation: added ``# VAULTSPEC_RAG_NOTHING_READS_THIS=`` under a
-    description. Observed this assertion fail naming that variable.
+    description. Observed this assertion fail naming that variable. Then added
+    an ``UNREAD_ENV = "VAULTSPEC_UNREAD"`` constant to a harness module, and
+    separately a third-party enum member only the example declared; observed
+    it fail naming each.
     """
-    by_value = {var.value: var for var in EnvVar}
-    unread: list[str] = []
-    for name in sorted(_declared()):
-        var = by_value.get(name)
-        if var is None:
-            used = harness_name_is_read(name)
-        elif entry(var).scope is VariableScope.EXTERNAL:
-            used = borrowed_name_is_referenced(var)
-        else:
-            used = product_setting_is_consumed(var)
-        if not used:
-            unread.append(name)
+    candidates = _declared() | set(source_surface().names)
+    unread = sorted(name for name in candidates if not _is_read(name))
     assert not unread, (
-        ".env.example declares variables nothing in the source reads, so each "
-        "advertises a knob that configures nothing - delete the line, or wire "
-        f"the reader its description promises: {unread}"
+        "these environment variables are declared in .env.example or named in "
+        "the source, and nothing reads them - delete every declaration of each, "
+        f"or wire the reader its description promises: {unread}"
     )
 
 
@@ -186,28 +185,16 @@ def test_the_example_declares_no_name_a_parent_process_sets() -> None:
     Mutation: added ``# PYTEST_CURRENT_TEST=`` under a description. Observed
     the first assertion fail naming it.
     """
-    kept_off = set(_SET_BY_A_PARENT_PROCESS) | _NAMED_WITHOUT_A_READER | _internal()
+    kept_off = set(_SET_BY_A_PARENT_PROCESS) | _internal()
     advertised = sorted(_declared() & kept_off)
     assert not advertised, (
         f".env.example declares names nobody sets by hand: {advertised}"
     )
 
     named = source_surface().names
-    stale = sorted(
-        name
-        for name in (*_SET_BY_A_PARENT_PROCESS, *_NAMED_WITHOUT_A_READER)
-        if name not in named
-    )
+    stale = sorted(name for name in _SET_BY_A_PARENT_PROCESS if name not in named)
     assert not stale, (
         f"names exempted from .env.example that the source no longer carries: {stale}"
-    )
-
-    wired = sorted(
-        name for name in _NAMED_WITHOUT_A_READER if harness_name_is_read(name)
-    )
-    assert not wired, (
-        "these names now have a reader, so they are settings like any other - "
-        f"declare them in .env.example and drop the exemption: {wired}"
     )
 
 

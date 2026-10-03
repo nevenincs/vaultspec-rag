@@ -56,14 +56,12 @@ class EnvVar(StrEnum):
     single source of truth - no other module should use bare string
     literals when reading or writing env vars for RAG configuration.
 
-    Two admission rules apply, and they are not the same rule. A
-    ``VAULTSPEC_RAG_*`` name is this project's own, so it earns a member by
-    being *read* somewhere in production: a first-party name nobody reads
-    configures nothing, and declaring one advertises a knob that does not
-    exist. A third-party name is owned by the library that honours it, so it
-    earns a member by being *named* anywhere in this codebase, production or
-    harness - the member exists to keep that literal in one place, and the
-    behaviour behind it is the owning library's whether we read it or not.
+    One admission rule applies: a name earns a member by being read or set
+    by this codebase outside its tests. A name nobody here touches
+    configures nothing this project can vouch for, and declaring one
+    advertises a knob that does not exist - whether the name is this
+    project's own or belongs to a library it depends on. A third-party
+    variable the code never touches is the library's to document.
     """
 
     RAG_ROOT = "VAULTSPEC_RAG_ROOT"
@@ -273,9 +271,8 @@ class EnvVar(StrEnum):
     # project does not get to rename out from under.
     PREPROCESS_INVOCATION = "VAULTSPEC_PREPROCESS_INVOCATION"
 
-    # Third-party env vars referenced in the codebase - defined here so
+    # Third-party env vars this codebase reads or sets - defined here so
     # the string literal lives in exactly one place.
-    HF_ENDPOINT = "HF_ENDPOINT"
     HF_HOME = "HF_HOME"
     HF_HUB_OFFLINE = "HF_HUB_OFFLINE"
     HF_HUB_DOWNLOAD_TIMEOUT = "HF_HUB_DOWNLOAD_TIMEOUT"

@@ -346,14 +346,14 @@ def _scan_script(relative: str, text: str, surface: Surface) -> None:
         surface.dynamic_sites.add(f"{relative}::<script>")
 
 
-def _scan(*, tests: bool) -> Surface:
+@cache
+def source_surface() -> Surface:
+    """Return what the non-test source names."""
     surface = Surface()
     for path in _candidate_files():
         if not path.is_file() or not _is_source(path):
             continue
-        if _is_test_module(path) is not tests:
-            continue
-        if "node_modules" in path.parts or "__pycache__" in path.parts:
+        if _is_test_module(path):
             continue
         relative = path.relative_to(REPO_ROOT).as_posix()
         text = path.read_text(encoding="utf-8")
@@ -363,18 +363,6 @@ def _scan(*, tests: bool) -> Surface:
         else:
             _scan_script(relative, text, surface)
     return surface
-
-
-@cache
-def source_surface() -> Surface:
-    """Return what the non-test source names."""
-    return _scan(tests=False)
-
-
-@cache
-def suite_surface() -> Surface:
-    """Return what the test modules name."""
-    return _scan(tests=True)
 
 
 def _in_product(files: Iterable[str]) -> bool:
@@ -413,25 +401,23 @@ def product_setting_is_consumed(var: EnvVar) -> bool:
     )
 
 
-def borrowed_name_is_referenced(var: EnvVar) -> bool:
-    """Return whether anything references a variable another project owns.
+def borrowed_name_is_touched(var: EnvVar) -> bool:
+    """Return whether the source reads or sets a variable another project owns.
 
-    Such a member exists to keep a third-party literal in one place, so it is
-    earned by being named anywhere, the test harness included: the behaviour
-    behind it is the owning library's whether this project reads it or not.
+    The harness counts as much as the product here: a release tool that reads a
+    library's variable is a reader. A test does not, because a member only
+    tests reach is a declaration with no consumer.
 
     Args:
         var: A member whose name another project owns.
 
     Returns:
-        True when any module outside the declaring ones references it.
+        True when a non-test module outside the declaring ones references it.
     """
     source = source_surface()
     if source.members.get(var.name, set()) - DECLARATION_MODULES:
         return True
-    if source.reads.get(var.value, set()) - {ENUM_MODULE}:
-        return True
-    return bool(suite_surface().members.get(var.name))
+    return bool(source.reads.get(var.value, set()) - {ENUM_MODULE})
 
 
 def harness_name_is_read(variable: str) -> bool:

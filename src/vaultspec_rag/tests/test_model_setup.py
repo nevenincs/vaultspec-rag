@@ -18,6 +18,7 @@ from ..config._types import EnvVar
 from ._child_signal import CHILD_PROCESS_TIMEOUT_SECONDS
 from ._http_stubs import QuietHandler
 from ._model_setup import (
+    HF_ENDPOINT_ENV,
     configured_service_model_ids,
     ensure_model_snapshots,
     model_setup_timeout_seconds,
@@ -348,7 +349,7 @@ def test_live_service_repair_failure_uses_shared_startup_envelope(
         _service_env(
             tmp_path / "outer-env",
             env_overrides={
-                EnvVar.HF_ENDPOINT.value: endpoint,
+                HF_ENDPOINT_ENV: endpoint,
                 EnvVar.HF_HOME.value: str(tmp_path / "hf-cache"),
             },
         ),

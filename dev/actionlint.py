@@ -84,7 +84,7 @@ ARCHIVES: dict[tuple[str, str], tuple[str, str]] = {
 #: to a literal `https://` origin.
 RELEASE_PATH = "rhysd/actionlint/releases/download"
 
-#: Exit codes, from `dev/EXIT-CODES.md`: 0 OK, 1 FAILED, 127 TOOL_MISSING.
+#: Exit codes: 0 OK, 1 FAILED, 127 TOOL_MISSING.
 OK = 0
 FAILED = 1
 TOOL_MISSING = 127
