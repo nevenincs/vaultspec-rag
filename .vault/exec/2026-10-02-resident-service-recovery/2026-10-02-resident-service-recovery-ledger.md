@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:028d42f5bc2c07272c331c3b1c7b2cf271cdc71df8a160b838a5c4097eb2fd5e'
+body_hash: 'sha256:0eb286c98372b926e2163fba0ad840579b8abba8004f1f14887c6ea0d39c3326'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -622,6 +622,16 @@ related:
 - `S31` `verify:` `uv run --no-sync python 'C:/Users/hello/AppData/Local/Temp/vaultspec-rag-incident-20261002-203057/perf-profiling/s31-file-state-guard/runner.py' 'C:/Users/hello/AppData/Local/Temp/vaultspec-rag-incident-20261002-203057/perf-profiling/s31-file-state-guard'` -> `pass`
 - `S31` `verify:` `uv run --no-sync python 'C:/Users/hello/AppData/Local/Temp/vaultspec-rag-incident-20261002-203057/perf-profiling/drift-lookup-guard/runner.py' 'C:/Users/hello/AppData/Local/Temp/vaultspec-rag-incident-20261002-203057/perf-profiling/drift-lookup-guard'` -> `pass`
 - `S31` `by:` `root`
+- `S32` `M` `src/vaultspec_rag/indexer/_route_migration.py`
+- `S32` `A` `src/vaultspec_rag/tests/test_route_scan_classification_cache.py`
+- `S32` `verify:` `'Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe' 'C:\Users\hello\AppData\Local\Temp\vaultspec-rag-incident-20261002-203057\s32-proof\verify.py'` -> `pass`
+- `S32` `verify:` `'Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe' 'C:\Users\hello\AppData\Local\Temp\vaultspec-rag-incident-20261002-203057\s32-proof\guards.py'` -> `pass`
+- `S32` `verify:` `'Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe' 'C:\Users\hello\AppData\Local\Temp\vaultspec-rag-incident-20261002-203057\s32-proof\benchmark.py'` -> `pass`
+- `S32` `verify:` `uv run --no-sync ruff check src/vaultspec_rag` -> `pass`
+- `S32` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag` -> `pass`
+- `S32` `verify:` `git diff --check` -> `pass`
+- `S32` `verify:` `uv run --no-sync python -m dev.complexity gate` -> `pass`
+- `S32` `by:` `root`
 
 ## Notes
 

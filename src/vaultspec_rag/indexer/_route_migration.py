@@ -9,6 +9,7 @@ import logging
 import time
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
@@ -26,11 +27,12 @@ from ._run_policy import DurableProgressKind
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from qdrant_client.conversions.common_types import PointId
 
     from ..store_runtime import VaultStore
+    from ._content_policy import ClassifiedContent
     from ._file_state import FileState
     from ._resolved_policy import ResolvedIndexPolicy
     from ._run_ledger_models import PublicationReceipt
@@ -325,7 +327,7 @@ def _scroll_stored_route_page(
 
 def _classify_stored_route_rows(
     rows: list[dict[str, object]],
-    policy: ResolvedIndexPolicy,
+    classify: Callable[[str], ClassifiedContent],
     stored_kind: ContentKind,
     *,
     path_key: str,
@@ -341,7 +343,7 @@ def _classify_stored_route_rows(
         raw_path = payload.get(path_key)
         if not isinstance(raw_path, str) or not raw_path:
             continue
-        disposition = policy.classify(raw_path).disposition
+        disposition = classify(raw_path).disposition
         page.append(
             StoredRouteRow(
                 point_id=str(payload.get(id_key) or row["id"]),
@@ -369,6 +371,9 @@ def iter_stored_route_pages(
         raise ValueError("route migration page size must be between 1 and 1000")
     if code_collection is not None and stored_kind is not ContentKind.CODE:
         raise ValueError("only code route scans accept an explicit collection")
+    # Classification depends only on the exact path and this immutable snapshot.
+    # Keep reuse bounded and local so every new scan starts with fresh policy.
+    classify = lru_cache(maxsize=4096)(policy.classify)
     offset: PointId | None = None
     while True:
         if run_policy is not None:
@@ -381,7 +386,7 @@ def iter_stored_route_pages(
         )
         page = _classify_stored_route_rows(
             rows,
-            policy,
+            classify,
             stored_kind,
             path_key=path_key,
             id_key=id_key,

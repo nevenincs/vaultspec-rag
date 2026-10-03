@@ -32,7 +32,7 @@ related:
   - '[[2026-09-08-qdrant-collection-sprawl-adr]]'
 modified: '2026-10-03'
 body_schema: body-v2
-body_hash: 'sha256:c50cea665af8c71ce5de90f6406ca5f9603a8591324b10449f833e6843cd1c35'
+body_hash: 'sha256:c0e0b93f3b5843c7b5819313c2da678978477de25a33eddf3326f6b9def654ad'
 ---
 
 # `resident-service-recovery` plan
@@ -127,7 +127,7 @@ S32 follows a live finalization stack in stored-route classification. The canoni
 - [x] `S29` - Bound changed-path ledger point lookup to the requested generation and path instead of scanning every generation point; `src/vaultspec_rag/indexer/_run_ledger_files.py superseded_point_ids SQL owner and focused actual-ledger CPU regression. Use indexed unit-first traversal, preserve exact ordered identities, storage-before-ledger drift authority and all schemas. Include query-work scaling and production mutation failure proof. Root owns live profiling, plan/audit, shared gates, Git and source rollout.`.
 - [x] `S30` - Schedule independently enabled storage reconciliation when automatic pruning is disabled; `src/vaultspec_rag/server/_lifespan.py maintenance-loop creation predicate and focused actual-lifespan CPU wiring regression. Preserve stage-owned destructive-disable checks, server/local boundaries, bounded shutdown and runtime toggles. Root owns live service, storage actions, shared gates, Git and vault checkpoints.`.
 - [x] `S31` - Avoid rewriting identical already-confirmed file state during checkpoint replay; `src/vaultspec_rag/indexer/_run_ledger_files.py canonical record_file_state atomic upsert and focused actual-ledger CPU no-op and changed-state regression. Add null-safe unchanged-row suppression inside the existing transaction. Preserve mutable-generation and completion and hash validation, evidence-generation ownership, tombstone cleanup, authority and connection lifetime. No checkpoint cache, schema, batching, progress cadence or resource-policy change. Root owns live actions, shared gates, Git and vault.`.
-- [ ] `S32` - Reuse immutable policy classification for repeated source paths within one bounded route scan; `src/vaultspec_rag/indexer/_route_migration.py canonical stored-row classification and focused actual-scanner CPU regression. Use scan-local LRU with at most 4096 exact-path entries. Preserve every page, checkpoint, row identity and order, malformed-row filtering, fresh policy snapshot, migration and publication authority. Prove across-page reuse, bounded eviction and new-scan reclassification. No persistent cache, schema, storage or routing policy change. Root owns live actions, shared gates, Git and vault.`.
+- [x] `S32` - Reuse immutable policy classification for repeated source paths within one bounded route scan; `src/vaultspec_rag/indexer/_route_migration.py canonical stored-row classification and focused actual-scanner CPU regression. Use scan-local LRU with at most 4096 exact-path entries. Preserve every page, checkpoint, row identity and order, malformed-row filtering, fresh policy snapshot, migration and publication authority. Prove across-page reuse, bounded eviction and new-scan reclassification. No persistent cache, schema, storage or routing policy change. Root owns live actions, shared gates, Git and vault.`.
 - [ ] `S04` - Deploy the current checkout as the resident daemon, repair affected publications through explicit rebuild jobs when required, and verify service health, search, and watcher convergence; `resident service lifecycle, affected root ledgers and admitted jobs, plan verification and final audit`.
 
 ## Parallelization
