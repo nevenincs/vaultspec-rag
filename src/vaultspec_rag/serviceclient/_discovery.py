@@ -10,8 +10,6 @@ publications so neither process can erase authoritative fields from the other.
 from __future__ import annotations
 
 import contextlib
-import hashlib
-import hmac
 import json
 import logging
 import os
@@ -26,8 +24,6 @@ from .._timestamps import age_seconds
 if TYPE_CHECKING:
     from collections.abc import Generator, Mapping
     from pathlib import Path
-
-    from .._machine_lock import PreIsolationMachineLock
 
 logger = logging.getLogger(__name__)
 
@@ -519,34 +515,6 @@ class MachineResolution:
         return f"{self.reason}: " + ", ".join(parts)
 
 
-@dataclass(frozen=True, slots=True)
-class PreIsolationMachinePointer:
-    """Original machine paths plus their one pre-root pointer resolution."""
-
-    observation: PreIsolationMachineLock
-    resolution: MachineResolution
-
-    def redacted(self) -> PreIsolationMachinePointer:
-        """Copy this witness without retaining the transient discovery bearer."""
-        payload = dict(self.resolution.payload) if self.resolution.payload else None
-        if payload is not None:
-            payload.pop("service_token", None)
-        return PreIsolationMachinePointer(
-            observation=self.observation,
-            resolution=MachineResolution(
-                state=self.resolution.state,
-                source=self.resolution.source,
-                holder_pid=self.resolution.holder_pid,
-                pointer_pid=self.resolution.pointer_pid,
-                port=self.resolution.port,
-                heartbeat_age_s=self.resolution.heartbeat_age_s,
-                stale_after_s=self.resolution.stale_after_s,
-                reason=self.resolution.reason,
-                payload=payload,
-            ),
-        )
-
-
 def resolve_machine_service() -> MachineResolution:
     """Resolve the machine singleton into one typed, evidence-carrying verdict.
 
@@ -611,59 +579,6 @@ class _MachinePointerEvidence:
     pointer_pid: int | None
     heartbeat_age_s: float | None
     stale_after_s: float
-
-
-def revalidate_captured_machine_pointer(
-    captured: PreIsolationMachinePointer,
-    *,
-    expected_pid: int,
-    expected_port: int,
-    token_sha256: str,
-) -> MachineResolution | None:
-    """Re-read one witness-owned pointer only after its lock still matches."""
-    from .._machine_lock import revalidate_captured_machine_lock
-
-    observation = revalidate_captured_machine_lock(captured.observation.witness)
-    if observation is None or observation.holder_pid != expected_pid:
-        return None
-    resolution = _resolve_machine_pointer_at_path(
-        observation.discovery_path,
-        holder_pid=observation.holder_pid,
-    )
-    token = resolution.service_token
-    if (
-        not resolution.is_ready
-        or resolution.pointer_pid != expected_pid
-        or resolution.port != expected_port
-        or not token
-        or not hmac.compare_digest(
-            hashlib.sha256(token.encode("utf-8")).hexdigest(), token_sha256
-        )
-    ):
-        return None
-    return resolution
-
-
-def _resolve_machine_pointer_at_path(
-    discovery_path: Path,
-    *,
-    holder_pid: int,
-) -> MachineResolution:
-    """Resolve one explicit existing machine pointer for a known live holder.
-
-    Captured GPU borrowing calls this before pytest redirects singleton paths.
-    It deliberately receives an already-observed holder rather than probing the
-    configured global lock, so it cannot bypass normal containment. The same
-    private payload evaluator used by :func:`resolve_machine_service` keeps
-    schema, freshness, port coercion, and exact PID checks identical.
-    """
-    try:
-        raw: object = json.loads(discovery_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        payload = None
-    else:
-        payload = cast("dict[str, object]", raw) if isinstance(raw, dict) else None
-    return _resolve_machine_pointer_payload(payload, holder_pid=holder_pid)
 
 
 def _resolve_machine_pointer_payload(

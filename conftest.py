@@ -9,6 +9,7 @@ from __future__ import annotations
 import atexit
 import hashlib
 import os
+import subprocess
 import sys
 import tempfile
 import time
@@ -25,6 +26,20 @@ import pytest  # noqa: E402  # bootstrap sentinel must precede project imports
 
 _PYTEST_SINGLETON_ACTIVE_ENV = "_VAULTSPEC_RAG_PYTEST_SINGLETON_ACTIVE"
 _PYTEST_SINGLETON_ROOT_ENV = "_VAULTSPEC_RAG_PYTEST_SINGLETON_ROOT"
+#: Set by the process that took the borrower lease, on the pytest process it
+#: starts inside that borrow. It says "somebody above you already borrowed the
+#: GPU" and nothing more: the session still proves the loan reaches it by
+#: asking the owner anchor, so this marker cannot authorise a device.
+_PYTEST_GPU_BORROWED_ENV = "_VAULTSPEC_RAG_PYTEST_GPU_BORROWED"
+#: Set on the collect-only child that answers "does this invocation actually
+#: select a GPU tier". Honoured only together with ``--collect-only``, so a
+#: marker left in an environment cannot end an ordinary session.
+_PYTEST_GPU_TIER_PROBE_ENV = "_VAULTSPEC_RAG_PYTEST_GPU_TIER_PROBE"
+
+#: The probe child's two answers. Outside pytest's own 0-5 range, so a status
+#: this harness did not choose is never read as one of them.
+_PROBE_GPU_TIER_SELECTED = 70
+_PROBE_NO_GPU_TIER = 71
 _STATUS_DIR_ENV = "VAULTSPEC_RAG_STATUS_DIR"
 _QDRANT_STORAGE_DIR_ENV = "VAULTSPEC_RAG_QDRANT_STORAGE_DIR"
 _SINGLETON_ENV_NAMES = (
@@ -46,10 +61,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from _typeshed import HasFileno
-
-    from vaultspec_rag.cli._gpu_lease import BorrowerServiceTarget
-
-_gpu_borrower_target: BorrowerServiceTarget | None = None
 
 # The tier vocabulary and its collection-time gate live in the package, at
 # vaultspec_rag.tests._tier_gate, so they can be exercised by ordinary tests.
@@ -257,6 +268,247 @@ def _require_host_provisioned_qdrant_for_gpu_tier() -> None:
     )
 
 
+# ===========================================================================
+#  Borrowing the GPU for a device tier
+#
+#  A device tier runs on the machine's one GPU, which the resident service
+#  owns. The product already has the way to take it: `run_with_borrowed_gpu`,
+#  the call `index --borrow-gpu` makes - resolve the service, take the machine
+#  borrower lease, pause, work, resume, release. The harness makes that same
+#  call, with no argument of its own, and that is the whole mechanism.
+#
+#  WHY THE SESSION RUNS IN A CHILD. The call has to see the operator's real
+#  service, and the session must not. Those are not reconcilable in one
+#  process: `pytest_configure` points the managed directories at a temporary
+#  root and PINS that root for the life of the process, deliberately one-way,
+#  so that nothing a test does to the environment can move the boundary
+#  afterwards. Every production effect on a real managed path is refused from
+#  that moment on - the borrow's own resume and release included.
+#
+#  So the borrow is taken BEFORE any of that exists. This hook runs ahead of
+#  `pytest_configure` (the default `pytest_cmdline_main` is what calls it), in
+#  a process that has pinned nothing, with the operator's own configuration
+#  still ambient. The suite then runs as a child pytest, which does its own
+#  isolation and pins its own root, while this process holds the lease and
+#  does nothing else. The loan the service records covers the borrower's whole
+#  process tree, so the child is inside it; its own check proves that rather
+#  than assuming it.
+#
+#  WHAT DECIDES. Only a selection that actually holds a GPU-tier test may
+#  pause the operator's service, and the marker expression cannot answer that:
+#  with no `-m` at all it admits every tier, so deciding on it alone would
+#  pause the service - and refuse the whole run when no service is reachable -
+#  for `pytest one_unit_test.py`. Only collection knows what was selected, and
+#  collecting here would pin this process's root. So the question goes to a
+#  collect-only child, which answers with one status and nothing else: it
+#  borrows nothing, runs nothing, and reaches no service. An answer that is
+#  neither of its two statuses is a collection fault, and this process stands
+#  aside so the ordinary in-process run reports it exactly as it always did.
+#
+#  The only marker switched is this harness's own bootstrap sentinel, which is
+#  set at import so that effects before the root is pinned fail closed. It is
+#  cleared across the borrow - this process pins no root and runs no test, so
+#  there is nothing here for containment to protect - and restored afterwards.
+#  The child sets its own on import.
+# ===========================================================================
+
+#: Options that collect, list or explain and then stop. None of them reaches a
+#: device, so none of them may pause the operator's service.
+_NO_TEST_RUN_OPTIONS = (
+    "collectonly",
+    "help",
+    "version",
+    "showfixtures",
+    "show_fixtures_per_test",
+    "markers",
+    "setupplan",
+)
+
+
+def _session_borrows_the_gpu(config: pytest.Config) -> bool:
+    """Whether this process should take the borrower lease for its session."""
+    if os.environ.get(_PYTEST_GPU_BORROWED_ENV) == "1":
+        return False
+    if os.environ.get(_PYTEST_SINGLETON_ACTIVE_ENV) == "1":
+        # Inherited containment: an outer pytest session owns this process
+        # tree, so the borrow - if the tier needs one - is already held above.
+        return False
+    option = config.option
+    if any(getattr(option, name, None) for name in _NO_TEST_RUN_OPTIONS):
+        return False
+
+    from vaultspec_rag.tests._tier_gate import (
+        MPS,
+        distributed_worker_count,
+        selectable_slow_tiers,
+    )
+
+    if distributed_worker_count(option) > 0:
+        # A distributed GPU selection is refused outright in pytest_configure.
+        # Let the session reach that refusal instead of pausing a service for
+        # a run that will not start.
+        return False
+    raw_markexpr = getattr(option, "markexpr", "")
+    markexpr = raw_markexpr if isinstance(raw_markexpr, str) else ""
+    # The MPS tier owns its own backend and never enters this protocol.
+    return bool(set(selectable_slow_tiers(markexpr)) - {MPS})
+
+
+def _run_pytest_child(
+    config: pytest.Config,
+    *,
+    marker: str,
+    extra_args: tuple[str, ...] = (),
+    quiet: bool = False,
+) -> int:
+    """Run this invocation again as a child under *marker*, and return its status.
+
+    The same argument vector, working directory and environment serve both
+    children: the probe adds ``--collect-only`` and keeps its output to
+    itself, and the suite inherits this process's streams so its report is
+    the one the operator reads.
+    """
+    environment = dict(os.environ)
+    environment[marker] = "1"
+    child = subprocess.Popen(
+        [sys.executable, "-m", "pytest", *config.invocation_params.args, *extra_args],
+        cwd=str(config.invocation_params.dir),
+        env=environment,
+        stdout=subprocess.DEVNULL if quiet else None,
+        stderr=subprocess.DEVNULL if quiet else None,
+    )
+    return _wait_out_the_child(child)
+
+
+def _selection_holds_a_gpu_tier(config: pytest.Config) -> bool | None:
+    """Ask a collect-only child whether this selection reaches a GPU tier.
+
+    ``None`` means it answered neither way - a collection error, a usage
+    refusal, anything this harness did not choose - and the caller must leave
+    the session to run in process, where that outcome is reported once.
+    """
+    status = _run_pytest_child(
+        config,
+        marker=_PYTEST_GPU_TIER_PROBE_ENV,
+        extra_args=("--collect-only", "-q"),
+        quiet=True,
+    )
+    if status == _PROBE_GPU_TIER_SELECTED:
+        return True
+    if status == _PROBE_NO_GPU_TIER:
+        return False
+    return None
+
+
+def _answer_a_gpu_tier_probe(session: pytest.Session) -> None:
+    """End a probe child with the status its parent is waiting for.
+
+    Runs where the selection is final and nothing has been executed, so the
+    answer is about the tests that would actually run. The marker is honoured
+    only alongside ``--collect-only``, which is how the parent always spawns
+    it: one left behind in an environment then changes nothing.
+    """
+    if os.environ.get(_PYTEST_GPU_TIER_PROBE_ENV) != "1":
+        return
+    if not session.config.option.collectonly:
+        return
+
+    from vaultspec_rag.tests._tier_gate import MPS, SLOW_TIERS, selected_tiers
+
+    tiers = (selected_tiers(session.items) & SLOW_TIERS) - {MPS}
+    pytest.exit(
+        "gpu tier probe answered",
+        returncode=_PROBE_GPU_TIER_SELECTED if tiers else _PROBE_NO_GPU_TIER,
+    )
+
+
+def _wait_out_the_child(child: subprocess.Popen[bytes]) -> int:
+    """Wait for the child to exit, whatever interrupts arrive meanwhile.
+
+    A console Ctrl+C is delivered to every process in the group, so the first
+    one is the operator stopping pytest - which the child is already handling.
+    Returning here on it would resume the service while the child still had
+    the device. A second one is the operator saying the child is not stopping,
+    and terminates it through the project's own termination path; either way
+    the wait only ends when the child is gone.
+    """
+    from vaultspec_rag.cli._process import _terminate_pid
+
+    interrupts = 0
+    while True:
+        try:
+            return child.wait()
+        except KeyboardInterrupt:
+            interrupts += 1
+            if interrupts == 1:
+                print(
+                    "pytest: interrupt delivered; waiting for the test session "
+                    "to stop before the service is resumed. Interrupt again to "
+                    "terminate it.",
+                    file=sys.stderr,
+                )
+                continue
+            print("pytest: terminating the test session.", file=sys.stderr)
+            _terminate_pid(child.pid, console_group_signal=False)
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_cmdline_main(config: pytest.Config) -> int | None:
+    """Hold the GPU borrow around a device-tier session, or stand aside.
+
+    Returning ``None`` leaves pytest's own implementation to run the session
+    in this process, which is every unit, collection and MPS invocation.
+    """
+    if not _session_borrows_the_gpu(config):
+        return None
+    if not _selection_holds_a_gpu_tier(config):
+        return None
+
+    from vaultspec_rag.cli._gpu_lease import BorrowGPUError, run_with_borrowed_gpu
+
+    print(
+        "pytest: borrowing the GPU from the resident service for this "
+        "session; the tests run in a child process.",
+        file=sys.stderr,
+    )
+    status = 1
+    prior_bootstrap = os.environ.pop(_PYTEST_SINGLETON_BOOTSTRAP_ENV, None)
+
+    def run_the_suite() -> None:
+        nonlocal status
+        status = _run_pytest_child(config, marker=_PYTEST_GPU_BORROWED_ENV)
+
+    try:
+        run_with_borrowed_gpu(requested_port=None, work=run_the_suite)
+    except BorrowGPUError as exc:
+        print(f"pytest: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        if prior_bootstrap is not None:
+            os.environ[_PYTEST_SINGLETON_BOOTSTRAP_ENV] = prior_bootstrap
+    return status
+
+
+def _require_the_session_runs_inside_a_gpu_loan() -> None:
+    """Refuse a device tier whose process the service has not lent the GPU to.
+
+    The marker the parent sets says only that somebody above took the lease.
+    Whether the loan actually reaches this process is a question the owner
+    anchor answers, and it is the same answer every model load will get.
+    """
+    from vaultspec_rag._gpu_owner import GpuOwnerState, observe_gpu_owner
+
+    ownership = observe_gpu_owner()
+    if ownership.state is GpuOwnerState.LENT_HERE:
+        return
+    pytest.exit(
+        "This GPU tier is not running inside a borrow of the resident "
+        f"service's GPU (owner state: {ownership.state.value}). Start the "
+        "runner's resident service before selecting a GPU tier.",
+        returncode=1,
+    )
+
+
 def _reset_singleton_config_caches() -> None:
     """Make early environment containment visible to both config layers."""
     from vaultspec_core.config import reset_config
@@ -282,28 +534,15 @@ def pytest_configure(config: pytest.Config) -> None:
     """
     _enable_ci_report(config)
 
-    from vaultspec_rag.tests._tier_gate import (
-        MPS,
-        enforce_serial_gpu_lane,
-        selectable_slow_tiers,
-    )
+    from vaultspec_rag.tests._tier_gate import enforce_serial_gpu_lane
 
     enforce_serial_gpu_lane(config.option)
 
-    global _gpu_borrower_target, _singleton_prior_env
+    global _singleton_prior_env
     global _singleton_root, _singleton_root_owned, _singleton_pair_owned
     global _singleton_participant
     if _singleton_root is not None:
         return
-
-    raw_markexpr = config.option.markexpr
-    markexpr = raw_markexpr if isinstance(raw_markexpr, str) else ""
-    if set(selectable_slow_tiers(markexpr)) - {MPS}:
-        from vaultspec_rag.tests._gpu_borrow_fixtures import (
-            capture_borrower_service_target,
-        )
-
-        _gpu_borrower_target = capture_borrower_service_target()
 
     _singleton_prior_env = {name: os.environ.get(name) for name in _SINGLETON_ENV_NAMES}
     inherited_root = os.environ.get(_PYTEST_SINGLETON_ROOT_ENV)
@@ -370,7 +609,7 @@ def pytest_unconfigure(config: pytest.Config) -> None:
     """Restore ambient configuration after the complete pytest session."""
     del config
 
-    global _gpu_borrower_target, _singleton_prior_env, _singleton_root
+    global _singleton_prior_env, _singleton_root
     global _singleton_root_owned, _singleton_pair_owned, _singleton_participant
     global _session_failed
     prior = _singleton_prior_env
@@ -407,7 +646,6 @@ def pytest_unconfigure(config: pytest.Config) -> None:
             )
     _singleton_prior_env = None
     _singleton_root = None
-    _gpu_borrower_target = None
     _singleton_root_owned = False
     _singleton_pair_owned = False
     _singleton_participant = None
@@ -474,10 +712,13 @@ def pytest_collection_finish(session: pytest.Session) -> None:
     from vaultspec_rag.tests._tier_gate import enforce_device_tier_isolation
 
     enforce_device_tier_isolation(session.items)
+    # After the refusals, so a probe inherits them rather than answering over
+    # a selection the session would not have run anyway.
+    _answer_a_gpu_tier_probe(session)
 
 
 def pytest_runtestloop(session: pytest.Session) -> bool | None:
-    """Run every selected GPU tier inside one acknowledged borrower lease.
+    """Run every selected GPU tier inside the loan this process was started in.
 
     Runs after deselection so only *selected* items are checked, which keeps a
     unit-only run free of every device precondition. A distributed session never
@@ -485,7 +726,6 @@ def pytest_runtestloop(session: pytest.Session) -> bool | None:
     in each worker - which costs nothing, because a distributed GPU selection is
     already refused before collection.
     """
-    from vaultspec_rag.cli._gpu_lease import BorrowGPUError, run_with_borrowed_gpu
     from vaultspec_rag.tests._tier_gate import (
         MPS,
         SLOW_TIERS,
@@ -512,42 +752,23 @@ def pytest_runtestloop(session: pytest.Session) -> bool | None:
         for item in cast("list[pytest.Function]", session.items)
     ):
         _require_host_provisioned_qdrant_for_gpu_tier()
-    target = _gpu_borrower_target
-    if target is None:
-        pytest.exit(
-            "No ready compatible machine-pointer service was captured before "
-            "pytest isolated its managed paths. Start the runner's resident "
-            "service before selecting a GPU tier.",
-            returncode=1,
-        )
+    _require_the_session_runs_inside_a_gpu_loan()
 
-    def run_selected_items() -> None:
-        from vaultspec_rag._gpu_admission import (
-            device_refusal_message,
-            evaluate_device_admission,
-        )
+    from vaultspec_rag._gpu_admission import (
+        device_refusal_message,
+        evaluate_device_admission,
+    )
 
-        admission = evaluate_device_admission()
-        if not admission.admitted:
-            pytest.exit(device_refusal_message(admission), returncode=1)
-        for index, item in enumerate(session.items):
-            nextitem = (
-                session.items[index + 1] if index + 1 < len(session.items) else None
-            )
-            item.config.hook.pytest_runtest_protocol(item=item, nextitem=nextitem)
-            if session.shouldfail:
-                raise session.Failed(session.shouldfail)
-            if session.shouldstop:
-                raise session.Interrupted(session.shouldstop)
-
-    try:
-        run_with_borrowed_gpu(
-            requested_port=None,
-            work=run_selected_items,
-            target=target,
-        )
-    except BorrowGPUError as exc:
-        pytest.exit(str(exc), returncode=1)
+    admission = evaluate_device_admission()
+    if not admission.admitted:
+        pytest.exit(device_refusal_message(admission), returncode=1)
+    for index, item in enumerate(session.items):
+        nextitem = session.items[index + 1] if index + 1 < len(session.items) else None
+        item.config.hook.pytest_runtest_protocol(item=item, nextitem=nextitem)
+        if session.shouldfail:
+            raise session.Failed(session.shouldfail)
+        if session.shouldstop:
+            raise session.Interrupted(session.shouldstop)
     return True
 
 

@@ -7,41 +7,28 @@ authenticated pause and resume routes before allowing a caller to use the GPU.
 
 from __future__ import annotations
 
-import hashlib
-import hmac
-from dataclasses import dataclass
 from math import isfinite
 from typing import TYPE_CHECKING, Final, TypeGuard
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
 from ..gpu_borrow_lease import (
-    CapturedBorrowerLeaseAuthority,
     GPUBorrowLease,
     acquire_gpu_borrow_lease,
-    acquire_gpu_borrow_lease_for_captured_authority,
     release_gpu_borrow_lease,
 )
 from ..service_quiesce import QUIESCE_ENVELOPE_FIELDS, QuiesceState
 from ..serviceclient._compat import classify_service_version
 from ..serviceclient._discovery import (
     MachineResolution,
-    PreIsolationMachinePointer,
     resolve_machine_service,
-    revalidate_captured_machine_pointer,
 )
 from ..serviceclient._search_transport import get_search_timeout
-from ..serviceclient._transport import (
-    _get_admin_timeout,
-    _try_http_admin,
-    _try_http_health,
-)
+from ..serviceclient._transport import _try_http_admin
 
 __all__ = [
     "BorrowGPUError",
-    "BorrowerServiceTarget",
     "run_with_borrowed_gpu",
 ]
 
@@ -52,27 +39,7 @@ _SERVICE_VERSION_INCOMPATIBLE: Final = "borrow_gpu_service_version_incompatible"
 _PAUSE_UNACKNOWLEDGED: Final = "borrow_gpu_pause_unacknowledged"
 _SAFE_SNAPSHOT_MISSING: Final = "borrow_gpu_safe_snapshot_missing"
 _RESUME_UNACKNOWLEDGED: Final = "borrow_gpu_resume_unacknowledged"
-_SERVICE_TARGET_CHANGED: Final = "borrow_gpu_service_target_changed"
 _QUIESCE_CONTRACT_MISMATCH: Final = "borrow_gpu_quiesce_contract_mismatch"
-
-
-@dataclass(frozen=True, slots=True)
-class BorrowerServiceTarget:
-    """One immutable pre-isolation identity for a borrower lifecycle call.
-
-    This value deliberately retains only original public identity witnesses,
-    a token digest, and the redacted in-process authority. The service token
-    is represented by its SHA-256 digest; each pause or resume re-reads its
-    short-lived raw bearer after the target has been revalidated.
-    """
-
-    identity_lock_path: Path
-    discovery_path: Path
-    port: int
-    service_pid: int
-    token_sha256: str
-    authority: CapturedBorrowerLeaseAuthority
-    pointer: PreIsolationMachinePointer
 
 
 class BorrowGPUError(RuntimeError):
@@ -87,7 +54,6 @@ def run_with_borrowed_gpu(
     *,
     requested_port: int | None,
     work: Callable[[], None],
-    target: BorrowerServiceTarget | None = None,
 ) -> None:
     """Run *work* only while a matching borrower pause is acknowledged.
 
@@ -97,17 +63,7 @@ def run_with_borrowed_gpu(
     open: the service's heartbeat then observes OS lease loss when this process
     exits and performs the only safe recovery.
     """
-    try:
-        lease = (
-            acquire_gpu_borrow_lease_for_captured_authority(target.authority)
-            if target is not None
-            else acquire_gpu_borrow_lease()
-        )
-    except PermissionError as exc:
-        raise BorrowGPUError(
-            _SERVICE_TARGET_CHANGED,
-            "The captured service borrower lease could not be acquired safely.",
-        ) from exc
+    lease = acquire_gpu_borrow_lease()
     if lease is None:
         raise BorrowGPUError(
             _LEASE_UNAVAILABLE,
@@ -121,7 +77,7 @@ def run_with_borrowed_gpu(
     port: int | None = None
     failure: BaseException | None = None
     try:
-        port = _resolve_borrower_port(requested_port, target)
+        port = _resolve_compatible_service(requested_port)
 
         def mark_pause_attempted() -> None:
             nonlocal pause_attempted
@@ -130,7 +86,6 @@ def run_with_borrowed_gpu(
         _require_acknowledged_pause(
             lease,
             port,
-            target=target,
             before_request=mark_pause_attempted,
         )
         work()
@@ -139,7 +94,7 @@ def run_with_borrowed_gpu(
         raise
     finally:
         if not pause_attempted or (
-            port is not None and _resume_is_acknowledged(lease, port, target=target)
+            port is not None and _resume_is_acknowledged(lease, port)
         ):
             release_gpu_borrow_lease(lease)
         elif failure is None:
@@ -154,24 +109,6 @@ def run_with_borrowed_gpu(
                 "The service did not acknowledge borrower resume; the GPU "
                 "borrower lease is retained until this process exits.",
             ) from failure
-
-
-def _resolve_borrower_port(
-    requested_port: int | None,
-    target: BorrowerServiceTarget | None,
-) -> int:
-    """Resolve an ordinary CLI target or retain the captured machine target."""
-    if target is not None:
-        if requested_port is not None and requested_port != target.port:
-            raise BorrowGPUError(
-                _SERVICE_PORT_MISMATCH,
-                (
-                    f"The requested service port {requested_port} does not match the "
-                    f"captured service port {target.port}."
-                ),
-            )
-        return target.port
-    return _resolve_compatible_service(requested_port)
 
 
 def _resolve_compatible_service(requested_port: int | None) -> int:
@@ -211,23 +148,11 @@ def _require_acknowledged_pause(
     lease: GPUBorrowLease,
     port: int,
     *,
-    target: BorrowerServiceTarget | None,
     before_request: Callable[[], None],
 ) -> None:
     """Require an authenticated pause plus the exact safe snapshot."""
-    target_verified, result = _try_borrower_lifecycle_call(
-        "pause_service",
-        lease,
-        port,
-        target=target,
-        before_request=before_request,
-    )
-    if not target_verified:
-        raise BorrowGPUError(
-            _SERVICE_TARGET_CHANGED,
-            "The captured service target no longer matches the original machine "
-            "service.",
-        )
+    before_request()
+    result = _try_http_admin("pause_service", _borrower_args(lease), port)
     _reject_unrecognised_quiesce(result, verb="pause")
     if not _acknowledged_transition(result, QuiesceState.QUIESCED):
         raise BorrowGPUError(
@@ -241,24 +166,21 @@ def _require_acknowledged_pause(
         )
 
 
-def _resume_is_acknowledged(
-    lease: GPUBorrowLease,
-    port: int,
-    *,
-    target: BorrowerServiceTarget | None,
-) -> bool:
+def _borrower_args(lease: GPUBorrowLease) -> dict[str, object]:
+    """Return the one authenticated argument every lifecycle call carries."""
+    return {"borrower_capability": lease.capability}
+
+
+def _resume_is_acknowledged(lease: GPUBorrowLease, port: int) -> bool:
     """Return whether the matching authenticated resume reached running."""
-    target_verified, result = _try_borrower_lifecycle_call(
+    result = _try_http_admin(
         "resume_service",
-        lease,
+        _borrower_args(lease),
         port,
-        target=target,
-        before_request=lambda: None,
         timeout=get_search_timeout(None),
     )
-    if target_verified:
-        _reject_unrecognised_quiesce(result, verb="resume")
-    return target_verified and _acknowledged_transition(result, QuiesceState.RUNNING)
+    _reject_unrecognised_quiesce(result, verb="resume")
+    return _acknowledged_transition(result, QuiesceState.RUNNING)
 
 
 def _pause_refusal_message(result: dict[str, object] | None) -> str:
@@ -353,119 +275,6 @@ def _reject_unrecognised_quiesce(
             f"missing fields: {sorted(absent) or 'none'})"
         ),
     )
-
-
-def _try_borrower_lifecycle_call(  # noqa: PLR0913 - lifecycle evidence is explicit.
-    tool_name: str,
-    lease: GPUBorrowLease,
-    port: int,
-    *,
-    target: BorrowerServiceTarget | None,
-    before_request: Callable[[], None],
-    timeout: float | None = None,
-) -> tuple[bool, dict[str, object] | None]:
-    """Make one lifecycle call, pinning captured targets before each send.
-
-    The raw token returned by ``_revalidate_captured_target`` stays inside this
-    one pause or resume transport call. Its refresh closure captures only the
-    non-secret target and asks for a new token after a 401.
-    """
-    args: dict[str, object] = {"borrower_capability": lease.capability}
-    if target is None:
-        before_request()
-        return True, _try_http_admin(tool_name, args, port, timeout=timeout)
-    token = _revalidate_captured_target(target)
-    if token is None:
-        return False, None
-    before_request()
-    return True, _try_http_admin(
-        tool_name,
-        args,
-        port,
-        timeout=timeout,
-        initial_bearer_token=token,
-        refresh_bearer_token=lambda: _revalidate_captured_target(target) or "",
-    )
-
-
-def _revalidate_captured_target(target: BorrowerServiceTarget) -> str | None:
-    """Return the current bearer only when every captured witness still agrees."""
-    resolution = revalidate_captured_machine_pointer(
-        target.pointer,
-        expected_pid=target.service_pid,
-        expected_port=target.port,
-        token_sha256=target.token_sha256,
-    )
-    if (
-        resolution is None
-        or resolution.payload is None
-        or not classify_service_version(resolution.payload).is_compatible
-    ):
-        return None
-    discovery_token = resolution.service_token
-    if not discovery_token:
-        return None
-    health = _read_health_evidence(target.port)
-    return _matching_health_token(health, target)
-
-
-def _matching_health_token(
-    health: dict[str, object] | None,
-    target: BorrowerServiceTarget,
-) -> str | None:
-    """Return the served bearer only when health proves the captured identity."""
-    return _matching_health_identity(
-        health,
-        service_pid=target.service_pid,
-        port=target.port,
-        token_sha256=target.token_sha256,
-    )
-
-
-def _read_health_evidence(port: int) -> dict[str, object] | None:
-    """Read ``/health`` as identity evidence, on the operator-governed bound.
-
-    Every borrower identity check reads health to PROVE which service holds
-    the port, which is a different question from the readiness poll the
-    probe's short default bound is shaped for. There a fast "not up yet" is
-    the point; here an unanswered probe is indistinguishable from a service
-    whose pid, port or token disagree, and the caller refuses either way. So
-    the short bound turns a merely busy service into a false "this is not the
-    service I captured" - and a service busy enough to answer slowly is
-    exactly the one a borrower most needs to coordinate with. Evidence reads
-    therefore take the same operator-governed bound the rest of this client's
-    evidence reads take.
-    """
-    return _try_http_health(port, timeout=_get_admin_timeout())
-
-
-def _matching_health_identity(
-    health: dict[str, object] | None,
-    *,
-    service_pid: int,
-    port: int,
-    token_sha256: str,
-) -> str | None:
-    """Return a served bearer only when health proves the frozen identity."""
-    if health is None:
-        return None
-    health_pid = health.get("pid")
-    health_port = health.get("port")
-    health_token = health.get("service_token")
-    if (
-        health_pid != service_pid
-        or health_port != port
-        or not isinstance(health_token, str)
-        or not health_token
-        or not hmac.compare_digest(_token_sha256(health_token), token_sha256)
-    ):
-        return None
-    return health_token
-
-
-def _token_sha256(token: str) -> str:
-    """Return the non-secret identity witness persisted in a captured target."""
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def _acknowledged_transition(

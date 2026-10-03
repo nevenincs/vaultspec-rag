@@ -32,7 +32,7 @@ import os
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, NoReturn, SupportsIndex, cast
+from typing import TYPE_CHECKING, cast
 
 from ._atomic_write import JsonWriteOptions, write_json_atomically
 
@@ -42,10 +42,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "CapturedMachineLockWitness",
     "MachineLockLease",
     "MachineLockProbe",
-    "PreIsolationMachineLock",
     "acquire_machine_lock_lease",
     "default_machine_lock_path",
     "delete_machine_discovery",
@@ -55,7 +53,6 @@ __all__ = [
     "publish_machine_discovery",
     "read_machine_discovery",
     "release_machine_lock_lease",
-    "revalidate_captured_machine_lock",
 ]
 
 _MACHINE_LOCK_FILENAME = "service.lock"
@@ -81,73 +78,12 @@ class MachineLockLease:
     descriptor: int
 
 
-@dataclass(frozen=True, slots=True, init=False)
-class PreIsolationMachineLock:
-    """Read-only projection of one registry-owned pre-root lock capture.
-
-    Callers can use the projected paths for diagnostics and discovery reads,
-    but cannot construct a record that the witness registry will recognize.
-    """
-
-    witness: CapturedMachineLockWitness
-    identity_lock_path: Path
-    discovery_path: Path
-    holder_pid: int
-
-
-@dataclass(frozen=True, slots=True, init=False, repr=False, eq=False)
-class CapturedMachineLockWitness:
-    """A redacted in-process reference to one captured machine lock identity."""
-
-    def __init__(self) -> None:
-        raise TypeError("captured machine lock witnesses are minted internally")
-
-    def __repr__(self) -> str:
-        """Keep diagnostics useful without exposing retained original paths."""
-        return "CapturedMachineLockWitness(<redacted>)"
-
-    def __reduce__(self) -> NoReturn:
-        """Forbid serializing a process-local original machine identity."""
-        raise TypeError("captured machine lock witnesses are not serializable")
-
-    def __reduce_ex__(self, protocol: SupportsIndex) -> NoReturn:
-        """Forbid every pickle protocol without exposing a fallback state."""
-        del protocol
-        return self.__reduce__()
-
-
-@dataclass(frozen=True, slots=True)
-class _CapturedMachineLockRecord:
-    """The registry-only original paths and expected owner for one witness."""
-
-    identity_lock_path: Path
-    discovery_path: Path
-    holder_pid: int
-
-
-def _project_captured_machine_lock(
-    witness: CapturedMachineLockWitness,
-    record: _CapturedMachineLockRecord,
-) -> PreIsolationMachineLock:
-    """Return the immutable public projection for one private registry record."""
-    projection = object.__new__(PreIsolationMachineLock)
-    object.__setattr__(projection, "witness", witness)
-    object.__setattr__(projection, "identity_lock_path", record.identity_lock_path)
-    object.__setattr__(projection, "discovery_path", record.discovery_path)
-    object.__setattr__(projection, "holder_pid", record.holder_pid)
-    return projection
-
-
 # Keeping the descriptor reachable through the retained lease is what keeps
 # the OS lock held.  Pointer mutation and release are serialized with this
 # registry so a lease cannot be released between its authority check and the
 # filesystem operation it authorizes.
 _held_leases: dict[str, MachineLockLease] = {}
 _lease_guard = threading.RLock()
-_captured_machine_lock_records: dict[
-    CapturedMachineLockWitness, _CapturedMachineLockRecord
-] = {}
-_captured_machine_lock_guard = threading.RLock()
 
 
 def machine_lock_path() -> Path:
@@ -343,34 +279,6 @@ def release_machine_lock_lease(lease: MachineLockLease) -> None:
             return
         _held_leases.pop(str(lease.path))
         release_anchor_claim(lease.descriptor, pid_record=True)
-
-
-def _probe_existing_machine_lock_holder(identity_lock_path: Path) -> int | None:
-    """Read a positive PID from one preselected, already-existing lock path.
-
-    This is the narrow pre-registration captured-target observer. Unlike the
-    configured-path probe below, it neither resolves configuration nor creates
-    an anchor; callers receive no lease or path-selection capability.
-    """
-    from ._anchor_claim import probe_existing_anchor_holder
-
-    return probe_existing_anchor_holder(identity_lock_path, pid_record=True)
-
-
-def revalidate_captured_machine_lock(
-    witness: object,
-) -> PreIsolationMachineLock | None:
-    """Return a fresh projection only for its original live captured holder."""
-    if not isinstance(witness, CapturedMachineLockWitness):
-        return None
-    with _captured_machine_lock_guard:
-        record = _captured_machine_lock_records.get(witness)
-    if record is None:
-        return None
-    holder_pid = _probe_existing_machine_lock_holder(record.identity_lock_path)
-    if holder_pid != record.holder_pid:
-        return None
-    return _project_captured_machine_lock(witness, record)
 
 
 @dataclass(frozen=True, slots=True)

@@ -52,6 +52,13 @@ _SET_BY_A_PARENT_PROCESS: Final[dict[str, str]] = {
     "_VAULTSPEC_RAG_PYTEST_SINGLETON_ROOT": "the test harness, on its session",
     "_VAULTSPEC_RAG_PYTEST_SINGLETON_ACTIVE": "the test harness, on its session",
     "_VAULTSPEC_RAG_PYTEST_SINGLETON_BOOTSTRAP": "the test harness, on its session",
+    "_VAULTSPEC_RAG_PYTEST_GPU_BORROWED": (
+        "the test harness, on the session it runs inside a GPU borrow"
+    ),
+    "_VAULTSPEC_RAG_PYTEST_GPU_TIER_PROBE": (
+        "the test harness, on the collect-only child it asks whether a GPU "
+        "tier is selected"
+    ),
     "PYTEST_CURRENT_TEST": "pytest, on the process running a test",
     "PYTEST_XDIST_WORKER": "pytest-xdist, on each worker",
     "GITHUB_ACTIONS": "the Actions runner, on every step",
