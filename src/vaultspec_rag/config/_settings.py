@@ -340,6 +340,8 @@ class VaultSpecConfigWrapper:
         # measured opening in ~131 s, so this is generous by design; operators
         # with larger stores raise it rather than patching the supervisor.
         "qdrant_ready_timeout_seconds": 300.0,
+        # Bound startup I/O and CPU pressure while overlapping collection opens.
+        "qdrant_collection_load_concurrency": 2,
         # Per-source retention policy for every operational log managed by the
         # resident service. Service and Qdrant each receive this full budget;
         # the values are not divided across sources.
@@ -1169,6 +1171,7 @@ class VaultSpecConfigWrapper:
     service_reindex_timeout_seconds: float
     service_pause_drain_timeout_seconds: float
     qdrant_ready_timeout_seconds: float
+    qdrant_collection_load_concurrency: int
     managed_log_max_bytes: int
     managed_log_backup_count: int
     job_max_nonterminal: int

@@ -94,6 +94,9 @@ class EnvVar(StrEnum):
     SERVICE_PAUSE_DRAIN_TIMEOUT = "VAULTSPEC_RAG_PAUSE_DRAIN_TIMEOUT"
     # Managed qdrant readiness bound, operator-tunable for very large stores.
     QDRANT_READY_TIMEOUT = "VAULTSPEC_RAG_QDRANT_READY_TIMEOUT"
+    QDRANT_COLLECTION_LOAD_CONCURRENCY = (
+        "VAULTSPEC_RAG_QDRANT_COLLECTION_LOAD_CONCURRENCY"
+    )
     # Diagnostic memory probe on/off switch. Named here so this enum stays the
     # authoritative list, but deliberately absent from the defaults map: the
     # probe module is reachable from spawn workers and must not pull this

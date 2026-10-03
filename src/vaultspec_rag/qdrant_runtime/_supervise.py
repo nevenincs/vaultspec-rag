@@ -415,6 +415,8 @@ class QdrantSupervisor:
         return self._proc.pid if self._proc is not None else None
 
     def _child_env(self) -> dict[str, str]:
+        from ..config._settings import get_config
+
         # Least privilege: pass only OS-operation variables plus the QDRANT__*
         # knobs, never the daemon's full environment, so any secrets the daemon
         # holds (cloud creds, tokens) are not exposed to the qdrant child.
@@ -433,6 +435,9 @@ class QdrantSupervisor:
                     self.storage_dir.parent / "snapshots"
                 ),
                 "QDRANT__TELEMETRY_DISABLED": "true",
+                "QDRANT__STORAGE__PERFORMANCE__MAX_CONCURRENT_COLLECTION_LOADS": str(
+                    get_config().qdrant_collection_load_concurrency
+                ),
             }
         )
         return env
@@ -464,6 +469,7 @@ class QdrantSupervisor:
                 "previous qdrant output drain is still active; refusing to spawn "
                 "a second log writer"
             )
+        child_env = self._child_env()
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         snapshots_dir.mkdir(parents=True, exist_ok=True)
         if self.log_path is not None:
@@ -483,7 +489,7 @@ class QdrantSupervisor:
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                env=self._child_env(),
+                env=child_env,
                 # Pin the child's working directory to the managed qdrant dir:
                 # the binary writes runtime markers (.qdrant-initialized) into
                 # its cwd, which must never be the service's start directory.
@@ -502,7 +508,7 @@ class QdrantSupervisor:
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                env=self._child_env(),
+                env=child_env,
                 # Same managed-cwd pin as the Windows branch above.
                 cwd=str(self.storage_dir.parent),
                 text=False,
@@ -511,11 +517,13 @@ class QdrantSupervisor:
             )
         self._start_output_drain()
         logger.info(
-            "qdrant child spawned: pid=%d http=%d grpc=%d storage=%s",
+            "qdrant child spawned: pid=%d http=%d grpc=%d storage=%s "
+            "collection_load_concurrency=%s",
             self._proc.pid,
             self.http_port,
             self.grpc_port,
             self.storage_dir,
+            child_env["QDRANT__STORAGE__PERFORMANCE__MAX_CONCURRENT_COLLECTION_LOADS"],
         )
 
     def _start_output_drain(self) -> None:
@@ -637,7 +645,7 @@ class QdrantSupervisor:
         """Poll ``/readyz`` until ready, until the child goes quiet, or the ceiling.
 
         *timeout* is the no-progress patience window, not a total budget. The
-        server loads every collection eagerly and sequentially before it
+        server loads every collection eagerly with bounded concurrency before it
         listens, and how long that takes varies by several times across
         otherwise identical starts, so elapsed wall time says nothing about
         whether a start is healthy. Every new line of child output restarts the

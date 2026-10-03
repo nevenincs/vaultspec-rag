@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#qdrant-collection-sprawl'
 date: '2026-09-08'
-modified: '2026-09-09'
+modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:77945ce7787b04d757599b5a21030463e43d159a287e5e35bfbf708a5b52d18f'
+body_hash: 'sha256:2bb9dc7e59dd378419e7004e542b93c798e36dc23d536d1293a1f99776aea529'
 related:
   - "[[2026-09-08-qdrant-collection-sprawl-research]]"
   - "[[2026-07-14-storage-autoprune-safety-adr]]"
@@ -132,9 +132,10 @@ decides the retention change and the conditions under which it can actually run.
   that claim holds without qualification.
 - Server mode only, matching the parent: the local store has one namespace and no
   manifest.
-- Bounded by qdrant `1.19.0` behaviour: eager sequential collection recovery has no
-  configuration or version remedy, so reducing the collection count is the only lever
-  on recovery time, and O4 must accommodate rather than eliminate it.
+- Qdrant `1.19.0` eagerly loads every collection before serving, but supports bounded
+  concurrent collection loading. The managed default is two collections at a time,
+  with a positive-integer operator override. Readiness patience and the hard ceiling
+  remain necessary because concurrency does not bound total recovery time.
 - Recoverability is platform-limited: on Windows the archive cannot be restored in
   place. O6 preserves the evidence but does not make it locally restorable, and this
   record accepts that gap rather than asserting it away.
@@ -283,3 +284,81 @@ Nothing here changes the collection-per-repo shape, so the upstream-recommended
 payload-partitioning migration (O11) stays open and stays necessary if the store is
 ever expected to hold many hundreds of roots. This record buys the headroom to make
 that decision deliberately instead of under resource pressure.
+
+## Startup tuning amendment (2026-10-03)
+
+Authorized by the user's approval of concurrency 2 and instruction to implement the
+meaningful measured improvements. This corrects the serial-only premise and refines
+startup; retention, grace, classification, archive-before-destroy and readiness
+ceilings retain their authority.
+
+Pinned Qdrant 1.19.0 build 74f3e85b declares
+`storage.performance.max_concurrent_collection_loads` (default 1) and feeds it to
+`buffer_unordered` while opening collections. Source witnesses:
+https://github.com/qdrant/qdrant/blob/74f3e85b/lib/common/common/src/load_concurrency.rs
+and https://github.com/qdrant/qdrant/blob/74f3e85b/lib/storage/src/content_manager/toc/mod.rs.
+
+Six isolated warm-cache starts used 41 frozen collections (1,296,547 points), in
+order 1,2,4,4,2,1, with optimization disabled consistently and no application writes.
+Mean process-creation-to-native-HTTP-log times were 20.909s, 13.081s, and 12.414s
+for concurrency 1,2,4. Two reduced startup by 37.4%; four improved only another
+5.1% while consuming more CPU (26.46s vs 22.26s mean). All point counts and ordered
+top-five IDs for three repeated queries were retained. Peak RSS was approximately
+14.57/14.87/14.87 GiB; private commit was 3.23/3.24/3.25 GiB. Shared-host CPU
+contention varied. The subset was the first 41 successful captures, not a random
+sample; test storage was X: NVMe, production C: NVMe. These results do not establish
+a 37% reduction for the original 185-second, 85-collection production startup or a
+cold-cache start.
+
+Implement `qdrant_collection_load_concurrency=2`, validated as a positive integer,
+with `VAULTSPEC_RAG_QDRANT_COLLECTION_LOAD_CONCURRENCY` translated explicitly into
+`QDRANT__STORAGE__PERFORMANCE__MAX_CONCURRENT_COLLECTION_LOADS` by the supervisor.
+Log the value applied to each spawned child. Changes apply at the next managed
+start; attached and remote servers are not reconfigured. One restores serial loading.
+Reconsider the default if complete-store startup or host-pressure measurements show
+regression. Shard/segment concurrency and no_populate require separate measurement.
+
+Chunking 61 Python files (1,171,009 bytes, 1,269 chunks) took about 0.27s serially;
+two/four spawned workers were slower. The pyperf mean was 301ms +/-27ms. Existing
+8 MiB auto-parallel admission remains appropriate for this measured corpus. Live
+probes did not establish another service bottleneck: health median 1.062ms, scroll
+3.689ms, native dense search 5.415ms, resident search 1.387s. Observed 19.5 GiB RSS
+includes mapped pages and is not proof of a leak; host available RAM stayed above
+32.7 GiB during original startup. Windows psutil memory_maps().rss reports mapping
+RegionSize, so it cannot substitute for process working-set measurement.
+
+Detailed evidence: `Y:/rag-load-benchmark-20261003/report.txt`, `comparison.json`,
+six `run-*-c*.json`/logs, `binary-proof.json`, `cleanup.json`, and
+`evidence-hashes.json`; original chunk/service measurements are in
+`C:/Users/hello/AppData/Local/Temp/rag-performance-20261003/`.
+Snapshot archives, restored test storage, pilot data, downloaded binary archive,
+and benchmark-created production snapshots were removed (about 46 GiB reclaimed).
+Only approximately 1.1 MiB of concurrency evidence remains. Native startup
+--snapshot restore was observed on Windows; this does not establish uploaded or
+in-place recovery support and does not change the archive recovery contract.
+
+### Implementation verification
+
+The change in `src/vaultspec_rag/config/`,
+`src/vaultspec_rag/qdrant_runtime/_supervise.py`, and `docs/configuration.md`
+passed 210 targeted configuration, supervisor, readiness, and registry tests.
+Ruff lint and format, ty, and basedpyright passed. Process-only mutations proved
+that removing the numeric bound fails the rejection tests and forcing native
+serial loading fails the default-two assertion; restored behavior passed all
+13 new tests. The first mutation runner attempted repeated pytest sessions in
+one interpreter and was refused by singleton-containment re-anchoring; separate
+processes fixed the harness without weakening containment.
+
+A verified pinned native binary started through the changed supervisor with
+default two, then override one, against four temporary empty collections. Both
+starts became ready, the actual child environment carried the expected value,
+and all four collections survived. Both owned children stopped; the temporary
+store and logs were removed. This proves managed spawn plumbing, not another
+performance estimate or live-production rollout. Reproduction helpers remain at
+`Y:/rag-load-benchmark-20261003/verify-managed-start.py` and
+`verify-load-concurrency-guards.py`.
+
+The hosted cross-reference pass judged 32 of 170 candidates with clipped input;
+its advisory links were checked against the provisioning, autoprune, archive
+restore, and backpressure ADRs. It does not prove corpus-wide absence of conflict.
+The amendment adds no deletion or restore behavior and preserves those contracts.

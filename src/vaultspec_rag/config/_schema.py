@@ -193,6 +193,7 @@ ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "service_reindex_timeout_seconds": EnvVar.SERVICE_REINDEX_TIMEOUT,
     "service_pause_drain_timeout_seconds": EnvVar.SERVICE_PAUSE_DRAIN_TIMEOUT,
     "qdrant_ready_timeout_seconds": EnvVar.QDRANT_READY_TIMEOUT,
+    "qdrant_collection_load_concurrency": EnvVar.QDRANT_COLLECTION_LOAD_CONCURRENCY,
     "managed_log_max_bytes": EnvVar.MANAGED_LOG_MAX_BYTES,
     "managed_log_backup_count": EnvVar.MANAGED_LOG_BACKUP_COUNT,
     "job_max_nonterminal": EnvVar.JOB_MAX_NONTERMINAL,
@@ -339,6 +340,7 @@ SETTING_BOUNDS: dict[str, _SettingBound] = {
     "service_reindex_timeout_seconds": _POSITIVE_NUMBER,
     "service_pause_drain_timeout_seconds": _POSITIVE_NUMBER,
     "qdrant_ready_timeout_seconds": _POSITIVE_NUMBER,
+    "qdrant_collection_load_concurrency": _POSITIVE_INT,
     "graph_ttl_seconds": _NON_NEGATIVE_NUMBER,
     # Managed log retention. Zero backups is a bounded no-history mode; a zero
     # rollover threshold would make every source unbounded.
