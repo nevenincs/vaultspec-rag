@@ -28,14 +28,19 @@ from ._job_evidence import (
     backend_probe_lock,
 )
 from ._job_progress import (
+    CONFIRMED_CHUNK_SAMPLING_KEY,
     PROGRESS_EMIT_KEY,
     PROGRESS_RATE_HISTORY_KEY,
     PROGRESS_WINDOW_KEY,
+    confirmed_chunk_progress,
+    last_work_timestamp,
+    record_confirmed_chunks,
     record_encode_bucket,
     record_encode_oom,
     record_forward_entry,
     record_forward_exit,
     record_progress,
+    start_confirmed_chunk_phase,
 )
 from ._job_registry_state import (
     _active_snapshot_path,
@@ -501,6 +506,7 @@ def _copied_record(record: dict[str, object]) -> dict[str, object]:
     item.pop(PROGRESS_WINDOW_KEY, None)
     item.pop(PROGRESS_RATE_HISTORY_KEY, None)
     item.pop(PROGRESS_EMIT_KEY, None)
+    item.pop(CONFIRMED_CHUNK_SAMPLING_KEY, None)
     prog = record.get("progress")
     if isinstance(prog, dict):
         item["progress"] = dict(cast("dict[str, object]", prog))
@@ -627,7 +633,12 @@ def _activity_record_terminal(record: dict[str, object]) -> bool:
     return str(record.get("phase", "")).strip().lower() in TERMINAL_PHASES
 
 
-def _job_snapshot_stalled(job: JobSnapshot, *, now: float) -> bool:
+def _job_snapshot_stalled(
+    job: JobSnapshot,
+    *,
+    now: float,
+    confirmed_work: dict[str, object] | None = None,
+) -> bool:
     """Classify a canonical job with the shared service stall threshold."""
     timestamps = job.timestamps
     if job.state in {JobState.PAUSING, JobState.CANCELLING}:
@@ -639,11 +650,15 @@ def _job_snapshot_stalled(job: JobSnapshot, *, now: float) -> bool:
             and now - requested >= STALL_THRESHOLD_SECONDS
         )
     progress = job.progress
+    work_at = last_work_timestamp(
+        progress.last_updated if progress is not None else None, confirmed_work
+    )
     return (
         job.state is JobState.RUNNING
         and progress is not None
         and progress.step != JobState.QUEUED.value
-        and now - progress.last_updated >= STALL_THRESHOLD_SECONDS
+        and work_at is not None
+        and now - work_at >= STALL_THRESHOLD_SECONDS
     )
 
 
@@ -653,6 +668,11 @@ def _domain_job_snapshot(job: JobSnapshot, *, now: float) -> dict[str, object]:
     spec = cast("dict[str, object]", raw["spec"])
     resilience_generation_id = (
         job.resilience.generation_id if job.resilience is not None else None
+    )
+    confirmed_work = (
+        confirmed_chunk_progress(job.id)
+        if job.spec.source is JobSource.CODE and job.state is JobState.RUNNING
+        else None
     )
     return {
         # This existing field is the job-attempt generation. Publication
@@ -689,7 +709,8 @@ def _domain_job_snapshot(job: JobSnapshot, *, now: float) -> dict[str, object]:
                 "admission_acquired_at",
             )
         },
-        "stalled": _job_snapshot_stalled(job, now=now),
+        "confirmed_chunk_progress": confirmed_work,
+        "stalled": _job_snapshot_stalled(job, now=now, confirmed_work=confirmed_work),
     }
 
 
@@ -803,12 +824,16 @@ class JobProgressReporter:
         self._step_name: str | None = None
         self._completed: int = 0
         self._total: int | None = None
+        self._chunk_phase_owner: object | None = None
 
     def phase_start(self, name: str, total: int | None) -> None:
         self._step_name = name
         self._total = total
         self._completed = 0
-        self._publish(name, completed=0, total=total)
+        self._chunk_phase_owner = None
+        if self._publish(name, completed=0, total=total):
+            self._chunk_phase_owner = object()
+            start_confirmed_chunk_phase(self.record_id, self._chunk_phase_owner)
 
     def advance(self, n: int = 1) -> None:
         self._completed += n
@@ -820,7 +845,29 @@ class JobProgressReporter:
             )
 
     def phase_end(self) -> None:
-        pass
+        self._chunk_phase_owner = None
+
+    def confirmed_chunks(self, n: int) -> None:
+        """Record acked work only for the accepted phase and live attempt.
+
+        The manager's immutable attempt identity refuses paused, terminal and
+        resumed owners. The phase token, accepted through the exact-task
+        progress gate at phase start, also fences acknowledgements after a
+        newer reporter starts. This never publishes a synthetic file tick.
+        """
+        owner = self._chunk_phase_owner
+        if owner is None:
+            return
+        context = self._context
+        if context is not None:
+            current = context.manager.get(self.record_id)
+            if (
+                current is None
+                or current.attempt.number != context.attempt
+                or not current.state.is_live_attempt
+            ):
+                return
+        record_confirmed_chunks(self.record_id, owner, n)
 
     def log(self, message: str) -> None:
         pass
@@ -850,13 +897,14 @@ class JobProgressReporter:
     def encode_oom(self) -> None:
         record_encode_oom(self.record_id)
 
-    def _publish(self, step: str, *, completed: int, total: int | None) -> None:
+    def _publish(self, step: str, *, completed: int, total: int | None) -> bool:
         context = self._context
         if context is not None:
             outcome = context.update_progress(step, completed=completed, total=total)
             if outcome.code == "stale_attempt_ignored":
-                return
+                return False
         record_progress(self.record_id, step=step, completed=completed, total=total)
+        return True
 
 
 def _sync_legacy_started(snapshot: JobSnapshot) -> None:

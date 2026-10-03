@@ -31,8 +31,8 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from .._job_progress import telemetry_block
-from .._store_models import CodeChunk
+from .._job_progress import confirmed_chunk_progress, telemetry_block
+from .._store_models import CodeChunk, _code_chunk_payload
 from ..embeddings import EncodeBucketProgress
 from ..indexer._chunk_producer import WeightedCodeSegmentQueue
 from ..indexer._consumer_pipeline import (
@@ -41,11 +41,13 @@ from ..indexer._consumer_pipeline import (
     CodePipelineLimits,
     _WeightedConsumerRun,
 )
+from ..indexer._reuse import DonorReuseContext
 from ..indexer._streaming import EncodeBucketReporter
 from ..indexer._streaming_types import CodeFileSegment, WeightedCodeSlice
 from ..job_models import JobSource
 from ..jobs import JobProgressReporter, record_start, reset, snapshot
 from ..memory_probe import MemoryProbe
+from ..store_runtime import DonorPoint
 from .test_weighted_code_resume import resume_run
 
 if TYPE_CHECKING:
@@ -100,6 +102,7 @@ class DeterministicEncoder:
     ) -> None:
         self.bucket_events = bucket_events
         self.on_event = on_event
+        self.texts: list[str] = []
 
     def encode_documents_on_device(
         self,
@@ -109,6 +112,7 @@ class DeterministicEncoder:
         on_bucket: Callable[[str, EncodeBucketProgress], None] | None = None,
     ) -> list[list[float]]:
         del batch_size, gpu_lock
+        self.texts.extend(texts)
         if on_bucket is not None:
             for phase, progress in self.bucket_events:
                 on_bucket(phase, progress)
@@ -124,6 +128,10 @@ class RecordingUpsertStore:
         self._job_id = job_id
         self.upserts: list[list[str]] = []
         self.completed_at_upsert: list[object] = []
+        self.chunk_work_at_upsert: list[object] = []
+        self.fail_write = False
+        self.donors: dict[str, DonorPoint] = {}
+        self.on_write_complete: Callable[[], None] | None = None
 
     def upsert_code_chunks(
         self,
@@ -136,7 +144,25 @@ class RecordingUpsertStore:
         record = next(e for e in snapshot() if e["id"] == self._job_id)
         progress = cast("dict[str, object]", record["progress"])
         self.completed_at_upsert.append(progress["completed"])
+        work = confirmed_chunk_progress(self._job_id)
+        self.chunk_work_at_upsert.append(
+            work["completed"] if work is not None else None
+        )
+        if self.fail_write:
+            raise RuntimeError("controlled upsert refused")
         self.upserts.append([chunk.id for chunk in chunks])
+        if self.on_write_complete is not None:
+            self.on_write_complete()
+
+    def retrieve_donor_points(
+        self, collection: str, chunk_ids: list[str]
+    ) -> dict[str, DonorPoint]:
+        del collection
+        return {
+            chunk_id: self.donors[chunk_id]
+            for chunk_id in chunk_ids
+            if chunk_id in self.donors
+        }
 
 
 def _chunk(path: str, ordinal: int) -> CodeChunk:
@@ -287,6 +313,12 @@ class TestConsumerAdvancesProgress:
         )
         assert consumer_run.total[0] == 3
         assert consumer_run.new_ids == {chunk_a0.id, chunk_a1.id, chunk_b0.id}
+        work = confirmed_chunk_progress(job_id)
+        assert work is not None
+        assert work["completed"] == 3, "acknowledged chunks were not reported"
+        assert store.chunk_work_at_upsert == [0], (
+            "chunk work preceded store acknowledgement"
+        )
 
     def test_the_code_slice_publishes_forward_boundaries(
         self,
@@ -556,6 +588,145 @@ class TestConsumerAdvancesProgress:
         assert encode["oom_count"] == 3
 
 
+def _chunk_work_run(
+    reporter: JobProgressReporter,
+    reuse: DonorReuseContext | None = None,
+) -> _WeightedConsumerRun:
+    from ..job_control import NO_RUN_CONTROL
+
+    return _WeightedConsumerRun(
+        segment_queue=WeightedCodeSegmentQueue(max_chunks=32, max_bytes=1 << 20),
+        consumer_exceptions=[],
+        limits=_limits(),
+        new_ids=set(),
+        total=[0],
+        metadata={},
+        checkpoint=None,
+        ingest_wait=False,
+        run_control=NO_RUN_CONTROL,
+        code_build_target=None,
+        donor_reuse=reuse,
+        reporter=reporter,
+    )
+
+
+@pytest.mark.parametrize("reused", [False, True], ids=["encoded", "donor-hits"])
+def test_acknowledged_chunk_operations_include_reuse_and_repeated_point_ids(
+    tmp_path: Path, reused: bool
+) -> None:
+    job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
+    reporter = JobProgressReporter(job_id)
+    reporter.phase_start("chunk + embed", 1)
+    chunks = tuple(_chunk("pkg/a.py", ordinal) for ordinal in range(3))
+    weighted = WeightedCodeSlice(
+        segments=(_segment("pkg/a.py", 0, chunks, is_file_end=False),),
+        chunks=chunks,
+        estimated_bytes=sum(len(chunk.content) for chunk in chunks),
+    )
+    store = RecordingUpsertStore(job_id)
+    reuse = None
+    if reused:
+        store.donors = {
+            chunk.id: DonorPoint(
+                [0.0, 1.0], None, None, dict(_code_chunk_payload(chunk))
+            )
+            for chunk in chunks
+        }
+        reuse = DonorReuseContext(cast("VaultStore", store), ("donor",))
+    encoder = DeterministicEncoder()
+    pipeline = _pipeline(tmp_path, store, encoder)
+    run = _chunk_work_run(reporter, reuse)
+    with MemoryProbe(name="acknowledged-chunk-operations") as probe:
+        # Two successful writes of the same points are six work operations,
+        # one segment each, three unique points, and zero completed files.
+        for ordinal in range(2):
+            pipeline._consume_weighted_slice(
+                weighted, slice_index=ordinal, consumer_run=run, probe=probe
+            )
+    work = confirmed_chunk_progress(job_id)
+    assert work is not None
+    assert work["completed"] == 6, (
+        "chunk work substituted encoded or unique point count"
+    )
+    assert store.chunk_work_at_upsert == [0, 3]
+    assert len(run.new_ids) == 3
+    assert _completed_files(job_id) == 0
+    assert len(encoder.texts) == (0 if reused else 6)
+    if reuse is not None:
+        assert reuse.stats.reuse_hits == 6
+
+
+@pytest.mark.parametrize("prior_ack", [False, True], ids=["no-ack", "partial-ack"])
+def test_failed_slice_counts_only_prior_successful_acknowledgements(
+    tmp_path: Path, prior_ack: bool
+) -> None:
+    job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
+    reporter = JobProgressReporter(job_id)
+    reporter.phase_start("chunk + embed", 1)
+    chunks = tuple(_chunk("pkg/a.py", ordinal) for ordinal in range(3))
+    weighted = WeightedCodeSlice(
+        segments=(_segment("pkg/a.py", 0, chunks, is_file_end=False),),
+        chunks=chunks,
+        estimated_bytes=sum(len(chunk.content) for chunk in chunks),
+    )
+    store = RecordingUpsertStore(job_id)
+    pipeline = _pipeline(tmp_path, store)
+    run = _chunk_work_run(reporter)
+    with MemoryProbe(name="failed-chunk-acknowledgement") as probe:
+        if prior_ack:
+            pipeline._consume_weighted_slice(
+                weighted, slice_index=0, consumer_run=run, probe=probe
+            )
+        store.fail_write = True
+        with pytest.raises(RuntimeError, match="controlled upsert refused"):
+            pipeline._consume_weighted_slice(
+                weighted, slice_index=1, consumer_run=run, probe=probe
+            )
+    work = confirmed_chunk_progress(job_id)
+    assert work is not None
+    assert work["completed"] == (3 if prior_ack else 0), (
+        "failed unacknowledged slice advanced chunk work"
+    )
+    assert (work["last_updated"] is None) is (not prior_ack)
+
+
+def test_acknowledged_work_survives_control_unwind_after_store_return(
+    tmp_path: Path,
+) -> None:
+    from ..job_control import PauseRequested, RunControlToken
+
+    job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
+    reporter = JobProgressReporter(job_id)
+    reporter.phase_start("chunk + embed", 1)
+    chunks = (_chunk("pkg/a.py", 0), _chunk("pkg/a.py", 1))
+    weighted = WeightedCodeSlice(
+        segments=(_segment("pkg/a.py", 0, chunks, is_file_end=False),),
+        chunks=chunks,
+        estimated_bytes=sum(len(chunk.content) for chunk in chunks),
+    )
+    store = RecordingUpsertStore(job_id)
+    pipeline = _pipeline(tmp_path, store)
+    run = _chunk_work_run(reporter)
+    control = RunControlToken()
+    run = replace(run, run_control=control)
+
+    def request_pause() -> None:
+        control.request_pause()
+
+    store.on_write_complete = request_pause
+    with (
+        MemoryProbe(name="acknowledgement-before-control") as probe,
+        pytest.raises(PauseRequested, match="run pause requested"),
+    ):
+        pipeline._consume_weighted_slice(
+            weighted, slice_index=0, consumer_run=run, probe=probe
+        )
+    work = confirmed_chunk_progress(job_id)
+    assert work is not None
+    assert work["completed"] == 2, "post-acknowledgement control lost confirmed work"
+    assert run.total == [0]
+
+
 def _completed_files(job_id: str) -> int:
     record = next(entry for entry in snapshot() if entry["id"] == job_id)
     progress = cast("dict[str, object]", record["progress"])
@@ -661,6 +832,11 @@ def test_replayed_complete_files_count_once_after_confirmation(
     assert resume_run.checkpoint.resumed_units == len(committed)
     assert consumer.total == [8 - len(committed)]
     assert len(resume_run.encoder.texts) == 8 - len(committed)
+    work = confirmed_chunk_progress(job_id)
+    assert work is not None
+    assert work["completed"] == 8 - len(committed), (
+        "committed replay was counted as new acknowledged chunk work"
+    )
     assert (
         resume_run.checkpoint.ledger.committed_unit_count(
             resume_run.checkpoint.generation_id
@@ -884,15 +1060,16 @@ def test_producer_and_consumer_publish_file_progress_in_order(
 
     def delayed_publish(
         reporter: JobProgressReporter, step: str, *, completed: int, total: int | None
-    ) -> None:
+    ) -> bool:
         if completed == 1:
             first_waiting.set()
             assert release_first.wait(10), "progress publication was never released"
-        publish(reporter, step, completed=completed, total=total)
+        accepted = publish(reporter, step, completed=completed, total=total)
         if completed:
             publication_order.append(completed)
         if completed == 2:
             second_published.set()
+        return accepted
 
     def record_zero_outcome(
         checkpoint: CodeRunCheckpoint,

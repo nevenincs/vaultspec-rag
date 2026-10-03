@@ -152,6 +152,9 @@ class _CountingReporter:
     def advance(self, n: int = 1) -> None:
         self.batches.append(n)
 
+    def confirmed_chunks(self, n: int) -> None:
+        del n
+
     def phase_end(self) -> None:
         return None
 

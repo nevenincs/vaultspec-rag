@@ -621,7 +621,8 @@ class CodeConsumerPipeline:
     def _record_confirmed_slice(
         self,
         segments: tuple[CodeFileSegment, ...],
-        metadata: dict[str, str],
+        consumer_run: _WeightedConsumerRun,
+        chunk_count: int,
     ) -> None:
         """Persist the file units covered by one confirmed store mutation.
 
@@ -630,7 +631,9 @@ class CodeConsumerPipeline:
         since its digest was observed must be superseded and re-recorded, not
         allowed to fail a run that has otherwise succeeded.
         """
-        self._lifecycle.drift_owner.record_segments(segments, metadata)
+        if consumer_run.checkpoint is not None:
+            self._lifecycle.drift_owner.record_segments(segments, consumer_run.metadata)
+        consumer_run.reporter.confirmed_chunks(chunk_count)
 
     def _consume_weighted_slice(
         self,
@@ -654,14 +657,11 @@ class CodeConsumerPipeline:
             probe.checkpoint(f"slice-{slice_index}-before-encode")
             completed_slice_index = slice_index + 1
             slice_items = len(slice_chunks)
-            on_storage_confirmed = (
-                partial(
-                    self._record_confirmed_slice,
-                    weighted_slice.segments,
-                    consumer_run.metadata,
-                )
-                if checkpoint is not None
-                else None
+            on_storage_confirmed = partial(
+                self._record_confirmed_slice,
+                weighted_slice.segments,
+                consumer_run,
+                slice_items,
             )
             mutation_lifecycle = (
                 checkpoint.mutation_lifecycle_for_units(
