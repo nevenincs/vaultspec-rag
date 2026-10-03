@@ -28,7 +28,9 @@ from __future__ import annotations
 import hashlib
 import json
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass
+from functools import partial
 from typing import TYPE_CHECKING, ClassVar, Protocol, Self
 
 from .. import store_schema
@@ -64,7 +66,7 @@ from ._run_ledger_runtime import RunLedger
 from ._run_policy import DurableProgressKind
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Callable, Generator
     from pathlib import Path
 
     from _typeshed import DataclassInstance
@@ -74,8 +76,17 @@ if TYPE_CHECKING:
     from ._content_policy import ContentKind
     from ._resolved_policy import ResolvedIndexPolicy
     from ._run_ledger_models import PublicationReceipt, RunGeneration
-    from ._run_policy import RunPolicy
+    from ._run_policy import RunPolicy, RunPolicySnapshot
     from ._streaming_types import StoreMutationLifecycle
+
+    type CheckpointProgressObserver = Callable[
+        [RunCheckpointBase, RunPolicySnapshot | None], None
+    ]
+
+
+_CHECKPOINT_PROGRESS_OBSERVER: ContextVar[CheckpointProgressObserver | None] = (
+    ContextVar("checkpoint_progress_observer", default=None)
+)
 
 __all__ = [
     "PublicationExecution",
@@ -83,7 +94,24 @@ __all__ = [
     "RunOpenRequest",
     "classify_interrupted_generation",
     "configuration_fingerprint",
+    "observe_checkpoint_progress",
 ]
+
+
+@contextmanager
+def observe_checkpoint_progress(
+    observer: CheckpointProgressObserver,
+) -> Generator[None]:
+    """Bind newly opened checkpoints to one exact attempt's observation.
+
+    The initial notification carries no progress snapshot: it registers the
+    actual checkpoint. Subsequent notifications follow confirmed durable work.
+    """
+    token = _CHECKPOINT_PROGRESS_OBSERVER.set(observer)
+    try:
+        yield
+    finally:
+        _CHECKPOINT_PROGRESS_OBSERVER.reset(token)
 
 
 class RunOpenRequest(Protocol):
@@ -196,6 +224,12 @@ class RunCheckpointBase:
     _collection_identity: ClassVar[str]
     _source_type: ClassVar[PublicSourceType]
     _embedding_schema: ClassVar[int]
+
+    def __post_init__(self) -> None:
+        observer = _CHECKPOINT_PROGRESS_OBSERVER.get()
+        if observer is not None:
+            self.run_policy.set_durable_progress_observer(partial(observer, self))
+            observer(self, None)
 
     @staticmethod
     def recover_pending_publication(

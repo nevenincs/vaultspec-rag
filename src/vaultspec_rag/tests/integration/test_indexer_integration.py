@@ -307,7 +307,8 @@ class TestCodeIndexMemoryCeilings:
     ) -> None:
         from ... import CodebaseIndexer
         from ..._job_errors import JobError, JobErrorKind
-        from ...job_dispatch import _code_resilience
+        from ...job_dispatch import _admitted_resilience, _indexer_resilience
+        from ...job_models import JobSource
         from ...store_runtime import VaultStore
 
         _configure_cpu_code_index(
@@ -336,7 +337,9 @@ class TestCodeIndexMemoryCeilings:
             assert rss_ceiling_mib is not None
             assert rss_ceiling_mib == 1.0
             assert snapshot.peak_rss_mib > rss_ceiling_mib
-            resilience = _code_resilience(indexer)
+            resilience = _indexer_resilience(
+                indexer, indexer.last_checkpoint, _admitted_resilience(JobSource.CODE)
+            )
             assert resilience.rss_ceiling_mib == rss_ceiling_mib
             assert resilience.peak_rss_mib == snapshot.peak_rss_mib
             assert store.count_code() == 0
@@ -371,7 +374,8 @@ class TestCodeIndexMemoryCeilings:
         from ... import CodebaseIndexer
         from ..._job_errors import JobError, JobErrorKind
         from ...config._settings import get_config
-        from ...job_dispatch import _code_resilience
+        from ...job_dispatch import _admitted_resilience, _indexer_resilience
+        from ...job_models import JobSource
         from ...memory_probe import (
             current_cuda_mib,
             current_rss_mib,
@@ -423,7 +427,9 @@ class TestCodeIndexMemoryCeilings:
             # rides above it as a diagnostic the comparison never reads.
             assert snapshot.peak_cuda_allocated_mib > cuda_ceiling_mib
             assert snapshot.peak_cuda_reserved_mib >= snapshot.peak_cuda_allocated_mib
-            resilience = _code_resilience(indexer)
+            resilience = _indexer_resilience(
+                indexer, indexer.last_checkpoint, _admitted_resilience(JobSource.CODE)
+            )
             assert resilience.cuda_ceiling_mib == cuda_ceiling_mib
             assert (
                 resilience.peak_cuda_allocated_mib == snapshot.peak_cuda_allocated_mib
@@ -531,7 +537,8 @@ class TestDocumentIndexMemoryAndWriteDeadline:
     ) -> None:
         from ... import DocumentIndexer
         from ...config._settings import get_config
-        from ...job_dispatch import _document_resilience
+        from ...job_dispatch import _admitted_resilience, _indexer_resilience
+        from ...job_models import JobSource
         from ...store_runtime import VaultStore
 
         _configure_cpu_code_index(
@@ -565,7 +572,11 @@ class TestDocumentIndexMemoryAndWriteDeadline:
                 4096.0,
                 indexer._support_limits().rss_bytes / 1024**2,
             )
-            resilience = _document_resilience(indexer)
+            resilience = _indexer_resilience(
+                indexer,
+                indexer.last_checkpoint,
+                _admitted_resilience(JobSource.DOCUMENT),
+            )
             assert resilience.peak_rss_mib == snapshot.peak_rss_mib
             assert resilience.peak_cuda_allocated_mib == 0.0
             assert resilience.peak_cuda_reserved_mib == 0.0
@@ -581,7 +592,8 @@ class TestDocumentIndexMemoryAndWriteDeadline:
     ) -> None:
         from ... import DocumentIndexer
         from ..._job_errors import JobError, JobErrorKind
-        from ...job_dispatch import _document_resilience
+        from ...job_dispatch import _admitted_resilience, _indexer_resilience
+        from ...job_models import JobSource
         from ...store_runtime import VaultStore
 
         _configure_cpu_code_index(
@@ -612,7 +624,11 @@ class TestDocumentIndexMemoryAndWriteDeadline:
             snapshot = indexer.memory_budget_snapshot
             assert snapshot is not None
             assert snapshot.peak_rss_mib > 1.0
-            resilience = _document_resilience(indexer)
+            resilience = _indexer_resilience(
+                indexer,
+                indexer.last_checkpoint,
+                _admitted_resilience(JobSource.DOCUMENT),
+            )
             assert resilience.peak_rss_mib == snapshot.peak_rss_mib
             assert resilience.rss_ceiling_mib == snapshot.rss_ceiling_mib == 1.0
             assert resilience.terminal_outcome == "rebuild_incomplete"

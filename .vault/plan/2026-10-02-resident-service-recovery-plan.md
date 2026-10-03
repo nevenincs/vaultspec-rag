@@ -32,7 +32,7 @@ related:
   - '[[2026-09-08-qdrant-collection-sprawl-adr]]'
 modified: '2026-10-03'
 body_schema: body-v2
-body_hash: 'sha256:b42096c3f22db29911dbe2a55fc01f686afd2365cc809cdd15040b91d799cb3d'
+body_hash: 'sha256:97eb1a64f9eecb590954bc84ff54dda036c63128978a7b94d375665734e1d863'
 ---
 
 # `resident-service-recovery` plan
@@ -69,6 +69,12 @@ S18 follows a strict live ingest barrier rejecting 14,897 expected versus 14,541
 
 The S16 final review found archive age/size eviction bypassing the same disable sentinel; accepted autoprune and archive decisions place it within the configured cycle, so S16 also preserves archived evidence when destruction is disabled. The S17 field audit additionally confirmed dropped model maps and per-kind point counts, plus temporary-root classification recomputed under the CLI process's environment. S17 carries those published namespace facts through one canonical accessor, retaining legacy/direct fallback without recomputing daemon authority. Intentional HTTP envelope fields remain outside the repair.
 
+S19 follows live MCP code indexing whose canonical job still reports generation null and zero committed units while a read-only ledger snapshot shows generation 5665e092078b43febab23033bce7d78a with 18,295 confirmed units. Accepted large-index resilience D8 and explicit-reindex observability require accurate attempt-owned durable progress while work is running. The durable RunPolicy clock itself advances correctly; job dispatch publishes the concrete snapshot only at exit. Bounded publication must observe actual checkpoint boundaries without per-commit full-ledger scans or unbounded persistence. File completion counters and the accepted legacy stall policy remain unchanged. The brief health degradation has not been attributed to this telemetry defect.
+
+S19 also projects actual vault checkpoint facts now that vault shares the canonical ledger and receipt lifecycle; its absent support profile and memory ceilings remain unknown. The old no-checkpoint projection and assertions are stale.
+
+S20 follows a confirmed high-severity vault liveness defect: confirmed chunk units do not renew the actual RunPolicy, and vault ingestion bypasses its write policy. A progressing rebuild longer than the timeout can publish its proof and succeeded generation, then report an admission-age no-progress timeout. Accepted resilience D4, D8 and D9 and incremental-publication-cost's shared vault lifecycle govern the correction. Actual inserted units must renew the clock, retries and safe boundaries must use the same policy, and genuine silence must still fail. No vault resource profile or memory ceiling is introduced.
+
 ## Steps
 
 - [x] `S01` - Preserve terminal rebuild refusals and accurate watcher status through events, failures, and restart, and reconcile successful verified operator rebuilds; `watcher retry, controller, intake, execution and runtime, jobs.py completion hook, affected watcher and job tests`.
@@ -88,6 +94,8 @@ The S16 final review found archive age/size eviction bypassing the same disable 
 - [x] `S16` - Honor disabled automatic pruning at superseded-generation and archive destruction stages while retaining classification and independently enabled reconciliation; `canonical reclamation policy, generation stage and archive retention, CPU disabled-policy real-storage and archive regressions`.
 - [x] `S17` - Preserve canonical namespace generation, model, per-kind count and temp-root classification facts through CLI survey decoding and JSON/human rendering; `CLI namespace survey projection, canonical survey record and fact accessors, CPU service-to-CLI fact round-trip and legacy fallback regressions`.
 - [x] `S18` - Preserve republished shared chunk identities during resume drift retirement and exclude historical deletion evidence from retained upsert accumulation; `indexer canonical drift owner and consumer retained-ID accumulation, ledger iterator selection only as needed, CPU actual chunking real-local-storage interrupted partial-edit and deletion-history regressions`.
+- [x] `S19` - Publish bounded attempt-owned live checkpoint resilience after durable indexing boundaries and expose accurate running generation, committed/replayed units and no-progress facts without changing file counters or stall policy; `canonical attempt binding, checkpoint/run-policy durable observation and job resilience projection only as needed, CPU paused-before-completion actual-ledger and failure/control regressions`.
+- [ ] `S20` - Advance and enforce the vault durable no-progress clock at confirmed chunk and publication boundaries so a progressing long rebuild remains valid and terminal publication cannot be followed by an admission-age timeout; `vault checkpoint confirmed-unit and ingest write-policy wiring, shared terminal publication ordering only as needed, CPU real-store multi-unit deadline and terminal-truth regressions`.
 - [ ] `S04` - Deploy the current checkout as the resident daemon, repair affected publications through explicit rebuild jobs when required, and verify service health, search, and watcher convergence; `resident service lifecycle, affected root ledgers and admitted jobs, plan verification and final audit`.
 
 ## Parallelization
@@ -113,6 +121,10 @@ S14 is assigned to the recovery worker, owning canonical resume/rebuild authorit
 The watcher worker also owns S16 reclamation policy and S17 CLI survey diagnostics after completing S15; source paths are disjoint from S14 and the supervisor's live operations. Separate Step checkpoints preserve each contract correction. CPU scratch evidence records unchanged source hashes and no live backend or GPU calls.
 
 The supervisor owns S18 canonical drift retirement, upsert-only retained-ID selection and real local-storage CPU regressions, disjoint from S14-S17. The supervisor also owns bounded retirement of the two damaged unserved generations, integrated review, serialized checkpoints and resident rollout. All mutation proofs remain process-only and workers never touch the live service or GPU.
+
+The recovery worker owns S19 attempt-owned live checkpoint resilience, bounded observation and real CPU ledger/store regressions. The source assignment may proceed while S04's existing protected rebuilds run because workers remain CPU-only and never mutate live state or source bytes for guard checks. The supervisor owns shared gates, all Git/vault mutations and a final restart after protected work settles so the new telemetry path is loaded. Existing source evidence remains applicable except for S19's changed interactions.
+
+The recovery worker also owns S20 vault confirmed-chunk liveness, ingest policy wiring and real CPU storage/deadline regressions, sequenced after S19's reviewable checkpoint. The supervisor has paused only the three unstarted ingest, TUI and MCP vault rebuilds while the protected MCP code worker continues. These logical jobs retain operator pause intent across the final source restart and resume with rebuild authority after S19 and S20 pass. The supervisor owns that restart, shared gates, Git/vault changes and live verification.
 
 ## Verification
 

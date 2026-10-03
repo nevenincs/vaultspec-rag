@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:4685aacd7c0c52040bf55aaa978f66aba266384a62aba672c56ee1af3ef323cc'
+body_hash: 'sha256:2175b75bebbd3128da73c8da06782f506584270d53891700b389d5b0e8025786'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -178,6 +178,16 @@ Independent final review passes S10 and S11 together: 53 and 57 applicable CPU t
 
 At 23:20 UTC the actual TUI job remains inside protected ingestion, with 7883 of 10491 paths processed and recent progress. Ten repair jobs are PAUSING with desired RUNNING; the controller separately reports eleven compute tickets, which must not be conflated with job count. Canonical job detail proves the TUI worker still owns its index slot, project lease, writer lock and active pipeline. Those resources are not reported released.
 
+### Live checkpoint resilience | medium | Running snapshots retain admission defaults
+
+Review at 2026-10-03 02:00 UTC found `job_dispatch.py` publishing concrete checkpoint resilience only at attempt exit. Read-only evidence at 01:33:58 UTC shows the running MCP generation `5665e092078b43febab23033bce7d78a` with 18,295 confirmed units and a fresh durable commit, while the canonical job exposes generation null and zero committed units. The vault projector also discards its now-real checkpoint. Accepted large-index resilience D8/D9 and explicit-reindex observability require accurate attempt-owned live facts. S19 owns bounded checkpoint observation and actual vault projection, retaining absent vault support profile and ceilings. Verification remains pending.
+
+### Vault durable progress | high | Healthy chunk commits do not renew the deadline
+
+Review at 2026-10-03 02:00 UTC confirmed `VaultRunCheckpoint.record_confirmed_chunks` records actual ledger units without advancing its RunPolicy, and vault ingestion uses no write policy. The shared terminal publication marks a generation succeeded and compacts it before recording progress against the expired clock. A progressing full vault run longer than the no-progress timeout can therefore report timeout after successful proof and generation publication. Accepted resilience D4/D8/D9 and the shared vault publication lifecycle govern S20. The supervisor paused the three unstarted ingest, TUI and MCP vault repair jobs; each acknowledged desired PAUSED, attempt 1, revision 4, with no index capacity, project lease, writer lock or pipeline held. The protected MCP code worker remains running. Review verdict is REVISION REQUIRED until S20's real storage/deadline evidence passes. Vault memory profile exclusions remain unchanged.
+
+The brief 01:30:43 UTC health degradation remains unattributed. File-completion counters intentionally advance only at file end; the accepted legacy stall policy and separate throughput-collapse diagnostic do not establish a new defect from that sample. Later observations are ready with no degradation reasons and unchanged resident/Qdrant identities.
+
 ## Recommendations
 
 Complete the open code Steps, verify their negative guards and integrated CPU behavior, then deploy the checkout through its separate locked GPU environment. Point the existing on-demand resident lifecycle tasks at that environment so CI restarts preserve the repair. Respect live CI ownership; repair affected publication domains through admitted explicit rebuild jobs, verify search and watcher convergence, and append the final review and rollout results here.
@@ -255,3 +265,7 @@ Canonical retry created eleven linked children, saving each identity immediately
 Monitor VAULT childbce9cd71-bd07-4a4a-8e1e-67a59672df19 was paused before worker admission, acknowledged PAUSED promptly with no capacity/project/writer/pipeline ownership, and resumed under the same ID as attempt2. Its actual full replacement and publication remain pending; this deliberately exercises the repaired resume authority boundary. The live CLI survey independently matches all14 published namespace fields, including four stamped model entries and false temporary-root classification, through the actual CLI process. No model loading or storage mutation was needed for that adapter proof.
 
 The new daemon initially has no active project watchers, so its pre-admission watcher listing is empty rather than a path-filter failure. Explicit watcher activation and canonical path-alias convergence will be verified after replacement proofs settle.
+
+## S19 integrated source checkpoint
+
+S19 SOURCE + CPU review PASS at 2026-10-03 02:18 UTC, with no blocking findings. The actual checkpoint observer publishes attempt-owned code, document and vault facts after confirmed durable boundaries, outside the policy lock, at a bounded cadence. Opening, first durable progress, finalization and exit preserve visibility; closure detaches the observer, and canonical task ownership rejects stale writes. Vault checkpoint facts retain unknown profile and ceilings. All six source/test hashes match the gate and guard manifests. Ten separate gates passed, including 239 affected CPU cases; all eleven actual production mutations failed as intended and immediately passed in fresh restored interpreters. Shared package lint, format and diff passed with 33 changed source/test hashes. S14 authority coverage passed in the affected suite; unchanged S10 framing owners need no refresh. Four managed-integration projection caller migrations were statically checked, with no GPU borrower fixture executed. Evidence is archived in the incident's `s19-proof` directory. The resident still runs the earlier committed source while protected code/document work settles; S04 owns loading and live proof. S20's vault clock correction remains open.

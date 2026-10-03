@@ -8,6 +8,7 @@ after a storage-confirmed unit or finalization phase is durably committed.
 
 from __future__ import annotations
 
+import logging
 import math
 import queue
 import threading
@@ -22,7 +23,7 @@ from .._store_writes import StoreWritePolicy
 from ..job_control import NO_RUN_CONTROL, RunControl
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Callable, Generator
 
 __all__ = [
     "CleanupQueuePutOutcome",
@@ -33,6 +34,7 @@ __all__ = [
 ]
 
 _POLL_INTERVAL_SECONDS = 0.05
+logger = logging.getLogger(__name__)
 
 
 class CleanupQueuePutOutcome(StrEnum):
@@ -87,6 +89,7 @@ class RunPolicy:
 
     __slots__ = (
         "_durable_progress_count",
+        "_durable_progress_observer",
         "_failure_detail",
         "_last_progress_kind",
         "_last_progress_label",
@@ -120,6 +123,9 @@ class RunPolicy:
         self._last_progress_kind: DurableProgressKind | None = None
         self._last_progress_label: str | None = None
         self._failure_detail: str | None = None
+        self._durable_progress_observer: Callable[[RunPolicySnapshot], None] | None = (
+            None
+        )
         self._store_write_policy = StoreWritePolicy(
             remaining_seconds=self.remaining_seconds,
             wait=self.wait,
@@ -192,7 +198,21 @@ class RunPolicy:
             self._durable_progress_count += 1
             self._last_progress_kind = kind
             self._last_progress_label = label
-            return self._snapshot_locked(now_monotonic=now_monotonic)
+            snapshot = self._snapshot_locked(now_monotonic=now_monotonic)
+            observer = self._durable_progress_observer
+        if observer is not None:
+            try:
+                observer(snapshot)
+            except Exception:
+                logger.warning("durable progress observation failed", exc_info=True)
+        return snapshot
+
+    def set_durable_progress_observer(
+        self, observer: Callable[[RunPolicySnapshot], None] | None
+    ) -> None:
+        """Attach one run's observer without exposing the policy lock to it."""
+        with self._lock:
+            self._durable_progress_observer = observer
 
     def wait(self, seconds: float) -> None:
         """Wait for at most ``seconds`` while polling control and liveness."""

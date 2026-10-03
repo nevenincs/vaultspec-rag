@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:02a1fba1fac9c48697692a003f45c77e9c6772aeeae8d11ac0c63b84da19d0c3'
+body_hash: 'sha256:e65e5cbcfd49912cdf520ef49fcd0ab082518343cbc40310baf44fb7ae37b0c2'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -243,6 +243,27 @@ related:
 - `S17` `verify:` `S17 twenty-one production mutation fail fresh restored pass pairs` -> `pass`
 - `S17` `verify:` `integrated S14-S18 source and CPU review` -> `pass`
 - `S17` `by:` `root`
+- `S19` `M` `src/vaultspec_rag/job_dispatch.py`
+- `S19` `M` `src/vaultspec_rag/indexer/_checkpoint_common.py`
+- `S19` `M` `src/vaultspec_rag/indexer/_run_policy.py`
+- `S19` `A` `src/vaultspec_rag/tests/test_live_checkpoint_resilience.py`
+- `S19` `M` `src/vaultspec_rag/tests/test_job_resilience.py`
+- `S19` `M` `src/vaultspec_rag/tests/integration/test_indexer_integration.py`
+- `S19` `M` `.vault/audit/2026-10-02-resident-service-recovery-audit.md`
+- `S19` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/job_dispatch.py src/vaultspec_rag/indexer/_checkpoint_common.py src/vaultspec_rag/indexer/_run_policy.py src/vaultspec_rag/tests/test_live_checkpoint_resilience.py src/vaultspec_rag/tests/test_job_resilience.py src/vaultspec_rag/tests/integration/test_indexer_integration.py` -> `pass`
+- `S19` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/job_dispatch.py src/vaultspec_rag/indexer/_checkpoint_common.py src/vaultspec_rag/indexer/_run_policy.py src/vaultspec_rag/tests/test_live_checkpoint_resilience.py src/vaultspec_rag/tests/test_job_resilience.py src/vaultspec_rag/tests/integration/test_indexer_integration.py` -> `pass`
+- `S19` `verify:` `uv run --no-sync basedpyright --pythonpath C:/Users/hello/.vaultspec-rag/debug-runtime/Scripts/python.exe src/vaultspec_rag/job_dispatch.py src/vaultspec_rag/indexer/_checkpoint_common.py src/vaultspec_rag/indexer/_run_policy.py` -> `pass`
+- `S19` `verify:` `uv run --no-sync basedpyright src/vaultspec_rag/tests/test_live_checkpoint_resilience.py src/vaultspec_rag/tests/test_job_resilience.py src/vaultspec_rag/tests/integration/test_indexer_integration.py` -> `pass`
+- `S19` `verify:` `uv run --no-sync ty check src/vaultspec_rag/job_dispatch.py src/vaultspec_rag/indexer/_checkpoint_common.py src/vaultspec_rag/indexer/_run_policy.py src/vaultspec_rag/tests/test_live_checkpoint_resilience.py src/vaultspec_rag/tests/test_job_resilience.py src/vaultspec_rag/tests/integration/test_indexer_integration.py` -> `pass`
+- `S19` `verify:` `uv run --no-sync complexipy src/vaultspec_rag/job_dispatch.py src/vaultspec_rag/indexer/_checkpoint_common.py src/vaultspec_rag/indexer/_run_policy.py --failed` -> `pass`
+- `S19` `verify:` `uv run --no-sync xenon vaultspec_rag/job_dispatch.py vaultspec_rag/indexer/_checkpoint_common.py vaultspec_rag/indexer/_run_policy.py --max-absolute C --max-modules C --max-average A` -> `pass`
+- `S19` `verify:` `uv run --no-sync pylint src/vaultspec_rag/job_dispatch.py src/vaultspec_rag/indexer/_checkpoint_common.py src/vaultspec_rag/indexer/_run_policy.py src/vaultspec_rag/tests/test_live_checkpoint_resilience.py src/vaultspec_rag/tests/test_job_resilience.py src/vaultspec_rag/tests/integration/test_indexer_integration.py --rcfile=pyproject.toml --score=n` -> `pass`
+- `S19` `verify:` `git diff --check -- src/vaultspec_rag/job_dispatch.py src/vaultspec_rag/indexer/_checkpoint_common.py src/vaultspec_rag/indexer/_run_policy.py src/vaultspec_rag/tests/test_live_checkpoint_resilience.py src/vaultspec_rag/tests/test_job_resilience.py src/vaultspec_rag/tests/integration/test_indexer_integration.py` -> `pass`
+- `S19` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_live_checkpoint_resilience.py src/vaultspec_rag/tests/test_job_resilience.py src/vaultspec_rag/tests/test_run_policy.py src/vaultspec_rag/tests/test_publication_recovery.py src/vaultspec_rag/tests/test_content_kind_checkpoint_restart.py src/vaultspec_rag/tests/test_job_rebuild_resume_dispatch.py src/vaultspec_rag/tests/test_job_contracts.py src/vaultspec_rag/tests/test_job_contracts_persistence.py -m unit and not torch -q --tb=short` -> `pass`
+- `S19` `verify:` `python .pytest-tmp/S19/prove_guards.py (11 actual production fail/restored pairs with unchanged source SHA256)` -> `pass`
+- `S19` `verify:` `python .pytest-tmp/recovery-shared-gates.py (package lint, format and diff, 33 source/test hashes)` -> `pass`
+- `S19` `verify:` `integrated S19 source and CPU review` -> `pass`
+- `S19` `by:` `root`
 
 ## Notes
 
@@ -253,3 +274,4 @@ related:
 - `S15` Malformed embedded-NUL root and `project_root` filters now return bounded `bad_request400;` live Windows path-alias watcher convergence remains S04.
 - `S16` Existing zero reclaim cap now disables generation and archive destruction; independently configured reconciliation and positive-cap retention remain active. No live storage or archive was removed.
 - `S17` The CLI carries canonical per-namespace facts; intentional HTTP envelope freshness/totals remain outside scope. No GPU or live service was used for these proofs.
+- `S19` The managed GPU integration fixture was not executed; four projection caller migrations passed strict static checks and actual-component CPU tests covered the changed behavior. Runtime verification remains in S04.
