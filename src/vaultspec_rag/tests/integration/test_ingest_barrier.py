@@ -20,11 +20,12 @@ import pytest
 
 from ..._publication_state import acquire_publication_snapshot
 from ..._source_types import PublicSourceType
-from ...config._settings import get_config, reset_config
+from ...config._settings import get_config
 from ...config._types import EnvVar
 from ...indexer._publication_proof import ProofMissingError
 from ...progress import NullProgressReporter
 from ...store_runtime import IngestVerificationError, VaultStore
+from .._config_fixtures import reset_config
 from ..corpus import build_synthetic_vault
 from ._helpers import provisioned_qdrant_binary, serve_qdrant
 

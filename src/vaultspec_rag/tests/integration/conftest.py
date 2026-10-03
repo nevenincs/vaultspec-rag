@@ -35,9 +35,10 @@ from ..._machine_lock import (
     probe_machine_lock,
     release_machine_lock,
 )
-from ...config._settings import get_config, reset_config
+from ...config._settings import get_config
 from ...config._types import EnvVar
 from ...progress import NullProgressReporter
+from .._config_fixtures import reset_config
 from .._model_setup import (
     HF_ENDPOINT_ENV,
     configured_service_model_ids,

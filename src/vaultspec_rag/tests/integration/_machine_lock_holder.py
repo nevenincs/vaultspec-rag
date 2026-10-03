@@ -42,7 +42,7 @@ import time
 from pathlib import Path
 
 os.environ["VAULTSPEC_RAG_QDRANT_STORAGE_DIR"] = sys.argv[1]
-from vaultspec_rag.config._settings import reset_config  # absolute-import-ok
+from vaultspec_rag.tests._config_fixtures import reset_config  # absolute-import-ok
 reset_config()
 from vaultspec_rag._machine_lock import acquire_machine_lock  # absolute-import-ok
 acquired, _ = acquire_machine_lock()

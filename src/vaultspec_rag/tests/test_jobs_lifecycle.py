@@ -522,7 +522,7 @@ class TestInterruptedJobRestore:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> Iterator[None]:
-        from ..config._settings import reset_config
+        from ._config_fixtures import reset_config
 
         monkeypatch.setenv("VAULTSPEC_RAG_STATUS_DIR", str(tmp_path / "status"))
         reset_config()

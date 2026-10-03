@@ -25,7 +25,6 @@ if TYPE_CHECKING:
     from ..store_runtime import VaultStore
 
 from ..capabilities import BackendCapabilities
-from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..mcp._mcp import mcp
 from ..mcp._resources import analyze_feature
@@ -45,6 +44,7 @@ from ..server._utils import (
 )
 from ..service import ServiceRegistry
 from ..serviceclient._discovery import HEARTBEAT_STALENESS_SECONDS
+from ._config_fixtures import reset_config
 
 pytestmark = [pytest.mark.unit]
 

@@ -26,7 +26,6 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 
 from .. import CodebaseIndexer
-from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..indexer import _chunk_worker
 from ..indexer._chunk_producer import CodeChunkProducer, _PoolDrainRequest
@@ -40,6 +39,7 @@ from ..indexer._preprocess_config import (
 from ..indexer._preprocess_runner import PreprocessAbortError
 from ..indexer._run_ledger_models import CommitUnit, CommitUnitKind
 from ._chunk_production import produce_chunks
+from ._config_fixtures import reset_config
 from ._import_probe import assert_fresh_import_excludes, import_probe_source
 
 if TYPE_CHECKING:

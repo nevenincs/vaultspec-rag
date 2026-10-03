@@ -26,12 +26,12 @@ from .._machine_lock import (
     capture_pre_isolation_machine_lock,
     machine_lock_path,
 )
-from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ._child_signal import (
     CHILD_PROCESS_TIMEOUT_SECONDS,
     PROCESS_TIMEOUT_SECONDS,
 )
+from ._config_fixtures import reset_config
 
 if TYPE_CHECKING:
     from collections.abc import Generator

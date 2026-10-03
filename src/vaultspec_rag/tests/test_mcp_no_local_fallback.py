@@ -188,7 +188,7 @@ workspace = base / 'workspace'
 (workspace / '.vault').mkdir(parents=True)
 (workspace / '.vaultspec').mkdir()
 
-from vaultspec_rag.config._settings import reset_config
+from vaultspec_rag.tests._config_fixtures import reset_config
 
 reset_config()
 

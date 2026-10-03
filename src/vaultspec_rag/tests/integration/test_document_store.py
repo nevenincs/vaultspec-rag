@@ -17,7 +17,6 @@ from ..._store_models import (
     DocumentMetadata,
     DocumentPayload,
 )
-from ...config._settings import reset_config
 from ...config._types import EnvVar
 from ...indexer._document_identity import document_point_id
 from ...server._routes_storage import _shape_survey_payload, _SurveyPayloadRequest
@@ -26,6 +25,7 @@ from ...storage_archive import (
 )
 from ...storage_survey_ops import gather_survey
 from ...store_runtime import VaultStore
+from .._config_fixtures import reset_config
 from .._store_fixtures import get_all_document_content_ids
 from ._helpers import provisioned_qdrant_binary, serve_qdrant
 

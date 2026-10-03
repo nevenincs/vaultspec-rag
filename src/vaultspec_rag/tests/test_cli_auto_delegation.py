@@ -50,7 +50,7 @@ os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(status_dir)
 os.environ["VAULTSPEC_RAG_QDRANT_STORAGE_DIR"] = str(storage_dir)
 os.environ.pop("VAULTSPEC_RAG_LOCAL_ONLY", None)
 
-from vaultspec_rag.config._settings import reset_config  # absolute-import-ok
+from vaultspec_rag.tests._config_fixtures import reset_config  # absolute-import-ok
 
 reset_config()
 

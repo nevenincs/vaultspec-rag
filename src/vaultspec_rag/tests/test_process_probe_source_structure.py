@@ -262,8 +262,9 @@ class TestConfigDefaultsResolveInConfig:
     ) -> None:
         # The behaviour the hardcoded default got wrong. Asserted through the
         # config property, which is what every reporting site now calls.
-        from ..config._settings import get_config, reset_config
+        from ..config._settings import get_config
         from ..config._types import EnvVar
+        from ._config_fixtures import reset_config
 
         monkeypatch.setenv(EnvVar.HF_HOME.value, "/tmp/hf-elsewhere")
         reset_config()

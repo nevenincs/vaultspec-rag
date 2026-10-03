@@ -1303,19 +1303,6 @@ def get_config(
     return _cached_config
 
 
-def reset_config() -> None:
-    """Clear the cached config singleton (for testing).
-
-    Args:
-        None.
-
-    Returns:
-        None.
-    """
-    global _cached_config
-    _cached_config = None
-
-
 def collect_environment_problems(
     cli_overrides: dict[str, Any] | None = None,
 ) -> list[str]:

@@ -311,9 +311,9 @@ async def test_job_mutations_keep_real_asgi_loop_responsive(
     tmp_path: Path,
 ) -> None:
     """Real durable CRUD writes must overlap an immediate ASGI auth response."""
-    from ...config._settings import reset_config
     from ...config._types import EnvVar
     from ...jobs import get_job_manager, reset
+    from .._config_fixtures import reset_config
 
     prior_status_dir = os.environ.get(EnvVar.STATUS_DIR)
     os.environ[EnvVar.STATUS_DIR] = str(tmp_path / "status")

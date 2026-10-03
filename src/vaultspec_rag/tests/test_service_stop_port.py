@@ -37,13 +37,13 @@ from ..cli._service_stop import (
     _service_pid_on_port,
     _stop_service_on_port,
 )
-from ..config._settings import reset_config
 from ..serviceclient._discovery import _merge_service_status, _status_file
 from ._cli_helpers import (
     _CONTRACT_SERVICE_TOKEN,
     _serving,
     _status_contract_server,
 )
+from ._config_fixtures import reset_config
 from ._ports import free_loopback_port
 
 if TYPE_CHECKING:

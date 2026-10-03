@@ -79,7 +79,7 @@ os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(status_dir)
 os.environ["VAULTSPEC_RAG_QDRANT_STORAGE_DIR"] = str(base / "qdrant")
 os.environ["VAULTSPEC_RAG_LOCAL_ONLY"] = "true"
 
-from vaultspec_rag.config._settings import reset_config
+from vaultspec_rag.tests._config_fixtures import reset_config
 
 reset_config()
 

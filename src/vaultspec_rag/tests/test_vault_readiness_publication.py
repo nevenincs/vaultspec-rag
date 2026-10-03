@@ -10,7 +10,6 @@ import pytest
 
 from .._publication_state import acquire_publication_snapshot
 from .._source_types import PublicSourceType
-from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..graph_cache import GraphCache
 from ..indexer import _vault_incremental, _vault_indexer
@@ -21,6 +20,7 @@ from ..job_models import JobSource
 from ..progress import NullProgressReporter
 from ..service import ProjectSlot, ServiceRegistry
 from ..store_runtime import configured_backend_identity
+from ._config_fixtures import reset_config
 
 if TYPE_CHECKING:
     from pathlib import Path

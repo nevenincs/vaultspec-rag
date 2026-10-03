@@ -11,11 +11,11 @@ import pytest
 from .. import _publication_state
 from .._search_state import FreshnessWaitPolicy
 from .._source_types import PublicSourceType
-from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..server import _routes
 from ..server._routes_search import SearchRequest, _execute_search_route
 from ..service import ServiceRegistry
+from ._config_fixtures import reset_config
 from .test_search_readiness_restore import _no_jobs, _published
 
 if TYPE_CHECKING:

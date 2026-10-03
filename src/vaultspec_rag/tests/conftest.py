@@ -32,10 +32,10 @@ from .._test_isolation import (
 )
 from ..config._settings import VaultSpecConfigWrapper as VaultSpecConfig
 from ..config._settings import get_config
-from ..config._settings import reset_config as reset_rag_config
 from ..config._types import EnvVar
 from ..operator_state._installation import InstallRole
 from ..progress import NullProgressReporter
+from ._config_fixtures import reset_config as reset_rag_config
 from ._model_setup import ensure_model_snapshots, model_setup_timeout_seconds
 from .corpus import CorpusManifest, build_synthetic_vault
 

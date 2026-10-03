@@ -20,7 +20,6 @@ import pytest
 from typer.testing import CliRunner
 
 from ..cli import app
-from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..qdrant_runtime._supervise import (
     _MAX_QUARANTINES_PER_START,
@@ -29,6 +28,7 @@ from ..qdrant_runtime._supervise import (
     _list_on_disk_collections,
     _quarantine_collection,
 )
+from ._config_fixtures import reset_config
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

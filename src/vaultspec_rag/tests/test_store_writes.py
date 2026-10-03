@@ -31,8 +31,8 @@ from .._store_writes import (
     run_store_operation_with_retry,
     store_volume_path,
 )
-from ..config._settings import reset_config
 from ..config._types import EnvVar
+from ._config_fixtures import reset_config
 
 if TYPE_CHECKING:
     from collections.abc import Generator

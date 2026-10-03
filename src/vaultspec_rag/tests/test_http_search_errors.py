@@ -17,7 +17,7 @@ from starlette.testclient import TestClient
 from .._search_state import MAX_SEARCH_EVIDENCE_ITEMS
 from .._source_types import INDEX_SOURCES, PublicSourceType
 from .._store_locks import VaultStoreLockedError
-from ..config._settings import get_config, reset_config
+from ..config._settings import get_config
 from ..mcp._tools import _validated_search_result
 from ..registry import get_registry, reset_registry
 from ..search._models import SearchResult
@@ -47,6 +47,7 @@ from ..serviceclient._search_transport import (
     _search_response_envelope,
     try_http_search,
 )
+from ._config_fixtures import reset_config
 from ._search_readiness_scenarios import (
     SEARCH_READINESS_SCENARIOS,
     canonical_service_envelope,

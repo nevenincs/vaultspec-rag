@@ -18,10 +18,10 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ... import CodebaseIndexer
-from ...config._settings import reset_config
 from ...config._types import EnvVar
 from ...progress import NullProgressReporter
 from ...store_runtime import VaultStore
+from .._config_fixtures import reset_config
 
 if TYPE_CHECKING:
     from pytest import TempPathFactory

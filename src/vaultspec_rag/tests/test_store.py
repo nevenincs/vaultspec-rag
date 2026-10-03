@@ -545,9 +545,9 @@ class TestQdrantServerMode:
 
         from qdrant_client.qdrant_remote import QdrantRemote
 
-        from ..config._settings import reset_config
         from ..config._types import EnvVar
         from ..store_runtime import VaultStore
+        from ._config_fixtures import reset_config
 
         variables = (EnvVar.QDRANT_URL, EnvVar.STORE_OPERATION_TIMEOUT_SECONDS)
         previous = {variable: os.environ.get(variable.value) for variable in variables}
@@ -581,8 +581,8 @@ class TestQdrantServerMode:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """When VAULTSPEC_RAG_QDRANT_URL is set, VaultStore bypasses FileLock."""
-        from ..config._settings import reset_config
         from ..store_runtime import VaultStore
+        from ._config_fixtures import reset_config
         from ._qdrant_warnings import (
             INSECURE_KEY_WARNING,
             VERSION_WARNING,
@@ -627,8 +627,8 @@ class TestQdrantServerMode:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Verify qdrant_quantization builds correct models configs."""
-        from ..config._settings import reset_config
         from ..store_runtime import VaultStore
+        from ._config_fixtures import reset_config
 
         # Test scalar quantization config mapping
         monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_QUANTIZATION", "scalar")
@@ -1217,9 +1217,9 @@ class TestServerModeNamespacing:
         import os
 
         from .._store_models import root_collection_prefix
-        from ..config._settings import reset_config
         from ..config._types import EnvVar
         from ..store_runtime import VaultStore
+        from ._config_fixtures import reset_config
 
         root_a = tmp_path / "project-a"
         root_b = tmp_path / "project-b"

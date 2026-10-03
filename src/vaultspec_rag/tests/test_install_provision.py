@@ -23,8 +23,9 @@ from ..cli import app
 from ..commands._install import install_run
 from ..commands._provision import ProvisionAction, ProvisionStep
 from ..config._paths import persist_local_only, read_persisted_local_only
-from ..config._settings import get_config, reset_config
+from ..config._settings import get_config
 from ..config._types import EnvVar
+from ._config_fixtures import reset_config
 from ._provision_fixtures import result_for
 
 if TYPE_CHECKING:

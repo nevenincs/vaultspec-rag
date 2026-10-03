@@ -27,10 +27,10 @@ from .._machine_lock import (
     machine_lock_path,
     release_machine_lock,
 )
-from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..server import ServerRouteRuntime, create_http_app, service_lifespan
 from ..service import ServiceRegistry
+from ._config_fixtures import reset_config
 from ._http_stubs import QuietHandler
 
 if TYPE_CHECKING:

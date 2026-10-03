@@ -19,12 +19,12 @@ from ..cli import app
 from ..cli._process import _is_our_service
 from ..cli._render import _display_search_results, _display_service_error
 from ..cli._service_status import _write_service_status, read_service_status
-from ..config._settings import reset_config as reset_rag_config
 from ..config._types import EnvVar
 from ..serviceclient._compat import DataPlaneService, classify_service_version
 from ..serviceclient._search_transport import get_search_timeout, try_http_search
 from ..serviceclient._transport import DEFAULT_SEARCH_TIMEOUT_SECONDS
 from ..torch_config._constants import TorchConfigAction
+from ._config_fixtures import reset_config as reset_rag_config
 from ._http_stubs import QuietHandler
 
 

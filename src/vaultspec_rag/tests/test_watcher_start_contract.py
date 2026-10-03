@@ -25,9 +25,10 @@ import httpx
 import pytest
 
 from .. import server
-from ..config._settings import get_config, reset_config
+from ..config._settings import get_config
 from ..server import WatcherStartOutcome
 from ..server import _watcher as watcher_lifecycle
+from ._config_fixtures import reset_config
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator, Iterator

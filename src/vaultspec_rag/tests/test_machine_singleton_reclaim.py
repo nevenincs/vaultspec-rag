@@ -24,8 +24,8 @@ from .._process_probe import pid_terminated
 from ..cli._service_stop import (
     _reclaim_machine_singleton,
 )
-from ..config._settings import reset_config
 from ..config._types import EnvVar
+from ._config_fixtures import reset_config
 from ._unnamed_lock_holder import unnamed_machine_lock_holder
 from .test_service_stop_port import _starting_process
 

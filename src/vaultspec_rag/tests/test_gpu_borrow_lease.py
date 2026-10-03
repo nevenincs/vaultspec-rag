@@ -19,7 +19,6 @@ from starlette.testclient import TestClient
 
 from .._anchor_claim import read_anchor_record
 from .._process_probe import pid_start_time, process_lineage
-from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..gpu_borrow_lease import (
     BorrowerLeaseStatus,
@@ -39,6 +38,7 @@ from ._child_signal import (
     await_marker,
     child_stderr,
 )
+from ._config_fixtures import reset_config
 
 if TYPE_CHECKING:
     from collections.abc import Generator

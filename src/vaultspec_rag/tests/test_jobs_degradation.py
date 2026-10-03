@@ -79,7 +79,7 @@ def own_status_dir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[None]:
-    from ..config._settings import reset_config
+    from ._config_fixtures import reset_config
 
     monkeypatch.setenv("VAULTSPEC_RAG_STATUS_DIR", str(tmp_path / "status"))
     reset_config()
@@ -898,7 +898,7 @@ class TestBackendEvidence:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from ..config._settings import reset_config
+        from ._config_fixtures import reset_config
 
         monkeypatch.setenv(
             "VAULTSPEC_RAG_QDRANT_STORAGE_DIR",

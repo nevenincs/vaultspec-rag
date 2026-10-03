@@ -24,11 +24,12 @@ import pytest
 
 from ... import jobs
 from ...concurrency import reset_limiters
-from ...config._settings import get_config, reset_config
+from ...config._settings import get_config
 from ...indexer._run_ledger_models import RunAuthority
 from ...job_models import JobState
 from ...registry import get_registry, reset_registry
 from ...server._routes import _service_job_snapshot
+from .._config_fixtures import reset_config
 from ._helpers import provisioned_qdrant_binary, serve_qdrant
 
 if TYPE_CHECKING:

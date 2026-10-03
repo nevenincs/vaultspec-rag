@@ -24,7 +24,6 @@ from .._machine_lock import (
     machine_lock_path,
     release_machine_lock,
 )
-from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..serviceclient._discovery import (
     DISCOVERY_REASON_HOLDER_UNNAMED,
@@ -42,6 +41,7 @@ from ..serviceclient._discovery import (
     _status_file,
     resolve_machine_service,
 )
+from ._config_fixtures import reset_config
 from ._unnamed_lock_holder import unnamed_machine_lock_holder
 
 if TYPE_CHECKING:

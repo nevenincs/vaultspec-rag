@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Never, cast
 import pytest
 from mcp.server.mcpserver.exceptions import MCPServerError
 
-from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..server import (
     ProjectRootRequiredError,
@@ -25,6 +24,7 @@ from ..server._utils import (
     _resolve_root,
 )
 from ..service import ServiceRegistry
+from ._config_fixtures import reset_config
 from .test_server import (
     _run,
 )

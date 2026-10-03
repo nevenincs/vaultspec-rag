@@ -144,8 +144,8 @@ class TestManagedJobAdmission:
         """
         from pathlib import Path
 
-        from ..config._settings import reset_config
         from ..config._types import EnvVar
+        from ._config_fixtures import reset_config
 
         monkeypatch.setenv(EnvVar.STATUS_DIR.value, "~/.vaultspec-rag-jobs-guard")
         reset_config()

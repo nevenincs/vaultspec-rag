@@ -270,8 +270,9 @@ class TestModelStep:
         # considering exactly the dense-only inventory (two repos, not
         # three) - proving it reads the shared, configured inventory rather than
         # a repo list of its own that could drift from it.
-        from ..config._settings import configured_model_repos, get_config, reset_config
+        from ..config._settings import configured_model_repos, get_config
         from ..config._types import EnvVar
+        from ._config_fixtures import reset_config
 
         prev = os.environ.get(EnvVar.SPARSE_ENABLED.value)
         os.environ[EnvVar.SPARSE_ENABLED.value] = "0"

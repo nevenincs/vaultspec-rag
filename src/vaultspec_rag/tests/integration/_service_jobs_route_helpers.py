@@ -43,8 +43,8 @@ def _routes_app(
     """
     import os
 
-    from ...config._settings import reset_config
     from ...config._types import EnvVar
+    from .._config_fixtures import reset_config
 
     prior_status_dir = os.environ.get(EnvVar.STATUS_DIR)
     os.environ[EnvVar.STATUS_DIR] = str(tmp_path / "route-status")

@@ -17,13 +17,10 @@ from typing import cast
 import pytest
 
 from .._job_errors import JobError, JobErrorKind
-from ..config._settings import (
-    VaultSpecConfigWrapper,
-    get_config,
-    reset_config,
-)
+from ..config._settings import VaultSpecConfigWrapper, get_config
 from ..config._types import EnvVar, hf_cache_only
 from ..memory_probe import MemoryBudget
+from ._config_fixtures import reset_config
 from ._scaffold import restore_env, set_env
 
 pytestmark = [pytest.mark.unit]

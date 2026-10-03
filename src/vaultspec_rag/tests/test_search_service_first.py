@@ -35,9 +35,9 @@ from ..cli._search import (
     _local_search_deadline,
     _local_search_mandated,
 )
-from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..serviceclient._compat import SERVICE_VERSION_FIELD, local_package_version
+from ._config_fixtures import reset_config
 from ._ports import free_loopback_port
 from .conftest import managed_env
 

@@ -300,7 +300,8 @@ class TestRerankerModelName:
     """ADR: gpu-only-rag-stack - reranker model must be bge-reranker-v2-m3."""
 
     def test_config_default_reranker_model(self):
-        from ..config._settings import get_config, reset_config
+        from ..config._settings import get_config
+        from ._config_fixtures import reset_config
 
         reset_config()
         cfg = get_config()

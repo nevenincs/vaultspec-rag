@@ -227,7 +227,7 @@ from vaultspec_rag.cli._gpu_lease import (
     capture_borrower_service_target,
     run_with_borrowed_gpu,
 )
-from vaultspec_rag.config._settings import reset_config
+from vaultspec_rag.tests._config_fixtures import reset_config
 from vaultspec_rag._machine_lock import machine_discovery_path
 from vaultspec_rag.serviceclient._discovery import resolve_machine_service
 
@@ -309,7 +309,7 @@ os.environ["VAULTSPEC_RAG_QDRANT_STORAGE_DIR"] = str(storage_path)
 
 from vaultspec_rag._machine_lock import machine_lock_path
 from vaultspec_rag.cli._gpu_lease import capture_borrower_service_target
-from vaultspec_rag.config._settings import reset_config
+from vaultspec_rag.tests._config_fixtures import reset_config
 
 reset_config()
 original_lock = machine_lock_path()

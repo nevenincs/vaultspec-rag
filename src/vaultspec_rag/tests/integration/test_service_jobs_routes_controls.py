@@ -66,9 +66,9 @@ def test_jobs_route_enforces_nonterminal_capacity(
 ) -> None:
     import os
 
-    from ...config._settings import reset_config
     from ...config._types import EnvVar
     from ...jobs import reset
+    from .._config_fixtures import reset_config
 
     client, token = _routes_app
     headers = {"Authorization": f"Bearer {token}"}

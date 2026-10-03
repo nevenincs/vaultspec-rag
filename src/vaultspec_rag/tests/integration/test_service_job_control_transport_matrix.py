@@ -22,7 +22,6 @@ from typer.testing import CliRunner
 
 from ... import jobs
 from ...cli import app
-from ...config._settings import reset_config
 from ...config._types import EnvVar
 from ...indexer._run_ledger_models import RunAuthority
 from ...job_models import DesiredJobState, JobSource
@@ -34,6 +33,7 @@ from ...serviceclient._transport import (
     _try_http_get_job,
     _try_http_set_job_desired_state,
 )
+from .._config_fixtures import reset_config
 from .._ports import free_loopback_port
 
 if TYPE_CHECKING:

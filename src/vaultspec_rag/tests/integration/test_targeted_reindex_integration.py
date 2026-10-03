@@ -24,8 +24,8 @@ from vaultspec_core.vaultcore import (
 from ..._job_errors import JobError, JobErrorKind
 from ..._source_types import PublicSourceType
 from ...config._settings import get_config
-from ...config._settings import reset_config as reset_rag_config
 from ...progress import NullProgressReporter
+from .._config_fixtures import reset_config as reset_rag_config
 from .._publication_assertions import published_content_identities
 from .._store_fixtures import get_all_ids
 from ..corpus import build_synthetic_vault

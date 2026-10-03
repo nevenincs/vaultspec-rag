@@ -18,7 +18,6 @@ from vaultspec_core.config import (
 )
 
 from .._source_types import PublicSourceType
-from ..config._settings import reset_config as reset_rag_config
 from ..indexer import CodebaseIndexer
 from ..indexer import _config_epoch as ce
 from ..indexer._content_policy import ContentKind
@@ -30,6 +29,7 @@ from ..indexer._run_ledger_models import (
 )
 from ..indexer._run_ledger_runtime import RunLedger
 from ..progress import NullProgressReporter
+from ._config_fixtures import reset_config as reset_rag_config
 
 if TYPE_CHECKING:
     from ..embeddings import EmbeddingModel

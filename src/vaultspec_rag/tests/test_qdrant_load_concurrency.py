@@ -12,9 +12,10 @@ from pathlib import Path
 
 import pytest
 
-from ..config._settings import get_config, reset_config
+from ..config._settings import get_config
 from ..config._types import EnvVar
 from ..qdrant_runtime._supervise import QdrantSupervisor
+from ._config_fixtures import reset_config
 from ._scaffold import restore_env, set_env
 
 pytestmark = [pytest.mark.unit]

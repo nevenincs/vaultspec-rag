@@ -29,9 +29,9 @@ from typing import TYPE_CHECKING, NamedTuple, TypedDict
 import pytest
 
 from ..._source_types import PublicSourceType
-from ...config._settings import reset_config
 from ...config._types import EnvVar
 from ...progress import NullProgressReporter
+from .._config_fixtures import reset_config
 from .._ledger_fixtures import latest_generation
 from .._publication_assertions import published_content_identities
 from .._sqlite_state import assert_sqlite_unchanged, sqlite_contents

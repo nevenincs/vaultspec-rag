@@ -16,9 +16,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ...config._settings import reset_config
 from ...config._types import EnvVar
 from ...progress import NullProgressReporter
+from .._config_fixtures import reset_config
 from ._helpers import _document_policy, provisioned_qdrant_binary, serve_qdrant
 
 if TYPE_CHECKING:

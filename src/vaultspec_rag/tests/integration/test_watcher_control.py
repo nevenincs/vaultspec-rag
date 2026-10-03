@@ -16,7 +16,7 @@ import pytest
 import vaultspec_rag.tests._admin_client as admin
 
 from ... import server
-from ...config._settings import reset_config
+from .._config_fixtures import reset_config
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

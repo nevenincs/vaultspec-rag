@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..qdrant_runtime._resolve import (
     QdrantEndpointProbe,
@@ -28,6 +27,7 @@ from ..qdrant_runtime._resolve import (
     verify_attachable,
     write_qdrant_identity,
 )
+from ._config_fixtures import reset_config
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

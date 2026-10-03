@@ -57,8 +57,8 @@ from ..commands._mode import (
     infer_rag_upgrade_mode,
 )
 from ..config._paths import persist_local_only, read_persisted_local_only
-from ..config._settings import reset_config
 from ..config._types import EnvVar
+from ._config_fixtures import reset_config
 
 if TYPE_CHECKING:
     from pathlib import Path
