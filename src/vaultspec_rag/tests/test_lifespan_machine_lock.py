@@ -22,16 +22,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from .._machine_lock import (
-    acquire_machine_lock,
-    machine_lock_path,
-    release_machine_lock,
-)
+from .._machine_lock import machine_lock_path
 from ..config._types import EnvVar
 from ..server import ServerRouteRuntime, create_http_app, service_lifespan
 from ..service import ServiceRegistry
 from ._config_fixtures import reset_config
 from ._http_stubs import QuietHandler
+from ._machine_lock_fixtures import acquire_machine_lock, release_machine_lock
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

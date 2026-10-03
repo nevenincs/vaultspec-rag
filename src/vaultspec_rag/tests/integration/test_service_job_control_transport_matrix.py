@@ -28,11 +28,11 @@ from ...job_models import DesiredJobState, JobSource
 from ...registry import get_registry
 from ...server import ServerRouteRuntime, create_http_app
 from ...serviceclient._transport import (
-    _try_http_create_job,
     _try_http_delete_job,
     _try_http_get_job,
     _try_http_set_job_desired_state,
 )
+from .._admin_client import _try_http_create_job
 from .._config_fixtures import reset_config
 from .._ports import free_loopback_port
 

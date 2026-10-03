@@ -167,8 +167,8 @@ class VaultSpecConfigWrapper:
         # of the sorted list. Vault inputs are heading-aware chunks
         # capped at ``vault_chunk_chars`` (~750 BPE tokens) and
         # length-sorted per slice, so padding waste is bounded and a
-        # larger sub-batch keeps the tensor cores fed. The OOM backoff
-        # in ``encode_documents`` halves this under memory pressure.
+        # larger sub-batch keeps the tensor cores fed. The bucketed
+        # encode's OOM backoff halves this under memory pressure.
         # (The former value of 8 dated from whole-document inputs that
         # ranged from 200 to 8000 chars; #68 wall-clock work.)
         "embedding_encode_batch_size": 32,
@@ -193,7 +193,7 @@ class VaultSpecConfigWrapper:
         # chunks are short (<=1500 chars) and length-sorted, so the padding
         # pathology that justifies 8 for variable-length vault docs does not
         # apply; a larger sub-batch keeps the GPU's tensor cores fed and
-        # raises encode throughput. The OOM-backoff in ``encode_documents``
+        # raises encode throughput. The bucketed encode's OOM backoff
         # still halves this on memory pressure.
         "embedding_code_encode_batch_size": 32,
         # Inner encode sub-batch for the DOCUMENT path, decoupled from the vault
@@ -202,7 +202,7 @@ class VaultSpecConfigWrapper:
         # token volume, so a batch of 32 window-sized fragments is far more
         # activation memory than the vault batch was sized for. A smaller
         # sub-batch keeps the per-forward working set within the indexing
-        # budget; the OOM-backoff in ``encode_documents`` still halves it under
+        # budget; the bucketed encode's OOM backoff still halves it under
         # pressure.
         "embedding_document_encode_batch_size": 12,
         # Token budget per planned dense encode bucket. Inputs are split into

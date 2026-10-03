@@ -12,8 +12,6 @@ values can neither disable the guard nor move its boundary.
 from __future__ import annotations
 
 import os
-import shutil
-import tempfile
 import threading
 from contextlib import contextmanager
 from pathlib import Path
@@ -33,11 +31,8 @@ __all__ = [
     "enforce_pytest_singleton_containment",
     "pytest_singleton_bootstrap_window",
     "pytest_singleton_containment_active",
-    "reclaim_singleton_paths",
     "register_pytest_singleton_root",
     "require_pytest_singleton_root_registration",
-    "singleton_child_names",
-    "sweep_orphaned_singleton_roots",
 ]
 
 # This is deliberately separate from the two operator-facing path overrides.
@@ -180,127 +175,6 @@ def register_pytest_singleton_root(root: str | PathLike[str]) -> Path:
         return pinned_root
 
 
-_PYTEST_SINGLETON_ROOT_PREFIX = "vaultspec-rag-pytest-"
-# A concurrently live pytest run writes into its session root throughout the
-# run, so a root untouched for this long cannot be a live session and is a
-# leftover from a run killed before its cleanup ran. Generous, so a parallel
-# run is never reclaimed out from under it.
-_ORPHAN_SWEEP_LIVENESS_WINDOW_SECONDS = 3600.0
-
-
-def _root_recently_touched(root: Path, *, now: float) -> bool:
-    """Return whether *root* or a direct child was modified within the window.
-
-    A stat failure is treated as recently touched so an unreadable or
-    disappearing root is never reclaimed on a guess.
-    """
-    try:
-        newest = root.stat().st_mtime
-        for child in root.iterdir():
-            newest = max(newest, child.stat().st_mtime)
-    except OSError:
-        return True
-    return (now - newest) < _ORPHAN_SWEEP_LIVENESS_WINDOW_SECONDS
-
-
-def singleton_child_names(worker: str | None) -> tuple[str, str]:
-    """Return the singleton and basetemp names for a session participant.
-
-    The xdist controller and each worker place their own pair side by side in one
-    session root. Session participants include their process id so nested pytest
-    factories cannot clear a live parent's basetemp. Reclaiming addresses only
-    the caller's own pair rather than the root wholesale.
-    """
-    suffix = f"-{worker}" if worker else ""
-    return f"machine-singleton{suffix}", f"pytest-temp{suffix}"
-
-
-def reclaim_singleton_paths(
-    root: str | PathLike[str],
-    *,
-    owned_root: bool,
-    owned_pair: bool,
-    keep_diagnostics: bool,
-    worker: str | None = None,
-) -> None:
-    """Reclaim what this process wrote under *root*, sparing failure evidence.
-
-    Three things make a blanket ``rmtree(root)`` wrong.
-
-    The machine-singleton tree - the isolated status dir and Qdrant storage - is
-    the bulk of a run's footprint and holds no per-test diagnostics, so it always
-    goes. Under an inherited root it is reclaimed here too: an xdist worker
-    created the pair it writes even though it did not create the root, and
-    nothing reclaimed those before.
-
-    ``basetemp`` sits inside the same root, so removing the root wholesale also
-    destroyed the ``tmp_path`` directories pytest deliberately retained under
-    ``tmp_path_retention_policy = "failed"``. A failing run's evidence is the one
-    thing cleanup must not take, so it survives when *keep_diagnostics*.
-
-    Both removals are gated on *owned_pair*, and the root itself additionally on
-    *owned_root*. A nested pytest subprocess inherits the root **and**
-    ``PYTEST_XDIST_WORKER``, but configuration adds its process id to the pair
-    names. Ownership still matters: a caller handed an existing pair must not
-    reclaim it merely because it knows its name.
-    """
-    root_path = Path(root)
-    if not owned_pair:
-        return
-    machine_singleton, basetemp = singleton_child_names(worker)
-    shutil.rmtree(root_path / machine_singleton, ignore_errors=True)
-    if keep_diagnostics:
-        return
-    shutil.rmtree(root_path / basetemp, ignore_errors=True)
-    if owned_root:
-        shutil.rmtree(root_path, ignore_errors=True)
-
-
-def sweep_orphaned_singleton_roots(
-    *,
-    keep: str | PathLike[str],
-    now: float,
-    base_dir: str | PathLike[str] | None = None,
-) -> list[Path]:
-    """Reclaim leftover pytest singleton roots from prior killed sessions.
-
-    A pytest run killed externally (a sandbox timeout, ``taskkill``) never
-    reaches ``pytest_unconfigure`` or its atexit backstop, so its session root -
-    the isolated machine-singleton status and Qdrant storage dirs, on the order
-    of 100 MB - leaks. On the next run's startup, reclaim every
-    ``vaultspec-rag-pytest-*`` root that is neither *keep* (the current run's
-    own root) nor touched within the liveness window, which cannot be a
-    concurrently live run. *now* is supplied by the caller and *base_dir*
-    defaults to the system temp dir, so the sweep is deterministic and testable.
-    Returns the roots actually reclaimed.
-    """
-    parent = (
-        _canonical_path(base_dir)
-        if base_dir is not None
-        else Path(tempfile.gettempdir())
-    )
-    keep_resolved = _canonical_path(keep)
-    reclaimed: list[Path] = []
-    try:
-        candidates = sorted(parent.glob(f"{_PYTEST_SINGLETON_ROOT_PREFIX}*"))
-    except OSError:
-        return reclaimed
-    for candidate in candidates:
-        if not candidate.is_dir():
-            continue
-        try:
-            if _canonical_path(candidate) == keep_resolved:
-                continue
-            if _root_recently_touched(candidate, now=now):
-                continue
-        except OSError:
-            continue
-        shutil.rmtree(candidate, ignore_errors=True)
-        if not candidate.exists():
-            reclaimed.append(candidate)
-    return reclaimed
-
-
 #: The kill-on-close job every pytest-spawned daemon joins. Created on first
 #: use and then held for the run: the handle IS the guarantee, so it is
 #: deliberately never closed by this module. Process exit closes it, which is
@@ -316,14 +190,14 @@ _PROCESS_SET_QUOTA_AND_TERMINATE = 0x0100 | 0x0001
 def anchor_spawned_process_to_pytest(pid: int) -> bool:
     """Bind a pytest-spawned daemon's lifetime to this pytest process.
 
-    ``sweep_orphaned_singleton_roots`` already exists because a pytest run
-    killed externally never reaches its teardown, stranding the session root.
-    The daemons that run cost more than the directory does - they hold ports,
-    a machine lock, and the GPU - and every mechanism that could stop them
-    lives inside the run that just died: the fixture teardown, the atexit
-    backstop, any watchdog thread. So a hard-killed pytest strands a daemon
-    with nothing left to reap it, and the daemon is built to survive exactly
-    that (``_spawn_service`` breaks away from the launching Job Object on
+    The session's startup sweep for leftover roots already exists because a
+    pytest run killed externally never reaches its teardown, stranding the
+    session root. The daemons that run cost more than the directory does -
+    they hold ports, a machine lock, and the GPU - and every mechanism that
+    could stop them lives inside the run that just died: the fixture teardown,
+    the atexit backstop, any watchdog thread. So a hard-killed pytest strands a
+    daemon with nothing left to reap it, and the daemon is built to survive
+    exactly that (``_spawn_service`` breaks away from the launching Job Object on
     Windows and calls ``start_new_session`` on POSIX, both deliberately, so it
     outlives the operator's shell).
 

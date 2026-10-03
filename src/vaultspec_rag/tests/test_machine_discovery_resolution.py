@@ -19,10 +19,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from .._machine_lock import (
-    acquire_machine_lock,
     machine_discovery_path,
     machine_lock_path,
-    release_machine_lock,
 )
 from ..config._types import EnvVar
 from ..serviceclient._discovery import (
@@ -42,6 +40,7 @@ from ..serviceclient._discovery import (
     resolve_machine_service,
 )
 from ._config_fixtures import reset_config
+from ._machine_lock_fixtures import acquire_machine_lock, release_machine_lock
 from ._unnamed_lock_holder import unnamed_machine_lock_holder
 
 if TYPE_CHECKING:

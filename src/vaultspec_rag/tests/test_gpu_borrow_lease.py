@@ -76,7 +76,6 @@ from vaultspec_rag._anchor_claim import claim_anchor, release_anchor_claim
 from vaultspec_rag._machine_lock import (
     CapturedMachineLockWitness,
     PreIsolationMachineLock,
-    capture_pre_isolation_machine_lock,
     revalidate_captured_machine_lock,
 )
 from vaultspec_rag._test_isolation import (
@@ -86,12 +85,17 @@ from vaultspec_rag._test_isolation import (
 from vaultspec_rag.gpu_borrow_lease import (
     CapturedBorrowerLeaseAuthority,
     acquire_gpu_borrow_lease_for_captured_authority,
-    mint_captured_borrower_lease_authority,
     release_gpu_borrow_lease,
 )
 from vaultspec_rag.tests._child_signal import (
     CHILD_PROCESS_TIMEOUT_SECONDS,
     await_marker,
+)
+from vaultspec_rag.tests._gpu_borrow_fixtures import (
+    mint_captured_borrower_lease_authority,
+)
+from vaultspec_rag.tests._machine_lock_fixtures import (
+    capture_pre_isolation_machine_lock,
 )
 
 anchor = identity_lock_path.with_name("gpu-borrower.lock")

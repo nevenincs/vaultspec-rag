@@ -15,6 +15,7 @@ from ..embeddings import (
     EncodeBucketProgress,
     plan_encode_buckets,
 )
+from ._embeddings_fixtures import encode_documents
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -407,7 +408,7 @@ class TestBucketedDenseEncode:
         fake = _BucketRecordingDenseModel()
         model = _model_shell(token_budget=100)
         model._dense_model = cast("SentenceTransformer", fake)
-        result = model.encode_documents(texts)
+        result = encode_documents(model, texts)
         assert fake.calls == [texts[0:2], texts[2:4]]
         # The bucket is handed over as a single library sub-batch, so the
         # library's internal loop degenerates to exactly one forward.
@@ -419,7 +420,7 @@ class TestBucketedDenseEncode:
         fake = _BucketRecordingDenseModel(oom_on_first=[texts[2:4]])
         model = _model_shell(token_budget=100)
         model._dense_model = cast("SentenceTransformer", fake)
-        result = model.encode_documents(texts)
+        result = encode_documents(model, texts)
         # Catches the retry scope regressing from the bucket to the whole
         # call: a slice-wide retry discards completed outputs and replans
         # from the first text, so the completed [t0, t1] bucket shows up
@@ -472,7 +473,7 @@ class TestBucketedDenseEncode:
         )
         model._dense_model = cast("SentenceTransformer", fake)
 
-        result = model.encode_documents(texts)
+        result = encode_documents(model, texts)
 
         assert result.shape == (4, 2)
         assert cache_releases == [None]
@@ -486,7 +487,7 @@ class TestBucketedDenseEncode:
         model = _model_shell(token_budget=100)
         model._dense_model = cast("SentenceTransformer", fake)
         with pytest.raises(torch.cuda.OutOfMemoryError):
-            model.encode_documents(texts)
+            encode_documents(model, texts)
         # A one-text bucket cannot shrink, so there is no retry attempt.
         assert fake.calls == [texts[0:1]]
 
@@ -495,9 +496,9 @@ class TestBucketedDenseEncode:
         fake = _BucketRecordingDenseModel(oom_on_first=[texts[2:4]])
         model = _model_shell(token_budget=100)
         model._dense_model = cast("SentenceTransformer", fake)
-        model.encode_documents(texts)
+        encode_documents(model, texts)
         first_call_count = len(fake.calls)
-        model.encode_documents(texts)
+        encode_documents(model, texts)
         # Catches the ceiling resetting between calls: an unclamped second
         # call would replan two-item 100-token buckets and rediscover the
         # OOM; under the learned 50-token ceiling it plans single-item
@@ -510,7 +511,7 @@ class TestBucketedDenseEncode:
         fake = _BucketRecordingDenseModel()
         model = _model_shell(token_budget=100)
         model._dense_model = cast("SentenceTransformer", fake)
-        result = model.encode_documents(texts)
+        result = encode_documents(model, texts)
         # Estimates 75/50/25/13 plan buckets [t0], [t1, t2], [t3]; the
         # concatenated rows must still follow the input order.
         assert fake.calls == [texts[0:1], texts[1:3], texts[3:4]]
@@ -522,7 +523,7 @@ class TestBucketedDenseEncode:
         fake = _BucketRecordingDenseModel()
         model = _model_shell()
         model._dense_model = cast("SentenceTransformer", fake)
-        result = model.encode_documents([])
+        result = encode_documents(model, [])
         assert fake.calls == [[]]
         assert result.shape[0] == 0
 
@@ -573,7 +574,7 @@ class TestBucketedSparseEncode:
         model._sparse_encode_token_budget = 50
         model._dense_model = cast("SentenceTransformer", dense)
         model._sparse_model = cast("SparseModelAdapter", sparse)
-        model.encode_documents(texts, batch_size=4)
+        encode_documents(model, texts, batch_size=4)
         model.encode_documents_sparse(texts, batch_size=4)
         # Mutation proof: using the dense budget for sparse failed; restored passed.
         assert dense.calls == [texts]
@@ -780,7 +781,7 @@ class TestBucketedSparseEncode:
         model._sparse_model = cast("SparseModelAdapter", sparse_fake)
         model._dense_model = cast("SentenceTransformer", dense_fake)
         model.encode_documents_sparse(texts)
-        model.encode_documents(texts)
+        encode_documents(model, texts)
         # The sparse OOM must not clamp the dense budget: dense still
         # plans full two-item 100-token buckets.
         assert dense_fake.calls == [texts[0:2], texts[2:4]]

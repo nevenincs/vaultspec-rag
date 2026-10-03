@@ -19,12 +19,10 @@ from vaultspec_core.config import (
 
 from .._machine_lock import (
     MachineLockLease,
-    acquire_machine_lock,
     delete_machine_discovery,
     machine_lock_path,
     probe_machine_lock,
     publish_machine_discovery,
-    release_machine_lock,
 )
 from .._test_isolation import (
     PYTEST_MANAGED_SINGLETON_ACTIVE_ENV,
@@ -51,6 +49,7 @@ from ..serviceclient._discovery import (
     _merge_service_status,
 )
 from ._config_fixtures import reset_config as reset_rag_config
+from ._machine_lock_fixtures import acquire_machine_lock, release_machine_lock
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -73,12 +72,14 @@ import os
 
 from vaultspec_rag._machine_lock import (  # absolute-import-ok
     MachineLockLease,
-    acquire_machine_lock,
     machine_lock_path,
     publish_machine_discovery,
 )
 from vaultspec_rag._test_isolation import (  # absolute-import-ok
     ManagedSingletonIsolationError,
+)
+from vaultspec_rag.tests._machine_lock_fixtures import (  # absolute-import-ok
+    acquire_machine_lock,
 )
 from vaultspec_rag.qdrant_runtime._resolve import (  # absolute-import-ok
     write_qdrant_identity,

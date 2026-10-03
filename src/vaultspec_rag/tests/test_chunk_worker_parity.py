@@ -75,30 +75,18 @@ def helper_{i}(a: int, b: int) -> int:
 '''
 
 
-def test_scoped_worker_reports_a_vanished_source_as_its_own_disposition(
+def test_the_worker_reports_a_vanished_source_as_its_own_disposition(
     tmp_path: Path,
 ) -> None:
     """A vanished changed file converges; it no longer ends the run.
 
-    These two previously required the read to raise, so that a file missing
-    from the corpus could not be published as an ordinary empty result. The
+    This previously required the read to raise, so that a file missing from
+    the corpus could not be published as an ordinary empty result. The
     guarantee is unchanged - a vanished file still never reaches publication as
     content - but it is now carried as a disposition the consumer converges
     rather than an exception that ends the job, which is how one deleted file
     in a tree under active edit was killing whole index runs.
     """
-    missing = tmp_path / "vanished.py"
-
-    result = _chunk_worker.chunk_file_with_status(missing, tmp_path)
-
-    assert result.preprocess_status == _chunk_worker.VANISHED_SOURCE_STATUS
-    assert result.chunks == []
-
-
-def test_full_worker_reports_a_vanished_source_as_its_own_disposition(
-    tmp_path: Path,
-) -> None:
-    """The full-index path carries the same disposition as the scoped one."""
     missing = tmp_path / "vanished.py"
 
     result = _chunk_worker.chunk_and_hash_file(missing, tmp_path)
@@ -146,14 +134,14 @@ def test_batch_passthrough_hashes_the_bytes_it_chunks(tmp_path: Path) -> None:
     assert "the bytes that are chunked" in result.chunks[0].content
 
 
-def test_scoped_worker_retains_readable_unsupported_encoding_disposition(
+def test_the_worker_retains_readable_unsupported_encoding_disposition(
     tmp_path: Path,
 ) -> None:
     """Readable non-UTF-8 content remains a successful zero-chunk disposition."""
     source = tmp_path / "encoded.py"
     source.write_bytes(b"\xff\xfe\x00\x01")
 
-    result = _chunk_worker.chunk_file_with_status(source, tmp_path)
+    result = _chunk_worker.chunk_and_hash_file(source, tmp_path)
 
     assert result.chunks == []
     assert result.preprocess_status is None
@@ -595,7 +583,7 @@ class TestChunkIdentityUniqueness:
         path = tmp_path / "generated_blob.py"
         path.write_text(source, encoding="utf-8")
 
-        chunks = _chunk_worker.chunk_file_with_status(path, tmp_path).chunks
+        chunks = _chunk_worker.chunk_and_hash_file(path, tmp_path).chunks
 
         # More than one chunk (the leaf was split), and every id distinct.
         assert len(chunks) > 1
@@ -609,7 +597,7 @@ class TestChunkIdentityUniqueness:
         path = tmp_path / "generated_blob.py"
         path.write_text(source, encoding="utf-8")
 
-        chunks = _chunk_worker.chunk_file_with_status(path, tmp_path).chunks
+        chunks = _chunk_worker.chunk_and_hash_file(path, tmp_path).chunks
         digest = hashlib.blake2b(source.encode("utf-8")).hexdigest()
 
         # Plurality matters: if the oversized leaf ever stopped being split,
@@ -734,7 +722,7 @@ class TestNewlineParity:
             b"    return a * b\r\n",
         )
         # New single-read path.
-        new_chunks = _chunk_worker.chunk_file_with_status(crlf, tmp_path).chunks
+        new_chunks = _chunk_worker.chunk_and_hash_file(crlf, tmp_path).chunks
         # Reference: the pre-rework behaviour decoded via Path.read_text, which
         # applies universal-newline translation.
         ref_content = crlf.read_text(encoding="utf-8")
@@ -775,10 +763,10 @@ class TestNewlineParity:
             body.replace("\n", "\r\n").encode("utf-8")
         )
 
-        lf_chunks = _chunk_worker.chunk_file_with_status(
+        lf_chunks = _chunk_worker.chunk_and_hash_file(
             lf_root / "twin_module.py", lf_root
         ).chunks
-        crlf_chunks = _chunk_worker.chunk_file_with_status(
+        crlf_chunks = _chunk_worker.chunk_and_hash_file(
             crlf_root / "twin_module.py", crlf_root
         ).chunks
 

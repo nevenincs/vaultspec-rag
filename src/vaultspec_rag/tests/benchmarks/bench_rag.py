@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ...progress import NullProgressReporter
+from .._embeddings_fixtures import encode_documents
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -35,7 +36,7 @@ def test_bench_embedding_throughput(
     ]
 
     start = time.perf_counter()
-    model.encode_documents(texts)
+    encode_documents(model, texts)
     elapsed = time.perf_counter() - start
 
     return {

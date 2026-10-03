@@ -66,10 +66,9 @@ from ..config._settings import get_config, rag_default
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    # The job-source vocabulary has one declaration, the canonical enum.
     # Annotation-only, so the client does not import the domain at runtime.
     from ..indexer._run_ledger_models import RunAuthority
-    from ..job_models import DesiredJobState, JobMode, JobSource
+    from ..job_models import DesiredJobState
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +85,6 @@ __all__ = [
     "_try_http_admin",
     "_try_http_clean",
     "_try_http_code_file",
-    "_try_http_create_job",
     "_try_http_delete_job",
     "_try_http_get_job",
     "_try_http_health",
@@ -187,33 +185,6 @@ class _JobCallRequest:
     method: HTTPMethod
     payload: dict[str, object] | None = None
     headers: dict[str, str] | None = None
-    timeout: float | None = None
-
-
-class CreateJobOptions(TypedDict, total=False):
-    """Optional fields for a create-job request."""
-
-    mode: JobMode | None
-    start_paused: bool
-    initiator_kind: str
-    command: str
-    idempotency_key: str | None
-    timeout: float | None
-
-
-@dataclass(frozen=True)
-class _CreateJobRequest:
-    """A create-job request before it is serialized to the jobs endpoint."""
-
-    source: JobSource
-    project_root: str
-    port: int | None
-    authority: RunAuthority
-    mode: JobMode | None = None
-    start_paused: bool = False
-    initiator_kind: str = "cli"
-    command: str = "server_job_create"
-    idempotency_key: str | None = None
     timeout: float | None = None
 
 
@@ -997,48 +968,6 @@ def _try_http_job_call(
             "error": "http_call_failed",
             "message": f"HTTP job call on port {request.port} failed: {cls}: {exc}",
         }
-
-
-def _default_job_mode() -> str:
-    """Return the convergence mode a job takes when the caller names none."""
-    from ..job_models import JobMode
-
-    return JobMode.INCREMENTAL.value
-
-
-def _try_http_create_job(
-    source: JobSource,
-    project_root: str,
-    port: int | None,
-    *,
-    authority: RunAuthority,
-    **options: Unpack[CreateJobOptions],
-) -> dict[str, object] | None:
-    request = _CreateJobRequest(source, project_root, port, authority, **options)
-    payload: dict[str, object] = {
-        "operation": "index",
-        "source": request.source,
-        "project_root": request.project_root,
-        "authority": request.authority.value,
-        # Resolved here, not in the signature: the enum is annotation-only in
-        # this module so the client keeps the domain out of its import graph.
-        "mode": request.mode if request.mode is not None else _default_job_mode(),
-        "start_paused": request.start_paused,
-        "initiator": {"kind": request.initiator_kind, "command": request.command},
-    }
-    headers = (
-        {"Idempotency-Key": request.idempotency_key}
-        if request.idempotency_key is not None
-        else None
-    )
-    return _try_http_job_call(
-        request.port,
-        "/jobs",
-        "POST",
-        payload=payload,
-        headers=headers,
-        timeout=request.timeout,
-    )
 
 
 def _try_http_get_job(

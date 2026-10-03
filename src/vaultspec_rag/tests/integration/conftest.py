@@ -33,12 +33,12 @@ from ..._job_values import count, measurement
 from ..._machine_lock import (
     machine_lock_path,
     probe_machine_lock,
-    release_machine_lock,
 )
 from ...config._settings import get_config
 from ...config._types import EnvVar
 from ...progress import NullProgressReporter
 from .._config_fixtures import reset_config
+from .._machine_lock_fixtures import release_machine_lock
 from .._model_setup import (
     HF_ENDPOINT_ENV,
     configured_service_model_ids,

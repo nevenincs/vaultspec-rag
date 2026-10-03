@@ -23,7 +23,6 @@ from .._anchor_claim import (
 )
 from .._machine_lock import (
     _probe_existing_machine_lock_holder,
-    capture_pre_isolation_machine_lock,
     machine_lock_path,
 )
 from ..config._types import EnvVar
@@ -32,6 +31,7 @@ from ._child_signal import (
     PROCESS_TIMEOUT_SECONDS,
 )
 from ._config_fixtures import reset_config
+from ._machine_lock_fixtures import capture_pre_isolation_machine_lock
 
 if TYPE_CHECKING:
     from collections.abc import Generator

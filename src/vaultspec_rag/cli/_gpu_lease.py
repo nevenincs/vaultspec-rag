@@ -17,13 +17,11 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-from .._test_isolation import ManagedSingletonIsolationError
 from ..gpu_borrow_lease import (
     CapturedBorrowerLeaseAuthority,
     GPUBorrowLease,
     acquire_gpu_borrow_lease,
     acquire_gpu_borrow_lease_for_captured_authority,
-    mint_captured_borrower_lease_authority,
     release_gpu_borrow_lease,
 )
 from ..service_quiesce import QUIESCE_ENVELOPE_FIELDS, QuiesceState
@@ -31,7 +29,6 @@ from ..serviceclient._compat import classify_service_version
 from ..serviceclient._discovery import (
     MachineResolution,
     PreIsolationMachinePointer,
-    capture_pre_isolation_machine_pointer,
     resolve_machine_service,
     revalidate_captured_machine_pointer,
 )
@@ -45,7 +42,6 @@ from ..serviceclient._transport import (
 __all__ = [
     "BorrowGPUError",
     "BorrowerServiceTarget",
-    "capture_borrower_service_target",
     "run_with_borrowed_gpu",
 ]
 
@@ -85,47 +81,6 @@ class BorrowGPUError(RuntimeError):
     def __init__(self, error: str, message: str) -> None:
         self.error = error
         super().__init__(message)
-
-
-def capture_borrower_service_target() -> BorrowerServiceTarget | None:
-    """Capture the live machine service before pytest redirects managed paths.
-
-    The capture itself is not GPU permission. It only freezes the original
-    paths and non-secret identity witnesses that a later borrower-held call
-    must repeat after its isolated test configuration is in effect.
-    """
-    captured = capture_pre_isolation_machine_pointer()
-    if captured is None:
-        return None
-    resolved = _captured_machine_pointer(captured)
-    if resolved is None:
-        return None
-    payload, port, service_pid, service_token = resolved
-    if not classify_service_version(payload).is_compatible:
-        return None
-    if (
-        _matching_health_identity(
-            _read_health_evidence(port),
-            service_pid=service_pid,
-            port=port,
-            token_sha256=_token_sha256(service_token),
-        )
-        is None
-    ):
-        return None
-    try:
-        authority = mint_captured_borrower_lease_authority(captured.observation.witness)
-    except (ManagedSingletonIsolationError, PermissionError):
-        return None
-    return BorrowerServiceTarget(
-        identity_lock_path=captured.observation.identity_lock_path,
-        discovery_path=captured.observation.discovery_path,
-        port=port,
-        service_pid=service_pid,
-        token_sha256=_token_sha256(service_token),
-        authority=authority,
-        pointer=captured.redacted(),
-    )
 
 
 def run_with_borrowed_gpu(
@@ -452,37 +407,6 @@ def _revalidate_captured_target(target: BorrowerServiceTarget) -> str | None:
         return None
     health = _read_health_evidence(target.port)
     return _matching_health_token(health, target)
-
-
-def _captured_machine_pointer(
-    captured: PreIsolationMachinePointer,
-) -> tuple[dict[str, object], int, int, str] | None:
-    """Resolve one existing machine pointer during pytest's pre-root window.
-
-    Generic discovery probes configured singleton paths, which pytest correctly
-    blocks before it has registered its root. Captured borrowing is the one
-    narrow exception: it observes only the original paths captured before that
-    redirect. This helper neither creates nor writes a path, and returns no
-    result unless the normal pointer schema, freshness, port, token, and exact
-    lock-holder/PID correlation all hold.
-    """
-    resolution = captured.resolution
-    holder_pid = captured.observation.holder_pid
-    if (
-        not resolution.is_ready
-        or resolution.holder_pid != holder_pid
-        or resolution.pointer_pid != holder_pid
-        or resolution.port is None
-        or not resolution.service_token
-        or resolution.payload is None
-    ):
-        return None
-    return (
-        resolution.payload,
-        resolution.port,
-        holder_pid,
-        resolution.service_token,
-    )
 
 
 def _matching_health_token(

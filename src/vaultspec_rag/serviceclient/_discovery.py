@@ -613,28 +613,6 @@ class _MachinePointerEvidence:
     stale_after_s: float
 
 
-def capture_pre_isolation_machine_pointer() -> PreIsolationMachinePointer | None:
-    """Capture the configured original pointer without accepting caller paths.
-
-    This is the sole pre-root bridge for captured GPU borrowing. The machine
-    lock module owns no-create lock observation; this module owns exactly the
-    same pointer evaluation the ordinary resolver uses. Neither performs a
-    write, retains a claim, or lets a caller choose an observed path.
-    """
-    from .._machine_lock import capture_pre_isolation_machine_lock
-
-    machine_lock = capture_pre_isolation_machine_lock()
-    if machine_lock is None:
-        return None
-    return PreIsolationMachinePointer(
-        observation=machine_lock,
-        resolution=_resolve_machine_pointer_at_path(
-            machine_lock.discovery_path,
-            holder_pid=machine_lock.holder_pid,
-        ),
-    )
-
-
 def revalidate_captured_machine_pointer(
     captured: PreIsolationMachinePointer,
     *,

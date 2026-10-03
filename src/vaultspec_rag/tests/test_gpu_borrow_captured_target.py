@@ -224,10 +224,10 @@ from vaultspec_rag._test_isolation import register_pytest_singleton_root
 from vaultspec_rag.cli._gpu_lease import (
     BorrowGPUError,
     BorrowerServiceTarget,
-    capture_borrower_service_target,
     run_with_borrowed_gpu,
 )
 from vaultspec_rag.tests._config_fixtures import reset_config
+from vaultspec_rag.tests._gpu_borrow_fixtures import capture_borrower_service_target
 from vaultspec_rag._machine_lock import machine_discovery_path
 from vaultspec_rag.serviceclient._discovery import resolve_machine_service
 
@@ -308,8 +308,8 @@ os.environ["_VAULTSPEC_RAG_PYTEST_SINGLETON_BOOTSTRAP"] = "1"
 os.environ["VAULTSPEC_RAG_QDRANT_STORAGE_DIR"] = str(storage_path)
 
 from vaultspec_rag._machine_lock import machine_lock_path
-from vaultspec_rag.cli._gpu_lease import capture_borrower_service_target
 from vaultspec_rag.tests._config_fixtures import reset_config
+from vaultspec_rag.tests._gpu_borrow_fixtures import capture_borrower_service_target
 
 reset_config()
 original_lock = machine_lock_path()

@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
 
 from vaultspec_core.env_values import parse_bool
-
-from .._content_route_syntax import validate_content_route_pattern
 
 PreprocessMode = Literal["default", "off"]
 
@@ -17,36 +14,6 @@ VALID_PREPROCESS_MODES: frozenset[str] = frozenset({"default", "off"})
 VALID_INDEX_SUPPORT_PROFILES: frozenset[str] = frozenset(
     {"managed-service", "embedded-local"}
 )
-
-
-@dataclass(frozen=True, slots=True)
-class ContentRouteConfig:
-    """One caller-authored project-relative pattern and raw target token.
-
-    Unknown targets remain representable at this boundary so policy
-    compilation can reject them as structured configuration errors instead of
-    silently dropping a route. Rule priority is the enclosing tuple's order.
-    """
-
-    pattern: str
-    target: str
-
-    def __post_init__(self) -> None:
-        validate_content_route_pattern(self.pattern)
-        if not self.target.strip():
-            raise ValueError("content route target must not be empty")
-
-
-@dataclass(frozen=True, slots=True)
-class RootContentPolicyConfig:
-    """Raw root policy whose route tuple preserves caller precedence."""
-
-    source_profile: str
-    routes: tuple[ContentRouteConfig, ...] = ()
-
-    def __post_init__(self) -> None:
-        if not self.source_profile.strip():
-            raise ValueError("source profile must not be empty")
 
 
 class EnvVar(StrEnum):

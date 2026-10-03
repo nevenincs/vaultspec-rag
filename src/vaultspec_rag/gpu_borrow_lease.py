@@ -22,11 +22,7 @@ from ._anchor_claim import (
     read_anchor_record,
     release_anchor_claim,
 )
-from ._machine_lock import (
-    CapturedMachineLockWitness,
-    consume_captured_machine_lock_for_borrower_authority,
-    machine_lock_path,
-)
+from ._machine_lock import machine_lock_path
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -41,7 +37,6 @@ __all__ = [
     "borrower_lease_status",
     "gpu_borrow_lease_path",
     "is_borrower_capability",
-    "mint_captured_borrower_lease_authority",
     "release_gpu_borrow_lease",
 ]
 
@@ -137,31 +132,6 @@ def acquire_gpu_borrow_lease() -> GPUBorrowLease | None:
         operation="acquire the GPU borrower lease",
         captured_service_anchor=False,
     )
-
-
-def mint_captured_borrower_lease_authority(
-    witness: object,
-) -> CapturedBorrowerLeaseAuthority:
-    """Mint one authority for a pre-registration validated service target.
-
-    Only the bootstrap window can mint. The machine-lock registry derives and
-    retains the borrower anchor from one opaque witness; callers receive no
-    anchor path and cannot select one for a later acquisition.
-    """
-    if not isinstance(witness, CapturedMachineLockWitness):
-        raise PermissionError(
-            "a captured GPU borrower lease requires a machine witness"
-        )
-    from ._test_isolation import pytest_singleton_bootstrap_window
-
-    with pytest_singleton_bootstrap_window(
-        operation="mint a captured GPU borrower lease authority"
-    ):
-        path = consume_captured_machine_lock_for_borrower_authority(witness)
-        authority = object.__new__(CapturedBorrowerLeaseAuthority)
-        with _lease_guard:
-            _captured_authority_paths[authority] = path
-    return authority
 
 
 def acquire_gpu_borrow_lease_for_captured_authority(

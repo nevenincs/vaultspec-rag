@@ -46,9 +46,7 @@ __all__ = [
     "MachineLockLease",
     "MachineLockProbe",
     "PreIsolationMachineLock",
-    "acquire_machine_lock",
     "acquire_machine_lock_lease",
-    "capture_pre_isolation_machine_lock",
     "default_machine_lock_path",
     "delete_machine_discovery",
     "machine_discovery_path",
@@ -56,7 +54,6 @@ __all__ = [
     "probe_machine_lock",
     "publish_machine_discovery",
     "read_machine_discovery",
-    "release_machine_lock",
     "release_machine_lock_lease",
     "revalidate_captured_machine_lock",
 ]
@@ -150,7 +147,6 @@ _lease_guard = threading.RLock()
 _captured_machine_lock_records: dict[
     CapturedMachineLockWitness, _CapturedMachineLockRecord
 ] = {}
-_captured_machine_lock_minted: set[CapturedMachineLockWitness] = set()
 _captured_machine_lock_guard = threading.RLock()
 
 
@@ -323,14 +319,17 @@ def acquire_machine_lock_lease() -> tuple[MachineLockLease | None, int]:
     return (lease, lease.pid)
 
 
-def acquire_machine_lock() -> tuple[bool, int]:
-    """Acquire the machine lock for callers not yet carrying the lease object."""
-    lease, holder = acquire_machine_lock_lease()
-    return (lease is not None, holder)
-
-
 def release_machine_lock_lease(lease: MachineLockLease) -> None:
-    """Release *lease* if it is the exact capability currently retained."""
+    """Release *lease* if it is the exact capability currently retained.
+
+    Unlocks and closes the fd; deliberately does NOT unlink the lock file. The
+    file's existence is not the authority (the OS lock is), and unlinking after
+    unlocking is racy: a contender that acquires in the unlock->unlink window
+    would have its freshly-locked file deleted out from under it, and the next
+    acquire would create a fresh inode and lock it uncontended - two live
+    holders. The lingering file is harmless; the next acquirer overwrites the
+    stale pid, and a dead/empty file is always acquirable.
+    """
     from ._test_isolation import enforce_pytest_managed_singleton_containment
 
     enforce_pytest_managed_singleton_containment(
@@ -346,31 +345,6 @@ def release_machine_lock_lease(lease: MachineLockLease) -> None:
         release_anchor_claim(lease.descriptor, pid_record=True)
 
 
-def release_machine_lock() -> None:
-    """Release the machine-scoped service lock if this process holds it.
-
-    Unlocks and closes the fd; deliberately does NOT unlink the lock file. The
-    file's existence is not the authority (the OS lock is), and unlinking after
-    unlocking is racy: a contender that acquires in the unlock->unlink window
-    would have its freshly-locked file deleted out from under it, and the next
-    acquire would create a fresh inode and lock it uncontended - two live
-    holders. The lingering file is harmless; the next acquirer overwrites the
-    stale pid, and a dead/empty file is always acquirable.
-    """
-    path = machine_lock_path()
-    from ._test_isolation import enforce_pytest_managed_singleton_containment
-
-    enforce_pytest_managed_singleton_containment(
-        operation="release the machine service lock",
-        targets=(path,),
-    )
-    with _lease_guard:
-        lease = _held_leases.get(str(path))
-    if lease is None:
-        return
-    release_machine_lock_lease(lease)
-
-
 def _probe_existing_machine_lock_holder(identity_lock_path: Path) -> int | None:
     """Read a positive PID from one preselected, already-existing lock path.
 
@@ -381,44 +355,6 @@ def _probe_existing_machine_lock_holder(identity_lock_path: Path) -> int | None:
     from ._anchor_claim import probe_existing_anchor_holder
 
     return probe_existing_anchor_holder(identity_lock_path, pid_record=True)
-
-
-def capture_pre_isolation_machine_lock() -> PreIsolationMachineLock | None:
-    """Capture one existing original machine lock without path input or writes.
-
-    This is the only public bridge to the private raw-path probe. It derives
-    the configured machine identity and discovery paths before pytest redirects
-    them, then returns evidence only when a positive owner PID is recovered
-    from a currently contended lock.
-    """
-    from ._test_isolation import (
-        ManagedSingletonIsolationError,
-        pytest_singleton_bootstrap_window,
-    )
-
-    try:
-        with pytest_singleton_bootstrap_window(
-            operation="capture a pre-isolation machine lock witness"
-        ):
-            try:
-                identity_lock_path = machine_lock_path().resolve(strict=False)
-                discovery_path = machine_discovery_path().resolve(strict=False)
-            except (OSError, RuntimeError, ValueError):
-                return None
-            holder_pid = _probe_existing_machine_lock_holder(identity_lock_path)
-            if holder_pid is None:
-                return None
-            witness = object.__new__(CapturedMachineLockWitness)
-            record = _CapturedMachineLockRecord(
-                identity_lock_path=identity_lock_path,
-                discovery_path=discovery_path,
-                holder_pid=holder_pid,
-            )
-            with _captured_machine_lock_guard:
-                _captured_machine_lock_records[witness] = record
-    except ManagedSingletonIsolationError:
-        return None
-    return _project_captured_machine_lock(witness, record)
 
 
 def revalidate_captured_machine_lock(
@@ -435,24 +371,6 @@ def revalidate_captured_machine_lock(
     if holder_pid != record.holder_pid:
         return None
     return _project_captured_machine_lock(witness, record)
-
-
-def consume_captured_machine_lock_for_borrower_authority(
-    witness: object,
-) -> Path:
-    """Consume one witness for a borrower authority and derive its sibling."""
-    if not isinstance(witness, CapturedMachineLockWitness):
-        raise PermissionError(
-            "a captured GPU borrower lease requires a machine witness"
-        )
-    with _captured_machine_lock_guard:
-        record = _captured_machine_lock_records.get(witness)
-        if record is None or witness in _captured_machine_lock_minted:
-            raise PermissionError(
-                "the captured machine lock witness is stale or consumed"
-            )
-        _captured_machine_lock_minted.add(witness)
-    return record.identity_lock_path.with_name("gpu-borrower.lock")
 
 
 @dataclass(frozen=True, slots=True)

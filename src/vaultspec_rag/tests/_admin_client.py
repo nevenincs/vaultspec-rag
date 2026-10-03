@@ -1,23 +1,35 @@
-"""Async client over the daemon's admin routes, for the service tests.
+"""Client over the daemon's admin and job routes, for the service tests.
 
 These are not MCP tools: the MCP surface is search, index refresh and
 read-only retrieval, and the admin verbs are CLI-only in production. The
 wrappers here shape a tool name and its arguments onto the same ``/admin``
 routes the CLI reaches, so a service test can drive a route and assert on
 what the daemon did.
+
+The create-job wrapper belongs here for the same reason. ``/jobs`` accepts a
+paused start and an idempotency key that the CLI's reindex path cannot send,
+so no production caller reaches that request shape; building it beside the
+tests keeps the production client free of a surface it never issues.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, TypedDict, Unpack
+from typing import TYPE_CHECKING, Any, TypedDict, Unpack
 
 from ..mcp._tools import (
     _delegate,  # pyright: ignore[reportPrivateUsage]  # test client over the delegation seam
     _require_port,  # pyright: ignore[reportPrivateUsage]  # test client over the delegation seam
 )
-from ..serviceclient._transport import _try_http_admin
+from ..serviceclient._transport import (
+    _try_http_admin,
+    _try_http_job_call,  # pyright: ignore[reportPrivateUsage]  # test client over the jobs-route seam
+)
+
+if TYPE_CHECKING:
+    from ..indexer._run_ledger_models import RunAuthority
+    from ..job_models import JobMode, JobSource
 
 
 class _JobQueryOptions(TypedDict, total=False):
@@ -158,3 +170,73 @@ async def reconfigure_watcher(
     if cooldown_s is not None:
         args["cooldown_s"] = cooldown_s
     return await _admin("reconfigure_watcher", args)
+
+
+class CreateJobOptions(TypedDict, total=False):
+    """Optional fields for a create-job request."""
+
+    mode: JobMode | None
+    start_paused: bool
+    initiator_kind: str
+    command: str
+    idempotency_key: str | None
+    timeout: float | None
+
+
+@dataclass(frozen=True)
+class _CreateJobRequest:
+    """A create-job request before it is serialized to the jobs endpoint."""
+
+    source: JobSource
+    project_root: str
+    port: int | None
+    authority: RunAuthority
+    mode: JobMode | None = None
+    start_paused: bool = False
+    initiator_kind: str = "cli"
+    command: str = "server_job_create"
+    idempotency_key: str | None = None
+    timeout: float | None = None
+
+
+def _default_job_mode() -> str:
+    """Return the convergence mode a job takes when the caller names none."""
+    from ..job_models import JobMode
+
+    return JobMode.INCREMENTAL.value
+
+
+def _try_http_create_job(
+    source: JobSource,
+    project_root: str,
+    port: int | None,
+    *,
+    authority: RunAuthority,
+    **options: Unpack[CreateJobOptions],
+) -> dict[str, object] | None:
+    """Post one create-job request to the running service's jobs route."""
+    request = _CreateJobRequest(source, project_root, port, authority, **options)
+    payload: dict[str, object] = {
+        "operation": "index",
+        "source": request.source,
+        "project_root": request.project_root,
+        "authority": request.authority.value,
+        # Resolved here, not in the signature: the enum stays annotation-only
+        # so this module keeps the domain out of its import graph.
+        "mode": request.mode if request.mode is not None else _default_job_mode(),
+        "start_paused": request.start_paused,
+        "initiator": {"kind": request.initiator_kind, "command": request.command},
+    }
+    headers = (
+        {"Idempotency-Key": request.idempotency_key}
+        if request.idempotency_key is not None
+        else None
+    )
+    return _try_http_job_call(
+        request.port,
+        "/jobs",
+        "POST",
+        payload=payload,
+        headers=headers,
+        timeout=request.timeout,
+    )

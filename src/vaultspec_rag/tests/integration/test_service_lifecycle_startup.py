@@ -183,7 +183,10 @@ def test_running_phase_status_failure_rolls_back_all_started_components(
     tmp_path: Path,
 ) -> None:
     """A real running-phase lock failure cancels tasks and releases all owners."""
-    from ..._machine_lock import acquire_machine_lock, release_machine_lock
+    from .._machine_lock_fixtures import (
+        acquire_machine_lock,
+        release_machine_lock,
+    )
 
     acquisition_env = {
         EnvVar.HF_HUB_OFFLINE.value: None,

@@ -96,16 +96,18 @@ class TestGraphCache:
 
 
 class TestQwen3NoDocumentPrompt:
-    """ADR: encode_documents must NOT pass prompt_name to the dense model."""
+    """ADR: document encoding must NOT pass prompt_name to the dense model."""
 
-    def test_encode_documents_no_prompt_name(self):
+    def test_dense_document_encode_has_no_prompt_name(self):
         import inspect
 
         from ..embeddings import EmbeddingModel
 
-        source = inspect.getsource(EmbeddingModel.encode_documents)
+        # The one site that calls the library's dense ``encode`` for
+        # documents; every document path reaches the forward through it.
+        source = inspect.getsource(EmbeddingModel._dense_encode_call)
         assert "prompt_name" not in source, (
-            "encode_documents should not pass prompt_name to the dense model"
+            "the dense document forward should not pass prompt_name"
         )
 
     def test_encode_query_uses_prompt_name(self):

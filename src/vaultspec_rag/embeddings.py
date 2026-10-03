@@ -852,38 +852,6 @@ class EmbeddingModel:
         """
         return self._device
 
-    def encode_documents(
-        self,
-        texts: list[str],
-        *,
-        batch_size: int | None = None,
-    ) -> np.ndarray:
-        """Encode document texts as dense embeddings on GPU.
-
-        Args:
-            texts: List of document texts (title + body).
-            batch_size: Item-count cap per planned encode bucket, applied
-                on top of the token budget. Defaults to
-                :meth:`_default_encode_batch_size` (config
-                ``embedding_encode_batch_size``).
-
-        Returns:
-            numpy array of shape ``(n, dimension)`` with normalized
-            embeddings.
-
-        Raises:
-            torch.cuda.OutOfMemoryError: If a single-text bucket still
-                fails after the allocator cache is flushed.
-        """
-        import numpy as np
-
-        embeddings = self._encode_documents_output(
-            texts,
-            batch_size=batch_size,
-            retain_on_device=False,
-        )
-        return np.asarray(embeddings, dtype=np.float32)
-
     def encode_documents_on_device(
         self,
         texts: list[str],
@@ -899,8 +867,7 @@ class EmbeddingModel:
         ``gpu_lock`` independently, so concurrent searches on the shared
         device wait for at most one bucket, never a whole slice.
         ``on_bucket`` observes bucket boundaries under the contract
-        documented on :meth:`_run_bucketed_encode`. Other callers use
-        :meth:`encode_documents` and receive a CPU NumPy result.
+        documented on :meth:`_run_bucketed_encode`.
         """
         return cast(
             "Tensor",

@@ -8,8 +8,7 @@ from pathlib import Path
 import pathspec
 import pytest
 
-from .._job_errors import JobErrorKind, classify_error_text
-from ..config._types import ContentRouteConfig, RootContentPolicyConfig
+from .._job_errors import JobErrorKind
 from ..indexer._content_policy import (
     AdmissionPolicyError,
     AdmissionReason,
@@ -30,39 +29,10 @@ from ..indexer._resolved_policy import (
     IndexPolicyResolutionOptions,
     ResolvedIndexPolicy,
     ResolvedPreprocessRule,
-    compile_content_policy,
     resolve_index_policy,
 )
 
 pytestmark = [pytest.mark.unit]
-
-
-def test_raw_route_configuration_preserves_order_and_closed_targets() -> None:
-    raw = RootContentPolicyConfig(
-        "explicit-only-v1",
-        (
-            ContentRouteConfig("manuals/**", "document"),
-            ContentRouteConfig("schemas/**/*.xsd", "code"),
-        ),
-    )
-    resolved = compile_content_policy(raw)
-    assert resolved.source_profile is SourceProfileVersion.EXPLICIT_ONLY_V1
-    assert resolved.routes == (
-        ContentRoute("manuals/**", ContentKind.DOCUMENT),
-        ContentRoute("schemas/**/*.xsd", ContentKind.CODE),
-    )
-
-
-def test_unknown_route_target_has_structured_error_identity() -> None:
-    raw = RootContentPolicyConfig(
-        "conventional-v1",
-        (ContentRouteConfig("**/*.py", "unknown"),),
-    )
-    with pytest.raises(AdmissionPolicyError) as caught:
-        compile_content_policy(raw)
-    assert (
-        classify_error_text(str(caught.value)) is JobErrorKind.ADMISSION_CONFIG_INVALID
-    )
 
 
 def test_ignore_wins_before_explicit_and_conventional_admission() -> None:

@@ -32,7 +32,7 @@ from ...index_profiles import (
 )
 from ...indexer._chunk_worker import (
     DocumentChunkingOptions,
-    chunk_file_with_status,
+    chunk_and_hash_file,
     stream_document_and_hash_file,
 )
 from ...indexer._document_indexer import _DocumentResourceBudget
@@ -196,7 +196,7 @@ def test_document_passthrough_stays_document_owned_and_code_worker_fails_closed(
 
     marker.unlink()
     with pytest.raises(ValueError, match="non-code extraction rule"):
-        chunk_file_with_status(source, tmp_path, context)
+        chunk_and_hash_file(source, tmp_path, context)
     assert not marker.exists()
 
 

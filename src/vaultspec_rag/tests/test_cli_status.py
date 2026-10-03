@@ -604,8 +604,14 @@ class TestServiceTokenIdentity:
         from ..cli._process import _is_our_service
 
         # A real daemon answering /health, and this process's own pid, which is
-        # alive by construction rather than by assertion.
-        with _health_service({"service_token": "abc"}) as (port, seen):
+        # alive by construction rather than by assertion. The payload carries
+        # the serving pid because the real report does: identity is the token
+        # AND the pid behind it, so a fixture omitting the pid would be asking
+        # production to adopt a token from an unidentified server.
+        with _health_service({"service_token": "abc", "pid": os.getpid()}) as (
+            port,
+            seen,
+        ):
             assert _is_our_service(os.getpid(), port=port, expected_token="abc")
         assert seen == ["/health"]
 
@@ -613,8 +619,12 @@ class TestServiceTokenIdentity:
         from ..cli._process import _is_our_service
 
         # Token mismatch is authoritative - return False regardless of
-        # whether the executable-name check would have passed.
-        with _health_service({"service_token": "abc"}) as (port, _seen):
+        # whether the executable-name check would have passed. The serving pid
+        # matches, so only the token can be deciding this.
+        with _health_service({"service_token": "abc", "pid": os.getpid()}) as (
+            port,
+            _seen,
+        ):
             assert not _is_our_service(os.getpid(), port=port, expected_token="xyz")
 
     def test_token_absent_in_response_falls_back(
@@ -871,7 +881,7 @@ class TestDegradedDiscoveryStatus:
 
     @staticmethod
     def _restore() -> None:
-        from .._machine_lock import release_machine_lock
+        from ._machine_lock_fixtures import release_machine_lock
 
         release_machine_lock()
         os.environ.pop(EnvVar.STATUS_DIR, None)
@@ -899,7 +909,7 @@ class TestDegradedDiscoveryStatus:
         status directory holds no record, so the machine singleton is the only
         evidence, and something owns it.
         """
-        from .._machine_lock import acquire_machine_lock
+        from ._machine_lock_fixtures import acquire_machine_lock
 
         self._isolate(tmp_path)
         try:
@@ -922,7 +932,7 @@ class TestDegradedDiscoveryStatus:
         self, tmp_path: Path
     ) -> None:
         """The human summary names the condition rather than saying stopped."""
-        from .._machine_lock import acquire_machine_lock
+        from ._machine_lock_fixtures import acquire_machine_lock
 
         self._isolate(tmp_path)
         try:
@@ -939,7 +949,7 @@ class TestDegradedDiscoveryStatus:
 
     def test_doctor_agrees_with_status_on_a_live_holder(self, tmp_path: Path) -> None:
         """Doctor and status must not disagree about a live holder."""
-        from .._machine_lock import acquire_machine_lock
+        from ._machine_lock_fixtures import acquire_machine_lock
 
         self._isolate(tmp_path)
         try:

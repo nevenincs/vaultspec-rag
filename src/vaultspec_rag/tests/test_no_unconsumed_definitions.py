@@ -70,20 +70,7 @@ _DOCUMENTED_EXTENSION_POINTS: Final[dict[str, str]] = {
 #: removed. Not a waiver: the set is held exact, so it can only shrink - a
 #: new entry fails as unconsumed, and one that gains a consumer or is deleted
 #: fails as stale until it is taken off this list.
-_STILL_TO_REMOVE: Final = frozenset(
-    {
-        "src/vaultspec_rag/_machine_lock.py:acquire_machine_lock",
-        "src/vaultspec_rag/_machine_lock.py:release_machine_lock",
-        "src/vaultspec_rag/_test_isolation.py:reclaim_singleton_paths",
-        "src/vaultspec_rag/_test_isolation.py:sweep_orphaned_singleton_roots",
-        "src/vaultspec_rag/cli/_gpu_lease.py:capture_borrower_service_target",
-        "src/vaultspec_rag/embeddings.py:encode_documents",
-        "src/vaultspec_rag/indexer/_chunk_worker.py:chunk_file_with_status",
-        "src/vaultspec_rag/indexer/_file_state.py:iter_publishable_states",
-        "src/vaultspec_rag/indexer/_resolved_policy.py:compile_content_policy",
-        "src/vaultspec_rag/serviceclient/_transport.py:_try_http_create_job",
-    }
-)
+_STILL_TO_REMOVE: Final[frozenset[str]] = frozenset()
 
 
 def _is_test(path: Path) -> bool:

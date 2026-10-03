@@ -102,7 +102,7 @@ _SERVICE = (
     """
 import os, sys, time
 from pathlib import Path
-from vaultspec_rag._machine_lock import acquire_machine_lock
+from vaultspec_rag.tests._machine_lock_fixtures import acquire_machine_lock
 
 ready, stop = (Path(arg) for arg in sys.argv[1:3])
 acquired, _ = acquire_machine_lock()

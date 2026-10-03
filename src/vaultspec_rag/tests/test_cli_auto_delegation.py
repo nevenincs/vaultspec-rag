@@ -55,9 +55,9 @@ from vaultspec_rag.tests._config_fixtures import reset_config  # absolute-import
 reset_config()
 
 
-from vaultspec_rag._machine_lock import (  # absolute-import-ok
+from vaultspec_rag._machine_lock import machine_discovery_path  # absolute-import-ok
+from vaultspec_rag.tests._machine_lock_fixtures import (  # absolute-import-ok
     acquire_machine_lock,
-    machine_discovery_path,
     release_machine_lock,
 )
 from vaultspec_rag.serviceclient._compat import (  # absolute-import-ok

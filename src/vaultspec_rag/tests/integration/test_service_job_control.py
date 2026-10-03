@@ -23,12 +23,12 @@ from ...jobs import get_job_manager
 from ...mcp._mcp import mcp
 from ...mcp._tools import reindex_vault
 from ...serviceclient._transport import (
-    _try_http_create_job,
     _try_http_delete_job,
     _try_http_get_job,
     _try_http_retry_job,
     _try_http_set_job_desired_state,
 )
+from .._admin_client import _try_http_create_job
 from .._import_probe import assert_fresh_import_excludes, import_probe_source
 from .._scaffold import make_workspace
 from ._service_jobs_support import _canonical_resilience_server

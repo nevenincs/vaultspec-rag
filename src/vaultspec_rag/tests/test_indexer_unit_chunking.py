@@ -285,7 +285,7 @@ class TestASTChunkerFallback:
         content = "key: value\nlist:\n  - item1\n  - item2\n"
         src.write_text(content, encoding="utf-8")
 
-        chunks = _chunk_worker.chunk_file_with_status(src, tmp_path).chunks
+        chunks = _chunk_worker.chunk_and_hash_file(src, tmp_path).chunks
         assert len(chunks) >= 1
         assert chunks[0].language == "yaml"
         # ID should still carry the emit ordinal and the hash suffix.
@@ -505,24 +505,6 @@ class TestVanishedSourceCostsOnlyItself:
         )
 
         result = chunk_and_hash_file(self._vanished(tmp_path), tmp_path)
-
-        assert result.preprocess_status == VANISHED_SOURCE_STATUS
-        assert result.chunks == []
-        assert "vanished" in (result.preprocess_reason or "")
-
-    def test_chunk_file_with_status_reports_a_skip_rather_than_raising(
-        self, tmp_path: Path
-    ) -> None:
-        """The sibling entry point reaches the read through its own seam.
-
-        Mutation: as above. Observed the same escape from this call.
-        """
-        from ..indexer._chunk_worker import (
-            VANISHED_SOURCE_STATUS,
-            chunk_file_with_status,
-        )
-
-        result = chunk_file_with_status(self._vanished(tmp_path), tmp_path)
 
         assert result.preprocess_status == VANISHED_SOURCE_STATUS
         assert result.chunks == []

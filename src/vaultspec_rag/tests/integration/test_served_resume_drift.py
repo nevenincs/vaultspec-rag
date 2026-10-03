@@ -12,11 +12,11 @@ import pytest
 from ...indexer._run_ledger_models import RunAuthority
 from ...job_models import JobMode, JobSource
 from ...serviceclient._transport import (
-    _try_http_create_job,
     _try_http_get_job,
     _try_http_health,
     _try_http_retry_job,
 )
+from .._admin_client import _try_http_create_job
 from .._child_signal import CHILD_PROCESS_TIMEOUT_SECONDS
 from .conftest import _live_service_context
 

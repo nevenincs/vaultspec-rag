@@ -299,7 +299,9 @@ def pytest_configure(config: pytest.Config) -> None:
     raw_markexpr = config.option.markexpr
     markexpr = raw_markexpr if isinstance(raw_markexpr, str) else ""
     if set(selectable_slow_tiers(markexpr)) - {MPS}:
-        from vaultspec_rag.cli._gpu_lease import capture_borrower_service_target
+        from vaultspec_rag.tests._gpu_borrow_fixtures import (
+            capture_borrower_service_target,
+        )
 
         _gpu_borrower_target = capture_borrower_service_target()
 
@@ -313,7 +315,7 @@ def pytest_configure(config: pytest.Config) -> None:
         _singleton_root_owned = True
 
     worker = os.environ.get("PYTEST_XDIST_WORKER")
-    from vaultspec_rag._test_isolation import singleton_child_names
+    from vaultspec_rag.tests._singleton_root_fixtures import singleton_child_names
 
     _singleton_participant = (
         f"{worker}-pid{os.getpid()}" if worker else f"pid{os.getpid()}"
@@ -335,8 +337,8 @@ def pytest_configure(config: pytest.Config) -> None:
     os.environ[_STATUS_DIR_ENV] = str(status_dir)
     os.environ[_QDRANT_STORAGE_DIR_ENV] = str(qdrant_storage_dir)
 
-    from vaultspec_rag._test_isolation import (
-        register_pytest_singleton_root,
+    from vaultspec_rag._test_isolation import register_pytest_singleton_root
+    from vaultspec_rag.tests._singleton_root_fixtures import (
         sweep_orphaned_singleton_roots,
     )
 
@@ -385,7 +387,7 @@ def pytest_unconfigure(config: pytest.Config) -> None:
     else:
         os.environ[_PYTEST_SINGLETON_BOOTSTRAP_ENV] = _PRIOR_PYTEST_SINGLETON_BOOTSTRAP
     if root is not None:
-        from vaultspec_rag._test_isolation import (
+        from vaultspec_rag.tests._singleton_root_fixtures import (
             reclaim_singleton_paths,
             singleton_child_names,
         )
@@ -424,7 +426,9 @@ def _atexit_reclaim_singleton_root() -> None:
     """
     root = _singleton_root
     if root is not None:
-        from vaultspec_rag._test_isolation import reclaim_singleton_paths
+        from vaultspec_rag.tests._singleton_root_fixtures import (
+            reclaim_singleton_paths,
+        )
 
         reclaim_singleton_paths(
             root,

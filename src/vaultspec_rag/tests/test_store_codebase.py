@@ -18,6 +18,7 @@ from .._job_errors import JobError, JobErrorKind
 from .._store_models import CodeChunk
 from .._store_writes import StoreWritePolicy
 from ..store_runtime import VaultStore
+from ._embeddings_fixtures import encode_documents
 
 pytestmark = [pytest.mark.integration]
 
@@ -91,7 +92,7 @@ class TestStoreCodebase:
         """upsert_code_chunks should add and retrieve chunks."""
         model = rag_components["model"]
         text = "print('hello')"
-        vector = cast("list[float]", model.encode_documents([text]).tolist()[0])
+        vector = cast("list[float]", encode_documents(model, [text]).tolist()[0])
         sparse = model.encode_documents_sparse([text])[0]
         chunks = [
             CodeChunk(
@@ -201,7 +202,7 @@ class TestStoreCodebase:
         """delete_code_chunks should remove code chunks by ID."""
         model = rag_components["model"]
         text = "test"
-        vector = cast("list[float]", model.encode_documents([text]).tolist()[0])
+        vector = cast("list[float]", encode_documents(model, [text]).tolist()[0])
         sparse = model.encode_documents_sparse([text])[0]
         chunks = [
             CodeChunk(
