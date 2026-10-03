@@ -145,18 +145,6 @@ class WeightedCodeSegmentQueue:
         self._items: deque[CodeFileSegment | None] = deque()
         self._condition = threading.Condition()
 
-    @property
-    def queued_chunks(self) -> int:
-        """Return the number of chunks waiting in the queue."""
-        with self._condition:
-            return self._queued_chunks
-
-    @property
-    def queued_bytes(self) -> int:
-        """Return the estimated bytes waiting in the queue."""
-        with self._condition:
-            return self._queued_bytes
-
     def _can_admit(self, segment: CodeFileSegment) -> bool:
         return (
             self._queued_chunks + len(segment.chunks) <= self._max_chunks

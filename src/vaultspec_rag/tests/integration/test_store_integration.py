@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 
 from ..._store_search import HybridSearchRequest
+from .._store_fixtures import get_all_ids, upsert_documents
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -34,7 +35,7 @@ class TestVaultStore:
 
     def test_get_all_ids(self, rag_components: RagComponentsWithManifest) -> None:
         store = rag_components["store"]
-        ids = store.get_all_ids()
+        ids = get_all_ids(store)
         assert len(ids) > 0
         # All ids should be strings
         for doc_id in ids:
@@ -97,7 +98,7 @@ class TestVaultStore:
         model = rag_components["model"]
 
         # Pick an existing doc ID
-        all_ids = store.get_all_ids()
+        all_ids = get_all_ids(store)
         assert len(all_ids) > 0
         target_id = next(iter(all_ids))
 
@@ -136,7 +137,7 @@ class TestVaultStore:
                 model.encode_query_sparse(doc.get("content", "")[:200]).values,
             ),
         )
-        store.upsert_documents([reinsert], write_policy=None)
+        upsert_documents(store, [reinsert], write_policy=None)
 
     def test_hybrid_search_with_sparse_vector(
         self, rag_components: RagComponentsWithManifest

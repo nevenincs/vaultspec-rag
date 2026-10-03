@@ -8,6 +8,7 @@ import pytest
 
 from ...indexer._run_ledger_models import RunAuthority
 from ...progress import NullProgressReporter
+from .._ledger_fixtures import latest_generation
 from .conftest import (
     SAMPLE_PYTHON_2,
     _CodeProject,
@@ -330,7 +331,7 @@ class TestCodebaseIncrementalIndex:
 
         data_root = indexer._data_root
         ledger = RunLedger(index_run_ledger_path(data_root))
-        generation = ledger.latest_generation(ContentKind.CODE)
+        generation = latest_generation(ledger, ContentKind.CODE)
         assert generation is not None
         state = ledger.file_states_for_paths(
             generation.generation_id,

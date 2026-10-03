@@ -43,7 +43,6 @@ __all__ = [
     "VaultDocument",
     "_code_chunk_payload",
     "_vault_chunk_payload",
-    "_vault_doc_payload",
     "root_collection_prefix",
     "vault_indexed_metadata",
     "vault_metadata_digest",
@@ -472,27 +471,6 @@ def vault_metadata_digest(doc: VaultDocument) -> str:
         _canonical_metadata(doc).encode("utf-8"),
         digest_size=_METADATA_DIGEST_BYTES,
     ).hexdigest()
-
-
-def _vault_doc_payload(doc: VaultDocument) -> store_schema.VaultDocPayload:
-    """Build a ``vault_docs`` document point payload from a document.
-
-    The one place the document-level payload shape is constructed; the typed
-    return binds it to the schema contract so a field drift is a type error
-    and the parity test can assert the produced dict directly.
-    """
-    return {
-        "doc_id": doc.id,
-        "path": doc.path,
-        "doc_type": doc.doc_type,
-        "feature": doc.feature,
-        "date": doc.date,
-        "tags": doc.tags,
-        "related": doc.related,
-        "title": doc.title,
-        "status": doc.status,
-        "content": doc.content,
-    }
 
 
 def _vault_chunk_payload(chunk: VaultChunk) -> store_schema.VaultChunkPayload:

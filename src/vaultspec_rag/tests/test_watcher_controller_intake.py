@@ -50,6 +50,7 @@ from ..watcher_retry_policy import (
     WatcherRetryPolicy,
 )
 from ..watcher_runtime import WatcherChangeRouting, WatcherConvergenceSlot
+from ._watcher_fixtures import dirty_paths
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -102,8 +103,8 @@ def test_classification_is_immutable_and_does_not_acknowledge_slots(
         (WatcherSource.CODE, code_path, WatcherPathEvent.ADDED),
         (WatcherSource.DOCUMENT, code_path, WatcherPathEvent.ADDED),
     ]
-    assert vault.slot.dirty_paths() == frozenset()
-    assert code.slot.dirty_paths() == frozenset()
+    assert dirty_paths(vault.slot) == frozenset()
+    assert dirty_paths(code.slot) == frozenset()
 
 
 async def test_exact_scope_is_durable_before_legacy_slot_acknowledgement(
@@ -120,7 +121,7 @@ async def test_exact_scope_is_durable_before_legacy_slot_acknowledgement(
         observations: tuple[WatcherPathObservation, ...],
         **_kwargs: object,
     ) -> bool:
-        persisted_before_ack.append(binding.slot.dirty_paths() == frozenset())
+        persisted_before_ack.append(dirty_paths(binding.slot) == frozenset())
         policy.mark_scope_pending(observations, now=time.time())
         return False
 
@@ -145,7 +146,7 @@ async def test_exact_scope_is_durable_before_legacy_slot_acknowledgement(
 
     assert cancelled is False
     assert persisted_before_ack == [True]
-    assert binding.slot.dirty_paths() == frozenset({changed})
+    assert dirty_paths(binding.slot) == frozenset({changed})
     state = binding.retry_policy.state
     assert [(item.relative_path, item.event_kinds) for item in state.pending_paths] == [
         ("src/example.py", frozenset({WatcherPathEvent.MODIFIED}))

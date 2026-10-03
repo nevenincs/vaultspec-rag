@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from .._store_search import HybridSearchRequest
+from ._store_fixtures import get_all_document_content_ids, get_all_ids, upsert_documents
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -405,7 +406,8 @@ class TestStoreLocalClientSerialization:
             VaultDocument,
         )
 
-        store.upsert_documents(
+        upsert_documents(
+            store,
             [
                 VaultDocument(
                     id=f"parallel-doc-{idx}",
@@ -712,7 +714,8 @@ class TestDropTable:
 
         store = VaultStore(tmp_path, embedding_dim=4)
         try:
-            store.upsert_documents(
+            upsert_documents(
+                store,
                 [
                     VaultDocument(
                         id="doc-1",
@@ -844,7 +847,7 @@ _CATALOG_READS: list[tuple[Callable[[VaultStore], object], object, str]] = [
     (lambda s: s.scroll_document_content(), ([], None), "DOCUMENT_TABLE_NAME"),
     (lambda s: s.code_content_ids_exist(["absent"]), False, "CODE_TABLE_NAME"),
     (lambda s: s.document_content_ids_exist(["absent"]), False, "DOCUMENT_TABLE_NAME"),
-    (lambda s: s.get_all_document_content_ids(), set(), "DOCUMENT_TABLE_NAME"),
+    (lambda s: get_all_document_content_ids(s), set(), "DOCUMENT_TABLE_NAME"),
     (
         lambda s: s.scroll_index_audit_content(
             s.TABLE_NAME,
@@ -956,7 +959,7 @@ class TestReadsCreateNothing:
         try:
             assert not store.client.collection_exists(store.TABLE_NAME)
 
-            assert store.get_all_ids() == set()
+            assert get_all_ids(store) == set()
             assert not store.client.collection_exists(store.TABLE_NAME), (
                 f"get_all_ids() created {store.TABLE_NAME}; a read must not create"
             )

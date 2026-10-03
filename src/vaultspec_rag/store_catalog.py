@@ -114,19 +114,6 @@ class _VaultCatalogMixin:
 
         def _retried[T](self, description: str, op: Callable[[int], T]) -> T: ...
 
-    def get_all_ids(self) -> set[str]:
-        """Return the set of all document ``id`` values in the store.
-
-        Returns:
-            Set of document stem IDs from the vault_docs collection, empty
-            when it does not exist. Creates nothing, for the same reason
-            :meth:`count` does not.
-        """
-        if not self._collection_exists(self.TABLE_NAME):
-            return set()
-        with self._point_lock(self.TABLE_NAME):
-            return self._scroll_all_ids(self.TABLE_NAME, "doc_id")
-
     def _scan_chunk_ordinals(
         self,
         doc_ids: set[str] | None,
@@ -543,18 +530,6 @@ class _VaultCatalogMixin:
         if not self._collection_exists(_target):
             return False
         return self._content_ids_exist(_target, ids)
-
-    def get_all_document_content_ids(self) -> set[str]:
-        """Return every deterministic ID in the document collection.
-
-        Empty when the collection does not exist. Scrolls unfiltered, so it
-        needs no schema reconcile on the way, and creates nothing for the same
-        reason :meth:`count` does not.
-        """
-        if not self._collection_exists(self.DOCUMENT_TABLE_NAME):
-            return set()
-        with self._point_lock(self.DOCUMENT_TABLE_NAME):
-            return self._scroll_all_ids(self.DOCUMENT_TABLE_NAME, "document_id")
 
     def scroll_document_content(
         self,

@@ -444,24 +444,6 @@ class WatcherRetryPolicy:
         """Return the current immutable policy state."""
         return self._state
 
-    def mark_convergence_pending(
-        self, *, now: float | None = None
-    ) -> WatcherRetryState:
-        """Persist a new coalesced convergence generation for an event batch."""
-        timestamp = wall_time(now)
-        with locked_state(self._path):
-            state = self._refresh_scope_unlocked()
-            committed = self._commit_unlocked(
-                replace(
-                    state,
-                    convergence_pending=True,
-                    convergence_generation=state.convergence_generation + 1,
-                    updated_at=timestamp,
-                )
-            )
-            self._scoped_generation = committed.convergence_generation
-            return committed
-
     def mark_scope_pending(
         self,
         observations: tuple[WatcherPathObservation, ...],

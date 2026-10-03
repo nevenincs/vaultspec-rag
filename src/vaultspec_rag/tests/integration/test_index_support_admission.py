@@ -19,6 +19,7 @@ from ...indexer._streaming_types import CodeFileSegment
 from ...jobs import get_job_manager, reset
 from ...server import ServerRouteRuntime, create_http_app
 from ...service import ServiceRegistry
+from .._indexer_fixtures import support_measurement
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -91,7 +92,7 @@ def test_code_segment_measurement_rejects_before_overweight_segment_yields(
         next(iter(indexer._support_budget.measure_code_segments((segment,))))
 
     assert raised.value.error_kind is JobErrorKind.CORPUS_LIMIT_EXCEEDED
-    assert indexer.support_measurement == SupportMeasurement(1, 64, 1, 33)
+    assert support_measurement(indexer) == SupportMeasurement(1, 64, 1, 33)
 
 
 def test_code_runtime_measurement_keeps_extractor_host_and_device_bounds_separate(
@@ -119,7 +120,7 @@ def test_code_runtime_measurement_keeps_extractor_host_and_device_bounds_separat
 
     indexer._support_budget.record_extracted_bytes(17)
     indexer._support_budget._record_resource_measurement(rss_bytes=31, cuda_bytes=23)
-    assert indexer.support_measurement == SupportMeasurement(
+    assert support_measurement(indexer) == SupportMeasurement(
         1,
         64,
         extracted_bytes=17,

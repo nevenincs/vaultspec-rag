@@ -74,7 +74,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
     from ..embeddings import EmbeddingModel
-    from ..index_profiles import SupportMeasurement
     from ..job_control import RunControl
     from ..memory_probe import MemoryBudgetSnapshot
     from ..progress import ProgressReporter
@@ -237,11 +236,6 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             self._lifecycle,
             self._pipeline_chunk_and_embed,
         )
-
-    @property
-    def support_measurement(self) -> SupportMeasurement:
-        """Return the latest immutable code workload measurement snapshot."""
-        return self._support_budget.measurement
 
     @property
     def last_checkpoint(self) -> CodeRunCheckpoint | None:

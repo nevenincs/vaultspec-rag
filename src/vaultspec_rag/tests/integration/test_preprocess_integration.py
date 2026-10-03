@@ -32,6 +32,7 @@ from ..._source_types import PublicSourceType
 from ...config._settings import reset_config
 from ...config._types import EnvVar
 from ...progress import NullProgressReporter
+from .._ledger_fixtures import latest_generation
 from .._publication_assertions import published_content_identities
 from .._sqlite_state import assert_sqlite_unchanged, sqlite_contents
 
@@ -714,7 +715,7 @@ class TestPreprocessEndToEnd:
                 ledger = RunLedger(
                     index_run_ledger_path(tmp_path / get_config().data_dir)
                 )
-                generation = ledger.latest_generation(ContentKind.CODE)
+                generation = latest_generation(ledger, ContentKind.CODE)
                 assert generation is not None
                 assert generation.terminal_state is RunTerminalState.SUCCEEDED
                 state = next(
@@ -931,7 +932,7 @@ class TestPreprocessEndToEnd:
             assert any("broken.pdf" in failure for failure in indexer._prep_skips)
             assert store.get_code_ids_by_paths({"broken.pdf"}) == []
             ledger = RunLedger(index_run_ledger_path(tmp_path / get_config().data_dir))
-            generation = ledger.latest_generation(ContentKind.CODE)
+            generation = latest_generation(ledger, ContentKind.CODE)
             assert generation is not None
             state = next(
                 item

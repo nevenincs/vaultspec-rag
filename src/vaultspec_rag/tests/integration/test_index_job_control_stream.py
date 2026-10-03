@@ -45,6 +45,7 @@ _CONTROL_WAIT_SECONDS = 20.0
 _MANAGED_WAIT_SECONDS = 240.0
 _CONTROL_POLL_SECONDS = 0.001
 
+from .._store_fixtures import get_all_ids
 from ._index_job_control_support import (
     _RevisedVaultPublication,
     assert_revised_vault_publication,
@@ -121,7 +122,7 @@ def test_clean_rebuild_defers_pause_until_complete_publication(
             reporter=NullProgressReporter(),
         )
         assert seeded.added == len(documents)
-        assert store.get_all_ids() == expected_ids
+        assert get_all_ids(store) == expected_ids
         metadata_before = published_content_identities(tmp_path, PublicSourceType.VAULT)
         revised_document = documents[0]
         revised_path = tmp_path / ".vault" / revised_document.path

@@ -19,8 +19,8 @@ from .._store_models import (
     VaultDocument,
     _code_chunk_payload,
     _vault_chunk_payload,
-    _vault_doc_payload,
 )
+from ._store_fixtures import vault_doc_payload
 
 pytestmark = [pytest.mark.unit]
 
@@ -38,7 +38,7 @@ def test_vault_doc_payload_matches_golden_shape() -> None:
         content="body",
         status="accepted",
     )
-    assert _vault_doc_payload(doc) == {
+    assert vault_doc_payload(doc) == {
         "doc_id": "adr/overview",
         "path": "adr/overview.md",
         "doc_type": "adr",

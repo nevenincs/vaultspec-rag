@@ -218,17 +218,6 @@ class FileChunkResult:
 
 
 @dataclass(slots=True)
-class DocumentFileChunkResult:
-    """One document source's independently typed chunks and source hash."""
-
-    rel_path: str
-    content_hash: str
-    chunks: list[DocumentChunk]
-    preprocess_status: str | None = None
-    preprocess_reason: str | None = None
-
-
-@dataclass(slots=True)
 class DocumentFileChunkStreamResult:
     """One document source whose chunks may be consumed incrementally."""
 
@@ -900,26 +889,6 @@ def stream_document_and_hash_file(
             execution_policy=options.execution_policy,
             run_control=options.run_control,
         )
-    )
-
-
-def chunk_document_and_hash_file(
-    path: pathlib.Path,
-    root_dir: pathlib.Path,
-    options: DocumentChunkingOptions = _DEFAULT_DOCUMENT_CHUNKING_OPTIONS,
-) -> DocumentFileChunkResult:
-    """Materialize the document stream for compatibility callers."""
-    result = stream_document_and_hash_file(
-        path,
-        root_dir,
-        options,
-    )
-    return DocumentFileChunkResult(
-        result.rel_path,
-        result.content_hash,
-        list(result.chunks),
-        result.preprocess_status,
-        result.preprocess_reason,
     )
 
 

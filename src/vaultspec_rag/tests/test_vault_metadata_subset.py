@@ -24,11 +24,11 @@ from .._store_models import (
     VAULT_STRUCTURAL_PAYLOAD_KEYS,
     VaultDocument,
     _vault_chunk_payload,
-    _vault_doc_payload,
     vault_indexed_metadata,
     vault_metadata_digest,
 )
 from ..indexer._vault_prep import split_document, vault_document_from_text
+from ._store_fixtures import vault_doc_payload
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -68,7 +68,7 @@ class TestSubsetPartitionsThePayload:
             | VAULT_BODY_PAYLOAD_KEYS
             | VAULT_STRUCTURAL_PAYLOAD_KEYS
         )
-        unaccounted = set(_vault_doc_payload(doc)) - accounted
+        unaccounted = set(vault_doc_payload(doc)) - accounted
         assert unaccounted == set(), (
             "vault document payload fields outside the subset digest: "
             f"{sorted(unaccounted)} - add them to vault_indexed_metadata() or "
@@ -94,7 +94,7 @@ class TestSubsetPartitionsThePayload:
         """A subset field absent from every payload digests noise, not content."""
         doc = _doc()
         chunk = split_document(doc, chunk_chars=64)[0]
-        carried = set(_vault_doc_payload(doc)) | set(_vault_chunk_payload(chunk))
+        carried = set(vault_doc_payload(doc)) | set(_vault_chunk_payload(chunk))
         assert set(vault_indexed_metadata(doc)) <= carried
 
     def test_every_subset_field_moves_the_digest(self) -> None:

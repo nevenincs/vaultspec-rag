@@ -36,6 +36,7 @@ from ..indexer._streaming_types import (
     CodeFileSegmentRequest,
     WeightedCodeSlice,
 )
+from ._indexer_fixtures import queued_bytes, queued_chunks
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -242,16 +243,16 @@ def test_weighted_queue_backpressure_releases_on_consumer_transfer() -> None:
     producer = threading.Thread(target=_put_second_segment)
     producer.start()
     assert not producer_released.wait(0.05)
-    assert segment_q.queued_chunks == 1
-    assert segment_q.queued_bytes == segments[0].estimated_bytes
+    assert queued_chunks(segment_q) == 1
+    assert queued_bytes(segment_q) == segments[0].estimated_bytes
 
     assert segment_q.get(timeout=1.0) is segments[0]
     assert producer_released.wait(1.0)
     producer.join(timeout=1.0)
     assert not producer.is_alive()
     assert segment_q.get(timeout=1.0) is segments[1]
-    assert segment_q.queued_chunks == 0
-    assert segment_q.queued_bytes == 0
+    assert queued_chunks(segment_q) == 0
+    assert queued_bytes(segment_q) == 0
 
     with pytest.raises(queue.Empty):
         segment_q.get(block=False)

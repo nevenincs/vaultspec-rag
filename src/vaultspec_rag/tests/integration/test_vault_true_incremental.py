@@ -34,6 +34,7 @@ from ...config._settings import reset_config as reset_rag_config
 from ...progress import NullProgressReporter
 from ...synthetic import build_synthetic_vault
 from .._publication_assertions import published_content_identities
+from .._store_fixtures import get_all_ids
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -513,7 +514,7 @@ class TestOneBadByteCannotWedgeIndexing:
             # completed instead of raising out of the hashing phase.
             result = indexer.incremental_index(reporter=NullProgressReporter())
 
-            stored = store.get_all_ids()
+            stored = get_all_ids(store)
             assert "adr/still-indexable" in stored, (
                 "the decodable new document was not indexed; the undecodable "
                 "one took the run down with it"
@@ -532,7 +533,7 @@ class TestOneBadByteCannotWedgeIndexing:
             # clean pass is not enough to prove the wedge is gone.
             repeat = indexer.incremental_index(reporter=NullProgressReporter())
 
-            assert store.get_all_ids() == stored, "the retry disturbed the index"
+            assert get_all_ids(store) == stored, "the retry disturbed the index"
             # The undecodable file stays in the "new" set on every run, because
             # that set is the difference against the *store*, which it can never
             # enter. So it is re-parsed and re-skipped each run - one file's
@@ -618,7 +619,7 @@ class TestUnscopedEscalationConverges:
 
             assert result.added == 1
             assert result.removed == 1
-            stored = store.get_all_ids()
+            stored = get_all_ids(store)
             assert "adr/unannounced-arrival" in stored
             assert removed_id not in stored
         finally:

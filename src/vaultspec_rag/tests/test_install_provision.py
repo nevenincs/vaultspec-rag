@@ -25,6 +25,7 @@ from ..commands._provision import ProvisionAction, ProvisionStep
 from ..config._paths import persist_local_only, read_persisted_local_only
 from ..config._settings import get_config, reset_config
 from ..config._types import EnvVar
+from ._provision_fixtures import result_for
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -206,7 +207,7 @@ class TestInstallProvisionWiring:
         )
         outcome = report.provision_outcome
         assert outcome is not None
-        qdrant = outcome.result_for(ProvisionStep.QDRANT)
+        qdrant = result_for(outcome, ProvisionStep.QDRANT)
         assert qdrant is not None
         assert qdrant.action == ProvisionAction.SKIPPED
         assert "local-only" in qdrant.detail
@@ -242,7 +243,7 @@ class TestInstallProvisionWiring:
         )
         outcome = report.provision_outcome
         assert outcome is not None
-        models = outcome.result_for(ProvisionStep.MODELS)
+        models = result_for(outcome, ProvisionStep.MODELS)
         assert models is not None
         assert models.action == ProvisionAction.SKIPPED
         assert "opted out" in models.detail
@@ -263,7 +264,7 @@ class TestInstallProvisionWiring:
         )
         outcome = report.provision_outcome
         assert outcome is not None
-        torch = outcome.result_for(ProvisionStep.TORCH)
+        torch = result_for(outcome, ProvisionStep.TORCH)
         assert torch is not None
         assert torch.action == ProvisionAction.SKIPPED
         assert report.torch_config_action == "applied"

@@ -26,6 +26,7 @@ from ...storage_archive import (
 )
 from ...storage_survey_ops import gather_survey
 from ...store_runtime import VaultStore
+from .._store_fixtures import get_all_document_content_ids
 from ._helpers import provisioned_qdrant_binary, serve_qdrant
 
 if TYPE_CHECKING:
@@ -138,7 +139,7 @@ def _assert_document_round_trip(store: VaultStore) -> None:
     chunk = _chunk()
     store.upsert_document_content_chunks([chunk], write_policy=None)
     assert store.count_document() == 1
-    assert store.get_all_document_content_ids() == {chunk.id}
+    assert get_all_document_content_ids(store) == {chunk.id}
     rows, offset = store.scroll_document_content(limit=10)
     assert offset is None
     assert len(rows) == 1

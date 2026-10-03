@@ -47,15 +47,6 @@ _WATCH_REPLACEMENT_BACKOFF_MAX_SECONDS = 30.0
 
 
 @dataclass(frozen=True, slots=True)
-class ObservedSource:
-    """One watcher domain's observed-event persistence request."""
-
-    observed: bool
-    source: WatcherSource
-    retry_policy: WatcherRetryPolicy
-
-
-@dataclass(frozen=True, slots=True)
 class WatcherChangeRouting:
     """Immutable routing dependencies for one watcher intake batch."""
 
@@ -176,11 +167,6 @@ class WatcherConvergenceSlot:
             )
             self.replacement_not_before = now + delay
             return delay
-
-    def dirty_paths(self) -> frozenset[Path]:
-        """Snapshot the exact paths eligible for the next watcher attempt."""
-        with self.lock:
-            return frozenset(self.held_paths | self.pending_paths)
 
     def capture_prevalidated_attempt(
         self,

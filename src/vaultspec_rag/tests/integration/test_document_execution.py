@@ -32,8 +32,6 @@ from ...index_profiles import (
 )
 from ...indexer._chunk_worker import (
     DocumentChunkingOptions,
-    DocumentFileChunkResult,
-    chunk_document_and_hash_file,
     chunk_file_with_status,
     stream_document_and_hash_file,
 )
@@ -69,6 +67,11 @@ from ...watcher_retry_policy import (
     WatcherRetryPolicy,
     _WatcherRetryOptions,
 )
+from .._indexer_fixtures import (
+    DocumentFileChunkResult,
+    chunk_document_and_hash_file,
+)
+from .._watcher_fixtures import mark_convergence_pending
 from ._helpers import _document_policy
 
 if TYPE_CHECKING:
@@ -449,9 +452,9 @@ def test_document_retry_state_and_resource_profile_are_independent(
             now=0,
         ),
     )
-    code.mark_convergence_pending(now=1)
+    mark_convergence_pending(code, now=1)
     code_before = code.state
-    document.mark_convergence_pending(now=1)
+    mark_convergence_pending(document, now=1)
     admitted = document.admit(now=1)
     assert admitted.attempt_generation is not None
     document.record_failure(

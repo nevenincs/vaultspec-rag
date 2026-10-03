@@ -57,6 +57,7 @@ _CONTROL_WAIT_SECONDS = 20.0
 _MANAGED_WAIT_SECONDS = 240.0
 _CONTROL_POLL_SECONDS = 0.001
 
+from .._store_fixtures import get_all_ids
 from ._index_job_control_support import (
     _assert_code_resources_released,
     _assert_manager_resources_released,
@@ -375,7 +376,7 @@ async def test_managed_vault_pause_releases_resources_and_resume_reconciles(
         first_task,
         "fresh reconciliation attempt did not start",
     )
-    assert slot.store.get_all_ids() == expected_ids
+    assert get_all_ids(slot.store) == expected_ids
     assert (
         set(published_content_identities(root, PublicSourceType.VAULT)) == expected_ids
     )

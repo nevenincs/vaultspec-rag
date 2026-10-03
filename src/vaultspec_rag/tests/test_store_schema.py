@@ -17,9 +17,9 @@ from .._store_models import (
     VaultDocument,
     _code_chunk_payload,
     _vault_chunk_payload,
-    _vault_doc_payload,
 )
 from ._import_probe import assert_fresh_import_excludes, import_probe_source
+from ._store_fixtures import vault_doc_payload
 
 pytestmark = [pytest.mark.unit]
 
@@ -109,7 +109,7 @@ class TestDescriptor:
             line_end=2,
         )
         assert sorted(desc["vault"]["payload_fields"]["document"]) == sorted(
-            _vault_doc_payload(doc)
+            vault_doc_payload(doc)
         )
         assert sorted(desc["vault"]["payload_fields"]["chunk"]) == sorted(
             _vault_chunk_payload(chunk)

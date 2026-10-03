@@ -27,6 +27,7 @@ from ...config._settings import get_config
 from ...config._settings import reset_config as reset_rag_config
 from ...progress import NullProgressReporter
 from .._publication_assertions import published_content_identities
+from .._store_fixtures import get_all_ids
 from ..corpus import build_synthetic_vault
 
 if TYPE_CHECKING:
@@ -119,7 +120,7 @@ class TestVaultScopedReindex:
             target_id = _vault_doc_id(target, docs_dir)
             other_id = _vault_doc_id(other, docs_dir)
 
-            assert target_id in store.get_all_ids()
+            assert target_id in get_all_ids(store)
             target.unlink()
 
             result = indexer.incremental_index(
@@ -130,7 +131,7 @@ class TestVaultScopedReindex:
             assert result.removed == 1
             assert result.added == 0
             assert result.updated == 0
-            ids_after = store.get_all_ids()
+            ids_after = get_all_ids(store)
             assert target_id not in ids_after
             assert other_id in ids_after
             assert target_id not in published_content_identities(

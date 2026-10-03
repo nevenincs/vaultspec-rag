@@ -28,6 +28,7 @@ from ..watcher_retry_policy import (
     _WatcherRetryOptions,
 )
 from ..watcher_runtime import WatcherConvergenceSlot, reconcile_restarted_slot
+from ._watcher_fixtures import dirty_paths, mark_convergence_pending
 from ._watcher_job_snapshot import watcher_job_snapshot
 
 if TYPE_CHECKING:
@@ -164,7 +165,7 @@ async def test_restart_restores_exact_scope_after_unsuccessful_terminal_job(
     )
 
     assert [item.relative_path for item in policy.state.pending_paths] == ["src/a.py"]
-    assert slot.dirty_paths() == frozenset({tmp_path.resolve() / "src/a.py"})
+    assert dirty_paths(slot) == frozenset({tmp_path.resolve() / "src/a.py"})
     assert policy.state.attempt_job_id is None
 
 
@@ -242,7 +243,7 @@ async def test_unsafe_restart_recovery_is_terminal_and_retry_cannot_clear_it(
 
     await reconcile_restarted_slot(slot, cast("Any", _History(history(tmp_path))))
     refused = policy.state
-    policy.mark_convergence_pending(now=3.0)
+    mark_convergence_pending(policy, now=3.0)
 
     assert refused.scope_refusal is WatcherScopeRefusal.FULL_REINDEX_REQUIRED
     assert refused.circuit_state is WatcherCircuitState.OPEN

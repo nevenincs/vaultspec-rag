@@ -32,6 +32,7 @@ from ..indexer._run_ledger_models import (
     RunTerminalState,
 )
 from ..indexer._run_ledger_runtime import RunLedger
+from ._ledger_fixtures import acquire_publication_read_token
 from ._run_ledger_test_support import (
     ledger_test_digest,
     ledger_test_proof_compatibility,
@@ -210,7 +211,7 @@ def test_publication_reservation_sequence_fences_open_and_rolled_back_receipts(
         tmp_path,
         (evidence,),
     )
-    token = ledger.acquire_publication_read_token(key)
+    token = acquire_publication_read_token(ledger, key)
 
     receipt = ledger.reserve_publication_receipt(
         key,
@@ -220,7 +221,7 @@ def test_publication_reservation_sequence_fences_open_and_rolled_back_receipts(
     assert receipt.reservation_sequence == token.reservation_sequence + 1
     assert ledger.active_publication_receipt(key) == receipt
     with pytest.raises(ProofReadConflictError):
-        ledger.acquire_publication_read_token(key)
+        acquire_publication_read_token(ledger, key)
     with pytest.raises(ProofReadConflictError):
         ledger.validate_publication_read_token(token)
 
@@ -235,7 +236,7 @@ def test_publication_reservation_sequence_fences_open_and_rolled_back_receipts(
     assert ledger.active_publication_receipt(key) is None
     with pytest.raises(ProofReadConflictError):
         ledger.validate_publication_read_token(token)
-    current = ledger.acquire_publication_read_token(key)
+    current = acquire_publication_read_token(ledger, key)
     ledger.validate_publication_read_token(current)
     next_receipt = ledger.reserve_publication_receipt(
         key,

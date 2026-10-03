@@ -28,6 +28,8 @@ from ..job_models import IndexResilienceSnapshot, JobSource
 from ..memory_probe import route_forward_peak_mib
 from ..progress import NullProgressReporter
 from ..store_runtime import VaultStore
+from ._indexer_fixtures import support_measurement
+from ._store_fixtures import get_all_document_content_ids
 from .test_live_checkpoint_resilience import _running, unloaded_model
 
 if TYPE_CHECKING:
@@ -274,7 +276,7 @@ async def test_preflight_refusal_retains_exception_and_unknown_memory(
         assert job.resilience.generation_id is None
         assert case.indexer.memory_budget_snapshot is None
         if isinstance(case.indexer, CodebaseIndexer):
-            assert case.indexer.support_measurement == SupportMeasurement(0, 0)
+            assert support_measurement(case.indexer) == SupportMeasurement(0, 0)
             assert case.indexer._support_budget._support_limits is None
             assert case.indexer._support_budget._support_profile_name is None
 
@@ -295,7 +297,7 @@ async def test_unchanged_attempt_owns_only_observations_it_takes(
     point_ids = (
         case.indexer.store.get_all_code_ids()
         if case.source is JobSource.CODE
-        else case.indexer.store.get_all_document_content_ids()
+        else get_all_document_content_ids(case.indexer.store)
     )
     failure: RunLedgerStateError | None = None
     outcome: tuple[str, IndexResilienceSnapshot, IndexResult] | None = None
@@ -331,7 +333,7 @@ async def test_unchanged_attempt_owns_only_observations_it_takes(
         )
         assert terminal.peak_cuda_allocated_mib == 0.0
         assert terminal.generation_id != prior.generation_id
-        assert case.indexer.store.get_all_document_content_ids() == point_ids
+        assert get_all_document_content_ids(case.indexer.store) == point_ids
         checkpoint = case.indexer.last_checkpoint
         assert checkpoint is not None and checkpoint.receipt is not None
         assert checkpoint.ledger.committed_unit_count(checkpoint.generation_id) == 0

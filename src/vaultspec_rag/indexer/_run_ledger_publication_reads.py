@@ -322,23 +322,6 @@ class RunLedgerPublicationReadMethods:
             receipt_corrupt("unfinished delta publication has no committed receipt")
         return hydrate_receipt(connection, row)
 
-    def acquire_publication_read_token(
-        self,
-        key: ProofCompatibilityKey,
-    ) -> ProofReadToken:
-        """Acquire one proof revision only when no receipt is open."""
-        with ledger_connection(self.path) as connection:
-            row = proof_snapshot_row(connection, key)
-        if row is None:
-            raise ProofMissingError("publication proof does not exist")
-        actual = require_exact_key(row, key, subject="publication proof")
-        return ProofReadToken.from_snapshot(
-            compatibility_key=actual,
-            revision=column_int(row, "revision"),
-            reservation_sequence=column_int(row, "reservation_sequence"),
-            has_open_receipt=has_open_receipt(row),
-        )
-
     def acquire_current_publication_snapshot(
         self,
         *,

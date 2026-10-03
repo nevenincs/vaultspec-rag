@@ -10,6 +10,7 @@ from .._store_models import CodeChunk, VaultDocument
 from .._store_search import HybridSearchRequest
 from ..embeddings import SparseResult
 from ..store_runtime import VaultStore
+from ._store_fixtures import upsert_documents
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -25,7 +26,8 @@ def test_removed_feedback_does_not_break_search(
     vector = [1.0, 0.0, 0.0, 0.0]
     with VaultStore(tmp_path, embedding_dim=4) as store:
         if source == "vault":
-            store.upsert_documents(
+            upsert_documents(
+                store,
                 [
                     VaultDocument(
                         id="kept",

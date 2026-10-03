@@ -59,6 +59,7 @@ from ..indexer._streaming_types import CodeFileSegment
 from ..job_control import CancelRequested, RunControlToken
 from ..storage_identity import sidecar_path
 from ..store_runtime import StorageModelError, VaultStore
+from ._store_fixtures import get_all_document_content_ids
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -583,7 +584,7 @@ def test_interrupted_destination_first_flip_resumes_idempotently(
         assert resume_pending_migrations(store, tmp_path / get_config().data_dir) == 2
         assert resume_pending_migrations(store, tmp_path / get_config().data_dir) == 0
         assert store.count_code() == 0
-        assert store.get_all_document_content_ids() == {destination.id}
+        assert get_all_document_content_ids(store) == {destination.id}
         assert list(journal.pending()) == []
     finally:
         store.close()
@@ -656,7 +657,7 @@ def test_missing_sidecar_recovery_retains_ledger_confirmed_points(
         )
 
         assert removed == 2
-        assert store.get_all_document_content_ids() == {retained.id, opposite.id}
+        assert get_all_document_content_ids(store) == {retained.id, opposite.id}
     finally:
         store.close()
 
@@ -732,7 +733,7 @@ def test_same_kind_cleanup_resumes_after_a_real_page_boundary_interruption(
             )
             > 0
         )
-        assert store.get_all_document_content_ids() == {retained.id}
+        assert get_all_document_content_ids(store) == {retained.id}
     finally:
         store.close()
 
@@ -852,7 +853,7 @@ def test_generation_route_cleanup_uses_bounded_store_and_ledger_pages(
 
         assert removed == 2
         assert store.get_all_code_ids() == {"retained-code"}
-        assert store.get_all_document_content_ids() == {
+        assert get_all_document_content_ids(store) == {
             destination.id for destination in destinations
         }
         assert checkpoint.run_policy.snapshot().expired is False

@@ -17,10 +17,7 @@ from .._publication_state import acquire_publication_snapshot
 from .._source_types import PublicSourceType
 from ..indexer._publication_proof import ProofMissingError
 from ..watcher_durability import (
-    _CANCELLATION_DURABILITY_SECONDS,
     _STATE_TRANSACTION_WORKER_SLOTS,
-    admit_watcher_attempt,
-    persist_observed_sources,
     run_durable_retry_transaction,
 )
 from ..watcher_retry import (
@@ -36,12 +33,12 @@ from ..watcher_retry_policy import (
     WatcherRetryPolicy,
     _WatcherRetryOptions,
 )
-from ..watcher_runtime import ObservedSource
 from ._child_signal import (
     CHILD_PROCESS_TIMEOUT_SECONDS,
     PROCESS_TIMEOUT_SECONDS,
     await_marker,
 )
+from ._watcher_fixtures import mark_convergence_pending
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -346,7 +343,7 @@ def _fail_once(
 
 def _drive_to_open_circuit(policy: WatcherRetryPolicy) -> None:
     """Fail three times, which is what opens the circuit."""
-    policy.mark_convergence_pending(now=0.0)
+    mark_convergence_pending(policy, now=0.0)
     _fail_once(policy, TimeoutError("t"), now=0.0, random_unit=0.5)
     _fail_once(policy, ConnectionError("c"), now=11.0, random_unit=1.0)
     _fail_once(policy, TimeoutError("t"), now=35.0, random_unit=0.5)
@@ -354,7 +351,7 @@ def _drive_to_open_circuit(policy: WatcherRetryPolicy) -> None:
 
 def test_retry_backoff_grows_and_gates_admission(tmp_path: Path) -> None:
     policy = _policy(tmp_path / "code.json", tmp_path)
-    policy.mark_convergence_pending(now=0.0)
+    mark_convergence_pending(policy, now=0.0)
 
     state = _fail_once(
         policy, TimeoutError("qdrant timed out"), now=1.0, random_unit=0.5
@@ -374,7 +371,7 @@ def test_retry_backoff_grows_and_gates_admission(tmp_path: Path) -> None:
 
 def test_third_failure_opens_the_circuit(tmp_path: Path) -> None:
     policy = _policy(tmp_path / "code.json", tmp_path)
-    policy.mark_convergence_pending(now=0.0)
+    mark_convergence_pending(policy, now=0.0)
     _fail_once(policy, TimeoutError("t"), now=1.0, random_unit=0.5)
     _fail_once(policy, ConnectionError("c"), now=11.0, random_unit=1.0)
 
@@ -389,7 +386,7 @@ def test_full_reindex_required_is_terminal_and_clears_pending_intent(
     tmp_path: Path,
 ) -> None:
     policy = _policy(tmp_path / "code.json", tmp_path)
-    policy.mark_convergence_pending(now=0.0)
+    mark_convergence_pending(policy, now=0.0)
 
     state = _fail_once(
         policy,
@@ -403,7 +400,7 @@ def test_full_reindex_required_is_terminal_and_clears_pending_intent(
     assert not state.convergence_pending
     assert not policy.admit(now=1000.0).admitted
 
-    renewed = policy.mark_convergence_pending(now=1001.0)
+    renewed = mark_convergence_pending(policy, now=1001.0)
     assert renewed.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
     assert renewed.circuit_state is WatcherCircuitState.OPEN
     assert not policy.admit(now=1001.0).admitted
@@ -475,7 +472,7 @@ def test_exact_event_cannot_replace_unknown_scope_after_restart(tmp_path: Path) 
     # unknown scope while admitting only the newest path.
     state_path = tmp_path / "code.json"
     policy = _policy(state_path, tmp_path)
-    policy.mark_convergence_pending(now=0.0)
+    mark_convergence_pending(policy, now=0.0)
     restarted = _policy(state_path, tmp_path, now=1.0)
 
     observed = restarted.mark_scope_pending((_path_observation("src/new.py"),), now=2.0)
@@ -497,7 +494,7 @@ def test_missing_publication_proof_is_a_terminal_rebuild_refusal(
     assert classify_error_text(str(missing.value)) is JobErrorKind.FULL_REINDEX_REQUIRED
 
     policy = _policy(tmp_path / "vault.json", tmp_path, source=WatcherSource.VAULT)
-    policy.mark_convergence_pending(now=0.0)
+    mark_convergence_pending(policy, now=0.0)
     state = _fail_once(policy, missing.value, now=1.0, random_unit=0.5)
 
     assert state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
@@ -556,7 +553,7 @@ def test_nonretryable_failure_opens_immediately(
     expected_kind: JobErrorKind,
 ) -> None:
     policy = _policy(tmp_path / "code.json", tmp_path)
-    policy.mark_convergence_pending(now=0.0)
+    mark_convergence_pending(policy, now=0.0)
     decision = policy.admit(now=0.0)
     assert decision.attempt_generation is not None
 
@@ -580,6 +577,10 @@ def test_restart_refuses_unsettled_attempt_until_explicit_rebuild(
         (
             "import os, sys",
             "from pathlib import Path",
+            (
+                "from vaultspec_rag.tests._watcher_fixtures import "
+                "mark_convergence_pending"
+            ),
             "from vaultspec_rag.watcher_retry import WatcherSource",
             (
                 "from vaultspec_rag.watcher_retry_policy import "
@@ -593,7 +594,7 @@ def test_restart_refuses_unsettled_attempt_until_explicit_rebuild(
                 "max_seconds=25.0, jitter_fraction=0.0, "
                 "failure_threshold=3, now=0.0))"
             ),
-            "policy.mark_convergence_pending(now=0.0)",
+            "mark_convergence_pending(policy, now=0.0)",
             "first = policy.admit(now=0.0)",
             "assert first.attempt_generation == 1",
             (
@@ -646,79 +647,6 @@ def test_live_attempt_owner_is_not_reclaimed(tmp_path: Path) -> None:
     assert not settled.convergence_pending
 
 
-@pytest.mark.asyncio
-async def test_cancelled_contended_admission_settles_committed_claim(
-    tmp_path: Path,
-) -> None:
-    state_path = tmp_path / "code.json"
-    policy = _policy(state_path, tmp_path)
-    policy.mark_convergence_pending(now=0.0)
-    lock_path = state_path.with_name(f"{state_path.name}.lock")
-    ready_path = tmp_path / "admission-lock-ready.marker"
-    # Two things must both hold, and they pull in opposite directions. The
-    # lock has to still be held when the admission is cancelled, or the
-    # contended path is never entered. And it has to be RELEASED well within
-    # the cancelled admission's own settle budget, or that settle gives up and
-    # hands the authority to a detached settler - the sibling case below,
-    # which deliberately holds for longer than the budget to force exactly
-    # that.
-    #
-    # Derived from the production budget rather than hand-picked, so the two
-    # cannot drift apart. The 2.4s this used to hold was under the 3.0s budget
-    # by only 0.6s, and a loaded runner spent that slack before the settle
-    # acquired the lock: the admission handed off, and the failure surfaced
-    # much later as "watcher admission authority has been handed off" from an
-    # unrelated-looking policy.admit() call.
-    #
-    # Mutation: held for _CANCELLATION_DURABILITY_SECONDS * 2 instead.
-    # Observed the original failure exactly - WatcherRetryStateError, "watcher
-    # admission authority has been handed off" - so this still tells the
-    # in-process settle apart from the handoff, which is the whole point of
-    # the case. Restored, and it passes.
-    holder = _spawn_state_lock_holder(
-        lock_path,
-        ready_path,
-        hold_seconds=_CANCELLATION_DURABILITY_SECONDS / 4,
-    )
-    try:
-        await _await_lock_held(holder, ready_path)
-
-        admission = asyncio.create_task(
-            admit_watcher_attempt(
-                policy,
-                source=WatcherSource.CODE,
-                root_dir=tmp_path,
-            )
-        )
-        await asyncio.sleep(0.05)
-        # Stated rather than assumed: if the hold has already lapsed, the rest
-        # of this test is exercising the handoff path under the name of the
-        # in-process one, and the failure that follows says nothing about why.
-        assert holder.poll() is None, (
-            "the lock holder exited before the admission was cancelled, so "
-            "the contended path under test was never entered"
-        )
-        admission.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await admission
-
-        await asyncio.to_thread(holder.wait, 10.0)
-        assert holder.returncode == 0
-        assert policy.state.attempt_generation is None
-        assert policy.state.convergence_pending
-        # The cancelled admission settles in the live process, whose slot
-        # still holds the dirty paths, so the durable intent stays scoped.
-        assert not policy.state.unscoped_required
-        next_attempt = policy.admit()
-        assert next_attempt.admitted
-        assert next_attempt.attempt_generation is not None
-        policy.record_interrupted(next_attempt.attempt_generation)
-    finally:
-        if holder.poll() is None:
-            holder.terminate()
-            holder.wait(timeout=5.0)
-
-
 async def _await_recovery_markers(root: Path, pattern: str) -> list[Path]:
     """Return the recovery markers matching *pattern*, waiting for them to land.
 
@@ -743,101 +671,10 @@ async def _await_recovery_markers(root: Path, pattern: str) -> list[Path]:
     return markers
 
 
-@pytest.mark.asyncio
-async def test_detached_admission_consumes_its_fenced_handoff(
-    tmp_path: Path,
-) -> None:
-    state_path = tmp_path / "code.json"
-    policy = _policy(state_path, tmp_path)
-    policy.mark_convergence_pending(now=0.0)
-    ready_path = tmp_path / "detached-admission-ready.marker"
-    holder = _spawn_state_lock_holder(
-        state_path.with_name(f"{state_path.name}.lock"),
-        ready_path,
-        # Held until this test releases it. It used to be a fixed 3.5s, sized
-        # to land between two deadlines it did not control; nothing here is
-        # timed against those any more, so the hold has no span to get right.
-        hold_seconds=_LOCK_HELD_UNTIL_RELEASED,
-    )
-    try:
-        await _await_lock_held(holder, ready_path)
-
-        admission = asyncio.create_task(
-            admit_watcher_attempt(
-                policy,
-                source=WatcherSource.CODE,
-                root_dir=tmp_path,
-            )
-        )
-        await asyncio.sleep(0.05)
-        started = asyncio.get_running_loop().time()
-        admission.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await admission
-        assert asyncio.get_running_loop().time() - started < 5.5
-        written = await _await_recovery_markers(tmp_path, "code.recovery.*.json")
-        assert written, "the cancelled admission wrote no recovery marker"
-
-        # Released so a transaction can take the lock at all. Which
-        # transaction consumes the marker is deliberately not pinned here: see
-        # below.
-        holder.terminate()
-        # The lock is an OS-level descriptor lock, so it is freed by the
-        # holder's exit; the exit is what this waits for, and its status is a
-        # signal rather than a clean return because the exit was asked for.
-        await asyncio.to_thread(holder.wait, CHILD_PROCESS_TIMEOUT_SECONDS)
-        assert holder.returncode is not None, "the lock holder did not exit"
-
-        replacement = _policy(state_path, tmp_path)
-        # The marker is consumed under state authority, and this asserts it
-        # once a transaction has actually run under that authority - which
-        # constructing the replacement above is.
-        #
-        # It deliberately does not name *which* transaction. The obvious
-        # candidate is the settler thread the cancelled admission abandoned,
-        # still parked on the lock; asserting that specifically is what this
-        # test used to do, and it cannot be made sound. That thread's wait is
-        # bounded by _STATE_LOCK_TIMEOUT_SECONDS from when it started, while
-        # the marker it would consume is not written until
-        # _CANCELLATION_DURABILITY_SECONDS has closed - a later deadline than
-        # the one the thread lives under. The window where the thread is both
-        # still parked and has something to consume is what is left over
-        # between the two, and a loaded host spends it. Both a fixed lock hold
-        # and releasing on the observed write only size that leftover
-        # differently; neither removes it, and CI failed each in turn.
-        #
-        # The invariant that actually matters is not which thread does it: a
-        # fenced marker must not survive a transaction that ran under state
-        # authority, or its intent is applied twice. That is what is asserted,
-        # it holds whichever consumer got there first, and it has no timing
-        # term at all.
-        remaining = list(tmp_path.glob("code.recovery.*.json"))
-        # Mutation: made _recovery_marker_is_consumable always return False.
-        # Observed this fail as "the fenced handoff was never consumed", naming
-        # the surviving marker, so the assertion still detects a consume path
-        # that does not run. Restored, and it passes.
-        assert not remaining, (
-            f"the fenced handoff was never consumed; {len(remaining)} marker(s) "
-            f"still present: {[p.name for p in remaining]}"
-        )
-
-        assert replacement.state.attempt_generation is None
-        assert replacement.state.convergence_pending
-        assert not replacement.state.unscoped_required
-        assert replacement.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
-
-        next_attempt = replacement.admit()
-        assert not next_attempt.admitted
-    finally:
-        if holder.poll() is None:
-            holder.terminate()
-            holder.wait(timeout=5.0)
-
-
 def test_prestart_handoff_cancels_reserved_admission(tmp_path: Path) -> None:
     state_path = tmp_path / "code.json"
     policy = _policy(state_path, tmp_path)
-    policy.mark_convergence_pending(now=0.0)
+    mark_convergence_pending(policy, now=0.0)
     attempt_token = policy.reserve_admission()
     assert attempt_token is not None
 
@@ -880,7 +717,7 @@ async def test_cancellation_handoff_has_reserved_worker_capacity(
 
         persistence = asyncio.create_task(
             run_durable_retry_transaction(
-                policy.mark_convergence_pending,
+                lambda: mark_convergence_pending(policy),
                 source=WatcherSource.CODE,
                 root_dir=tmp_path,
                 action="mark_convergence_pending",
@@ -908,7 +745,7 @@ async def test_cancellation_handoff_has_reserved_worker_capacity(
 def test_restored_unknown_scope_is_not_narrowed_by_new_event(tmp_path: Path) -> None:
     state_path = tmp_path / "code.json"
     policy = _policy(state_path, tmp_path)
-    policy.mark_convergence_pending(now=0.0)
+    mark_convergence_pending(policy, now=0.0)
     attempt = policy.admit(now=0.0)
     assert attempt.attempt_generation is not None
     policy.record_failure(
@@ -919,7 +756,7 @@ def test_restored_unknown_scope_is_not_narrowed_by_new_event(tmp_path: Path) -> 
     )
 
     restarted = _policy(state_path, tmp_path, now=2.0)
-    restarted.mark_convergence_pending(now=3.0)
+    mark_convergence_pending(restarted, now=3.0)
     decision = restarted.admit(now=11.0)
     assert not decision.admitted
     assert restarted.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
@@ -932,7 +769,7 @@ def test_interruption_retains_scoped_intent_for_the_marking_instance(
     without the volatile paths is promoted to unscoped."""
     state_path = tmp_path / "code.json"
     policy = _policy(state_path, tmp_path)
-    policy.mark_convergence_pending(now=0.0)
+    mark_convergence_pending(policy, now=0.0)
     attempt = policy.admit(now=0.0)
     assert attempt.attempt_generation is not None
 
@@ -961,11 +798,11 @@ def test_interruption_retains_scoped_intent_for_the_marking_instance(
 def test_success_with_mid_attempt_event_stays_scoped(tmp_path: Path) -> None:
     """A generation marked mid-attempt by the same instance converges scoped."""
     policy = _policy(tmp_path / "code.json", tmp_path)
-    policy.mark_convergence_pending(now=0.0)
+    mark_convergence_pending(policy, now=0.0)
     attempt = policy.admit(now=0.0)
     assert attempt.attempt_generation == 1
 
-    newer = policy.mark_convergence_pending(now=1.0)
+    newer = mark_convergence_pending(policy, now=1.0)
     assert newer.convergence_generation == 2
     settled = policy.record_success(1, now=2.0)
     assert settled.convergence_pending
@@ -1054,7 +891,7 @@ def test_recovery_marker_clears_claim_and_requires_explicit_rebuild(
 ) -> None:
     state_path = tmp_path / "code.json"
     policy = _policy(state_path, tmp_path)
-    policy.mark_convergence_pending(now=0.0)
+    mark_convergence_pending(policy, now=0.0)
     attempt = policy.admit(now=0.0)
     assert attempt.attempt_generation is not None
     marker = policy.write_recovery_marker()
@@ -1075,7 +912,7 @@ def test_recovery_marker_clears_claim_and_requires_explicit_rebuild(
 def test_late_recovery_marker_preserves_newer_live_claim(tmp_path: Path) -> None:
     state_path = tmp_path / "code.json"
     retiring = _policy(state_path, tmp_path)
-    retiring.mark_convergence_pending(now=0.0)
+    mark_convergence_pending(retiring, now=0.0)
     retiring_attempt = retiring.admit(now=0.0)
     assert retiring_attempt.attempt_generation is not None
     retiring.record_interrupted(retiring_attempt.attempt_generation, now=1.0)
@@ -1099,7 +936,7 @@ def test_late_recovery_marker_preserves_newer_live_claim(tmp_path: Path) -> None
 def test_inactive_same_process_fence_is_consumed(tmp_path: Path) -> None:
     state_path = tmp_path / "code.json"
     policy = _policy(state_path, tmp_path)
-    policy.mark_convergence_pending(now=0.0)
+    mark_convergence_pending(policy, now=0.0)
     attempt = policy.admit(now=0.0)
     assert attempt.attempt_generation is not None
     marker = policy.write_recovery_marker()
@@ -1144,68 +981,6 @@ def test_time_confirmed_recovery_temporary_is_removed(tmp_path: Path) -> None:
     policy.refresh()
 
     assert not any(temporary.exists() for temporary in temporaries)
-
-
-@pytest.mark.asyncio
-async def test_mixed_batch_cancellation_hands_off_both_sources(
-    tmp_path: Path,
-) -> None:
-    vault_path = tmp_path / "vault.json"
-    code_path = tmp_path / "code.json"
-    vault = _policy(vault_path, tmp_path, source=WatcherSource.VAULT)
-    code = _policy(code_path, tmp_path)
-    vault_ready = tmp_path / "mixed-vault-lock-ready.marker"
-    code_ready = tmp_path / "mixed-code-lock-ready.marker"
-    holders = [
-        _spawn_state_lock_holder(
-            vault_path.with_name(f"{vault_path.name}.lock"),
-            vault_ready,
-            hold_seconds=_LOCK_HELD_UNTIL_RELEASED,
-        ),
-        _spawn_state_lock_holder(
-            code_path.with_name(f"{code_path.name}.lock"),
-            code_ready,
-            hold_seconds=_LOCK_HELD_UNTIL_RELEASED,
-        ),
-    ]
-    try:
-        vault_holder, code_holder = holders
-        await _await_lock_held(vault_holder, vault_ready)
-        await _await_lock_held(code_holder, code_ready)
-
-        persistence = asyncio.create_task(
-            persist_observed_sources(
-                (
-                    ObservedSource(True, WatcherSource.VAULT, vault),
-                    ObservedSource(True, WatcherSource.CODE, code),
-                ),
-                root_dir=tmp_path,
-            )
-        )
-        await asyncio.sleep(0.05)
-        started = asyncio.get_running_loop().time()
-        persistence.cancel()
-        assert await persistence is True
-
-        assert asyncio.get_running_loop().time() - started < 8.0
-        vault_written = await _await_recovery_markers(tmp_path, "vault.recovery.*.json")
-        assert vault_written, "the vault source wrote no recovery marker"
-        code_written = await _await_recovery_markers(tmp_path, "code.recovery.*.json")
-        assert code_written, "the code source wrote no recovery marker"
-    finally:
-        for holder in holders:
-            if holder.poll() is None:
-                holder.terminate()
-                holder.wait(timeout=5.0)
-
-    recovered_vault = _policy(vault_path, tmp_path, source=WatcherSource.VAULT)
-    recovered_code = _policy(code_path, tmp_path)
-    assert recovered_vault.state.convergence_pending
-    assert not recovered_vault.state.unscoped_required
-    assert recovered_vault.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
-    assert recovered_code.state.convergence_pending
-    assert not recovered_code.state.unscoped_required
-    assert recovered_code.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
 
 
 @pytest.mark.asyncio

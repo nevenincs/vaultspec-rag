@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ...progress import NullProgressReporter
+from .._indexer_fixtures import support_measurement
 from ..benchmarks.bench_large_index_resilience import (
     CorpusSpec,
     MeasuredIndexRun,
@@ -209,7 +210,7 @@ class TestLargeCodeIndexHighWater:
                     clean=True,
                 )
                 assert measured.result.total == spec.expected_chunks
-                assert indexer.support_measurement.generated_chunks == (
+                assert support_measurement(indexer).generated_chunks == (
                     spec.expected_chunks
                 )
                 return measured

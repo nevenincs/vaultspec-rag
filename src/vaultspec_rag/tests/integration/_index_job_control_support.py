@@ -46,6 +46,7 @@ from ...progress import NullProgressReporter
 from ...registry import get_registry, reset_registry
 from ...store_runtime import VaultStore
 from .._publication_assertions import published_content_identities
+from .._store_fixtures import get_all_ids
 from ._helpers import cpu_backed_embedding_model
 
 if TYPE_CHECKING:
@@ -412,13 +413,13 @@ async def assert_cancelled_vault_stops_writes(
     metadata_mtime = (
         metadata_path.stat().st_mtime_ns if metadata_path.exists() else None
     )
-    point_ids = slot.store.get_all_ids()
+    point_ids = get_all_ids(slot.store)
     point_count = slot.store.count()
     payloads = {point_id: slot.store.get_by_id(point_id) for point_id in point_ids}
     await asyncio.sleep(0.25)
 
     assert manager.get(job_id) == cancelled
-    assert slot.store.get_all_ids() == point_ids
+    assert get_all_ids(slot.store) == point_ids
     assert slot.store.count() == point_count
     current_payloads = {
         point_id: slot.store.get_by_id(point_id) for point_id in point_ids
@@ -700,7 +701,7 @@ def assert_revised_vault_publication(
     publication: _RevisedVaultPublication,
     token: RunControlToken,
 ) -> None:
-    assert store.get_all_ids() == publication.expected_ids
+    assert get_all_ids(store) == publication.expected_ids
     metadata_after = published_content_identities(
         indexer.root_dir, PublicSourceType.VAULT
     )

@@ -33,6 +33,7 @@ from ...progress import NullProgressReporter
 from ...server import _lifespan as server_lifespan
 from ...service_quiesce import ServiceQuiesceController
 from .._sqlite_state import assert_sqlite_unchanged, sqlite_contents
+from .._store_fixtures import get_all_ids
 from ._service_job_control_e2e_support import (
     E2E_POLL_SECONDS,
     E2E_TIMEOUT_SECONDS,
@@ -217,7 +218,7 @@ async def _cancel_large_job(
 ) -> None:
     """Cancel a writer-blocked job and assert its published state is absorbing."""
     _write_vault_corpus(root, start=384, count=192)
-    before_ids = slot.store.get_all_ids()
+    before_ids = get_all_ids(slot.store)
     metadata_path = index_run_ledger_path(workspace_volume_path(root.resolve()))
     before_metadata = sqlite_contents(metadata_path)
     cancelled_id: str | None = None
@@ -260,11 +261,11 @@ async def _cancel_large_job(
     assert cancelled is not None
     assert cancelled.state is JobState.CANCELLED
     assert_released(cancelled, slot)
-    after_ids = slot.store.get_all_ids()
+    after_ids = get_all_ids(slot.store)
     assert_sqlite_unchanged(metadata_path, before_metadata)
     await asyncio.sleep(0.25)
     assert after_ids == before_ids
-    assert slot.store.get_all_ids() == after_ids
+    assert get_all_ids(slot.store) == after_ids
     assert_sqlite_unchanged(metadata_path, before_metadata)
     replay = manager.set_desired_state(cancelled_id, DesiredJobState.CANCELLED)
     assert replay.code == "already_satisfied"

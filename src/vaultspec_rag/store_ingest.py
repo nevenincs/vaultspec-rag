@@ -9,10 +9,8 @@ from . import store_schema
 from ._store_models import (
     CodeChunk,
     VaultChunk,
-    VaultDocument,
     _code_chunk_payload,
     _vault_chunk_payload,
-    _vault_doc_payload,
 )
 from ._store_models import DocumentChunk as _DocumentChunk
 from ._store_writes import (
@@ -129,46 +127,6 @@ class _VaultIngestMixin:
             "extractor_id": chunk.payload.extractor_id,
             "extractor_version": chunk.payload.extractor_version,
         }
-
-    def upsert_documents(
-        self,
-        docs: list[VaultDocument],
-        *,
-        write_policy: StoreWritePolicy | None,
-    ) -> None:
-        """Insert or update documents by ``id``.
-
-        Args:
-            docs: Documents to insert or replace.
-            write_policy: Caller-owned retry/deadline policy for managed runs;
-                direct store callers pass ``None``.
-        """
-        if not docs:
-            return
-
-        from qdrant_client import models
-
-        points: list[PointStruct] = []
-        for doc in docs:
-            points.append(
-                models.PointStruct(
-                    id=self._stable_id(doc.id),
-                    vector=_point_vector(
-                        doc.vector, doc.sparse_indices, doc.sparse_values
-                    ),
-                    payload=cast("dict[str, Any]", _vault_doc_payload(doc)),
-                ),
-            )
-
-        self.ensure_table()
-        with self._point_lock(self.TABLE_NAME):
-            self._guarded_upsert(
-                self.TABLE_NAME,
-                points,
-                "vault documents",
-                write_policy=write_policy,
-            )
-        logger.info("Upserted %d document(s)", len(docs))
 
     def upsert_document_chunks(
         self,

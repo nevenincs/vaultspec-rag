@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, NamedTuple
 import pytest
 
 from ...progress import NullProgressReporter
+from .._ledger_fixtures import latest_generation
 from ._helpers import _document_policy
 
 if TYPE_CHECKING:
@@ -76,7 +77,8 @@ def _interrupt_document_indexing(
     while time.monotonic() < deadline:
         if ledger_path.exists():
             ledger = RunLedger(ledger_path)
-            generation = ledger.latest_generation(
+            generation = latest_generation(
+                ledger,
                 ContentKind.DOCUMENT,
                 collection_identity=store_schema.DOCUMENT_COLLECTION,
             )
@@ -135,7 +137,8 @@ def test_document_restart_reuses_confirmed_slices_and_publishes_once(
             preflight=indexer.preflight_content(),
         )
         ledger = RunLedger(interrupted.ledger_path)
-        published = ledger.latest_generation(
+        published = latest_generation(
+            ledger,
             ContentKind.DOCUMENT,
             collection_identity=store_schema.DOCUMENT_COLLECTION,
         )

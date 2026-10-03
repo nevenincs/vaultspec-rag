@@ -444,7 +444,6 @@ class TestNoStructurallyIdenticalFunctions:
         (
             "_readiness.py:dimension",
             "cli/_jobs_tui_status.py:seat_pool",
-            "commands/_provision.py:result_for",
         ): _FIND_FIRST,
         (
             "indexer/_preprocess_config.py:match",
@@ -457,10 +456,6 @@ class TestNoStructurallyIdenticalFunctions:
         (
             "commands/_mcp_topology.py:_require_identity",
             "commands/_mcp_topology.py:_require_unchanged",
-        ): _SMALL_GUARD,
-        (
-            "watcher_runtime.py:dirty_paths",
-            "watcher_runtime.py:pending_count",
         ): _SMALL_GUARD,
         (
             "commands/_install.py:install_run",
@@ -515,10 +510,6 @@ class TestNoStructurallyIdenticalFunctions:
         (
             "store_collections.py:ensure_document_table",
             "store_collections.py:ensure_table",
-        ): _PARAMETERISATION,
-        (
-            "store_catalog.py:get_all_document_content_ids",
-            "store_catalog.py:get_all_ids",
         ): _PARAMETERISATION,
         (
             "store_catalog.py:scroll_code_content",
