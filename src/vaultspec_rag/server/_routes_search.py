@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from functools import partial
 from math import ceil, isfinite
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
 from qdrant_client.http.exceptions import (
@@ -117,7 +117,7 @@ if TYPE_CHECKING:
 
     from ..service import ServiceRegistry
     from ..service_quiesce import QuiesceSnapshot
-    from ._search_availability import SearchResponseClassification
+    from ._search_availability import SearchResponseClassification, SearchStatusCode
     from ._search_readiness import (
         PublicationTarget,
         ReadinessRevisionRegistry,
@@ -351,7 +351,7 @@ def _complete_classified_search(
     facts: SearchAvailabilityRequestFacts,
     registry: ServiceRegistry,
     total_seconds: float,
-) -> tuple[dict[str, object], Literal[200, 409, 503]]:
+) -> tuple[dict[str, object], SearchStatusCode]:
     """Complete watcher and log effects from one classification decision."""
     result = classification.response
     # The classifier owns the canonical failure code and evidence. HTTP owns
@@ -1261,7 +1261,7 @@ async def _execute_search_route(
 
 def _search_response_status(
     result: dict[str, object],
-) -> Literal[200, 409, 503]:
+) -> SearchStatusCode:
     """Map canonical search outcomes onto their stable HTTP status.
 
     Retrieval envelopes carry no ``ok`` key, so only a failure declares one.

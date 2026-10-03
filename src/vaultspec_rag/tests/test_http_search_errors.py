@@ -419,6 +419,14 @@ class TestSearchResponseStatus:
         assert actual != 429
 
 
+#: The generation the fixture daemon has published and is serving. The
+#: integrity block below names the same one: a consistent verdict proves
+#: nothing about the published generation unless it was measured over it, so
+#: the two values are one value here for the same reason production compares
+#: them.
+_PUBLISHED_GENERATION = "served"
+
+
 def _canonical_classification_facts(
     root: Path,
     *,
@@ -449,9 +457,9 @@ def _canonical_classification_facts(
         port=8766,
         readiness_snapshot=ReadinessRevisionSnapshot(
             key=key,
-            published_generation="served",
+            published_generation=_PUBLISHED_GENERATION,
             publication_revision=1,
-            desired_generation="served" if current else "desired",
+            desired_generation=_PUBLISHED_GENERATION if current else "desired",
             controller_revision=1 if current else 2,
         ),
     )
@@ -468,7 +476,10 @@ def _canonical_searched(results: list[dict[str, object]]) -> dict[str, object]:
             "requested_target_root": "project",
             "target_matches": True,
             "status": "available",
-            "index_integrity": {"verdict": "consistent"},
+            "index_integrity": {
+                "verdict": "consistent",
+                "generation_id": _PUBLISHED_GENERATION,
+            },
         },
     }
 

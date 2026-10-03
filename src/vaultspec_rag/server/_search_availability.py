@@ -30,12 +30,19 @@ if TYPE_CHECKING:
 __all__ = [
     "CanonicalSearchEvidence",
     "SearchResponseClassification",
+    "SearchStatusCode",
     "classify_qdrant_collection_disappearance",
     "classify_search_response",
     "storage_conformance_refusal_fact",
 ]
 
 # One declaration of the convergence-mode vocabulary; the transport owns it.
+
+#: The stable HTTP statuses a classified search answers with. Declared beside
+#: the classification that carries one so the transport's own mapping function
+#: and this field cannot drift to different sets. The classifier cannot import
+#: the transport - the transport imports it - so the alias lives on this side.
+type SearchStatusCode = Literal[200, 409, 503]
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +63,7 @@ class SearchResponseClassification:
     """One response decision and its bounded, causally merged job evidence."""
 
     response: dict[str, object]
-    status_code: Literal[200, 409, 503]
+    status_code: SearchStatusCode
     matching_jobs: tuple[MatchingIndexJobReference, ...]
     matching_jobs_truncated: bool
     rebuilding: bool
