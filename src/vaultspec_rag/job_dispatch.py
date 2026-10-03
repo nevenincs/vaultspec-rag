@@ -478,17 +478,11 @@ def _indexer_resilience(
     admitted: IndexResilienceSnapshot,
 ) -> IndexResilienceSnapshot:
     """Project the attempt's exact checkpoint and observed resource peaks."""
-    from .indexer import CodebaseIndexer
-
     budget = indexer.memory_budget_snapshot
     peak_rss_mib = budget.peak_rss_mib if budget is not None else None
     peak_cuda_reserved_mib = (
         budget.peak_cuda_reserved_mib if budget is not None else None
     )
-    if budget is None and isinstance(indexer, CodebaseIndexer):
-        measurement = indexer.support_measurement
-        peak_rss_mib = bytes_to_mib(measurement.rss_bytes)
-        peak_cuda_reserved_mib = bytes_to_mib(measurement.cuda_bytes)
     return _checkpoint_resilience(
         checkpoint,
         admitted,
@@ -580,8 +574,11 @@ def _observe_index_resilience(
     admitted: IndexResilienceSnapshot,
 ) -> Generator[None]:
     """Bind real checkpoint notifications and final facts to this attempt."""
+    from .indexer import CodebaseIndexer, DocumentIndexer
     from .indexer._checkpoint_common import observe_checkpoint_progress
 
+    if isinstance(indexer, (CodebaseIndexer, DocumentIndexer)):
+        indexer.reset_memory_telemetry()
     publication = _LiveResiliencePublication(context, indexer, admitted)
     with observe_checkpoint_progress(publication):
         try:

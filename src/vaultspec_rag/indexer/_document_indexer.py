@@ -406,6 +406,10 @@ class DocumentIndexer:
 
         return held_budget_snapshot(self._memory_budget)
 
+    def reset_memory_telemetry(self) -> None:
+        """Clear prior attempt observations under managed worker ownership."""
+        self._memory_budget = None
+
     def resolve_policy_snapshot(self) -> ResolvedIndexPolicy:
         """Resolve the immutable admission and extraction policy for one run."""
         from ._resolved_policy import IndexPolicyResolutionOptions, resolve_index_policy
@@ -1475,7 +1479,7 @@ class DocumentIndexer:
                         ContentKind.DOCUMENT,
                         selected,
                     )
-                else:
+                elif selected:
                     reconcile_generation_storage(
                         self.store,
                         checkpoint,

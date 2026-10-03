@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:9cd4e210afaeee3a404e13eda48a2e499851d9f188642d30cc85c85fd912e576'
+body_hash: 'sha256:03ffd67e452a56a34255bad2b7d73a6836767aa0101f3fb18d9042d0c3dc0284'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -652,6 +652,19 @@ related:
 - `S35` `verify:` `root package Ruff/format/diff/full complexity gates` -> `pass`
 - `S35` `verify:` `root independent S35 formula and evidence review` -> `pass`
 - `S35` `by:` `root`
+- `S36` `M` `src/vaultspec_rag/indexer/_support_budget.py`
+- `S36` `M` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S36` `M` `src/vaultspec_rag/indexer/_document_indexer.py`
+- `S36` `M` `src/vaultspec_rag/job_dispatch.py`
+- `S36` `A` `src/vaultspec_rag/tests/test_attempt_memory_telemetry.py`
+- `S36` `M` `.vault/audit/2026-10-02-resident-service-recovery-audit.md`
+- `S36` `verify:` `CPU test_attempt_memory_telemetry (11 passed)` -> `pass`
+- `S36` `verify:` `affected live_checkpoint/job/watcher/contracts/resource CPU (80 passed)` -> `pass`
+- `S36` `verify:` `changed Ruff/format/strict basedpyright/ty` -> `pass`
+- `S36` `verify:` `five actual production omission guards named fail1 finally restore fresh0 stable22deps` -> `pass`
+- `S36` `verify:` `root package Ruff/format/diff/full complexity` -> `pass`
+- `S36` `verify:` `independent Sol xhigh S36 review binding22dependencies and8artifacts` -> `pass`
+- `S36` `by:` `root`
 
 ## Notes
 

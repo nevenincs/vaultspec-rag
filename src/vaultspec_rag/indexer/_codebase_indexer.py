@@ -254,6 +254,10 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         budget = self._support_budget.memory_budget
         return budget.snapshot if budget is not None else None
 
+    def reset_memory_telemetry(self) -> None:
+        """Clear prior attempt observations under managed worker ownership."""
+        self._support_budget.reset_memory_telemetry()
+
     def resolve_policy_snapshot(self) -> ResolvedIndexPolicy:
         """Resolve one immutable policy snapshot before any mutation authority.
 

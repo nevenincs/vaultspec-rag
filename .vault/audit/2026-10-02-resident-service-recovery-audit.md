@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:5e816e0300bb511602566619a2cb068d07454bbe0ad97c4e06520d981de8e5fc'
+body_hash: 'sha256:7e5423961d340d7b40ed406cd2bf8b6d2a7bb8a609ab007daddd7060cb7ba9af'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -451,3 +451,11 @@ The frozen two-file handoff records 15 focused and 114 affected CPU passes, six 
 A fresh TUI VAULT update succeeded in 36.433 seconds. Its 359-chunk payload refresh occupied about 27.5 seconds. The pinned live py-spy dump captured the writer waiting in Qdrant HTTP response reading through the per-chunk overwrite owner. Investigation of avoidable request amplification is pending. A later 10-second active recording started after this job succeeded and collected zero samples, so it is excluded from active performance evidence. A separate 14.212-second idle resource window measured 0.391 CPU-seconds each for Python and Qdrant and zero sampled GPU utilization.
 
 The monitoring helper's invalid `state=active` filter was corrected to a real state and now checks the canonical active summary. The two transient tickets belonged to live watcher work, not a demonstrated leak. After the admitted writer completed, canonical service pause succeeded in 1.022 seconds, reporting zero tickets, completed drain, released VRAM and closed admissions. The resident remains alive with zero backend restarts and zero fatal-log bytes. S34's lazy restoration is being corrected to offload proof reads from the HTTP loop. S36 owns fresh CODE/DOCUMENT attempt telemetry and the independently reproduced empty DOCUMENT receipt reconciliation defect. The final source reload, physical publication recovery and trusted fleet deployment remain open. Other user files remain intact.
+
+## S36 formal source checkpoint
+
+S36 resets CODE and DOCUMENT memory telemetry at the managed attempt observation boundary before the public call and preflight, under existing admitted worker ownership. CODE clears its held budget, support measurement and stale profile/limits; DOCUMENT clears its budget. Absent current budgets project unknown peaks instead of prior support-measurement peaks or fabricated zero. Sampling, enforcing admission, writer/GPU lock order and VAULT remain unchanged.
+
+Actual consecutive public CPU runs reproduce the previous attempt peak and verify a fresh checkpoint starts with unknown peaks, then reports its own lower peak. Real preflight refusal preserves its original error while retaining unknown memory, and no-op completion owns only observations it takes. The DOCUMENT no-op also exposed an empty reservation rolled back by canonical sealing before an unconditional destructive effective-read sweep. The correction skips that unscoped sweep only when no path is selected, retaining nonempty removals, per-path reconciliation, unchanged parent publication, physical point IDs, zero units, rolled-back empty receipt and strict sealed-reader refusal. The parent proof's generation/revision/aggregate remain unchanged; opening the DOCUMENT reservation advances only its canonical reservation sequence.
+
+All five source/test files are frozen. Ruff, format, strict basedpyright and ty pass; 11 focused and 80 affected CPU tests pass with six deselections. Five actual production in-memory guards fail on their named assertions, restore in finally and pass in fresh normal children, with 22 dependencies stable. The extra reader guard omits the sealed check and reaches the independent terminal-immutability refusal, failing the exact expected sealed-reader matcher; the test matcher was never weakened. Root source/test review and a separate Sol xhigh review pass. Root package Ruff/format/diff/full complexity gates pass. Exact commands, hashes and logs are in `s36-proof/handoff.json` and `perf-profiling/s36-final-shared-gates.json`. Runtime acceptance remains pending source reload.
