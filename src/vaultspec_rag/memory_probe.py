@@ -434,26 +434,29 @@ def resolve_index_cuda_ceiling_mib(
     in either direction - it may raise the ceiling above the profile figure as
     well as lower it below, replacing the former one-way ``min`` clamp. When it
     is unset (zero or negative), the ceiling is derived from the real device as
-    an ABSOLUTE figure: ``min(baseline_mib + free - headroom_mib,
-    total - headroom_mib)``. Free memory is sampled after the resident models
-    loaded, so it already excludes them - and enforcement compares peak and
-    ceiling net of the resident baseline, so ``baseline_mib`` must be added back
-    here. A bare ``free - headroom`` ceiling would charge the resident models
-    twice (once inside the free reading, once via the baseline-net comparison)
-    and falsely reject legitimate forwards. When the free reading is
+    an ABSOLUTE figure: ``min(own_reserved + free - headroom_mib,
+    total - headroom_mib)``. Free and own reservation come from one guarded
+    observation. The reservation includes resident allocations and reusable
+    allocator blocks that a cache flush cannot release, so adding only the
+    resident baseline would omit capacity this process already holds. If the
+    reservation is unreadable, only the known resident baseline is credited.
+    The baseline is never added on top of a readable reservation. Enforcement
+    still compares peak and ceiling net of that baseline. When the free reading is
     unavailable the derivation falls back to ``total - headroom_mib``; off the
     GPU compute path the device total is also unavailable, so it falls back to
     ``profile_cuda_mib`` - the profile figure becomes a default rather than a
     hard cap.
     """
+    device = cuda_device_memory()
     return cuda_ceiling_from_observation(
         CudaCeilingObservation(
-            device_total_mib=cuda_device_total_mib(),
-            free_mib=cuda_free_memory_mib(),
+            device_total_mib=device.total_mib,
+            free_mib=device.free_mib,
             configured_mib=configured_mib,
             headroom_mib=headroom_mib,
             profile_cuda_mib=profile_cuda_mib,
             baseline_mib=baseline_mib,
+            own_reserved_mib=device.own_reserved_mib,
         )
     )
 
@@ -468,6 +471,7 @@ class CudaCeilingObservation:
     headroom_mib: float
     profile_cuda_mib: float
     baseline_mib: float
+    own_reserved_mib: float | None = None
 
 
 def cuda_ceiling_from_observation(
@@ -490,10 +494,15 @@ def cuda_ceiling_from_observation(
     total_capped = max(0.0, observation.device_total_mib - observation.headroom_mib)
     if observation.free_mib is None:
         return total_capped
+    own_credit = (
+        observation.baseline_mib
+        if observation.own_reserved_mib is None
+        else observation.own_reserved_mib
+    )
     return max(
         0.0,
         min(
-            observation.baseline_mib + observation.free_mib - observation.headroom_mib,
+            own_credit + observation.free_mib - observation.headroom_mib,
             total_capped,
         ),
     )

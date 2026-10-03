@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:510fb808b6c70f80b63db291aa308225f7e8bb160dcb70d42e80a5940107e41d'
+body_hash: 'sha256:9cd4e210afaeee3a404e13eda48a2e499851d9f188642d30cc85c85fd912e576'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -641,6 +641,17 @@ related:
 - `S33` `verify:` `git diff --check` -> `pass`
 - `S33` `verify:` `uv run --no-sync python -m dev.complexity gate` -> `pass`
 - `S33` `by:` `root`
+- `S35` `M` `src/vaultspec_rag/memory_probe.py`
+- `S35` `A` `src/vaultspec_rag/tests/test_index_cuda_reservation_credit.py`
+- `S35` `M` `.vault/adr/2026-07-24-index-cuda-shared-device-adr.md`
+- `S35` `M` `.vault/audit/2026-10-02-resident-service-recovery-audit.md`
+- `S35` `verify:` `pytest test_index_cuda_reservation_credit CPU (15 passed)` -> `pass`
+- `S35` `verify:` `pytest config/job_resilience/index_resource_ceilings CPU (114 passed)` -> `pass`
+- `S35` `verify:` `changed-file Ruff and format plus strict ty/basedpyright source-only resolution` -> `pass`
+- `S35` `verify:` `actual production reservation-credit and peak-enforcement omission guards fail1 restore fresh0` -> `pass`
+- `S35` `verify:` `root package Ruff/format/diff/full complexity gates` -> `pass`
+- `S35` `verify:` `root independent S35 formula and evidence review` -> `pass`
+- `S35` `by:` `root`
 
 ## Notes
 
