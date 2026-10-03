@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:0d66fb4c2833ba7726ff5be9108730f08076d8a10a1e379d478df0c36ed12ff7'
+body_hash: 'sha256:312941cacd73c79bfa8f395494f9d5ed832e577ea2f27557973ce6f90a248a45'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -227,3 +227,13 @@ Timed maintenance restoration was extended to 04:30 UTC on 2026-10-03 for review
 Independent SOURCE+CPU review passes final S15:27 focused and335 affected CPU cases, seven recorded changed-file gates exit0, eight production guard fail/fresh-pass pairs including explicit NUL validation, and three refreshed S07 temporal guards against the extracted predicates. All eleven owned hashes match. Real ASGI tests cover Windows path aliases and malformed root/project_root filters, including conflicting valid/invalid filters. The affected suite refreshes S01/S07 recovery and S13 readiness/conformance/availability behavior.
 
 S16 review additionally found archive expiry/size eviction still running while autoprune was disabled. The accepted autoprune decision places archive retention in stage4 of the same configured cycle and declares no independent archive enable; the existing policy documentation promises all destructive stages remain inert when disabled. S16 scope now also gates archive eviction while retaining enabled retention and independently configured reconciliation. Source and CPU review must finish before rollout.
+
+## Expanded S17 survey fact audit
+
+Independent per-namespace audit confirmed the CLI service decoder also dropped stamped model maps and vault/code/document point counts. The model loss falsely labelled stamped namespaces as predating stamping in human output. Published temp_rooted was discarded and recomputed under the client TEMP/TMP/TMPDIR/tempfile environment, so the client could report a different classification from the service. S17 now preserves all four dimensions alongside generation diagnostics through the existing canonical survey record and a shared fact accessor; both published true and false must survive, with canonical local fallback only when no valid published fact exists. Prefix, root, status, collection names, valid aggregate points, verification, footprint and queried-root facts already survived. HTTP-only snapshot age and envelope totals remain outside scope. Final source/gate/guard review is pending the expanded proof handoff.
+
+Both monitor and TUI ledgers were preserved through SQLite consistent read-only backups before fresh rebuild publication can compact obsolete evidence. Their sizes are57,311,232 and441,352,192 bytes. A vector-free backend ID comparison and actual source-snapshot chunking will be attempted after backend readiness to bound attribution of the356 missing monitor points.
+
+## Final S16 source checkpoint
+
+Independent SOURCE+CPU review passes expanded S16 against both frozen hashes:13 focused and190 affected CPU cases, seven changed gates exit0 and five intended production mutation failures followed by fresh restored passes. Real local-Qdrant and complete-archive tests prove autoprune off preserves eligible generations and expired/over-cap archives, with byte-for-byte archive preservation, while still recording grace observations and running independently configured reconciliation. Enabled autoprune and explicit dry-run retain their accepted behaviors. Neither this repair nor incident investigation deleted any live backend storage or archive.

@@ -29,9 +29,10 @@ related:
   - '[[2026-07-14-storage-autoprune-safety-adr]]'
   - '[[2026-07-25-archive-restore-contract-adr]]'
   - '[[2026-09-01-generation-accounting-adr]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-adr]]'
 modified: '2026-10-03'
 body_schema: body-v2
-body_hash: 'sha256:1edfbba85303ba21f5d2c2bfa45713e1eb81212806c5e1ab381991be844175e5'
+body_hash: 'sha256:32ad9594590da3f602d5ae333ed9c3ecc7199b87700b2c861d4260f7edb7f6d2'
 ---
 
 # `resident-service-recovery` plan
@@ -66,6 +67,8 @@ A bounded cold-start cleanup investigation confirmed two additional contract vio
 
 S18 follows a strict live ingest barrier rejecting 14,897 expected versus 14,541 actual monitor code points. Real chunking and local storage reproduced record-time drift deleting newly written unchanged chunk IDs shared across whole-file digests. A separate interrupted-deletion reproduction seeded retired identities from durable deletion units. The existing single drift owner, storage-before-ledger ordering and resumable confirmed-unit authority govern both repairs; no schema change is required. Damaged unserved monitor and TUI build generations must be retired through the canonical ledger owner while the daemon is stopped, preserving served collections and evidence before explicit rebuild retries.
 
+The S16 final review found archive age/size eviction bypassing the same disable sentinel; accepted autoprune and archive decisions place it within the configured cycle, so S16 also preserves archived evidence when destruction is disabled. The S17 field audit additionally confirmed dropped model maps and per-kind point counts, plus temporary-root classification recomputed under the CLI process's environment. S17 carries those published namespace facts through one canonical accessor, retaining legacy/direct fallback without recomputing daemon authority. Intentional HTTP envelope fields remain outside the repair.
+
 ## Steps
 
 - [x] `S01` - Preserve terminal rebuild refusals and accurate watcher status through events, failures, and restart, and reconcile successful verified operator rebuilds; `watcher retry, controller, intake, execution and runtime, jobs.py completion hook, affected watcher and job tests`.
@@ -82,8 +85,8 @@ S18 follows a strict live ingest barrier rejecting 14,897 expected versus 14,541
 - [x] `S13` - Map storage conformance refusals to canonical search rebuild-required facts and HTTP outcomes without erasing combined source failures; `service-domain search availability and combined outcome conformance mapping, server search route as needed, focused CPU route and search regressions`.
 - [x] `S14` - Preserve explicit rebuild replacement authority across global quiesce and logical job resume before any source worker has started; `canonical job resume clean/mode mapping and source handoff as needed, CPU queued-quiesce and paused rebuild replacement regressions`.
 - [x] `S15` - Use one canonical watcher root identity for Windows path filters, unregistration and bounded active-root release; `watcher root-key owner, server watcher route and scheduler lifecycle, CPU path-alias filter and active registration/release regressions`.
-- [ ] `S16` - Honor disabled automatic pruning at superseded-generation and archive destruction stages while retaining classification and independently enabled reconciliation; `canonical reclamation policy, generation stage and archive retention, CPU disabled-policy real-storage and archive regressions`.
-- [ ] `S17` - Preserve canonical generation diagnostics through CLI storage survey decoding and JSON emission; `CLI namespace survey projection and shared survey record as needed, CPU unknown known-empty and generation-debt round-trip regressions`.
+- [x] `S16` - Honor disabled automatic pruning at superseded-generation and archive destruction stages while retaining classification and independently enabled reconciliation; `canonical reclamation policy, generation stage and archive retention, CPU disabled-policy real-storage and archive regressions`.
+- [ ] `S17` - Preserve canonical namespace generation, model, per-kind count and temp-root classification facts through CLI survey decoding and JSON/human rendering; `CLI namespace survey projection, canonical survey record and fact accessors, CPU service-to-CLI fact round-trip and legacy fallback regressions`.
 - [x] `S18` - Preserve republished shared chunk identities during resume drift retirement and exclude historical deletion evidence from retained upsert accumulation; `indexer canonical drift owner and consumer retained-ID accumulation, ledger iterator selection only as needed, CPU actual chunking real-local-storage interrupted partial-edit and deletion-history regressions`.
 - [ ] `S04` - Deploy the current checkout as the resident daemon, repair affected publications through explicit rebuild jobs when required, and verify service health, search, and watcher convergence; `resident service lifecycle, affected root ledgers and admitted jobs, plan verification and final audit`.
 

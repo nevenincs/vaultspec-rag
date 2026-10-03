@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:208d8378cb5a6dee77931e6557058dd7c0a4c695bd4d3b394c567977aa35a68a'
+body_hash: 'sha256:45bc98b94b480ee4bcbd3833f12324d7c2aa2fac033e63053904fb07f1f2abed'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -224,6 +224,14 @@ related:
 - `S15` `verify:` `S07 three temporal guard pairs refreshed against current predicates` -> `pass`
 - `S15` `verify:` `integrated S15 source and CPU review` -> `pass`
 - `S15` `by:` `root`
+- `S16` `M` `src/vaultspec_rag/storage_reclamation.py`
+- `S16` `A` `src/vaultspec_rag/tests/test_generation_autoprune_policy.py`
+- `S16` `verify:` `package Ruff lint format and frozen hashes` -> `pass`
+- `S16` `verify:` `S16 seven changed gates each exit0` -> `pass`
+- `S16` `verify:` `S16 focused CPU13 and affected190 cases` -> `pass`
+- `S16` `verify:` `S16 five production mutation fail fresh restored pass pairs` -> `pass`
+- `S16` `verify:` `integrated S16 source and CPU review` -> `pass`
+- `S16` `by:` `root`
 
 ## Notes
 
@@ -232,3 +240,4 @@ related:
 - `S14` Constructor-only integration migrations were strictly checked; GPU integration fixtures were not executed. Live replacement rollout remains S04.
 - `S18` Live monitor missing356 points shares the reproduced drift mechanism; individual attribution of every missing ID remains unproven. Served collections and damaged-build storage were preserved; fresh admitted rebuild verification remains S04.
 - `S15` Malformed embedded-NUL root and `project_root` filters now return bounded `bad_request400;` live Windows path-alias watcher convergence remains S04.
+- `S16` Existing zero reclaim cap now disables generation and archive destruction; independently configured reconciliation and positive-cap retention remain active. No live storage or archive was removed.
