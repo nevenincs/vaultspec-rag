@@ -4,7 +4,7 @@ tags:
   - '#large-index-resilience'
 date: '2026-07-21'
 modified: '2026-10-03'
-body_hash: 'sha256:5e36e3dc7206b3b75277f973e42151799653ef85a90a510fa7c74096233f86f9'
+body_hash: 'sha256:e82d15916dc5a5304e8f875161785cccd5f2b0a3dc2a5ab85301458c3019e741'
 related:
   - "[[2026-07-21-large-index-resilience-research]]"
   - "[[2026-07-21-large-index-resilience-reference]]"
@@ -265,7 +265,7 @@ The pinned sparse model has 50,370 output dimensions. The canonical estimator re
 
 The managed CODE aggregate weighted limit is corrected to 1,024 GiB, matching the existing managed DOCUMENT aggregate weight and rounding the proved floor upward with 78,441,096,408 bytes of margin. This restores the already accepted floor under the pinned vocabulary. It is not benchmark evidence for a new corpus capability above that floor, and independent chunk/source/runtime limits continue to reject their first excess before another unit is admitted. Real CPU fixtures and negative guards establish the floor and boundary behavior; resident recovery establishes the actual interrupted and failed builds. No profile reset, per-run override or estimator weakening is introduced.
 
-Evidence is the canonical CPU reproduction `C:/Users/hello/AppData/Local/Temp/vaultspec-rag-weighted-floor-proof/diagnosis.json` and the rolling resident-service-recovery audit. The reproduction uses actual benchmark source, chunking, estimation and support-budget enforcement and imports no Torch.
+Evidence is the canonical CPU reproduction recorded in a temporary directory as `vaultspec-rag-weighted-floor-proof/diagnosis.json` and the rolling resident-service-recovery audit. The reproduction uses actual benchmark source, chunking, estimation and support-budget enforcement and imports no Torch.
 
 ## Rationale
 

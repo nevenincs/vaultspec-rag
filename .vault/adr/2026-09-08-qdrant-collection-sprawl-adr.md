@@ -5,7 +5,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:2bb9dc7e59dd378419e7004e542b93c798e36dc23d536d1293a1f99776aea529'
+body_hash: 'sha256:9d1ca13b29415e29aeabd6f4605277e713af9873db4cd284487c47c1e05a964e'
 related:
   - "[[2026-09-08-qdrant-collection-sprawl-research]]"
   - "[[2026-07-14-storage-autoprune-safety-adr]]"
@@ -330,7 +330,7 @@ RegionSize, so it cannot substitute for process working-set measurement.
 Detailed evidence: `Y:/rag-load-benchmark-20261003/report.txt`, `comparison.json`,
 six `run-*-c*.json`/logs, `binary-proof.json`, `cleanup.json`, and
 `evidence-hashes.json`; original chunk/service measurements are in
-`C:/Users/hello/AppData/Local/Temp/rag-performance-20261003/`.
+a temporary directory (`rag-performance-20261003/`).
 Snapshot archives, restored test storage, pilot data, downloaded binary archive,
 and benchmark-created production snapshots were removed (about 46 GiB reclaimed).
 Only approximately 1.1 MiB of concurrency evidence remains. Native startup

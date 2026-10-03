@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:ae66f0c0ff06019e35d7f961f66b39863c41f174ca315feb8e5e52f3d0c41c64'
+body_hash: 'sha256:bb0ba7b83b0bc63888d3d0ff723849891d12035d9278c46f4c66a84c223c3e2e'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -252,7 +252,7 @@ related:
 - `S19` `M` `.vault/audit/2026-10-02-resident-service-recovery-audit.md`
 - `S19` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/job_dispatch.py src/vaultspec_rag/indexer/_checkpoint_common.py src/vaultspec_rag/indexer/_run_policy.py src/vaultspec_rag/tests/test_live_checkpoint_resilience.py src/vaultspec_rag/tests/test_job_resilience.py src/vaultspec_rag/tests/integration/test_indexer_integration.py` -> `pass`
 - `S19` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/job_dispatch.py src/vaultspec_rag/indexer/_checkpoint_common.py src/vaultspec_rag/indexer/_run_policy.py src/vaultspec_rag/tests/test_live_checkpoint_resilience.py src/vaultspec_rag/tests/test_job_resilience.py src/vaultspec_rag/tests/integration/test_indexer_integration.py` -> `pass`
-- `S19` `verify:` `uv run --no-sync basedpyright --pythonpath C:/Users/hello/.vaultspec-rag/debug-runtime/Scripts/python.exe src/vaultspec_rag/job_dispatch.py src/vaultspec_rag/indexer/_checkpoint_common.py src/vaultspec_rag/indexer/_run_policy.py` -> `pass`
+- `S19` `verify:` `uv run --no-sync basedpyright --pythonpath ~/.vaultspec-rag/debug-runtime/Scripts/python.exe src/vaultspec_rag/job_dispatch.py src/vaultspec_rag/indexer/_checkpoint_common.py src/vaultspec_rag/indexer/_run_policy.py` -> `pass`
 - `S19` `verify:` `uv run --no-sync basedpyright src/vaultspec_rag/tests/test_live_checkpoint_resilience.py src/vaultspec_rag/tests/test_job_resilience.py src/vaultspec_rag/tests/integration/test_indexer_integration.py` -> `pass`
 - `S19` `verify:` `uv run --no-sync ty check src/vaultspec_rag/job_dispatch.py src/vaultspec_rag/indexer/_checkpoint_common.py src/vaultspec_rag/indexer/_run_policy.py src/vaultspec_rag/tests/test_live_checkpoint_resilience.py src/vaultspec_rag/tests/test_job_resilience.py src/vaultspec_rag/tests/integration/test_indexer_integration.py` -> `pass`
 - `S19` `verify:` `uv run --no-sync complexipy src/vaultspec_rag/job_dispatch.py src/vaultspec_rag/indexer/_checkpoint_common.py src/vaultspec_rag/indexer/_run_policy.py --failed` -> `pass`
@@ -275,7 +275,7 @@ related:
 - `S20` `M` `src/vaultspec_rag/tests/test_checkpoint_common.py`
 - `S20` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/indexer/_checkpoint_common.py src/vaultspec_rag/indexer/_run_policy.py src/vaultspec_rag/indexer/_streaming.py src/vaultspec_rag/indexer/_vault_checkpoint.py src/vaultspec_rag/indexer/_vault_incremental.py src/vaultspec_rag/indexer/_vault_indexer.py src/vaultspec_rag/store_ingest.py src/vaultspec_rag/tests/test_vault_run_liveness.py src/vaultspec_rag/tests/test_checkpoint_common.py` -> `pass`
 - `S20` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/indexer/_checkpoint_common.py src/vaultspec_rag/indexer/_run_policy.py src/vaultspec_rag/indexer/_streaming.py src/vaultspec_rag/indexer/_vault_checkpoint.py src/vaultspec_rag/indexer/_vault_incremental.py src/vaultspec_rag/indexer/_vault_indexer.py src/vaultspec_rag/store_ingest.py src/vaultspec_rag/tests/test_vault_run_liveness.py src/vaultspec_rag/tests/test_checkpoint_common.py` -> `pass`
-- `S20` `verify:` `uv run --no-sync basedpyright --pythonpath C:/Users/hello/.vaultspec-rag/debug-runtime/Scripts/python.exe src/vaultspec_rag/indexer/_checkpoint_common.py src/vaultspec_rag/indexer/_run_policy.py src/vaultspec_rag/indexer/_streaming.py src/vaultspec_rag/indexer/_vault_checkpoint.py src/vaultspec_rag/indexer/_vault_incremental.py src/vaultspec_rag/indexer/_vault_indexer.py src/vaultspec_rag/store_ingest.py` -> `pass`
+- `S20` `verify:` `uv run --no-sync basedpyright --pythonpath ~/.vaultspec-rag/debug-runtime/Scripts/python.exe src/vaultspec_rag/indexer/_checkpoint_common.py src/vaultspec_rag/indexer/_run_policy.py src/vaultspec_rag/indexer/_streaming.py src/vaultspec_rag/indexer/_vault_checkpoint.py src/vaultspec_rag/indexer/_vault_incremental.py src/vaultspec_rag/indexer/_vault_indexer.py src/vaultspec_rag/store_ingest.py` -> `pass`
 - `S20` `verify:` `uv run --no-sync basedpyright src/vaultspec_rag/tests/test_vault_run_liveness.py src/vaultspec_rag/tests/test_checkpoint_common.py` -> `pass`
 - `S20` `verify:` `uv run --no-sync ty check src/vaultspec_rag/indexer/_checkpoint_common.py src/vaultspec_rag/indexer/_run_policy.py src/vaultspec_rag/indexer/_streaming.py src/vaultspec_rag/indexer/_vault_checkpoint.py src/vaultspec_rag/indexer/_vault_incremental.py src/vaultspec_rag/indexer/_vault_indexer.py src/vaultspec_rag/store_ingest.py src/vaultspec_rag/tests/test_vault_run_liveness.py src/vaultspec_rag/tests/test_checkpoint_common.py` -> `pass`
 - `S20` `verify:` `uv run --no-sync complexipy src/vaultspec_rag/indexer/_checkpoint_common.py src/vaultspec_rag/indexer/_run_policy.py src/vaultspec_rag/indexer/_streaming.py src/vaultspec_rag/indexer/_vault_checkpoint.py src/vaultspec_rag/indexer/_vault_incremental.py src/vaultspec_rag/indexer/_vault_indexer.py src/vaultspec_rag/store_ingest.py --failed` -> `pass`
@@ -290,17 +290,17 @@ related:
 - `S21` `M` `src/vaultspec_rag/index_profiles.py`
 - `S21` `M` `src/vaultspec_rag/tests/test_index_profiles.py`
 - `S21` `M` `.vault/adr/2026-07-21-large-index-resilience-adr.md`
-- `S21` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/index_profiles.py src/vaultspec_rag/tests/test_index_profiles.py` -> `pass`
-- `S21` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ruff format --check src/vaultspec_rag/index_profiles.py src/vaultspec_rag/tests/test_index_profiles.py` -> `pass`
-- `S21` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m basedpyright src/vaultspec_rag/index_profiles.py src/vaultspec_rag/tests/test_index_profiles.py` -> `pass`
-- `S21` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pylint src/vaultspec_rag/index_profiles.py src/vaultspec_rag/tests/test_index_profiles.py --rcfile=pyproject.toml --score=n` -> `pass`
-- `S21` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/index_profiles.py src/vaultspec_rag/tests/test_index_profiles.py --select PLR1702 --preview` -> `pass`
-- `S21` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\complexipy.exe src/vaultspec_rag/index_profiles.py --failed` -> `pass`
-- `S21` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\xenon.exe vaultspec_rag/index_profiles.py --max-absolute C --max-modules C --max-average A` -> `pass`
-- `S21` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_index_profiles.py -m 'not integration and not cuda and not mps and not subprocess_gpu' -q` -> `pass`
-- `S21` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_index_profiles.py src/vaultspec_rag/tests/test_large_index_resilience_harness.py src/vaultspec_rag/tests/test_streaming_segments.py src/vaultspec_rag/tests/test_index_resource_ceilings.py -m 'not integration and not cuda and not mps and not subprocess_gpu' -q -k 'not test_real_numpy_and_cpu_torch_rows_convert_to_store_vectors'` -> `pass`
+- `S21` `verify:` `.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/index_profiles.py src/vaultspec_rag/tests/test_index_profiles.py` -> `pass`
+- `S21` `verify:` `.venv\Scripts\python.exe -m ruff format --check src/vaultspec_rag/index_profiles.py src/vaultspec_rag/tests/test_index_profiles.py` -> `pass`
+- `S21` `verify:` `.venv\Scripts\python.exe -m basedpyright src/vaultspec_rag/index_profiles.py src/vaultspec_rag/tests/test_index_profiles.py` -> `pass`
+- `S21` `verify:` `.venv\Scripts\python.exe -m pylint src/vaultspec_rag/index_profiles.py src/vaultspec_rag/tests/test_index_profiles.py --rcfile=pyproject.toml --score=n` -> `pass`
+- `S21` `verify:` `.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/index_profiles.py src/vaultspec_rag/tests/test_index_profiles.py --select PLR1702 --preview` -> `pass`
+- `S21` `verify:` `.venv\Scripts\complexipy.exe src/vaultspec_rag/index_profiles.py --failed` -> `pass`
+- `S21` `verify:` `.venv\Scripts\xenon.exe vaultspec_rag/index_profiles.py --max-absolute C --max-modules C --max-average A` -> `pass`
+- `S21` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_index_profiles.py -m 'not integration and not cuda and not mps and not subprocess_gpu' -q` -> `pass`
+- `S21` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_index_profiles.py src/vaultspec_rag/tests/test_large_index_resilience_harness.py src/vaultspec_rag/tests/test_streaming_segments.py src/vaultspec_rag/tests/test_index_resource_ceilings.py -m 'not integration and not cuda and not mps and not subprocess_gpu' -q -k 'not test_real_numpy_and_cpu_torch_rows_convert_to_store_vectors'` -> `pass`
 - `S21` `verify:` `.venv/Scripts/python.exe .pytest-tmp/recovery-shared-gates.py` -> `pass`
-- `S21` `verify:` `.venv/Scripts/python.exe C:/Users/hello/AppData/Local/Temp/vaultspec-rag-weighted-floor-proof/guards.py` -> `pass`
+- `S21` `verify:` `.venv/Scripts/python.exe %TEMP%/vaultspec-rag-weighted-floor-proof/guards.py` -> `pass`
 - `S21` `verify:` `Integrated S21 source, decision and CPU review` -> `pass`
 - `S21` `by:` `root`
 - `S22` `M` `src/vaultspec_rag/job_manager/_control.py`
@@ -327,21 +327,21 @@ related:
 - `S22` `by:` `root`
 - `S23` `M` `src/vaultspec_rag/server/_lifespan.py`
 - `S23` `M` `src/vaultspec_rag/tests/test_server.py`
-- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_server.py` -> `pass`
-- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ruff format --check src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_server.py` -> `pass`
-- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m basedpyright src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_server.py` -> `pass`
-- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pylint src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_server.py --rcfile=pyproject.toml --score=n` -> `pass`
-- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_server.py --select PLR1702 --preview` -> `pass`
-- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\complexipy.exe src/vaultspec_rag/server/_lifespan.py --failed` -> `pass`
-- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\xenon.exe vaultspec_rag/server/_lifespan.py --max-absolute C --max-modules C --max-average A` -> `fail`
-- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_server.py::TestHealthHandler -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_server.py::TestHealthHandler src/vaultspec_rag/tests/test_server.py::TestHealthInfoReduction src/vaultspec_rag/tests/test_lifespan_device_load.py src/vaultspec_rag/tests/test_health_degraded_clears.py src/vaultspec_rag/tests/test_undispatched_job_health.py src/vaultspec_rag/tests/test_quiesce_state_projections.py src/vaultspec_rag/tests/test_jobs_quiesce_projection.py -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S23` `verify:` `.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_server.py` -> `pass`
+- `S23` `verify:` `.venv\Scripts\python.exe -m ruff format --check src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_server.py` -> `pass`
+- `S23` `verify:` `.venv\Scripts\python.exe -m basedpyright src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_server.py` -> `pass`
+- `S23` `verify:` `.venv\Scripts\python.exe -m pylint src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_server.py --rcfile=pyproject.toml --score=n` -> `pass`
+- `S23` `verify:` `.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_server.py --select PLR1702 --preview` -> `pass`
+- `S23` `verify:` `.venv\Scripts\complexipy.exe src/vaultspec_rag/server/_lifespan.py --failed` -> `pass`
+- `S23` `verify:` `.venv\Scripts\xenon.exe vaultspec_rag/server/_lifespan.py --max-absolute C --max-modules C --max-average A` -> `fail`
+- `S23` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_server.py::TestHealthHandler -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S23` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_server.py::TestHealthHandler src/vaultspec_rag/tests/test_server.py::TestHealthInfoReduction src/vaultspec_rag/tests/test_lifespan_device_load.py src/vaultspec_rag/tests/test_health_degraded_clears.py src/vaultspec_rag/tests/test_undispatched_job_health.py src/vaultspec_rag/tests/test_quiesce_state_projections.py src/vaultspec_rag/tests/test_jobs_quiesce_projection.py -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
 - `S23` `verify:` `uv run --no-sync python -m dev.complexity gate` -> `pass`
-- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\xenon.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-health-handoff-proof\_lifespan_original_call.py --max-absolute C --max-modules C --max-average A` -> `fail`
-- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-health-handoff-proof\guards.py child registry` -> `fail`
-- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_server.py::TestHealthHandler::test_health_lock_wait_keeps_event_loop_responsive[registry] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-health-handoff-proof\guards.py child store` -> `fail`
-- `S23` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_server.py::TestHealthHandler::test_health_lock_wait_keeps_event_loop_responsive[store] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S23` `verify:` `.venv\Scripts\xenon.exe %TEMP%\vaultspec-rag-health-handoff-proof\_lifespan_original_call.py --max-absolute C --max-modules C --max-average A` -> `fail`
+- `S23` `verify:` `.venv\Scripts\python.exe %TEMP%\vaultspec-rag-health-handoff-proof\guards.py child registry` -> `fail`
+- `S23` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_server.py::TestHealthHandler::test_health_lock_wait_keeps_event_loop_responsive[registry] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S23` `verify:` `.venv\Scripts\python.exe %TEMP%\vaultspec-rag-health-handoff-proof\guards.py child store` -> `fail`
+- `S23` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_server.py::TestHealthHandler::test_health_lock_wait_keeps_event_loop_responsive[store] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
 - `S23` `verify:` `uv run --no-sync ruff check src/vaultspec_rag` -> `pass`
 - `S23` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag` -> `pass`
 - `S23` `verify:` `git diff --check` -> `pass`
@@ -351,56 +351,56 @@ related:
 - `S24` `M` `src/vaultspec_rag/config/_settings.py`
 - `S24` `M` `src/vaultspec_rag/server/_routes_registry.py`
 - `S24` `M` `src/vaultspec_rag/tests/test_watcher_start_contract.py`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/_root_identity.py src/vaultspec_rag/config/_schema.py src/vaultspec_rag/config/_settings.py src/vaultspec_rag/server/_routes_registry.py src/vaultspec_rag/tests/test_watcher_start_contract.py` -> `pass`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ruff format --check src/vaultspec_rag/_root_identity.py src/vaultspec_rag/config/_schema.py src/vaultspec_rag/config/_settings.py src/vaultspec_rag/server/_routes_registry.py src/vaultspec_rag/tests/test_watcher_start_contract.py` -> `pass`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m basedpyright src/vaultspec_rag/_root_identity.py src/vaultspec_rag/config/_schema.py src/vaultspec_rag/config/_settings.py src/vaultspec_rag/server/_routes_registry.py src/vaultspec_rag/tests/test_watcher_start_contract.py` -> `pass`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pylint src/vaultspec_rag/_root_identity.py src/vaultspec_rag/config/_schema.py src/vaultspec_rag/config/_settings.py src/vaultspec_rag/server/_routes_registry.py src/vaultspec_rag/tests/test_watcher_start_contract.py --rcfile=pyproject.toml --score=n` -> `pass`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/_root_identity.py src/vaultspec_rag/config/_schema.py src/vaultspec_rag/config/_settings.py src/vaultspec_rag/server/_routes_registry.py src/vaultspec_rag/tests/test_watcher_start_contract.py --select PLR1702 --preview` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/_root_identity.py src/vaultspec_rag/config/_schema.py src/vaultspec_rag/config/_settings.py src/vaultspec_rag/server/_routes_registry.py src/vaultspec_rag/tests/test_watcher_start_contract.py` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe -m ruff format --check src/vaultspec_rag/_root_identity.py src/vaultspec_rag/config/_schema.py src/vaultspec_rag/config/_settings.py src/vaultspec_rag/server/_routes_registry.py src/vaultspec_rag/tests/test_watcher_start_contract.py` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe -m basedpyright src/vaultspec_rag/_root_identity.py src/vaultspec_rag/config/_schema.py src/vaultspec_rag/config/_settings.py src/vaultspec_rag/server/_routes_registry.py src/vaultspec_rag/tests/test_watcher_start_contract.py` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe -m pylint src/vaultspec_rag/_root_identity.py src/vaultspec_rag/config/_schema.py src/vaultspec_rag/config/_settings.py src/vaultspec_rag/server/_routes_registry.py src/vaultspec_rag/tests/test_watcher_start_contract.py --rcfile=pyproject.toml --score=n` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/_root_identity.py src/vaultspec_rag/config/_schema.py src/vaultspec_rag/config/_settings.py src/vaultspec_rag/server/_routes_registry.py src/vaultspec_rag/tests/test_watcher_start_contract.py --select PLR1702 --preview` -> `pass`
 - `S24` `verify:` `uv run --no-sync python -m dev.complexity gate` -> `pass`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py src/vaultspec_rag/tests/test_watcher_root_identity.py src/vaultspec_rag/tests/test_watcher_route_projection.py src/vaultspec_rag/tests/test_config.py src/vaultspec_rag/tests/test_config_watcher.py src/vaultspec_rag/tests/test_config_backend.py src/vaultspec_rag/tests/test_operator_repositories.py src/vaultspec_rag/tests/test_search_availability.py src/vaultspec_rag/tests/test_search_readiness.py src/vaultspec_rag/tests/test_search_conformance_refusal.py src/vaultspec_rag/tests/test_http_search_errors.py -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 0` -> `fail`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[invalid-json-start] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 1` -> `fail`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[array-body-start] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 2` -> `fail`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[wrong-root-key-start] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 3` -> `fail`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[invalid-path-start] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 4` -> `fail`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_root_resolution_error_before_dispatch[start] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 5` -> `fail`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_authentication_precedes_body_validation[start] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 6` -> `fail`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[invalid-json-stop] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 7` -> `fail`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[array-body-stop] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 8` -> `fail`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[wrong-root-key-stop] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 9` -> `fail`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[invalid-path-stop] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 10` -> `fail`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_root_resolution_error_before_dispatch[stop] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 11` -> `fail`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_authentication_precedes_body_validation[stop] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 12` -> `fail`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[invalid-json-reconfigure] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 13` -> `fail`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[array-body-reconfigure] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 14` -> `fail`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[wrong-root-key-reconfigure] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 15` -> `fail`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[invalid-path-reconfigure] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 16` -> `fail`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_root_resolution_error_before_dispatch[reconfigure] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 17` -> `fail`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_authentication_precedes_body_validation[reconfigure] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 18` -> `fail`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_reconfigure_rejects_invalid_timing_before_stopping[debounce_ms--1] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 19` -> `fail`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_reconfigure_rejects_invalid_timing_before_stopping[cooldown_s--1] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-watcher-request-proof\guards.py child 20` -> `fail`
-- `S24` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_reconfigure_rejects_invalid_timing_before_stopping[debounce_ms--1] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py src/vaultspec_rag/tests/test_watcher_root_identity.py src/vaultspec_rag/tests/test_watcher_route_projection.py src/vaultspec_rag/tests/test_config.py src/vaultspec_rag/tests/test_config_watcher.py src/vaultspec_rag/tests/test_config_backend.py src/vaultspec_rag/tests/test_operator_repositories.py src/vaultspec_rag/tests/test_search_availability.py src/vaultspec_rag/tests/test_search_readiness.py src/vaultspec_rag/tests/test_search_conformance_refusal.py src/vaultspec_rag/tests/test_http_search_errors.py -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe %TEMP%\vaultspec-rag-watcher-request-proof\guards.py child 0` -> `fail`
+- `S24` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[invalid-json-start] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe %TEMP%\vaultspec-rag-watcher-request-proof\guards.py child 1` -> `fail`
+- `S24` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[array-body-start] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe %TEMP%\vaultspec-rag-watcher-request-proof\guards.py child 2` -> `fail`
+- `S24` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[wrong-root-key-start] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe %TEMP%\vaultspec-rag-watcher-request-proof\guards.py child 3` -> `fail`
+- `S24` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[invalid-path-start] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe %TEMP%\vaultspec-rag-watcher-request-proof\guards.py child 4` -> `fail`
+- `S24` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_root_resolution_error_before_dispatch[start] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe %TEMP%\vaultspec-rag-watcher-request-proof\guards.py child 5` -> `fail`
+- `S24` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_authentication_precedes_body_validation[start] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe %TEMP%\vaultspec-rag-watcher-request-proof\guards.py child 6` -> `fail`
+- `S24` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[invalid-json-stop] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe %TEMP%\vaultspec-rag-watcher-request-proof\guards.py child 7` -> `fail`
+- `S24` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[array-body-stop] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe %TEMP%\vaultspec-rag-watcher-request-proof\guards.py child 8` -> `fail`
+- `S24` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[wrong-root-key-stop] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe %TEMP%\vaultspec-rag-watcher-request-proof\guards.py child 9` -> `fail`
+- `S24` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[invalid-path-stop] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe %TEMP%\vaultspec-rag-watcher-request-proof\guards.py child 10` -> `fail`
+- `S24` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_root_resolution_error_before_dispatch[stop] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe %TEMP%\vaultspec-rag-watcher-request-proof\guards.py child 11` -> `fail`
+- `S24` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_authentication_precedes_body_validation[stop] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe %TEMP%\vaultspec-rag-watcher-request-proof\guards.py child 12` -> `fail`
+- `S24` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[invalid-json-reconfigure] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe %TEMP%\vaultspec-rag-watcher-request-proof\guards.py child 13` -> `fail`
+- `S24` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[array-body-reconfigure] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe %TEMP%\vaultspec-rag-watcher-request-proof\guards.py child 14` -> `fail`
+- `S24` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[wrong-root-key-reconfigure] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe %TEMP%\vaultspec-rag-watcher-request-proof\guards.py child 15` -> `fail`
+- `S24` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_invalid_root_before_dispatch[invalid-path-reconfigure] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe %TEMP%\vaultspec-rag-watcher-request-proof\guards.py child 16` -> `fail`
+- `S24` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_route_rejects_root_resolution_error_before_dispatch[reconfigure] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe %TEMP%\vaultspec-rag-watcher-request-proof\guards.py child 17` -> `fail`
+- `S24` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_watcher_authentication_precedes_body_validation[reconfigure] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe %TEMP%\vaultspec-rag-watcher-request-proof\guards.py child 18` -> `fail`
+- `S24` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_reconfigure_rejects_invalid_timing_before_stopping[debounce_ms--1] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe %TEMP%\vaultspec-rag-watcher-request-proof\guards.py child 19` -> `fail`
+- `S24` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_reconfigure_rejects_invalid_timing_before_stopping[cooldown_s--1] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S24` `verify:` `.venv\Scripts\python.exe %TEMP%\vaultspec-rag-watcher-request-proof\guards.py child 20` -> `fail`
+- `S24` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_start_contract.py::test_reconfigure_rejects_invalid_timing_before_stopping[debounce_ms--1] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
 - `S24` `verify:` `uv run --no-sync python -m ruff check src/vaultspec_rag` -> `pass`
 - `S24` `verify:` `uv run --no-sync python -m ruff format --check src/vaultspec_rag` -> `pass`
 - `S24` `verify:` `git diff --check` -> `pass`
@@ -410,28 +410,28 @@ related:
 - `S25` `M` `src/vaultspec_rag/tests/test_service_registry.py`
 - `S25` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/store_collections.py src/vaultspec_rag/tests/test_storage_identity.py src/vaultspec_rag/tests/test_service_registry.py` -> `pass`
 - `S25` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/store_collections.py src/vaultspec_rag/tests/test_storage_identity.py src/vaultspec_rag/tests/test_service_registry.py` -> `pass`
-- `S25` `verify:` `uv run --no-sync basedpyright --pythonpath C:/Users/hello/.vaultspec-rag/debug-runtime/Scripts/python.exe src/vaultspec_rag/store_collections.py` -> `pass`
-- `S25` `verify:` `PYTHONPATH=Y:\code\vaultspec-rag-worktrees\monitor\.venv\Lib\site-packages uv run --no-sync basedpyright --pythonpath C:/Users/hello/.vaultspec-rag/debug-runtime/Scripts/python.exe src/vaultspec_rag/tests/test_storage_identity.py src/vaultspec_rag/tests/test_service_registry.py` -> `pass`
+- `S25` `verify:` `uv run --no-sync basedpyright --pythonpath ~/.vaultspec-rag/debug-runtime/Scripts/python.exe src/vaultspec_rag/store_collections.py` -> `pass`
+- `S25` `verify:` `PYTHONPATH=.venv\Lib\site-packages uv run --no-sync basedpyright --pythonpath ~/.vaultspec-rag/debug-runtime/Scripts/python.exe src/vaultspec_rag/tests/test_storage_identity.py src/vaultspec_rag/tests/test_service_registry.py` -> `pass`
 - `S25` `verify:` `uv run --no-sync ty check src/vaultspec_rag/store_collections.py src/vaultspec_rag/tests/test_storage_identity.py src/vaultspec_rag/tests/test_service_registry.py` -> `pass`
 - `S25` `verify:` `uv run --no-sync complexipy src/vaultspec_rag/store_collections.py --failed` -> `pass`
 - `S25` `verify:` `uv run --no-sync xenon vaultspec_rag/store_collections.py --max-absolute C --max-modules C --max-average A` -> `pass`
 - `S25` `verify:` `uv run --no-sync pylint src/vaultspec_rag/store_collections.py src/vaultspec_rag/tests/test_storage_identity.py src/vaultspec_rag/tests/test_service_registry.py --rcfile=pyproject.toml --score=n` -> `pass`
 - `S25` `verify:` `git diff --check -- src/vaultspec_rag/store_collections.py src/vaultspec_rag/tests/test_storage_identity.py src/vaultspec_rag/tests/test_service_registry.py` -> `pass`
 - `S25` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_storage_identity.py src/vaultspec_rag/tests/test_service_registry.py src/vaultspec_rag/tests/test_store_schema.py src/vaultspec_rag/tests/test_search_conformance_refusal.py src/vaultspec_rag/tests/test_generation_survey.py src/vaultspec_rag/tests/test_live_checkpoint_resilience.py -m unit and not torch -q --tb=short` -> `pass`
-- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py retained_after_swap mutate` -> `fail`
-- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py retained_after_swap restore` -> `pass`
-- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py private_before_swap mutate` -> `fail`
-- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py private_before_swap restore` -> `pass`
-- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py noncode_preserved mutate` -> `fail`
-- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py noncode_preserved restore` -> `pass`
-- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py active_fatal_preserved mutate` -> `fail`
-- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py active_fatal_preserved restore` -> `pass`
-- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py retained_cache_preserved mutate` -> `fail`
-- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py retained_cache_preserved restore` -> `pass`
-- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py no_backend_reprobe mutate` -> `fail`
-- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py no_backend_reprobe restore` -> `pass`
-- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py lifecycle_lock mutate` -> `fail`
-- `S25` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S25\prove_guards.py lifecycle_lock restore` -> `pass`
+- `S25` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S25\prove_guards.py retained_after_swap mutate` -> `fail`
+- `S25` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S25\prove_guards.py retained_after_swap restore` -> `pass`
+- `S25` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S25\prove_guards.py private_before_swap mutate` -> `fail`
+- `S25` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S25\prove_guards.py private_before_swap restore` -> `pass`
+- `S25` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S25\prove_guards.py noncode_preserved mutate` -> `fail`
+- `S25` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S25\prove_guards.py noncode_preserved restore` -> `pass`
+- `S25` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S25\prove_guards.py active_fatal_preserved mutate` -> `fail`
+- `S25` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S25\prove_guards.py active_fatal_preserved restore` -> `pass`
+- `S25` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S25\prove_guards.py retained_cache_preserved mutate` -> `fail`
+- `S25` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S25\prove_guards.py retained_cache_preserved restore` -> `pass`
+- `S25` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S25\prove_guards.py no_backend_reprobe mutate` -> `fail`
+- `S25` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S25\prove_guards.py no_backend_reprobe restore` -> `pass`
+- `S25` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S25\prove_guards.py lifecycle_lock mutate` -> `fail`
+- `S25` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S25\prove_guards.py lifecycle_lock restore` -> `pass`
 - `S25` `verify:` `uv run --no-sync python -m dev.complexity gate` -> `pass`
 - `S25` `verify:` `uv run --no-sync python -m ruff check src/vaultspec_rag` -> `pass`
 - `S25` `verify:` `uv run --no-sync python -m ruff format --check src/vaultspec_rag` -> `pass`
@@ -441,7 +441,7 @@ related:
 - `S26` `M` `src/vaultspec_rag/tests/test_code_consumer_progress.py`
 - `S26` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/indexer/_consumer_pipeline.py src/vaultspec_rag/tests/test_code_consumer_progress.py` -> `pass`
 - `S26` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/indexer/_consumer_pipeline.py src/vaultspec_rag/tests/test_code_consumer_progress.py` -> `pass`
-- `S26` `verify:` `uv run --no-sync basedpyright --pythonpath C:/Users/hello/.vaultspec-rag/debug-runtime/Scripts/python.exe src/vaultspec_rag/indexer/_consumer_pipeline.py` -> `pass`
+- `S26` `verify:` `uv run --no-sync basedpyright --pythonpath ~/.vaultspec-rag/debug-runtime/Scripts/python.exe src/vaultspec_rag/indexer/_consumer_pipeline.py` -> `pass`
 - `S26` `verify:` `uv run --no-sync basedpyright src/vaultspec_rag/tests/test_code_consumer_progress.py` -> `pass`
 - `S26` `verify:` `uv run --no-sync ty check src/vaultspec_rag/indexer/_consumer_pipeline.py src/vaultspec_rag/tests/test_code_consumer_progress.py` -> `pass`
 - `S26` `verify:` `uv run --no-sync complexipy src/vaultspec_rag/indexer/_consumer_pipeline.py --failed` -> `pass`
@@ -449,20 +449,20 @@ related:
 - `S26` `verify:` `uv run --no-sync pylint src/vaultspec_rag/indexer/_consumer_pipeline.py src/vaultspec_rag/tests/test_code_consumer_progress.py --rcfile=pyproject.toml --score=n` -> `pass`
 - `S26` `verify:` `git diff --check -- src/vaultspec_rag/indexer/_consumer_pipeline.py src/vaultspec_rag/tests/test_code_consumer_progress.py` -> `pass`
 - `S26` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_code_consumer_progress.py src/vaultspec_rag/tests/test_weighted_code_resume.py src/vaultspec_rag/tests/test_streaming_segments.py src/vaultspec_rag/tests/test_checkpoint_common.py src/vaultspec_rag/tests/test_live_checkpoint_resilience.py -m unit and not torch -q --tb=short` -> `pass`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py full_resume mutate` -> `fail`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py full_resume restore` -> `pass`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py gap_after_ack mutate` -> `fail`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py gap_after_ack restore` -> `pass`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py gap_requires_confirmation mutate` -> `fail`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py gap_requires_confirmation restore` -> `pass`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py exactly_once mutate` -> `fail`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py exactly_once restore` -> `pass`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py no_ledger_seed mutate` -> `fail`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py no_ledger_seed restore` -> `pass`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py current_digest mutate` -> `fail`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py current_digest restore` -> `pass`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py store_before_count mutate` -> `fail`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py store_before_count restore` -> `pass`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26\prove_guards.py full_resume mutate` -> `fail`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26\prove_guards.py full_resume restore` -> `pass`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26\prove_guards.py gap_after_ack mutate` -> `fail`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26\prove_guards.py gap_after_ack restore` -> `pass`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26\prove_guards.py gap_requires_confirmation mutate` -> `fail`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26\prove_guards.py gap_requires_confirmation restore` -> `pass`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26\prove_guards.py exactly_once mutate` -> `fail`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26\prove_guards.py exactly_once restore` -> `pass`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26\prove_guards.py no_ledger_seed mutate` -> `fail`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26\prove_guards.py no_ledger_seed restore` -> `pass`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26\prove_guards.py current_digest mutate` -> `fail`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26\prove_guards.py current_digest restore` -> `pass`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26\prove_guards.py store_before_count mutate` -> `fail`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26\prove_guards.py store_before_count restore` -> `pass`
 - `S26` `verify:` `uv run --no-sync python -m dev.complexity gate` -> `pass`
 - `S26` `verify:` `uv run --no-sync ruff check src/vaultspec_rag` -> `pass`
 - `S26` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag` -> `pass`
@@ -470,7 +470,7 @@ related:
 - `S26` `by:` `root`
 - `S26` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/indexer/_consumer_pipeline.py src/vaultspec_rag/tests/test_code_consumer_progress.py` -> `pass`
 - `S26` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/indexer/_consumer_pipeline.py src/vaultspec_rag/tests/test_code_consumer_progress.py` -> `pass`
-- `S26` `verify:` `uv run --no-sync basedpyright --pythonpath C:/Users/hello/.vaultspec-rag/debug-runtime/Scripts/python.exe src/vaultspec_rag/indexer/_consumer_pipeline.py` -> `pass`
+- `S26` `verify:` `uv run --no-sync basedpyright --pythonpath ~/.vaultspec-rag/debug-runtime/Scripts/python.exe src/vaultspec_rag/indexer/_consumer_pipeline.py` -> `pass`
 - `S26` `verify:` `uv run --no-sync basedpyright src/vaultspec_rag/tests/test_code_consumer_progress.py` -> `pass`
 - `S26` `verify:` `uv run --no-sync ty check src/vaultspec_rag/indexer/_consumer_pipeline.py src/vaultspec_rag/tests/test_code_consumer_progress.py` -> `pass`
 - `S26` `verify:` `uv run --no-sync complexipy src/vaultspec_rag/indexer/_consumer_pipeline.py --failed` -> `pass`
@@ -478,30 +478,30 @@ related:
 - `S26` `verify:` `uv run --no-sync pylint src/vaultspec_rag/indexer/_consumer_pipeline.py src/vaultspec_rag/tests/test_code_consumer_progress.py --rcfile=pyproject.toml --score=n` -> `pass`
 - `S26` `verify:` `git diff --check -- src/vaultspec_rag/indexer/_consumer_pipeline.py src/vaultspec_rag/tests/test_code_consumer_progress.py` -> `pass`
 - `S26` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_code_consumer_progress.py src/vaultspec_rag/tests/test_weighted_code_resume.py src/vaultspec_rag/tests/test_streaming_segments.py src/vaultspec_rag/tests/test_checkpoint_common.py src/vaultspec_rag/tests/test_live_checkpoint_resilience.py -m unit and not torch -q --tb=short` -> `pass`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py producer_consumer_publication_order mutate` -> `fail`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py producer_consumer_publication_order restore` -> `pass`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py zero_chunk_completion mutate` -> `fail`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py zero_chunk_completion restore` -> `pass`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py zero_chunk_durable_order mutate` -> `fail`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py zero_chunk_durable_order restore` -> `pass`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py zero_chunk_extraction_failure mutate` -> `fail`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py zero_chunk_extraction_failure restore` -> `pass`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py zero_chunk_ledger_failure mutate` -> `fail`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py zero_chunk_ledger_failure restore` -> `pass`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py full_resume mutate` -> `fail`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py full_resume restore` -> `pass`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py gap_after_ack mutate` -> `fail`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py gap_after_ack restore` -> `pass`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py gap_requires_confirmation mutate` -> `fail`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py gap_requires_confirmation restore` -> `pass`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py exactly_once mutate` -> `fail`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py exactly_once restore` -> `pass`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py no_ledger_seed mutate` -> `fail`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py no_ledger_seed restore` -> `pass`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py current_digest mutate` -> `fail`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py current_digest restore` -> `pass`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py store_before_count mutate` -> `fail`
-- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py store_before_count restore` -> `pass`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26-final\prove_guards.py producer_consumer_publication_order mutate` -> `fail`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26-final\prove_guards.py producer_consumer_publication_order restore` -> `pass`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26-final\prove_guards.py zero_chunk_completion mutate` -> `fail`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26-final\prove_guards.py zero_chunk_completion restore` -> `pass`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26-final\prove_guards.py zero_chunk_durable_order mutate` -> `fail`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26-final\prove_guards.py zero_chunk_durable_order restore` -> `pass`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26-final\prove_guards.py zero_chunk_extraction_failure mutate` -> `fail`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26-final\prove_guards.py zero_chunk_extraction_failure restore` -> `pass`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26-final\prove_guards.py zero_chunk_ledger_failure mutate` -> `fail`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26-final\prove_guards.py zero_chunk_ledger_failure restore` -> `pass`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26-final\prove_guards.py full_resume mutate` -> `fail`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26-final\prove_guards.py full_resume restore` -> `pass`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26-final\prove_guards.py gap_after_ack mutate` -> `fail`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26-final\prove_guards.py gap_after_ack restore` -> `pass`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26-final\prove_guards.py gap_requires_confirmation mutate` -> `fail`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26-final\prove_guards.py gap_requires_confirmation restore` -> `pass`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26-final\prove_guards.py exactly_once mutate` -> `fail`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26-final\prove_guards.py exactly_once restore` -> `pass`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26-final\prove_guards.py no_ledger_seed mutate` -> `fail`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26-final\prove_guards.py no_ledger_seed restore` -> `pass`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26-final\prove_guards.py current_digest mutate` -> `fail`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26-final\prove_guards.py current_digest restore` -> `pass`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26-final\prove_guards.py store_before_count mutate` -> `fail`
+- `S26` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S26-final\prove_guards.py store_before_count restore` -> `pass`
 - `S26` `verify:` `uv run --no-sync python -m dev.complexity gate` -> `pass`
 - `S26` `verify:` `uv run --no-sync ruff check src/vaultspec_rag` -> `pass`
 - `S26` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag` -> `pass`
@@ -511,7 +511,7 @@ related:
 - `S27` `A` `src/vaultspec_rag/tests/test_code_rebuild_stale_evidence.py`
 - `S27` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/indexer/_codebase_indexer.py src/vaultspec_rag/indexer/_generation_lifecycle.py src/vaultspec_rag/tests/test_code_rebuild_stale_evidence.py` -> `pass`
 - `S27` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/indexer/_codebase_indexer.py src/vaultspec_rag/indexer/_generation_lifecycle.py src/vaultspec_rag/tests/test_code_rebuild_stale_evidence.py` -> `pass`
-- `S27` `verify:` `uv run --no-sync basedpyright --pythonpath C:/Users/hello/.vaultspec-rag/debug-runtime/Scripts/python.exe src/vaultspec_rag/indexer/_codebase_indexer.py src/vaultspec_rag/indexer/_generation_lifecycle.py` -> `pass`
+- `S27` `verify:` `uv run --no-sync basedpyright --pythonpath ~/.vaultspec-rag/debug-runtime/Scripts/python.exe src/vaultspec_rag/indexer/_codebase_indexer.py src/vaultspec_rag/indexer/_generation_lifecycle.py` -> `pass`
 - `S27` `verify:` `uv run --no-sync basedpyright src/vaultspec_rag/tests/test_code_rebuild_stale_evidence.py` -> `pass`
 - `S27` `verify:` `uv run --no-sync ty check src/vaultspec_rag/indexer/_codebase_indexer.py src/vaultspec_rag/indexer/_generation_lifecycle.py src/vaultspec_rag/tests/test_code_rebuild_stale_evidence.py` -> `pass`
 - `S27` `verify:` `uv run --no-sync complexipy src/vaultspec_rag/indexer/_codebase_indexer.py src/vaultspec_rag/indexer/_generation_lifecycle.py --failed` -> `pass`
@@ -519,57 +519,57 @@ related:
 - `S27` `verify:` `uv run --no-sync pylint src/vaultspec_rag/indexer/_codebase_indexer.py src/vaultspec_rag/indexer/_generation_lifecycle.py src/vaultspec_rag/tests/test_code_rebuild_stale_evidence.py --rcfile=pyproject.toml --score=n` -> `pass`
 - `S27` `verify:` `git diff --check -- src/vaultspec_rag/indexer/_codebase_indexer.py src/vaultspec_rag/indexer/_generation_lifecycle.py src/vaultspec_rag/tests/test_code_rebuild_stale_evidence.py` -> `pass`
 - `S27` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_code_rebuild_stale_evidence.py src/vaultspec_rag/tests/test_code_pipeline_retained_ids.py src/vaultspec_rag/tests/test_checkpoint_common.py src/vaultspec_rag/tests/test_publication_recovery.py src/vaultspec_rag/tests/test_index_run_ledger_publication_finalization.py src/vaultspec_rag/tests/test_index_run_ledger_publication_reads.py -m unit and not torch -q --tb=short` -> `pass`
-- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py own_shadow_key mutate` -> `fail`
-- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py own_shadow_key restore` -> `pass`
-- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py own_shadow_membership mutate` -> `fail`
-- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py own_shadow_membership restore` -> `pass`
-- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py seeded_removed_accounting mutate` -> `fail`
-- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py seeded_removed_accounting restore` -> `pass`
-- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py startup_binding mutate` -> `fail`
-- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py startup_binding restore` -> `pass`
-- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py partial_ownership mutate` -> `fail`
-- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py partial_ownership restore` -> `pass`
-- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py current_source_fence mutate` -> `fail`
-- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py current_source_fence restore` -> `pass`
-- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py receipt_strict_key mutate` -> `fail`
-- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py receipt_strict_key restore` -> `pass`
-- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py deletion_evidence mutate` -> `fail`
-- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py deletion_evidence restore` -> `pass`
-- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py storage_before_retirement mutate` -> `fail`
-- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py storage_before_retirement restore` -> `pass`
+- `S27` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S27\prove_guards.py own_shadow_key mutate` -> `fail`
+- `S27` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S27\prove_guards.py own_shadow_key restore` -> `pass`
+- `S27` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S27\prove_guards.py own_shadow_membership mutate` -> `fail`
+- `S27` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S27\prove_guards.py own_shadow_membership restore` -> `pass`
+- `S27` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S27\prove_guards.py seeded_removed_accounting mutate` -> `fail`
+- `S27` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S27\prove_guards.py seeded_removed_accounting restore` -> `pass`
+- `S27` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S27\prove_guards.py startup_binding mutate` -> `fail`
+- `S27` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S27\prove_guards.py startup_binding restore` -> `pass`
+- `S27` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S27\prove_guards.py partial_ownership mutate` -> `fail`
+- `S27` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S27\prove_guards.py partial_ownership restore` -> `pass`
+- `S27` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S27\prove_guards.py current_source_fence mutate` -> `fail`
+- `S27` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S27\prove_guards.py current_source_fence restore` -> `pass`
+- `S27` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S27\prove_guards.py receipt_strict_key mutate` -> `fail`
+- `S27` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S27\prove_guards.py receipt_strict_key restore` -> `pass`
+- `S27` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S27\prove_guards.py deletion_evidence mutate` -> `fail`
+- `S27` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S27\prove_guards.py deletion_evidence restore` -> `pass`
+- `S27` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S27\prove_guards.py storage_before_retirement mutate` -> `fail`
+- `S27` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S27\prove_guards.py storage_before_retirement restore` -> `pass`
 - `S27` `by:` `root`
 - `S28` `M` `src/vaultspec_rag/watcher_execution.py`
 - `S28` `A` `src/vaultspec_rag/tests/test_watcher_index_resilience.py`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/watcher_execution.py src/vaultspec_rag/tests/test_watcher_index_resilience.py` -> `pass`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ruff format --check src/vaultspec_rag/watcher_execution.py src/vaultspec_rag/tests/test_watcher_index_resilience.py` -> `pass`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m basedpyright src/vaultspec_rag/watcher_execution.py src/vaultspec_rag/tests/test_watcher_index_resilience.py` -> `pass`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pylint --rcfile=pyproject.toml --score=n src/vaultspec_rag/watcher_execution.py src/vaultspec_rag/tests/test_watcher_index_resilience.py` -> `pass`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/watcher_execution.py src/vaultspec_rag/tests/test_watcher_index_resilience.py --select PLR1702 --preview` -> `pass`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\complexipy.exe src/vaultspec_rag/watcher_execution.py` -> `pass`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_index_resilience.py -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_admission.py src/vaultspec_rag/tests/test_watcher_controller.py src/vaultspec_rag/tests/test_watcher_controller_intake.py src/vaultspec_rag/tests/test_watcher_durable_scope.py src/vaultspec_rag/tests/test_watcher_index_resilience.py src/vaultspec_rag/tests/test_watcher_load.py src/vaultspec_rag/tests/test_watcher_measurements.py src/vaultspec_rag/tests/test_watcher_quiesce_intake.py src/vaultspec_rag/tests/test_watcher_rebuild_reconciliation.py src/vaultspec_rag/tests/test_watcher_recovery.py src/vaultspec_rag/tests/test_watcher_retry.py src/vaultspec_rag/tests/test_watcher_root_identity.py src/vaultspec_rag/tests/test_watcher_route_projection.py src/vaultspec_rag/tests/test_watcher_scheduler.py src/vaultspec_rag/tests/test_watcher_start_contract.py src/vaultspec_rag/tests/test_watcher_transition_logging.py src/vaultspec_rag/tests/test_watcher_unit.py src/vaultspec_rag/tests/test_job_resilience.py src/vaultspec_rag/tests/test_live_checkpoint_resilience.py -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S28\verify.py mutant stale_projectors src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_managed_watcher_completes_with_actual_checkpoint[code]` -> `fail`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_managed_watcher_completes_with_actual_checkpoint[code] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S28\verify.py mutant missing_checkpoint src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_managed_watcher_completes_with_actual_checkpoint[code]` -> `fail`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_managed_watcher_completes_with_actual_checkpoint[code] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S28\verify.py mutant lost_retry_backoff src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_managed_watcher_completes_with_actual_checkpoint[code]` -> `fail`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_managed_watcher_completes_with_actual_checkpoint[code] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S28\verify.py mutant projection_escape src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_checkpoint_projection_failure_preserves_watcher_outcome[code]` -> `fail`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_checkpoint_projection_failure_preserves_watcher_outcome[code] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S28\verify.py mutant stale_projectors src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_managed_watcher_completes_with_actual_checkpoint[document]` -> `fail`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_managed_watcher_completes_with_actual_checkpoint[document] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S28\verify.py mutant missing_checkpoint src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_managed_watcher_completes_with_actual_checkpoint[document]` -> `fail`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_managed_watcher_completes_with_actual_checkpoint[document] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S28\verify.py mutant lost_retry_backoff src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_managed_watcher_completes_with_actual_checkpoint[document]` -> `fail`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_managed_watcher_completes_with_actual_checkpoint[document] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S28\verify.py mutant projection_escape src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_checkpoint_projection_failure_preserves_watcher_outcome[document]` -> `fail`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_checkpoint_projection_failure_preserves_watcher_outcome[document] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S28\verify.py mutant stale_projectors src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_vault_watcher_does_not_import_code_document_projectors` -> `fail`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_vault_watcher_does_not_import_code_document_projectors -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S28\verify.py mutant previous_checkpoint_leak src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_unchanged_watcher_does_not_inherit_previous_checkpoint` -> `fail`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_unchanged_watcher_does_not_inherit_previous_checkpoint -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S28\verify.py mutant previous_checkpoint_leak src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_pre_checkpoint_cancellation_keeps_original_outcome` -> `fail`
-- `S28` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_pre_checkpoint_cancellation_keeps_original_outcome -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S28` `verify:` `.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/watcher_execution.py src/vaultspec_rag/tests/test_watcher_index_resilience.py` -> `pass`
+- `S28` `verify:` `.venv\Scripts\python.exe -m ruff format --check src/vaultspec_rag/watcher_execution.py src/vaultspec_rag/tests/test_watcher_index_resilience.py` -> `pass`
+- `S28` `verify:` `.venv\Scripts\python.exe -m basedpyright src/vaultspec_rag/watcher_execution.py src/vaultspec_rag/tests/test_watcher_index_resilience.py` -> `pass`
+- `S28` `verify:` `.venv\Scripts\python.exe -m pylint --rcfile=pyproject.toml --score=n src/vaultspec_rag/watcher_execution.py src/vaultspec_rag/tests/test_watcher_index_resilience.py` -> `pass`
+- `S28` `verify:` `.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/watcher_execution.py src/vaultspec_rag/tests/test_watcher_index_resilience.py --select PLR1702 --preview` -> `pass`
+- `S28` `verify:` `.venv\Scripts\complexipy.exe src/vaultspec_rag/watcher_execution.py` -> `pass`
+- `S28` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_index_resilience.py -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S28` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_admission.py src/vaultspec_rag/tests/test_watcher_controller.py src/vaultspec_rag/tests/test_watcher_controller_intake.py src/vaultspec_rag/tests/test_watcher_durable_scope.py src/vaultspec_rag/tests/test_watcher_index_resilience.py src/vaultspec_rag/tests/test_watcher_load.py src/vaultspec_rag/tests/test_watcher_measurements.py src/vaultspec_rag/tests/test_watcher_quiesce_intake.py src/vaultspec_rag/tests/test_watcher_rebuild_reconciliation.py src/vaultspec_rag/tests/test_watcher_recovery.py src/vaultspec_rag/tests/test_watcher_retry.py src/vaultspec_rag/tests/test_watcher_root_identity.py src/vaultspec_rag/tests/test_watcher_route_projection.py src/vaultspec_rag/tests/test_watcher_scheduler.py src/vaultspec_rag/tests/test_watcher_start_contract.py src/vaultspec_rag/tests/test_watcher_transition_logging.py src/vaultspec_rag/tests/test_watcher_unit.py src/vaultspec_rag/tests/test_job_resilience.py src/vaultspec_rag/tests/test_live_checkpoint_resilience.py -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S28` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S28\verify.py mutant stale_projectors src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_managed_watcher_completes_with_actual_checkpoint[code]` -> `fail`
+- `S28` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_managed_watcher_completes_with_actual_checkpoint[code] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S28` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S28\verify.py mutant missing_checkpoint src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_managed_watcher_completes_with_actual_checkpoint[code]` -> `fail`
+- `S28` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_managed_watcher_completes_with_actual_checkpoint[code] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S28` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S28\verify.py mutant lost_retry_backoff src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_managed_watcher_completes_with_actual_checkpoint[code]` -> `fail`
+- `S28` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_managed_watcher_completes_with_actual_checkpoint[code] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S28` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S28\verify.py mutant projection_escape src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_checkpoint_projection_failure_preserves_watcher_outcome[code]` -> `fail`
+- `S28` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_checkpoint_projection_failure_preserves_watcher_outcome[code] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S28` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S28\verify.py mutant stale_projectors src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_managed_watcher_completes_with_actual_checkpoint[document]` -> `fail`
+- `S28` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_managed_watcher_completes_with_actual_checkpoint[document] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S28` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S28\verify.py mutant missing_checkpoint src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_managed_watcher_completes_with_actual_checkpoint[document]` -> `fail`
+- `S28` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_managed_watcher_completes_with_actual_checkpoint[document] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S28` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S28\verify.py mutant lost_retry_backoff src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_managed_watcher_completes_with_actual_checkpoint[document]` -> `fail`
+- `S28` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_managed_watcher_completes_with_actual_checkpoint[document] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S28` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S28\verify.py mutant projection_escape src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_checkpoint_projection_failure_preserves_watcher_outcome[document]` -> `fail`
+- `S28` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_checkpoint_projection_failure_preserves_watcher_outcome[document] -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S28` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S28\verify.py mutant stale_projectors src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_vault_watcher_does_not_import_code_document_projectors` -> `fail`
+- `S28` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_vault_watcher_does_not_import_code_document_projectors -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S28` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S28\verify.py mutant previous_checkpoint_leak src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_unchanged_watcher_does_not_inherit_previous_checkpoint` -> `fail`
+- `S28` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_unchanged_watcher_does_not_inherit_previous_checkpoint -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
+- `S28` `verify:` `.venv\Scripts\python.exe .pytest-tmp\S28\verify.py mutant previous_checkpoint_leak src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_pre_checkpoint_cancellation_keeps_original_outcome` -> `fail`
+- `S28` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_watcher_index_resilience.py::test_pre_checkpoint_cancellation_keeps_original_outcome -m not integration and not cuda and not mps and not subprocess_gpu -q` -> `pass`
 - `S28` `by:` `root`
 - `S29` `M` `src/vaultspec_rag/indexer/_run_ledger_files.py`
 - `S29` `A` `src/vaultspec_rag/tests/test_index_run_ledger_drift_lookup.py`
@@ -580,7 +580,7 @@ related:
 - `S29` `verify:` `uv run --no-sync basedpyright src/vaultspec_rag/indexer/_run_ledger_files.py src/vaultspec_rag/tests/test_index_run_ledger_drift_lookup.py` -> `pass`
 - `S29` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_index_run_ledger_drift_lookup.py` -> `pass`
 - `S29` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_code_pipeline_retained_ids.py src/vaultspec_rag/tests/test_weighted_code_resume.py src/vaultspec_rag/tests/test_index_run_ledger_commit_units.py src/vaultspec_rag/tests/test_index_run_ledger_generations.py src/vaultspec_rag/tests/test_index_run_ledger_concurrency.py` -> `pass`
-- `S29` `verify:` `uv run --no-sync python C:\Users\hello\AppData\Local\Temp\vaultspec-rag-incident-20261002-203057\perf-profiling\drift-lookup-guard\runner.py C:\Users\hello\AppData\Local\Temp\vaultspec-rag-incident-20261002-203057\perf-profiling\drift-lookup-guard` -> `pass`
+- `S29` `verify:` `uv run --no-sync python %TEMP%\vaultspec-rag-incident-20261002-203057\perf-profiling\drift-lookup-guard\runner.py %TEMP%\vaultspec-rag-incident-20261002-203057\perf-profiling\drift-lookup-guard` -> `pass`
 - `S29` `verify:` `uv run --no-sync ruff check src/vaultspec_rag` -> `pass`
 - `S29` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag` -> `pass`
 - `S29` `verify:` `git diff --check` -> `pass`
@@ -588,22 +588,22 @@ related:
 - `S29` `by:` `root`
 - `S30` `M` `src/vaultspec_rag/server/_lifespan.py`
 - `S30` `A` `src/vaultspec_rag/tests/test_lifespan_storage_tasks.py`
-- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_lifespan_storage_tasks.py` -> `pass`
-- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ruff format --check src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_lifespan_storage_tasks.py` -> `pass`
-- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m basedpyright src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_lifespan_storage_tasks.py` -> `pass`
-- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ty check src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_lifespan_storage_tasks.py` -> `pass`
-- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pylint src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_lifespan_storage_tasks.py --rcfile=pyproject.toml --score=n` -> `pass`
-- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_lifespan_storage_tasks.py --select PLR1702 --preview` -> `pass`
-- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\complexipy.exe src/vaultspec_rag/server/_lifespan.py --failed` -> `pass`
-- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\xenon.exe vaultspec_rag/server/_lifespan.py --max-absolute C --max-modules C --max-average A` -> `pass`
-- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_lifespan_storage_tasks.py -m "not integration and not cuda and not mps and not subprocess_gpu" -q` -> `pass`
-- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_lifespan_storage_tasks.py src/vaultspec_rag/tests/test_lifespan_machine_lock.py src/vaultspec_rag/tests/test_storage_maintenance_tick.py src/vaultspec_rag/tests/test_generation_autoprune_policy.py src/vaultspec_rag/tests/test_service_registry_recovery.py -m "not integration and not cuda and not mps and not subprocess_gpu" -q` -> `pass`
-- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-incident-20261002-203057\s30-proof\guards.py child prune_only_creation` -> `fail`
-- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_lifespan_storage_tasks.py::test_lifespan_schedules_independently_enabled_storage_maintenance[server-reconcile-only] -m "not integration and not cuda and not mps and not subprocess_gpu" -q` -> `pass`
-- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-incident-20261002-203057\s30-proof\guards.py child both_disabled_creation` -> `fail`
-- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_lifespan_storage_tasks.py::test_lifespan_schedules_independently_enabled_storage_maintenance[server-neither] -m "not integration and not cuda and not mps and not subprocess_gpu" -q` -> `pass`
-- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe C:\Users\hello\AppData\Local\Temp\vaultspec-rag-incident-20261002-203057\s30-proof\guards.py child omitted_startup_call` -> `fail`
-- `S30` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_lifespan_storage_tasks.py::test_component_startup_includes_storage_tasks -m "not integration and not cuda and not mps and not subprocess_gpu" -q` -> `pass`
+- `S30` `verify:` `.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_lifespan_storage_tasks.py` -> `pass`
+- `S30` `verify:` `.venv\Scripts\python.exe -m ruff format --check src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_lifespan_storage_tasks.py` -> `pass`
+- `S30` `verify:` `.venv\Scripts\python.exe -m basedpyright src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_lifespan_storage_tasks.py` -> `pass`
+- `S30` `verify:` `.venv\Scripts\python.exe -m ty check src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_lifespan_storage_tasks.py` -> `pass`
+- `S30` `verify:` `.venv\Scripts\python.exe -m pylint src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_lifespan_storage_tasks.py --rcfile=pyproject.toml --score=n` -> `pass`
+- `S30` `verify:` `.venv\Scripts\python.exe -m ruff check src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/tests/test_lifespan_storage_tasks.py --select PLR1702 --preview` -> `pass`
+- `S30` `verify:` `.venv\Scripts\complexipy.exe src/vaultspec_rag/server/_lifespan.py --failed` -> `pass`
+- `S30` `verify:` `.venv\Scripts\xenon.exe vaultspec_rag/server/_lifespan.py --max-absolute C --max-modules C --max-average A` -> `pass`
+- `S30` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_lifespan_storage_tasks.py -m "not integration and not cuda and not mps and not subprocess_gpu" -q` -> `pass`
+- `S30` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_lifespan_storage_tasks.py src/vaultspec_rag/tests/test_lifespan_machine_lock.py src/vaultspec_rag/tests/test_storage_maintenance_tick.py src/vaultspec_rag/tests/test_generation_autoprune_policy.py src/vaultspec_rag/tests/test_service_registry_recovery.py -m "not integration and not cuda and not mps and not subprocess_gpu" -q` -> `pass`
+- `S30` `verify:` `.venv\Scripts\python.exe %TEMP%\vaultspec-rag-incident-20261002-203057\s30-proof\guards.py child prune_only_creation` -> `fail`
+- `S30` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_lifespan_storage_tasks.py::test_lifespan_schedules_independently_enabled_storage_maintenance[server-reconcile-only] -m "not integration and not cuda and not mps and not subprocess_gpu" -q` -> `pass`
+- `S30` `verify:` `.venv\Scripts\python.exe %TEMP%\vaultspec-rag-incident-20261002-203057\s30-proof\guards.py child both_disabled_creation` -> `fail`
+- `S30` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_lifespan_storage_tasks.py::test_lifespan_schedules_independently_enabled_storage_maintenance[server-neither] -m "not integration and not cuda and not mps and not subprocess_gpu" -q` -> `pass`
+- `S30` `verify:` `.venv\Scripts\python.exe %TEMP%\vaultspec-rag-incident-20261002-203057\s30-proof\guards.py child omitted_startup_call` -> `fail`
+- `S30` `verify:` `.venv\Scripts\python.exe -m pytest src/vaultspec_rag/tests/test_lifespan_storage_tasks.py::test_component_startup_includes_storage_tasks -m "not integration and not cuda and not mps and not subprocess_gpu" -q` -> `pass`
 - `S30` `verify:` `uv run --no-sync ruff check src/vaultspec_rag` -> `pass`
 - `S30` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag` -> `pass`
 - `S30` `verify:` `git diff --check` -> `pass`
@@ -619,14 +619,14 @@ related:
 - `S31` `verify:` `uv run --no-sync basedpyright src/vaultspec_rag/indexer/_run_ledger_files.py src/vaultspec_rag/tests/test_index_run_ledger_file_state_writes.py` -> `pass`
 - `S31` `verify:` `uv run --no-sync python -m dev.complexity gate` -> `pass`
 - `S31` `verify:` `git diff --check` -> `pass`
-- `S31` `verify:` `uv run --no-sync python 'C:/Users/hello/AppData/Local/Temp/vaultspec-rag-incident-20261002-203057/perf-profiling/s31-file-state-guard/runner.py' 'C:/Users/hello/AppData/Local/Temp/vaultspec-rag-incident-20261002-203057/perf-profiling/s31-file-state-guard'` -> `pass`
-- `S31` `verify:` `uv run --no-sync python 'C:/Users/hello/AppData/Local/Temp/vaultspec-rag-incident-20261002-203057/perf-profiling/drift-lookup-guard/runner.py' 'C:/Users/hello/AppData/Local/Temp/vaultspec-rag-incident-20261002-203057/perf-profiling/drift-lookup-guard'` -> `pass`
+- `S31` `verify:` `uv run --no-sync python '%TEMP%/vaultspec-rag-incident-20261002-203057/perf-profiling/s31-file-state-guard/runner.py' '%TEMP%/vaultspec-rag-incident-20261002-203057/perf-profiling/s31-file-state-guard'` -> `pass`
+- `S31` `verify:` `uv run --no-sync python '%TEMP%/vaultspec-rag-incident-20261002-203057/perf-profiling/drift-lookup-guard/runner.py' '%TEMP%/vaultspec-rag-incident-20261002-203057/perf-profiling/drift-lookup-guard'` -> `pass`
 - `S31` `by:` `root`
 - `S32` `M` `src/vaultspec_rag/indexer/_route_migration.py`
 - `S32` `A` `src/vaultspec_rag/tests/test_route_scan_classification_cache.py`
-- `S32` `verify:` `'Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe' 'C:\Users\hello\AppData\Local\Temp\vaultspec-rag-incident-20261002-203057\s32-proof\verify.py'` -> `pass`
-- `S32` `verify:` `'Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe' 'C:\Users\hello\AppData\Local\Temp\vaultspec-rag-incident-20261002-203057\s32-proof\guards.py'` -> `pass`
-- `S32` `verify:` `'Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe' 'C:\Users\hello\AppData\Local\Temp\vaultspec-rag-incident-20261002-203057\s32-proof\benchmark.py'` -> `pass`
+- `S32` `verify:` `'.venv\Scripts\python.exe' '%TEMP%\vaultspec-rag-incident-20261002-203057\s32-proof\verify.py'` -> `pass`
+- `S32` `verify:` `'.venv\Scripts\python.exe' '%TEMP%\vaultspec-rag-incident-20261002-203057\s32-proof\guards.py'` -> `pass`
+- `S32` `verify:` `'.venv\Scripts\python.exe' '%TEMP%\vaultspec-rag-incident-20261002-203057\s32-proof\benchmark.py'` -> `pass`
 - `S32` `verify:` `uv run --no-sync ruff check src/vaultspec_rag` -> `pass`
 - `S32` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag` -> `pass`
 - `S32` `verify:` `git diff --check` -> `pass`
@@ -634,8 +634,8 @@ related:
 - `S32` `by:` `root`
 - `S33` `M` `src/vaultspec_rag/indexer/_vault_incremental.py`
 - `S33` `M` `src/vaultspec_rag/tests/test_vault_progress_phases.py`
-- `S33` `verify:` `Y:/code/vaultspec-rag-worktrees/monitor/.venv/Scripts/python.exe C:/Users/hello/AppData/Local/Temp/vaultspec-rag-incident-20261002-203057/s33-proof/verify.py` -> `pass`
-- `S33` `verify:` `Y:/code/vaultspec-rag-worktrees/monitor/.venv/Scripts/python.exe C:/Users/hello/AppData/Local/Temp/vaultspec-rag-incident-20261002-203057/s33-proof/guards.py` -> `pass`
+- `S33` `verify:` `.venv/Scripts/python.exe %TEMP%/vaultspec-rag-incident-20261002-203057/s33-proof/verify.py` -> `pass`
+- `S33` `verify:` `.venv/Scripts/python.exe %TEMP%/vaultspec-rag-incident-20261002-203057/s33-proof/guards.py` -> `pass`
 - `S33` `verify:` `uv run --no-sync ruff check src/vaultspec_rag` -> `pass`
 - `S33` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag` -> `pass`
 - `S33` `verify:` `git diff --check` -> `pass`
