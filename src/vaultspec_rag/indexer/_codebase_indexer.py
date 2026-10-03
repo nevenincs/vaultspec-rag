@@ -1010,58 +1010,59 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             scope="code incremental",
             execution=execution,
         )
-        resumed_publication = self._resume_pending_finalization(
-            checkpoint,
-            reporter=reporter,
-            started_at=start,
-        )
-        result = resumed_publication
-        if result is None:
-            publication = self._incremental_commit.supersede_and_publish(
-                IncrementalPublicationRequest(
-                    hashes=current_hashes,
-                    to_index=to_index,
-                    paths_to_index=paths_to_index,
-                    attempted_paths=attempted_paths,
-                    pipeline_run=CodePipelineRun(
-                        reporter=reporter,
+        with checkpoint.preserve_incomplete_generation():
+            resumed_publication = self._resume_pending_finalization(
+                checkpoint,
+                reporter=reporter,
+                started_at=start,
+            )
+            result = resumed_publication
+            if result is None:
+                publication = self._incremental_commit.supersede_and_publish(
+                    IncrementalPublicationRequest(
+                        hashes=current_hashes,
+                        to_index=to_index,
+                        paths_to_index=paths_to_index,
+                        attempted_paths=attempted_paths,
+                        pipeline_run=CodePipelineRun(
+                            reporter=reporter,
+                            checkpoint=checkpoint,
+                            limits=limits,
+                            content_epoch=self._content_epoch,
+                            code_build_target=self._lifecycle.active_build_target,
+                            run_control=run_control,
+                        ),
+                    )
+                )
+                current_hashes.update(publication.published_hashes)
+                self._incremental_commit.commit_replacement(
+                    IncrementalReplacementRequest(
+                        existing_ids=publication.existing_ids,
+                        published_ids=publication.published_ids,
+                        prior_ids_by_path=publication.prior_ids_by_path,
+                        deleted_paths=deleted_files,
                         checkpoint=checkpoint,
-                        limits=limits,
-                        content_epoch=self._content_epoch,
-                        code_build_target=self._lifecycle.active_build_target,
+                        files_count=len(attempted_paths),
+                        protect_replacement=bool(modified_files or deleted_files),
+                        reporter=reporter,
                         run_control=run_control,
-                    ),
+                    )
                 )
-            )
-            current_hashes.update(publication.published_hashes)
-            self._incremental_commit.commit_replacement(
-                IncrementalReplacementRequest(
-                    existing_ids=publication.existing_ids,
-                    published_ids=publication.published_ids,
-                    prior_ids_by_path=publication.prior_ids_by_path,
-                    deleted_paths=deleted_files,
-                    checkpoint=checkpoint,
-                    files_count=len(attempted_paths),
-                    protect_replacement=bool(modified_files or deleted_files),
-                    reporter=reporter,
-                    run_control=run_control,
+                result = IndexResult(
+                    total=self.store.count_code(),
+                    added=len(new_files),
+                    updated=len(modified_files),
+                    removed=len(deleted_files),
+                    duration_ms=int((time.time() - start) * 1000),
+                    device=self.model.device,
+                    files=len(to_index),
+                    preprocess_ok=self._prep_ok,
+                    preprocess_skipped=len(self._prep_skips),
+                    preprocess_failures=list(self._prep_skips),
+                    reuse=self._reuse_snapshot(),
+                    drift=self._lifecycle.drift_snapshot(),
                 )
-            )
-            result = IndexResult(
-                total=self.store.count_code(),
-                added=len(new_files),
-                updated=len(modified_files),
-                removed=len(deleted_files),
-                duration_ms=int((time.time() - start) * 1000),
-                device=self.model.device,
-                files=len(to_index),
-                preprocess_ok=self._prep_ok,
-                preprocess_skipped=len(self._prep_skips),
-                preprocess_failures=list(self._prep_skips),
-                reuse=self._reuse_snapshot(),
-                drift=self._lifecycle.drift_snapshot(),
-            )
-        return result
+            return result
 
     @staticmethod
     def _incremental_change_sets(
@@ -1285,55 +1286,56 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             scope="scoped code",
             execution=execution,
         )
-        resumed_publication = self._resume_pending_finalization(
-            checkpoint,
-            reporter=reporter,
-            started_at=start,
-        )
-        if resumed_publication is not None:
-            return resumed_publication
-        publication = self._incremental_commit.supersede_and_publish(
-            IncrementalPublicationRequest(
-                hashes=changed_hashes,
-                to_index=to_index,
-                paths_to_index=paths_to_index,
-                attempted_paths=attempted_paths,
-                pipeline_run=CodePipelineRun(
-                    reporter=reporter,
-                    checkpoint=checkpoint,
-                    limits=limits,
-                    content_epoch=self._content_epoch,
-                    code_build_target=self._lifecycle.active_build_target,
-                    run_control=run_control,
-                ),
-            )
-        )
-        self._incremental_commit.commit_replacement(
-            IncrementalReplacementRequest(
-                existing_ids=publication.existing_ids,
-                published_ids=publication.published_ids,
-                prior_ids_by_path=publication.prior_ids_by_path,
-                deleted_paths=delete_files,
-                checkpoint=checkpoint,
-                files_count=len(attempted_paths),
-                protect_replacement=bool(modified_files or delete_files),
+        with checkpoint.preserve_incomplete_generation():
+            resumed_publication = self._resume_pending_finalization(
+                checkpoint,
                 reporter=reporter,
-                run_control=run_control,
+                started_at=start,
             )
-        )
-        total = self.store.count_code()
-        duration_ms = int((time.time() - start) * 1000)
-        return IndexResult(
-            total=total,
-            added=len(new_files),
-            updated=len(modified_files),
-            removed=len(delete_files.intersection(previous_metadata)),
-            duration_ms=duration_ms,
-            device=self.model.device,
-            files=len(to_index),
-            preprocess_ok=self._prep_ok,
-            preprocess_skipped=len(self._prep_skips),
-            preprocess_failures=list(self._prep_skips),
-            reuse=self._reuse_snapshot(),
-            drift=self._lifecycle.drift_snapshot(),
-        )
+            if resumed_publication is not None:
+                return resumed_publication
+            publication = self._incremental_commit.supersede_and_publish(
+                IncrementalPublicationRequest(
+                    hashes=changed_hashes,
+                    to_index=to_index,
+                    paths_to_index=paths_to_index,
+                    attempted_paths=attempted_paths,
+                    pipeline_run=CodePipelineRun(
+                        reporter=reporter,
+                        checkpoint=checkpoint,
+                        limits=limits,
+                        content_epoch=self._content_epoch,
+                        code_build_target=self._lifecycle.active_build_target,
+                        run_control=run_control,
+                    ),
+                )
+            )
+            self._incremental_commit.commit_replacement(
+                IncrementalReplacementRequest(
+                    existing_ids=publication.existing_ids,
+                    published_ids=publication.published_ids,
+                    prior_ids_by_path=publication.prior_ids_by_path,
+                    deleted_paths=delete_files,
+                    checkpoint=checkpoint,
+                    files_count=len(attempted_paths),
+                    protect_replacement=bool(modified_files or delete_files),
+                    reporter=reporter,
+                    run_control=run_control,
+                )
+            )
+            total = self.store.count_code()
+            duration_ms = int((time.time() - start) * 1000)
+            return IndexResult(
+                total=total,
+                added=len(new_files),
+                updated=len(modified_files),
+                removed=len(delete_files.intersection(previous_metadata)),
+                duration_ms=duration_ms,
+                device=self.model.device,
+                files=len(to_index),
+                preprocess_ok=self._prep_ok,
+                preprocess_skipped=len(self._prep_skips),
+                preprocess_failures=list(self._prep_skips),
+                reuse=self._reuse_snapshot(),
+                drift=self._lifecycle.drift_snapshot(),
+            )
