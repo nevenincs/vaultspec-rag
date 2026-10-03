@@ -27,7 +27,6 @@ from .._store_models import (
     vault_metadata_digest,
 )
 from ..indexer._vault_prep import split_document, vault_document_from_text
-from ._store_fixtures import vault_doc_payload
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -63,20 +62,6 @@ def _doc() -> VaultDocument:
 class TestSubsetPartitionsThePayload:
     """Every vault payload key is body, structure, or an indexed subset field."""
 
-    def test_document_payload_keys_are_all_accounted_for(self) -> None:
-        doc = _doc()
-        accounted = (
-            set(vault_indexed_metadata(doc))
-            | _VAULT_BODY_PAYLOAD_KEYS
-            | VAULT_STRUCTURAL_PAYLOAD_KEYS
-        )
-        unaccounted = set(vault_doc_payload(doc)) - accounted
-        assert unaccounted == set(), (
-            "vault document payload fields outside the subset digest: "
-            f"{sorted(unaccounted)} - add them to vault_indexed_metadata() or "
-            "classify them as body/structural, or they will never refresh"
-        )
-
     def test_chunk_payload_keys_are_all_accounted_for(self) -> None:
         doc = _doc()
         chunk = split_document(doc, chunk_chars=64)[0]
@@ -95,8 +80,10 @@ class TestSubsetPartitionsThePayload:
     def test_subset_names_no_field_the_payload_does_not_carry(self) -> None:
         """A subset field absent from every payload digests noise, not content."""
         doc = _doc()
+        # The ordinal-0 chunk is the widest payload a vault point ever has: it
+        # carries every per-chunk field plus the parent body.
         chunk = split_document(doc, chunk_chars=64)[0]
-        carried = set(vault_doc_payload(doc)) | set(_vault_chunk_payload(chunk))
+        carried = set(_vault_chunk_payload(chunk))
         assert set(vault_indexed_metadata(doc)) <= carried
 
     def test_every_subset_field_moves_the_digest(self) -> None:

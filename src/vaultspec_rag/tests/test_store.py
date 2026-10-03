@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from .._store_search import HybridSearchRequest
-from ._store_fixtures import get_all_document_content_ids, get_all_ids, upsert_documents
+from ._store_fixtures import get_all_document_content_ids, get_all_ids
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -403,14 +403,19 @@ class TestStoreLocalClientSerialization:
     def _seed_searchable_points(self, store: VaultStore, dim: int) -> None:
         from .._store_models import (
             CodeChunk,
-            VaultDocument,
+            VaultChunk,
         )
 
-        upsert_documents(
-            store,
+        store.upsert_document_chunks(
             [
-                VaultDocument(
-                    id=f"parallel-doc-{idx}",
+                VaultChunk(
+                    doc_id=f"parallel-doc-{idx}",
+                    ordinal=0,
+                    chunk_count=1,
+                    text=(
+                        "Local Qdrant searches are serialized per store "
+                        f"while request threads continue safely {idx}."
+                    ),
                     path=f".vault/adr/parallel-doc-{idx}.md",
                     doc_type="adr",
                     feature="parallel-search",
@@ -418,7 +423,7 @@ class TestStoreLocalClientSerialization:
                     tags=["search", "parallel"],
                     related=[],
                     title=f"Parallel search ADR {idx}",
-                    content=(
+                    doc_content=(
                         "Local Qdrant searches are serialized per store "
                         f"while request threads continue safely {idx}."
                     ),
@@ -709,16 +714,18 @@ class TestDropTable:
         collection's sqlite handle open, rmtree silently failed on Windows, and a
         same-name create_collection resurrected the deleted points.
         """
-        from .._store_models import VaultDocument
+        from .._store_models import VaultChunk
         from ..store_runtime import VaultStore
 
         store = VaultStore(tmp_path, embedding_dim=4)
         try:
-            upsert_documents(
-                store,
+            store.upsert_document_chunks(
                 [
-                    VaultDocument(
-                        id="doc-1",
+                    VaultChunk(
+                        doc_id="doc-1",
+                        ordinal=0,
+                        chunk_count=1,
+                        text="hello world",
                         path="doc-1.md",
                         doc_type="research",
                         feature="demo",
@@ -726,7 +733,7 @@ class TestDropTable:
                         tags=["#research", "#demo"],
                         related=[],
                         title="Doc 1",
-                        content="hello world",
+                        doc_content="hello world",
                         vector=[0.1, 0.2, 0.3, 0.4],
                     )
                 ],

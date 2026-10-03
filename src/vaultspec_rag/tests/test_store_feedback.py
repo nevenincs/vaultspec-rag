@@ -6,11 +6,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from .._store_models import CodeChunk, VaultDocument
+from .._store_models import CodeChunk, VaultChunk
 from .._store_search import HybridSearchRequest
 from ..embeddings import SparseResult
 from ..store_runtime import VaultStore
-from ._store_fixtures import upsert_documents
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -26,11 +25,13 @@ def test_removed_feedback_does_not_break_search(
     vector = [1.0, 0.0, 0.0, 0.0]
     with VaultStore(tmp_path, embedding_dim=4) as store:
         if source == "vault":
-            upsert_documents(
-                store,
+            store.upsert_document_chunks(
                 [
-                    VaultDocument(
-                        id="kept",
+                    VaultChunk(
+                        doc_id="kept",
+                        ordinal=0,
+                        chunk_count=1,
+                        text="searchable content",
                         path=".vault/adr/kept.md",
                         doc_type="adr",
                         feature="search",
@@ -38,7 +39,7 @@ def test_removed_feedback_does_not_break_search(
                         tags=[],
                         related=[],
                         title="Kept",
-                        content="searchable content",
+                        doc_content="searchable content",
                         vector=vector,
                     )
                 ],

@@ -16,40 +16,11 @@ from .._markdown_passages import Passage
 from .._store_models import (
     CodeChunk,
     VaultChunk,
-    VaultDocument,
     _code_chunk_payload,
     _vault_chunk_payload,
 )
-from ._store_fixtures import vault_doc_payload
 
 pytestmark = [pytest.mark.unit]
-
-
-def test_vault_doc_payload_matches_golden_shape() -> None:
-    doc = VaultDocument(
-        id="adr/overview",
-        path="adr/overview.md",
-        doc_type="adr",
-        feature="demo",
-        date="2026-06-27",
-        tags=["#adr", "#demo"],
-        related=["[[x]]"],
-        title="Overview",
-        content="body",
-        status="accepted",
-    )
-    assert vault_doc_payload(doc) == {
-        "doc_id": "adr/overview",
-        "path": "adr/overview.md",
-        "doc_type": "adr",
-        "feature": "demo",
-        "date": "2026-06-27",
-        "tags": ["#adr", "#demo"],
-        "related": ["[[x]]"],
-        "title": "Overview",
-        "status": "accepted",
-        "content": "body",
-    }
 
 
 def _vault_chunk(ordinal: int, doc_content: str | None) -> VaultChunk:

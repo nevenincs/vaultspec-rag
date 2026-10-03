@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 
 from ..._store_search import HybridSearchRequest
-from .._store_fixtures import get_all_ids, upsert_documents
+from .._store_fixtures import get_all_ids
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -113,31 +113,38 @@ class TestVaultStore:
         assert store.get_by_id(target_id) is None
         assert store.count() == count_before - 1
 
-        # Re-insert it so other tests aren't affected (session-scoped fixture)
-        from ... import VaultDocument
+        # Re-insert it so other tests aren't affected (session-scoped fixture).
+        # The count fell by exactly one, so the document was a single chunk;
+        # restoring it through the production chunk writer puts back the same
+        # head-chunk point the indexer wrote.
+        from ..._store_models import VaultChunk
 
         # The retrieved payload is genuinely dynamic store content; narrow it
-        # here at the point it is unpacked into the reconstructed document.
+        # here at the point it is unpacked into the reconstructed chunk.
         doc = cast("dict[str, Any]", doc)
-        reinsert = VaultDocument(
-            id=doc["id"],
-            path=doc["path"],
-            title=doc.get("title", ""),
-            content=doc.get("content", ""),
-            doc_type=doc.get("doc_type", ""),
-            feature=doc.get("feature", ""),
-            date=doc.get("date", ""),
-            tags=doc.get("tags", ""),
-            related=doc.get("related", []),
-            vector=model.encode_query(doc.get("content", "")[:200]).tolist(),
+        body = cast("str", doc.get("content", ""))
+        reinsert = VaultChunk(
+            doc_id=cast("str", doc["id"]),
+            ordinal=0,
+            chunk_count=1,
+            text=body,
+            path=cast("str", doc["path"]),
+            doc_type=cast("str", doc.get("doc_type", "")),
+            feature=cast("str", doc.get("feature", "")),
+            date=cast("str", doc.get("date", "")),
+            tags=cast("list[str]", doc.get("tags", [])),
+            related=cast("list[str]", doc.get("related", [])),
+            title=cast("str", doc.get("title", "")),
+            doc_content=body,
+            vector=model.encode_query(body[:200]).tolist(),
             sparse_indices=list(
-                model.encode_query_sparse(doc.get("content", "")[:200]).indices,
+                model.encode_query_sparse(body[:200]).indices,
             ),
             sparse_values=list(
-                model.encode_query_sparse(doc.get("content", "")[:200]).values,
+                model.encode_query_sparse(body[:200]).values,
             ),
         )
-        upsert_documents(store, [reinsert], write_policy=None)
+        store.upsert_document_chunks([reinsert], write_policy=None)
 
     def test_hybrid_search_with_sparse_vector(
         self, rag_components: RagComponentsWithManifest
