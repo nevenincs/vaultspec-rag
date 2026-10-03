@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:c017d23f36bf3b8fb558b7b7cf23ab16266054e3486728e2a5bc7581b75d9038'
+body_hash: 'sha256:e8d891dac0a484709fa7741fb783ebc094b3ef9525b2a26303b6a76f24835035'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -437,6 +437,75 @@ related:
 - `S25` `verify:` `uv run --no-sync python -m ruff format --check src/vaultspec_rag` -> `pass`
 - `S25` `verify:` `git diff --check` -> `pass`
 - `S25` `by:` `root`
+- `S26` `M` `src/vaultspec_rag/indexer/_consumer_pipeline.py`
+- `S26` `M` `src/vaultspec_rag/tests/test_code_consumer_progress.py`
+- `S26` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/indexer/_consumer_pipeline.py src/vaultspec_rag/tests/test_code_consumer_progress.py` -> `pass`
+- `S26` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/indexer/_consumer_pipeline.py src/vaultspec_rag/tests/test_code_consumer_progress.py` -> `pass`
+- `S26` `verify:` `uv run --no-sync basedpyright --pythonpath C:/Users/hello/.vaultspec-rag/debug-runtime/Scripts/python.exe src/vaultspec_rag/indexer/_consumer_pipeline.py` -> `pass`
+- `S26` `verify:` `uv run --no-sync basedpyright src/vaultspec_rag/tests/test_code_consumer_progress.py` -> `pass`
+- `S26` `verify:` `uv run --no-sync ty check src/vaultspec_rag/indexer/_consumer_pipeline.py src/vaultspec_rag/tests/test_code_consumer_progress.py` -> `pass`
+- `S26` `verify:` `uv run --no-sync complexipy src/vaultspec_rag/indexer/_consumer_pipeline.py --failed` -> `pass`
+- `S26` `verify:` `uv run --no-sync xenon vaultspec_rag/indexer/_consumer_pipeline.py --max-absolute C --max-modules C --max-average A` -> `pass`
+- `S26` `verify:` `uv run --no-sync pylint src/vaultspec_rag/indexer/_consumer_pipeline.py src/vaultspec_rag/tests/test_code_consumer_progress.py --rcfile=pyproject.toml --score=n` -> `pass`
+- `S26` `verify:` `git diff --check -- src/vaultspec_rag/indexer/_consumer_pipeline.py src/vaultspec_rag/tests/test_code_consumer_progress.py` -> `pass`
+- `S26` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_code_consumer_progress.py src/vaultspec_rag/tests/test_weighted_code_resume.py src/vaultspec_rag/tests/test_streaming_segments.py src/vaultspec_rag/tests/test_checkpoint_common.py src/vaultspec_rag/tests/test_live_checkpoint_resilience.py -m unit and not torch -q --tb=short` -> `pass`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py full_resume mutate` -> `fail`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py full_resume restore` -> `pass`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py gap_after_ack mutate` -> `fail`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py gap_after_ack restore` -> `pass`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py gap_requires_confirmation mutate` -> `fail`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py gap_requires_confirmation restore` -> `pass`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py exactly_once mutate` -> `fail`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py exactly_once restore` -> `pass`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py no_ledger_seed mutate` -> `fail`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py no_ledger_seed restore` -> `pass`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py current_digest mutate` -> `fail`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py current_digest restore` -> `pass`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py store_before_count mutate` -> `fail`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26\prove_guards.py store_before_count restore` -> `pass`
+- `S26` `verify:` `uv run --no-sync python -m dev.complexity gate` -> `pass`
+- `S26` `verify:` `uv run --no-sync ruff check src/vaultspec_rag` -> `pass`
+- `S26` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag` -> `pass`
+- `S26` `verify:` `git diff --check` -> `pass`
+- `S26` `by:` `root`
+- `S26` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/indexer/_consumer_pipeline.py src/vaultspec_rag/tests/test_code_consumer_progress.py` -> `pass`
+- `S26` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/indexer/_consumer_pipeline.py src/vaultspec_rag/tests/test_code_consumer_progress.py` -> `pass`
+- `S26` `verify:` `uv run --no-sync basedpyright --pythonpath C:/Users/hello/.vaultspec-rag/debug-runtime/Scripts/python.exe src/vaultspec_rag/indexer/_consumer_pipeline.py` -> `pass`
+- `S26` `verify:` `uv run --no-sync basedpyright src/vaultspec_rag/tests/test_code_consumer_progress.py` -> `pass`
+- `S26` `verify:` `uv run --no-sync ty check src/vaultspec_rag/indexer/_consumer_pipeline.py src/vaultspec_rag/tests/test_code_consumer_progress.py` -> `pass`
+- `S26` `verify:` `uv run --no-sync complexipy src/vaultspec_rag/indexer/_consumer_pipeline.py --failed` -> `pass`
+- `S26` `verify:` `uv run --no-sync xenon vaultspec_rag/indexer/_consumer_pipeline.py --max-absolute C --max-modules C --max-average A` -> `pass`
+- `S26` `verify:` `uv run --no-sync pylint src/vaultspec_rag/indexer/_consumer_pipeline.py src/vaultspec_rag/tests/test_code_consumer_progress.py --rcfile=pyproject.toml --score=n` -> `pass`
+- `S26` `verify:` `git diff --check -- src/vaultspec_rag/indexer/_consumer_pipeline.py src/vaultspec_rag/tests/test_code_consumer_progress.py` -> `pass`
+- `S26` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_code_consumer_progress.py src/vaultspec_rag/tests/test_weighted_code_resume.py src/vaultspec_rag/tests/test_streaming_segments.py src/vaultspec_rag/tests/test_checkpoint_common.py src/vaultspec_rag/tests/test_live_checkpoint_resilience.py -m unit and not torch -q --tb=short` -> `pass`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py producer_consumer_publication_order mutate` -> `fail`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py producer_consumer_publication_order restore` -> `pass`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py zero_chunk_completion mutate` -> `fail`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py zero_chunk_completion restore` -> `pass`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py zero_chunk_durable_order mutate` -> `fail`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py zero_chunk_durable_order restore` -> `pass`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py zero_chunk_extraction_failure mutate` -> `fail`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py zero_chunk_extraction_failure restore` -> `pass`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py zero_chunk_ledger_failure mutate` -> `fail`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py zero_chunk_ledger_failure restore` -> `pass`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py full_resume mutate` -> `fail`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py full_resume restore` -> `pass`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py gap_after_ack mutate` -> `fail`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py gap_after_ack restore` -> `pass`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py gap_requires_confirmation mutate` -> `fail`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py gap_requires_confirmation restore` -> `pass`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py exactly_once mutate` -> `fail`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py exactly_once restore` -> `pass`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py no_ledger_seed mutate` -> `fail`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py no_ledger_seed restore` -> `pass`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py current_digest mutate` -> `fail`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py current_digest restore` -> `pass`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py store_before_count mutate` -> `fail`
+- `S26` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S26-final\prove_guards.py store_before_count restore` -> `pass`
+- `S26` `verify:` `uv run --no-sync python -m dev.complexity gate` -> `pass`
+- `S26` `verify:` `uv run --no-sync ruff check src/vaultspec_rag` -> `pass`
+- `S26` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag` -> `pass`
+- `S26` `verify:` `git diff --check` -> `pass`
 
 ## Notes
 
@@ -454,3 +523,5 @@ related:
 - `S23` Supplemental standalone Xenon applies project-average A to one allowed-B module and fails identically for original/current calls; canonical unchanged production package complexity gate passes. Two deliberate process-only handoff-removal guards fail their intended assertions, restore in finally and pass in fresh normal subprocesses. Exact two live health timeouts remain unattributed; runtime reload remains S04.
 - `S24` The twenty-one fail entries are intentional actual-production mutation proofs, each followed by finally restoration and a fresh normal pass; eight dependency hashes stayed unchanged. CPU-only source verification is frozen, and final service loading remains S04. One accidental earlier live discovery call was disclosed and reconciled separately in the audit.
 - `S25` Seven fail entries are intended actual-production method mutation proofs, each finally-restored and immediately followed by a fresh normal pass. All fifteen source/dependency hashes are unchanged. Initial test-fixture static typing failures and a private-mixin bootstrap import cycle are preserved separately and excluded from guard proof; corrected final checks pass. Strict test discovery uses CPU pytest site-packages and the resident interpreter for static installed paths only, without changing or executing the resident environment. Runtime verification remains S04.
+- `S26` Seven actual-production process-only guard mutations intentionally fail the named assertions with exit 1, restore functions and descriptors in finally, and pass in fresh normal processes. Fourteen hashes remain unchanged. The initial oversized queue test fixture was corrected without changing production limits. One unchanged Torch-dependent CPU case is excluded because the CPU environment lacks Torch. An unsupported scratch complexity --json invocation is excluded from evidence; the canonical whole-production gate actually passes. Independent integrated source and CPU review PASS. Live rollout remains under S04.
+- `S26` Reopened before first source commit for durably resolved zero-chunk outcome omission and confirmed producer/consumer publication-order race. Final frozen proof supersedes initial source evidence while retaining it as history. Twelve actual production mutants intentionally fail their named behavioural assertions and are restored in finally before fresh normal passes; no checkout mutation. Independent integrated source/CPU review passes; live source rollout remains S04.

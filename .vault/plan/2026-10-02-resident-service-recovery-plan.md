@@ -32,7 +32,7 @@ related:
   - '[[2026-09-08-qdrant-collection-sprawl-adr]]'
 modified: '2026-10-03'
 body_schema: body-v2
-body_hash: 'sha256:c463dc0ff750395c410f10bc339c0c4169a0cca0e11b06b032647dfb40fd3c4e'
+body_hash: 'sha256:37b19feb05a1d659b39673551b87f8b59c06bc7f2d3f8e3ca488d7891bb747b8'
 ---
 
 # `resident-service-recovery` plan
@@ -83,6 +83,10 @@ S24 follows an actual malformed stop-watcher request returning HTTP 500 after Pa
 
 The newly registered ci-fleet/main root exposed an old sparse-model CODE publication during live verification. S04 includes explicit replacement of its affected domains and subsequent publication/search/watcher verification, preserving unrelated source and vault work. This is expected strict conformance behavior rather than a source defect or crash.
 
+S26 follows the user's question about indexing performance and an actual resumed TUI rebuild whose file counter omitted approximately 1,507 already-committed complete files while its denominator still included them. Existing consumer and checkpoint owners provide validated resume evidence. This is a progress projection correction under the user's authorization to fix every discovered bug, with no storage, admission, GPU concurrency or indexing policy change. Performance evidence separates approximately 59 minutes of admission queueing from the actual chunk-and-embed phase; checkpoint units, chunks and files are distinct measures.
+
+S27 follows the actual TUI CODE rebuild failure at 05:55 UTC after 72,514 durable units: full stale reconciliation requested retained path evidence using the new generation compatibility key against the still-served old-model publication. The strict reader correctly refused it. Rebuild cleanup must follow the shadow generation's own retained evidence while incremental readers retain their existing committed-proof authority. S28 follows an actual INGEST watcher index whose physical publication succeeded but whose job failed during completion because watcher_execution still imports removed _code_resilience and _document_resilience names from job_dispatch after S19 consolidated the canonical projector. Both are in-scope defects under the user's standing instruction to fix every discovered bug.
+
 ## Steps
 
 - [x] `S01` - Preserve terminal rebuild refusals and accurate watcher status through events, failures, and restart, and reconcile successful verified operator rebuilds; `watcher retry, controller, intake, execution and runtime, jobs.py completion hook, affected watcher and job tests`.
@@ -109,6 +113,9 @@ The newly registered ci-fleet/main root exposed an old sparse-model CODE publica
 - [x] `S23` - Keep synchronous registry and storage health projection off the HTTP event loop while preserving bounded caller timeout uncertainty and conformance facts; `canonical server health handler and focused real-lock CPU responsiveness regression`.
 - [x] `S24` - Reject malformed watcher administration bodies and root paths as canonical bad requests instead of internal errors; `canonical watcher administration request validation plus shared root identity path and settings numeric validation owners and focused CPU HTTP and existing settings regressions`.
 - [x] `S25` - Report conformance for current served namespaces after code generation replacement; `src/vaultspec_rag/store_collections.py canonical current-namespace conformance owner, src/vaultspec_rag/tests/test_storage_identity.py and src/vaultspec_rag/tests/test_service_registry.py real local storage, publication and CPU health regressions. Exclude retained unserved code generations from current service degradation without deleting retained storage or hiding active nonconforming namespaces. Root manages shared gates, final source rollout and live five-root evidence.`.
+- [x] `S26` - Count validated replay completions and durably resolved zero-chunk source outcomes in code indexing progress; `src/vaultspec_rag/indexer/_consumer_pipeline.py canonical consumer and completed producer-result progress ownership, src/vaultspec_rag/tests/test_code_consumer_progress.py actual-ledger CPU regressions. Include complete and gapped resume, empty or skipped source outcomes, acknowledgement-before-count and failure-without-count. Preserve raw stream validation, checkpoint authority and GPU discipline. Root owns the zero-chunk correction and final source gates while the recovery worker completes S27.`.
+- [ ] `S27` - Reconcile clean rebuild stale paths from their own generation evidence and recover interrupted removal before replay seeding; `src/vaultspec_rag/indexer/_codebase_indexer.py and _generation_lifecycle.py canonical clean rebuild cleanup, src/vaultspec_rag/tests/test_code_rebuild_stale_evidence.py actual full-entry real-storage CPU regressions. Use generation-owned retained UPSERT and completed-path evidence, retire absent admitted-source paths through the existing storage-first drift owner before resumed ID seeding, preserve exact apply/finalization barriers, old served proof and strict incremental receipt authority. Include completed and partial removals and deletion-before-ledger interruption. Root owns all live service, shared gates, Git and vault checkpoints.`.
+- [ ] `S28` - Use the canonical resilience projector for watcher completion after dispatcher consolidation and preserve exact attempt attribution; `src/vaultspec_rag/watcher_execution.py watcher completion projection and src/vaultspec_rag/tests/test_watcher_index_resilience.py actual watcher CPU regressions. Remove stale private imports, preserve original index outcomes, retry facts and failure isolation, reuse captured admission facts, project only the checkpoint newly opened in this attempt, and exclude previous-generation facts on no-op or pre-open cancellation. Root owns live service, shared gates, Git and vault checkpoints.`.
 - [ ] `S04` - Deploy the current checkout as the resident daemon, repair affected publications through explicit rebuild jobs when required, and verify service health, search, and watcher convergence; `resident service lifecycle, affected root ledgers and admitted jobs, plan verification and final audit`.
 
 ## Parallelization
@@ -148,6 +155,12 @@ The watcher worker owns S23's canonical health-handler thread handoff and real-l
 After its S23 handoff the watcher worker owns S24 canonical watcher administration validation and focused CPU HTTP regressions. The supervisor owns all new CI-root repair admissions, stopping its watcher during replacement, physical evidence, shared gates and Git/vault/runtime operations. All source fixes still use one final idle restart after protected jobs settle.
 
 The recovery worker owns S25's current served-namespace conformance projection and real CPU regressions, after S24's frozen source checkpoint. It may proceed alongside protected live job observation because it never calls the resident or GPU. The supervisor owns shared verification, all Git/vault/runtime operations, and the single final idle restart after every discovered source repair and protected writer settles.
+
+The recovery worker owns S26 consumer resume progress and actual-ledger CPU regressions while the supervisor continues S04 read-only observation and performance attribution. The worker never calls the live service, opens live storage, uses CUDA, changes Git/vault records or mutates checkout bytes for guard proofs. The supervisor owns shared checks, all service and admission operations, serialized Git/vault changes and final rollout. S04's final restart loads S26 after its source checkpoint passes.
+
+The recovery worker owns S27 full rebuild reconciliation and real-storage regressions after finishing S26's CPU gates and guards. The watcher worker owns S28 watcher completion resilience and focused real-component CPU tests, disjoint from S26 and S27. S28 may run while the recovery worker finishes S26 checks. All workers remain CPU-only and never use live RAG, services, storage or CUDA. The supervisor owns serialized Git/vault changes, shared checks, maintenance, protected checkpoint recovery and final source rollout after all three repairs pass.
+
+The supervisor owns the reopened S26 zero-chunk progress extension and its tests while the recovery worker owns S27. Final process-only guards bind the frozen S26-S28 production and test hashes; shared package checks and source rollout follow all three handoffs.
 
 ## Verification
 

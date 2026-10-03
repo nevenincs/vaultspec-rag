@@ -17,8 +17,9 @@ import hashlib
 import logging
 import queue
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
+from threading import Lock
 from typing import TYPE_CHECKING, NamedTuple
 
 from .._job_errors import JobError, JobErrorKind
@@ -178,6 +179,9 @@ class _WeightedConsumerRun:
     code_build_target: str | None
     donor_reuse: DonorReuseContext | None
     reporter: ProgressReporter
+    pending_file_end_paths: set[str] = field(default_factory=set)
+    completed_file_paths: set[str] = field(default_factory=set)
+    progress_lock: Lock = field(default_factory=Lock)
 
 
 class CodeConsumerPipeline:
@@ -288,9 +292,8 @@ class CodeConsumerPipeline:
             len(paths) * _CHUNKS_PER_FILE_ESTIMATE + duplicate_points
         )
         run_control.checkpoint()
-        # The total is the file count; the counter is advanced by the GPU
-        # consumer as files finish encoding and upserting, so N of M reads
-        # as pipeline output, never as files merely handed to the queue.
+        # Count confirmed consumer output and durably resolved source outcomes
+        # that produce no chunks, against the admitted file total.
         reporter.phase_start("chunk + embed", len(paths))
         try:
             if not paths:
@@ -565,6 +568,8 @@ class CodeConsumerPipeline:
         run_control.checkpoint()
         self._record_preprocess_result(result)
         self.raise_code_result_failure(result, checkpoint)
+        if not result.chunks:
+            self._advance_file_progress(consumer_run, 1)
         if result.preprocess_status == "ok":
             self._record_extracted_bytes(
                 sum(len(chunk.content.encode("utf-8")) for chunk in result.chunks)
@@ -735,21 +740,46 @@ class CodeConsumerPipeline:
             run_control.checkpoint()
             consumer_run.new_ids.update(chunk.id for chunk in slice_chunks)
             consumer_run.total[0] += len(slice_chunks)
-            # Progress counts a file only once its final segment has been
-            # encoded and upserted: the counter measures what the pipeline
-            # has finished, not what the producer has queued, so it keeps
-            # moving while the GPU drains a backlog the producer already
-            # handed off. A resumed run's already-committed files emit no
-            # pending segments and are simply not re-counted.
-            completed_files = sum(
-                1 for segment in weighted_slice.segments if segment.is_file_end
-            )
-            if completed_files:
-                consumer_run.reporter.advance(completed_files)
+            self._advance_completed_files(consumer_run, weighted_slice.segments)
             probe.checkpoint(f"slice-{completed_slice_index}-after-store")
             self._sample_memory_budget(f"slice-{completed_slice_index}-after-store")
         finally:
             del slice_chunks
+
+    @staticmethod
+    def _advance_completed_files(
+        consumer_run: _WeightedConsumerRun,
+        segments: tuple[CodeFileSegment, ...],
+    ) -> None:
+        """Count validated file ends once their actual durable gaps are closed."""
+        consumer_run.pending_file_end_paths.update(
+            segment.path for segment in segments if segment.is_file_end
+        )
+        completed = 0
+        for path in dict.fromkeys(segment.path for segment in segments):
+            if (
+                path not in consumer_run.pending_file_end_paths
+                or path in consumer_run.completed_file_paths
+            ):
+                continue
+            checkpoint = consumer_run.checkpoint
+            if checkpoint is not None and not checkpoint.ledger.file_complete(
+                checkpoint.generation_id, path
+            ):
+                continue
+            consumer_run.completed_file_paths.add(path)
+            consumer_run.pending_file_end_paths.discard(path)
+            completed += 1
+        if completed:
+            CodeConsumerPipeline._advance_file_progress(consumer_run, completed)
+
+    @staticmethod
+    def _advance_file_progress(
+        consumer_run: _WeightedConsumerRun, completed: int
+    ) -> None:
+        """Serialize the producer and consumer's count and publication together."""
+        with consumer_run.progress_lock:
+            consumer_run.reporter.advance(completed)
 
     def _finish_consumer_probe(
         self,
@@ -787,9 +817,13 @@ class CodeConsumerPipeline:
                 checkpoint = consumer_run.checkpoint
 
                 def _skip_committed_segment(segment: CodeFileSegment) -> bool:
-                    return checkpoint is not None and checkpoint.segment_committed(
+                    if checkpoint is None or not checkpoint.segment_committed(
                         segment, consumer_run.metadata[segment.path]
-                    )
+                    ):
+                        return False
+                    if segment.is_file_end:
+                        self._advance_completed_files(consumer_run, (segment,))
+                    return True
 
                 for slice_index, weighted_slice in enumerate(
                     iter_weighted_code_slices(
