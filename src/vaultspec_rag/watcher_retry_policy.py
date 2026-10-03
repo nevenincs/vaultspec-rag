@@ -232,7 +232,6 @@ class WatcherRetryPolicy:
         "_root",
         "_scope_max_bytes",
         "_scope_max_paths",
-        "_scoped_generation",
         "_source",
         "_state",
     )
@@ -267,7 +266,6 @@ class WatcherRetryPolicy:
         self._root = options.canonical_root
         self._admission_handoff_started = False
         self._owned_attempt_token: str | None = None
-        self._scoped_generation: int | None = None
         self._source = options.source
 
         timestamp = wall_time(options.now)
@@ -457,7 +455,7 @@ class WatcherRetryPolicy:
         for observation in observations:
             validate_path_observation(observation, source=self._source)
         with locked_state(self._path):
-            state = self._refresh_scope_unlocked()
+            state = self._refresh_unlocked()
             generation = state.convergence_generation + 1
             merged = merge_observations(
                 state.pending_paths,
@@ -481,13 +479,12 @@ class WatcherRetryPolicy:
                 return self._commit_unlocked(
                     refuse_scope_capacity(state, timestamp=timestamp)
                 )
-            self._scoped_generation = generation
             return self._commit_unlocked(candidate)
 
     def refresh(self) -> WatcherRetryState:
         """Refresh this policy's cached view under the state authority lock."""
         with locked_state(self._path):
-            return self._refresh_scope_unlocked()
+            return self._refresh_unlocked()
 
     def reconcile_rebuild(
         self,
@@ -674,7 +671,7 @@ class WatcherRetryPolicy:
             )
         try:
             with locked_state(self._path):
-                state = self._refresh_scope_unlocked()
+                state = self._refresh_unlocked()
                 if self._owned_attempt_token != attempt_token:
                     _finish_admission_token(attempt_token)
                     return _decision(
@@ -1193,33 +1190,6 @@ class WatcherRetryPolicy:
                 continue
             except OSError as exc:
                 raise state_io_failure("remove recovery marker", marker, exc) from exc
-        return state
-
-    def _refresh_scope_unlocked(self) -> WatcherRetryState:
-        """Refuse a pending generation this instance cannot scope."""
-        state = self._refresh_unlocked()
-        if (
-            state.convergence_pending
-            and not state.unscoped_required
-            and not state.pending_paths
-            and not state.captured_paths
-            and state.convergence_generation != self._scoped_generation
-            and state.scope_refusal is None
-        ):
-            state = self._commit_unlocked(
-                replace(
-                    state,
-                    last_error_kind=JobErrorKind.FULL_REINDEX_REQUIRED,
-                    last_error_detail=(
-                        "watcher recovery lost the exact changed-path scope; "
-                        "request an explicit full reindex"
-                    ),
-                    scope_refusal=WatcherScopeRefusal.FULL_REINDEX_REQUIRED,
-                    last_failure_at=wall_time(None),
-                    circuit_state=WatcherCircuitState.OPEN,
-                    updated_at=wall_time(None),
-                )
-            )
         return state
 
     def _require_active_attempt(

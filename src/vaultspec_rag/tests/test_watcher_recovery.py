@@ -28,7 +28,7 @@ from ..watcher_retry_policy import (
     _WatcherRetryOptions,
 )
 from ..watcher_runtime import WatcherConvergenceSlot, reconcile_restarted_slot
-from ._watcher_fixtures import dirty_paths, mark_convergence_pending
+from ._watcher_fixtures import dirty_paths
 from ._watcher_job_snapshot import watcher_job_snapshot
 
 if TYPE_CHECKING:
@@ -243,7 +243,19 @@ async def test_unsafe_restart_recovery_is_terminal_and_retry_cannot_clear_it(
 
     await reconcile_restarted_slot(slot, cast("Any", _History(history(tmp_path))))
     refused = policy.state
-    mark_convergence_pending(policy, now=3.0)
+    policy.mark_scope_pending(
+        (
+            WatcherPathObservation(
+                relative_path="src/b.py",
+                source=WatcherSource.CODE,
+                first_observed_at=3.0,
+                latest_observed_at=3.0,
+                event_kinds=frozenset({WatcherPathEvent.MODIFIED}),
+                generation=1,
+            ),
+        ),
+        now=3.0,
+    )
 
     assert refused.scope_refusal is WatcherScopeRefusal.FULL_REINDEX_REQUIRED
     assert refused.circuit_state is WatcherCircuitState.OPEN

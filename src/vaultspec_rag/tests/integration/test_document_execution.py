@@ -61,6 +61,8 @@ from ...job_models import (
 from ...service import ServiceRegistry
 from ...service_quiesce import ServiceQuiesceController
 from ...watcher_retry import (
+    WatcherPathEvent,
+    WatcherPathObservation,
     WatcherSource,
 )
 from ...watcher_retry_policy import (
@@ -71,7 +73,6 @@ from .._indexer_fixtures import (
     DocumentFileChunkResult,
     chunk_document_and_hash_file,
 )
-from .._watcher_fixtures import mark_convergence_pending
 from ._helpers import _document_policy
 
 if TYPE_CHECKING:
@@ -424,6 +425,18 @@ def test_document_runtime_budget_enforces_extracted_rss_and_cuda_dimensions() ->
     assert runtime_budget.cuda_bytes >= 0
 
 
+def _watched_path(source: WatcherSource) -> WatcherPathObservation:
+    """One exact observation of the shape watcher intake persists."""
+    return WatcherPathObservation(
+        relative_path="docs/report.pdf",
+        source=source,
+        first_observed_at=1.0,
+        latest_observed_at=1.0,
+        event_kinds=frozenset({WatcherPathEvent.MODIFIED}),
+        generation=1,
+    )
+
+
 def test_document_retry_state_and_resource_profile_are_independent(
     tmp_path: Path,
 ) -> None:
@@ -452,9 +465,9 @@ def test_document_retry_state_and_resource_profile_are_independent(
             now=0,
         ),
     )
-    mark_convergence_pending(code, now=1)
+    code.mark_scope_pending((_watched_path(WatcherSource.CODE),), now=1)
     code_before = code.state
-    mark_convergence_pending(document, now=1)
+    document.mark_scope_pending((_watched_path(WatcherSource.DOCUMENT),), now=1)
     admitted = document.admit(now=1)
     assert admitted.attempt_generation is not None
     document.record_failure(

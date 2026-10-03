@@ -38,7 +38,6 @@ from ._child_signal import (
     PROCESS_TIMEOUT_SECONDS,
     await_marker,
 )
-from ._watcher_fixtures import mark_convergence_pending
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -74,14 +73,28 @@ def _path_observation(
     generation: int = 1,
     first: float = 1.0,
     latest: float = 2.0,
+    source: WatcherSource = WatcherSource.CODE,
 ) -> WatcherPathObservation:
     return WatcherPathObservation(
         relative_path=path,
-        source=WatcherSource.CODE,
+        source=source,
         first_observed_at=first,
         latest_observed_at=latest,
         event_kinds=frozenset({WatcherPathEvent.MODIFIED}),
         generation=generation,
+    )
+
+
+def _mark_scope(
+    policy: WatcherRetryPolicy,
+    *,
+    now: float,
+    path: str = "src/a.py",
+    source: WatcherSource = WatcherSource.CODE,
+) -> WatcherRetryState:
+    """Stage one pending generation the way the watcher intake stages it."""
+    return policy.mark_scope_pending(
+        (_path_observation(path, first=now, latest=now, source=source),), now=now
     )
 
 
@@ -201,11 +214,13 @@ def test_invalid_or_foreign_scope_fails_closed(
     assert not policy.state.convergence_pending
 
 
-def test_schema_two_pending_intent_migrates_to_typed_rebuild_refusal(
-    tmp_path: Path,
-) -> None:
-    state_path = tmp_path / "state" / "code.json"
-    _policy(state_path, tmp_path)
+def _seed_pending_state_without_exact_scope(state_path: Path, root: Path) -> None:
+    """Persist the pending intent an older release wrote with no path evidence.
+
+    That schema carried no path fields at all, so a state file left by one is
+    the only way a pending generation arrives with nothing to scope it.
+    """
+    _policy(state_path, root)
     payload = json.loads(state_path.read_text(encoding="utf-8"))
     payload["schema_version"] = 2
     payload["convergence_pending"] = True
@@ -219,6 +234,13 @@ def test_schema_two_pending_intent_migrates_to_typed_rebuild_refusal(
     ):
         payload.pop(field)
     state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_schema_two_pending_intent_migrates_to_typed_rebuild_refusal(
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / "state" / "code.json"
+    _seed_pending_state_without_exact_scope(state_path, tmp_path)
 
     migrated = _policy(state_path, tmp_path, now=3.0)
 
@@ -343,7 +365,7 @@ def _fail_once(
 
 def _drive_to_open_circuit(policy: WatcherRetryPolicy) -> None:
     """Fail three times, which is what opens the circuit."""
-    mark_convergence_pending(policy, now=0.0)
+    _mark_scope(policy, now=0.0)
     _fail_once(policy, TimeoutError("t"), now=0.0, random_unit=0.5)
     _fail_once(policy, ConnectionError("c"), now=11.0, random_unit=1.0)
     _fail_once(policy, TimeoutError("t"), now=35.0, random_unit=0.5)
@@ -351,7 +373,7 @@ def _drive_to_open_circuit(policy: WatcherRetryPolicy) -> None:
 
 def test_retry_backoff_grows_and_gates_admission(tmp_path: Path) -> None:
     policy = _policy(tmp_path / "code.json", tmp_path)
-    mark_convergence_pending(policy, now=0.0)
+    _mark_scope(policy, now=0.0)
 
     state = _fail_once(
         policy, TimeoutError("qdrant timed out"), now=1.0, random_unit=0.5
@@ -371,7 +393,7 @@ def test_retry_backoff_grows_and_gates_admission(tmp_path: Path) -> None:
 
 def test_third_failure_opens_the_circuit(tmp_path: Path) -> None:
     policy = _policy(tmp_path / "code.json", tmp_path)
-    mark_convergence_pending(policy, now=0.0)
+    _mark_scope(policy, now=0.0)
     _fail_once(policy, TimeoutError("t"), now=1.0, random_unit=0.5)
     _fail_once(policy, ConnectionError("c"), now=11.0, random_unit=1.0)
 
@@ -386,7 +408,7 @@ def test_full_reindex_required_is_terminal_and_clears_pending_intent(
     tmp_path: Path,
 ) -> None:
     policy = _policy(tmp_path / "code.json", tmp_path)
-    mark_convergence_pending(policy, now=0.0)
+    _mark_scope(policy, now=0.0)
 
     state = _fail_once(
         policy,
@@ -400,7 +422,7 @@ def test_full_reindex_required_is_terminal_and_clears_pending_intent(
     assert not state.convergence_pending
     assert not policy.admit(now=1000.0).admitted
 
-    renewed = mark_convergence_pending(policy, now=1001.0)
+    renewed = _mark_scope(policy, now=1001.0, path="src/b.py")
     assert renewed.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
     assert renewed.circuit_state is WatcherCircuitState.OPEN
     assert not policy.admit(now=1001.0).admitted
@@ -467,12 +489,13 @@ def test_exact_events_preserve_failure_backoff_and_circuit(tmp_path: Path) -> No
     assert not policy.admit(now=34.0).admitted
 
 
-def test_exact_event_cannot_replace_unknown_scope_after_restart(tmp_path: Path) -> None:
-    # Mutation: clearing the restart refusal on an exact event loses the older
+def test_exact_event_cannot_replace_unknown_scope_from_an_older_release(
+    tmp_path: Path,
+) -> None:
+    # Mutation: clearing the migrated refusal on an exact event loses the older
     # unknown scope while admitting only the newest path.
-    state_path = tmp_path / "code.json"
-    policy = _policy(state_path, tmp_path)
-    mark_convergence_pending(policy, now=0.0)
+    state_path = tmp_path / "state" / "code.json"
+    _seed_pending_state_without_exact_scope(state_path, tmp_path)
     restarted = _policy(state_path, tmp_path, now=1.0)
 
     observed = restarted.mark_scope_pending((_path_observation("src/new.py"),), now=2.0)
@@ -494,7 +517,7 @@ def test_missing_publication_proof_is_a_terminal_rebuild_refusal(
     assert classify_error_text(str(missing.value)) is JobErrorKind.FULL_REINDEX_REQUIRED
 
     policy = _policy(tmp_path / "vault.json", tmp_path, source=WatcherSource.VAULT)
-    mark_convergence_pending(policy, now=0.0)
+    _mark_scope(policy, now=0.0, source=WatcherSource.VAULT)
     state = _fail_once(policy, missing.value, now=1.0, random_unit=0.5)
 
     assert state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
@@ -553,7 +576,7 @@ def test_nonretryable_failure_opens_immediately(
     expected_kind: JobErrorKind,
 ) -> None:
     policy = _policy(tmp_path / "code.json", tmp_path)
-    mark_convergence_pending(policy, now=0.0)
+    _mark_scope(policy, now=0.0)
     decision = policy.admit(now=0.0)
     assert decision.attempt_generation is not None
 
@@ -578,10 +601,9 @@ def test_restart_refuses_unsettled_attempt_until_explicit_rebuild(
             "import os, sys",
             "from pathlib import Path",
             (
-                "from vaultspec_rag.tests._watcher_fixtures import "
-                "mark_convergence_pending"
+                "from vaultspec_rag.watcher_retry import "
+                "WatcherPathEvent, WatcherPathObservation, WatcherSource"
             ),
-            "from vaultspec_rag.watcher_retry import WatcherSource",
             (
                 "from vaultspec_rag.watcher_retry_policy import "
                 "WatcherRetryPolicy, _WatcherRetryOptions"
@@ -594,7 +616,13 @@ def test_restart_refuses_unsettled_attempt_until_explicit_rebuild(
                 "max_seconds=25.0, jitter_fraction=0.0, "
                 "failure_threshold=3, now=0.0))"
             ),
-            "mark_convergence_pending(policy, now=0.0)",
+            (
+                "policy.mark_scope_pending((WatcherPathObservation("
+                "relative_path='src/a.py', source=WatcherSource.CODE, "
+                "first_observed_at=0.0, latest_observed_at=0.0, "
+                "event_kinds=frozenset({WatcherPathEvent.MODIFIED}), "
+                "generation=1),), now=0.0)"
+            ),
             "first = policy.admit(now=0.0)",
             "assert first.attempt_generation == 1",
             (
@@ -621,7 +649,9 @@ def test_restart_refuses_unsettled_attempt_until_explicit_rebuild(
     assert state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
     assert state.circuit_state is WatcherCircuitState.OPEN
     assert state.next_retry_at == 0.0
-    assert state.last_failure_at == 40.0
+    # The refusal must not post-date the evidence it rests on: the cutoff is
+    # the start of the abandoned attempt, not the restart that found it.
+    assert state.last_failure_at == 30.0
     assert state.attempt_generation is None
     assert not state.unscoped_required
     assert not restarted.admit(now=64.9).admitted
@@ -674,7 +704,7 @@ async def _await_recovery_markers(root: Path, pattern: str) -> list[Path]:
 def test_prestart_handoff_cancels_reserved_admission(tmp_path: Path) -> None:
     state_path = tmp_path / "code.json"
     policy = _policy(state_path, tmp_path)
-    mark_convergence_pending(policy, now=0.0)
+    _mark_scope(policy, now=0.0)
     attempt_token = policy.reserve_admission()
     assert attempt_token is not None
 
@@ -717,10 +747,10 @@ async def test_cancellation_handoff_has_reserved_worker_capacity(
 
         persistence = asyncio.create_task(
             run_durable_retry_transaction(
-                lambda: mark_convergence_pending(policy),
+                lambda: _mark_scope(policy, now=time.time()),
                 source=WatcherSource.CODE,
                 root_dir=tmp_path,
-                action="mark_convergence_pending",
+                action="mark_scope_pending",
                 cancellation_fallback=policy.write_recovery_marker,
             )
         )
@@ -742,34 +772,13 @@ async def test_cancellation_handoff_has_reserved_worker_capacity(
     assert replacement.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
 
 
-def test_restored_unknown_scope_is_not_narrowed_by_new_event(tmp_path: Path) -> None:
-    state_path = tmp_path / "code.json"
-    policy = _policy(state_path, tmp_path)
-    mark_convergence_pending(policy, now=0.0)
-    attempt = policy.admit(now=0.0)
-    assert attempt.attempt_generation is not None
-    policy.record_failure(
-        OSError("No space left on device"),
-        attempt.attempt_generation,
-        now=1.0,
-        random_unit=0.5,
-    )
-
-    restarted = _policy(state_path, tmp_path, now=2.0)
-    mark_convergence_pending(restarted, now=3.0)
-    decision = restarted.admit(now=11.0)
-    assert not decision.admitted
-    assert restarted.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
-
-
-def test_interruption_retains_scoped_intent_for_the_marking_instance(
+def test_interruption_retains_scoped_intent_across_instances(
     tmp_path: Path,
 ) -> None:
-    """A live interruption keeps scoped convergence; only a fresh instance
-    without the volatile paths is promoted to unscoped."""
+    """An interruption keeps the exact scope, for this instance and the next."""
     state_path = tmp_path / "code.json"
     policy = _policy(state_path, tmp_path)
-    mark_convergence_pending(policy, now=0.0)
+    _mark_scope(policy, now=0.0)
     attempt = policy.admit(now=0.0)
     assert attempt.attempt_generation is not None
 
@@ -777,8 +786,6 @@ def test_interruption_retains_scoped_intent_for_the_marking_instance(
     assert state.attempt_generation is None
     assert state.consecutive_failures == 0
     assert state.convergence_pending
-    # The marking instance still holds the exact dirty paths in its
-    # convergence slot, so the interruption must not force a full-tree pass.
     assert not state.unscoped_required
     retry = policy.admit(now=1.0)
     assert retry.admitted
@@ -786,23 +793,28 @@ def test_interruption_retains_scoped_intent_for_the_marking_instance(
     assert retry.attempt_generation is not None
     policy.record_interrupted(retry.attempt_generation, now=2.0)
 
-    # A replacement instance never held those paths, so construction over the
-    # durable pending bit promotes the intent to unscoped.
+    # The scope is durable, so a replacement instance inherits the exact paths
+    # rather than losing them with the process that observed them.
     replacement = _policy(state_path, tmp_path, now=3.0)
     assert replacement.state.convergence_pending
     assert not replacement.state.unscoped_required
-    assert replacement.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
-    assert not replacement.admit(now=3.0).admitted
+    assert replacement.state.last_error_kind is None
+    assert [item.relative_path for item in replacement.state.pending_paths] == [
+        "src/a.py"
+    ]
+    resumed = replacement.admit(now=3.0)
+    assert resumed.admitted
+    assert not resumed.requires_unscoped
 
 
 def test_success_with_mid_attempt_event_stays_scoped(tmp_path: Path) -> None:
     """A generation marked mid-attempt by the same instance converges scoped."""
     policy = _policy(tmp_path / "code.json", tmp_path)
-    mark_convergence_pending(policy, now=0.0)
+    _mark_scope(policy, now=0.0)
     attempt = policy.admit(now=0.0)
     assert attempt.attempt_generation == 1
 
-    newer = mark_convergence_pending(policy, now=1.0)
+    newer = _mark_scope(policy, now=1.0, path="src/b.py")
     assert newer.convergence_generation == 2
     settled = policy.record_success(1, now=2.0)
     assert settled.convergence_pending
@@ -891,7 +903,7 @@ def test_recovery_marker_clears_claim_and_requires_explicit_rebuild(
 ) -> None:
     state_path = tmp_path / "code.json"
     policy = _policy(state_path, tmp_path)
-    mark_convergence_pending(policy, now=0.0)
+    _mark_scope(policy, now=0.0)
     attempt = policy.admit(now=0.0)
     assert attempt.attempt_generation is not None
     marker = policy.write_recovery_marker()
@@ -912,21 +924,21 @@ def test_recovery_marker_clears_claim_and_requires_explicit_rebuild(
 def test_late_recovery_marker_preserves_newer_live_claim(tmp_path: Path) -> None:
     state_path = tmp_path / "code.json"
     retiring = _policy(state_path, tmp_path)
-    mark_convergence_pending(retiring, now=0.0)
+    _mark_scope(retiring, now=0.0)
     retiring_attempt = retiring.admit(now=0.0)
     assert retiring_attempt.attempt_generation is not None
     retiring.record_interrupted(retiring_attempt.attempt_generation, now=1.0)
 
     replacement = _policy(state_path, tmp_path, now=2.0)
     replacement_attempt = replacement.admit(now=2.0)
-    assert not replacement_attempt.admitted
-    assert replacement.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+    assert replacement_attempt.admitted
     marker = retiring.write_recovery_marker()
 
     settled = _policy(state_path, tmp_path, now=3.0).state
 
     assert not marker.exists()
-    assert settled.attempt_generation is None
+    # The marker fences the retired attempt, not the live one that replaced it.
+    assert settled.attempt_generation == replacement_attempt.attempt_generation
     assert settled.convergence_pending
     assert not settled.unscoped_required
     assert settled.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
@@ -936,7 +948,7 @@ def test_late_recovery_marker_preserves_newer_live_claim(tmp_path: Path) -> None
 def test_inactive_same_process_fence_is_consumed(tmp_path: Path) -> None:
     state_path = tmp_path / "code.json"
     policy = _policy(state_path, tmp_path)
-    mark_convergence_pending(policy, now=0.0)
+    _mark_scope(policy, now=0.0)
     attempt = policy.admit(now=0.0)
     assert attempt.attempt_generation is not None
     marker = policy.write_recovery_marker()

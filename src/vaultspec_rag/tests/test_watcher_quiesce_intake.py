@@ -26,13 +26,15 @@ from ..watcher_execution import (
 )
 from ..watcher_intake import _new_controller
 from ..watcher_retry import (
+    WatcherPathEvent,
+    WatcherPathObservation,
     WatcherSource,
 )
 from ..watcher_retry_policy import (
     WatcherRetryPolicy,
 )
 from ..watcher_runtime import WatcherConvergenceSlot
-from ._watcher_fixtures import dirty_paths, mark_convergence_pending
+from ._watcher_fixtures import dirty_paths
 
 pytestmark = [pytest.mark.unit]
 
@@ -43,7 +45,19 @@ if TYPE_CHECKING:
 def _slot(root: Path, registry: ServiceRegistry) -> WatcherConvergenceSlot:
     """Build one real on-disk retry owner with deferred code work."""
     policy = WatcherRetryPolicy.for_root(root, WatcherSource.CODE)
-    mark_convergence_pending(policy, now=1.0)
+    policy.mark_scope_pending(
+        (
+            WatcherPathObservation(
+                relative_path="changed.py",
+                source=WatcherSource.CODE,
+                first_observed_at=1.0,
+                latest_observed_at=1.0,
+                event_kinds=frozenset({WatcherPathEvent.MODIFIED}),
+                generation=1,
+            ),
+        ),
+        now=1.0,
+    )
     slot = WatcherConvergenceSlot(
         JobSource.CODE,
         root,
