@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:d16e95ab744ffcac9e7ed393fa61855a2322dde09d315b8946d05268c989c4bc'
+body_hash: 'sha256:5e3ee7f08d72b8fd199d25c98eadcf495bdd287514f9251c460e28f4dcdb7fef'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -303,6 +303,28 @@ related:
 - `S21` `verify:` `.venv/Scripts/python.exe C:/Users/hello/AppData/Local/Temp/vaultspec-rag-weighted-floor-proof/guards.py` -> `pass`
 - `S21` `verify:` `Integrated S21 source, decision and CPU review` -> `pass`
 - `S21` `by:` `root`
+- `S22` `M` `src/vaultspec_rag/job_manager/_control.py`
+- `S22` `M` `src/vaultspec_rag/tests/test_job_manager_transitions.py`
+- `S22` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/job_manager/_control.py src/vaultspec_rag/tests/test_job_manager_transitions.py` -> `pass`
+- `S22` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/job_manager/_control.py src/vaultspec_rag/tests/test_job_manager_transitions.py` -> `pass`
+- `S22` `verify:` `uv run --no-sync basedpyright src/vaultspec_rag/job_manager/_control.py` -> `pass`
+- `S22` `verify:` `uv run --no-sync basedpyright src/vaultspec_rag/tests/test_job_manager_transitions.py` -> `pass`
+- `S22` `verify:` `uv run --no-sync ty check src/vaultspec_rag/job_manager/_control.py src/vaultspec_rag/tests/test_job_manager_transitions.py` -> `pass`
+- `S22` `verify:` `uv run --no-sync complexipy src/vaultspec_rag/job_manager/_control.py --failed` -> `pass`
+- `S22` `verify:` `uv run --no-sync xenon vaultspec_rag/job_manager/_control.py --max-absolute C --max-modules C --max-average A` -> `pass`
+- `S22` `verify:` `uv run --no-sync pylint src/vaultspec_rag/job_manager/_control.py src/vaultspec_rag/tests/test_job_manager_transitions.py --rcfile=pyproject.toml --score=n` -> `pass`
+- `S22` `verify:` `git diff --check -- src/vaultspec_rag/job_manager/_control.py src/vaultspec_rag/tests/test_job_manager_transitions.py` -> `pass`
+- `S22` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_job_manager_transitions.py src/vaultspec_rag/tests/test_job_control_unit.py src/vaultspec_rag/tests/test_job_control_admission.py src/vaultspec_rag/tests/test_job_manager_quiesce.py src/vaultspec_rag/tests/test_job_quiesce_operator_intent.py src/vaultspec_rag/tests/test_job_contracts.py src/vaultspec_rag/tests/test_job_contracts_persistence.py src/vaultspec_rag/tests/test_jobs_quiesce_projection.py -m unit and not torch -q --tb=short` -> `pass`
+- `S22` `verify:` `.venv/Scripts/python.exe .pytest-tmp/S22/prove_guards.py clear_started mutate` -> `fail`
+- `S22` `verify:` `.venv/Scripts/python.exe .pytest-tmp/S22/prove_guards.py clear_started restore` -> `pass`
+- `S22` `verify:` `.venv/Scripts/python.exe .pytest-tmp/S22/prove_guards.py clear_finished mutate` -> `fail`
+- `S22` `verify:` `.venv/Scripts/python.exe .pytest-tmp/S22/prove_guards.py clear_finished restore` -> `pass`
+- `S22` `verify:` `.venv/Scripts/python.exe .pytest-tmp/S22/prove_guards.py same_attempt_preserved mutate` -> `fail`
+- `S22` `verify:` `.venv/Scripts/python.exe .pytest-tmp/S22/prove_guards.py same_attempt_preserved restore` -> `pass`
+- `S22` `verify:` `uv run --no-sync ruff check src/vaultspec_rag` -> `pass`
+- `S22` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag` -> `pass`
+- `S22` `verify:` `git diff --check` -> `pass`
+- `S22` `by:` `root`
 
 ## Notes
 
@@ -316,3 +338,4 @@ related:
 - `S19` The managed GPU integration fixture was not executed; four projection caller migrations passed strict static checks and actual-component CPU tests covered the changed behavior. Runtime verification remains in S04.
 - `S20` Resident stopped after separate S21 corpus-profile refusal; live S19/S20 loading, preserved job recovery and publication proof remain S04 work.
 - `S21` Unchanged Torch-dependent vector conversion case excluded from the CPU-only affected rerun; initial failure preserved. No claim of new above-floor GPU benchmark capability. Live corrected-build recovery remains S04 work.
+- `S22` Three deliberate process-only production mutations failed their named regressions before finally restoration and fresh normal passes. Runtime rollout remains assigned S04.

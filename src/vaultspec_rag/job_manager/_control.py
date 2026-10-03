@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from typing import TYPE_CHECKING, Literal
 
@@ -1149,6 +1149,10 @@ class JobManagerControl(JobManagerQuiesceControl):
         now: float,
     ) -> None:
         previous_attempt = managed.snapshot.attempt.number
+        managed.snapshot = replace(
+            managed.snapshot,
+            resources=replace(managed.snapshot.resources, started=None, finished=None),
+        )
         self._replace_snapshot_locked(
             managed,
             SnapshotTransition(

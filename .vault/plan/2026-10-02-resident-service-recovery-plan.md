@@ -32,7 +32,7 @@ related:
   - '[[2026-09-08-qdrant-collection-sprawl-adr]]'
 modified: '2026-10-03'
 body_schema: body-v2
-body_hash: 'sha256:a41e987a77668eea18a307f1638d182422e48326091f14c421fa64debd3a7d99'
+body_hash: 'sha256:1eb9bb4921132ef569622233f08fdd79e35fceedd516ec23c3edd6c3da57ba4b'
 ---
 
 # `resident-service-recovery` plan
@@ -75,6 +75,10 @@ S19 also projects actual vault checkpoint facts now that vault shares the canoni
 
 S20 follows a confirmed high-severity vault liveness defect: confirmed chunk units do not renew the actual RunPolicy, and vault ingestion bypasses its write policy. A progressing rebuild longer than the timeout can publish its proof and succeeded generation, then report an admission-age no-progress timeout. Accepted resilience D4, D8 and D9 and incremental-publication-cost's shared vault lifecycle govern the correction. Actual inserted units must renew the clock, retries and safe boundaries must use the same policy, and genuine silence must still fail. No vault resource profile or memory ceiling is introduced.
 
+S22 follows a confirmed live observability defect: a resumed VAULT attempt publishes its current started resource reading beside a finished reading retained from the earlier paused attempt. The canonical resource update is exact-attempt and exposes no historical attribution. Accepted job control and operability require clearing boundary readings when a new attempt is prepared while preserving same-attempt pause withdrawal and terminal history. The intentionally CODE/DOCUMENT-only pipeline_active flag remains unchanged. This small in-scope correction needs no protocol, schema, or costly decision change.
+
+S23 follows a concrete synchronous blocking seam: the async health handler calls registry.health on the HTTP event loop, and that owner holds its registry lock while waiting for a store lifecycle lock. Collection creation and payload-index backend operations hold the same lifecycle lock, so slow storage can starve otherwise independent HTTP requests. The exact two live health timeouts remain unattributed without lock-duration evidence. The accepted service boundary and truthful uncertainty contracts govern offloading synchronous health projection through the existing thread seam. This correction preserves conformance facts and caller timeout semantics, introduces no cached success or new latency promise, and requires no protocol or schema change.
+
 ## Steps
 
 - [x] `S01` - Preserve terminal rebuild refusals and accurate watcher status through events, failures, and restart, and reconcile successful verified operator rebuilds; `watcher retry, controller, intake, execution and runtime, jobs.py completion hook, affected watcher and job tests`.
@@ -97,6 +101,8 @@ S20 follows a confirmed high-severity vault liveness defect: confirmed chunk uni
 - [x] `S19` - Publish bounded attempt-owned live checkpoint resilience after durable indexing boundaries and expose accurate running generation, committed/replayed units and no-progress facts without changing file counters or stall policy; `canonical attempt binding, checkpoint/run-policy durable observation and job resilience projection only as needed, CPU paused-before-completion actual-ledger and failure/control regressions`.
 - [x] `S20` - Advance and enforce the vault durable no-progress clock at confirmed chunk and publication boundaries so a progressing long rebuild remains valid and terminal publication cannot be followed by an admission-age timeout; `vault checkpoint confirmed-unit and ingest write-policy wiring including deadline-aware point locks, shared terminal publication ordering and attempt completion only as needed, CPU real-store multi-unit deadline, lock-wait, cleanup and terminal-truth regressions`.
 - [x] `S21` - Restore the accepted managed CODE corpus floor under the pinned sparse vocabulary without weakening cumulative accounting or queue and runtime safeguards; `managed CODE aggregate weighted-byte limit, canonical real-chunk floor and first-excess boundary regressions, dated D6 coverage clarification and live failed-build recovery`.
+- [x] `S22` - Clear prior-attempt resource boundary readings when preparing a resumed job while preserving same-attempt pause withdrawal and terminal history; `canonical job resumed-attempt snapshot owner and focused real-manager CPU control regressions`.
+- [ ] `S23` - Keep synchronous registry and storage health projection off the HTTP event loop while preserving bounded caller timeout uncertainty and conformance facts; `canonical server health handler and focused real-lock CPU responsiveness regression`.
 - [ ] `S04` - Deploy the current checkout as the resident daemon, repair affected publications through explicit rebuild jobs when required, and verify service health, search, and watcher convergence; `resident service lifecycle, affected root ledgers and admitted jobs, plan verification and final audit`.
 
 ## Parallelization
@@ -128,6 +134,10 @@ The recovery worker owns S19 attempt-owned live checkpoint resilience, bounded o
 The recovery worker also owns S20 vault confirmed-chunk liveness, ingest policy wiring and real CPU storage/deadline regressions, sequenced after S19's reviewable checkpoint. The supervisor has paused only the three unstarted ingest, TUI and MCP vault rebuilds while the protected MCP code worker continues. These logical jobs retain operator pause intent across the final source restart and resume with rebuild authority after S19 and S20 pass. The supervisor owns that restart, shared gates, Git/vault changes and live verification.
 
 The watcher worker owns S21's managed CODE weighted-cap correction and canonical real-chunk CPU floor/boundary regression, sequenced after S20's commit so its production guards retain frozen dependencies. Only index_profiles.py and the focused support-profile test are assigned. The supervisor owns the dated D6 clarification, Git/vault checkpoints and resident recovery. The MCP CODE failure and TUI protected pause request are preserved through the canonical Windows stop. After the corrected source starts, recover MCP first so its verified replacement can become a donor before resuming TUI and the remaining domains.
+
+The recovery worker owns S22 canonical resumed-attempt boundary resource cleanup and focused real-manager CPU regressions. It may proceed while the protected repair jobs finish because it does not touch runtime or the GPU. The supervisor owns shared checks, vault/Git checkpoints, and a final idle restart to load this source repair after all protected writers settle.
+
+The watcher worker owns S23's canonical health-handler thread handoff and real-lock CPU responsiveness regression. Its files are disjoint from S22 and both workers remain CPU-only. The supervisor owns shared gates, vault/Git checkpoints and the single final idle source restart after every protected repair job settles.
 
 ## Verification
 

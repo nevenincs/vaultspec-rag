@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:be8ce8aa223f97e1e9a92343885786455542f0a0aeb03c6c3a5dbc21b8569804'
+body_hash: 'sha256:8cbdaf3e0b37542fbd02b951faa7c610028d3d164d2731002ebfaebfdbb8f67e'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -190,6 +190,14 @@ The brief 01:30:43 UTC health degradation remains unattributed. File-completion 
 
 **HIGH — S21 managed CODE weight violates the accepted floor.** The MCP CODE repair failed at 02:45:48 UTC after 9,393 of 9,806 files, 69,986 durable units and 134,967 physical points. It reported weighted bytes 549,758,571,584 against the 549,755,813,888-byte managed limit. Daemon PID 38488 and Qdrant PID 77200 stayed alive with zero backend restarts and no fatal output. This was a deliberate support refusal, not replay inflation, a physical 549 GiB allocation or an OOM crash. The canonical estimator reserves pinned 50,370 sparse dimensions at 80 lifetime bytes each. The real benchmark/chunker/support-budget CPU reproduction shows the accepted 83,624-file, 250,872-chunk floor weighs 1,021,070,531,368 bytes (950.946 GiB), while current enforcement rejects at 135,075 chunks. D6 already requires that floor. S21 corrects only the managed CODE aggregate cap to 1,024 GiB, retains cumulative accounting and all queue/runtime/embedded limits, and adds real floor/boundary regression and negative proof. Its dated D6 clarification records the derivation without claiming new above-floor capability. Source review remains pending.
 
+### Resumed resource boundaries | medium | S22
+
+The live MCP VAULT resumed attempt reports its current started reading beside the prior paused attempt's finished reading. Canonical resumed-attempt preparation increments attempt identity while retaining resources, and worker admission updates started without clearing finished. ResourceUpdate documents exact-attempt facts and carries no historical attribution. S22 clears boundary readings when preparing a new resumed attempt, preserving same-attempt pause withdrawal and terminal history. The VAULT pipeline_active=false value is intentional: that flag describes CODE/DOCUMENT consumer execution, while vault capacity/project/writer ownership remains independently visible.
+
+### Synchronous health lock wait | medium | S23
+
+The async health_handler calls synchronous ServiceRegistry.health on the HTTP event loop. That owner holds its registry RLock while awaiting each store lifecycle lock, and collection ensure holds that lifecycle lock across backend collection and payload-index operations. Thus slow storage can starve independent HTTP work. The exact 03:24:46 and 03:25:41 UTC health timeouts remain unattributed without lock-duration capture: document discovery and the long payload-only route scan do not hold this lifecycle lock. S23 reuses the existing anyio thread seam for the registry projection, retaining conformance results and existing bounded caller uncertainty without claiming a new health latency guarantee or caching success.
+
 ## Recommendations
 
 Complete the open code Steps, verify their negative guards and integrated CPU behavior, then deploy the checkout through its separate locked GPU environment. Point the existing on-demand resident lifecycle tasks at that environment so CI restarts preserve the repair. Respect live CI ownership; repair affected publication domains through admitted explicit rebuild jobs, verify search and watcher convergence, and append the final review and rollout results here.
@@ -295,3 +303,21 @@ After the S21 controlled stop, consistent read-only SQLite backups preserved the
 S21 SOURCE + DECISION + CPU review PASS at 2026-10-03 03:08 UTC, with no blocking findings. Only the managed CODE aggregate weighted cap changes, from 512 to 1,024 GiB; the dated D6 clarification preserves the accepted floor and all cumulative, queue, runtime and embedded-local invariants. Real benchmark/chunker/segmenter/support-budget tests reach 250,872 representative chunks at 1,021,070,531,368 cumulative bytes and reject the first segment exceeding the corrected cap before yield, including across calls. The source finding is resolved; this is not a new above-floor GPU benchmark claim.
 
 All seven separately captured changed-path gates passed, with 23 focused and 61 affected CPU cases passing. The affected run has seven deselections, including the unchanged Torch-dependent conversion test that could not execute in the CPU environment; its initial dependency-failure log is preserved. All three corrected actual production mutation pairs reached named assertion failures (exit 1), restored methods in finally, and passed in fresh normal processes (exit 0). A scratch annotation NameError was rejected as invalid guard evidence and corrected before the complete uninterrupted sequence was rerun. Eight dependency hashes and the shared 42-file package lint/format/diff manifest match current source. Evidence is archived in `s21-proof`. The resident remains stopped pending committed-source startup and compatible build recovery under S04.
+
+## Committed-source live recovery checkpoint
+
+The canonical Start task loaded editable checkout revision 4700ebcaf67060ea7e2edca9e292e0be37220aa8 on 2026-10-03 03:09:43 UTC. Daemon 83668 and managed backend 89504 became ready at 03:16:04 UTC, with zero backend restarts and an empty fatal log. Seven paused document/vault jobs retained operator intent across restart and were explicitly resumed under the same logical identities. Two monitor source refresh jobs replace earlier successful leaves because the source and audit changed after those publications.
+
+MCP CODE linked retry e4117d6a-9471-46d2-b0d8-8e54b82f3b21 succeeded in 433630ms using compatible generation 5665e092078b43febab23033bce7d78a, 70806 committed units and 69986 replayed units. Its compacted clean publication contains 136334 retained IDs, all equal to actual backend payload IDs under the current Linkup sparse model. The initial phase with no file progress completed; read-only tracing confirms complete-corpus re-reading, framing validation and per-segment replay lookup before newly consumed file ends update the counter. No blocking defect follows from that temporary silence. The follow-up physical producer now binds the CODE current VERIFIED proof and validates its receipt-free read token before and after scanning. Document/vault proof artifacts additionally bind the job's actual generation to the scanned canonical generation.
+
+MCP VAULT now publishes actual active generation f9c7ff508816401e842c6a59af1831e7 and real durable committed-unit/timestamp updates. A read-only SQLite observation at 03:28:28 UTC showed 1280 confirmed units, matching the live projection after its bounded publication interval. This is actual S19 active VAULT evidence; profile and memory ceilings correctly remain unknown. At 03:32:28 UTC six of twelve current repair leaves had succeeded, with all others running or waiting. Final all-domain physical proof, search, watcher convergence, S22 source rollout and trusted idle fleet deployment remain pending.
+
+## S22 source verification checkpoint
+
+S22 changes only job_manager/_control.py and tests/test_job_manager_transitions.py. The canonical resumed-attempt preparation clears started and finished resource boundaries through immutable replacement, preserving ownership flags and the existing revision, lineage and persistence transaction. Same-attempt pause withdrawal and terminal retry history remain unchanged. Ten separately recorded gates pass, including strict source/test typing and 187 affected CPU tests. Three fresh-process guards mutate the actual production method to omit started cleanup, omit finished cleanup, or wrongly clear same-attempt readings; each fails its intended assertion with exit 1, restores the original method in finally, and then passes in a fresh normal process with exit 0. Both source hashes remain unchanged. Evidence: .pytest-tmp/S22 and incident s22-proof archive. Shared package Ruff, formatting and diff gates pass with 44 changed source/test hashes. Final source review and the idle deployed restart are tracked separately from these checks.
+
+At 03:42:28 UTC the real MCP VAULT generation remained running after more than 900 seconds, with 19264 durable units and a commit timestamp less than two seconds old. Canonical job projection at 03:42:16 showed 18880 confirmed units and a renewed 900-second no-progress budget. This is live S20 evidence of progressing work outlasting the original admission-age deadline; successful final publication remains pending.
+
+## S22 formal review
+
+Independent integrated source review: PASS, no blocking findings. Both frozen hashes, ten gates, 187 CPU passes and all three intended production mutation failure/restored-pass pairs were independently checked. Shared package gates and all 44 hashes matched. The resumed-resource finding is resolved in source; the final idle restart remains part of S04. S23 and final S04/S09 runtime proof remain pending.
