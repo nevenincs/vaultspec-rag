@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:6d5328826ed4235db2208adf3e83b81c108c7bc646f0a31bcb73b64b66f8d813'
+body_hash: 'sha256:1eec459d807586c50eefe2f69848ac649fbf142d22c999633a3794f64f5b49a4'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -181,8 +181,21 @@ related:
 - `S13` `verify:` `independent integrated S12 S13 source CPU review PASS` -> `pass`
 - `S13` `verify:` `git diff --check exit0` -> `pass`
 - `S13` `by:` `vaultspec-high-executor`
+- `S14` `M` `src/vaultspec_rag/job_dispatch.py`
+- `S14` `A` `src/vaultspec_rag/tests/test_job_rebuild_resume_dispatch.py`
+- `S14` `M` `src/vaultspec_rag/tests/test_content_kind_checkpoint_restart.py`
+- `S14` `M` `src/vaultspec_rag/tests/integration/test_document_execution.py`
+- `S14` `M` `src/vaultspec_rag/tests/integration/test_document_resource_bounds.py`
+- `S14` `M` `src/vaultspec_rag/tests/integration/test_service_jobs_routes_mutations.py`
+- `S14` `verify:` `package Ruff lint and format verified28 frozen paths` -> `pass`
+- `S14` `verify:` `S14 strict typing and configured design gates each exit0` -> `pass`
+- `S14` `verify:` `S14 affected CPU199 cases` -> `pass`
+- `S14` `verify:` `S14 eleven production mutation fail then fresh restored pass pairs` -> `pass`
+- `S14` `verify:` `integrated S14 source and CPU review` -> `pass`
+- `S14` `by:` `root`
 
 ## Notes
 
 - `S09` Source checkpoint 7386cc3 committed on isolated fix/resident-start-admission for canonical committed-runtime deployment; S09 remains open pending trusted idle live deployment.
 - `S10` An initial mistaken blanket integration invocation issued a canonical drain request and was refused before GPU borrower admission; no GPU lease was granted, service admission was restored, and all final test selections were CPU-only. Live exact linked retries are owned by S04.
+- `S14` Constructor-only integration migrations were strictly checked; GPU integration fixtures were not executed. Live replacement rollout remains S04.

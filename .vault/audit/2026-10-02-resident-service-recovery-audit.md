@@ -3,9 +3,9 @@ tags:
   - '#audit'
   - '#resident-service-recovery'
 date: '2026-10-02'
-modified: '2026-10-02'
+modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:e3f2a756c7464a8daf3afacf83f27af771c3d0c6aab0ac97db0c7506f13c43e5'
+body_hash: 'sha256:4bd0760aff36058194107593a7b19967ac32b58d78110e0a08eb8e6b2a1fe23c'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -193,3 +193,23 @@ At 23:31:40 UTC the canonical global pause reached its 20-second drain bound wit
 ## Integrated S12 and S13 review
 
 The independent reviewer issued SOURCE+CPU PASS for S12 and S13 against the current frozen files and complete evidence. All nineteen owned hashes and the additional unchanged storage-conformance hash match. All 23 S12 and 17 S13 actual production-function mutation logs fail at their intended assertion and pass after fresh restoration. No remaining source findings were reported. Quiesce recovery preserves closed durable preparation, protected workers and operator intent; search conformance refusal retains compatible combined results without starting rebuilds or weakening publication. S04 live rollout remains pending. Fresh captured subprocesses from both CPU and debug interpreters import this checkout and return stopped exit3 in human and JSON modes; earlier reported exit1 was PowerShell propagation, with no status-source defect.
+
+## Continued rollout findings at 2026-10-03 00:07 UTC
+
+The committed S12/S13 checkout restarted as daemon 2664 with managed Qdrant 88116 and reached readiness at 23:52:17 UTC. An actual 20-second quiesce, abort and resume recovered waiting desired-running jobs under their existing IDs as attempt2. Explicit operator pause remained held under its original attempt until separately resumed. Search incompatibility now produced typed nonretryable rebuild-required outcomes; compatible combined results remained usable.
+
+The ingest CODE child 50a7e0c4-85af-42a2-9989-44c794cfef58 completed its interrupted finalization at 23:56:20 UTC: generation 02d3547f844c400184cd936ad9a4356d published 1,665 points across 168 file outcomes. This establishes the S11 vector-free origin repair on the resident.
+
+The same control trace exposed S14: resumed REBUILD children passed clean=false at source entry despite retained rebuild authority. Untouched vault/document domains then refused incompatible old-model collections. S15 exposed inconsistent Windows root identity: forward-slash and uppercase-drive watcher filters returned zero controllers while the canonical lowercase root returned three. Review additionally found embedded-NUL path filters could escape as HTTP500; narrow bad-request validation is required. Independent source review passes S14 with 199 affected CPU cases, all changed gates and eleven production mutation/restoration pairs; actual source-entry and ledger-reuse proof scopes remain distinct.
+
+### Resumed edits delete shared freshly written chunk IDs | high | S18
+
+Monitor CODE child dcbefc0f-201f-483f-9975-e382def72940 failed the strict ingest barrier with 14,897 expected versus 14,541 actual points. Generation 81a0c6c67a714492951cef99cec90004 contains 7,700 UPSERT units and 14,897 distinct committed IDs; it has no deletion units. Real chunking/local-storage review reproduced whole-file drift retirement deleting unchanged chunk IDs already republished in the current mutation. The mechanism is confirmed; every one of the live 356 missing IDs has not been individually attributed. Fresh confirmed mutation IDs must survive retirement while all obsolete ledger units are removed.
+
+### Historical deletion records revive retired expected IDs | high | S18
+
+A separate interrupted deletion reopened a generation with zero live points and zero retained manifest paths, but the consumer seeded the deleted point identity from a durable deletion unit. Upsert-only ledger iteration must retain unfinished file prefixes while excluding deletion history; default all-operation iteration remains available to existing callers.
+
+Canonical stop succeeded at 00:07:31 UTC after checkpoint capture. Daemon2664 and Qdrant88116 were verified absent with unused ports. The damaged monitor build and TUI generation 0f2e9d6c33454bfc9246c5393face70d must be invalidated through the canonical RunLedger API before the next repair admission. Storage and previously served collections remain intact. Start/Stop tasks stay disabled during this bounded repair window; Probe remains enabled and the owned CI maintenance hold is retained.
+
+A separate cold-start investigation found retained generation ages within the accepted168-hour grace, so no incident-driven storage deletion is justified. CPU proofs nevertheless confirmed S16 disabled autoprune still admitted generation destruction and S17 CLI survey decoding omitted generation diagnostics. Those contract defects have explicit repair Steps and independent CPU verification.

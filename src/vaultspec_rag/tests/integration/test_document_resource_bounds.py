@@ -96,7 +96,6 @@ async def test_over_budget_document_is_refused_before_gpu_or_extractor(
                 context,
                 dispatch=_AttemptDispatch(
                     JobSource.DOCUMENT,
-                    manager,
                     created.job.id,
                     tmp_path,
                     JobMode.INCREMENTAL,

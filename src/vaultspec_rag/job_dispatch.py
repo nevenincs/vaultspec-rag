@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from .indexer._document_indexer import DocumentIndexPreflight
     from .job_manager.manager import JobManager
     from .job_models import JobSnapshot
+    from .progress import ProgressReporter
     from .service import ServiceRegistry
 
 
@@ -62,7 +63,6 @@ class _AttemptDispatch:
     """Stable persisted execution contract for one source-specific attempt."""
 
     source: JobSource
-    manager: JobManager
     job_id: str
     root: Path
     mode: JobMode
@@ -89,6 +89,78 @@ def _admit_attempt_mode(
     return clean
 
 
+def _bind_index_attempt(
+    context: JobAttemptContext,
+    dispatch: _AttemptDispatch,
+    *,
+    indexer: CodebaseIndexer | DocumentIndexer | VaultIndexer,
+    reporter: ProgressReporter,
+    preflight: CodeIndexPreflight | DocumentIndexPreflight | None = None,
+) -> Callable[[], IndexResult]:
+    """Bind source execution to persisted authority, independent of attempt lineage.
+
+    A resumed rebuild retains replacement authority. Each source checkpoint
+    decides whether its compatible generation can resume confirmed work.
+    """
+    from .indexer import CodebaseIndexer, DocumentIndexer
+    from .indexer._codebase_indexer import CodeIndexPreflight
+    from .indexer._document_indexer import DocumentIndexPreflight
+
+    clean = _admit_attempt_mode(context, dispatch)
+    if isinstance(indexer, CodebaseIndexer):
+        if not isinstance(preflight, CodeIndexPreflight):
+            raise RuntimeError("code attempt requires its admitted preflight")
+        if clean:
+            return partial(
+                indexer.full_index,
+                clean=clean,
+                reporter=reporter,
+                preflight=preflight,
+                authority=dispatch.authority,
+                run_control=context.control,
+            )
+        return partial(
+            indexer.incremental_index,
+            reporter=reporter,
+            preflight=preflight,
+            authority=dispatch.authority,
+            run_control=context.control,
+        )
+    if isinstance(indexer, DocumentIndexer):
+        if not isinstance(preflight, DocumentIndexPreflight):
+            raise RuntimeError("document attempt requires its admitted preflight")
+        if clean:
+            return partial(
+                indexer.full_index,
+                clean=clean,
+                reporter=reporter,
+                preflight=preflight,
+                authority=dispatch.authority,
+                run_control=context.control,
+            )
+        return partial(
+            indexer.incremental_index,
+            reporter=reporter,
+            preflight=preflight,
+            authority=dispatch.authority,
+            run_control=context.control,
+        )
+    if clean:
+        return partial(
+            indexer.full_index,
+            clean=clean,
+            reporter=reporter,
+            authority=dispatch.authority,
+            run_control=context.control,
+        )
+    return partial(
+        indexer.incremental_index,
+        reporter=reporter,
+        authority=dispatch.authority,
+        run_control=context.control,
+    )
+
+
 def bind_index_job(binding: IndexJobBinding) -> JobOutcome:
     """Bind one restored or newly admitted indexing job to production services."""
     # Admission authority proves creation was validated; execution rediscovers
@@ -111,7 +183,6 @@ def bind_index_job(binding: IndexJobBinding) -> JobOutcome:
             _run_vault_attempt,
             dispatch=_AttemptDispatch(
                 source=JobSource.VAULT,
-                manager=binding.manager,
                 job_id=binding.job_id,
                 root=root,
                 mode=spec.mode,
@@ -124,7 +195,6 @@ def bind_index_job(binding: IndexJobBinding) -> JobOutcome:
             _run_indexing_attempt,
             dispatch=_AttemptDispatch(
                 source=spec.source,
-                manager=binding.manager,
                 job_id=binding.job_id,
                 root=root,
                 mode=spec.mode,
@@ -148,7 +218,7 @@ def _run_vault_attempt(
     """Run one vault attempt through the exact service registry."""
     from .jobs import JobProgressReporter
 
-    clean = _admit_attempt_mode(context, dispatch)
+    _admit_attempt_mode(context, dispatch)
     result: IndexResult | None = None
     try:
         with dispatch.registry.compute_lease(dispatch.root) as lease:
@@ -157,25 +227,13 @@ def _run_vault_attempt(
             try:
                 context.set_resources(ResourceUpdate(writer_lock_held=True))
                 reporter = JobProgressReporter(dispatch.job_id, context=context)
-                snapshot = dispatch.manager.get(dispatch.job_id)
-                resumed = (
-                    snapshot is not None
-                    and snapshot.attempt.resumed_from_attempt is not None
-                )
                 try:
-                    if clean:
-                        result = runtime.vault_indexer.full_index(
-                            clean=not resumed,
-                            reporter=reporter,
-                            authority=dispatch.authority,
-                            run_control=context.control,
-                        )
-                    else:
-                        result = runtime.vault_indexer.incremental_index(
-                            reporter=reporter,
-                            authority=dispatch.authority,
-                            run_control=context.control,
-                        )
+                    result = _bind_index_attempt(
+                        context,
+                        dispatch,
+                        indexer=runtime.vault_indexer,
+                        reporter=reporter,
+                    )()
                 finally:
                     _publish_resilience(
                         context,
@@ -209,7 +267,7 @@ def _run_indexing_attempt(
     things: which admission call validates the root, which ``JobSource`` the
     resilience snapshot is taken for, which indexer the leased slot exposes,
     and which reader turns that indexer into resilience evidence. Everything
-    else - the lease, the resource bookkeeping, the resumed check, the
+    else - the lease, the resource bookkeeping, the admitted mode, the
     clean/incremental branch, the teardown ordering, and the whole result -
     was the same text twice.
 
@@ -234,7 +292,7 @@ def _run_indexing_attempt(
     )
     from .jobs import JobProgressReporter
 
-    clean = _admit_attempt_mode(context, dispatch)
+    _admit_attempt_mode(context, dispatch)
     # Held as two narrowed locals rather than one union: each indexer accepts
     # only its own preflight type, and the type checker cannot see that the
     # source picks both together. Narrowing keeps the pairing checkable.
@@ -267,48 +325,25 @@ def _run_indexing_attempt(
                     ResourceUpdate(writer_lock_held=True, pipeline_active=True)
                 )
                 reporter = JobProgressReporter(dispatch.job_id, context=context)
-                snapshot = dispatch.manager.get(dispatch.job_id)
-                resumed = (
-                    snapshot is not None
-                    and snapshot.attempt.resumed_from_attempt is not None
-                )
                 try:
                     if code_preflight is not None:
                         code_indexer = runtime.code_indexer
-                        result = (
-                            code_indexer.full_index(
-                                clean=not resumed,
-                                reporter=reporter,
-                                preflight=code_preflight,
-                                authority=dispatch.authority,
-                                run_control=context.control,
-                            )
-                            if clean
-                            else code_indexer.incremental_index(
-                                reporter=reporter,
-                                preflight=code_preflight,
-                                authority=dispatch.authority,
-                                run_control=context.control,
-                            )
-                        )
+                        result = _bind_index_attempt(
+                            context,
+                            dispatch,
+                            indexer=code_indexer,
+                            reporter=reporter,
+                            preflight=code_preflight,
+                        )()
                     else:
                         document_indexer = runtime.document_indexer
-                        result = (
-                            document_indexer.full_index(
-                                clean=not resumed,
-                                reporter=reporter,
-                                preflight=document_preflight,
-                                authority=dispatch.authority,
-                                run_control=context.control,
-                            )
-                            if clean
-                            else document_indexer.incremental_index(
-                                reporter=reporter,
-                                preflight=document_preflight,
-                                authority=dispatch.authority,
-                                run_control=context.control,
-                            )
-                        )
+                        result = _bind_index_attempt(
+                            context,
+                            dispatch,
+                            indexer=document_indexer,
+                            reporter=reporter,
+                            preflight=document_preflight,
+                        )()
                 finally:
                     _publish_resilience(
                         context,

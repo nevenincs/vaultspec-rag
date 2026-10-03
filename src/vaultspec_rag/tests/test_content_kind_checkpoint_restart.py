@@ -14,7 +14,10 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.unit]
 
 
-def test_each_kind_replays_only_its_final_unconfirmed_unit(tmp_path: Path) -> None:
+@pytest.mark.parametrize("clean", [False, True])
+def test_each_kind_replays_only_its_final_unconfirmed_unit(
+    tmp_path: Path, clean: bool
+) -> None:
     """Independent production checkpoints retain every confirmed kind-local unit."""
     import hashlib
 
@@ -78,7 +81,7 @@ def test_each_kind_replays_only_its_final_unconfirmed_unit(tmp_path: Path) -> No
                 run_policy=run_policy,
                 operation=RunOperation.FULL,
                 authority=RunAuthority.REBUILD,
-                clean=False,
+                clean=clean,
                 model_identity="restart-model-v1",
                 backend_identity="test-backend:content-kind-restart",
                 dense_dimensions=4,
@@ -95,7 +98,7 @@ def test_each_kind_replays_only_its_final_unconfirmed_unit(tmp_path: Path) -> No
                 run_policy=run_policy,
                 operation=RunOperation.FULL,
                 authority=RunAuthority.REBUILD,
-                clean=False,
+                clean=clean,
                 model_identity="restart-model-v1",
                 backend_identity="test-backend:content-kind-restart",
                 dense_dimensions=4,
@@ -180,3 +183,49 @@ def test_each_kind_replays_only_its_final_unconfirmed_unit(tmp_path: Path) -> No
         for segment in code_segments
     )
     assert all(resumed_document.slice_committed(unit) for unit in document_units)
+
+
+def test_vault_rebuild_keeps_its_confirmed_generation_after_interruption(
+    tmp_path: Path,
+) -> None:
+    """Retained clean authority reopens the real ledger without discarding units."""
+    from ..indexer._run_ledger_models import (
+        CommitUnit,
+        CommitUnitKind,
+        RunAuthority,
+        RunOperation,
+        RunTerminalState,
+    )
+    from ..indexer._vault_checkpoint import VaultRunCheckpoint
+    from ..job_control import NO_RUN_CONTROL
+
+    def _open() -> VaultRunCheckpoint:
+        return VaultRunCheckpoint.open(
+            tmp_path,
+            backend_identity="test-backend:vault-rebuild-restart",
+            authority=RunAuthority.REBUILD,
+            operation=RunOperation.FULL,
+            run_control=NO_RUN_CONTROL,
+        )
+
+    checkpoint = _open()
+    confirmed = CommitUnit(
+        rel_path="notes",
+        kind=CommitUnitKind.UPSERT,
+        source_digest="3" * 128,
+        segment_ordinal=0,
+        is_file_end=False,
+        point_ids=("notes#c0",),
+    )
+    checkpoint.ledger.record_storage_confirmed_unit(checkpoint.generation_id, confirmed)
+    checkpoint.ledger.finish_generation(
+        checkpoint.generation_id,
+        RunTerminalState.CANCELLED,
+        detail="paused after the first durable vault unit",
+    )
+    resumed = _open()
+    assert resumed.generation_id == checkpoint.generation_id
+    assert resumed.generation.signature.clean
+    assert resumed.ledger.committed_unit_count(resumed.generation_id) == 1
+    assert resumed.ledger.unit_committed(resumed.generation_id, confirmed)
+    assert not resumed.ledger.file_complete(resumed.generation_id, confirmed.rel_path)

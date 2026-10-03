@@ -26,9 +26,9 @@ related:
   - '[[2026-07-21-service-job-control-adr]]'
   - '[[2026-06-12-service-concurrency-adr]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
-modified: '2026-10-02'
+modified: '2026-10-03'
 body_schema: body-v2
-body_hash: 'sha256:f25adeaa58d69b9d38036dacf9f8cd89941c1810a6006437c31666b121fab700'
+body_hash: 'sha256:cce16dc706b7df59f7ecd5299b9597fe62ab56105498a8e7e130649af1715c7a'
 ---
 
 # `resident-service-recovery` plan
@@ -55,6 +55,14 @@ The same S12 control trace also found PAUSING/desired-RUNNING work from global q
 
 S13 follows four production search ASGI traces whose typed StorageModelError escaped as HTTP 500. Accepted search readiness requires a nonretryable rebuild-required source fact and HTTP 409; combined search must retain every failed constituent while serving useful compatible domains. The existing sparse-provenance and storage-conformance authorities remain strict. This is correction of exception-to-outcome mapping within the accepted protocol, with no ranking or persisted schema change. Recent logs and canonical handler traces ground the unavailable-index fallback.
 
+The restarted service exposed S14: explicit REBUILD jobs paused before acquiring index capacity resumed under a reconcile context that restarted vault and document full workers with clean=false. Those untouched jobs then refused the old sparse model instead of performing the requested replacement. The accepted rebuild authority and job-control/resume contracts require retaining replacement intent across control; no new protocol or persisted schema is proposed.
+
+S15 follows live watcher reports returning zero controllers for both forward-slash and ordinarily resolved uppercase-drive Windows roots, while the canonical lowercase root returns all three source controllers. The route compares raw query paths to normcase controller keys. Scheduler unregistration and active-root joining also compare differently cased keys. Accepted watcher lifecycle and bounded diagnostics require the same root identity at each boundary.
+
+A bounded cold-start cleanup investigation confirmed two additional contract violations. S16 follows a CPU stage-wiring proof that disabled autoprune sets the namespace cap to zero but still permits destructive superseded-generation cleanup; the accepted maintenance on/off contract explicitly requires destructive stages to report without acting. Independently enabled reconciliation must continue, and no new per-generation cap is inferred. S17 follows actual canonical survey producer, CLI decoder and JSON emitter round trips dropping served-code and unreferenced-generation diagnostics. The canonical contract requires preserving unknown null, known-empty arrays and known debt; intentional HTTP-only envelope fields are outside the repair.
+
+S18 follows a strict live ingest barrier rejecting 14,897 expected versus 14,541 actual monitor code points. Real chunking and local storage reproduced record-time drift deleting newly written unchanged chunk IDs shared across whole-file digests. A separate interrupted-deletion reproduction seeded retired identities from durable deletion units. The existing single drift owner, storage-before-ledger ordering and resumable confirmed-unit authority govern both repairs; no schema change is required. Damaged unserved monitor and TUI build generations must be retired through the canonical ledger owner while the daemon is stopped, preserving served collections and evidence before explicit rebuild retries.
+
 ## Steps
 
 - [x] `S01` - Preserve terminal rebuild refusals and accurate watcher status through events, failures, and restart, and reconcile successful verified operator rebuilds; `watcher retry, controller, intake, execution and runtime, jobs.py completion hook, affected watcher and job tests`.
@@ -69,6 +77,11 @@ S13 follows four production search ASGI traces whose typed StorageModelError esc
 - [x] `S11` - Allow vector-free cross-kind route reconciliation against an old-model origin without weakening destination evidence or vector conformance; `indexer/_route_migration.py, store_catalog.py and store_ingest.py plus collection owner only as needed, CPU real-Qdrant and ledger migration and strict conformance regressions`.
 - [x] `S12` - Recover desired-running paused jobs after aborted quiesce, let unstarted capacity waiters acknowledge control, and preserve operator pause intent during global unwind; `job_manager quiesce recovery, attempt capacity admission and desired-state/capability owner, _service_residency.py and service_quiesce.py recovery failure ordering, focused real-component CPU control regressions`.
 - [x] `S13` - Map storage conformance refusals to canonical search rebuild-required facts and HTTP outcomes without erasing combined source failures; `service-domain search availability and combined outcome conformance mapping, server search route as needed, focused CPU route and search regressions`.
+- [x] `S14` - Preserve explicit rebuild replacement authority across global quiesce and logical job resume before any source worker has started; `canonical job resume clean/mode mapping and source handoff as needed, CPU queued-quiesce and paused rebuild replacement regressions`.
+- [ ] `S15` - Use one canonical watcher root identity for Windows path filters, unregistration and bounded active-root release; `watcher root-key owner, server watcher route and scheduler lifecycle, CPU path-alias filter and active registration/release regressions`.
+- [ ] `S16` - Honor disabled automatic pruning at the superseded-generation destruction stage while retaining classification and independently enabled reconciliation; `canonical reclamation policy and generation stage, CPU disabled-policy stage and safe-generation evaluator regressions`.
+- [ ] `S17` - Preserve canonical generation diagnostics through CLI storage survey decoding and JSON emission; `CLI namespace survey projection and shared survey record as needed, CPU unknown known-empty and generation-debt round-trip regressions`.
+- [ ] `S18` - Preserve republished shared chunk identities during resume drift retirement and exclude historical deletion evidence from retained upsert accumulation; `indexer canonical drift owner and consumer retained-ID accumulation, ledger iterator selection only as needed, CPU actual chunking real-local-storage interrupted partial-edit and deletion-history regressions`.
 - [ ] `S04` - Deploy the current checkout as the resident daemon, repair affected publications through explicit rebuild jobs when required, and verify service health, search, and watcher convergence; `resident service lifecycle, affected root ledgers and admitted jobs, plan verification and final audit`.
 
 ## Parallelization
@@ -88,6 +101,12 @@ S11 is assigned to the watcher worker in the monitor checkout, owning cross-kind
 S12 is assigned to the recovery worker, owning quiesce recovery, attempt capacity admission and their CPU regressions. It may proceed concurrently with S11 checkpoint metadata and S04 observation because source ownership is disjoint. The supervisor owns shared package gates, serialized Git/vault writes, job/lifecycle operations and rollout. No worker uses the live resident or GPU; process-only mutation checks preserve checkout source bytes.
 
 S13 is assigned to the watcher worker, owning search conformance-failure mapping and focused CPU regressions. It may run concurrently with S12 because source paths are disjoint. The supervisor owns all shared gates, serialized vault/Git changes and resident/CI operations. Deployment follows both source repairs.
+
+S14 is assigned to the recovery worker, owning canonical resume/rebuild authority mapping and CPU regressions. S15 is assigned to the watcher worker, owning watcher root identity, filter and scheduler lifecycle corrections plus their CPU regressions. Their paths are disjoint. The supervisor owns plan/vault/Git mutations, shared gates and all live operations. Further source edits wait for explicit Step assignment and remain CPU-only; final resident rollout follows every confirmed repair.
+
+The watcher worker also owns S16 reclamation policy and S17 CLI survey diagnostics after completing S15; source paths are disjoint from S14 and the supervisor's live operations. Separate Step checkpoints preserve each contract correction. CPU scratch evidence records unchanged source hashes and no live backend or GPU calls.
+
+The supervisor owns S18 canonical drift retirement, upsert-only retained-ID selection and real local-storage CPU regressions, disjoint from S14-S17. The supervisor also owns bounded retirement of the two damaged unserved generations, integrated review, serialized checkpoints and resident rollout. All mutation proofs remain process-only and workers never touch the live service or GPU.
 
 ## Verification
 

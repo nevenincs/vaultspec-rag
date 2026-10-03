@@ -149,7 +149,6 @@ def _attempt_contract(
     registry = ServiceRegistry()
     dispatch = _AttemptDispatch(
         source=JobSource.DOCUMENT,
-        manager=manager,
         job_id=created.job.id,
         root=tmp_path,
         mode=mode,

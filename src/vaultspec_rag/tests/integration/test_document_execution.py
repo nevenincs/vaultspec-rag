@@ -366,7 +366,6 @@ async def test_document_attempt_honors_cancellation_before_admission(
                 context,
                 dispatch=_AttemptDispatch(
                     JobSource.DOCUMENT,
-                    manager,
                     created.job.id,
                     tmp_path,
                     JobMode.INCREMENTAL,
