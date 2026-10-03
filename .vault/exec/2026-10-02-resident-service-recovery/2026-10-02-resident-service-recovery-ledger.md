@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:aa35a1d7ba036a6aa7f2967a2a1fcf45c64521ad1d23e9aa59f73daf86a350bf'
+body_hash: 'sha256:028d42f5bc2c07272c331c3b1c7b2cf271cdc71df8a160b838a5c4097eb2fd5e'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -609,6 +609,19 @@ related:
 - `S30` `verify:` `git diff --check` -> `pass`
 - `S30` `verify:` `uv run --no-sync python -m dev.complexity gate` -> `pass`
 - `S30` `by:` `root`
+- `S31` `M` `src/vaultspec_rag/indexer/_run_ledger_files.py`
+- `S31` `A` `src/vaultspec_rag/tests/test_index_run_ledger_file_state_writes.py`
+- `S31` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_index_run_ledger_file_state_writes.py` -> `pass`
+- `S31` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_index_run_ledger_generations.py src/vaultspec_rag/tests/test_index_run_ledger_commit_units.py src/vaultspec_rag/tests/test_index_run_ledger_publication_reads.py src/vaultspec_rag/tests/test_index_run_ledger_concurrency.py src/vaultspec_rag/tests/test_weighted_code_resume.py src/vaultspec_rag/tests/test_code_pipeline_retained_ids.py` -> `pass`
+- `S31` `verify:` `uv run --no-sync ruff check src/vaultspec_rag` -> `pass`
+- `S31` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag` -> `pass`
+- `S31` `verify:` `uv run --no-sync ty check src/vaultspec_rag/indexer/_run_ledger_files.py src/vaultspec_rag/tests/test_index_run_ledger_file_state_writes.py` -> `pass`
+- `S31` `verify:` `uv run --no-sync basedpyright src/vaultspec_rag/indexer/_run_ledger_files.py src/vaultspec_rag/tests/test_index_run_ledger_file_state_writes.py` -> `pass`
+- `S31` `verify:` `uv run --no-sync python -m dev.complexity gate` -> `pass`
+- `S31` `verify:` `git diff --check` -> `pass`
+- `S31` `verify:` `uv run --no-sync python 'C:/Users/hello/AppData/Local/Temp/vaultspec-rag-incident-20261002-203057/perf-profiling/s31-file-state-guard/runner.py' 'C:/Users/hello/AppData/Local/Temp/vaultspec-rag-incident-20261002-203057/perf-profiling/s31-file-state-guard'` -> `pass`
+- `S31` `verify:` `uv run --no-sync python 'C:/Users/hello/AppData/Local/Temp/vaultspec-rag-incident-20261002-203057/perf-profiling/drift-lookup-guard/runner.py' 'C:/Users/hello/AppData/Local/Temp/vaultspec-rag-incident-20261002-203057/perf-profiling/drift-lookup-guard'` -> `pass`
+- `S31` `by:` `root`
 
 ## Notes
 

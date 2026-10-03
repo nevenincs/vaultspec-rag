@@ -157,6 +157,14 @@ class RunLedgerFileMethods:
                     error_kind = excluded.error_kind,
                     detail = excluded.detail,
                     evidence_generation_id = excluded.evidence_generation_id
+                WHERE file_states.state IS NOT excluded.state
+                   OR file_states.content_kind IS NOT excluded.content_kind
+                   OR file_states.content_hash IS NOT excluded.content_hash
+                   OR file_states.admission_reason IS NOT excluded.admission_reason
+                   OR file_states.error_kind IS NOT excluded.error_kind
+                   OR file_states.detail IS NOT excluded.detail
+                   OR file_states.evidence_generation_id
+                      IS NOT excluded.evidence_generation_id
                 """,
                 (
                     generation_id,

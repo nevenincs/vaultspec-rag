@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:61fbd6869a754459735c0fd8770bb73c1cfd021618d3a0a7ef5978567e8ac24b'
+body_hash: 'sha256:bec704dcb15b152c8593f39d132589110894d38b088e079a1998ac1d6cc55345'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -421,3 +421,7 @@ Ten separately captured changed-path gates pass, including 103 affected CPU case
 A CPU donor-eligibility probe initially used the unbound local-storage backend identity and therefore observed proof_unavailable. That diagnostic is retained as tui-code-donor-eligibility-cpu-unbound-recheck.json and is not live failure evidence. The corrected CPU subprocess binds only its own VAULTSPEC_RAG_QDRANT_URL to the actual service backend http://127.0.0.1:8765. Canonical current proof validation then accepts the actual MCP served generation 5665e092078b43febab23033bce7d78a, with identical content/embedding identities and no failed donor gate. The other two same-family candidates are rejected for their retained naver/splade-v3 sparse model. The corrected read-only artifact is tui-code-donor-eligibility-runtime-bound-recheck.json. Donor discovery already follows served generation pointers. No new source defect is established and no policy was loosened. Actual reuse hit/miss accounting remains pending until the TUI consumer returns.
 
 At 04:54:23 UTC health stopped naming CI's old verdict while the daemon/backend PIDs remained unchanged. The exact service log attributes this to normal ProjectSlot idle eviction at 04:53:41 UTC, not loading S25 or deleting the retained collection. Health's active project count is two; TUI's still-served old incompatible generation remains truthfully reported. S25 remains a reviewed source fix awaiting the final restart. A real TUI ledger snapshot at 04:44:05 UTC showed 33336 confirmed units and a commit less than one second old; current live projection passed 39041 units by 04:54:23 UTC. No fatal or backend restart occurred.
+
+## S31 formal source checkpoint
+
+Independent Sol xhigh source/CPU review PASS, no findings. The canonical transactional file-state upsert now compares all seven updated fields with NULL-safe IS NOT predicates, including evidence_generation_id. Identical rows avoid writes; validation, current-generation ownership promotion, BEGIN IMMEDIATE, connection lifetime and unconditional tombstone cleanup remain unchanged. Ten focused and 59 affected CPU cases and changed-file Ruff, formatting, ty and basedpyright pass. Root package Ruff, formatting, diff and canonical full complexity gates pass with frozen hashes. S31's actual WHERE omission fails the named zero-row-change assertion with 20 changed rows, restores in finally, and passes in a fresh process. S29's production join mutation was refreshed against the final ledger bytes and also fails/restores/passes. Both guard manifests bind 880 stable package hashes. Matched isolated replay trials retain 180 connection cycles and 20 transaction boundaries while changing rows drops from 20 to zero; timings do not establish live throughput. Evidence is archived under perf-profiling/s31-handoff.json and s31-final-shared-gates.json. Source finding resolved; loading and live acceptance remain S04.
