@@ -10,7 +10,7 @@ constructed - the classification methods operate on the resolved config alone.
 from collections.abc import Generator
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict, Unpack, cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from vaultspec_core.config import (
@@ -20,8 +20,6 @@ from vaultspec_core.config import (
 from .._source_types import PublicSourceType
 from ..indexer import CodebaseIndexer
 from ..indexer import _config_epoch as ce
-from ..indexer._content_policy import ContentKind
-from ..indexer._preprocess_config import OnError, PreprocessRule
 from ..indexer._run_ledger_models import (
     RunOperation,
     RunSignature,
@@ -45,31 +43,6 @@ def _reset_cfg() -> Generator[None]:  # pyright: ignore[reportUnusedFunction]
     yield
     reset_config()
     reset_rag_config()
-
-
-class _RuleOverrides(TypedDict, total=False):
-    command: str | None
-    entry_point: str | None
-    on_error: OnError
-    priority: int
-    timeout_s: float | None
-    options: dict[str, object] | None
-    order: int
-
-
-def _rule(pattern: str, **overrides: Unpack[_RuleOverrides]) -> PreprocessRule:
-    return PreprocessRule(
-        pattern=pattern,
-        command=overrides.get("command", "extract {path}"),
-        entry_point=overrides.get("entry_point"),
-        priority=overrides.get("priority", 100),
-        target=ContentKind.DOCUMENT,
-        extractor_version="1.0",
-        on_error=overrides.get("on_error", "skip"),
-        timeout_s=overrides.get("timeout_s", 120.0),
-        options=overrides.get("options") or {},
-        order=overrides.get("order", 0),
-    )
 
 
 def _make_indexer(root: Path) -> CodebaseIndexer:
