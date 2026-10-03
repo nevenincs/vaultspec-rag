@@ -43,6 +43,7 @@ from ._content_policy import (
     RootContentPolicy,
     SourceProfileVersion,
 )
+from ._file_state import FileStateKind
 from ._generation_lifecycle import (
     CodeGenerationBindings,
     CodeGenerationLifecycle,
@@ -468,20 +469,47 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         )
         return current_files, current_hashes
 
+    @staticmethod
+    def _full_removed_paths(request: _FullStaleReconciliation) -> set[str]:
+        """Select absent sources from the manifest this full run owns."""
+        previous_paths = (
+            {
+                state.rel_path
+                for state in request.checkpoint.ledger.iter_file_states(
+                    request.checkpoint.generation_id
+                )
+                if state.state is FileStateKind.INDEXED
+            }
+            if request.checkpoint.generation.signature.clean
+            else set(request.previous_metadata)
+        )
+        return previous_paths - set(request.metadata)
+
     def _reconcile_full_stale_ids(
         self,
         request: _FullStaleReconciliation,
     ) -> list[str]:
         """Delete stale full-run identities and checkpoint removed paths."""
+        clean = request.checkpoint.generation.signature.clean
         stale_ids = sorted(request.existing_ids - request.retained_ids)
-        removed_paths = set(request.previous_metadata) - set(request.metadata)
-        if not stale_ids:
+        removed_paths = self._full_removed_paths(request)
+        if not stale_ids and not (clean and removed_paths):
             return stale_ids
         removed_ids_by_path = self._lifecycle.checkpoint_ids_by_path(
             request.checkpoint,
             removed_paths,
             retained=True,
         )
+        if clean:
+            removed_ids = {
+                point_id for ids in removed_ids_by_path.values() for point_id in ids
+            }
+            # Resumed upserts seeded the pipeline accumulator before this scan.
+            # A source removed from the shadow corpus cannot remain retained
+            # merely because that earlier attempt confirmed its points.
+            stale_ids = sorted(
+                request.existing_ids - (request.retained_ids - removed_ids)
+            )
         request.reporter.phase_start("purge stale chunks", len(stale_ids))
         try:
             try:
@@ -490,10 +518,15 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                     point_ids = tuple(sorted(removed_ids_by_path[rel]))
                     if not point_ids:
                         continue
-                    self.store.delete_code_chunks(
-                        list(point_ids), collection=request.collection
-                    )
-                    request.checkpoint.record_confirmed_deletion(rel, point_ids)
+                    if clean:
+                        self._lifecycle.drift_owner.retire_retained_outcome(
+                            rel, remove_path=True
+                        )
+                    else:
+                        self.store.delete_code_chunks(
+                            list(point_ids), collection=request.collection
+                        )
+                        request.checkpoint.record_confirmed_deletion(rel, point_ids)
                     path_removed_ids.update(point_ids)
                 remaining_stale_ids = sorted(set(stale_ids) - path_removed_ids)
                 if remaining_stale_ids:
@@ -716,6 +749,12 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                 effective_clean=effective_clean,
                 clean_has_confirmed_units=clean_has_confirmed_units,
                 reporter=reporter,
+            )
+            self._lifecycle.recover_removed_shadow_paths(
+                checkpoint,
+                current_paths={
+                    path.relative_to(self.root_dir).as_posix() for path in paths
+                },
             )
             run_control.checkpoint()
 

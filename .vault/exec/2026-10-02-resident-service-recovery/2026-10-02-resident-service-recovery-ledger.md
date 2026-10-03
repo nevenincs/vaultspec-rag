@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:e8d891dac0a484709fa7741fb783ebc094b3ef9525b2a26303b6a76f24835035'
+body_hash: 'sha256:fee137dda4b4268abda113d35faa607e3c70a0f061145fa7470b050d327f105a'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -506,6 +506,38 @@ related:
 - `S26` `verify:` `uv run --no-sync ruff check src/vaultspec_rag` -> `pass`
 - `S26` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag` -> `pass`
 - `S26` `verify:` `git diff --check` -> `pass`
+- `S27` `M` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S27` `M` `src/vaultspec_rag/indexer/_generation_lifecycle.py`
+- `S27` `A` `src/vaultspec_rag/tests/test_code_rebuild_stale_evidence.py`
+- `S27` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/indexer/_codebase_indexer.py src/vaultspec_rag/indexer/_generation_lifecycle.py src/vaultspec_rag/tests/test_code_rebuild_stale_evidence.py` -> `pass`
+- `S27` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/indexer/_codebase_indexer.py src/vaultspec_rag/indexer/_generation_lifecycle.py src/vaultspec_rag/tests/test_code_rebuild_stale_evidence.py` -> `pass`
+- `S27` `verify:` `uv run --no-sync basedpyright --pythonpath C:/Users/hello/.vaultspec-rag/debug-runtime/Scripts/python.exe src/vaultspec_rag/indexer/_codebase_indexer.py src/vaultspec_rag/indexer/_generation_lifecycle.py` -> `pass`
+- `S27` `verify:` `uv run --no-sync basedpyright src/vaultspec_rag/tests/test_code_rebuild_stale_evidence.py` -> `pass`
+- `S27` `verify:` `uv run --no-sync ty check src/vaultspec_rag/indexer/_codebase_indexer.py src/vaultspec_rag/indexer/_generation_lifecycle.py src/vaultspec_rag/tests/test_code_rebuild_stale_evidence.py` -> `pass`
+- `S27` `verify:` `uv run --no-sync complexipy src/vaultspec_rag/indexer/_codebase_indexer.py src/vaultspec_rag/indexer/_generation_lifecycle.py --failed` -> `pass`
+- `S27` `verify:` `uv run --no-sync xenon vaultspec_rag/indexer/_codebase_indexer.py vaultspec_rag/indexer/_generation_lifecycle.py --max-absolute C --max-modules C --max-average A` -> `pass`
+- `S27` `verify:` `uv run --no-sync pylint src/vaultspec_rag/indexer/_codebase_indexer.py src/vaultspec_rag/indexer/_generation_lifecycle.py src/vaultspec_rag/tests/test_code_rebuild_stale_evidence.py --rcfile=pyproject.toml --score=n` -> `pass`
+- `S27` `verify:` `git diff --check -- src/vaultspec_rag/indexer/_codebase_indexer.py src/vaultspec_rag/indexer/_generation_lifecycle.py src/vaultspec_rag/tests/test_code_rebuild_stale_evidence.py` -> `pass`
+- `S27` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_code_rebuild_stale_evidence.py src/vaultspec_rag/tests/test_code_pipeline_retained_ids.py src/vaultspec_rag/tests/test_checkpoint_common.py src/vaultspec_rag/tests/test_publication_recovery.py src/vaultspec_rag/tests/test_index_run_ledger_publication_finalization.py src/vaultspec_rag/tests/test_index_run_ledger_publication_reads.py -m unit and not torch -q --tb=short` -> `pass`
+- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py own_shadow_key mutate` -> `fail`
+- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py own_shadow_key restore` -> `pass`
+- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py own_shadow_membership mutate` -> `fail`
+- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py own_shadow_membership restore` -> `pass`
+- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py seeded_removed_accounting mutate` -> `fail`
+- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py seeded_removed_accounting restore` -> `pass`
+- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py startup_binding mutate` -> `fail`
+- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py startup_binding restore` -> `pass`
+- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py partial_ownership mutate` -> `fail`
+- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py partial_ownership restore` -> `pass`
+- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py current_source_fence mutate` -> `fail`
+- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py current_source_fence restore` -> `pass`
+- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py receipt_strict_key mutate` -> `fail`
+- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py receipt_strict_key restore` -> `pass`
+- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py deletion_evidence mutate` -> `fail`
+- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py deletion_evidence restore` -> `pass`
+- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py storage_before_retirement mutate` -> `fail`
+- `S27` `verify:` `Y:\code\vaultspec-rag-worktrees\monitor\.venv\Scripts\python.exe Y:\code\vaultspec-rag-worktrees\monitor\.pytest-tmp\S27\prove_guards.py storage_before_retirement restore` -> `pass`
+- `S27` `by:` `root`
 
 ## Notes
 
@@ -525,3 +557,4 @@ related:
 - `S25` Seven fail entries are intended actual-production method mutation proofs, each finally-restored and immediately followed by a fresh normal pass. All fifteen source/dependency hashes are unchanged. Initial test-fixture static typing failures and a private-mixin bootstrap import cycle are preserved separately and excluded from guard proof; corrected final checks pass. Strict test discovery uses CPU pytest site-packages and the resident interpreter for static installed paths only, without changing or executing the resident environment. Runtime verification remains S04.
 - `S26` Seven actual-production process-only guard mutations intentionally fail the named assertions with exit 1, restore functions and descriptors in finally, and pass in fresh normal processes. Fourteen hashes remain unchanged. The initial oversized queue test fixture was corrected without changing production limits. One unchanged Torch-dependent CPU case is excluded because the CPU environment lacks Torch. An unsupported scratch complexity --json invocation is excluded from evidence; the canonical whole-production gate actually passes. Independent integrated source and CPU review PASS. Live rollout remains under S04.
 - `S26` Reopened before first source commit for durably resolved zero-chunk outcome omission and confirmed producer/consumer publication-order race. Final frozen proof supersedes initial source evidence while retaining it as history. Twelve actual production mutants intentionally fail their named behavioural assertions and are restored in finally before fresh normal passes; no checkout mutation. Independent integrated source/CPU review passes; live source rollout remains S04.
+- `S27` Actual TUI clean rebuild failed after72514 confirmed units by requesting old served proof with the replacement model key. Real full-entry regressions also reproduced removed partial UPSERT paths and storage deletion interrupted before ledger retirement. Existing canonical storage-first drift retirement now runs on absent own shadow paths before replay seeding; strict incremental receipt checks and exact apply barriers remain. Nine production mutants intentionally fail the exact named assertions, restore in finally and pass fresh ordinary processes. Independent integrated source/CPU review passes; live protected retry remains S04.
