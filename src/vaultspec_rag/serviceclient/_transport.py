@@ -99,7 +99,6 @@ __all__ = [
     "_try_http_vault_document",
     "health_answered",
     "health_probe_timed_out",
-    "resolve_service_port",
 ]
 
 
@@ -324,23 +323,6 @@ class ServiceUnavailableError(RuntimeError):
     def holder_pid(self) -> int:
         """The live singleton holder, or zero when none is held."""
         return self.resolution.holder_pid
-
-
-def resolve_service_port() -> int:
-    """Return the live service port, or raise with the discovery evidence.
-
-    There is deliberately no compatibility fallback here: when a holder owns
-    the singleton but its pointer is untrustworthy, guessing an address would
-    send the caller to a service the owner never advertised. Failing fast with
-    the holder and pointer evidence is what lets a caller report the actual
-    condition instead of an opaque connection failure.
-    """
-    from ._discovery import resolve_machine_service
-
-    resolution = resolve_machine_service()
-    if resolution.is_ready and resolution.port is not None:
-        return resolution.port
-    raise ServiceUnavailableError(resolution)
 
 
 class ServiceResponseTooLargeError(ValueError):

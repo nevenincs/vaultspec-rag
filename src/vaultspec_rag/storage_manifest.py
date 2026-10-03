@@ -56,9 +56,7 @@ __all__ = [
     "record_root",
     "rekey_prefix",
     "remove_prefix",
-    "remove_root",
     "retain_collections",
-    "reverse_map",
     "snapshot_manifest_path",
     "update_activity_stamps",
     "update_orphan_stamps",
@@ -620,32 +618,6 @@ def remove_prefix(prefix: str) -> bool:
         del entries[prefix]
         _write_manifest(entries)
     return True
-
-
-def remove_root(root: Path | str) -> bool:
-    """Drop the manifest entry for ``root`` and persist.
-
-    Args:
-        root: The workspace root whose entry to forget.
-
-    Returns:
-        ``True`` if an entry was removed, ``False`` if none existed.
-    """
-    return remove_prefix(root_collection_prefix(root))
-
-
-def reverse_map(prefix: str) -> str | None:
-    """Return the resolved root path for a collection prefix, or ``None``.
-
-    Args:
-        prefix: The collection prefix (``r{hash}_``).
-
-    Returns:
-        The resolved root path string, or ``None`` when the prefix is not
-        attributable (an ``unknown`` namespace).
-    """
-    entry = load_manifest().get(prefix)
-    return entry.root if entry is not None else None
 
 
 def classify_root(entry: ManifestEntry) -> str:

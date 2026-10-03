@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "CONVENTIONAL_SOURCE_EXTENSIONS",
     "LANGUAGE_MAP",
-    "SUPPORTED_EXTENSIONS",
     "_CLASS_LIKE_NODES",
     "_CONTAINER_NODES",
     "_FUNCTION_LIKE_NODES",
@@ -229,7 +228,6 @@ LANGUAGE_MAP: dict[str, tuple[str, str | None]] = {
     ".xsd": ("xml", None),
 }
 
-SUPPORTED_EXTENSIONS: set[str] = set(LANGUAGE_MAP.keys())
 
 # Path-agnostic source admission is intentionally narrower than parser
 # capability. Document, schema, and general configuration formats remain

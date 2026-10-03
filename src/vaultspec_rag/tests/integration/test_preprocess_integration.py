@@ -1,7 +1,7 @@
 """End-to-end integration tests for the document-preprocessing hook (#185).
 
 Real GPU + real Qdrant + a real subprocess preprocessor. A binary ``.pdf``
-(outside ``SUPPORTED_EXTENSIONS``) is extracted by a project-supplied command
+(outside ``LANGUAGE_MAP``) is extracted by a project-supplied command
 rule, indexed first-class, and found by hybrid search with its deep-link anchor;
 the scoped/incremental path routes a changed binary through the preprocessor;
 and a failing preprocessor remains unresolved and retryable rather than

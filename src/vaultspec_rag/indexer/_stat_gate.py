@@ -193,23 +193,6 @@ class StatEvidenceGate:
             if version == 0:
                 connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
 
-    def hash_file(self, key: str, path: pathlib.Path) -> str:
-        """Return *path*'s content hash, reading it only when evidence demands.
-
-        Raises:
-            OSError: The file could not be statted or read, exactly as the
-                ungated digest call would have raised.
-        """
-        stat = os.stat(path)
-        reused = self.probe(key, stat)
-        if reused is not None:
-            return reused
-        hashed_at_ns = time.time_ns()
-        digest = self.digest(path)
-        self.record(key, stat, digest, hashed_at_ns)
-        self.rehashed += 1
-        return digest
-
     def probe(self, key: str, stat: os.stat_result) -> str | None:
         """Return the reusable recorded hash for *stat*'s identity, or ``None``.
 

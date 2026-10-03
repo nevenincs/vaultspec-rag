@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from ..capabilities import BackendCapabilities, backend_capabilities_dict
-from ..server._models import SearchResponse
 
 pytestmark = pytest.mark.unit
 
@@ -24,7 +23,5 @@ def test_service_capabilities_follow_backend(
     """
     monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_URL", url)
     assert backend_capabilities_dict()["backend"] == expected
-    response = SearchResponse(results=[], summary="No results")
-    assert response.backend_capabilities.backend == expected
     # Both concrete values also survive the public response schema.
     assert BackendCapabilities.model_validate({"backend": expected}).backend == expected

@@ -55,7 +55,6 @@ from ._lifespan import health_handler, service_lifespan
 # 4. Entry point.
 from ._main import create_http_app, main
 from ._models import (
-    SearchResponse,
     SearchResultItem,
 )
 from ._runtime import ServerRouteRuntime, get_request_runtime
@@ -96,7 +95,6 @@ from ._watcher import (
 
 __all__ = [
     "ProjectRootRequiredError",
-    "SearchResponse",
     "SearchResultItem",
     "ServerRouteRuntime",
     "WatcherStartOutcome",

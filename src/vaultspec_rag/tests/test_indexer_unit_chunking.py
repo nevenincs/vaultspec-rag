@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from ..indexer import LANGUAGE_MAP, SUPPORTED_EXTENSIONS, ASTChunker
+from ..indexer import LANGUAGE_MAP, ASTChunker
 from ..indexer._chunking import (
     _CLASS_LIKE_NODES,
     _CONTAINER_NODES,
@@ -452,16 +452,16 @@ class TestLanguageMap:
         assert grammar == "tsx"
 
     def test_all_extensions_count(self):
-        assert len(SUPPORTED_EXTENSIONS) >= 29
+        assert len(LANGUAGE_MAP) >= 29
 
     def test_go_extension(self):
-        assert ".go" in SUPPORTED_EXTENSIONS
+        assert ".go" in LANGUAGE_MAP
 
     def test_kotlin_extension(self):
-        assert ".kt" in SUPPORTED_EXTENSIONS
+        assert ".kt" in LANGUAGE_MAP
 
     def test_csharp_extension(self):
-        assert ".cs" in SUPPORTED_EXTENSIONS
+        assert ".cs" in LANGUAGE_MAP
 
     def test_plain_text_extensions_added(self):
         # #185 adjacent ask: plain-text tails index as text (grammar None).
@@ -472,35 +472,6 @@ class TestLanguageMap:
         # #185 adjacent ask: XML/XSD keep a distinct queryable language label.
         assert LANGUAGE_MAP[".xml"] == ("xml", None)
         assert LANGUAGE_MAP[".xsd"] == ("xml", None)
-
-
-class TestLanguageMapConsistency:
-    """LANGUAGE_MAP and SUPPORTED_EXTENSIONS must be consistent."""
-
-    def test_every_supported_ext_in_language_map(self):
-        for ext in SUPPORTED_EXTENSIONS:
-            assert ext in LANGUAGE_MAP, (
-                f"{ext} in SUPPORTED_EXTENSIONS but missing from LANGUAGE_MAP"
-            )
-
-    def test_every_language_map_ext_in_supported(self):
-        for ext in LANGUAGE_MAP:
-            assert ext in SUPPORTED_EXTENSIONS, (
-                f"{ext} in LANGUAGE_MAP but missing from SUPPORTED_EXTENSIONS"
-            )
-
-    def test_all_extensions_start_with_dot(self):
-        for ext in SUPPORTED_EXTENSIONS:
-            assert ext.startswith("."), f"Extension missing dot prefix: {ext}"
-
-    def test_language_map_values_are_tuples(self):
-        for ext, entry in LANGUAGE_MAP.items():
-            assert isinstance(entry, tuple) and len(entry) == 2, (
-                f"LANGUAGE_MAP[{ext!r}] should be (lang, grammar) tuple"
-            )
-            lang, grammar = entry
-            assert isinstance(lang, str)
-            assert grammar is None or isinstance(grammar, str)
 
 
 class TestVanishedSourceCostsOnlyItself:

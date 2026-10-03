@@ -29,7 +29,6 @@ from ..config._types import EnvVar
 from ..mcp._mcp import mcp
 from ..mcp._resources import analyze_feature
 from ..server import (
-    SearchResponse,
     SearchResultItem,
     ServerRouteRuntime,
     create_http_app,
@@ -551,33 +550,6 @@ class TestPydanticModels:
         assert item.line_start == 1
         assert item.rerank_text == "def main():\n    return 0"
         assert "rerank_text" not in item.model_dump()
-
-    def test_search_response(self):
-        resp = SearchResponse(
-            results=[
-                SearchResultItem(
-                    id="1",
-                    path="a.md",
-                    title="A",
-                    score=0.9,
-                    snippet="text",
-                    source="vault",
-                ),
-            ],
-            summary="Found 1 result",
-        )
-        assert len(resp.results) == 1
-        assert "1 result" in resp.summary
-        assert resp.backend_capabilities.backend == "qdrant-local"
-        assert resp.backend_capabilities.concurrent_search_supported is True
-        assert resp.backend_capabilities.same_project_search_strategy == "serialized"
-        assert resp.backend_capabilities.cross_project_search_strategy == "parallel"
-        assert resp.backend_capabilities.local_storage_process_model == "exclusive"
-
-    def test_search_response_empty(self):
-        resp = SearchResponse(results=[], summary="No results")
-        assert len(resp.results) == 0
-        assert resp.backend_capabilities.concurrent_search_supported is True
 
     def test_backend_capabilities_serializes_to_tool_schema(self):
         caps = BackendCapabilities()

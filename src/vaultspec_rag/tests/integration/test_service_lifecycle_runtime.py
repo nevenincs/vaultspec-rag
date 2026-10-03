@@ -709,7 +709,7 @@ def test_multi_project_search_isolation(
     tmp_path: Path,
 ) -> None:
     """Two projects indexed via MCP have isolated search results."""
-    from ...synthetic import build_multi_project_fixture
+    from ..corpus import build_multi_project_fixture
 
     with _service_env(tmp_path):
         port = free_loopback_port()
