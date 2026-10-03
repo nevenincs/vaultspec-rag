@@ -32,7 +32,7 @@ related:
   - '[[2026-09-08-qdrant-collection-sprawl-adr]]'
 modified: '2026-10-03'
 body_schema: body-v2
-body_hash: 'sha256:97eb1a64f9eecb590954bc84ff54dda036c63128978a7b94d375665734e1d863'
+body_hash: 'sha256:1cd154b21a5c89c79200ac01a4b412068503f130eed114bf546cb79eee84c68a'
 ---
 
 # `resident-service-recovery` plan
@@ -95,7 +95,8 @@ S20 follows a confirmed high-severity vault liveness defect: confirmed chunk uni
 - [x] `S17` - Preserve canonical namespace generation, model, per-kind count and temp-root classification facts through CLI survey decoding and JSON/human rendering; `CLI namespace survey projection, canonical survey record and fact accessors, CPU service-to-CLI fact round-trip and legacy fallback regressions`.
 - [x] `S18` - Preserve republished shared chunk identities during resume drift retirement and exclude historical deletion evidence from retained upsert accumulation; `indexer canonical drift owner and consumer retained-ID accumulation, ledger iterator selection only as needed, CPU actual chunking real-local-storage interrupted partial-edit and deletion-history regressions`.
 - [x] `S19` - Publish bounded attempt-owned live checkpoint resilience after durable indexing boundaries and expose accurate running generation, committed/replayed units and no-progress facts without changing file counters or stall policy; `canonical attempt binding, checkpoint/run-policy durable observation and job resilience projection only as needed, CPU paused-before-completion actual-ledger and failure/control regressions`.
-- [ ] `S20` - Advance and enforce the vault durable no-progress clock at confirmed chunk and publication boundaries so a progressing long rebuild remains valid and terminal publication cannot be followed by an admission-age timeout; `vault checkpoint confirmed-unit and ingest write-policy wiring, shared terminal publication ordering only as needed, CPU real-store multi-unit deadline and terminal-truth regressions`.
+- [x] `S20` - Advance and enforce the vault durable no-progress clock at confirmed chunk and publication boundaries so a progressing long rebuild remains valid and terminal publication cannot be followed by an admission-age timeout; `vault checkpoint confirmed-unit and ingest write-policy wiring including deadline-aware point locks, shared terminal publication ordering and attempt completion only as needed, CPU real-store multi-unit deadline, lock-wait, cleanup and terminal-truth regressions`.
+- [ ] `S21` - Restore the accepted managed CODE corpus floor under the pinned sparse vocabulary without weakening cumulative accounting or queue and runtime safeguards; `managed CODE aggregate weighted-byte limit, canonical real-chunk floor and first-excess boundary regressions, dated D6 coverage clarification and live failed-build recovery`.
 - [ ] `S04` - Deploy the current checkout as the resident daemon, repair affected publications through explicit rebuild jobs when required, and verify service health, search, and watcher convergence; `resident service lifecycle, affected root ledgers and admitted jobs, plan verification and final audit`.
 
 ## Parallelization
@@ -125,6 +126,8 @@ The supervisor owns S18 canonical drift retirement, upsert-only retained-ID sele
 The recovery worker owns S19 attempt-owned live checkpoint resilience, bounded observation and real CPU ledger/store regressions. The source assignment may proceed while S04's existing protected rebuilds run because workers remain CPU-only and never mutate live state or source bytes for guard checks. The supervisor owns shared gates, all Git/vault mutations and a final restart after protected work settles so the new telemetry path is loaded. Existing source evidence remains applicable except for S19's changed interactions.
 
 The recovery worker also owns S20 vault confirmed-chunk liveness, ingest policy wiring and real CPU storage/deadline regressions, sequenced after S19's reviewable checkpoint. The supervisor has paused only the three unstarted ingest, TUI and MCP vault rebuilds while the protected MCP code worker continues. These logical jobs retain operator pause intent across the final source restart and resume with rebuild authority after S19 and S20 pass. The supervisor owns that restart, shared gates, Git/vault changes and live verification.
+
+The watcher worker owns S21's managed CODE weighted-cap correction and canonical real-chunk CPU floor/boundary regression, sequenced after S20's commit so its production guards retain frozen dependencies. Only index_profiles.py and the focused support-profile test are assigned. The supervisor owns the dated D6 clarification, Git/vault checkpoints and resident recovery. The MCP CODE failure and TUI protected pause request are preserved through the canonical Windows stop. After the corrected source starts, recover MCP first so its verified replacement can become a donor before resuming TUI and the remaining domains.
 
 ## Verification
 

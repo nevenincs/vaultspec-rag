@@ -211,7 +211,7 @@ class _VaultIngestMixin:
             )
 
         self.ensure_table()
-        with self._point_lock(self.TABLE_NAME):
+        with self._point_write_lock(self.TABLE_NAME, write_policy):
             self._guarded_upsert(
                 self.TABLE_NAME,
                 points,
@@ -254,7 +254,7 @@ class _VaultIngestMixin:
         ensure_disk_headroom(self._storage_probe_path)
         self.ensure_table()
         description = f"overwrite vault chunk payload in {self.TABLE_NAME}"
-        with self._point_lock(self.TABLE_NAME):
+        with self._point_write_lock(self.TABLE_NAME, write_policy):
             for chunk in chunks:
                 payload = cast("dict[str, Any]", _vault_chunk_payload(chunk))
                 point_id = self._stable_id(chunk.point_key)

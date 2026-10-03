@@ -554,6 +554,7 @@ class _VaultSliceRequest:
     on_encode_bucket: Callable[[str, EncodeBucketProgress], None] | None = None
     mutation_lifecycle: StoreMutationLifecycle | None = None
     after_acknowledgement: Callable[[], None] | None = None
+    write_policy: StoreWritePolicy | None = None
 
 
 def _encode_and_upsert_vault_slice(request: _VaultSliceRequest) -> None:
@@ -599,7 +600,7 @@ def _encode_and_upsert_vault_slice(request: _VaultSliceRequest) -> None:
                 partial(
                     request.store.upsert_document_chunks,
                     request.slice_chunks,
-                    write_policy=None,
+                    write_policy=request.write_policy,
                     wait=request.ingest_wait,
                 ),
                 request.mutation_lifecycle,
@@ -611,7 +612,7 @@ def _encode_and_upsert_vault_slice(request: _VaultSliceRequest) -> None:
                     write=partial(
                         request.store.upsert_document_chunks,
                         request.slice_chunks,
-                        write_policy=None,
+                        write_policy=request.write_policy,
                         wait=request.ingest_wait,
                     ),
                     release=partial(_release_vector_fields, request.slice_chunks),
@@ -774,13 +775,24 @@ def _stream_encode_and_upsert_vault(request: VaultStreamRequest) -> dict[str, in
     cfg = get_config()
     sparse_enabled = cfg.sparse_enabled
     chunk_chars = int(cfg.vault_chunk_chars)
+    run_control = (
+        request.checkpoint.run_policy
+        if request.checkpoint is not None
+        else request.run_control
+    )
+    write_policy = (
+        request.checkpoint.run_policy.store_write_policy
+        if request.checkpoint is not None
+        else None
+    )
+    run_control.checkpoint()
 
     # Expand documents into heading-aware chunks (one point each), then
     # sort by embed-text length, longest first. SentenceTransformer
     # sorts again per call, but the slice-level sort makes each slice's
     # longest text close in length to its shortest, bounding the
     # slice's worst-case padding cost.
-    chunks = split_documents(request.docs, chunk_chars, run_control=request.run_control)
+    chunks = split_documents(request.docs, chunk_chars, run_control=run_control)
     chunk_counts = {c.doc_id: c.chunk_count for c in chunks}
     sorted_chunks = sorted(chunks, key=lambda c: -len(vault_embed_text(c)))
 
@@ -797,6 +809,7 @@ def _stream_encode_and_upsert_vault(request: VaultStreamRequest) -> dict[str, in
                 for slice_index, i in enumerate(
                     range(0, len(sorted_chunks), request.slice_size)
                 ):
+                    run_control.checkpoint()
                     slice_chunks = sorted_chunks[i : i + request.slice_size]
                     is_last = i + request.slice_size >= len(sorted_chunks)
                     lifecycle = (
@@ -826,7 +839,7 @@ def _stream_encode_and_upsert_vault(request: VaultStreamRequest) -> dict[str, in
                             sparse_enabled=sparse_enabled,
                             probe=probe,
                             ingest_wait=request.ingest_wait,
-                            run_control=request.run_control,
+                            run_control=run_control,
                             reuse=request.reuse,
                             writer=writer,
                             release_cache=(
@@ -851,6 +864,7 @@ def _stream_encode_and_upsert_vault(request: VaultStreamRequest) -> dict[str, in
                             ),
                             mutation_lifecycle=lifecycle,
                             after_acknowledgement=after_acknowledgement,
+                            write_policy=write_policy,
                         )
                     )
                     probe.checkpoint(f"slice-{i}-after-empty-cache")
@@ -858,7 +872,7 @@ def _stream_encode_and_upsert_vault(request: VaultStreamRequest) -> dict[str, in
             except BaseException:
                 writer.abandon()
                 raise
-            writer.close(run_control=request.run_control)
+            writer.close(run_control=run_control)
         finally:
             # Always close the phase so progress reporters never see
             # an unbalanced phase_start/phase_end pair, even when the

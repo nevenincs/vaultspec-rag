@@ -469,7 +469,7 @@ class VaultIncrementalMixin:
                 def write_payloads(current: list[VaultChunk] = doc_chunks) -> None:
                     self.store.overwrite_vault_chunk_payloads(
                         current,
-                        write_policy=None,
+                        write_policy=work.checkpoint.run_policy.store_write_policy,
                     )
 
                 execute_store_mutation(
@@ -661,6 +661,7 @@ class VaultIncrementalMixin:
             operation=RunOperation.SCOPED_INCREMENTAL,
             run_control=run_control,
         )
+        run_control = checkpoint.run_policy
         if checkpoint.receipt is None:
             raise RuntimeError("vault incremental opened without a publication receipt")
 

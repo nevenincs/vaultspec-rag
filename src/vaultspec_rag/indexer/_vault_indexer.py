@@ -306,6 +306,7 @@ class VaultIndexer(VaultIncrementalMixin):
             operation=RunOperation.FULL,
             run_control=run_control,
         )
+        run_control = checkpoint.run_policy
         # Note: we intentionally do NOT short-circuit when docs is
         # empty. The streaming helper handles a zero-length list
         # correctly, and falling through the main path means
@@ -328,10 +329,7 @@ class VaultIndexer(VaultIncrementalMixin):
         # publication span begins; within it, new requests are deferred
         # through streaming, stale cleanup, and metadata publication so a
         # deliberate pause/cancel never exposes a partial replacement.
-        publication_span = (
-            run_control.protected() if clean else contextlib.nullcontext()
-        )
-        with publication_span:
+        with run_control.protected() if clean else contextlib.nullcontext():
             existing_counts = self._prepare_collection(
                 clean=clean,
                 reporter=reporter,
@@ -359,6 +357,7 @@ class VaultIndexer(VaultIncrementalMixin):
                 existing_counts,
                 new_counts,
                 run_control=run_control,
+                checkpoint=checkpoint,
             )
 
             stale_counts: dict[str, int] = existing_counts
@@ -400,6 +399,7 @@ class VaultIndexer(VaultIncrementalMixin):
             self.store.apply_ingest_barrier(
                 self.store.TABLE_NAME,
                 expected_points=expected_points,
+                write_policy=checkpoint.run_policy.store_write_policy,
             )
             with controlled_phase(
                 reporter,
@@ -589,6 +589,7 @@ class VaultIndexer(VaultIncrementalMixin):
             operation=RunOperation.INCREMENTAL,
             run_control=run_control,
         )
+        run_control = checkpoint.run_policy
         receipt = checkpoint.receipt
         if receipt is None:
             raise RuntimeError("vault incremental opened without a publication receipt")

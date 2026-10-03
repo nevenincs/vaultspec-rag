@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:e65e5cbcfd49912cdf520ef49fcd0ab082518343cbc40310baf44fb7ae37b0c2'
+body_hash: 'sha256:07d2cc11930bf8f4a5bf5ebbd686b2602e9355130a819345d4c54bb3e0de5ae1'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -264,6 +264,29 @@ related:
 - `S19` `verify:` `python .pytest-tmp/recovery-shared-gates.py (package lint, format and diff, 33 source/test hashes)` -> `pass`
 - `S19` `verify:` `integrated S19 source and CPU review` -> `pass`
 - `S19` `by:` `root`
+- `S20` `M` `src/vaultspec_rag/indexer/_checkpoint_common.py`
+- `S20` `M` `src/vaultspec_rag/indexer/_run_policy.py`
+- `S20` `M` `src/vaultspec_rag/indexer/_streaming.py`
+- `S20` `M` `src/vaultspec_rag/indexer/_vault_checkpoint.py`
+- `S20` `M` `src/vaultspec_rag/indexer/_vault_incremental.py`
+- `S20` `M` `src/vaultspec_rag/indexer/_vault_indexer.py`
+- `S20` `M` `src/vaultspec_rag/store_ingest.py`
+- `S20` `A` `src/vaultspec_rag/tests/test_vault_run_liveness.py`
+- `S20` `M` `src/vaultspec_rag/tests/test_checkpoint_common.py`
+- `S20` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/indexer/_checkpoint_common.py src/vaultspec_rag/indexer/_run_policy.py src/vaultspec_rag/indexer/_streaming.py src/vaultspec_rag/indexer/_vault_checkpoint.py src/vaultspec_rag/indexer/_vault_incremental.py src/vaultspec_rag/indexer/_vault_indexer.py src/vaultspec_rag/store_ingest.py src/vaultspec_rag/tests/test_vault_run_liveness.py src/vaultspec_rag/tests/test_checkpoint_common.py` -> `pass`
+- `S20` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/indexer/_checkpoint_common.py src/vaultspec_rag/indexer/_run_policy.py src/vaultspec_rag/indexer/_streaming.py src/vaultspec_rag/indexer/_vault_checkpoint.py src/vaultspec_rag/indexer/_vault_incremental.py src/vaultspec_rag/indexer/_vault_indexer.py src/vaultspec_rag/store_ingest.py src/vaultspec_rag/tests/test_vault_run_liveness.py src/vaultspec_rag/tests/test_checkpoint_common.py` -> `pass`
+- `S20` `verify:` `uv run --no-sync basedpyright --pythonpath C:/Users/hello/.vaultspec-rag/debug-runtime/Scripts/python.exe src/vaultspec_rag/indexer/_checkpoint_common.py src/vaultspec_rag/indexer/_run_policy.py src/vaultspec_rag/indexer/_streaming.py src/vaultspec_rag/indexer/_vault_checkpoint.py src/vaultspec_rag/indexer/_vault_incremental.py src/vaultspec_rag/indexer/_vault_indexer.py src/vaultspec_rag/store_ingest.py` -> `pass`
+- `S20` `verify:` `uv run --no-sync basedpyright src/vaultspec_rag/tests/test_vault_run_liveness.py src/vaultspec_rag/tests/test_checkpoint_common.py` -> `pass`
+- `S20` `verify:` `uv run --no-sync ty check src/vaultspec_rag/indexer/_checkpoint_common.py src/vaultspec_rag/indexer/_run_policy.py src/vaultspec_rag/indexer/_streaming.py src/vaultspec_rag/indexer/_vault_checkpoint.py src/vaultspec_rag/indexer/_vault_incremental.py src/vaultspec_rag/indexer/_vault_indexer.py src/vaultspec_rag/store_ingest.py src/vaultspec_rag/tests/test_vault_run_liveness.py src/vaultspec_rag/tests/test_checkpoint_common.py` -> `pass`
+- `S20` `verify:` `uv run --no-sync complexipy src/vaultspec_rag/indexer/_checkpoint_common.py src/vaultspec_rag/indexer/_run_policy.py src/vaultspec_rag/indexer/_streaming.py src/vaultspec_rag/indexer/_vault_checkpoint.py src/vaultspec_rag/indexer/_vault_incremental.py src/vaultspec_rag/indexer/_vault_indexer.py src/vaultspec_rag/store_ingest.py --failed` -> `pass`
+- `S20` `verify:` `uv run --no-sync xenon vaultspec_rag/indexer/_checkpoint_common.py vaultspec_rag/indexer/_run_policy.py vaultspec_rag/indexer/_streaming.py vaultspec_rag/indexer/_vault_checkpoint.py vaultspec_rag/indexer/_vault_incremental.py vaultspec_rag/indexer/_vault_indexer.py vaultspec_rag/store_ingest.py --max-absolute C --max-modules C --max-average A` -> `pass`
+- `S20` `verify:` `uv run --no-sync pylint src/vaultspec_rag/indexer/_checkpoint_common.py src/vaultspec_rag/indexer/_run_policy.py src/vaultspec_rag/indexer/_streaming.py src/vaultspec_rag/indexer/_vault_checkpoint.py src/vaultspec_rag/indexer/_vault_incremental.py src/vaultspec_rag/indexer/_vault_indexer.py src/vaultspec_rag/store_ingest.py src/vaultspec_rag/tests/test_vault_run_liveness.py src/vaultspec_rag/tests/test_checkpoint_common.py --rcfile=pyproject.toml --score=n` -> `pass`
+- `S20` `verify:` `git diff --check -- src/vaultspec_rag/indexer/_checkpoint_common.py src/vaultspec_rag/indexer/_run_policy.py src/vaultspec_rag/indexer/_streaming.py src/vaultspec_rag/indexer/_vault_checkpoint.py src/vaultspec_rag/indexer/_vault_incremental.py src/vaultspec_rag/indexer/_vault_indexer.py src/vaultspec_rag/store_ingest.py src/vaultspec_rag/tests/test_vault_run_liveness.py src/vaultspec_rag/tests/test_checkpoint_common.py` -> `pass`
+- `S20` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_vault_run_liveness.py src/vaultspec_rag/tests/test_run_policy.py src/vaultspec_rag/tests/test_checkpoint_common.py src/vaultspec_rag/tests/test_live_checkpoint_resilience.py src/vaultspec_rag/tests/test_job_resilience.py src/vaultspec_rag/tests/test_vault_checkpoint.py src/vaultspec_rag/tests/test_publication_recovery.py src/vaultspec_rag/tests/test_content_kind_checkpoint_restart.py src/vaultspec_rag/tests/test_store_writes.py src/vaultspec_rag/tests/test_slice_writer_overlap.py src/vaultspec_rag/tests/test_streaming_segments.py src/vaultspec_rag/tests/test_weighted_code_resume.py src/vaultspec_rag/tests/test_job_rebuild_resume_dispatch.py src/vaultspec_rag/tests/test_vault_split_parallel.py src/vaultspec_rag/tests/test_vault_progress_phases.py src/vaultspec_rag/tests/test_vault_chunking_unit.py -m unit and not torch -q --tb=short` -> `pass`
+- `S20` `verify:` `.venv/Scripts/python.exe .pytest-tmp/recovery-shared-gates.py` -> `pass`
+- `S20` `verify:` `.venv/Scripts/python.exe .pytest-tmp/S20/prove_guards.py --remaining` -> `pass`
+- `S20` `verify:` `Integrated S20 review (235 CPU passes, one Torch deselected, 22 actual-production fail-1/fresh-pass-0 pairs, nine stable hashes)` -> `pass`
+- `S20` `by:` `root`
 
 ## Notes
 
@@ -275,3 +298,4 @@ related:
 - `S16` Existing zero reclaim cap now disables generation and archive destruction; independently configured reconciliation and positive-cap retention remain active. No live storage or archive was removed.
 - `S17` The CLI carries canonical per-namespace facts; intentional HTTP envelope freshness/totals remain outside scope. No GPU or live service was used for these proofs.
 - `S19` The managed GPU integration fixture was not executed; four projection caller migrations passed strict static checks and actual-component CPU tests covered the changed behavior. Runtime verification remains in S04.
+- `S20` Resident stopped after separate S21 corpus-profile refusal; live S19/S20 loading, preserved job recovery and publication proof remain S04 work.

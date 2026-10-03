@@ -88,6 +88,7 @@ class RunPolicy:
     """
 
     __slots__ = (
+        "_completed",
         "_durable_progress_count",
         "_durable_progress_observer",
         "_failure_detail",
@@ -120,6 +121,7 @@ class RunPolicy:
         self._last_progress_monotonic = now_monotonic
         self._last_progress_wall = time.time()
         self._durable_progress_count = 0
+        self._completed = False
         self._last_progress_kind: DurableProgressKind | None = None
         self._last_progress_label: str | None = None
         self._failure_detail: str | None = None
@@ -152,14 +154,14 @@ class RunPolicy:
         """Expose the store's limited view of this same clock and waiter."""
         return self._store_write_policy
 
-    def checkpoint(self, label: str) -> None:
+    def checkpoint(self, label: str = "indexing safe boundary") -> None:
         """Raise a latched deadline or pending control signal at a safe edge."""
         _require_label(label)
-        self._remaining_or_raise(label=label)
+        self._remaining_or_raise(label=label, allow_completed=True)
         self._run_control.checkpoint()
 
     @contextmanager
-    def protected(self, label: str) -> Generator[None]:
+    def protected(self, label: str = "indexing protected interval") -> Generator[None]:
         """Defer cooperative control across one labeled indivisible span."""
         _require_label(label)
         self.checkpoint(f"{label} entry")
@@ -168,7 +170,7 @@ class RunPolicy:
         self.checkpoint(f"{label} exit")
 
     def remaining_seconds(self) -> float:
-        """Return the live positive budget or raise the typed latched expiry."""
+        """Return live budget, zero after completion, or the latched expiry."""
         return self._remaining_or_raise(label="remaining-budget check")
 
     def record_durable_progress(
@@ -193,19 +195,53 @@ class RunPolicy:
                 now_monotonic=now_monotonic,
                 label=label,
             )
-            self._last_progress_monotonic = now_monotonic
-            self._last_progress_wall = time.time()
-            self._durable_progress_count += 1
-            self._last_progress_kind = kind
-            self._last_progress_label = label
-            snapshot = self._snapshot_locked(now_monotonic=now_monotonic)
+            snapshot = self._record_progress_locked(
+                now_monotonic=now_monotonic, kind=kind, label=label
+            )
             observer = self._durable_progress_observer
+        self._notify_durable_progress(snapshot, observer)
+        return snapshot
+
+    def complete(self, *, label: str) -> None:
+        """Retire deadline checks after the actual successful terminal commit.
+
+        Completion permits control-aware epilogues, not further store writes.
+        A prior latched failure is retained. Callers must check the budget
+        before committing terminal success and invoke this only after it returns.
+        """
+        _require_label(label)
+        with self._lock:
+            if self._completed:
+                return
+            self._completed = True
+            snapshot = self._record_progress_locked(
+                now_monotonic=time.monotonic(),
+                kind=DurableProgressKind.FINALIZATION_PHASE_COMMITTED,
+                label=label,
+            )
+            observer = self._durable_progress_observer
+        self._notify_durable_progress(snapshot, observer)
+
+    def _record_progress_locked(
+        self, *, now_monotonic: float, kind: DurableProgressKind, label: str
+    ) -> RunPolicySnapshot:
+        self._last_progress_monotonic = now_monotonic
+        self._last_progress_wall = time.time()
+        self._durable_progress_count += 1
+        self._last_progress_kind = kind
+        self._last_progress_label = label
+        return self._snapshot_locked(now_monotonic=now_monotonic)
+
+    @staticmethod
+    def _notify_durable_progress(
+        snapshot: RunPolicySnapshot,
+        observer: Callable[[RunPolicySnapshot], None] | None,
+    ) -> None:
         if observer is not None:
             try:
                 observer(snapshot)
             except Exception:
                 logger.warning("durable progress observation failed", exc_info=True)
-        return snapshot
 
     def set_durable_progress_observer(
         self, observer: Callable[[RunPolicySnapshot], None] | None
@@ -332,13 +368,24 @@ class RunPolicy:
         with self._lock:
             return self._snapshot_locked(now_monotonic=time.monotonic())
 
-    def _remaining_or_raise(self, *, label: str) -> float:
+    def _remaining_or_raise(
+        self, *, label: str, allow_completed: bool = False
+    ) -> float:
         with self._lock:
             now_monotonic = time.monotonic()
-            self._raise_or_latch_expiry_locked(
-                now_monotonic=now_monotonic,
-                label=label,
-            )
+            if self._completed and not allow_completed:
+                if self._failure_detail is not None:
+                    raise JobError(
+                        JobErrorKind.NO_PROGRESS_TIMEOUT, self._failure_detail
+                    )
+                return 0.0
+            if not (
+                allow_completed and self._completed and self._failure_detail is None
+            ):
+                self._raise_or_latch_expiry_locked(
+                    now_monotonic=now_monotonic,
+                    label=label,
+                )
             return self._remaining_locked(now_monotonic=now_monotonic)
 
     def _raise_or_latch_expiry_locked(
@@ -373,11 +420,12 @@ class RunPolicy:
             timeout_seconds=self._timeout_seconds,
             last_durable_progress_at=self._last_progress_wall,
             seconds_since_durable_progress=elapsed,
-            remaining_seconds=remaining,
+            remaining_seconds=0.0 if self._completed else remaining,
             durable_progress_count=self._durable_progress_count,
             last_progress_kind=self._last_progress_kind,
             last_progress_label=self._last_progress_label,
-            expired=self._failure_detail is not None or remaining <= 0.0,
+            expired=self._failure_detail is not None
+            or (not self._completed and remaining <= 0.0),
         )
 
 

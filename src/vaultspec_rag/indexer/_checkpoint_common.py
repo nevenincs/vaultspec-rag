@@ -593,6 +593,7 @@ class RunCheckpointBase:
             FinalizationPhase.STALE_RECONCILED,
         }:
             return 0
+        self.run_policy.checkpoint(f"{self._kind_label} proof publication entry")
         changed = 0
         if phase is FinalizationPhase.INGESTING:
             changed = self._seal_publication_proof()
@@ -609,6 +610,10 @@ class RunCheckpointBase:
         self.generation = self.ledger.advance_finalization(
             self.generation_id,
             FinalizationPhase.METADATA_PUBLISHED,
+        )
+        self.run_policy.record_durable_progress(
+            kind=DurableProgressKind.FINALIZATION_PHASE_COMMITTED,
+            label=f"{self._kind_label} proof publication",
         )
         return changed
 
@@ -817,6 +822,7 @@ class RunCheckpointBase:
 
     def publish_generation(self) -> RunGeneration:
         """Certify generation publication and compact prior compatible rows."""
+        self.run_policy.checkpoint(f"{self._kind_label} generation publication entry")
         phase = self.generation.finalization_phase
         if phase in (
             FinalizationPhase.INGESTING,
@@ -837,18 +843,21 @@ class RunCheckpointBase:
                 self.generation_id,
                 FinalizationPhase.GENERATION_PUBLISHED,
             )
+            self.run_policy.record_durable_progress(
+                kind=DurableProgressKind.FINALIZATION_PHASE_COMMITTED,
+                label=f"{self._kind_label} generation publication phase",
+            )
         if self.generation.terminal_state is RunTerminalState.RUNNING:
+            self.run_policy.checkpoint(f"{self._kind_label} terminal publication")
             self.generation = self.ledger.finish_generation(
                 self.generation_id,
                 RunTerminalState.SUCCEEDED,
             )
+        if self.generation.terminal_state is RunTerminalState.SUCCEEDED:
+            self.run_policy.complete(label=f"{self._kind_label} terminal publication")
         if self.generation.finalization_phase is not FinalizationPhase.COMPACTED:
             self.ledger.compact(self.generation_id)
         self.generation = self.ledger.generation(self.generation_id)
-        self.run_policy.record_durable_progress(
-            kind=DurableProgressKind.FINALIZATION_PHASE_COMMITTED,
-            label=f"{self._kind_label} generation publication",
-        )
         return self.generation
 
     def _record_indexed_file(self, rel_path: str, source_digest: str) -> None:
