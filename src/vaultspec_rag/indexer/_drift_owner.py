@@ -97,9 +97,9 @@ class CodeDriftOwner:
     def superseded_point_ids(self) -> frozenset[str]:
         """Return every point identity this run dropped as superseded.
 
-        A run's caller cannot derive this from a pre-run id snapshot: chunk
-        identity embeds a content digest, so a drifted path's replacement
-        points carry new identities and the superseded ones are simply gone.
+        A run's caller cannot derive this from a pre-run id snapshot: edited
+        chunks receive new identities, while unchanged chunks can retain the
+        same identity across different whole-file digests.
         Anything reconciling the snapshot against live storage has to be told
         which identities this run retired, or it counts them as still present.
 
@@ -249,6 +249,7 @@ class CodeDriftOwner:
                     self._supersede_recorded(
                         collision.rel_path,
                         collision.indexed_digest,
+                        pending,
                     )
                     continue
                 pending = self._defer(pending, collision.rel_path)
@@ -279,7 +280,7 @@ class CodeDriftOwner:
             self._checkpoint.drifted_indexed_paths(observed).items()
         ):
             if self._charge(rel_path):
-                self._supersede_recorded(rel_path, superseded_digest)
+                self._supersede_recorded(rel_path, superseded_digest, pending)
             else:
                 pending = self._defer(pending, rel_path)
         return pending
@@ -288,16 +289,30 @@ class CodeDriftOwner:
         self,
         rel_path: str,
         superseded_digest: str | None,
+        replacement_segments: tuple[CodeFileSegment, ...],
     ) -> None:
-        """Supersede a path whose replacement points are already stored."""
+        """Retire old evidence without deleting confirmed replacement points."""
         if superseded_digest is None:
             raise ValueError(
                 f"cannot supersede {rel_path!r} without the digest it indexed"
             )
+        replacement_ids = {
+            chunk.id
+            for segment in replacement_segments
+            if segment.path == rel_path
+            for chunk in segment.chunks
+        }
+        stale_ids = tuple(
+            point_id
+            for point_id in self._checkpoint.superseded_point_ids(
+                rel_path, superseded_digest
+            )
+            if point_id not in replacement_ids
+        )
         self._supersede(
             rel_path,
             superseded_digest,
-            self._checkpoint.superseded_point_ids(rel_path, superseded_digest),
+            stale_ids,
         )
 
     def _supersede(
@@ -308,9 +323,9 @@ class CodeDriftOwner:
     ) -> None:
         """Drop the superseded points, then stop claiming them, in that order.
 
-        The order is the whole invariant. Chunk identity embeds a content
-        digest, so replacement points never overwrite superseded ones. Removing
-        the units first would leave storage holding points no unit claims,
+        At record time, the caller excludes confirmed replacement identities:
+        unchanged chunks can share IDs across different whole-file digests.
+        Removing the units first would leave storage holding points no unit claims,
         which no later reconciliation attributes to this path - the content
         would simply be published twice. Dropping first means an interruption
         between the two steps replays cleanly: the path is still recorded

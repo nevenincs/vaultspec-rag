@@ -28,7 +28,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-adr]]'
 modified: '2026-10-03'
 body_schema: body-v2
-body_hash: 'sha256:cce16dc706b7df59f7ecd5299b9597fe62ab56105498a8e7e130649af1715c7a'
+body_hash: 'sha256:fe113926eda187be52a29fbbc0274aae8b44fcb75551a3c85b652ff796bd2113'
 ---
 
 # `resident-service-recovery` plan
@@ -81,7 +81,7 @@ S18 follows a strict live ingest barrier rejecting 14,897 expected versus 14,541
 - [ ] `S15` - Use one canonical watcher root identity for Windows path filters, unregistration and bounded active-root release; `watcher root-key owner, server watcher route and scheduler lifecycle, CPU path-alias filter and active registration/release regressions`.
 - [ ] `S16` - Honor disabled automatic pruning at the superseded-generation destruction stage while retaining classification and independently enabled reconciliation; `canonical reclamation policy and generation stage, CPU disabled-policy stage and safe-generation evaluator regressions`.
 - [ ] `S17` - Preserve canonical generation diagnostics through CLI storage survey decoding and JSON emission; `CLI namespace survey projection and shared survey record as needed, CPU unknown known-empty and generation-debt round-trip regressions`.
-- [ ] `S18` - Preserve republished shared chunk identities during resume drift retirement and exclude historical deletion evidence from retained upsert accumulation; `indexer canonical drift owner and consumer retained-ID accumulation, ledger iterator selection only as needed, CPU actual chunking real-local-storage interrupted partial-edit and deletion-history regressions`.
+- [x] `S18` - Preserve republished shared chunk identities during resume drift retirement and exclude historical deletion evidence from retained upsert accumulation; `indexer canonical drift owner and consumer retained-ID accumulation, ledger iterator selection only as needed, CPU actual chunking real-local-storage interrupted partial-edit and deletion-history regressions`.
 - [ ] `S04` - Deploy the current checkout as the resident daemon, repair affected publications through explicit rebuild jobs when required, and verify service health, search, and watcher convergence; `resident service lifecycle, affected root ledgers and admitted jobs, plan verification and final audit`.
 
 ## Parallelization

@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:1eec459d807586c50eefe2f69848ac649fbf142d22c999633a3794f64f5b49a4'
+body_hash: 'sha256:2572f77621d0d3ba70e3a64dfe4bd7e20451a9a3fce53ab5b0a2aedfe36c435c'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -193,9 +193,23 @@ related:
 - `S14` `verify:` `S14 eleven production mutation fail then fresh restored pass pairs` -> `pass`
 - `S14` `verify:` `integrated S14 source and CPU review` -> `pass`
 - `S14` `by:` `root`
+- `S18` `M` `src/vaultspec_rag/indexer/_drift_owner.py`
+- `S18` `M` `src/vaultspec_rag/indexer/_consumer_pipeline.py`
+- `S18` `M` `src/vaultspec_rag/indexer/_run_ledger_commits.py`
+- `S18` `M` `src/vaultspec_rag/tests/test_code_pipeline_retained_ids.py`
+- `S18` `M` `.vault/adr/2026-07-25-index-resume-drift-race-adr.md`
+- `S18` `verify:` `package lint format and all four source hashes stable` -> `pass`
+- `S18` `verify:` `S18 eleven changed gates each exit0` -> `pass`
+- `S18` `verify:` `S18 affected CPU85 cases` -> `pass`
+- `S18` `verify:` `S18 six actual production mutation fail and fresh restored pass pairs` -> `pass`
+- `S18` `verify:` `S10 eight refreshed guard pairs against current consumer` -> `pass`
+- `S18` `verify:` `integrated S18 source and CPU review` -> `pass`
+- `S18` `verify:` `canonical RunLedger retirement exact two damaged unserved generations` -> `pass`
+- `S18` `by:` `root`
 
 ## Notes
 
 - `S09` Source checkpoint 7386cc3 committed on isolated fix/resident-start-admission for canonical committed-runtime deployment; S09 remains open pending trusted idle live deployment.
 - `S10` An initial mistaken blanket integration invocation issued a canonical drain request and was refused before GPU borrower admission; no GPU lease was granted, service admission was restored, and all final test selections were CPU-only. Live exact linked retries are owned by S04.
 - `S14` Constructor-only integration migrations were strictly checked; GPU integration fixtures were not executed. Live replacement rollout remains S04.
+- `S18` Live monitor missing356 points shares the reproduced drift mechanism; individual attribution of every missing ID remains unproven. Served collections and damaged-build storage were preserved; fresh admitted rebuild verification remains S04.

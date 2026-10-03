@@ -33,6 +33,7 @@ from ._chunk_producer import (
 from ._content_policy import AdmissionReason
 from ._file_state import FileStateKind
 from ._run_checkpoint import CodeRunConfiguration
+from ._run_ledger_models import CommitUnitKind
 from ._slicing import iter_code_file_segments, iter_weighted_code_slices
 from ._streaming import (
     EncodeBucketReporter,
@@ -267,7 +268,11 @@ class CodeConsumerPipeline:
             expected_content_epoch=run.content_epoch or "",
         )
         new_ids: set[str] = set()
-        new_ids.update(checkpoint.ledger.iter_point_ids(checkpoint.generation_id))
+        new_ids.update(
+            checkpoint.ledger.iter_point_ids(
+                checkpoint.generation_id, unit_kind=CommitUnitKind.UPSERT
+            )
+        )
         metadata: dict[str, str] = {}
         total = [len(new_ids)]
         self._begin_support_measurement(paths)
