@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#resident-service-recovery'
 date: '2026-10-02'
-modified: '2026-10-03'
+modified: '2026-10-04'
 body_schema: 'body-v2'
-body_hash: 'sha256:dd64c7d7a096a012ba424c5d852e82d655c2afe82c983ce9d7a5993b2b097ff2'
+body_hash: 'sha256:c767244cf98d05efc4c148125815c3469246e9963623628a7a2365a1d590fc73'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -808,6 +808,13 @@ related:
 - `S45` `verify:` `managed-data-cutover-verified original lock inode identity and all backup bytes retained` -> `pass`
 - `S45` `verify:` `canonical warmed final-source lifecycle original anchor physical H storage and READY` -> `pass`
 - `S45` `by:` `root`
+- `S48` `M` `Y:/code/ci-fleet-worktrees/resident-recovery/fleetctl/host_admission/deployment.py`
+- `S48` `M` `Y:/code/ci-fleet-worktrees/resident-recovery/tests/test_host_admission_deployment.py`
+- `S48` `verify:` `complete focused deployment23 and affected engine15 CPU tests` -> `pass`
+- `S48` `verify:` `canonical Python lint format Ty and exact diff checks` -> `pass`
+- `S48` `verify:` `seven actual production omissions named fail exact finally restore fresh pass` -> `pass`
+- `S48` `verify:` `independent source CPU review 227 artifacts214dependencies zero mismatches` -> `pass`
+- `S48` `by:` `root`
 
 ## Notes
 
@@ -830,3 +837,4 @@ related:
 - `S27` Actual TUI clean rebuild failed after72514 confirmed units by requesting old served proof with the replacement model key. Real full-entry regressions also reproduced removed partial UPSERT paths and storage deletion interrupted before ledger retirement. Existing canonical storage-first drift retirement now runs on absent own shadow paths before replay seeding; strict incremental receipt checks and exact apply barriers remain. Nine production mutants intentionally fail the exact named assertions, restore in finally and pass fresh ordinary processes. Independent integrated source/CPU review passes; live protected retry remains S04.
 - `S28` S19 canonical projector consolidation left cold watcher imports of removed names; actual INGEST CODE and TUI DOCUMENT physically completed then their managed jobs failed. Exact-attempt review also found previous checkpoint facts leaking into no-op/pre-open outcomes. Final projection now reuses the one canonical projector with captured admission facts and only a newly opened checkpoint, preserving retry overlay and failure isolation. Eleven production mutants intentionally fail named behavioural assertions, restore in finally and pass fresh ordinary processes;339 hashes unchanged. Independent integrated source/CPU review passes; actual loaded-source completion acceptance remains S04.
 - `S45` Rejected first whole-parent H copy retained unused after intervening installed UV restart; no original data deletion.
+- `S48` Canonical authority apply refused exit2 before deployment by published-origin/main provenance gate; no bypass or remote push/merge, exact hold and disabled tasks preserved. S09/S04 stay open. Source-only S48 commit 53818f2b912415e265385cac8c91c2fcae0ade0d.
