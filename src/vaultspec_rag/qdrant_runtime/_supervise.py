@@ -17,6 +17,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -143,6 +144,13 @@ _LOAD_FAILURE_MARKERS = (
 )
 
 
+# Explicit sharing failures describe file ownership, not collection corruption.
+# Match the native OS-error forms, not arbitrary application codes or prefixes.
+_WINDOWS_SHARING_VIOLATION = re.compile(
+    r"\b(?:os error\s+32|Os\s*\{\s*code:\s*32)\b", re.IGNORECASE
+)
+
+
 def _qdrant_child_path(path: Path) -> str:
     """Render a storage path for the qdrant child's environment.
 
@@ -196,7 +204,8 @@ def _corrupt_collection_from_output(tail: str, storage_dir: Path) -> str | None:
     a collection merely logged (healthily) earlier in the buffer while an
     unrelated, collection-less fault (corrupt ``raft_state.json``, disk-full,
     OOM) panics later. Abstaining on no match is deliberate - guessing would risk
-    quarantining a healthy index.
+    quarantining a healthy index. Explicit Windows sharing violations on a
+    candidate failure line abstain too: a locked file is not corrupt.
     """
     on_disk = _list_on_disk_collections(storage_dir)
     if not on_disk:
@@ -207,6 +216,8 @@ def _corrupt_collection_from_output(tail: str, storage_dir: Path) -> str | None:
     for line in tail.splitlines():
         lowered = line.lower()
         if not any(marker in lowered for marker in _LOAD_FAILURE_MARKERS):
+            continue
+        if _WINDOWS_SHARING_VIOLATION.search(line):
             continue
         for name in names:
             if name in line:

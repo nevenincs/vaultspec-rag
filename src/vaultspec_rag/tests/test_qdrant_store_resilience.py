@@ -107,6 +107,46 @@ class TestDetection:
             == "r0abc_vault_docs_codebase"
         )
 
+    @pytest.mark.parametrize(
+        "cause",
+        [
+            "Wal error: Can't init WAL: Os { code: 32, kind: Uncategorized, "
+            'message: "The process cannot access the file because it is being '
+            'used by another process." }',
+            "Failed to open mmap payload storage: The process cannot access "
+            "the file because it is being used by another process. (os error 32)",
+        ],
+    )
+    def test_sharing_violation_is_not_collection_corruption(
+        self, tmp_path: Path, cause: str
+    ) -> None:
+        _make_collection(tmp_path, "r0abc_vault_docs")
+        tail = f"Panic: Failed to load local shard r0abc_vault_docs/0: {cause}"
+        assert _corrupt_collection_from_output(tail, tmp_path) is None, (
+            "SHARING_VIOLATION_IS_NOT_CORRUPTION"
+        )
+
+    @pytest.mark.parametrize("sharing_first", [True, False])
+    def test_unrelated_sharing_failure_does_not_hide_real_corruption(
+        self, tmp_path: Path, sharing_first: bool
+    ) -> None:
+        _make_collection(tmp_path, "r0abc_vault_docs")
+        _make_collection(tmp_path, "r0def_vault_docs")
+        sharing = "Failed to load r0abc_vault_docs: mmap failed (os error 32)"
+        corrupt = "Failed to load r0def_vault_docs: corrupt segment"
+        lines = [sharing, corrupt] if sharing_first else [corrupt, sharing]
+        assert _corrupt_collection_from_output("\n".join(lines), tmp_path) == (
+            "r0def_vault_docs"
+        ), "UNRELATED_SHARING_DOES_NOT_HIDE_CORRUPTION"
+
+    @pytest.mark.parametrize("cause", ["os error 320", "os error 132", "code: 32"])
+    def test_other_codes_keep_existing_corruption_detection(
+        self, tmp_path: Path, cause: str
+    ) -> None:
+        _make_collection(tmp_path, "r0abc_vault_docs")
+        tail = f"Failed to load r0abc_vault_docs: corrupt segment ({cause})"
+        assert _corrupt_collection_from_output(tail, tmp_path) == "r0abc_vault_docs"
+
     def test_empty_tail_is_no_culprit(self, tmp_path: Path) -> None:
         _make_collection(tmp_path, "r0abc_vault_docs")
         assert _corrupt_collection_from_output("   ", tmp_path) is None
@@ -226,6 +266,44 @@ class TestBoundedRetry:
             sup.stop()
         assert not (storage / "quarantine").exists()
         assert _list_on_disk_collections(storage) == {"r0000_vault_docs"}
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "cause", ["Os { code: 32, kind: Uncategorized }", "os error 32"]
+    )
+    def test_sharing_failure_preserves_collection_and_does_not_retry(
+        self, tmp_path: Path, cause: str
+    ) -> None:
+        """Omitting the sharing refusal must fail the preservation assertion."""
+        storage = tmp_path / "qdrant-server" / "storage"
+        col = _make_collection(storage, "r0000_vault_docs")
+        attempts = tmp_path / "attempts.txt"
+        source = (
+            "import pathlib, sys\n"
+            f"with pathlib.Path({str(attempts)!r}).open('a') as stream:\n"
+            "    stream.write('start\\n')\n"
+            "print('Failed to load local shard r0000_vault_docs/0: "
+            f"{cause}', flush=True)\n"
+            "sys.exit(1)\n"
+        )
+        binary = _fake_binary(tmp_path, source, name="sharing")
+        sup = QdrantSupervisor(
+            binary,
+            http_port=8993,
+            storage_dir=storage,
+            log_path=tmp_path / "qdrant.log",
+        )
+        try:
+            with pytest.raises(RuntimeError, match="failed to become ready") as failure:
+                sup.start(timeout=10.0)
+        finally:
+            sup.stop()
+        assert col.exists(), "SHARING_VIOLATION_COLLECTION_PRESERVED"
+        assert (col / "segment.bin").read_bytes() == b"data"
+        assert not (storage / "quarantine").exists()
+        assert attempts.read_text() == "start\n", "SHARING_VIOLATION_NOT_RETRIED"
+        assert cause in str(failure.value)
+        assert not sup.is_alive()
 
     @pytest.mark.integration
     def test_readiness_timeout_with_a_live_child_quarantines_nothing(
