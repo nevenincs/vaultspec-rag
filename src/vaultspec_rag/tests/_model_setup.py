@@ -16,6 +16,11 @@ from urllib.parse import quote
 from .._model_cache import cached_snapshot_is_complete
 from .._sparse_profile import sparse_model_revision
 
+#: The Hub's own mirror variable. The product never reads it - the Hub
+#: library does - so the fixtures that report or redirect the endpoint are
+#: its only readers here, and the name lives with them.
+HF_ENDPOINT_ENV = "HF_ENDPOINT"
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -299,10 +304,8 @@ def _setup_context(
     endpoint: str | None,
 ) -> str:
     """Render stable failure context for fixture diagnostics."""
-    from ..config._types import EnvVar
-
     effective_endpoint = endpoint or os.environ.get(
-        EnvVar.HF_ENDPOINT.value,
+        HF_ENDPOINT_ENV,
         "https://huggingface.co",
     )
     effective_cache = str(cache_dir) if cache_dir is not None else "<default HF cache>"
@@ -340,11 +343,9 @@ def _worker(
         snapshot_download,  # pyright: ignore[reportUnknownVariableType]  # stubs partially unknown
     )
 
-    from ..config._types import EnvVar
-
     for model_id in model_ids:
         effective_endpoint = endpoint or os.environ.get(
-            EnvVar.HF_ENDPOINT.value,
+            HF_ENDPOINT_ENV,
             "https://huggingface.co",
         )
         metadata_url = (

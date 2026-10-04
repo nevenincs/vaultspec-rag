@@ -12,7 +12,7 @@ from watchfiles import (
     awatch,  # pyright: ignore[reportUnknownVariableType] - watchfiles stub gap
 )
 
-from ...indexer import SUPPORTED_EXTENSIONS, CodebaseIndexer
+from ...indexer import LANGUAGE_MAP, CodebaseIndexer
 from ...indexer._content_policy import (
     AdmissionReason,
     ContentKind,
@@ -140,7 +140,7 @@ async def test_added_and_modified_events_match_discovery_admission(
         policy,
     )
 
-    assert ".toml" in SUPPORTED_EXTENSIONS
+    assert ".toml" in LANGUAGE_MAP
     assert full_admitted == {"src/logic.py"}
     assert set(scoped) == full_admitted
     assert rejected == set(paths) - full_admitted

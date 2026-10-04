@@ -28,6 +28,7 @@ from ..watcher_retry_policy import (
     _WatcherRetryOptions,
 )
 from ..watcher_runtime import WatcherConvergenceSlot, reconcile_restarted_slot
+from ._watcher_fixtures import dirty_paths
 from ._watcher_job_snapshot import watcher_job_snapshot
 
 if TYPE_CHECKING:
@@ -46,6 +47,11 @@ class _History:
     def get(self, job_id: str) -> JobSnapshot | None:
         assert job_id == "job-1"
         return self.snapshot
+
+    def terminal(self) -> tuple[JobSnapshot, ...]:
+        if self.snapshot is None or not self.snapshot.state.is_terminal:
+            return ()
+        return (self.snapshot,)
 
 
 def _options(root: Path) -> _WatcherRetryOptions:
@@ -130,7 +136,7 @@ async def test_restart_recognizes_already_succeeded_generation(
     assert not policy.state.convergence_pending
     assert policy.state.captured_paths == ()
     assert policy.state.attempt_job_id is None
-    assert not slot.has_work()
+    assert not (slot.held_paths or slot.pending_paths)
 
 
 @pytest.mark.asyncio
@@ -159,7 +165,7 @@ async def test_restart_restores_exact_scope_after_unsuccessful_terminal_job(
     )
 
     assert [item.relative_path for item in policy.state.pending_paths] == ["src/a.py"]
-    assert slot.dirty_paths() == frozenset({tmp_path.resolve() / "src/a.py"})
+    assert dirty_paths(slot) == frozenset({tmp_path.resolve() / "src/a.py"})
     assert policy.state.attempt_job_id is None
 
 
@@ -237,10 +243,23 @@ async def test_unsafe_restart_recovery_is_terminal_and_retry_cannot_clear_it(
 
     await reconcile_restarted_slot(slot, cast("Any", _History(history(tmp_path))))
     refused = policy.state
-    policy.mark_convergence_pending(now=3.0)
+    policy.mark_scope_pending(
+        (
+            WatcherPathObservation(
+                relative_path="src/b.py",
+                source=WatcherSource.CODE,
+                first_observed_at=3.0,
+                latest_observed_at=3.0,
+                event_kinds=frozenset({WatcherPathEvent.MODIFIED}),
+                generation=1,
+            ),
+        ),
+        now=3.0,
+    )
 
     assert refused.scope_refusal is WatcherScopeRefusal.FULL_REINDEX_REQUIRED
     assert refused.circuit_state is WatcherCircuitState.OPEN
-    assert refused.pending_paths == ()
+    # Mutation: a terminal refusal must restore the captured paths before release.
+    assert [item.relative_path for item in refused.pending_paths] == ["src/a.py"]
     assert policy.state.scope_refusal is WatcherScopeRefusal.FULL_REINDEX_REQUIRED
     assert not policy.admit(now=4.0).admitted

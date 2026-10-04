@@ -118,36 +118,34 @@ class _PopulatedJSONHandler(QuietHandler):
         self.wfile.write(body)
 
 
-# The health-token stage spends half the whole-call budget, so a budget
+# The refusal stage spends half the whole-call budget, so a budget
 # renewed at re-authentication visibly outlives the original one; both halves
 # are seconds wide, far above any loopback scheduling stall. The authenticated
 # retry outlasts the budget but not the default admin timeout.
 _AUTH_CALL_BUDGET_SECONDS = 3.0
-_AUTH_HEALTH_SECONDS = _AUTH_CALL_BUDGET_SECONDS / 2
+_AUTH_REFUSAL_SECONDS = _AUTH_CALL_BUDGET_SECONDS / 2
 _AUTH_RETRY_SECONDS = 15.0
 
 
 class _AuthDeadlineHandler(QuietHandler):
-    """Exercise the real 401, health-token, authenticated-retry sequence."""
+    """Rotate discovery after refusal, then delay the authenticated retry."""
 
     service_token = "live-loopback-token"
     requests: ClassVar[list[str]] = []
 
-    # The 401 is cheap, the health-token stage spends half the budget, and the
-    # authenticated retry is far longer than the budget, so the sequence
-    # reaches the third request with seconds to spare and expires there.
+    # The first refusal spends half the budget; the authenticated retry
+    # outlasts the remaining budget and must expire against that deadline.
     def do_GET(self) -> None:
         authorization = self.headers.get("Authorization", "")
         type(self).requests.append(f"{self.path} {authorization}".rstrip())
-        if self.path == "/health":
-            time.sleep(_AUTH_HEALTH_SECONDS)
-            self._json(200, {"service_token": self.service_token})
-            return
         if authorization == f"Bearer {self.service_token}":
             time.sleep(_AUTH_RETRY_SECONDS)
             self._json(200, {"projects": []})
             return
-        time.sleep(0.005)
+        from ..serviceclient._discovery import _merge_service_status
+
+        _merge_service_status({"service_token": self.service_token})
+        time.sleep(_AUTH_REFUSAL_SECONDS)
         self._json(401, {"ok": False, "error": "unauthorized"})
 
     def _json(self, status: int, payload: dict[str, object]) -> None:
@@ -422,19 +420,14 @@ class TestAdminErrorSurfacing:
         assert result is None
 
     def test_auth_recovery_obeys_one_whole_call_deadline(self) -> None:
-        """401, health-token recovery, and retry share one whole-call budget.
-
-        The invariant is that re-authentication does not buy a fresh budget:
-        the call must expire against the ORIGINAL deadline somewhere at or
-        after the health-token stage. Which of those stages the clock lands in
-        is a host-timing detail, so the assertion names the set rather than one
-        member. A retry granted a fresh budget expires one health stage late,
-        and a retry given the default timeout runs until the retry answers;
-        both land past the bound. Every bound is derived from the budget and
-        the stage delays, never from a host speed.
-        """
+        """Discovery refresh and authenticated retry share the original deadline."""
         _AuthDeadlineHandler.requests = []
         server, port = _serve(_AuthDeadlineHandler)
+        from ..serviceclient._discovery import _merge_service_status
+
+        _merge_service_status(
+            {"pid": os.getpid(), "port": port, "service_token": "stale-token"}
+        )
         started = time.monotonic()
         try:
             result = _try_http_admin(
@@ -453,8 +446,7 @@ class TestAdminErrorSurfacing:
         assert any(
             stage in message
             for stage in (
-                "health-token request",
-                "health-token response",
+                "discovery-token refresh",
                 "authenticated retry",
                 "authenticated retry response",
             )
@@ -462,146 +454,12 @@ class TestAdminErrorSurfacing:
         assert (
             _AUTH_CALL_BUDGET_SECONDS
             <= elapsed
-            < _AUTH_CALL_BUDGET_SECONDS + _AUTH_HEALTH_SECONDS
+            < _AUTH_CALL_BUDGET_SECONDS + _AUTH_REFUSAL_SECONDS
         )
-        assert _AuthDeadlineHandler.requests[:2] == ["/projects", "/health"]
-        assert len(_AuthDeadlineHandler.requests) <= 3
-
-
-class TestDegradedDiscoveryPropagation:
-    """Port resolution fails fast with evidence, never a guessed address.
-
-    Driven against a real held machine lock and real on-disk pointers, with
-    both managed singleton paths relocated under the test's own temp root.
-    """
-
-    @staticmethod
-    def _isolate(tmp_path: Path) -> None:
-        from ..config._settings import reset_config
-
-        os.environ[EnvVar.STATUS_DIR.value] = str(tmp_path / "status")
-        os.environ[EnvVar.QDRANT_STORAGE_DIR.value] = str(
-            tmp_path / "qdrant-server" / "storage"
+        assert len(_AuthDeadlineHandler.requests) == 2
+        assert all(
+            path.startswith("/projects ") for path in _AuthDeadlineHandler.requests
         )
-        (tmp_path / "status").mkdir(parents=True, exist_ok=True)
-        reset_config()
-
-    @staticmethod
-    def _restore() -> None:
-        from .._machine_lock import release_machine_lock
-        from ..config._settings import reset_config
-
-        release_machine_lock()
-        os.environ.pop(EnvVar.STATUS_DIR.value, None)
-        os.environ.pop(EnvVar.QDRANT_STORAGE_DIR.value, None)
-        reset_config()
-
-    def test_absent_singleton_raises_without_a_holder(self, tmp_path: Path) -> None:
-        from ..serviceclient._transport import (
-            ServiceUnavailableError,
-            resolve_service_port,
-        )
-
-        self._isolate(tmp_path)
-        try:
-            with pytest.raises(ServiceUnavailableError) as caught:
-                resolve_service_port()
-            assert caught.value.is_degraded is False
-            assert caught.value.holder_pid == 0
-        finally:
-            self._restore()
-
-    @pytest.mark.parametrize(
-        ("pointer", "expected_reason"),
-        [
-            (None, "pointer_missing"),
-            ("{not json", "pointer_missing"),
-            ('{"pid": 1, "port": 0}', "pointer_foreign"),
-        ],
-    )
-    def test_degraded_resolution_carries_its_reason(
-        self,
-        tmp_path: Path,
-        pointer: str | None,
-        expected_reason: str,
-    ) -> None:
-        """Every degraded shape fails fast naming the holder and the reason."""
-        from .._machine_lock import acquire_machine_lock, machine_discovery_path
-        from ..serviceclient._transport import (
-            ServiceUnavailableError,
-            resolve_service_port,
-        )
-
-        self._isolate(tmp_path)
-        try:
-            acquired, _holder = acquire_machine_lock()
-            assert acquired
-            if pointer is not None:
-                path = machine_discovery_path()
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(pointer, encoding="utf-8")
-
-            with pytest.raises(ServiceUnavailableError) as caught:
-                resolve_service_port()
-
-            error = caught.value
-            assert error.is_degraded is True
-            assert error.reason == expected_reason
-            assert error.holder_pid == os.getpid()
-            # The message a caller surfaces carries the evidence itself.
-            assert str(os.getpid()) in str(error)
-        finally:
-            self._restore()
-
-    def test_stale_pointer_never_yields_a_guessed_address(self, tmp_path: Path) -> None:
-        """A stale pointer must not be accepted through any fallback.
-
-        A status file naming a different port is present, so a compatibility
-        fallback would resolve an address the singleton owner never published.
-        """
-        import json as _json
-        from datetime import UTC, datetime, timedelta
-
-        from .._machine_lock import acquire_machine_lock, machine_discovery_path
-        from ..serviceclient._discovery import _status_file
-        from ..serviceclient._transport import (
-            ServiceUnavailableError,
-            resolve_service_port,
-        )
-
-        self._isolate(tmp_path)
-        try:
-            acquired, _holder = acquire_machine_lock()
-            assert acquired
-            stamp = (datetime.now(UTC) - timedelta(hours=2)).isoformat(
-                timespec="seconds"
-            )
-            path = machine_discovery_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                _json.dumps(
-                    {
-                        "pid": os.getpid(),
-                        "port": 8801,
-                        "last_heartbeat": stamp,
-                        "stale_after_s": 60,
-                    }
-                ),
-                encoding="utf-8",
-            )
-            _status_file().write_text(
-                _json.dumps({"pid": 4242, "port": 9999}), encoding="utf-8"
-            )
-
-            with pytest.raises(ServiceUnavailableError) as caught:
-                resolve_service_port()
-
-            assert caught.value.reason == "pointer_stale"
-            # Neither the refused pointer port nor the status file's port is
-            # handed back as a usable address.
-            assert "9999" not in str(caught.value)
-        finally:
-            self._restore()
 
 
 @pytest.mark.usefixtures("isolated_status_dir")
@@ -624,12 +482,12 @@ class TestRedirectsAreRefused:
         redirector, redirector_port = _serve(_RedirectingHandler)
         return sink, redirector, redirector_port
 
-    def test_health_token_fetch_refuses_a_redirect(self) -> None:
-        from ..serviceclient._transport import _fetch_health_token
+    def test_health_probe_refuses_a_redirect(self) -> None:
+        from ..serviceclient._transport import _try_http_health
 
         sink, redirector, port = self._serve_pair()
         try:
-            token = _fetch_health_token(port, timeout=5.0)
+            answer = _try_http_health(port, timeout=5.0)
         finally:
             for server in (redirector, sink):
                 server.shutdown()
@@ -637,7 +495,7 @@ class TestRedirectsAreRefused:
 
         # The redirect was declined, so no token was obtained at all - and in
         # particular not the sink's, which would have been taken as genuine.
-        assert token == ""
+        assert answer == {"status": "error", "http_code": 302}
         assert _RedirectSinkHandler.received == []
 
     def test_credential_bearing_call_refuses_a_redirect_and_withholds_the_token(
@@ -649,12 +507,11 @@ class TestRedirectsAreRefused:
         from ..serviceclient._transport import _try_http_admin
 
         token = "loopback-bearer-token"
+        sink, redirector, port = self._serve_pair()
         _status_file().write_text(
-            _json.dumps({"pid": os.getpid(), "port": 1, "service_token": token}),
+            _json.dumps({"pid": os.getpid(), "port": port, "service_token": token}),
             encoding="utf-8",
         )
-
-        sink, redirector, port = self._serve_pair()
         try:
             result = _try_http_admin("list_projects", {}, port, timeout=5.0)
         finally:

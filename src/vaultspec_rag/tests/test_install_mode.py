@@ -49,16 +49,16 @@ from vaultspec_core.core.workspace_mode import (
     write_package_declaration,
 )
 
+from .._process_probe import SERVER_LAUNCH_MARKER
 from ..builtins import seed_builtins
 from ..commands._install import install_run
 from ..commands._mode import (
     RAG_DISTRIBUTION_NAME,
-    RAG_MCP_MODULE,
     infer_rag_upgrade_mode,
 )
 from ..config._paths import persist_local_only, read_persisted_local_only
-from ..config._settings import reset_config
 from ..config._types import EnvVar
+from ._config_fixtures import reset_config
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -74,7 +74,7 @@ _RAG_LEAK_ADVISORY = dependency_leak_advisory(RAG_DISTRIBUTION_NAME)
 # launch the module through the governed project's own venv (``uv run``), tool
 # mode through an ephemeral ``uvx --from`` invocation. ``dev`` renders
 # byte-identically to ``dependency``.
-_DEP_LAUNCH = ("uv", ["run", "--no-sync", "python", "-m", RAG_MCP_MODULE])
+_DEP_LAUNCH = ("uv", ["run", "--no-sync", "python", "-m", SERVER_LAUNCH_MARKER[1]])
 _TOOL_LAUNCH = (
     "uvx",
     [
@@ -82,7 +82,7 @@ _TOOL_LAUNCH = (
         f"{RAG_DISTRIBUTION_NAME}[mcp]",
         "python",
         "-m",
-        RAG_MCP_MODULE,
+        SERVER_LAUNCH_MARKER[1],
     ],
 )
 

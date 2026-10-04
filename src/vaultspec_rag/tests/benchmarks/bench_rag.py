@@ -35,7 +35,7 @@ def test_bench_embedding_throughput(
     ]
 
     start = time.perf_counter()
-    model.encode_documents(texts)
+    model.encode_documents_on_device(texts)
     elapsed = time.perf_counter() - start
 
     return {

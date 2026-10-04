@@ -37,9 +37,10 @@ from vaultspec_core.config import (
 
 from ..commands import _mcp_topology as commands_mcp_topology
 from ..config._registry import PACKAGE, entry
-from ..config._settings import get_config, reset_config
+from ..config._settings import get_config
 from ..config._types import EnvVar
 from ..indexer._preprocess_schema import PREPROCESS_INVOCATION_ENV
+from ._config_fixtures import reset_config
 from ._import_probe import assert_fresh_import_excludes, import_probe_source
 
 if TYPE_CHECKING:
@@ -269,12 +270,12 @@ def test_validating_the_environment_does_not_populate_the_cached_config() -> Non
     """
     from ..config import _settings
 
-    _settings.reset_config()
+    reset_config()
     try:
         assert _settings.collect_environment_problems(None) == []
         assert _settings._cached_config is None
     finally:
-        _settings.reset_config()
+        reset_config()
 
 
 @pytest.mark.usefixtures("clean_chain")

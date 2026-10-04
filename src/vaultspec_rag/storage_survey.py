@@ -37,12 +37,14 @@ from .storage_manifest import ManifestEntry, classify_root
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from .generation_survey import RootGenerations
 __all__ = [
     "NamespaceSurvey",
     "_prefix_of",
     "classify_namespaces",
     "is_canonical_prefix",
     "is_temp_rooted",
+    "namespace_temp_rooted",
 ]
 
 
@@ -128,6 +130,17 @@ class NamespaceSurvey:
     # without a manifest read, keeps working and simply reports nothing about
     # provenance rather than reporting a value it never looked up.
     models: dict[str, str] = field(default_factory=dict)
+    # Published generation facts are optional; an ungathered/unreadable fact
+    # remains unknown rather than claiming an empty generation-debt list.
+    generations: RootGenerations | None = None
+    temp_rooted: bool | None = None
+
+
+def namespace_temp_rooted(survey: NamespaceSurvey) -> bool:
+    """Use a published temp-root fact, or classify a direct/legacy survey locally."""
+    if survey.temp_rooted is not None:
+        return survey.temp_rooted
+    return is_temp_rooted(survey.root)
 
 
 def _kind_points(

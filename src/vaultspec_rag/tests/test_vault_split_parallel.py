@@ -7,13 +7,13 @@ import os
 import pytest
 
 from .._store_models import VaultDocument
-from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..indexer._vault_prep import (
     _plan_split_workers,
     split_document,
     split_documents,
 )
+from ._config_fixtures import reset_config
 from ._import_probe import assert_fresh_import_excludes, import_probe_source
 
 pytestmark = [pytest.mark.unit]

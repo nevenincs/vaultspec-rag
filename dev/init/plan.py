@@ -56,7 +56,7 @@ PREFLIGHT: Final[tuple[Step, ...]] = (
     Step(
         name="dotenv",
         argv=(PY, "-m", "dev.init.dotenv", ".env.example", ".env"),
-        summary="Provision .env from .env.example when it is absent.",
+        summary="Provision .env in the structure of .env.example, keeping values.",
     ),
 )
 

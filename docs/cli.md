@@ -75,7 +75,7 @@ Generated from the live command surface. Each entry lists the command's argument
 
 ## search
 
-Search project documents or source code by meaning. Uses the running service when available. Local search runs only with an explicit mandate (--allow-fallback or configured local-only mode).
+Search ADRs and source code by meaning by default. Uses the running service when available. Local search runs only with an explicit mandate (--allow-fallback or configured local-only mode).
 
 ```bash
 vaultspec-rag search
@@ -91,7 +91,7 @@ vaultspec-rag search
 
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `--type` | str | no | vault | Search area: vault documentation, source code, extracted documents, or all three with combined. Aliases: docs, codebase, all. |
+| `--type` | str | no | combined | Search area: vault documentation, source code, extracted documents, or all three with explicit combined. Without --type: ADRs and code. Aliases: docs, codebase, all. |
 | `--max-results`, `--limit` | int | no | 10 | Maximum number of results to show. Default 10 keeps the output focused. |
 | `--language` | str | no | - | Only show code results in this programming language. |
 | `--path` | str | no | - | Only show code results from this one exact project-relative path. Use --include-path to select a subtree or a glob. |
@@ -535,7 +535,7 @@ None.
 
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `--port` | int | no | - | Stop the service answering on this port, resolving its identity from /health rather than the status file. Use when the service runs on a non-default port or the status file diverges from the running instance. |
+| `--port` | int | no | - | Stop the service answering on this port, resolving its identity from /health, or from a matching launch identity in the status file before its listener opens. Use when the service runs on a non-default port or the status file diverges from the running instance. |
 | `--json` | boolean | no | off | Emit one structured JSON outcome. An already-stopped service is the success `already_stopped` (exit 0); a stop that leaves the service running (unconfirmed identity) is `identity_unconfirmed` (exit 1) in both output modes. |
 | `--orphans` | boolean | no | off | Reap surplus vaultspec-rag daemons that lost the machine-singleton race and linger holding no port, lock, or discovery pointer, invisible to a normal stop. Confirm-then-reap, scoped to this singleton's port; the live singleton, isolated-config, and foreign-worktree daemons are always spared. |
 

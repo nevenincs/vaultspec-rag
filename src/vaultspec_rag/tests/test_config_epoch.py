@@ -10,7 +10,7 @@ constructed - the classification methods operate on the resolved config alone.
 from collections.abc import Generator
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict, Unpack, cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from vaultspec_core.config import (
@@ -18,11 +18,8 @@ from vaultspec_core.config import (
 )
 
 from .._source_types import PublicSourceType
-from ..config._settings import reset_config as reset_rag_config
 from ..indexer import CodebaseIndexer
 from ..indexer import _config_epoch as ce
-from ..indexer._content_policy import ContentKind
-from ..indexer._preprocess_config import OnError, PreprocessRule
 from ..indexer._run_ledger_models import (
     RunOperation,
     RunSignature,
@@ -30,6 +27,7 @@ from ..indexer._run_ledger_models import (
 )
 from ..indexer._run_ledger_runtime import RunLedger
 from ..progress import NullProgressReporter
+from ._config_fixtures import reset_config as reset_rag_config
 
 if TYPE_CHECKING:
     from ..embeddings import EmbeddingModel
@@ -47,31 +45,6 @@ def _reset_cfg() -> Generator[None]:  # pyright: ignore[reportUnusedFunction]
     reset_rag_config()
 
 
-class _RuleOverrides(TypedDict, total=False):
-    command: str | None
-    entry_point: str | None
-    on_error: OnError
-    priority: int
-    timeout_s: float | None
-    options: dict[str, object] | None
-    order: int
-
-
-def _rule(pattern: str, **overrides: Unpack[_RuleOverrides]) -> PreprocessRule:
-    return PreprocessRule(
-        pattern=pattern,
-        command=overrides.get("command", "extract {path}"),
-        entry_point=overrides.get("entry_point"),
-        priority=overrides.get("priority", 100),
-        target=ContentKind.DOCUMENT,
-        extractor_version="1.0",
-        on_error=overrides.get("on_error", "skip"),
-        timeout_s=overrides.get("timeout_s", 120.0),
-        options=overrides.get("options") or {},
-        order=overrides.get("order", 0),
-    )
-
-
 def _make_indexer(root: Path) -> CodebaseIndexer:
     """Build an indexer with no model/store - enough for config-epoch paths."""
     return CodebaseIndexer(
@@ -79,159 +52,6 @@ def _make_indexer(root: Path) -> CodebaseIndexer:
         cast("EmbeddingModel", None),
         cast("VaultStore", None),
     )
-
-
-class TestMembershipEpochFunction:
-    def test_changes_across_gitignore_reorder(self) -> None:
-        a = ce.code_membership_epoch(
-            gitignore_patterns=["a/", "b/", "c/"],
-            vaultragignore_patterns=[],
-            preprocess_rules=[],
-        )
-        b = ce.code_membership_epoch(
-            gitignore_patterns=["c/", "a/", "b/"],
-            vaultragignore_patterns=[],
-            preprocess_rules=[],
-        )
-        assert a != b
-
-    def test_changes_on_gitignore_pattern_add(self) -> None:
-        a = ce.code_membership_epoch(
-            gitignore_patterns=["a/"],
-            vaultragignore_patterns=[],
-            preprocess_rules=[],
-        )
-        b = ce.code_membership_epoch(
-            gitignore_patterns=["a/", "b/"],
-            vaultragignore_patterns=[],
-            preprocess_rules=[],
-        )
-        assert a != b
-
-    def test_changes_on_vaultragignore_pattern(self) -> None:
-        a = ce.code_membership_epoch(
-            gitignore_patterns=[],
-            vaultragignore_patterns=["secret.py"],
-            preprocess_rules=[],
-        )
-        b = ce.code_membership_epoch(
-            gitignore_patterns=[],
-            vaultragignore_patterns=[],
-            preprocess_rules=[],
-        )
-        assert a != b
-
-    def test_changes_on_preprocess_pattern(self) -> None:
-        a = ce.code_membership_epoch(
-            gitignore_patterns=[],
-            vaultragignore_patterns=[],
-            preprocess_rules=[_rule("*.pdf")],
-        )
-        b = ce.code_membership_epoch(
-            gitignore_patterns=[],
-            vaultragignore_patterns=[],
-            preprocess_rules=[_rule("*.docx")],
-        )
-        assert a != b
-
-    def test_ignores_command_change(self) -> None:
-        # The command is a content input, not a membership one.
-        a = ce.code_membership_epoch(
-            gitignore_patterns=[],
-            vaultragignore_patterns=[],
-            preprocess_rules=[_rule("*.pdf", command="a {path}")],
-        )
-        b = ce.code_membership_epoch(
-            gitignore_patterns=[],
-            vaultragignore_patterns=[],
-            preprocess_rules=[_rule("*.pdf", command="b {path}")],
-        )
-        assert a == b
-
-
-class TestContentEpochFunction:
-    def test_changes_on_command(self) -> None:
-        a = ce.code_content_epoch(
-            preprocess_rules=[_rule("*.pdf", command="a {path}")],
-            html_strip=True,
-            max_emitted_bytes=10,
-        )
-        b = ce.code_content_epoch(
-            preprocess_rules=[_rule("*.pdf", command="b {path}")],
-            html_strip=True,
-            max_emitted_bytes=10,
-        )
-        assert a != b
-
-    def test_ignores_pattern_change(self) -> None:
-        # The pattern is a membership input; the content epoch must not move.
-        a = ce.code_content_epoch(
-            preprocess_rules=[_rule("*.pdf", command="x {path}")],
-            html_strip=True,
-            max_emitted_bytes=10,
-        )
-        b = ce.code_content_epoch(
-            preprocess_rules=[_rule("*.docx", command="x {path}")],
-            html_strip=True,
-            max_emitted_bytes=10,
-        )
-        assert a == b
-
-    def test_changes_on_html_strip(self) -> None:
-        a = ce.code_content_epoch(
-            preprocess_rules=[], html_strip=True, max_emitted_bytes=10
-        )
-        b = ce.code_content_epoch(
-            preprocess_rules=[], html_strip=False, max_emitted_bytes=10
-        )
-        assert a != b
-
-    def test_changes_on_options(self) -> None:
-        a = ce.code_content_epoch(
-            preprocess_rules=[_rule("*.pdf", options={"mode": "fast"})],
-            html_strip=True,
-            max_emitted_bytes=10,
-        )
-        b = ce.code_content_epoch(
-            preprocess_rules=[_rule("*.pdf", options={"mode": "slow"})],
-            html_strip=True,
-            max_emitted_bytes=10,
-        )
-        assert a != b
-
-    def test_changes_on_on_error_and_timeout_and_order(self) -> None:
-        base = ce.code_content_epoch(
-            preprocess_rules=[_rule("*.pdf")],
-            html_strip=True,
-            max_emitted_bytes=10,
-        )
-        on_error = ce.code_content_epoch(
-            preprocess_rules=[_rule("*.pdf", on_error="fail")],
-            html_strip=True,
-            max_emitted_bytes=10,
-        )
-        timeout = ce.code_content_epoch(
-            preprocess_rules=[_rule("*.pdf", timeout_s=30.0)],
-            html_strip=True,
-            max_emitted_bytes=10,
-        )
-        order = ce.code_content_epoch(
-            preprocess_rules=[_rule("*.pdf", order=3)],
-            html_strip=True,
-            max_emitted_bytes=10,
-        )
-        assert len({base, on_error, timeout, order}) == 4
-
-    def test_changes_on_max_emitted_bytes(self) -> None:
-        # The emitted-text cap re-truncates oversized extractions, so a cap
-        # change is content-shaping for unchanged bytes.
-        a = ce.code_content_epoch(
-            preprocess_rules=[], html_strip=True, max_emitted_bytes=10
-        )
-        b = ce.code_content_epoch(
-            preprocess_rules=[], html_strip=True, max_emitted_bytes=20
-        )
-        assert a != b
 
 
 class TestVaultContentEpochFunction:
@@ -325,3 +145,52 @@ class TestScopedSnapshot:
         )
         assert not to_hash
         assert deleted == {"a.py"}
+
+
+@pytest.mark.parametrize("ignore_location", ["root", "nested", "rag"])
+def test_unreachable_gitignore_does_not_change_membership(
+    tmp_path: Path, ignore_location: str
+) -> None:
+    parent = tmp_path / "src" if ignore_location == "nested" else tmp_path
+    parent.mkdir(exist_ok=True)
+    ignore_file = (
+        tmp_path / ".vaultragignore"
+        if ignore_location == "rag"
+        else parent / ".gitignore"
+    )
+    ignore_file.write_text("output/\n", encoding="utf-8")
+    (parent / "kept.py").write_text("kept = True\n", encoding="utf-8")
+    indexer = _make_indexer(tmp_path)
+    before = indexer.resolve_policy_snapshot()
+
+    excluded = parent / "output" / "generated"
+    excluded.mkdir(parents=True)
+    (excluded / ".gitignore").write_text("*.poison.py\n", encoding="utf-8")
+    after = indexer.resolve_policy_snapshot()
+
+    # Removing project/RAG pruning admits this unreachable pattern and changes
+    # the fingerprint; the mutation must fail this equality assertion.
+    assert after.fingerprints == before.fingerprints
+    assert not any("poison" in pattern for pattern in after.gitignore_patterns)
+
+
+def test_reachable_nested_gitignore_changes_membership(tmp_path: Path) -> None:
+    nested = tmp_path / "src" / "pkg"
+    nested.mkdir(parents=True)
+    indexer = _make_indexer(tmp_path)
+    before = indexer.resolve_policy_snapshot()
+    (nested / ".gitignore").write_text("*.generated.py\n", encoding="utf-8")
+    after = indexer.resolve_policy_snapshot()
+
+    assert after.fingerprints != before.fingerprints
+    assert "src/pkg/*.generated.py" in after.gitignore_patterns
+
+
+def test_directory_negation_keeps_nested_ignore_reachable(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("output/*\n!output/kept/\n", encoding="utf-8")
+    kept = tmp_path / "output" / "kept"
+    kept.mkdir(parents=True)
+    (kept / ".gitignore").write_text("*.generated.py\n", encoding="utf-8")
+    policy = _make_indexer(tmp_path).resolve_policy_snapshot()
+
+    assert "output/kept/*.generated.py" in policy.gitignore_patterns

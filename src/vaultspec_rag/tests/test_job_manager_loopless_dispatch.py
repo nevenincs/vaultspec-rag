@@ -35,10 +35,11 @@ from ..job_models import (
     JobSpec,
     JobState,
 )
-from ..registry import get_registry, reset_registry
+from ..registry import get_registry
 from ..service import ServiceRegistry
 from ..service_quiesce import ServiceQuiesceController
 from ._job_roots import _TEST_PROJECT_ROOT
+from ._state_fixtures import reset_registry
 
 if TYPE_CHECKING:
     from ..job_manager.models import JobAttemptContext, JobExecutionResult

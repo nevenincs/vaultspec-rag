@@ -12,29 +12,42 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import subprocess
 import sys
+import tempfile
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import psutil
 import pytest
 from typer.testing import CliRunner
 
+from .. import _process_probe as process_probe
 from .._machine_lock import probe_machine_lock
-from .._process_probe import pid_terminated
+from .._process_probe import pid_image_path, pid_start_time, pid_terminated
+from ..cli import _process as service_process
+from ..cli import _service_stop as service_stop
 from ..cli import app
+from ..cli._process import _is_our_service, _terminate_pid
 from ..cli._service_status import _write_service_status
 from ..cli._service_stop import (
     _orphan_daemon_pids,
     _service_pid_on_port,
     _stop_service_on_port,
 )
-from ..config._settings import reset_config
+from ..serviceclient._discovery import _merge_service_status, _status_file
+from ._cli_helpers import (
+    _CONTRACT_SERVICE_TOKEN,
+    _serving,
+    _status_contract_server,
+)
+from ._config_fixtures import reset_config
 from ._ports import free_loopback_port
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from collections.abc import Generator
 
 #: Budget for one `server stop --orphans` subprocess. Currently measured at
 #: 3.2-3.6s on a host with ~1700 processes - CLI startup, one process-table
@@ -96,19 +109,638 @@ class TestStopCliPortOption:
         assert "not running" in result.output.lower()
 
 
-def _spawn_witness_daemon(port: int) -> subprocess.Popen[bytes]:
-    """Spawn a harmless sleeper whose cmdline carries the launch witness.
+@pytest.fixture
+def isolated_stop_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Generator[Path]:
+    monkeypatch.setenv("VAULTSPEC_RAG_STATUS_DIR", str(tmp_path / "status"))
+    monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_STORAGE_DIR", str(tmp_path / "storage"))
+    reset_config()
+    try:
+        yield _status_file()
+    finally:
+        reset_config()
 
-    The marker tokens ride as trailing argv to ``-c`` so ``psutil`` reports the
-    subsequence ``-m vaultspec_rag.server --port <port>`` without the process
-    ever importing the daemon or touching a GPU. Spawned in its own process
+
+@contextlib.contextmanager
+def _starting_process(
+    arguments: list[str],
+    *,
+    hold_machine_lock: bool = False,
+    foreign_command: bool = False,
+    code_override: str | None = None,
+) -> Generator[subprocess.Popen[str]]:
+    """Keep a real process with the production launch witness alive, without models."""
+    # Use the running interpreter image rather than its venv shim so the
+    # recorded PID is the process executing the sleeper on both platforms.
+    interpreter = pid_image_path(psutil.Process().pid)
+    assert interpreter is not None
+    module_launch = (
+        arguments[:2] == ["-m", "vaultspec_rag.server"] and not foreign_command
+    )
+    fixture_root = tempfile.TemporaryDirectory(prefix="resident-witness-")
+    module_root = _write_witness_module(Path(fixture_root.name))
+    command = (
+        arguments
+        if module_launch
+        else [
+            "-c",
+            code_override
+            or (
+                "import time; print('up', flush=True); "
+                f"time.sleep({_WITNESS_LIFETIME_SECONDS})"
+            ),
+            *arguments,
+        ]
+    )
+    env = _witness_environment(module_root, hold_machine_lock=hold_machine_lock)
+    child = subprocess.Popen(
+        [
+            interpreter,
+            *command,
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+        env=env,
+        creationflags=0x00000200 if sys.platform == "win32" else 0,
+        start_new_session=sys.platform != "win32",
+    )
+    try:
+        assert child.stdout is not None
+        assert child.stdout.readline().strip() == "up"
+        yield child
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=10)
+        if child.stdout is not None:
+            child.stdout.close()
+        fixture_root.cleanup()
+
+
+def _write_witness_module(root: Path) -> Path:
+    """Create a harmless real module launch, sharing only the production lock owner."""
+    package = root / "vaultspec_rag"
+    package.mkdir(parents=True, exist_ok=True)
+    real_package = Path(__file__).resolve().parents[1]
+    (package / "__init__.py").write_text(
+        f"__path__.append({str(real_package)!r})\n", encoding="utf-8"
+    )
+    (package / "server.py").write_text(
+        "import os, time\n"
+        "if os.environ.get('RESIDENT_WITNESS_HOLD_LOCK') == '1':\n"
+        "    from vaultspec_rag._machine_lock import acquire_machine_lock_lease\n"
+        "    lease, holder = acquire_machine_lock_lease()\n"
+        "    assert lease is not None, holder\n"
+        "print('up', flush=True)\n"
+        f"time.sleep({_WITNESS_LIFETIME_SECONDS})\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+def _witness_environment(
+    root: Path, *, hold_machine_lock: bool = False
+) -> dict[str, str]:
+    return {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join([str(root), *sys.path]),
+        "RESIDENT_WITNESS_HOLD_LOCK": "1" if hold_machine_lock else "0",
+    }
+
+
+@pytest.fixture
+def witness_module_path(tmp_path: Path) -> Path:
+    return _write_witness_module(tmp_path / "witness")
+
+
+def _port_stop(port: int | None) -> tuple[int, dict[str, object]]:
+    arguments = ["server", "stop", "--json"]
+    if port is not None:
+        arguments += ["--port", str(port)]
+    result = runner.invoke(app, arguments)
+    payloads = [line for line in result.output.splitlines() if line.startswith("{")]
+    assert len(payloads) == 1, result.output
+    return result.exit_code, cast("dict[str, object]", json.loads(payloads[0]))
+
+
+class TestDefaultServiceStopIdentity:
+    @pytest.mark.parametrize("with_pointer", [True, False])
+    def test_legacy_module_launch_stops_with_or_without_discovery(
+        self, isolated_stop_status: Path, with_pointer: bool
+    ) -> None:
+        port = free_loopback_port()
+        with _starting_process(
+            ["-m", "vaultspec_rag.server", "--port", str(port)],
+            hold_machine_lock=not with_pointer,
+        ) as child:
+            if with_pointer:
+                _write_service_status(child.pid, port)
+            exit_code, envelope = _port_stop(None)
+
+            assert exit_code == 0, envelope
+            assert cast("dict[str, object]", envelope["data"])["status"] == (
+                "stopped" if with_pointer else "reclaimed"
+            )
+            assert pid_terminated(child.pid), "legacy resident was not stopped"
+            assert not isolated_stop_status.exists()
+            assert not probe_machine_lock().held
+
+    @pytest.mark.parametrize("with_pointer", [True, False])
+    def test_foreign_python_is_never_a_default_stop_target(
+        self, isolated_stop_status: Path, with_pointer: bool
+    ) -> None:
+        """Mutation proved: legacy executable acceptance fails; restoration passes."""
+        code = (
+            "import time\n"
+            "from vaultspec_rag._machine_lock import acquire_machine_lock_lease\n"
+            "lease, holder = acquire_machine_lock_lease()\n"
+            "assert lease is not None, holder\n"
+            "print('up', flush=True)\n"
+            f"time.sleep({_WITNESS_LIFETIME_SECONDS})\n"
+        )
+        with _starting_process(
+            [], code_override=None if with_pointer else code
+        ) as child:
+            if with_pointer:
+                _write_service_status(child.pid, free_loopback_port())
+            before = isolated_stop_status.read_bytes() if with_pointer else None
+
+            exit_code, envelope = _port_stop(None)
+
+            assert exit_code == 1, "foreign Python was reported stopped"
+            assert envelope["error"] == "identity_unconfirmed", envelope
+            assert not pid_terminated(child.pid), "foreign Python was terminated"
+            if with_pointer:
+                assert isolated_stop_status.read_bytes() == before
+            else:
+                assert not isolated_stop_status.exists()
+                assert probe_machine_lock().holder_pid == child.pid
+
+    def test_an_orphan_scan_does_not_authorize_a_recycled_foreign_pid(
+        self, isolated_stop_status: Path
+    ) -> None:
+        """Mutation proved: trusting a stale argv scan fails; restoration passes."""
+        del isolated_stop_status
+        with _starting_process([]) as child:
+            reaped, survivors, denied = service_stop._reap_unprotected(
+                {child.pid: 0}, set(), free_loopback_port()
+            )
+
+            assert reaped == [], "stale scan authorized a foreign process"
+            assert survivors == [child.pid]
+            assert not denied
+            assert not pid_terminated(child.pid)
+
+
+class TestStartingServicePortStop:
+    @pytest.mark.parametrize("with_launch_token", [False, True])
+    @pytest.mark.parametrize("port_form", ["separate", "equals"])
+    def test_matching_startup_identity_stops_before_the_listener_opens(
+        self, isolated_stop_status: Path, with_launch_token: bool, port_form: str
+    ) -> None:
+        port = free_loopback_port()
+        arguments = ["-m", "vaultspec_rag.server", "--port", str(port)]
+        if port_form == "equals":
+            arguments = ["-m", "vaultspec_rag.server", f"--port={port}"]
+        if with_launch_token:
+            arguments += ["--launch-token", "recorded-launch"]
+        with _starting_process(arguments) as child:
+            _write_service_status(child.pid, port)
+            fields: dict[str, object] = {"phase": "warming"}
+            if with_launch_token:
+                fields["launch_token"] = "recorded-launch"
+            _merge_service_status(fields)
+            assert _service_pid_on_port(port) is None
+
+            exit_code, envelope = _port_stop(port)
+
+            assert exit_code == 0, envelope
+            data = cast("dict[str, object]", envelope["data"])
+            assert data["status"] == "stopped", envelope
+            assert data["pid"] == child.pid
+            assert pid_terminated(child.pid), "matching starting daemon was not stopped"
+            assert not isolated_stop_status.exists()
+
+    def test_other_port_does_not_target_the_recorded_starting_daemon(
+        self, isolated_stop_status: Path
+    ) -> None:
+        """Mutation proved: accepting another port fails; restoration passes."""
+        port = free_loopback_port()
+        other_port = free_loopback_port()
+        assert other_port != port
+        with _starting_process(
+            ["-m", "vaultspec_rag.server", "--port", str(port)]
+        ) as child:
+            _write_service_status(child.pid, port)
+            before = isolated_stop_status.read_bytes()
+
+            exit_code, envelope = _port_stop(other_port)
+
+            assert exit_code == 0, "another port's discovery was adopted"
+            assert (
+                cast("dict[str, object]", envelope["data"])["status"]
+                == "already_stopped"
+            )
+            assert not pid_terminated(child.pid), "other-port daemon was targeted"
+            assert isolated_stop_status.read_bytes() == before
+
+    @pytest.mark.parametrize(
+        "kind",
+        [
+            "foreign_python",
+            "wrong_port",
+            "wrong_token",
+            "stdio",
+            "argv_text",
+            "trailing_marker",
+            "duplicate_port",
+            "duplicate_nonce",
+        ],
+    )
+    def test_unconfirmed_live_pid_is_refused_and_discovery_retained(
+        self, isolated_stop_status: Path, kind: str
+    ) -> None:
+        """Mutation proved: bypassing launch checks fails; restoration passes."""
+        port = free_loopback_port()
+        arguments = [
+            "-m",
+            "vaultspec_rag.server",
+            "--port",
+            str(port),
+            "--launch-token",
+            "recorded-launch",
+        ]
+        if kind == "foreign_python":
+            arguments = []
+        elif kind == "wrong_port":
+            arguments[3] = str(port + 1)
+        elif kind == "wrong_token":
+            arguments[-1] = "different-launch"
+        elif kind == "stdio":
+            arguments = ["-m", "vaultspec_rag.server"]
+        elif kind == "argv_text":
+            arguments = ["-m vaultspec_rag.server --port " + str(port)]
+        elif kind == "duplicate_port":
+            arguments += ["--port", str(port + 1)]
+        elif kind == "duplicate_nonce":
+            arguments += ["--launch-token", "different-launch"]
+        with _starting_process(
+            arguments, foreign_command=kind == "trailing_marker"
+        ) as child:
+            _write_service_status(child.pid, port)
+            _merge_service_status(
+                {"phase": "warming", "launch_token": "recorded-launch"}
+            )
+            before = isolated_stop_status.read_bytes()
+
+            exit_code, envelope = _port_stop(port)
+
+            assert exit_code == 1, "unconfirmed PID was reported stopped"
+            assert envelope["error"] == "identity_unconfirmed", envelope
+            assert not pid_terminated(child.pid), "unconfirmed process was terminated"
+            assert isolated_stop_status.read_bytes() == before, (
+                "live discovery was erased"
+            )
+
+    def test_dead_matching_pointer_is_cleaned_without_a_termination(
+        self, isolated_stop_status: Path
+    ) -> None:
+        port = free_loopback_port()
+        with _starting_process([]) as child:
+            pid = child.pid
+        assert pid_terminated(pid)
+        _write_service_status(pid, port)
+
+        exit_code, envelope = _port_stop(port)
+
+        assert exit_code == 0, envelope
+        assert cast("dict[str, object]", envelope["data"])["status"] == "cleaned"
+        assert not isolated_stop_status.exists()
+
+    def test_unknown_process_birth_does_not_authorize_termination(
+        self, isolated_stop_status: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Mutation proved: ignoring an unknown OS birth fails; restoration passes."""
+        port = free_loopback_port()
+        with _starting_process(
+            ["-m", "vaultspec_rag.server", "--port", str(port)]
+        ) as child:
+            _write_service_status(child.pid, port)
+            before = isolated_stop_status.read_bytes()
+
+            def unknown_birth(_pid: int, *, timeout: float | None = None) -> float:
+                del timeout
+                return 0.0
+
+            monkeypatch.setattr(service_stop, "pid_start_time", unknown_birth)
+
+            exit_code, envelope = _port_stop(port)
+
+            assert exit_code == 1
+            assert envelope["error"] == "identity_unconfirmed", (
+                "unknown OS birth was accepted"
+            )
+            assert not pid_terminated(child.pid)
+            assert isolated_stop_status.read_bytes() == before
+
+    def test_machine_holder_is_stopped_before_status_publication(
+        self, isolated_stop_status: Path
+    ) -> None:
+        port = free_loopback_port()
+        with _starting_process(
+            ["-m", "vaultspec_rag.server", "--port", str(port)],
+            hold_machine_lock=True,
+        ) as child:
+            assert probe_machine_lock().holder_pid == child.pid
+            assert not isolated_stop_status.exists()
+            assert _service_pid_on_port(port) is None
+
+            exit_code, envelope = _port_stop(port)
+
+            assert exit_code == 0, envelope
+            assert cast("dict[str, object]", envelope["data"])["status"] == "stopped"
+            assert pid_terminated(child.pid), "starting machine holder was not stopped"
+            assert not probe_machine_lock().held
+
+    @pytest.mark.parametrize("stale_record", ["dead_launcher", "other_port"])
+    def test_machine_holder_is_resolved_past_stale_discovery(
+        self, isolated_stop_status: Path, stale_record: str
+    ) -> None:
+        port = free_loopback_port()
+        _write_service_status(
+            99_999_999, port if stale_record == "dead_launcher" else port + 1
+        )
+        before = isolated_stop_status.read_bytes()
+        with _starting_process(
+            ["-m", "vaultspec_rag.server", "--port", str(port)],
+            hold_machine_lock=True,
+        ) as child:
+            exit_code, envelope = _port_stop(port)
+
+            assert exit_code == 0, envelope
+            assert cast("dict[str, object]", envelope["data"])["status"] == "stopped", (
+                "stale discovery hid the starting owner"
+            )
+            assert pid_terminated(child.pid)
+            assert not probe_machine_lock().held
+            assert isolated_stop_status.read_bytes() == before
+
+    @pytest.mark.parametrize(
+        "target_mode", ["warming", "serving", "default", "reclaim"]
+    )
+    def test_pid_reuse_during_identity_inspection_does_not_authorize_a_stop(
+        self,
+        isolated_stop_status: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        target_mode: str,
+    ) -> None:
+        """Mutation proved: dropping the birth bracket fails; restoration passes."""
+        health: dict[str, object] = {"pid": None}
+        with contextlib.ExitStack() as stack:
+            port = (
+                stack.enter_context(
+                    _serving(_status_contract_server(tmp_path, health=health))
+                )
+                if target_mode == "serving"
+                else free_loopback_port()
+            )
+            child = stack.enter_context(
+                _starting_process(
+                    ["-m", "vaultspec_rag.server", "--port", str(port)],
+                    hold_machine_lock=target_mode == "reclaim",
+                )
+            )
+            health["pid"] = child.pid
+            if target_mode != "reclaim":
+                _write_service_status(child.pid, port)
+            before = (
+                isolated_stop_status.read_bytes() if target_mode != "reclaim" else None
+            )
+            original_birth = pid_start_time(child.pid)
+            reads = 0
+
+            def observed_birth(_pid: int, *, timeout: float | None = None) -> float:
+                del timeout
+                nonlocal reads
+                reads += 1
+                return original_birth if reads == 1 else original_birth + 60.0
+
+            monkeypatch.setattr(service_stop, "pid_start_time", observed_birth)
+            monkeypatch.setattr(process_probe, "pid_start_time", observed_birth)
+
+            exit_code, envelope = _port_stop(
+                None if target_mode in {"default", "reclaim"} else port
+            )
+
+            assert exit_code == 1
+            assert envelope["error"] == "identity_unconfirmed", (
+                "reused PID crossed identity inspection"
+            )
+            assert not pid_terminated(child.pid)
+            if target_mode != "reclaim":
+                assert isolated_stop_status.read_bytes() == before
+            else:
+                assert not isolated_stop_status.exists()
+                assert probe_machine_lock().holder_pid == child.pid
+
+    @pytest.mark.parametrize("with_pid", [True, False])
+    def test_foreign_python_health_without_a_token_is_refused(
+        self, isolated_stop_status: Path, with_pid: bool
+    ) -> None:
+        """Mutation proved: using executable identity for tokenless health fails."""
+        port = free_loopback_port()
+        reported_pid_expression = "os.getpid()" if with_pid else "None"
+        code = (
+            "import os, json\n"
+            "from http.server import BaseHTTPRequestHandler, HTTPServer\n"
+            "class Handler(BaseHTTPRequestHandler):\n"
+            "    def do_GET(self):\n"
+            "        self.send_response(200); self.end_headers()\n"
+            f"        payload = {{'pid': {reported_pid_expression}}}\n"
+            "        payload['status'] = 'ready'\n"
+            "        self.wfile.write(json.dumps(payload).encode())\n"
+            "    def log_message(self, *args): pass\n"
+            f"server = HTTPServer(('127.0.0.1', {port}), Handler)\n"
+            "print('up', flush=True)\nserver.serve_forever()\n"
+        )
+        with _starting_process([], code_override=code) as child:
+            if with_pid:
+                _write_service_status(child.pid, port)
+            before = isolated_stop_status.read_bytes() if with_pid else None
+
+            exit_code, envelope = _port_stop(port)
+
+            assert exit_code == 1, "tokenless foreign listener was reported stopped"
+            expected_error = (
+                "identity_unconfirmed" if with_pid else "port_holder_unconfirmed"
+            )
+            assert envelope["error"] == expected_error
+            assert not pid_terminated(child.pid)
+            if with_pid:
+                assert isolated_stop_status.read_bytes() == before
+            else:
+                assert not isolated_stop_status.exists()
+
+    def test_machine_holder_on_another_port_is_preserved(
+        self, isolated_stop_status: Path
+    ) -> None:
+        """Mutation proved: ignoring the requested port fails; restoration passes."""
+        port = free_loopback_port()
+        with _starting_process(
+            ["-m", "vaultspec_rag.server", "--port", str(port)],
+            hold_machine_lock=True,
+        ) as child:
+            exit_code, envelope = _port_stop(port + 1)
+
+            assert exit_code == 1, "another-port machine holder was adopted"
+            assert envelope["error"] == "identity_unconfirmed"
+            assert not pid_terminated(child.pid), (
+                "another-port machine holder was stopped"
+            )
+            assert probe_machine_lock().holder_pid == child.pid
+            assert not isolated_stop_status.exists()
+
+    def test_unnamed_machine_holder_is_not_reported_stopped(
+        self, isolated_stop_status: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Mutation proved: treating the unnamed held lock as absent fails."""
+        from .. import _machine_lock as machine_lock
+
+        def unnamed_holder() -> machine_lock.MachineLockProbe:
+            return machine_lock.MachineLockProbe(held=True, holder_pid=0)
+
+        monkeypatch.setattr(machine_lock, "probe_machine_lock", unnamed_holder)
+        exit_code, envelope = _port_stop(free_loopback_port())
+
+        assert exit_code == 1, "held unknown owner was reported stopped"
+        assert envelope["error"] == "machine_holder_unnamed"
+        assert not isolated_stop_status.exists()
+
+
+def test_termination_refuses_a_different_process_birth(
+    isolated_stop_status: Path,
+) -> None:
+    """Mutation proved: removing the birth fence fails; restoration passes."""
+    with _starting_process([]) as child:
+        witnessed = pid_start_time(child.pid)
+        assert witnessed > 0.0
+
+        result = _terminate_pid(
+            child.pid,
+            timeout=2.0,
+            console_group_signal=False,
+            expected_start_time=witnessed - 60.0,
+        )
+
+        assert result.alive, "different process incarnation was reported stopped"
+        assert not pid_terminated(child.pid), (
+            "recycled process incarnation was signalled"
+        )
+    assert not isolated_stop_status.exists()
+
+
+def test_strict_launch_witness_refuses_an_unreadable_argv(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation proved: accepting unknown argv fails; restoration passes."""
+    port = free_loopback_port()
+    with _starting_process(
+        ["-m", "vaultspec_rag.server", "--port", str(port)]
+    ) as child:
+
+        def unknown_argv(
+            _pid: int, *, timeout: float | None = None
+        ) -> list[str] | None:
+            del timeout
+            return None
+
+        monkeypatch.setattr(service_process, "pid_argv", unknown_argv)
+        assert not _is_our_service(child.pid, port=port, require_launch_witness=True), (
+            "unknown argv authorized the startup stop"
+        )
+
+
+@pytest.mark.parametrize("reported_pid", ["same", "different", "missing", "boolean"])
+def test_health_token_identity_is_bound_to_its_serving_pid(
+    isolated_stop_status: Path, reported_pid: str, tmp_path: Path
+) -> None:
+    """Mutation proved: dropping health PID binding fails; restoration passes."""
+    with _starting_process([]) as child:
+        health_pid: object = child.pid
+        if reported_pid == "different":
+            health_pid = psutil.Process().pid
+        elif reported_pid == "missing":
+            health_pid = None
+        elif reported_pid == "boolean":
+            health_pid = True
+        with _serving(
+            _status_contract_server(tmp_path, health={"pid": health_pid})
+        ) as port:
+            confirmed = _is_our_service(
+                child.pid, port=port, expected_token=_CONTRACT_SERVICE_TOKEN
+            )
+
+            assert confirmed is (reported_pid == "same"), (
+                "health token adopted a different PID"
+            )
+            assert not pid_terminated(child.pid)
+    assert not isolated_stop_status.exists()
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["python", "-c", "pass", "-m", "vaultspec_rag.server", "--port", "8766"],
+        ["python", "foreign.py", "-m", "vaultspec_rag.server", "--port", "8766"],
+        ["python", "-m", "foreign", "-m", "vaultspec_rag.server", "--port", "8766"],
+        ["python", "--", "-m", "vaultspec_rag.server", "--port", "8766"],
+    ],
+)
+def test_launch_marker_in_foreign_application_data_is_not_a_server(
+    arguments: list[str],
+) -> None:
+    """Mutation proved: subsequence launch matching fails; restoration passes."""
+    assert not process_probe.is_server_launch(arguments), (
+        "foreign application data became a server launch"
+    )
+    assert process_probe.server_launch_port(arguments) is None
+
+
+@pytest.mark.parametrize(
+    "arguments, expected",
+    [
+        (
+            ["python", "-I", "-X", "utf8", "-m", "vaultspec_rag.server", "--port=8766"],
+            8766,
+        ),
+        (
+            ["python", "-m", "vaultspec_rag.server", "--port", "8766", "--port=8767"],
+            None,
+        ),
+        (["python", "-m", "vaultspec_rag.server", "--", "--port", "8766"], None),
+        (["python", "-X", "--port=8766", "-m", "vaultspec_rag.server"], None),
+    ],
+)
+def test_launch_port_comes_from_unambiguous_application_arguments(
+    arguments: list[str], expected: int | None
+) -> None:
+    """Mutation proved: scanning interpreter or duplicate options fails."""
+    assert process_probe.server_launch_port(arguments) == expected, (
+        "ambiguous or interpreter data selected the launch port"
+    )
+
+
+def _spawn_witness_daemon(port: int, module_root: Path) -> subprocess.Popen[bytes]:
+    """Spawn a harmless fixture through the actual resident module execution mode.
+
+    The isolated module sleeps without loading models. Spawned in its own process
     group / session (as the real detached daemon is) so the reap's group-scoped
     termination signal cannot cascade back to this test process.
     """
     argv = [
         sys.executable,
-        "-c",
-        f"import time; time.sleep({_WITNESS_LIFETIME_SECONDS})",
         "-m",
         "vaultspec_rag.server",
         "--port",
@@ -116,13 +748,17 @@ def _spawn_witness_daemon(port: int) -> subprocess.Popen[bytes]:
     ]
     if sys.platform == "win32":
         # CREATE_NEW_PROCESS_GROUP (0x00000200): isolate the CTRL_BREAK group.
-        return subprocess.Popen(argv, creationflags=0x00000200)
-    return subprocess.Popen(argv, start_new_session=True)
+        return subprocess.Popen(
+            argv, creationflags=0x00000200, env=_witness_environment(module_root)
+        )
+    return subprocess.Popen(
+        argv, start_new_session=True, env=_witness_environment(module_root)
+    )
 
 
 # A Windows venv launcher shim re-execs the real interpreter, so each spawned
 # `-m vaultspec_rag.server` witness enumerates as a launcher+worker PAIR; on
-# POSIX the `-c` process is a single enumerable process with no such child. The
+# POSIX the module process is a single enumerable process with no such child. The
 # reap must spare the singleton and reap the orphan under BOTH process models,
 # so the expected witness count per daemon is platform-conditional.
 _PROCS_PER_DAEMON = 2 if sys.platform == "win32" else 1
@@ -259,7 +895,7 @@ def _reaped_pids(envelope: dict[str, object]) -> set[int]:
     return {int(cast("int", pid)) for pid in cast("list[object]", raw)}
 
 
-def _spawn_lock_holding_daemon(port: int) -> subprocess.Popen[bytes]:
+def _spawn_lock_holding_daemon(port: int, module_root: Path) -> subprocess.Popen[bytes]:
     """Spawn a witness that HOLDS the machine lock, publishing no pointer.
 
     Models the singleton in the no-pointer recovery scenario the reap must
@@ -267,29 +903,26 @@ def _spawn_lock_holding_daemon(port: int) -> subprocess.Popen[bytes]:
     reap's ``probe_machine_lock`` anchor) but wrote no service-status
     pointer, so the lock anchor is the ONLY thing sparing it. The lease-acquire
     runs in the worker the shim spawns, so the worker's pid is recorded in the
-    lock file and the trailing witness argv keeps the whole pair enumerable.
+    lock file and the actual module launch keeps the whole pair enumerable.
     """
-    code = (
-        "import time;"
-        "from vaultspec_rag.config._settings import reset_config;"
-        "reset_config();"
-        "from vaultspec_rag._machine_lock import acquire_machine_lock_lease;"
-        "lease, holder = acquire_machine_lock_lease();"
-        "assert lease is not None, holder;"
-        f"time.sleep({_WITNESS_LIFETIME_SECONDS})"
-    )
     argv = [
         sys.executable,
-        "-c",
-        code,
         "-m",
         "vaultspec_rag.server",
         "--port",
         str(port),
     ]
     if sys.platform == "win32":
-        return subprocess.Popen(argv, creationflags=0x00000200)
-    return subprocess.Popen(argv, start_new_session=True)
+        return subprocess.Popen(
+            argv,
+            creationflags=0x00000200,
+            env=_witness_environment(module_root, hold_machine_lock=True),
+        )
+    return subprocess.Popen(
+        argv,
+        start_new_session=True,
+        env=_witness_environment(module_root, hold_machine_lock=True),
+    )
 
 
 def _wait_for_lock_holder(candidates: set[int]) -> int:
@@ -316,6 +949,7 @@ class TestOrphanReapSafety:
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        witness_module_path: Path,
     ) -> None:
         monkeypatch.setenv("VAULTSPEC_RAG_STATUS_DIR", str(tmp_path / "status"))
         monkeypatch.setenv(
@@ -327,9 +961,9 @@ class TestOrphanReapSafety:
         foreign_port = free_loopback_port()
         procs: list[subprocess.Popen[bytes]] = []
         try:
-            singleton = _spawn_witness_daemon(port)
-            orphan = _spawn_witness_daemon(port)
-            foreign = _spawn_witness_daemon(foreign_port)
+            singleton = _spawn_witness_daemon(port, witness_module_path)
+            orphan = _spawn_witness_daemon(port, witness_module_path)
+            foreign = _spawn_witness_daemon(foreign_port, witness_module_path)
             procs = [singleton, orphan, foreign]
 
             # Each witness spawn is a shim launcher + worker pair; wait for both.
@@ -377,6 +1011,7 @@ class TestOrphanReapSafety:
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        witness_module_path: Path,
     ) -> None:
         # Production publishes the WORKER (the child that runs the lifespan) as
         # the pointer, not the launcher, exercising the protect-parent branch so
@@ -390,8 +1025,8 @@ class TestOrphanReapSafety:
         port = free_loopback_port()
         procs: list[subprocess.Popen[bytes]] = []
         try:
-            singleton = _spawn_witness_daemon(port)
-            orphan = _spawn_witness_daemon(port)
+            singleton = _spawn_witness_daemon(port, witness_module_path)
+            orphan = _spawn_witness_daemon(port, witness_module_path)
             procs = [singleton, orphan]
             matched = _wait_for_matched(
                 port, [singleton.pid, orphan.pid], count=2 * _PROCS_PER_DAEMON
@@ -427,6 +1062,7 @@ class TestOrphanReapSafety:
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        witness_module_path: Path,
     ) -> None:
         # The no-pointer recovery scenario the ADR targets: the singleton holds
         # the machine lock but published NO service-status pointer, so the lock
@@ -441,8 +1077,8 @@ class TestOrphanReapSafety:
         port = free_loopback_port()
         procs: list[subprocess.Popen[bytes]] = []
         try:
-            singleton = _spawn_lock_holding_daemon(port)
-            orphan = _spawn_witness_daemon(port)
+            singleton = _spawn_lock_holding_daemon(port, witness_module_path)
+            orphan = _spawn_witness_daemon(port, witness_module_path)
             procs = [singleton, orphan]
             matched = _wait_for_matched(
                 port, [singleton.pid, orphan.pid], count=2 * _PROCS_PER_DAEMON

@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from starlette.applications import Starlette
     from starlette.requests import Request
 
+    from ..config._settings import VaultSpecConfigWrapper
     from ..job_manager.manager import JobManager
     from ..job_manager.models import JobShutdownResult
     from ..qdrant_runtime._constants import QdrantRuntimeState
@@ -574,20 +575,24 @@ async def _start_components(
             exc_info=True,
         )
 
-    # Scheduled storage maintenance: server-mode only and knob-gated at
-    # task creation (the tick re-checks both cheaply, so a config flip is
-    # honoured without a restart either way). The loop itself delays one
-    # full interval before the first cycle - a fresh daemon serves before
-    # it sweeps.
-    if get_config().effective_server_mode() and bool(get_config().storage_autoprune):
-        tasks.append(asyncio.create_task(_m._maintenance_loop()))
+    tasks.extend(_start_storage_tasks(get_config()))
+
+    return tasks
+
+
+def _start_storage_tasks(cfg: VaultSpecConfigWrapper) -> list[asyncio.Task[None]]:
+    """Schedule server storage work while preserving independent stage controls."""
+    tasks: list[asyncio.Task[None]] = []
+    if not cfg.effective_server_mode():
+        return tasks
+    # Stage enable checks belong to the tick so runtime changes take effect
+    # even when both stages started disabled. The first cycle is delayed.
+    tasks.append(asyncio.create_task(_m._maintenance_loop()))
     # Survey snapshot warmer: server-mode only, but deliberately NOT gated on
     # the autoprune knob - the /storage/survey route serves from the snapshot
     # regardless of whether scheduled reclamation is enabled. One-shot and
     # read-only; a failure leaves the route on its fresh-compute fallback.
-    if get_config().effective_server_mode():
-        tasks.append(asyncio.create_task(_m._survey_warmup_task()))
-
+    tasks.append(asyncio.create_task(_m._survey_warmup_task()))
     return tasks
 
 
@@ -1369,9 +1374,20 @@ async def health_handler(request: Request) -> object:
     from ..qdrant_runtime import _supervise
     from ..search._typesafe_transport import enrollment_status
     from ..serviceclient._compat import local_package_version
+    from ._auth import require_token
 
+    authenticated = False
+    if request.scope.get("headers") and (
+        request.headers.get("authorization") or request.query_params.get("token")
+    ):
+        refusal = require_token(request)
+        if refusal is not None:
+            return refusal
+        authenticated = True
     runtime = get_request_runtime(request)
-    reg_health = runtime.registry.health()
+    # Cached conformance still takes store lifecycle locks shared with
+    # collection I/O. A contended snapshot must not hold the serving loop.
+    reg_health = await _run_in_thread(runtime.registry.health)
     quiesce_snapshot = runtime.registry.quiesce_snapshot()
     qdrant_state = _supervise.runtime_state()
     status, degradations = _service_health_status(
@@ -1424,7 +1440,7 @@ async def health_handler(request: Request) -> object:
         # Per-process identity token. Mirrors the value written to
         # service.json. The CLI compares the two to detect PID reuse and an
         # unrelated HTTP server on the port.
-        service_token=runtime.token,
+        service_token=runtime.token if authenticated else None,
         jobs=jobs_health,
         qdrant=qdrant_state.to_dict(),
         quiesce=quiesce_snapshot.as_envelope(),
@@ -1432,4 +1448,7 @@ async def health_handler(request: Request) -> object:
         backend_capabilities=backend_capabilities_dict(),
         support_profile=active_index_support_profiles(),
     )
-    return JSONResponse(report.model_dump(mode="json"))
+    payload = report.model_dump(mode="json")
+    if report.service_token is None:
+        payload.pop("service_token")
+    return JSONResponse(payload)

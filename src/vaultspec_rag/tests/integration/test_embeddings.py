@@ -28,7 +28,7 @@ class TestEmbeddingModel:
     ) -> None:
         model = rag_components["model"]
         texts = ["This is a test document about architecture decisions."]
-        vectors = model.encode_documents(texts)
+        vectors = model.encode_documents_on_device(texts)
         assert vectors.shape[0] == 1
         assert vectors.shape[1] == model.dimension
 
@@ -47,9 +47,13 @@ class TestEmbeddingModel:
 
         model = rag_components["model"]
 
-        doc_vec = model.encode_documents(
-            ["LanceDB is an embedded vector database for semantic search"],
-        )[0]
+        doc_vec = (
+            model.encode_documents_on_device(
+                ["LanceDB is an embedded vector database for semantic search"],
+            )[0]
+            .cpu()
+            .numpy()
+        )
         related_query = model.encode_query("vector database for search")
         unrelated_query = model.encode_query("chocolate cake recipe")
 
@@ -70,7 +74,7 @@ class TestEmbeddingModel:
             "Second document about testing.",
             "Third document about performance.",
         ]
-        vectors = model.encode_documents(texts, batch_size=2)
+        vectors = model.encode_documents_on_device(texts, batch_size=2)
         assert vectors.shape[0] == 3
         assert vectors.shape[1] == model.dimension
 

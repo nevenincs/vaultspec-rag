@@ -10,11 +10,11 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from ...indexer._run_ledger_models import RunAuthority
-from ...job_models import JobMode, JobSource
+from ...job_models import JobSource
 from ...serviceclient._transport import (
-    _try_http_create_job,
     _try_http_get_job,
     _try_http_health,
+    _try_http_reindex,
     _try_http_retry_job,
 )
 from .._child_signal import CHILD_PROCESS_TIMEOUT_SECONDS
@@ -104,16 +104,18 @@ def test_served_retry_supersedes_a_moving_source_and_clears_degradation(
     )
     with _live_service_context(tmp_path / "service") as (port, _, _):
         assert (control / "installed").exists()
-        first = _job(
-            _try_http_create_job(
-                JobSource.CODE,
-                str(root),
+        created = _object(
+            _try_http_reindex(
+                JobSource.CODE.value,
+                True,
                 port,
+                str(root),
                 authority=RunAuthority.REBUILD,
-                mode=JobMode.REBUILD,
+                initiator_kind="cli",
             )
         )
-        first_id = first["id"]
+        assert created.get("ok") is True, created
+        first_id = created["job_id"]
         assert isinstance(first_id, str)
         failed = _wait_job(port, first_id, "failed")
         failed_health = _object(_try_http_health(port, timeout=5))

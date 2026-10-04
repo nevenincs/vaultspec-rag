@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import threading
 import time
+from dataclasses import replace
 from typing import TYPE_CHECKING, cast
 
 import pytest
 from watchfiles import Change
 
 from .. import jobs as _jobs
+from .._job_errors import JobError, JobErrorKind
 from ..job_manager.models import JobAttemptContext, JobExecutionResult
 from ..job_models import JobSource, JobState
 from ..server._watcher_measurements import WatcherServiceMeasurement
@@ -23,6 +25,8 @@ from ..watcher_controller import (
 )
 from ..watcher_execution import (
     _CreatedWatcherJobRequest,
+    _ManagedSettlement,
+    _settle_and_observe_managed_job,
     controller_scope_from_retry_state,
     submit_watcher_job,
 )
@@ -36,14 +40,17 @@ from ..watcher_intake import (
     _WatcherEventBatch,
 )
 from ..watcher_retry import (
+    WatcherCircuitState,
     WatcherPathEvent,
     WatcherPathObservation,
+    WatcherScopeRefusal,
     WatcherSource,
 )
 from ..watcher_retry_policy import (
     WatcherRetryPolicy,
 )
 from ..watcher_runtime import WatcherChangeRouting, WatcherConvergenceSlot
+from ._watcher_fixtures import dirty_paths
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -96,8 +103,8 @@ def test_classification_is_immutable_and_does_not_acknowledge_slots(
         (WatcherSource.CODE, code_path, WatcherPathEvent.ADDED),
         (WatcherSource.DOCUMENT, code_path, WatcherPathEvent.ADDED),
     ]
-    assert vault.slot.dirty_paths() == frozenset()
-    assert code.slot.dirty_paths() == frozenset()
+    assert dirty_paths(vault.slot) == frozenset()
+    assert dirty_paths(code.slot) == frozenset()
 
 
 async def test_exact_scope_is_durable_before_legacy_slot_acknowledgement(
@@ -114,7 +121,7 @@ async def test_exact_scope_is_durable_before_legacy_slot_acknowledgement(
         observations: tuple[WatcherPathObservation, ...],
         **_kwargs: object,
     ) -> bool:
-        persisted_before_ack.append(binding.slot.dirty_paths() == frozenset())
+        persisted_before_ack.append(dirty_paths(binding.slot) == frozenset())
         policy.mark_scope_pending(observations, now=time.time())
         return False
 
@@ -139,13 +146,44 @@ async def test_exact_scope_is_durable_before_legacy_slot_acknowledgement(
 
     assert cancelled is False
     assert persisted_before_ack == [True]
-    assert binding.slot.dirty_paths() == frozenset({changed})
+    assert dirty_paths(binding.slot) == frozenset({changed})
     state = binding.retry_policy.state
     assert [(item.relative_path, item.event_kinds) for item in state.pending_paths] == [
         ("src/example.py", frozenset({WatcherPathEvent.MODIFIED}))
     ]
     assert binding.controller.snapshot.state is ControllerState.COLLECTING
     assert binding.controller.snapshot.next_decision_at is not None
+
+
+async def test_typed_preflight_refusal_stops_automatic_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Mutation: settling a precreation failure as an interruption retries the
+    # same incompatible publication instead of exposing the rebuild remedy.
+    binding = _ready_binding(tmp_path.resolve())
+    _real_manager(monkeypatch)
+
+    async def refuse_preflight(
+        *_args: object, **_kwargs: object
+    ) -> tuple[CodeExecutionPreflight | None, DocumentExecutionPreflight | None]:
+        raise JobError(JobErrorKind.FULL_REINDEX_REQUIRED, "membership changed")
+
+    monkeypatch.setattr(
+        "vaultspec_rag.watcher_execution._preflight_scoped_paths", refuse_preflight
+    )
+    with pytest.raises(JobError, match="membership changed"):
+        await submit_watcher_job(
+            binding.slot,
+            controller=binding.controller,
+            now=time.monotonic(),
+            secondary_graph_cache=None,
+        )
+
+    assert binding.retry_policy.state.scope_refusal is not None
+    assert binding.controller.snapshot.state is ControllerState.REFUSED
+    assert binding.controller.snapshot.reason is ControllerReason.FULL_REINDEX_REQUIRED
+    assert binding.controller.snapshot.remediation is not None
+    assert not binding.retry_policy.admit(now=time.time() + 1000.0).admitted
 
 
 async def test_cancellation_is_delivered_after_every_source_commit(
@@ -488,3 +526,141 @@ async def test_failure_after_dispatch_leaves_the_running_attempt_to_its_owner(
         release.set()
         for job_id in created:
             await manager.wait_for_attempt(job_id, timeout_seconds=10.0)
+
+
+@pytest.mark.parametrize("retain_exception", [False, True])
+async def test_terminal_rebuild_failure_is_actionable_through_events_and_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    retain_exception: bool,
+) -> None:
+    # Mutation: releasing a terminal refusal as cancelled work removes its
+    # rebuild remediation; discarding captured scope loses the original path.
+    root = tmp_path.resolve()
+    binding = _ready_binding(root)
+    manager = _real_manager(monkeypatch)
+
+    async def hold_dispatch(_request: _CreatedWatcherJobRequest) -> None:
+        return
+
+    monkeypatch.setattr(
+        "vaultspec_rag.watcher_execution._dispatch_created_watcher_job", hold_dispatch
+    )
+    await submit_watcher_job(
+        binding.slot,
+        controller=binding.controller,
+        now=time.monotonic(),
+        secondary_graph_cache=None,
+    )
+    job_id = binding.slot.job_id
+    assert job_id is not None
+    binding.controller.advance(ControllerReason.JOB_STARTED)
+    outcome = manager.fail_unstarted(job_id, result="membership proof changed")
+    assert outcome.job is not None
+    failed = replace(outcome.job, error_kind=JobErrorKind.FULL_REINDEX_REQUIRED.value)
+    await _settle_and_observe_managed_job(
+        _ManagedSettlement(
+            binding.slot,
+            binding.controller,
+            failed,
+            1.0,
+            None,
+            JobError(JobErrorKind.FULL_REINDEX_REQUIRED, "membership proof changed")
+            if retain_exception
+            else None,
+        )
+    )
+
+    state = binding.retry_policy.state
+    assert state.scope_refusal is WatcherScopeRefusal.FULL_REINDEX_REQUIRED
+    refused = binding.controller.snapshot
+    assert refused.state is ControllerState.REFUSED
+    assert refused.reason is ControllerReason.FULL_REINDEX_REQUIRED
+    assert refused.circuit_state is WatcherCircuitState.OPEN
+    assert refused.remediation is not None
+    assert refused.next_decision_at is None
+    assert [item.relative_path for item in refused.scope.pending] == ["src/example.py"]
+    assert refused.scope.captured == ()
+
+    await _persist_and_observe_batch(
+        _WatcherEventBatch(
+            (
+                _ClassifiedWatcherChange(
+                    WatcherSource.CODE,
+                    root / "src" / "later.py",
+                    WatcherPathEvent.MODIFIED,
+                ),
+            )
+        ),
+        (binding,),
+        root_dir=root,
+    )
+    assert binding.controller.snapshot.state is ControllerState.REFUSED
+    pending = binding.controller.snapshot.scope.pending
+    assert [item.relative_path for item in pending] == [
+        "src/example.py",
+        "src/later.py",
+    ]
+    binding.controller.evaluate(
+        ControllerMeasurement(generation=1, observed_at=time.monotonic()),
+        circuit_state=state.circuit_state,
+    )
+    assert binding.controller.snapshot.state is ControllerState.REFUSED
+    restarted = _new_controller(WatcherRetryPolicy.for_root(root, WatcherSource.CODE))
+    assert restarted.snapshot.state is ControllerState.REFUSED
+    assert restarted.snapshot.remediation == refused.remediation
+    assert [item.relative_path for item in restarted.snapshot.scope.pending] == [
+        "src/example.py",
+        "src/later.py",
+    ]
+    assert restarted.snapshot.scope.captured == ()
+
+
+async def test_noop_success_keeps_a_mid_attempt_recovery_refusal_actionable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Mutation: projecting success before durable refusal reports convergence
+    # while the newer unscoped recovery marker still requires a full rebuild.
+    root = tmp_path.resolve()
+    binding = _ready_binding(root)
+    manager = _real_manager(monkeypatch)
+
+    async def hold_dispatch(_request: _CreatedWatcherJobRequest) -> None:
+        return
+
+    monkeypatch.setattr(
+        "vaultspec_rag.watcher_execution._dispatch_created_watcher_job", hold_dispatch
+    )
+    await submit_watcher_job(
+        binding.slot,
+        controller=binding.controller,
+        now=time.monotonic(),
+        secondary_graph_cache=None,
+    )
+    job_id = binding.slot.job_id
+    assert job_id is not None
+    binding.controller.advance(ControllerReason.JOB_STARTED)
+    observer = WatcherRetryPolicy.for_root(root, WatcherSource.CODE)
+    observer.write_recovery_marker()
+
+    def no_op(_context: JobAttemptContext) -> JobExecutionResult:
+        return JobExecutionResult(summary="no content work")
+
+    manager.bind_dispatch(job_id, no_op)
+    await manager.dispatch_async(job_id)
+    await manager.wait_for_attempt(job_id, timeout_seconds=10.0)
+    completed = manager.get(job_id)
+    assert completed is not None and completed.state is JobState.SUCCEEDED
+    await _settle_and_observe_managed_job(
+        _ManagedSettlement(binding.slot, binding.controller, completed, 1.0, None, None)
+    )
+
+    state = binding.retry_policy.state
+    assert state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+    assert state.last_failure_at is not None
+    assert state.scope_refusal is WatcherScopeRefusal.FULL_REINDEX_REQUIRED
+    refused = binding.controller.snapshot
+    assert refused.state is ControllerState.REFUSED
+    assert refused.circuit_state is WatcherCircuitState.OPEN
+    assert refused.remediation is not None
+    assert refused.next_decision_at is None

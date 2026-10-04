@@ -15,7 +15,6 @@ from starlette.responses import JSONResponse
 
 __all__ = [
     "_BAD_REQUEST_MISSING_ROOT",
-    "_TRUTHY_QUERY_VALUES",
     "ProjectRootRequiredError",
     "_clamp_top_k",
     "_default_root",
@@ -56,11 +55,6 @@ _BAD_REQUEST_MISSING_ROOT = JSONResponse(
     },
     status_code=400,
 )
-
-# The truthy spellings a boolean HTTP query flag accepts, shared by every
-# route that reads one (e.g. ``?failed=``, ``?fresh=``) so the accepted
-# vocabulary cannot drift between routes that each restate it.
-_TRUTHY_QUERY_VALUES: tuple[str, ...] = ("1", "true", "yes")
 
 
 class ProjectRootRequiredError(ValueError):

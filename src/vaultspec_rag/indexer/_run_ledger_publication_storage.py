@@ -42,6 +42,9 @@ if TYPE_CHECKING:
     import sqlite3
     from collections.abc import Iterable
 
+    from ._run_ledger_models import RunGeneration
+
+
 OPEN_RECEIPT_SQL: Final = "state IN ('reserved', 'sealed', 'rolling_back')"
 
 
@@ -448,6 +451,51 @@ def receipt_row_by_id(
         connection,
         "SELECT * FROM publication_receipts WHERE receipt_id = ?",
         (receipt_id,),
+    )
+
+
+def latest_receipt_row(
+    connection: sqlite3.Connection,
+    generation_id: str,
+) -> sqlite3.Row | None:
+    """Read a generation's last reservation, including completed no-op work."""
+    return fetch_one(
+        connection,
+        """
+        SELECT * FROM publication_receipts
+        WHERE generation_id = ?
+        ORDER BY reservation_sequence DESC, receipt_id DESC
+        LIMIT 1
+        """,
+        (generation_id,),
+    )
+
+
+def is_noop_publication(
+    connection: sqlite3.Connection,
+    receipt: PublicationReceipt,
+    generation: RunGeneration,
+    proof: PublicationProof,
+) -> bool:
+    """Recognize only a mutation-free rollback against its unchanged parent."""
+    from ._run_ledger_publication_identity import compatibility_for_generation
+
+    return (
+        receipt.state is ProofReceiptState.ROLLED_BACK
+        and not receipt.mutations
+        and not receipt.deltas
+        and receipt.generation_id == generation.generation_id
+        and generation.parent_generation_id == proof.generation_id
+        and receipt.compatibility_key == proof.compatibility_key
+        and receipt.compatibility_key == compatibility_for_generation(generation)
+        and receipt.parent_revision == proof.revision
+        and receipt.reservation_sequence == proof.reservation_sequence
+        and fetch_one(
+            connection,
+            "SELECT 1 FROM commit_units WHERE generation_id = ? LIMIT 1",
+            (generation.generation_id,),
+        )
+        is None
     )
 
 

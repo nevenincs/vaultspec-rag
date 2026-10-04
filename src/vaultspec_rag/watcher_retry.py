@@ -776,6 +776,7 @@ def refuse_scope_capacity(
         last_error_detail=(
             "scope_capacity_exceeded: exact watcher scope exceeds configured capacity"
         ),
+        last_failure_at=timestamp,
         circuit_state=WatcherCircuitState.OPEN,
         updated_at=timestamp,
     )

@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Never, cast
 import pytest
 from mcp.server.mcpserver.exceptions import MCPServerError
 
-from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..server import (
     ProjectRootRequiredError,
@@ -25,6 +24,7 @@ from ..server._utils import (
     _resolve_root,
 )
 from ..service import ServiceRegistry
+from ._config_fixtures import reset_config
 from .test_server import (
     _run,
 )
@@ -77,7 +77,10 @@ class TestRouteMissingProjectRoot:
         mod._http_mode = True
         try:
             client: httpx.Client = cast(
-                "httpx.Client", TestClient(app, raise_server_exceptions=False)
+                "httpx.Client",
+                TestClient(
+                    app, raise_server_exceptions=False, base_url="http://127.0.0.1"
+                ),
             )
             resp: httpx.Response = client.post(
                 "/search",
@@ -118,7 +121,10 @@ class TestRouteMissingProjectRoot:
         mod._http_mode = True
         try:
             client: httpx.Client = cast(
-                "httpx.Client", TestClient(app, raise_server_exceptions=False)
+                "httpx.Client",
+                TestClient(
+                    app, raise_server_exceptions=False, base_url="http://127.0.0.1"
+                ),
             )
             cases = (
                 ("malformed", b'{"query":', "invalid_json"),
@@ -191,7 +197,11 @@ class TestRouteMissingProjectRoot:
         try:
             client: httpx.Client = cast(
                 "httpx.Client",
-                TestClient(self._make_app(), raise_server_exceptions=False),
+                TestClient(
+                    self._make_app(),
+                    raise_server_exceptions=False,
+                    base_url="http://127.0.0.1",
+                ),
             )
             response: httpx.Response = client.get("/search-activity")
 
@@ -234,7 +244,9 @@ try:
         ServerRouteRuntime(token=token, registry=ServiceRegistry(), port=8765),
         lifespan=None,
     )
-    with TestClient(app, raise_server_exceptions=False) as client:
+    with TestClient(
+        app, raise_server_exceptions=False, base_url="http://127.0.0.1"
+    ) as client:
         baseline = client.post(
             "/search",
             json={"query": "ledger capacity must not control search admission"},
@@ -335,31 +347,6 @@ finally:
         assert terminal[0]["outcome"] == "validation_rejected"
         assert terminal[0]["status_code"] == 400
 
-    def test_benchmark_route_returns_400_without_project_root(self):
-        from starlette.testclient import TestClient
-
-        import vaultspec_rag.server as mod
-
-        app = self._make_app()
-        orig_mode = mod._http_mode
-        mod._http_mode = True
-        try:
-            client: httpx.Client = cast(
-                "httpx.Client", TestClient(app, raise_server_exceptions=False)
-            )
-            resp: httpx.Response = client.post(
-                "/benchmark",
-                json={},
-                headers=self._auth_headers(),
-            )
-            assert resp.status_code == 400
-            data: dict[str, object] = cast("dict[str, object]", resp.json())
-            assert data["ok"] is False
-            assert data["error"] == "bad_request"
-            assert "project_root" in cast("str", data["message"])
-        finally:
-            mod._http_mode = orig_mode
-
     def test_reindex_route_returns_400_without_project_root(self):
         from starlette.testclient import TestClient
 
@@ -370,7 +357,10 @@ finally:
         mod._http_mode = True
         try:
             client: httpx.Client = cast(
-                "httpx.Client", TestClient(app, raise_server_exceptions=False)
+                "httpx.Client",
+                TestClient(
+                    app, raise_server_exceptions=False, base_url="http://127.0.0.1"
+                ),
             )
             resp: httpx.Response = client.post(
                 "/reindex",
@@ -395,7 +385,10 @@ finally:
         mod._http_mode = True
         try:
             client: httpx.Client = cast(
-                "httpx.Client", TestClient(app, raise_server_exceptions=False)
+                "httpx.Client",
+                TestClient(
+                    app, raise_server_exceptions=False, base_url="http://127.0.0.1"
+                ),
             )
             response: httpx.Response = client.post(
                 "/index/audit",
@@ -432,7 +425,10 @@ finally:
         mod._http_mode = True
         try:
             client: httpx.Client = cast(
-                "httpx.Client", TestClient(app, raise_server_exceptions=False)
+                "httpx.Client",
+                TestClient(
+                    app, raise_server_exceptions=False, base_url="http://127.0.0.1"
+                ),
             )
             response: httpx.Response = client.post(
                 "/index/audit",
@@ -488,7 +484,10 @@ finally:
         mod._http_mode = True
         try:
             client: httpx.Client = cast(
-                "httpx.Client", TestClient(app, raise_server_exceptions=False)
+                "httpx.Client",
+                TestClient(
+                    app, raise_server_exceptions=False, base_url="http://127.0.0.1"
+                ),
             )
             response: httpx.Response = client.post(
                 "/index/audit",
@@ -521,7 +520,10 @@ finally:
         mod._http_mode = True
         try:
             client: httpx.Client = cast(
-                "httpx.Client", TestClient(app, raise_server_exceptions=False)
+                "httpx.Client",
+                TestClient(
+                    app, raise_server_exceptions=False, base_url="http://127.0.0.1"
+                ),
             )
             resp: httpx.Response = client.get(
                 "/service-state",
@@ -545,7 +547,10 @@ finally:
         mod._http_mode = True
         try:
             client: httpx.Client = cast(
-                "httpx.Client", TestClient(app, raise_server_exceptions=False)
+                "httpx.Client",
+                TestClient(
+                    app, raise_server_exceptions=False, base_url="http://127.0.0.1"
+                ),
             )
             resp: httpx.Response = client.post(
                 "/code-file",
@@ -570,7 +575,10 @@ finally:
         mod._http_mode = True
         try:
             client: httpx.Client = cast(
-                "httpx.Client", TestClient(app, raise_server_exceptions=False)
+                "httpx.Client",
+                TestClient(
+                    app, raise_server_exceptions=False, base_url="http://127.0.0.1"
+                ),
             )
             resp: httpx.Response = client.post(
                 "/vault-document",
@@ -724,7 +732,8 @@ try:
         create_http_app(
             ServerRouteRuntime(token=token, registry=ServiceRegistry(), port=8765),
             lifespan=None,
-        )
+        ),
+        base_url="http://127.0.0.1",
     ) as client:
         response = client.post(
             "/reindex",

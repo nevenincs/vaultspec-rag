@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:aef24127c62f88bdddad883ffc43cadfbbba4c27479cad91f46adc650776c495'
+body_hash: 'sha256:3aabd079f01343e22ead9203f4d9265f8503baff6fedcf6eda1612f58d128081'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -237,6 +237,24 @@ related:
 - `S06` `verify:` `macOS ARM64 native/browser/offline CI=pass; Linux x64 native/browser/offline CI=pass; clean Windows native/browser/offline actual firewall and cleanup=pass; affected tests 33 and workflow checks 47=pass; Ruff/type/format/docs/workflow` -> `pass`
 - `S06` `verify:` `private common frontend 37016154365 attempts 1,2=fail; workflow actionlint,Prettier and affected guards` -> `pass`
 - `S06` `verify:` `affected tooling/workflow/archive tests 93=pass; Windows corrected actual OS smoke and cleanup=pass; initial Windows negative-control bound=fail; Ruff/type/format/workflow=pass; full Windows 37014474575` -> `fail`
+- `S06` `M` `src/vaultspec_rag/tests/test_gpu_borrow_captured_target.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_monitor_browser.py`
+- `S06` `verify:` `pytest Windows full-run failures (8) on local Windows` -> `pass`
+- `S06` `verify:` `ruff check src tools dev` -> `pass`
+- `S06` `verify:` `ruff format --check and ty check on changed files` -> `pass`
+- `S06` `verify:` `dev lint workflow (actionlint)` -> `pass`
+- `S06` `verify:` `prettier --check acquisition.yml` -> `pass`
+- `S06` `verify:` `pytest workflow guards (51)` -> `pass`
+- `S06` `M` `src/vaultspec_rag/cli/_jobs_tui_log.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_monitor_logs.py`
+- `S06` `verify:` `tail-scroll guard mutations jump_end/scroll_followed_tail/per-line write each fail own label then pass` -> `pass`
+- `S06` `verify:` `pytest jobs TUI and monitor log suites (140)` -> `pass`
+- `S06` `verify:` `ruff check/format, ty, complexity, nesting, size` -> `pass`
+- `S06` `M` `src/vaultspec_rag/tests/_ports.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_monitor_process_integration.py`
+- `S06` `verify:` `linux container: held listener raises errno 98, server-side TIME_WAIT binds` -> `pass`
+- `S06` `verify:` `windows monitor allocation test: held port fails at helper, restored passes` -> `pass`
+- `S06` `verify:` `ruff check/format, ty, monitor process and port helper users (98)` -> `pass`
 
 ## Notes
 

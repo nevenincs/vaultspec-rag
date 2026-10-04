@@ -23,7 +23,7 @@ import pytest
 from typer.testing import CliRunner
 
 from ..._process_probe import pid_alive
-from ...cli._process import _spawn_service, _terminate_pid
+from ...cli._process import _terminate_pid
 from ...cli._service_status import (
     _status_file,
     _write_service_status,
@@ -36,6 +36,7 @@ from .._model_setup import (
     model_setup_timeout_seconds,
 )
 from .._ports import free_loopback_port
+from .._session_job_anchor import spawn_anchored_service
 from ._helpers import (
     _poll_health,
     _service_env,
@@ -183,7 +184,10 @@ def test_running_phase_status_failure_rolls_back_all_started_components(
     tmp_path: Path,
 ) -> None:
     """A real running-phase lock failure cancels tasks and releases all owners."""
-    from ..._machine_lock import acquire_machine_lock, release_machine_lock
+    from .._machine_lock_fixtures import (
+        acquire_machine_lock,
+        release_machine_lock,
+    )
 
     acquisition_env = {
         EnvVar.HF_HUB_OFFLINE.value: None,
@@ -217,7 +221,7 @@ def test_running_phase_status_failure_rolls_back_all_started_components(
                 else None
             )
         )
-        launcher_pid = _spawn_service(port, log_path, watch=False)
+        launcher_pid = spawn_anchored_service(port, log_path, watch=False)
         owned_pids = [launcher_pid]
         request.addfinalizer(lambda: _terminate_test_processes(owned_pids))
 
@@ -293,7 +297,7 @@ def test_startup_expiry_reaps_pre_readiness_qdrant(
     with _service_env(tmp_path, env_overrides=offline_env):
         port = free_loopback_port()
         log_path = tmp_path / "startup-expiry.log"
-        pid = _spawn_service(port, log_path, watch=False)
+        pid = spawn_anchored_service(port, log_path, watch=False)
         owned_pids = [pid]
         request.addfinalizer(lambda: _terminate_test_processes(owned_pids))
         identity = _wait_for_published_qdrant(service_pid=pid)
@@ -362,7 +366,7 @@ if sys.platform == "win32":
             log_path = tmp_path / "late-spawn-timeout.log"
             started = time.monotonic()
             with pytest.raises(TimeoutError) as caught:
-                _spawn_service(
+                spawn_anchored_service(
                     port,
                     log_path,
                     watch=False,
@@ -406,7 +410,7 @@ if sys.platform == "win32":
         with _service_env(tmp_path, env_overrides=offline_env):
             port = free_loopback_port()
             log_path = tmp_path / "late-spawn-cleanup.log"
-            launcher_pid = _spawn_service(port, log_path, watch=False)
+            launcher_pid = spawn_anchored_service(port, log_path, watch=False)
             owned_pids = [launcher_pid]
             request.addfinalizer(lambda: _terminate_test_processes(owned_pids))
             published = _wait_for_published_qdrant(service_pid=launcher_pid)

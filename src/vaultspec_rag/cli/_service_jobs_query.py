@@ -228,13 +228,6 @@ def jobs_from_result(result: dict[str, object]) -> list[object]:
     return cast("list[object]", raw_jobs) if isinstance(raw_jobs, list) else []
 
 
-def job_revision(job: dict[str, object]) -> int | None:
-    revision = job.get("revision")
-    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
-        return None
-    return revision
-
-
 def filter_is_set(value: object) -> bool:
     """Report whether a filter value narrows the job list at all.
 

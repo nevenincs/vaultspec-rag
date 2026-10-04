@@ -11,6 +11,7 @@ from dataclasses import dataclass, replace
 from functools import partial
 from typing import TYPE_CHECKING, Any, cast
 
+from anyio import move_on_after
 from anyio.to_thread import run_sync as _run_in_thread
 
 if TYPE_CHECKING:
@@ -69,6 +70,11 @@ logger = logging.getLogger("vaultspec_rag.jobs")
 #: repair. Generous on purpose: expiring early would report a failure for a
 #: dispatch the loop then goes on to perform.
 _LOOPLESS_DISPATCH_TIMEOUT_SECONDS = 30.0
+
+# A capacity waiter owns an attempt ticket but has no worker to poll control.
+# AnyIO shields an admitted worker after acquiring the limiter, so this deadline
+# interrupts only admission waits; it never abandons synchronous execution.
+_ADMISSION_CONTROL_POLL_SECONDS = 0.1
 
 
 @dataclass(frozen=True, slots=True)
@@ -612,12 +618,21 @@ class JobManagerExecution(JobManagerState):
         error: BaseException | None = None
         release_persisted = False
         try:
-            result = await _run_in_thread(
-                self._run_worker_attempt,
-                context,
-                binding,
-                limiter=self._attempt_limiter(job_id),
-            )
+            limiter = self._attempt_limiter(job_id)
+            while True:
+                control.checkpoint()
+                with move_on_after(_ADMISSION_CONTROL_POLL_SECONDS):
+                    result = await _run_in_thread(
+                        self._run_worker_attempt,
+                        context,
+                        binding,
+                        limiter=limiter,
+                        abandon_on_cancel=False,
+                    )
+                    # A deadline can expire while the admitted worker is
+                    # shielded. Returning its result, rather than the deadline
+                    # flag, proves execution completed and must not be retried.
+                    break
         except (
             PauseRequested,
             CancelRequested,

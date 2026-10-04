@@ -110,56 +110,71 @@ class TestKillOnCloseSurvivesAHardKill:
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Job Objects are Windows-only")
 class TestTheAnchorEstablishesMembership:
-    def test_anchoring_a_live_process_succeeds_under_pytest(self) -> None:
+    def test_anchoring_a_live_process_succeeds(self) -> None:
         # The two guards either side of this prove the OS primitive holds and
-        # that the spawn path calls the anchor. Neither sees the anchor itself
-        # silently returning False - a wrong access mask or a failed job
-        # creation - which would leave the spawn path calling a no-op.
-        from ..._test_isolation import anchor_spawned_process_to_pytest
+        # that every test spawn goes through the anchor. Neither sees the
+        # anchor itself silently returning False - a wrong access mask or a
+        # failed job creation - which would leave every spawn calling a no-op.
         from ...cli._process import WIN_DAEMON_SPAWN_FLAGS
+        from .._session_job_anchor import anchor_spawned_process_to_session
 
         sleeper = subprocess.Popen(
             [sys.executable, "-c", "import time; time.sleep(60)"],
             creationflags=WIN_DAEMON_SPAWN_FLAGS,
         )
         try:
-            assert anchor_spawned_process_to_pytest(sleeper.pid), (
+            assert anchor_spawned_process_to_session(sleeper.pid), (
                 "the anchor reported no membership for a live process it should "
-                "have joined to the pytest job"
+                "have joined to the session job"
             )
         finally:
             sleeper.kill()
             sleeper.wait(timeout=10)
 
 
-class TestEverySpawnedDaemonIsAnchored:
-    def test_spawn_service_anchors_the_process_it_created(self) -> None:
-        # The anchor is only a guarantee if the spawn path actually calls it.
-        # A source assertion rather than a behavioural one because the failure
-        # being guarded is deletion of the call, which no passing service test
-        # would notice.
-        from ...cli import _process as process_module
+#: The one test module allowed to call the production spawn directly.
+_ANCHORING_MODULE = "_session_job_anchor.py"
 
-        source = Path(process_module.__file__).read_text(encoding="utf-8")
-        module = ast.parse(source)
-        functions = {
-            node.name: node for node in module.body if isinstance(node, ast.FunctionDef)
-        }
-        # Follow the call path rather than one body: the entry point is free to
-        # forward into a helper that does the spawning, and a guard pinned to a
-        # single function goes blind the moment it does.
-        called: set[str] = set()
-        pending, seen = ["_spawn_service"], set[str]()
-        while pending:
-            name = pending.pop()
-            if name in seen or name not in functions:
-                continue
-            seen.add(name)
-            for node in ast.walk(functions[name]):
-                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-                    called.add(node.func.id)
-                    pending.append(node.func.id)
-        assert "anchor_spawned_process_to_pytest" in called, (
-            "the _spawn_service call path no longer anchors the process it "
-            "spawned; a hard-killed pytest run will strand its daemon"
+
+def _direct_spawn_calls(source: Path) -> list[int]:
+    """Return the lines of *source* that call the production spawn directly."""
+    module = ast.parse(source.read_text(encoding="utf-8"))
+    lines: list[int] = []
+    for node in ast.walk(module):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.id if isinstance(func, ast.Name) else None
+        if isinstance(func, ast.Attribute):
+            name = func.attr
+        if name == "_spawn_service":
+            lines.append(node.lineno)
+    return lines
+
+
+class TestEverySpawnedDaemonIsAnchored:
+    def test_tests_spawn_the_service_only_through_the_anchor(self) -> None:
+        # The anchor is only a guarantee if every spawn takes it, and production
+        # knows nothing about the test session, so the spawn sites are here. A
+        # source assertion rather than a behavioural one because the failure
+        # being guarded is a new test calling the production spawn directly,
+        # which no passing service test would notice. Program text a test runs
+        # in a child process is a string, not a call, and is not counted: that
+        # child is its own owner.
+        #
+        # Mutation check: replacing one `spawn_anchored_service(` call in
+        # test_watcher_control.py with the production `_spawn_service(` failed
+        # this test on its assertion, naming that file and line; restoring the
+        # call passed it.
+        tests_root = Path(__file__).resolve().parents[1]
+        offenders = [
+            f"{path.relative_to(tests_root).as_posix()}:{line}"
+            for path in sorted(tests_root.rglob("*.py"))
+            if path.name != _ANCHORING_MODULE
+            for line in _direct_spawn_calls(path)
+        ]
+        assert not offenders, (
+            "these tests start the real service without binding it to the "
+            "session job, so a hard-killed run would strand the daemon; use "
+            f"spawn_anchored_service: {offenders}"
         )

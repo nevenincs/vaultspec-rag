@@ -21,7 +21,12 @@ from vaultspec_core.logging_config import resolve_log_level
 from .._sparse_profile import SPARSE_MODEL_ID
 from ._paths import read_persisted_local_only
 from ._registry import entry
-from ._schema import ENV_OVERRIDE_MAP, SETTING_BOUNDS, setting_rejection
+from ._schema import (
+    ENV_OVERRIDE_MAP,
+    SETTING_BOUNDS,
+    checked_setting,
+    setting_rejection,
+)
 from ._types import STATUS_DIR_DEFAULT, VALID_PREPROCESS_MODES, EnvVar, PreprocessMode
 
 if TYPE_CHECKING:
@@ -152,8 +157,6 @@ class VaultSpecConfigWrapper:
         "storage_reconcile_budget_seconds": 300.0,
         "data_dir": ".vault/data/search-data",
         "qdrant_dir": "qdrant",
-        "index_metadata_file": "index_meta.json",
-        "code_index_metadata_file": "code_index_meta.json",
         "status_dir": STATUS_DIR_DEFAULT,
         "log_file": "service.log",
         "graph_ttl_seconds": 300.0,
@@ -164,8 +167,8 @@ class VaultSpecConfigWrapper:
         # of the sorted list. Vault inputs are heading-aware chunks
         # capped at ``vault_chunk_chars`` (~750 BPE tokens) and
         # length-sorted per slice, so padding waste is bounded and a
-        # larger sub-batch keeps the tensor cores fed. The OOM backoff
-        # in ``encode_documents`` halves this under memory pressure.
+        # larger sub-batch keeps the tensor cores fed. The bucketed
+        # encode's OOM backoff halves this under memory pressure.
         # (The former value of 8 dated from whole-document inputs that
         # ranged from 200 to 8000 chars; #68 wall-clock work.)
         "embedding_encode_batch_size": 32,
@@ -190,7 +193,7 @@ class VaultSpecConfigWrapper:
         # chunks are short (<=1500 chars) and length-sorted, so the padding
         # pathology that justifies 8 for variable-length vault docs does not
         # apply; a larger sub-batch keeps the GPU's tensor cores fed and
-        # raises encode throughput. The OOM-backoff in ``encode_documents``
+        # raises encode throughput. The bucketed encode's OOM backoff
         # still halves this on memory pressure.
         "embedding_code_encode_batch_size": 32,
         # Inner encode sub-batch for the DOCUMENT path, decoupled from the vault
@@ -199,7 +202,7 @@ class VaultSpecConfigWrapper:
         # token volume, so a batch of 32 window-sized fragments is far more
         # activation memory than the vault batch was sized for. A smaller
         # sub-batch keeps the per-forward working set within the indexing
-        # budget; the OOM-backoff in ``encode_documents`` still halves it under
+        # budget; the bucketed encode's OOM backoff still halves it under
         # pressure.
         "embedding_document_encode_batch_size": 12,
         # Token budget per planned dense encode bucket. Inputs are split into
@@ -335,6 +338,8 @@ class VaultSpecConfigWrapper:
         # measured opening in ~131 s, so this is generous by design; operators
         # with larger stores raise it rather than patching the supervisor.
         "qdrant_ready_timeout_seconds": 300.0,
+        # Bound startup I/O and CPU pressure while overlapping collection opens.
+        "qdrant_collection_load_concurrency": 2,
         # Per-source retention policy for every operational log managed by the
         # resident service. Service and Qdrant each receive this full budget;
         # the values are not divided across sources.
@@ -882,28 +887,6 @@ class VaultSpecConfigWrapper:
                 raise setting_rejection(name, bound.shape, raw, source) from None
         return raw
 
-    def _checked(self, name: str, value: object, source: EnvVar | None) -> object:
-        """Return *value* narrowed to the key's declared range.
-
-        Args:
-            name: The settings key being resolved.
-            value: The resolved value, from any source.
-            source: The environment variable it came from, when it came from one.
-
-        Returns:
-            The value narrowed to the declared type, or unchanged when the key
-            declares no range.
-
-        Raises:
-            ValueError: If the key declares a range and *value* is outside it.
-        """
-        bound = SETTING_BOUNDS.get(name)
-        if bound is None:
-            return value
-        if not bound.admits(value):
-            raise setting_rejection(name, bound.shape, value, source)
-        return bound.narrow(value)
-
     def _raw_rag_setting(self, name: str) -> tuple[object, EnvVar | None]:
         """Resolve *name* through the precedence chain without validating it."""
         # 1. CLI override
@@ -939,7 +922,7 @@ class VaultSpecConfigWrapper:
 
     def _resolve_rag_default(self, name: str) -> Any:
         value, source = self._raw_rag_setting(name)
-        return self._checked(name, value, source)
+        return checked_setting(name, value, source)
 
     def _validate_settings(self) -> None:
         """Reject every unusable setting at construction, all of them at once.
@@ -1110,7 +1093,7 @@ class VaultSpecConfigWrapper:
     # but it gives the type checker a declared member to resolve the read
     # against, so `cfg.qdrant_port` types as ``int`` instead of ``Any``
     # without a property method body per key. The type of every entry here
-    # is not a guess: it is exactly what ``_checked``/``_resolve_rag_default``
+    # is not a guess: it is exactly what ``checked_setting``/``_resolve_rag_default``
     # already narrows the value to, via ``SETTING_BOUNDS`` (numeric and
     # choice bounds) or the declared-bool defaults in ``_RAG_DEFAULTS``
     # itself; a key with neither stays the type of its shipped default.
@@ -1141,8 +1124,6 @@ class VaultSpecConfigWrapper:
     storage_reconcile_budget_seconds: float
     data_dir: str
     qdrant_dir: str
-    index_metadata_file: str
-    code_index_metadata_file: str
     status_dir: str
     log_file: str
     graph_ttl_seconds: float
@@ -1186,6 +1167,7 @@ class VaultSpecConfigWrapper:
     service_reindex_timeout_seconds: float
     service_pause_drain_timeout_seconds: float
     qdrant_ready_timeout_seconds: float
+    qdrant_collection_load_concurrency: int
     managed_log_max_bytes: int
     managed_log_backup_count: int
     job_max_nonterminal: int
@@ -1319,19 +1301,6 @@ def get_config(
         base = get_base_config()
         _cached_config = VaultSpecConfigWrapper(base)
     return _cached_config
-
-
-def reset_config() -> None:
-    """Clear the cached config singleton (for testing).
-
-    Args:
-        None.
-
-    Returns:
-        None.
-    """
-    global _cached_config
-    _cached_config = None
 
 
 def collect_environment_problems(

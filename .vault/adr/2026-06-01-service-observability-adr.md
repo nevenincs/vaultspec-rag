@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#service-observability'
 date: '2026-06-01'
-modified: '2026-09-23'
-body_hash: 'sha256:12978262b9ec43f313722d7692090fc21d0ab5a994a2b086bf7d15ae458d03dc'
+modified: '2026-10-04'
+body_hash: 'sha256:a13d83e28bae1b6978f48648804cf8a20141a34a4279e240ffdfde83fb5f81ca'
 related:
   - "[[2026-06-01-service-observability-research]]"
   - "[[2026-06-01-service-operability-adr]]"
@@ -73,6 +73,8 @@ MCP-transported reads, **not** a second control plane.
   envelope + exit-code contract). No new dependency; `prometheus_client` is
   avoided in favour of emitting the text format directly (no new dep, no
   background collector).
+
+2026-10-04 authorized HTTP security refinement: loopback-http-security overrides this record's assumption that binding alone is the authentication boundary. The application validates loopback Host and matching browser Origin before routing; the REST token is a protected credential and is omitted from unauthenticated health. The existing route token checks and loopback binding remain required.
 
 ## Implementation
 

@@ -10,9 +10,9 @@ import pytest
 from starlette.testclient import TestClient
 
 from .. import jobs
+from .._root_identity import canonical_root_key
 from ..api import controller_snapshot_envelope, get_service_state
 from ..job_models import JobSource
-from ..mcp import _admin_client
 from ..server import ServerRouteRuntime, _watcher, create_http_app
 from ..server._watcher import _WatcherScheduler
 from ..service import ServiceRegistry
@@ -25,6 +25,7 @@ from ..watcher_controller import (
     WatcherController,
 )
 from ..watcher_retry import WatcherSource
+from . import _admin_client
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -43,7 +44,7 @@ def fixture_controller_surfaces(
     root = (tmp_path / "project").resolve()
     job_id = jobs.record_start(JobSource.CODE, "watcher", project_root=root)
     snapshot = ControllerSnapshot(
-        canonical_root=str(root),
+        canonical_root=canonical_root_key(root),
         source=WatcherSource.CODE,
         state=ControllerState.REFUSED,
         reason=ControllerReason.FULL_REINDEX_REQUIRED,
@@ -67,7 +68,7 @@ def fixture_controller_surfaces(
         ServerRouteRuntime(token="surface-token", registry=registry, port=8765),
         lifespan=None,
     )
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         yield client, registry, root, expected, job_id
     jobs.reset()
     _watcher._watcher_scheduler = previous_scheduler

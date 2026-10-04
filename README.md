@@ -195,6 +195,16 @@ prints their IDs. Follow them with `vaultspec-rag server jobs --watch`. The firs
 takes a while. After that, the service watches for file changes and keeps the index
 current by itself.
 
+When no search type is specified (no `--type`), search defaults to source code
+and architecture decision records (ADRs), ranked together:
+
+```bash
+vaultspec-rag search "accelerator selection and its rationale"
+```
+
+Use `--type code` for source code only, `--type vault` for all vault record types,
+or `--type combined` for all three indexes, including extracted documents.
+
 To find code, describe what it does. The words don't have to appear in the code:
 
 ```bash

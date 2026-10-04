@@ -5,8 +5,6 @@ from __future__ import annotations
 import subprocess
 from typing import TYPE_CHECKING
 
-from .._test_isolation import enforce_pytest_singleton_containment
-
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -37,11 +35,6 @@ def _run_uv_sync_torch(*, target: Path, report: InstallReport) -> None:
     resolution (Windows ``CreateProcess`` only auto-tries ``.exe``, which
     makes ``.cmd`` / ``.bat`` stubs unreliable cross-platform).
     """
-    # This writes into the workspace it is pointed at. Under pytest that
-    # must be the session's own temporary tree: a test reaching a real
-    # project would re-resolve and reinstall packages in it. Inert outside
-    # pytest, where the operator's own project is the point.
-    enforce_pytest_singleton_containment(target, operation="sync a project environment")
     try:
         proc = subprocess.run(
             ["uv", "sync", "--reinstall-package", "torch"],

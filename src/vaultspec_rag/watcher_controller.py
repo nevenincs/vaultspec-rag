@@ -326,10 +326,29 @@ class WatcherController:
         """Return the current immutable controller truth."""
         return self._snapshot
 
-    def observe(self, scope: ControllerScope) -> ControllerSnapshot:
+    def observe(
+        self,
+        scope: ControllerScope,
+        *,
+        circuit_state: WatcherCircuitState = WatcherCircuitState.CLOSED,
+        retry_at: float | None = None,
+    ) -> ControllerSnapshot:
         """Accept already-merged exact scope and begin adaptive collection."""
         now = self._monotonic()
         freshness = self._freshness_deadline(scope)
+        if self._snapshot.state in {
+            ControllerState.ADMITTED,
+            ControllerState.RUNNING,
+        }:
+            return self._transition(
+                self._snapshot.state,
+                ControllerReason.CHANGE_OBSERVED,
+                scope=scope,
+                next_decision_at=None,
+                freshness_deadline=freshness,
+                circuit_state=circuit_state,
+                retry_at=retry_at,
+            )
         coalesce = min(now + self._coalesce_delay(scope), freshness)
         return self._transition(
             ControllerState.COLLECTING,
@@ -339,6 +358,8 @@ class WatcherController:
             freshness_deadline=freshness,
             job_id=None,
             remediation=None,
+            circuit_state=circuit_state,
+            retry_at=retry_at,
         )
 
     def evaluate(
@@ -354,6 +375,18 @@ class WatcherController:
         if snapshot.state is ControllerState.REFUSED:
             return self._transition(
                 ControllerState.REFUSED,
+                snapshot.reason,
+                measurement=measurement,
+                next_decision_at=None,
+            )
+        self._snapshot = snapshot = replace(
+            snapshot,
+            circuit_state=circuit_state,
+            retry_at=retry_at,
+        )
+        if snapshot.state in {ControllerState.ADMITTED, ControllerState.RUNNING}:
+            return self._transition(
+                snapshot.state,
                 snapshot.reason,
                 measurement=measurement,
                 next_decision_at=None,
@@ -428,7 +461,6 @@ class WatcherController:
                 ControllerReason.MAXIMUM_FRESHNESS_DUE,
                 measurement=measurement,
                 next_decision_at=now,
-                circuit_state=WatcherCircuitState.CLOSED,
                 retry_at=retry_at,
             )
         deadline = snapshot.next_decision_at
@@ -549,6 +581,8 @@ class WatcherController:
                 job_id=None,
                 next_decision_at=None,
                 freshness_deadline=None,
+                circuit_state=WatcherCircuitState.CLOSED,
+                retry_at=None,
             )
         now = self._monotonic()
         freshness = self._freshness_deadline(scope)
@@ -566,6 +600,8 @@ class WatcherController:
             job_id=None,
             next_decision_at=cooling,
             freshness_deadline=freshness,
+            circuit_state=WatcherCircuitState.CLOSED,
+            retry_at=None,
         )
 
     def release(
@@ -602,6 +638,7 @@ class WatcherController:
         reason: ControllerReason,
         *,
         remediation: str,
+        scope: ControllerScope | None = None,
     ) -> ControllerSnapshot:
         """Stop unsafe automatic admission with a typed actionable reason."""
         if reason not in _REFUSAL_REASONS or not remediation:
@@ -613,6 +650,9 @@ class WatcherController:
             next_decision_at=None,
             remediation=remediation,
             job_id=None,
+            scope=self._snapshot.scope if scope is None else scope,
+            circuit_state=WatcherCircuitState.OPEN,
+            retry_at=None,
         )
 
     def _coalesce_delay(self, scope: ControllerScope) -> float:

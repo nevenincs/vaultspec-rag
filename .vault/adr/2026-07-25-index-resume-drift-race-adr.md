@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#index-resume-drift-race'
 date: '2026-07-25'
-modified: '2026-07-25'
-body_hash: 'sha256:8c78db152840f73d0d48c6018ba3ede3a4377dbf651493ccf6a1099d931de388'
+modified: '2026-10-03'
+body_hash: 'sha256:5963506bcce5f90a4b4612d67e623a52f39e73215b642190600d5857d62d5372'
 related:
   - "[[2026-07-25-index-resume-drift-race-research]]"
   - "[[2026-07-21-large-index-resilience-adr]]"
@@ -165,3 +165,7 @@ circuit-breaker accounting for drift outcomes is decided by
 `2026-07-25-index-drift-circuit-accounting-adr`, and the document index path's
 resume semantics by `2026-07-25-document-index-drift-parity-adr`. Each is a
 decision in its own right and carries its own record.
+
+## Implementation clarification 2026-10-03
+
+Resident recovery reproduced unchanged chunk IDs shared by different whole-file source digests. A changed whole-file digest does not imply every replacement point identity is new. At record time, the drift owner must exclude the current confirmed mutation's replacement IDs for that path from storage retirement, then reopen all obsolete old-digest ledger units through its existing storage-before-ledger owner. Pre-dispatch retirement remains safe to remove old points before replacement writes. This clarification preserves the accepted single-owner remedy and ordering; it introduces no additional consumer, lock, schema or authority.

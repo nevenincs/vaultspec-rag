@@ -156,18 +156,6 @@ class CodeSliceRequest:
 
 
 @dataclass(frozen=True, slots=True)
-class CodebaseStreamRequest:
-    chunks: list[CodeChunk]
-    slice_size: int
-    model: EmbeddingModel
-    store: VaultStore
-    gpu_lock: threading.Lock | None
-    reporter: ProgressReporter
-    run_control: RunControl = NO_RUN_CONTROL
-    reuse: DonorReuseContext | None = None
-
-
-@dataclass(frozen=True, slots=True)
 class WeightedDocumentSlice:
     """One document slice with an exact conservative retained-byte weight."""
 

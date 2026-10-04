@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
-import subprocess
 import sys
 import typing
 
@@ -32,6 +30,7 @@ from ._cli_helpers import (
     usage_metavar,
 )
 from ._http_stubs import QuietHandler
+from .test_service_stop_port import _starting_process
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -833,8 +832,11 @@ class TestLifecycleShutdownLog:
         The service is a real child process recorded in a real discovery
         file, so the identity confirmation, the termination, the liveness
         poll, and the log append are all production code deciding the
-        outcome. The child is a Python interpreter, which is what the
-        tokenless identity fallback confirms as ours, and it is spawned into
+        outcome. Stop requires the resident launch witness - the recorded
+        process's own argument vector naming the server module and the
+        recorded port - so the stand-in is spawned as that module launch,
+        with a harmless stub shadowing the server module on its own
+        ``PYTHONPATH`` rather than running the real one. It is spawned into
         its own process group so the Windows ``CTRL_BREAK_EVENT`` reaches it
         and cannot reach the test runner's console group.
 
@@ -853,27 +855,11 @@ class TestLifecycleShutdownLog:
         """
         from ..cli._service_status import _log_file
 
-        creationflags = (
-            subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
-        )
-        # The stand-in has to satisfy the real identity fallback on BOTH
-        # platforms, and they ask different questions: Windows checks the
-        # image name is a Python interpreter, POSIX reads the cmdline for the
-        # package name. A bare `-c` script answers only the first, so this
-        # test passed on Windows and failed on Linux with an unconfirmed
-        # identity. Naming the package in the script satisfies the POSIX check
-        # the way a real daemon's cmdline does, rather than skipping the test
-        # on the platform where the fallback is stricter.
-        child = subprocess.Popen(
-            [
-                sys.executable,
-                "-c",
-                "# vaultspec_rag service stand-in\nimport time; time.sleep(120)",
-            ],
-            creationflags=creationflags,
-        )
-        try:
-            _write_service_status(pid=child.pid, port=_find_free_port())
+        port = _find_free_port()
+        with _starting_process(
+            ["-m", "vaultspec_rag.server", "--port", str(port)]
+        ) as child:
+            _write_service_status(pid=child.pid, port=port)
 
             result = runner.invoke(app, ["server", "stop"])
 
@@ -883,10 +869,6 @@ class TestLifecycleShutdownLog:
             assert not pid_alive(child.pid), (
                 "a stop that reports success must have stopped the process"
             )
-        finally:
-            with contextlib.suppress(OSError, subprocess.TimeoutExpired):
-                child.kill()
-                child.wait(timeout=10)
 
         log_path = _log_file()
         assert log_path.exists(), (

@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import ast
 import inspect
-import sys
 import textwrap
 import threading
-from contextlib import contextmanager
-from types import ModuleType, SimpleNamespace
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -19,9 +16,10 @@ from ..api import clean
 from ..indexer._run_ledger_models import RunAuthority, RunOperation
 from ..indexer._vault_checkpoint import VaultRunCheckpoint
 from ..job_control import NO_RUN_CONTROL
-from ..registry import get_registry, reset_registry
+from ..registry import get_registry
 from ..service import ProjectBusyError, ServiceRegistry
 from ..store_runtime import configured_backend_identity
+from ._state_fixtures import reset_registry
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -181,59 +179,3 @@ def test_clean_does_not_construct_or_import_vault_store_directly() -> None:
     )
     assert len(_attribute_calls(clean_node, "lease_maintenance_store")) == 1
     assert api.clean is clean
-
-
-def test_benchmark_reports_mps_as_unified_memory_not_zero_vram(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The benchmark payload uses the same truthful accelerator semantics."""
-    mib = 1024**2
-    fake_torch = ModuleType("torch")
-    fake_torch.__dict__.update(
-        cuda=SimpleNamespace(is_available=lambda: False),
-        backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: True)),
-        mps=SimpleNamespace(
-            current_allocated_memory=lambda: 384 * mib,
-            driver_allocated_memory=lambda: 512 * mib,
-            recommended_max_memory=lambda: 4096 * mib,
-        ),
-    )
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
-    monkeypatch.delenv("PYTORCH_ENABLE_MPS_FALLBACK", raising=False)
-
-    class _Store:
-        @staticmethod
-        def count() -> int:
-            return 1
-
-        @staticmethod
-        def count_code() -> int:
-            return 2
-
-    class _Searcher:
-        @staticmethod
-        def search_vault(_query: str, *, top_k: int) -> list[object]:
-            assert top_k in {1, 5}
-            return []
-
-    class _Registry:
-        @contextmanager
-        def lease_store(self, _root: Path):
-            yield _Store()
-
-        @contextmanager
-        def search_lease(self, _root: Path):
-            yield SimpleNamespace(searcher=_Searcher())
-
-    result = api.run_benchmark(
-        tmp_path,
-        n_queries=1,
-        registry=cast("ServiceRegistry", _Registry()),
-    )
-
-    assert result["gpu"] == "Apple MPS"
-    assert result["accelerator_backend"] == "mps"
-    assert result["memory_kind"] == "unified"
-    assert result["memory_allocated_mib"] == 384
-    assert result["vram_mib"] is None

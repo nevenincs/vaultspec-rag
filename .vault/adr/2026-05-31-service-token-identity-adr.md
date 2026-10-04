@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#service-token-identity'
 date: '2026-05-31'
-modified: '2026-07-30'
-body_hash: 'sha256:c145e0a8c6003628dd39e49c746c78cd51a0d5ab14a30701af4fda31920fac6a'
+modified: '2026-10-04'
+body_hash: 'sha256:b0fce31851c9d387a2752ae279148c6799677207a08a862ceceb316a1aea3e09'
 related:
   - '[[2026-05-31-service-token-identity-research]]'
   - '[[2026-07-24-service-quiesce-adr]]'
@@ -92,6 +92,8 @@ absent or fails before model startup.
   the same production route app with an explicit runtime. They must
   not assign server globals, start the service, or initialize Qdrant,
   models, Torch, or CUDA.
+
+2026-10-04 authorized HTTP security refinement: loopback-http-security governs credential disclosure and overrides the public health echo and identity-only threat assumption in this record. service_token is a REST credential: unauthenticated health omits it, authenticated health can preserve the identity echo, and clients acquire or renew it only from protected same-user discovery. Immutable runtime ownership and existing PID/identity semantics remain in force.
 
 ## Implementation
 

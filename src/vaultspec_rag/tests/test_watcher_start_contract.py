@@ -17,15 +17,18 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
+import os
 from typing import TYPE_CHECKING, cast
 
 import httpx
 import pytest
 
 from .. import server
-from ..config._settings import get_config, reset_config
+from ..config._settings import get_config
 from ..server import WatcherStartOutcome
 from ..server import _watcher as watcher_lifecycle
+from ._config_fixtures import reset_config
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator, Iterator
@@ -75,9 +78,10 @@ async def watcher_client() -> AsyncIterator[httpx.AsyncClient]:
                     port=8765,
                 ),
                 lifespan=None,
-            )
+            ),
+            raise_app_exceptions=False,
         ),
-        base_url="http://service",
+        base_url="http://127.0.0.1",
         headers={"Authorization": f"Bearer {_TOKEN}"},
     ) as client:
         yield client
@@ -111,6 +115,221 @@ async def _stop_still_draining(root: Path) -> AsyncGenerator[None]:
         )
         assert root not in watcher_lifecycle._watcher_drains
         assert root not in server._watcher_tasks
+
+
+@pytest.mark.usefixtures("watching_service")
+@pytest.mark.parametrize("verb", ["start", "stop", "reconfigure"])
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(b"", id="empty"),
+        pytest.param(b"{", id="invalid-json"),
+        pytest.param(b"\xff", id="invalid-encoding"),
+        pytest.param(b"null", id="null-body"),
+        pytest.param(b"[]", id="array-body"),
+        pytest.param(b"true", id="boolean-body"),
+        pytest.param(b"42", id="number-body"),
+        pytest.param(b'"project"', id="string-body"),
+        pytest.param(b"{}", id="missing-root"),
+        pytest.param(b'{"project_root":"project"}', id="wrong-root-key"),
+        pytest.param(b'{"root":null}', id="null-root"),
+        pytest.param(b'{"root":true}', id="boolean-root"),
+        pytest.param(b'{"root":42}', id="number-root"),
+        pytest.param(b'{"root":[]}', id="array-root"),
+        pytest.param(b'{"root":{}}', id="object-root"),
+        pytest.param(b'{"root":""}', id="empty-root"),
+        pytest.param(b'{"root":"  "}', id="blank-root"),
+        pytest.param(b'{"root":"a\\u0000b"}', id="invalid-path"),
+    ],
+)
+async def test_watcher_route_rejects_invalid_root_before_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    watcher_client: httpx.AsyncClient,
+    verb: str,
+    body: bytes,
+) -> None:
+    """Bypassing root validation must fail the typed 400 assertion."""
+    root = tmp_path.resolve()
+    monkeypatch.chdir(root)
+    async with _stop_still_draining(root):
+        generation = watcher_lifecycle._watcher_stop_generations[root]
+        response = await watcher_client.post(
+            f"/watcher/{verb}",
+            content=body,
+            headers={"Content-Type": "application/json"},
+        )
+        assert response.status_code == 400, "invalid watcher input must be HTTP 400"
+        assert response.json()["error"] == "bad_request"
+        assert response.json()["ok"] is False
+        assert watcher_lifecycle._watcher_stop_generations[root] == generation, (
+            "invalid input must not dispatch watcher lifecycle"
+        )
+        assert root not in watcher_lifecycle._watcher_restarts
+
+
+@pytest.mark.usefixtures("watching_service")
+@pytest.mark.parametrize("verb", ["start", "stop", "reconfigure"])
+async def test_watcher_route_rejects_root_resolution_error_before_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    watcher_client: httpx.AsyncClient,
+    verb: str,
+) -> None:
+    """Filesystem resolution faults remain client-input failures."""
+    from .. import _root_identity as root_identity
+
+    root = tmp_path.resolve()
+    async with _stop_still_draining(root):
+        generation = watcher_lifecycle._watcher_stop_generations[root]
+        with monkeypatch.context() as paths:
+
+            def unavailable_path(_path: object) -> Path:
+                raise OSError("root path cannot be resolved")
+
+            paths.setattr(root_identity, "Path", unavailable_path)
+            response = await watcher_client.post(
+                f"/watcher/{verb}", json={"root": str(root)}
+            )
+        assert response.status_code == 400
+        assert response.json()["error"] == "bad_request"
+        assert response.json()["message"] == "root path cannot be resolved"
+        assert watcher_lifecycle._watcher_stop_generations[root] == generation, (
+            "invalid input must not dispatch watcher lifecycle"
+        )
+        assert root not in watcher_lifecycle._watcher_restarts
+
+
+@pytest.mark.usefixtures("watching_service")
+@pytest.mark.parametrize("verb", ["start", "stop", "reconfigure"])
+@pytest.mark.parametrize("spelling", ["absolute", "relative", "dot", "case-slashes"])
+async def test_watcher_route_valid_alias_dispatches_canonical_lifecycle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    watcher_client: httpx.AsyncClient,
+    verb: str,
+    spelling: str,
+) -> None:
+    """Validation retains the actual watcher owner's canonical root and outcome."""
+    root = tmp_path / "MixedCaseRoot"
+    root.mkdir()
+    root = root.resolve()
+    monkeypatch.chdir(root.parent)
+    aliases = {
+        "absolute": str(root),
+        "relative": root.name,
+        "dot": str(root / ".." / root.name),
+        "case-slashes": str(root).upper().replace("\\", "/"),
+    }
+    if spelling == "case-slashes" and os.name != "nt":
+        pytest.skip("Case and separator aliases follow Windows filesystem identity")
+    async with _stop_still_draining(root):
+        generation = watcher_lifecycle._watcher_stop_generations[root]
+        payload = await _post(
+            watcher_client,
+            f"/watcher/{verb}",
+            {"root": aliases[spelling], "debounce_ms": 250, "cooldown_s": 3},
+        )
+        from .._root_identity import canonical_root_key
+
+        assert canonical_root_key(str(payload["root"])) == canonical_root_key(root)
+        if verb == "stop":
+            assert payload["stopped"] is False
+            assert root not in watcher_lifecycle._watcher_restarts
+        else:
+            assert payload["status"] == "queued_behind_drain"
+            restart = watcher_lifecycle._watcher_restarts[root]
+            if verb == "reconfigure":
+                assert payload["restarted"] is False
+                assert payload["debounce_ms"] == restart.debounce_ms == 250
+                assert payload["cooldown_s"] == restart.cooldown_s == 3.0
+            else:
+                assert payload["started"] is False
+        assert watcher_lifecycle._watcher_stop_generations[root] == generation + (
+            0 if verb == "start" else 1
+        )
+
+
+@pytest.mark.usefixtures("watching_service")
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("debounce_ms", -1),
+        ("debounce_ms", True),
+        ("debounce_ms", 1.5),
+        ("debounce_ms", "invalid"),
+        ("debounce_ms", {}),
+        ("debounce_ms", 10**400),
+        ("cooldown_s", -1),
+        ("cooldown_s", True),
+        ("cooldown_s", "invalid"),
+        ("cooldown_s", []),
+        ("cooldown_s", float("nan")),
+        ("cooldown_s", float("inf")),
+        ("cooldown_s", 10**400),
+    ],
+)
+async def test_reconfigure_rejects_invalid_timing_before_stopping(
+    tmp_path: Path,
+    watcher_client: httpx.AsyncClient,
+    key: str,
+    value: object,
+) -> None:
+    """A bad override must not stop or replace a root before reporting rejection."""
+    root = tmp_path.resolve()
+    async with _stop_still_draining(root):
+        generation = watcher_lifecycle._watcher_stop_generations[root]
+        response = await watcher_client.post(
+            "/watcher/reconfigure",
+            content=json.dumps({"root": str(root), key: value}),
+            headers={"Content-Type": "application/json"},
+        )
+        assert response.status_code == 400, "invalid timing must be HTTP 400"
+        assert response.json()["error"] == "bad_request"
+        assert watcher_lifecycle._watcher_stop_generations[root] == generation, (
+            "invalid timing must not stop the watcher"
+        )
+        assert root not in watcher_lifecycle._watcher_restarts
+
+
+@pytest.mark.usefixtures("watching_service")
+async def test_valid_stop_dispatches_active_watcher_cleanup(
+    tmp_path: Path, watcher_client: httpx.AsyncClient
+) -> None:
+    """A validated stop actually disables intake and starts canonical cleanup."""
+    root = tmp_path.resolve()
+    release = asyncio.Event()
+
+    async def intake() -> None:
+        await release.wait()
+
+    task = asyncio.create_task(intake())
+    stopped = asyncio.Event()
+    with server._watcher_lock:
+        server._watcher_tasks[root] = task
+        server._watcher_stops[root] = stopped
+    try:
+        payload = await _post(watcher_client, "/watcher/stop", {"root": str(root)})
+        assert payload["stopped"] is True
+        assert root not in server._watcher_tasks
+        assert stopped.is_set()
+        assert watcher_lifecycle._watcher_drains[root].intake_task is task
+    finally:
+        server._stop_watcher(root)
+        release.set()
+        assert await server._wait_for_watcher_cleanup(
+            root, timeout_seconds=_DRAIN_TIMEOUT_SECONDS
+        )
+
+
+@pytest.mark.parametrize("verb", ["start", "stop", "reconfigure"])
+async def test_watcher_authentication_precedes_body_validation(
+    watcher_client: httpx.AsyncClient, verb: str
+) -> None:
+    response = await watcher_client.post(
+        f"/watcher/{verb}", content=b"{", headers={"Authorization": "Bearer wrong"}
+    )
+    assert response.status_code == 401
 
 
 async def _post(

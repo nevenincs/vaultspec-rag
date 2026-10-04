@@ -24,7 +24,6 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from .._store_models import CodeChunk, VaultChunk
-from ..config._settings import reset_config
 from ..indexer._donor_candidates import CollectionKind
 from ..indexer._reuse import (
     FALLBACK_ENCODE_SECONDS_PER_CHUNK,
@@ -36,6 +35,7 @@ from ..indexer._slicing import code_embed_text
 from ..indexer._streaming import encode_and_upsert_code_slice
 from ..indexer._streaming_types import CodeSliceRequest
 from ..store_runtime import DonorPoint, VaultStore
+from ._config_fixtures import reset_config
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Sequence

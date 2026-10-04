@@ -132,7 +132,7 @@ class HealthReport(_Wire):
     uptime_s: float
     schema_version: int
     package_version: str
-    service_token: str
+    service_token: str | None = None
     jobs: dict[str, object]
     qdrant: dict[str, object]
     quiesce: dict[str, object]

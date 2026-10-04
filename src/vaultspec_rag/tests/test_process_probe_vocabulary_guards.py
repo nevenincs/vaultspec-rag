@@ -545,19 +545,6 @@ class TestNoSymbolKeptAliveForTests:
     symbol alive for tests.
     """
 
-    #: Client-transport calls that reach a real service route this project's
-    #: own CLI has not adopted yet. They are not test conveniences duplicating
-    #: a production path - each covers a capability no production caller can
-    #: otherwise reach - so deleting them would drop client coverage of a live
-    #: route. An entry needs that justification, not merely a passing test.
-    _CLIENT_SURFACE: ClassVar[dict[str, str]] = {
-        "_try_http_create_job": (
-            "creates a job with start_paused and an idempotency key; "
-            "_try_http_reindex, the path the CLI uses, has neither parameter, "
-            "so no production caller can create a paused job"
-        ),
-    }
-
     @staticmethod
     def _source_outside_dunder_all(text: str, tree: ast.Module) -> str:
         """Return *text* with the lines of every ``__all__`` assignment dropped.
@@ -626,13 +613,8 @@ class TestNoSymbolKeptAliveForTests:
             if production_mentions[name] - len(sites) == 0 and test_mentions[name]
         }
 
-        unexplained = {
-            name: sites
-            for name, sites in orphans.items()
-            if name not in self._CLIENT_SURFACE
-        }
-        assert not unexplained, (
-            f"private symbol(s) reachable only from tests: {unexplained}. "
+        assert not orphans, (
+            f"private symbol(s) reachable only from tests: {orphans}. "
             "Delete them and repoint the tests at the production entry point - "
             "a test-only path proves nothing about the path production runs"
         )

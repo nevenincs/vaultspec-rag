@@ -52,7 +52,6 @@ async def _seed_terminal_resilience_job(
             authority=RunAuthority.REBUILD,
         ),
         JobInitiator("cli", "server jobs", str(project_root)),
-        start_paused=outcome_name == "controlled",
     )
     assert created.job is not None
     job_id = created.job.id

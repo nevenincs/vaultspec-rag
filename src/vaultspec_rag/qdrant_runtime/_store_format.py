@@ -174,12 +174,7 @@ def write_store_format(storage_dir: Path, version: str) -> Path:
         The path the stamp was written to.
     """
     path = store_format_path(storage_dir)
-    from .._test_isolation import enforce_pytest_managed_singleton_containment
 
-    enforce_pytest_managed_singleton_containment(
-        operation="write the managed Qdrant store-format stamp",
-        targets=(path,),
-    )
     write_json_atomically(
         path,
         {"version": version, "stamped_at": datetime.now(UTC).isoformat()},

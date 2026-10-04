@@ -21,12 +21,12 @@ import pytest
 
 from ..._source_types import PublicSourceType
 from ..._store_search import HybridSearchRequest
-from ...config._settings import reset_config
 from ...config._types import EnvVar
 from ...progress import NullProgressReporter
 from ...qdrant_runtime._constants import QDRANT_SERVER_VERSION
 from ...qdrant_runtime._resolve import resolve_binary
 from ...qdrant_runtime._supervise import QdrantSupervisor
+from .._config_fixtures import reset_config
 from .._ports import free_loopback_port
 from .._publication_assertions import published_content_identities
 from ..corpus import build_synthetic_vault

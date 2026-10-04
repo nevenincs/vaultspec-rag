@@ -11,8 +11,9 @@ import os
 
 import pytest
 
-from ..config._settings import get_config, reset_config
+from ..config._settings import get_config
 from ..config._types import EnvVar
+from ._config_fixtures import reset_config
 
 pytestmark = [pytest.mark.unit]
 

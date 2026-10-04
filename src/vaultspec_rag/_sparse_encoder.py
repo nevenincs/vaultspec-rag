@@ -21,7 +21,7 @@ class _UpstreamSparseModel(Protocol):
         self, texts: list[str], kind: str = "document", batch_size: int = 32
     ) -> Tensor: ...
     def __call__(
-        self, input_ids: Tensor, attention_mask: Tensor, pooling_mask: Tensor
+        self, _input_ids: Tensor, _attention_mask: Tensor, _pooling_mask: Tensor, /
     ) -> Tensor: ...
 
 

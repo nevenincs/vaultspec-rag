@@ -58,7 +58,7 @@ _DEFAULT_INDEX_COMMAND_OPTIONS = IndexCommandOptions()
 _WINDOWS_BARE_PATH = re.compile(r"[\w.:\\/-]+")
 
 
-def _shell_argument(path: str, *, windows: bool = os.name == "nt") -> str:
+def _shell_argument(path: str) -> str:
     """Quote *path* as one literal argument for the operator's shell.
 
     PowerShell takes a single-quoted string literally once its own single
@@ -66,7 +66,7 @@ def _shell_argument(path: str, *, windows: bool = os.name == "nt") -> str:
     holding a quote, a ``$`` or a separator pastes back as the one argument it
     names.
     """
-    if not windows:
+    if os.name != "nt":
         return shlex.quote(path)
     if _WINDOWS_BARE_PATH.fullmatch(path):
         return path

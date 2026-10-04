@@ -7,6 +7,7 @@ from typing import Annotated, NoReturn, cast
 
 import typer
 
+from .._job_values import count
 from .._operator_commands import SERVICE_NOT_RUNNING_MESSAGE
 from ..job_models import DesiredJobState
 from ..serviceclient._discovery import _default_service_port
@@ -20,7 +21,7 @@ from ..serviceclient._transport import (
 from ._app import JobIdArgument, JsonEnvelopeMode, PortOption, server_job_app
 from ._render import _emit_json, _emit_json_error_and_exit, _plain
 from ._service_jobs_presentation import render_job_detail
-from ._service_jobs_query import job_revision, jobs_from_result
+from ._service_jobs_query import jobs_from_result
 
 #: The desired state each ``server job`` control verb asks the service for.
 #: Stated once so a verb cannot request a state its own name contradicts.
@@ -232,7 +233,7 @@ def _require_job_revision(
     command: str,
     json_mode: bool,
 ) -> int:
-    revision = job_revision(job)
+    revision = count(job.get("revision"), minimum=1)
     if revision is not None:
         return revision
     _job_control_failure(

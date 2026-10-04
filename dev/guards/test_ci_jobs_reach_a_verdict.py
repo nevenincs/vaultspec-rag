@@ -26,8 +26,8 @@ from typing import cast
 
 import pytest
 
-from dev.ci_names import MERGE_BOX
 from dev.guards import _workflows as workflows
+from dev.guards._ci_names import MERGE_BOX
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
 

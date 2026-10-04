@@ -21,9 +21,9 @@ from ..config._settings import (
     VaultSpecConfigWrapper,
     configured_model_repos,
     get_config,
-    reset_config,
 )
 from ..config._types import EnvVar
+from ._config_fixtures import reset_config
 from ._scaffold import restore_env, set_env
 
 pytestmark = [pytest.mark.unit]

@@ -262,8 +262,9 @@ class TestConfigDefaultsResolveInConfig:
     ) -> None:
         # The behaviour the hardcoded default got wrong. Asserted through the
         # config property, which is what every reporting site now calls.
-        from ..config._settings import get_config, reset_config
+        from ..config._settings import get_config
         from ..config._types import EnvVar
+        from ._config_fixtures import reset_config
 
         monkeypatch.setenv(EnvVar.HF_HOME.value, "/tmp/hf-elsewhere")
         reset_config()
@@ -426,10 +427,6 @@ class TestNoStructurallyIdenticalFunctions:
             "_publication_state.py:_collection",
         ): _PER_SOURCE_NAME,
         (
-            "cli/_service_jobs_query.py:job_revision",
-            "storage_manifest.py:_decode_schema_version",
-        ): _SMALL_GUARD,
-        (
             "cli/_search.py:_render_breadth_shortfall",
             "cli/_search.py:_render_file_breadth_shortfall",
         ): _DISTINCT_PROSE,
@@ -444,7 +441,6 @@ class TestNoStructurallyIdenticalFunctions:
         (
             "_readiness.py:dimension",
             "cli/_jobs_tui_status.py:seat_pool",
-            "commands/_provision.py:result_for",
         ): _FIND_FIRST,
         (
             "indexer/_preprocess_config.py:match",
@@ -457,10 +453,6 @@ class TestNoStructurallyIdenticalFunctions:
         (
             "commands/_mcp_topology.py:_require_identity",
             "commands/_mcp_topology.py:_require_unchanged",
-        ): _SMALL_GUARD,
-        (
-            "watcher_runtime.py:dirty_paths",
-            "watcher_runtime.py:pending_count",
         ): _SMALL_GUARD,
         (
             "commands/_install.py:install_run",
@@ -493,10 +485,6 @@ class TestNoStructurallyIdenticalFunctions:
             "indexer/_generation_lifecycle.py:drift_snapshot",
         ): _OPTIONAL_ATTR,
         (
-            "indexer/_codebase_indexer.py:memory_budget_snapshot",
-            "indexer/_document_indexer.py:memory_budget_snapshot",
-        ): _OPTIONAL_ATTR,
-        (
             "cli/_service_start.py:_fail_start",
             "cli/_service_stop.py:_fail_stop",
         ): _PARAMETERISATION,
@@ -505,20 +493,12 @@ class TestNoStructurallyIdenticalFunctions:
             "cli/_service_stop.py:_stop_success",
         ): _PARAMETERISATION,
         (
-            "indexer/_content_discovery.py:resolve_policy",
-            "indexer/_document_indexer.py:resolve_policy_snapshot",
-        ): _PARAMETERISATION,
-        (
             "store_runtime.py:_retrieve",
             "store_runtime.py:_scroll",
         ): _PARAMETERISATION,
         (
             "store_collections.py:ensure_document_table",
             "store_collections.py:ensure_table",
-        ): _PARAMETERISATION,
-        (
-            "store_catalog.py:get_all_document_content_ids",
-            "store_catalog.py:get_all_ids",
         ): _PARAMETERISATION,
         (
             "store_catalog.py:scroll_code_content",

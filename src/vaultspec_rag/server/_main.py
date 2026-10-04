@@ -73,12 +73,15 @@ def create_http_app(
 ) -> Starlette:
     """Build the one production HTTP route surface for *runtime*."""
     from starlette.applications import Starlette
+    from starlette.middleware import Middleware
     from starlette.routing import Route
 
+    from ._http_boundary import LoopbackHTTPBoundary
     from ._routes import ROUTES
 
     app = Starlette(
         routes=[Route("/health", health_handler), *ROUTES],
+        middleware=[Middleware(LoopbackHTTPBoundary)],
         lifespan=lifespan,
         exception_handlers={Exception: _unhandled_route_error},
     )

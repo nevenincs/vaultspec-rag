@@ -29,12 +29,14 @@ from ..search._outcomes import (
     COMBINED_SEARCH_FAILED,
     COMBINED_SEARCH_FAILED_MESSAGE,
 )
+from ..store_runtime import StorageGeometryError
 from ._search_availability import (
     CanonicalSearchEvidence,
     SearchAvailabilityContext,
     SearchResponseClassification,
     classify_qdrant_collection_disappearance,
     classify_search_response,
+    storage_conformance_refusal_fact,
 )
 
 if TYPE_CHECKING:
@@ -120,12 +122,17 @@ class SearchAvailabilityRequestFacts:
             if isinstance(integrity, dict)
             else None
         )
+        snapshot = self.readiness_snapshot
         integrity_verified = (
             integrity_block is not None
             and integrity_block.get("verdict") == IntegrityVerdict.CONSISTENT
+            and snapshot is not None
+            and snapshot.published_generation is not None
+            and integrity_block.get("generation_id") == snapshot.published_generation
         )
-        snapshot = self.readiness_snapshot
-        target = self.readiness_target
+        target = self.readiness_target or (
+            snapshot.publication_target() if snapshot is not None else None
+        )
         return SearchAvailabilityContext(
             before_snapshot=self.job_snapshot_before,
             after_snapshot=after_snapshot,
@@ -138,23 +145,11 @@ class SearchAvailabilityRequestFacts:
                 served_generation=(
                     snapshot.published_generation if snapshot is not None else None
                 ),
-                desired_generation=(
-                    target.generation
-                    if target is not None
-                    else snapshot.desired_generation
-                    if snapshot is not None
-                    else None
-                ),
+                desired_generation=(target.generation if target is not None else None),
                 publication_revision=(
                     snapshot.publication_revision if snapshot is not None else None
                 ),
-                desired_revision=(
-                    target.revision
-                    if target is not None
-                    else snapshot.controller_revision
-                    if snapshot is not None
-                    else None
-                ),
+                desired_revision=(target.revision if target is not None else None),
                 collection_present=True,
                 target_matches=index_state.get("target_matches") is True,
                 integrity_verified=integrity_verified,
@@ -417,7 +412,7 @@ async def run_search_with_availability(
     run: Callable[[], dict[str, object]],
     facts: SearchAvailabilityRequestFacts,
 ) -> tuple[dict[str, object], SearchResponseClassification | None]:
-    """Run retrieval and recover only an evidenced collection disappearance."""
+    """Run retrieval and project evidenced storage refusals or disappearance."""
     try:
         return await _run_in_thread(run, limiter=get_search_limiter()), None
     except UnexpectedResponse as exc:
@@ -428,6 +423,37 @@ async def run_search_with_availability(
         if classification is None:
             raise
         return classification.response, classification
+    except StorageGeometryError as exc:
+        from ._routes import canonical_job_snapshot
+
+        # Retrieval refused before a live count was established. Neither zero
+        # nor a missing collection follows from incompatible vector identity.
+        index_state: dict[str, object] = {
+            "source": facts.source,
+            "requested_target_root": str(facts.root),
+            "status": "unavailable",
+        }
+        classification = classify_search_response(
+            {},
+            facts.to_context(
+                after_snapshot=canonical_job_snapshot(), index_state=index_state
+            ),
+        )
+        refusal_fact = storage_conformance_refusal_fact(
+            exc, classification.source_fact, root=facts.root, port=facts.port
+        )
+        assert refusal_fact is not None
+        source_fact = replace(refusal_fact, wait_policy=facts.wait_policy)
+        response = source_fact.failure_response(
+            request_id=facts.request_id, index_state=index_state
+        )
+        response["message"] = f"{response['message']}: {exc.detail}"
+        return response, replace(
+            classification,
+            response=response,
+            status_code=409,
+            source_fact=source_fact,
+        )
 
 
 def dominant_combined_failure(

@@ -37,7 +37,8 @@ def _routes_app() -> Iterator[tuple[TestClient, str]]:  # pyright: ignore[report
                 port=8765,
             ),
             lifespan=None,
-        )
+        ),
+        base_url="http://127.0.0.1",
     )
     try:
         yield client, "test-token-readiness"

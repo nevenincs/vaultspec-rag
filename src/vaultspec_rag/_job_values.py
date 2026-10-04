@@ -19,17 +19,21 @@ from typing import cast
 __all__ = ["count", "flag", "mapping", "measurement", "text"]
 
 
-def count(value: object) -> int | None:
-    """Read one published value as a whole, non-negative count.
+def count(value: object, *, minimum: int = 0) -> int | None:
+    """Read one published value as a whole count no smaller than ``minimum``.
 
     The counted-work half of the reader pair :func:`measurement` completes,
     and it carries the same contract: a count is a published *quantity*, so
-    ``bool`` and a negative are both malformed rather than readings. A
-    ``float`` is refused outright rather than truncated, because a
-    fractional count is a malformed reading and not a rounding question - a
+    ``bool`` and a value below ``minimum`` are both malformed rather than
+    readings. A ``float`` is refused outright rather than truncated, because
+    a fractional count is a malformed reading and not a rounding question - a
     cap of ``3.7`` is a broken field, not "3".
+
+    A counter that versions a published artifact rather than measuring a
+    quantity - a job's revision, a persisted schema version - starts at one
+    and climbs, so it reads with ``minimum=1``.
     """
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
         return None
     return value
 

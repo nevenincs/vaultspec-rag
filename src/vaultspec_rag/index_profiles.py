@@ -207,7 +207,11 @@ _PROFILES: Final = MappingProxyType(
                 source_files=500_000,
                 source_bytes=128 * _GIB,
                 generated_chunks=5_000_000,
-                weighted_bytes=512 * _GIB,
+                # The true-source 250,872-chunk floor weighs about 951 GiB
+                # with the pinned sparse vocabulary, dense vectors and
+                # payload lifetime allowances. Round that aggregate up to
+                # 1 TiB; the queue and runtime memory bounds stay separate.
+                weighted_bytes=1024 * _GIB,
                 extracted_bytes=128 * _GIB,
                 queue_bytes=512 * 1024**2,
                 rss_bytes=16 * _GIB,

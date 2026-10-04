@@ -268,7 +268,7 @@ class ReadinessControlResult:
 async def _measure_readiness_control(
     root: str, concurrency: int
 ) -> ReadinessControlResult:
-    registry = ReadinessRevisionRegistry(max_observers=concurrency)
+    registry = ReadinessRevisionRegistry()
     registry.start()
     initial = registry.publish_next(root, "vault", generation="benchmark-initial")
     immediate_target = PublicationTarget(

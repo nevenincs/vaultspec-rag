@@ -500,67 +500,22 @@ def _in_own_lineage(pid: int, start_time: float) -> bool:
 
 
 def _service_holding_machine() -> int | None:
-    """Return the pid of a service holding a storage-scoped service lock.
+    """Return the pid of a service holding the configured service lock.
 
-    ``None`` when no other process holds one. This is how a service is seen
-    between claiming its machine and loading its first model, and how a service
-    from a release that predates the GPU anchor is seen at all. The configured
-    lock is always asked; the default-location lock is asked too when this
-    process is configured elsewhere, because that is where a service started
-    without an override holds it. Under pytest containment the default location
-    belongs to the real machine and is not touched.
+    ``None`` when no other process holds it. This is how a service is seen
+    between claiming its machine and loading its first model, before it holds
+    the GPU anchor itself.
 
     Raises:
         ImportError: The platform ships no advisory-lock primitive.
-        OSError: A service lock could not be read.
-        RuntimeError: Pytest containment refused the configured lock path.
+        OSError: The service lock could not be read.
     """
-    from ._machine_lock import (
-        default_machine_lock_path,
-        machine_lock_path,
-        probe_machine_lock,
-    )
-    from ._test_isolation import pytest_singleton_containment_active
+    from ._machine_lock import probe_machine_lock
 
     probe = probe_machine_lock()
     if probe.held and probe.holder_pid != os.getpid():
         return probe.holder_pid
-    if pytest_singleton_containment_active():
-        return None
-    default = default_machine_lock_path()
-    if _same_path(default, machine_lock_path()):
-        return None
-    return _holder_of_service_lock(default)
-
-
-def _holder_of_service_lock(lock: Path) -> int | None:
-    """Return who holds the storage-scoped service lock at *lock*, if anyone.
-
-    Fails closed: a lock that exists but cannot be opened or locked is not
-    evidence that no service holds it, so that is raised for the caller to
-    report as unverifiable. A lock file that does not exist is a machine where
-    no service ever ran there.
-
-    Raises:
-        ImportError: The platform ships no advisory-lock primitive.
-        OSError: The lock exists but could not be observed.
-    """
-    from ._anchor_claim import AnchorOutcome, observe_existing_anchor
-
-    seen = observe_existing_anchor(lock, pid_record=True, shared=True)
-    if seen.outcome is AnchorOutcome.CONTENDED:
-        return seen.holder_pid
-    if seen.outcome is AnchorOutcome.UNAVAILABLE:
-        if isinstance(seen.fault, ImportError):
-            raise seen.fault
-        raise OSError(f"{lock} could not be observed: {seen.fault}")
     return None
-
-
-def _same_path(left: Path, right: Path) -> bool:
-    return os.path.normcase(os.path.abspath(left)) == os.path.normcase(
-        os.path.abspath(right)
-    )
 
 
 def _publish(descriptor: int, record: Mapping[str, object]) -> bool:

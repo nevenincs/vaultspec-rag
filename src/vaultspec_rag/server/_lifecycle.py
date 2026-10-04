@@ -80,12 +80,7 @@ def _resolve_log_path() -> Path:
 
     cfg = get_config()
     status_dir = managed_status_dir()
-    from .._test_isolation import enforce_pytest_managed_singleton_containment
 
-    enforce_pytest_managed_singleton_containment(
-        operation="create the managed service log directory",
-        targets=(status_dir,),
-    )
     status_dir.mkdir(parents=True, exist_ok=True)
     return status_dir / cfg.log_file
 

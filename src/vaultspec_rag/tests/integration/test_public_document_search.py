@@ -30,6 +30,7 @@ def test_empty_document_and_combined_search_need_no_model(tmp_path: Path) -> Non
     assert not combined.partial
     assert combined.vault.ok
     assert combined.code.ok
+    assert combined.document is not None
     assert combined.document.ok
 
 
@@ -81,6 +82,7 @@ def test_non_empty_public_facade_applies_document_owned_combined_filters(
             )
         )
         assert combined.ok
+        assert combined.document is not None
         assert combined.document.ok
         assert combined.document.results
         assert {result.path for result in combined.document.results} == {selected_path}

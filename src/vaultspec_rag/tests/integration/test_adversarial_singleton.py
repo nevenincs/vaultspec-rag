@@ -18,11 +18,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ..._machine_lock import (
-    acquire_machine_lock,
-    probe_machine_lock,
-)
-from ...config._settings import reset_config
+from ..._machine_lock import probe_machine_lock
 from ...config._types import EnvVar
 from ...qdrant_runtime._resolve import (
     QdrantEndpointProbe,
@@ -30,6 +26,8 @@ from ...qdrant_runtime._resolve import (
     decide_qdrant_action,
     pid_start_time,
 )
+from .._config_fixtures import reset_config
+from .._machine_lock_fixtures import acquire_machine_lock
 from ._machine_lock_holder import spawn_foreign_machine_lock_holder
 
 if TYPE_CHECKING:

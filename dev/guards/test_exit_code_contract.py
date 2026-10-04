@@ -1,7 +1,7 @@
 """The repository-wide exit-code contract, enforced.
 
-`dev/EXIT-CODES.md` states the contract in prose and `dev/exit_codes.py` states
-it as data. This module is what makes either of them true tomorrow.
+`dev/exit_codes.py` states the contract as data. This module is what makes it
+true tomorrow.
 
 Two populations are asserted:
 
@@ -24,21 +24,17 @@ import pytest
 
 from dev.exit_codes import (
     ADVISORY_BROKEN,
-    ALLOW_EMPTY_ENV,
     DRIFT,
     FAILED,
     FINDINGS_CODES,
-    FIX_STRICT_ENV,
     INIT_HOST_TOOL_MISSING,
     INIT_LOCKED,
     INIT_STALE,
     INIT_STEP_FAILED,
     NOTHING_SELECTED,
     OK,
-    PYTEST_NO_TESTS_COLLECTED,
     TOOL_MISSING,
     advisory_result,
-    selection_result,
 )
 
 #: Repository-configuration guards read files only, so they run in the fast lane.
@@ -159,16 +155,6 @@ def test_a_declared_findings_set_still_catches_breakage() -> None:
     assert advisory_result(TOOL_MISSING, vulture) == ADVISORY_BROKEN
 
 
-def test_an_empty_selection_is_not_a_pass() -> None:
-    assert selection_result(PYTEST_NO_TESTS_COLLECTED) == NOTHING_SELECTED
-    assert NOTHING_SELECTED != OK
-
-
-def test_a_real_test_result_passes_through_selection_mapping() -> None:
-    assert selection_result(OK) == OK
-    assert selection_result(FAILED) == FAILED
-
-
 def test_the_codes_are_distinct() -> None:
     """Two meanings sharing a number is the ambiguity this contract removes."""
     codes = [
@@ -198,11 +184,6 @@ def test_the_init_codes_match_the_agreed_allocation() -> None:
     assert allocated == (2, 3, 4, 5, 6)
 
 
-def test_the_environment_switches_are_named_once() -> None:
-    assert FIX_STRICT_ENV == "VAULTSPEC_FIX_STRICT"
-    assert ALLOW_EMPTY_ENV == "VAULTSPEC_ALLOW_EMPTY_SELECTION"
-
-
 # --- 2. no hand-rolled swallows in any justfile -------------------------------
 
 
@@ -219,8 +200,7 @@ def test_no_recipe_swallows_a_failure_by_hand() -> None:
                     offences.append(f"{rel}:{number}: {why}\n    {line.strip()}")
     assert not offences, (
         "Express advisory intent structurally with `advisory=True` in the "
-        "toolchain table, which suppresses findings only. See "
-        "dev/EXIT-CODES.md.\n" + "\n".join(offences)
+        "toolchain table, which suppresses findings only.\n" + "\n".join(offences)
     )
 
 
@@ -238,14 +218,5 @@ def test_no_dead_lastexitcode_guard() -> None:
     assert not offences, (
         "`just` runs each standalone recipe line in its own shell process, so "
         "$LASTEXITCODE is unset and this guard never fires. Move the logic "
-        "into dev/ and let the runner own the exit code. See "
-        "dev/EXIT-CODES.md.\n" + "\n".join(offences)
+        "into dev/ and let the runner own the exit code.\n" + "\n".join(offences)
     )
-
-
-def test_the_contract_is_documented_beside_its_implementation() -> None:
-    doc = ROOT / "dev" / "EXIT-CODES.md"
-    assert doc.exists(), "dev/EXIT-CODES.md is the canonical statement"
-    body = doc.read_text(encoding="utf-8")
-    for token in ("ADVISORY_BROKEN", "NOTHING_SELECTED", "TOOL_MISSING"):
-        assert token in body, f"{token} is unexplained in dev/EXIT-CODES.md"

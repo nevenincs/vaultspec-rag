@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ..storage_reclamation import ReclaimPolicy, evaluate_reclaim
-from ..storage_safety import StorageSafetyError, is_within, resolve_within
+from ..storage_safety import StorageSafetyError, resolve_within
 from ..storage_survey import is_temp_rooted
 from .test_storage_ops import (
     _NOW,
@@ -44,6 +44,16 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
+
+
+def _is_within(target: Path | str, base: Path | str) -> bool:
+    """Return whether production admits *target* as contained in *base*."""
+    try:
+        resolve_within(target, base)
+    except StorageSafetyError:
+        return False
+    return True
+
 
 #: Hours the ephemeral-orphan tests age their grace stamp by: past the
 #: ephemeral window and far short of either tiered one.
@@ -118,7 +128,7 @@ def test_descendant_is_allowed(tmp_path: Path) -> None:
     target = base / "qdrant" / "storage"
     target.mkdir(parents=True)
     assert resolve_within(target, base) == target.resolve()
-    assert is_within(target, base) is True
+    assert _is_within(target, base) is True
 
 
 def test_base_itself_is_allowed(tmp_path: Path) -> None:
@@ -133,7 +143,7 @@ def test_parent_traversal_is_rejected(tmp_path: Path) -> None:
     escape = base / ".." / ".." / "etc"
     with pytest.raises(StorageSafetyError):
         resolve_within(escape, base)
-    assert is_within(escape, base) is False
+    assert _is_within(escape, base) is False
 
 
 def test_sibling_outside_base_is_rejected(tmp_path: Path) -> None:
@@ -143,14 +153,14 @@ def test_sibling_outside_base_is_rejected(tmp_path: Path) -> None:
     sibling.mkdir()
     with pytest.raises(StorageSafetyError):
         resolve_within(sibling, base)
-    assert is_within(sibling, base) is False
+    assert _is_within(sibling, base) is False
 
 
 def test_deeply_nested_descendant_is_allowed(tmp_path: Path) -> None:
     base = tmp_path / "managed"
     target = base / "a" / "b" / "c" / "d"
     target.mkdir(parents=True)
-    assert is_within(target, base) is True
+    assert _is_within(target, base) is True
 
 
 def test_prefix_lookalike_sibling_is_rejected(tmp_path: Path) -> None:
@@ -160,7 +170,7 @@ def test_prefix_lookalike_sibling_is_rejected(tmp_path: Path) -> None:
     lookalike = tmp_path / "managed-evil"
     base.mkdir()
     lookalike.mkdir()
-    assert is_within(lookalike, base) is False
+    assert _is_within(lookalike, base) is False
 
 
 @pytest.mark.usefixtures("isolated_status_dir")

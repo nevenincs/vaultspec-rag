@@ -11,7 +11,6 @@ import pytest
 
 from ..indexer._preprocess_cache import (
     PreprocessCacheIdentity,
-    clear_preprocess_cache,
     preprocess_cache_dir,
     read_cached_output,
     write_cached_output,
@@ -110,16 +109,6 @@ def test_corrupt_entry_is_a_miss(tmp_path: Path) -> None:
     for json_file in root.rglob("*.json"):
         json_file.write_text("{ not valid", encoding="utf-8")
     assert read_cached_output(root, identity) is None
-
-
-def test_clear_removes_subtree(tmp_path: Path) -> None:
-    root = preprocess_cache_dir(tmp_path)
-    write_cached_output(root, _identity(), _output())
-    assert root.exists()
-    clear_preprocess_cache(root)
-    assert not root.exists()
-    # Clearing an already-absent cache is a no-op.
-    clear_preprocess_cache(root)
 
 
 def test_units_output_round_trips(tmp_path: Path) -> None:

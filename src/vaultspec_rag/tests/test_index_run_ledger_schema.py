@@ -13,7 +13,9 @@ from ..indexer._run_ledger_models import (
     REQUIRED_INDEXES,
     REQUIRED_SCHEMA,
     SCHEMA_VERSION,
+    RunAuthority,
 )
+from ..indexer._run_ledger_publication_identity import compatibility_for_signature
 from ..indexer._run_ledger_runtime import RunLedger
 from ._child_signal import PROCESS_TIMEOUT_SECONDS
 from ._run_ledger_test_support import (
@@ -22,9 +24,10 @@ from ._run_ledger_test_support import (
     ledger_test_assert_publication_tables,
     ledger_test_assert_rebuild_required_without_mutation,
     ledger_test_digest,
-    ledger_test_insert_reserved_receipt,
+    ledger_test_duplicate_receipt_row,
     ledger_test_interleave_peer_after_version_read,
     ledger_test_open_concurrent_fresh_ledgers,
+    ledger_test_publish_and_compact,
     ledger_test_signature,
 )
 
@@ -102,62 +105,73 @@ def test_publication_schema_enforces_open_receipt_and_state_constraints(
 ) -> None:
     """The durable schema rejects ambiguous or malformed receipt state."""
     ledger = RunLedger(tmp_path / "runs.sqlite3")
-    generation = ledger.start_generation(ledger_test_signature(tmp_path))
+    signature = ledger_test_signature(tmp_path)
+    parent = ledger.start_generation(signature)
+    ledger.establish_verified_publication(
+        parent.generation_id, RunAuthority.REBUILD, ()
+    )
+    ledger_test_publish_and_compact(ledger, parent.generation_id)
+    key = compatibility_for_signature(signature)
+    successor = ledger.start_generation(signature)
+    first = ledger.reserve_publication_receipt(
+        key,
+        successor.generation_id,
+        expected_parent_revision=ledger.publication_proof(key).revision,
+    )
 
     with closing(sqlite3.connect(ledger.path)) as connection, connection:
         connection.execute("PRAGMA foreign_keys = ON")
-        ledger_test_insert_reserved_receipt(
-            connection,
-            receipt_id="receipt-one",
-            reservation_sequence=1,
-            generation_id=generation.generation_id,
-        )
-        connection.commit()
 
         with pytest.raises(sqlite3.IntegrityError):
-            ledger_test_insert_reserved_receipt(
+            ledger_test_duplicate_receipt_row(
                 connection,
+                first.receipt_id,
                 receipt_id="receipt-two",
-                reservation_sequence=2,
-                generation_id=generation.generation_id,
+                reservation_sequence=first.reservation_sequence + 1,
             )
 
         connection.execute(
             """
             UPDATE publication_receipts
-            SET state = 'rolling_back', rollback_started_at = 2.0
-            WHERE receipt_id = 'receipt-one'
-            """
+            SET state = 'rolling_back', rollback_started_at = reserved_at
+            WHERE receipt_id = ?
+            """,
+            (first.receipt_id,),
         )
         with pytest.raises(sqlite3.IntegrityError):
-            ledger_test_insert_reserved_receipt(
+            ledger_test_duplicate_receipt_row(
                 connection,
+                first.receipt_id,
                 receipt_id="receipt-two",
-                reservation_sequence=2,
-                generation_id=generation.generation_id,
+                reservation_sequence=first.reservation_sequence + 1,
             )
         connection.execute(
             """
             UPDATE publication_receipts
-            SET state = 'rolled_back', rolled_back_at = 3.0
-            WHERE receipt_id = 'receipt-one'
-            """
+            SET state = 'rolled_back', rolled_back_at = reserved_at
+            WHERE receipt_id = ?
+            """,
+            (first.receipt_id,),
         )
-        ledger_test_insert_reserved_receipt(
+        ledger_test_duplicate_receipt_row(
             connection,
+            first.receipt_id,
             receipt_id="receipt-two",
-            reservation_sequence=2,
-            generation_id=generation.generation_id,
+            reservation_sequence=first.reservation_sequence + 1,
         )
         connection.commit()
 
+        # A different projection, so only the revision CHECK can fire.
         with pytest.raises(sqlite3.IntegrityError):
-            ledger_test_insert_reserved_receipt(
+            ledger_test_duplicate_receipt_row(
                 connection,
+                "receipt-two",
                 receipt_id="wrong-revision",
-                reservation_sequence=1,
-                generation_id=generation.generation_id,
-                projection=("other-collection", 2),
+                reservation_sequence=first.reservation_sequence + 2,
+                overrides={
+                    "collection_identity": "other-collection",
+                    "target_revision": first.target_revision + 1,
+                },
             )
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute(

@@ -29,10 +29,11 @@ from typing import TYPE_CHECKING
 import pytest
 from vaultspec_core.env_values import FALSE_TOKENS, TRUE_TOKENS
 
-from ..config._settings import get_config, reset_config
+from ..config._settings import get_config
 from ..config._types import EnvVar, hf_cache_only
 from ..memory_probe import is_enabled
 from ..server._stdio_lifetime import watchdog_disabled
+from ._config_fixtures import reset_config
 from ._import_probe import assert_fresh_import_excludes
 from ._scaffold import restore_env, set_env
 

@@ -31,7 +31,6 @@ if TYPE_CHECKING:
     from .indexer._codebase_indexer import (
         CodeIndexPreflight,
         CodeScopedPreflight,
-        ContentScanResult,
     )
     from .indexer._document_indexer import (
         DocumentIndexPreflight,
@@ -255,8 +254,3 @@ def validate_document_job_admission(
     preflight = validate_document_index_policy(root, run_control=run_control)
     validate_document_support_profile(root, preflight, run_control=run_control)
     return preflight
-
-
-def scan_code_index_preflight(root: Path) -> ContentScanResult:
-    """Return bounded admission from the production structured scanner."""
-    return validate_code_index_policy(root).scan

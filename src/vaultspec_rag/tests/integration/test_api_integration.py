@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ...progress import NullProgressReporter
+from .._store_fixtures import get_all_ids
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -91,7 +92,7 @@ class TestRAGAPI:
         """
         store = rag_components["store"]
 
-        all_ids = store.get_all_ids()
+        all_ids = get_all_ids(store)
         assert len(all_ids) > 0
         doc_id = next(iter(all_ids))
         result = store.get_by_id(doc_id)

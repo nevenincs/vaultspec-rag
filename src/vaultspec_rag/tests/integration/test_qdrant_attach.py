@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ...config._settings import reset_config
 from ...config._types import EnvVar
 from ...qdrant_runtime._constants import QDRANT_SERVER_VERSION
 from ...qdrant_runtime._resolve import write_qdrant_identity
@@ -28,6 +27,7 @@ from ...qdrant_runtime._supervise import (
     set_active_supervisor,
     start_supervised_from_config,
 )
+from .._config_fixtures import reset_config
 from ._helpers import _get_ephemeral_qdrant_port, _mirror_managed_qdrant_binary
 
 if TYPE_CHECKING:

@@ -24,6 +24,7 @@ from ..job_models import (
 )
 from ..service_quiesce import ServiceQuiesceController
 from ._job_roots import _TEST_PROJECT_ROOT, _TEST_PROJECT_ROOT_OTHER
+from ._state_fixtures import reset_limiters
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -42,11 +43,10 @@ class TestEncodeAdmissionGate:
 
     @pytest.fixture(autouse=True)
     def _fresh_limiters(self) -> Iterator[None]:
-        from .. import concurrency
 
-        concurrency.reset_limiters()
+        reset_limiters()
         yield
-        concurrency.reset_limiters()
+        reset_limiters()
 
     @staticmethod
     def _encode_spec(root: str) -> JobSpec:

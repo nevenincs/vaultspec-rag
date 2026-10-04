@@ -184,6 +184,8 @@ def test_health_never_reaches_the_installation_or_hardware_probes() -> None:
         lifespan=None,
     )
 
-    assert TestClient(app_).get("/health").status_code == 200
+    assert (
+        TestClient(app_, base_url="http://127.0.0.1").get("/health").status_code == 200
+    )
     assert api.service_installation.cache_info().currsize == 0
     assert read_hardware.cache_info().currsize == 0

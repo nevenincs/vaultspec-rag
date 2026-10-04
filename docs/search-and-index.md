@@ -19,11 +19,16 @@ How you phrase a query matters more than any filter here: pair a short
 description of the behavior with the concrete words the target would contain.
 [Writing a query](query-craft.md) covers it properly.
 
-Search defaults to your vault documents:
+Search defaults to relevant ADRs and source code, ranked together:
 
 ```
 uv run vaultspec-rag search "how does the watcher coalesce changes"
 ```
+
+Use `--type vault` for all vault record types, or `--type combined` for all
+three indexes. `--doc-type plan` (or inline `type:plan`) overrides the default
+ADR filter while retaining code results. The one-line advisory names the
+available filters; check `source` and `doc_type` in JSON to verify each hit's kind.
 
 A vault result has three parts. The first line is the document path with the lines that
 hold the passage. The second line gives the document's type, feature, status, date,
@@ -67,8 +72,8 @@ uv run vaultspec-rag search "where is this policy implemented" --type combined
 
 `docs` remains an alias for `vault`, `codebase` remains an alias for `code`, and `all`
 remains an alias for `combined`. The command rejects unknown source types rather than falling
-back to another corpus. A combined response preserves an outcome for every domain. If
-only some domains fail, successful results return with `partial=true`; if all three fail,
+back to another corpus. A combined response preserves an outcome for every requested domain. If
+only some domains fail, successful results return with `partial=true`; if every requested domain fails,
 the command reports a failure instead of an empty success.
 
 Each result is a record with a rank, a file location, and the matching text.

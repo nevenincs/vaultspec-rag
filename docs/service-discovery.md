@@ -151,7 +151,9 @@ Read both thresholds from the record rather than hard-coding them. If the payloa
 
 Today the daemon publishes 15 and 60. Neither is configurable - there is no environment variable, flag, or config key for either - so a consumer that wants a different window enforces it on its own side rather than looking for a setting that does not exist. Reading them from the record is what keeps that true if the daemon's values ever change.
 
-**PID-reuse caveat.** After a crash without clean shutdown, a recorded `pid` may belong to an unrelated process. Don't treat a live `pid` alone as proof the daemon is up. Combine it with a fresh `last_heartbeat`. Where you need stronger proof, verify the `service_token` against the target port's `/health` response.
+**PID-reuse caveat.** After a crash without clean shutdown, a recorded `pid` may belong to an unrelated process. Don't treat a live `pid` alone as proof the daemon is up. Combine it with a fresh `last_heartbeat`. Where you need stronger proof, send the independently discovered `service_token` as a bearer credential to the target port's `/health` and verify the authenticated identity response.
+
+Both discovery files are private to the publishing account: mode 0600 on POSIX and a protected user-only DACL on Windows, installed before credential bytes are written. Obtain and refresh credentials only from discovery for the addressed port. Unauthenticated `/health` omits `service_token`; a wrong presented credential returns 401. Explicit-port clients without matching readable discovery cannot acquire a token over HTTP. The daemon accepts literal loopback addresses and `localhost` in Host, and requires any browser Origin to match the request scheme and authority. The monitor's server-side bridge continues to discover credentials automatically.
 
 ## Authority: the machine lock
 

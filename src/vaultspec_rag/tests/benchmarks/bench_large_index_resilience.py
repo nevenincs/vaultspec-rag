@@ -31,6 +31,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Protocol, cast
 
+from .._indexer_fixtures import support_measurement
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -504,7 +506,7 @@ def run_acceptance(request: AcceptanceRequest) -> AcceptanceReport:
         )
         result = measured.result
         resources = measured.resources
-        measurement = indexer.support_measurement
+        measurement = support_measurement(indexer)
         stored_chunks = store.count_code()
         if result.files != request.spec.files:
             raise RuntimeError(

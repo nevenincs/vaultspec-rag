@@ -21,9 +21,7 @@ from . import _config_epoch, _ignore_specs
 from ._content_policy import (
     ClassifiedContent,
     ContentKind,
-    ContentRoute,
     RootContentPolicy,
-    SourceProfileVersion,
     classify_content,
 )
 from ._preprocess_config import OnError, PreprocessRule, load_preprocess_rules
@@ -33,7 +31,7 @@ if TYPE_CHECKING:
     import pathlib
     from collections.abc import Sequence
 
-    from ..config._types import PreprocessMode, RootContentPolicyConfig
+    from ..config._types import PreprocessMode
 
 __all__ = [
     "DecoderPolicy",
@@ -41,7 +39,6 @@ __all__ = [
     "IndexPolicyResolutionOptions",
     "ResolvedIndexPolicy",
     "ResolvedPreprocessRule",
-    "compile_content_policy",
     "preprocess_stale_note",
     "resolve_index_policy",
 ]
@@ -560,37 +557,6 @@ def preprocess_stale_note(rel_path: str) -> str:
     retains a path on that predicate surfaces it with this one wording.
     """
     return f"{rel_path}: preprocessing disabled; retained work as stale"
-
-
-def compile_content_policy(config: RootContentPolicyConfig) -> RootContentPolicy:
-    """Compile raw caller configuration into closed policy vocabulary."""
-    from .._job_errors import JobErrorKind
-    from ._content_policy import AdmissionPolicyError
-
-    try:
-        source_profile = SourceProfileVersion(config.source_profile)
-    except ValueError:
-        raise AdmissionPolicyError(
-            f"{JobErrorKind.ADMISSION_CONFIG_INVALID.value}: unknown source profile "
-            f"{config.source_profile!r}"
-        ) from None
-
-    routes: list[ContentRoute] = []
-    for index, route in enumerate(config.routes):
-        try:
-            kind = ContentKind(route.target)
-        except ValueError:
-            raise AdmissionPolicyError(
-                f"{JobErrorKind.ADMISSION_CONFIG_INVALID.value}: route #{index} has "
-                f"unknown target {route.target!r}"
-            ) from None
-        routes.append(ContentRoute(route.pattern, kind))
-    try:
-        return RootContentPolicy(source_profile, tuple(routes))
-    except AdmissionPolicyError as exc:
-        raise AdmissionPolicyError(
-            f"{JobErrorKind.ADMISSION_CONFIG_INVALID.value}: {exc}"
-        ) from exc
 
 
 def resolve_index_policy(

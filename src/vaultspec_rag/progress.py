@@ -56,6 +56,13 @@ class ProgressReporter(Protocol):
     def phase_end(self) -> None:
         """End the currently active phase."""
 
+    def confirmed_chunks(self, n: int) -> None:
+        """Record successfully acknowledged chunk operations, including reuse.
+
+        This is separate from the phase's display units: CODE bars count
+        completed files, while this work signal counts each submitted chunk.
+        """
+
     def log(self, message: str) -> None:
         """Emit an informational message outside of any phase bar."""
 
@@ -80,6 +87,9 @@ class NullProgressReporter:
         del name, total
 
     def advance(self, n: int = 1) -> None:
+        del n
+
+    def confirmed_chunks(self, n: int) -> None:
         del n
 
     def phase_end(self) -> None:
@@ -214,6 +224,10 @@ class RichProgressReporter:
         # Forward-pass boundaries feed the service's job telemetry; the
         # interactive bar already animates, so there is nothing to add here.
         del ordinal, items
+
+    def confirmed_chunks(self, n: int) -> None:
+        # Chunk work feeds service telemetry; the file bar has its own units.
+        del n
 
     def forward_finished(self, *, ordinal: int, items: int) -> None:
         del ordinal, items

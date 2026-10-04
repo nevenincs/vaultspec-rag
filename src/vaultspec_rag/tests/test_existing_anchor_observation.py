@@ -1,4 +1,4 @@
-"""Real no-create observations of captured service identity anchors."""
+"""Real no-create observations of existing service identity anchors."""
 
 from __future__ import annotations
 
@@ -21,13 +21,6 @@ from .._anchor_claim import (
     record_claim_owner,
     release_anchor_claim,
 )
-from .._machine_lock import (
-    _probe_existing_machine_lock_holder,
-    capture_pre_isolation_machine_lock,
-    machine_lock_path,
-)
-from ..config._settings import reset_config
-from ..config._types import EnvVar
 from ._child_signal import (
     CHILD_PROCESS_TIMEOUT_SECONDS,
     PROCESS_TIMEOUT_SECONDS,
@@ -161,10 +154,9 @@ def _held_anchor(
     script: str,
     *extra: str,
     name: str,
-    anchor: Path | None = None,
 ) -> Generator[tuple[Path, int]]:
     """Run *script* holding a real anchor and yield its path and holder pid."""
-    anchor = anchor if anchor is not None else tmp_path / f"{name}.lock"
+    anchor = tmp_path / f"{name}.lock"
     ready_path = tmp_path / f"{name}-ready"
     stop_path = tmp_path / f"{name}-stop"
     process = subprocess.Popen(
@@ -264,7 +256,6 @@ def test_owner_record_still_in_flight_is_waited_out_not_read_as_absent(
             "a holder that had not yet published its first record was reported "
             "as an anchor with no owner"
         )
-        assert _probe_existing_machine_lock_holder(anchor) == holder_pid
 
 
 def test_unparseable_owner_record_is_refused_without_waiting(tmp_path: Path) -> None:
@@ -318,23 +309,6 @@ def test_published_owner_record_stays_readable_as_plain_json(tmp_path: Path) -> 
     assert json.loads(anchor.read_text(encoding="utf-8")) == {"pid": os.getpid()}
 
 
-@contextmanager
-def _relocated_machine_paths(tmp_path: Path) -> Generator[None]:
-    """Point the no-argument capture facade at this test's real temp paths."""
-    storage_key = EnvVar.QDRANT_STORAGE_DIR.value
-    prior_storage = os.environ.get(storage_key)
-    os.environ[storage_key] = str(tmp_path / "qdrant" / "storage")
-    reset_config()
-    try:
-        yield
-    finally:
-        if prior_storage is None:
-            os.environ.pop(storage_key, None)
-        else:
-            os.environ[storage_key] = prior_storage
-        reset_config()
-
-
 def test_deleted_existing_anchor_is_absent_and_never_recreated(tmp_path: Path) -> None:
     """Deletion before the single no-create open refuses without recreation."""
     identity_lock_path = tmp_path / "original-service.lock"
@@ -346,7 +320,6 @@ def test_deleted_existing_anchor_is_absent_and_never_recreated(tmp_path: Path) -
     assert observation.outcome is AnchorOutcome.ABSENT
     assert observation.descriptor is None
     assert observation.fault is None
-    assert _probe_existing_machine_lock_holder(identity_lock_path) is None
     assert not identity_lock_path.exists()
 
 
@@ -358,19 +331,6 @@ def test_existing_anchor_observation_reports_an_open_fault(tmp_path: Path) -> No
     assert observation.descriptor is None
     assert observation.holder_pid == 0
     assert observation.fault is not None
-
-
-def test_pre_isolation_machine_capture_derives_paths_without_creating(
-    tmp_path: Path,
-) -> None:
-    """The public capture facade refuses an absent lock without creating it."""
-    with _relocated_machine_paths(tmp_path):
-        identity_lock_path = machine_lock_path()
-
-        captured = capture_pre_isolation_machine_lock()
-
-        assert captured is None
-        assert not identity_lock_path.exists()
 
 
 def test_existing_anchor_observation_reads_a_real_contended_owner_pid(
@@ -387,20 +347,3 @@ def test_existing_anchor_observation_reads_a_real_contended_owner_pid(
         assert observation.descriptor is None
         assert observation.fault is None
         assert observation.holder_pid == expected_pid
-        assert _probe_existing_machine_lock_holder(identity_lock_path) == expected_pid
-
-
-def test_pre_isolation_machine_capture_refuses_after_root_registration(
-    tmp_path: Path,
-) -> None:
-    """The no-argument facade cannot capture a post-root external lock."""
-    with (
-        _relocated_machine_paths(tmp_path),
-        _held_anchor(
-            tmp_path,
-            _HOLD_EXISTING_ANCHOR,
-            name="capture-holder",
-            anchor=machine_lock_path(),
-        ),
-    ):
-        assert capture_pre_isolation_machine_lock() is None

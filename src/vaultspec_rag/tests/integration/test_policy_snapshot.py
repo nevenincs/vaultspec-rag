@@ -16,7 +16,6 @@ import pytest
 
 from ..._publication_state import acquire_publication_snapshot
 from ..._source_types import PublicSourceType
-from ...config._settings import reset_config
 from ...config._types import EnvVar
 from ...indexer._content_policy import (
     ContentKind,
@@ -26,6 +25,7 @@ from ...indexer._content_policy import (
 )
 from ...indexer._preprocess_config import PREPROCESS_CONFIG_FILENAME
 from ...progress import NullProgressReporter
+from .._config_fixtures import reset_config
 
 if TYPE_CHECKING:
     from collections.abc import Generator

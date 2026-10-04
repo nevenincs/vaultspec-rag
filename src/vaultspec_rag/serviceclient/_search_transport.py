@@ -95,7 +95,11 @@ def _build_http_search_payload(
         payload["like_ids"] = list(request.like_ids)
     if request.unlike_ids:
         payload["unlike_ids"] = list(request.unlike_ids)
-    selected_filters: dict[str, object | None] = {}
+    selected_filters: dict[str, object | None] = {
+        "include_documents": request.include_documents
+        if source is PublicSourceType.COMBINED
+        else None,
+    }
     if source in {PublicSourceType.CODE, PublicSourceType.COMBINED}:
         selected_filters.update(
             {
@@ -293,6 +297,8 @@ def _search_request_from_arguments(
         top_k=_int_search_field(values, "top_k"),
         port=_int_search_field(values, "port"),
         project_root=_str_search_field(values, "project_root"),
+        include_documents=_optional_bool_search_field(values, "include_documents")
+        is not False,
         timeout=_optional_numeric_search_field(values, "timeout"),
         language=_optional_str_search_field(values, "language"),
         path=_optional_str_search_field(values, "path"),
@@ -360,6 +366,7 @@ def _validate_search_request(
                 ),
                 locator_kind=(request.document_filters or {}).get("locator_kind"),
             ),
+            include_documents=request.include_documents,
         )
     except InvalidFilterForSearchTypeError as exc:
         return None, {

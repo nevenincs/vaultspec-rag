@@ -2,9 +2,9 @@
 """Real-behavior integration coverage for cooperative indexing control.
 
 The tests use the production streaming and indexing paths with local Qdrant,
-real vault and code files, and a CPU-backed SentenceTransformer model. Keeping
-the model tiny makes the control races deterministic without substituting test
-implementations for any production indexing behavior.
+real vault and code files, and the session's real GPU embedding model. Control
+is observed at production checkpoints rather than raced against a particular
+encode duration, so no test implementation stands in for indexing behavior.
 """
 
 from __future__ import annotations
@@ -57,6 +57,7 @@ _CONTROL_WAIT_SECONDS = 20.0
 _MANAGED_WAIT_SECONDS = 240.0
 _CONTROL_POLL_SECONDS = 0.001
 
+from .._store_fixtures import get_all_ids
 from ._index_job_control_support import (
     _assert_code_resources_released,
     _assert_manager_resources_released,
@@ -111,7 +112,7 @@ class _ControlAfterFirstCodeCommit(NullProgressReporter):
 )
 def test_code_pipeline_control_unwinds_and_reconciliation_converges(
     tmp_path: Path,
-    cpu_embedding_model: EmbeddingModel,
+    index_control_model: EmbeddingModel,
     control_request: ControlRequest,
     signal_type: type[RunControlSignal],
 ) -> None:
@@ -121,8 +122,8 @@ def test_code_pipeline_control_unwinds_and_reconciliation_converges(
 
     assert not _code_consumer_threads()
     assert not multiprocessing.active_children()
-    with VaultStore(tmp_path, embedding_dim=cpu_embedding_model.dimension) as store:
-        indexer = CodebaseIndexer(tmp_path, cpu_embedding_model, store)
+    with VaultStore(tmp_path, embedding_dim=index_control_model.dimension) as store:
+        indexer = CodebaseIndexer(tmp_path, index_control_model, store)
         with pytest.raises(signal_type):
             indexer.full_index(
                 reporter=_ControlAfterFirstCodeCommit(token, control_request),
@@ -134,9 +135,9 @@ def test_code_pipeline_control_unwinds_and_reconciliation_converges(
         _assert_code_resources_released()
         published_count = store.count_code()
         published_ids = store.get_all_code_ids()
-        # Control is cooperative. On the tiny CPU model the sole consumer can
-        # finish its already-buffered slices before the producer observes the
-        # delivered signal, so the durable prefix may equal the whole corpus.
+        # Control is cooperative. The sole consumer may finish its
+        # already-buffered slices before the producer observes the delivered
+        # signal, so the durable prefix may equal the whole corpus.
         # The contract here is that no later write escapes the unwind and a
         # fresh attempt converges from whichever confirmed prefix won the race.
         assert 0 < published_count <= len(paths)
@@ -159,17 +160,17 @@ def test_code_pipeline_control_unwinds_and_reconciliation_converges(
 
 def test_code_clean_rebuild_defers_pause_until_publication_is_current(
     tmp_path: Path,
-    cpu_embedding_model: EmbeddingModel,
+    index_control_model: EmbeddingModel,
 ) -> None:
     """Clean code publication cannot expose an empty or stale collection."""
     paths = _write_code_files(tmp_path, 24, "seed")
     token = RunControlToken()
     gpu_lock = threading.Lock()
 
-    with VaultStore(tmp_path, embedding_dim=cpu_embedding_model.dimension) as store:
+    with VaultStore(tmp_path, embedding_dim=index_control_model.dimension) as store:
         indexer = CodebaseIndexer(
             tmp_path,
-            cpu_embedding_model,
+            index_control_model,
             store,
             options=CodebaseIndexer.Options(gpu_lock=gpu_lock),
         )
@@ -246,17 +247,17 @@ def test_code_clean_rebuild_defers_pause_until_publication_is_current(
 
 def test_code_scoped_replacement_defers_pause_until_data_and_metadata_are_current(
     tmp_path: Path,
-    cpu_embedding_model: EmbeddingModel,
+    index_control_model: EmbeddingModel,
 ) -> None:
     """A scoped replacement delivers pause only after new chunks and metadata."""
     paths = _write_code_files(tmp_path, 4, "seed")
     token = RunControlToken()
     gpu_lock = threading.Lock()
 
-    with VaultStore(tmp_path, embedding_dim=cpu_embedding_model.dimension) as store:
+    with VaultStore(tmp_path, embedding_dim=index_control_model.dimension) as store:
         indexer = CodebaseIndexer(
             tmp_path,
-            cpu_embedding_model,
+            index_control_model,
             store,
             options=CodebaseIndexer.Options(gpu_lock=gpu_lock),
         )
@@ -375,7 +376,7 @@ async def test_managed_vault_pause_releases_resources_and_resume_reconciles(
         first_task,
         "fresh reconciliation attempt did not start",
     )
-    assert slot.store.get_all_ids() == expected_ids
+    assert get_all_ids(slot.store) == expected_ids
     assert (
         set(published_content_identities(root, PublicSourceType.VAULT)) == expected_ids
     )

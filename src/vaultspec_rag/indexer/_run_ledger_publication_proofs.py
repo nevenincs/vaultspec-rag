@@ -38,6 +38,9 @@ from ._run_ledger_publication_identity import (
 )
 from ._run_ledger_publication_storage import (
     OPEN_RECEIPT_SQL,
+    hydrate_receipt,
+    is_noop_publication,
+    latest_receipt_row,
     proof_from_row,
     proof_row,
     receipt_corrupt,
@@ -71,6 +74,66 @@ class RunLedgerPublicationProofMethods:
         with ledger_connection(self.path) as connection:
             row = require_proof_row(connection, key)
         return proof_from_row(row)
+
+    def publication_noop_completed(
+        self,
+        generation_id: str,
+        receipt_id: str,
+    ) -> bool:
+        """Validate persisted no-op completion against one current proof snapshot."""
+        with ledger_connection(self.path) as connection:
+            connection.execute("BEGIN")
+            try:
+                generation = self._generation_from_row(
+                    self._require_mutable_generation(connection, generation_id)
+                )
+                row = latest_receipt_row(connection, generation_id)
+                if row is None or column_text(row, "receipt_id") != receipt_id:
+                    return False
+                receipt = hydrate_receipt(connection, row)
+                proof = proof_from_row(
+                    require_proof_row(
+                        connection, compatibility_for_generation(generation)
+                    )
+                )
+                return is_noop_publication(connection, receipt, generation, proof)
+            finally:
+                connection.rollback()
+
+    def publication_already_committed(self, generation_id: str) -> bool:
+        """Recognize source storage finalization proven before a publication crash.
+
+        A receipt may have committed while its generation still records stale
+        reconciliation. Validate the exact canonical proof before skipping
+        those completed mutations; a caller-owned phase alone is insufficient.
+        """
+        with ledger_connection(self.path) as connection:
+            connection.execute("BEGIN")
+            try:
+                generation = self._generation_from_row(
+                    self._require_mutable_generation(connection, generation_id)
+                )
+                if generation.finalization_phase is FinalizationPhase.INGESTING:
+                    return False
+                if generation.finalization_phase is FinalizationPhase.STALE_RECONCILED:
+                    receipt = latest_receipt_row(connection, generation_id)
+                    if (
+                        receipt is None
+                        or column_text(receipt, "state")
+                        == ProofReceiptState.SEALED.value
+                    ):
+                        current = proof_row(
+                            connection, compatibility_for_generation(generation)
+                        )
+                        if (
+                            current is None
+                            or column_text(current, "generation_id") != generation_id
+                        ):
+                            return False
+                self.assert_generation_proof_committed(connection, generation_id)
+                return True
+            finally:
+                connection.rollback()
 
     def clear_publication_source(
         self,
@@ -341,10 +404,7 @@ class RunLedgerPublicationProofMethods:
             raise RunLedgerStateError(
                 "publication proof is incompatible with generation finalization"
             )
-        if proof.generation_id != generation.generation_id:
-            raise RunLedgerStateError(
-                "publication proof must commit before generation finalization"
-            )
+        latest_receipt = latest_receipt_row(connection, generation_id)
         open_receipt: sqlite3.Row | None = fetch_one(
             connection,
             f"""
@@ -361,16 +421,22 @@ class RunLedgerPublicationProofMethods:
                 "publication proof must close its receipt before generation "
                 "finalization"
             )
-        latest_receipt: sqlite3.Row | None = fetch_one(
-            connection,
-            """
-            SELECT * FROM publication_receipts
-            WHERE generation_id = ?
-            ORDER BY reservation_sequence DESC, receipt_id DESC
-            LIMIT 1
-            """,
-            (generation.generation_id,),
-        )
+        if (
+            latest_receipt is not None
+            and column_text(latest_receipt, "state")
+            == ProofReceiptState.ROLLED_BACK.value
+            and is_noop_publication(
+                connection,
+                hydrate_receipt(connection, latest_receipt),
+                generation,
+                proof,
+            )
+        ):
+            return
+        if proof.generation_id != generation.generation_id:
+            raise RunLedgerStateError(
+                "publication proof must commit before generation finalization"
+            )
         if latest_receipt is None:
             if proof.provenance is not ProofProvenance.VERIFIED:
                 raise RunLedgerStateError(

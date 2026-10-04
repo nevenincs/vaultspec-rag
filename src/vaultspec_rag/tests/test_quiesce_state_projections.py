@@ -37,7 +37,7 @@ def _projection_client(registry: ServiceRegistry) -> Generator[TestClient]:
         ServerRouteRuntime(token=_TOKEN, registry=registry, port=8765),
         lifespan=None,
     )
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         yield client
 
 

@@ -5,14 +5,13 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import threading
-    from collections import OrderedDict, deque
+    from collections import deque
 
-from .. import job_persistence as _job_persistence
 from .._runtime_identity import process_identity_fields
 from ..job_models import (
     DesiredJobState,
@@ -42,27 +41,10 @@ from .state import (
     JobDispatchBinding,
     JobManagerState,
     ManagedJob,
-    ManagerStateBackup,
     assign_runtime_owner,
 )
 
 logger = logging.getLogger("vaultspec_rag.jobs")
-
-
-@dataclass(frozen=True)
-class _CreateRequest:
-    """Validated values needed to create one job while holding the manager lock."""
-
-    spec: JobSpec
-    initiator: JobInitiator
-    idempotency_key: str | None
-    start_paused: bool
-    job_id: str | None
-
-    @property
-    def signature(self) -> tuple[JobSpec, JobInitiator, bool]:
-        """Return the immutable identity used by idempotency bindings."""
-        return self.spec, self.initiator, self.start_paused
 
 
 class JobManagerRecords(JobManagerState):
@@ -75,94 +57,17 @@ class JobManagerRecords(JobManagerState):
     _active: dict[str, ManagedJob]
     _terminal: deque[ManagedJob]
     _dispatchers: dict[str, JobDispatchBinding]
-    _idempotency: OrderedDict[str, _job_persistence.IdempotencyBinding]
-    _job_idempotency_keys: dict[str, set[str]]
     _max_nonterminal: int
     _max_terminal_history: int
-    _max_idempotency: int
-
-    def _replay_idempotent_locked(
-        self,
-        normalized_key: str | None,
-        signature: tuple[JobSpec, JobInitiator, bool],
-    ) -> JobOutcome | None:
-        """Resolve an idempotency key against existing bindings.
-
-        Returns the outcome to hand back when the key conflicts with a
-        different request or replays an existing job, or ``None`` when
-        admission should proceed - including when the bound job has since
-        disappeared, whose stale binding is dropped here.
-        """
-        if normalized_key is None:
-            return None
-        binding = self._idempotency.get(normalized_key)
-        if binding is None:
-            return None
-        self._idempotency.move_to_end(normalized_key)
-        existing = self._get_locked(binding.job_id)
-        if binding.signature != signature:
-            return JobOutcome(
-                command="create",
-                status=JobOutcomeStatus.ERROR,
-                code="idempotency_key_conflict",
-                message=(
-                    "The idempotency key is already bound to a different job request."
-                ),
-                job=existing,
-            )
-        if existing is not None:
-            return JobOutcome(
-                command="create",
-                status=JobOutcomeStatus.OK,
-                code="idempotency_replayed",
-                message="The original job creation result was replayed.",
-                job=existing,
-            )
-        self._idempotency.pop(normalized_key, None)
-        return None
-
-    def _adopt_equivalent_locked(
-        self,
-        equivalent: JobSnapshot,
-        *,
-        normalized_key: str | None,
-        signature: tuple[JobSpec, JobInitiator, bool],
-        backup: ManagerStateBackup,
-    ) -> JobOutcome:
-        """Bind an optional replay key to equivalent active work durably."""
-        if normalized_key is not None:
-            self._bind_idempotency_locked(
-                normalized_key,
-                signature,
-                equivalent.id,
-            )
-            persistence_error = self._persist_locked()
-            if persistence_error is not None:
-                if not persistence_error.published:
-                    self._restore_state_locked(backup)
-                return self._persistence_error(
-                    "create",
-                    persistence_error,
-                    equivalent,
-                )
-        return JobOutcome(
-            command="create",
-            status=JobOutcomeStatus.OK,
-            code="active_job_exists",
-            message="Equivalent active work is already registered.",
-            job=equivalent,
-        )
 
     def create(
         self,
         spec: JobSpec,
         initiator: JobInitiator,
         *,
-        idempotency_key: str | None = None,
-        start_paused: bool = False,
         job_id: str | None = None,
     ) -> JobOutcome:
-        """Admit one logical job, or replay/deduplicate an existing resource."""
+        """Admit one logical job, or deduplicate against equivalent active work."""
         spec_error = _job_spec_error(spec)
         if spec_error is not None:
             return JobOutcome(
@@ -171,42 +76,25 @@ class JobManagerRecords(JobManagerState):
                 code="invalid_job_spec",
                 message=spec_error,
             )
-        try:
-            normalized_key = self._normalize_idempotency_key(idempotency_key)
-        except ValueError as exc:
-            return JobOutcome(
-                command="create",
-                status=JobOutcomeStatus.ERROR,
-                code="invalid_idempotency_key",
-                message=str(exc),
-            )
-        request = _CreateRequest(
-            spec=spec,
-            initiator=initiator,
-            idempotency_key=normalized_key,
-            start_paused=start_paused,
-            job_id=job_id,
-        )
-
         with self._lock:
-            return self._create_locked(request)
+            return self._create_locked(spec, initiator, job_id)
 
-    def _create_locked(self, request: _CreateRequest) -> JobOutcome:
+    def _create_locked(
+        self,
+        spec: JobSpec,
+        initiator: JobInitiator,
+        job_id: str | None,
+    ) -> JobOutcome:
         """Create a validated request while the manager lock is held."""
         backup = self._capture_state_locked()
-        replay = self._replay_idempotent_locked(
-            request.idempotency_key, request.signature
-        )
-        if replay is not None:
-            return replay
-
-        equivalent = self._find_equivalent_active_locked(request.spec)
+        equivalent = self._find_equivalent_active_locked(spec)
         if equivalent is not None:
-            return self._adopt_equivalent_locked(
-                equivalent,
-                normalized_key=request.idempotency_key,
-                signature=request.signature,
-                backup=backup,
+            return JobOutcome(
+                command="create",
+                status=JobOutcomeStatus.OK,
+                code="active_job_exists",
+                message="Equivalent active work is already registered.",
+                job=equivalent,
             )
 
         if len(self._active) >= self._max_nonterminal:
@@ -220,7 +108,7 @@ class JobManagerRecords(JobManagerState):
                 ),
             )
 
-        resolved_id = request.job_id or str(uuid.uuid4())
+        resolved_id = job_id or str(uuid.uuid4())
         if self._get_locked(resolved_id) is not None:
             return JobOutcome(
                 command="create",
@@ -231,28 +119,26 @@ class JobManagerRecords(JobManagerState):
             )
 
         now = time.time()
-        state = JobState.PAUSED if request.start_paused else JobState.QUEUED
-        desired_state = (
-            DesiredJobState.PAUSED if request.start_paused else DesiredJobState.RUNNING
-        )
+        state = JobState.QUEUED
+        desired_state = DesiredJobState.RUNNING
         created = JobSnapshot(
             id=resolved_id,
             revision=1,
-            spec=request.spec,
+            spec=spec,
             state=state,
             desired_state=desired_state,
-            capabilities=_capabilities_for_state(request.spec, state),
+            capabilities=_capabilities_for_state(
+                spec, state, desired_state=desired_state
+            ),
             attempt=JobAttempt(number=1),
             timestamps=JobTimestamps(
                 created_at=now,
                 state_changed_at=now,
-                control_requested_at=now if request.start_paused else None,
-                control_acknowledged_at=now if request.start_paused else None,
             ),
             progress=None,
             result=None,
             error_kind=None,
-            initiator=request.initiator,
+            initiator=initiator,
             runtime=self._process_runtime_snapshot(),
             resources=JobResourceSnapshot(started=None, finished=None),
         )
@@ -260,12 +146,6 @@ class JobManagerRecords(JobManagerState):
             snapshot=created,
             runtime=UNOWNED_RUNTIME,
         )
-        if request.idempotency_key is not None:
-            self._bind_idempotency_locked(
-                request.idempotency_key,
-                request.signature,
-                resolved_id,
-            )
 
         persistence_error = self._persist_locked()
         if persistence_error is not None:
@@ -339,8 +219,7 @@ class JobManagerRecords(JobManagerState):
         self._dispatchers.pop(managed.snapshot.id, None)
         self._terminal.append(managed)
         while len(self._terminal) > self._max_terminal_history:
-            evicted = self._terminal.popleft()
-            self._forget_idempotency_locked(evicted.snapshot.id)
+            self._terminal.popleft()
 
     def _snapshot_locked(self, managed: ManagedJob) -> JobSnapshot:
         owner = managed.runtime
@@ -351,76 +230,6 @@ class JobManagerRecords(JobManagerState):
             worker_active=owner.worker_active,
         )
         return replace(managed.snapshot, runtime=runtime)
-
-    def _bind_idempotency_locked(
-        self,
-        key: str,
-        signature: tuple[JobSpec, JobInitiator, bool],
-        job_id: str,
-    ) -> None:
-        previous = self._idempotency.pop(key, None)
-        if previous is not None:
-            previous_keys = self._job_idempotency_keys.get(previous.job_id)
-            if previous_keys is not None:
-                previous_keys.discard(key)
-                if not previous_keys:
-                    self._job_idempotency_keys.pop(previous.job_id, None)
-        self._idempotency[key] = _job_persistence.IdempotencyBinding(signature, job_id)
-        self._job_idempotency_keys.setdefault(job_id, set()).add(key)
-        while len(self._idempotency) > self._idempotency_budget_locked():
-            evicted_key, evicted = self._idempotency.popitem(last=False)
-            job_keys = self._job_idempotency_keys.get(evicted.job_id)
-            if job_keys is not None:
-                job_keys.discard(evicted_key)
-                if not job_keys:
-                    self._job_idempotency_keys.pop(evicted.job_id, None)
-
-    def _idempotency_budget_locked(self) -> int:
-        """Return the replay-binding ceiling: one per job that can still be named.
-
-        The configured ceiling is derived from the two retention bounds, which
-        expresses one binding per job either bound can retain. Restored state
-        can legitimately hold more nonterminal jobs than the current
-        nonterminal bound - a bound lowered between service lives limits new
-        admission, not what a previous life already recorded - and evicting
-        against the configured number alone would then discard a binding whose
-        job is still live and still addressable. The caller replaying that key
-        would be told equivalent work exists rather than that its own original
-        request was replayed, which is a different answer to the same
-        question.
-
-        Taking the larger of the two keeps the invariant the ceiling exists to
-        state without letting the map outgrow the jobs it describes, because
-        the floor is the live count and falls back as that work drains.
-
-        The floor counts jobs while the map holds bindings, and a job can
-        carry several keys, so a job adopted repeatedly under new keys can
-        still push the map past it and evict a live binding. That is the
-        residual bound of a per-job ceiling rather than something this floor
-        introduces - the configured number makes the same assumption - and
-        closing it means counting the union of the per-job key sets.
-        """
-        return max(self._max_idempotency, len(self._active) + len(self._terminal))
-
-    def _forget_idempotency_locked(self, job_id: str) -> None:
-        for key in self._job_idempotency_keys.pop(job_id, set()):
-            binding = self._idempotency.get(key)
-            if binding is not None and binding.job_id == job_id:
-                self._idempotency.pop(key, None)
-
-    @staticmethod
-    def _normalize_idempotency_key(key: str | None) -> str | None:
-        if key is None:
-            return None
-        normalized = key.strip()
-        if not normalized:
-            raise ValueError("idempotency_key must not be empty")
-        if len(normalized) > _job_persistence.MAX_IDEMPOTENCY_KEY_LENGTH:
-            raise ValueError(
-                "idempotency_key must not exceed "
-                f"{_job_persistence.MAX_IDEMPOTENCY_KEY_LENGTH} characters"
-            )
-        return normalized
 
     @staticmethod
     def _process_runtime_snapshot() -> JobRuntimeSnapshot:

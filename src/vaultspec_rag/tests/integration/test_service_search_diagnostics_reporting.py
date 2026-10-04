@@ -53,6 +53,7 @@ def test_cli_json_preserves_shared_readiness_scenario(
     expected.update({"query": "readiness", "search_type": "code", "via": "service"})
     emitted = json.loads(result.output)
     if scenario.failure is None:
+        assert "--doc-type adr" in emitted["data"].pop("advisory")
         # Mutation proof (current): temporarily removing readiness while the
         # CLI copied the service payload failed this exact JSON parity assertion
         # (RED exit 1); immediate restoration passed the identical node (GREEN 0).

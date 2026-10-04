@@ -25,7 +25,6 @@ import os
 import subprocess
 import sys
 import threading
-import time
 from typing import TYPE_CHECKING
 
 import pytest
@@ -35,9 +34,9 @@ from ..cli._search import (
     _local_search_deadline,
     _local_search_mandated,
 )
-from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..serviceclient._compat import SERVICE_VERSION_FIELD, local_package_version
+from ._config_fixtures import reset_config
 from ._ports import free_loopback_port
 from .conftest import managed_env
 
@@ -132,10 +131,30 @@ class TestLocalSearchDeadline:
     """The wall-clock deadline bounds a mandated local run."""
 
     def test_timer_fires_on_slow_body(self) -> None:
-        fired = threading.Event()
-        with _local_search_deadline(0.05, json_mode=False, on_timeout=fired.set):
-            time.sleep(0.6)
-        assert fired.is_set()
+        """The shipped handler writes its envelope and force-exits the process.
+
+        Only process exit frees the index lock the local store holds, so the
+        expiry path cannot be observed in this interpreter; a fresh one runs
+        the real handler and is asserted on its envelope and exit status.
+        """
+        code = (
+            "import time\n"
+            "from vaultspec_rag.cli._search import _local_search_deadline\n"
+            "with _local_search_deadline(0.05, json_mode=True):\n"
+            "    time.sleep(60)\n"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=180,
+        )
+
+        assert proc.returncode == 124, proc.stderr
+        payload = json.loads(proc.stderr.strip().splitlines()[-1])
+        assert payload["error"] == "local_search_timeout"
+        assert payload["timeout_seconds"] == 0.05
 
     def test_timer_cancelled_on_fast_body(self) -> None:
         """Exiting the body cancels the timer - observed, not raced against.
@@ -155,9 +174,8 @@ class TestLocalSearchDeadline:
         """
         deadline = 30.0
         join_bound = 2.0
-        fired = threading.Event()
         pre_existing = set(threading.enumerate())
-        with _local_search_deadline(deadline, json_mode=False, on_timeout=fired.set):
+        with _local_search_deadline(deadline, json_mode=False):
             armed = [
                 thread
                 for thread in threading.enumerate()
@@ -168,14 +186,19 @@ class TestLocalSearchDeadline:
             assert timer.is_alive()
         timer.join(join_bound)
         assert not timer.is_alive(), "the deadline timer was not cancelled on exit"
-        assert not fired.is_set()
 
     @pytest.mark.parametrize("seconds", [None, 0, -1.0])
     def test_non_positive_deadline_is_noop(self, seconds: float | None) -> None:
-        fired = threading.Event()
-        with _local_search_deadline(seconds, json_mode=False, on_timeout=fired.set):
-            pass
-        assert not fired.is_set()
+        """No deadline arms no timer, so nothing can force-exit the process."""
+        pre_existing = set(threading.enumerate())
+        with _local_search_deadline(seconds, json_mode=False):
+            armed = [
+                thread
+                for thread in threading.enumerate()
+                if isinstance(thread, threading.Timer) and thread not in pre_existing
+            ]
+
+        assert armed == []
 
 
 def _run_cli_search_subprocess(

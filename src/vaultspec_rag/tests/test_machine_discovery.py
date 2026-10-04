@@ -21,11 +21,11 @@ from .._machine_lock import (
     read_machine_discovery,
     release_machine_lock_lease,
 )
-from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..server import ServerRouteRuntime
 from ..server._lifecycle import _DiscoveryPublisher
 from ..service import ServiceRegistry
+from ._config_fixtures import reset_config
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

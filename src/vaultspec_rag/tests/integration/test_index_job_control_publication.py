@@ -2,9 +2,9 @@
 """Real-behavior integration coverage for cooperative indexing control.
 
 The tests use the production streaming and indexing paths with local Qdrant,
-real vault and code files, and a CPU-backed SentenceTransformer model. Keeping
-the model tiny makes the control races deterministic without substituting test
-implementations for any production indexing behavior.
+real vault and code files, and the session's real GPU embedding model. Control
+is observed at production checkpoints rather than raced against a particular
+encode duration, so no test implementation stands in for indexing behavior.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ from ._index_job_control_support import (
 
 def test_clean_rebuild_reencodes_when_collection_vanished_under_the_ledger(
     tmp_path: Path,
-    cpu_embedding_model: EmbeddingModel,
+    index_control_model: EmbeddingModel,
 ) -> None:
     """A rebuild must not trust ledger evidence for a destroyed collection.
 
@@ -63,10 +63,10 @@ def test_clean_rebuild_reencodes_when_collection_vanished_under_the_ledger(
     """
     paths = _write_code_files(tmp_path, 128, "ledger-stale")
 
-    with VaultStore(tmp_path, embedding_dim=cpu_embedding_model.dimension) as store:
+    with VaultStore(tmp_path, embedding_dim=index_control_model.dimension) as store:
         indexer = CodebaseIndexer(
             tmp_path,
-            cpu_embedding_model,
+            index_control_model,
             store,
             options=CodebaseIndexer.Options(gpu_lock=threading.Lock()),
         )
@@ -112,7 +112,7 @@ def test_clean_rebuild_reencodes_when_collection_vanished_under_the_ledger(
 
 def test_incremental_requires_rebuild_when_collection_vanished_under_metadata(
     tmp_path: Path,
-    cpu_embedding_model: EmbeddingModel,
+    index_control_model: EmbeddingModel,
 ) -> None:
     """An incremental run must not trust carried evidence for a destroyed collection.
 
@@ -126,10 +126,10 @@ def test_incremental_requires_rebuild_when_collection_vanished_under_metadata(
     """
     paths = _write_code_files(tmp_path, 32, "meta-stale")
 
-    with VaultStore(tmp_path, embedding_dim=cpu_embedding_model.dimension) as store:
+    with VaultStore(tmp_path, embedding_dim=index_control_model.dimension) as store:
         indexer = CodebaseIndexer(
             tmp_path,
-            cpu_embedding_model,
+            index_control_model,
             store,
             options=CodebaseIndexer.Options(gpu_lock=threading.Lock()),
         )
@@ -167,7 +167,7 @@ def test_incremental_requires_rebuild_when_collection_vanished_under_metadata(
 
 def test_an_interrupted_rebuild_leaves_the_served_index_fully_readable(
     tmp_path: Path,
-    cpu_embedding_model: EmbeddingModel,
+    index_control_model: EmbeddingModel,
 ) -> None:
     """A rebuild interrupted mid-build must not cost the served index a point.
 
@@ -185,10 +185,10 @@ def test_an_interrupted_rebuild_leaves_the_served_index_fully_readable(
     """
     paths = _write_code_files(tmp_path, 24, "interrupted-rebuild")
 
-    with VaultStore(tmp_path, embedding_dim=cpu_embedding_model.dimension) as store:
+    with VaultStore(tmp_path, embedding_dim=index_control_model.dimension) as store:
         indexer = CodebaseIndexer(
             tmp_path,
-            cpu_embedding_model,
+            index_control_model,
             store,
             options=CodebaseIndexer.Options(gpu_lock=threading.Lock()),
         )

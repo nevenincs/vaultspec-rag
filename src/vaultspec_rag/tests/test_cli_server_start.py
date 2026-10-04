@@ -175,6 +175,9 @@ class TestStartReorderAndGuards:
             {
                 "status": "degraded",
                 "service_token": "tok-live",
+                # The real report names its serving pid, and identity is the
+                # token and the pid behind it.
+                "pid": os.getpid(),
                 "features": {"typesafe": {"state": "pending"}},
                 "package_version": local_package_version(),
             }
@@ -279,7 +282,10 @@ class TestStartReorderAndGuards:
         # Hold the real machine lock in THIS process, then a start on a free
         # port falls through the idempotent check and the port guard to the
         # machine guard -> machine_owned (with our pid), stated as JSON.
-        from .._machine_lock import acquire_machine_lock, release_machine_lock
+        from ._machine_lock_fixtures import (
+            acquire_machine_lock,
+            release_machine_lock,
+        )
 
         acquired, _ = acquire_machine_lock()
         assert acquired, "the isolated machine lock should be free to acquire"

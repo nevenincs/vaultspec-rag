@@ -13,10 +13,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-import vaultspec_rag.mcp._admin_client as admin
+import vaultspec_rag.tests._admin_client as admin
 
 from ... import server
-from ...config._settings import reset_config
+from .._config_fixtures import reset_config
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -101,9 +101,9 @@ async def test_start_watcher_disabled_is_pull_only(
     tmp_path: Path,
     request: pytest.FixtureRequest,
 ) -> None:
-    from ...cli._process import _spawn_service
     from ...cli._service_status import _write_service_status
     from .._ports import free_loopback_port
+    from .._session_job_anchor import spawn_anchored_service
     from ._helpers import _poll_health, _service_env
     from .conftest import _cleanup_service_process
 
@@ -112,7 +112,7 @@ async def test_start_watcher_disabled_is_pull_only(
     with _service_env(tmp_path, env_overrides={"VAULTSPEC_RAG_WATCH_ENABLED": "0"}):
         port = free_loopback_port()
         log_path = tmp_path / "service.log"
-        pid = _spawn_service(port, log_path)
+        pid = spawn_anchored_service(port, log_path)
         request.addfinalizer(
             lambda: _cleanup_service_process(
                 pid=pid, port=port, log_path=log_path, timeout=15.0

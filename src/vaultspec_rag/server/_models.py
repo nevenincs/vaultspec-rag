@@ -12,7 +12,6 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 from .._store_models import DocumentLocatorKind
-from ..capabilities import BackendCapabilities
 
 
 class DocumentLocatorItem(BaseModel):
@@ -105,26 +104,3 @@ class SearchResultItem(BaseModel):
     def _materialize_document_metadata(cls, value: object) -> object:
         materialize = getattr(value, "materialize", None)
         return materialize() if callable(materialize) else value
-
-
-class SearchResponse(BaseModel):
-    """Response envelope for search tool results.
-
-    Attributes:
-        results: Ranked list of search result items, ordered
-            by descending relevance score.
-        summary: Human-readable summary of the search outcome.
-        backend_capabilities: Concurrency capabilities for the
-            active local vector backend.
-    """
-
-    results: list[SearchResultItem] = Field(
-        description="List of ranked search results",
-    )
-    summary: str = Field(
-        description="Human-readable summary of findings",
-    )
-    backend_capabilities: BackendCapabilities = Field(
-        default_factory=BackendCapabilities,
-        description="Backend concurrency capabilities for agent orchestration",
-    )

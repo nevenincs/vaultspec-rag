@@ -1,0 +1,162 @@
+---
+tags:
+  - '#exec'
+  - '#incremental-index-recovery'
+date: '2026-09-30'
+modified: '2026-10-04'
+body_schema: 'body-v2'
+body_hash: 'sha256:03169f5e4efe895061016eaa391ffaa9be3d110a3fa2e316365ca6587a7efa50'
+related:
+  - "[[2026-09-30-incremental-index-recovery-plan]]"
+---
+
+# `incremental-index-recovery` ledger
+
+## Changes
+
+- `S04` `M` `src/vaultspec_rag/_index_integrity.py`
+- `S04` `A` `src/vaultspec_rag/tests/test_vault_audit_validation.py`
+- `S04` `verify:` `python -m pytest test_vault_audit_validation test_vault_checkpoint test_publication_integrity test_store_schema: 41 tests` -> `pass`
+- `S04` `verify:` `ruff check src dev tools conftest.py` -> `pass`
+- `S04` `verify:` `ruff format --check src dev tools conftest.py` -> `pass`
+- `S04` `verify:` `ty check and strict basedpyright: S04 changed files` -> `pass`
+- `S04` `verify:` `17 audit guard mutations: intended assertion fail, immediate restoration pass` -> `pass`
+- `S04` `by:` `vaultspec-standard-executor`
+- `S01` `M` `src/vaultspec_rag/indexer/_checkpoint_common.py`
+- `S01` `M` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S01` `M` `src/vaultspec_rag/indexer/_document_indexer.py`
+- `S01` `M` `src/vaultspec_rag/indexer/_generation_lifecycle.py`
+- `S01` `M` `src/vaultspec_rag/indexer/_run_ledger_commits.py`
+- `S01` `M` `src/vaultspec_rag/indexer/_run_ledger_finalization.py`
+- `S01` `M` `src/vaultspec_rag/indexer/_run_ledger_publication_proofs.py`
+- `S01` `M` `src/vaultspec_rag/indexer/_run_ledger_publication_reads.py`
+- `S01` `M` `src/vaultspec_rag/indexer/_run_ledger_publication_receipts.py`
+- `S01` `M` `src/vaultspec_rag/indexer/_run_ledger_publication_storage.py`
+- `S01` `M` `src/vaultspec_rag/indexer/_vault_checkpoint.py`
+- `S01` `M` `src/vaultspec_rag/tests/_run_ledger_test_support.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_index_run_ledger_compaction.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_index_run_ledger_generations.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_index_run_ledger_publication_reads.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_publication_read_paths.py`
+- `S01` `A` `src/vaultspec_rag/tests/test_incremental_receipt_recovery.py`
+- `S01` `A` `src/vaultspec_rag/tests/test_receipt_finalization_recovery.py`
+- `S01` `verify:` `python -m pytest selected unit publication, ledger, checkpoint and recovery modules: 169 tests` -> `pass`
+- `S01` `verify:` `python -m ty check and strict basedpyright: S01 changed files with main .venv interpreter` -> `pass`
+- `S01` `verify:` `receipt guard mutations: exact authority, readiness, proof continuation and private pointer; immediate restoration passes` -> `pass`
+- `S02` `M` `src/vaultspec_rag/indexer/_route_migration.py`
+- `S02` `M` `src/vaultspec_rag/indexer/_run_ledger_commits.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_publication_scaling.py`
+- `S02` `M` `src/vaultspec_rag/tests/integration/test_content_route_migration.py`
+- `S02` `A` `src/vaultspec_rag/tests/test_incremental_route_reconciliation.py`
+- `S02` `verify:` `python -m pytest test_incremental_route_reconciliation.py: 8 real-store cases` -> `pass`
+- `S02` `verify:` `python -m pytest test_publication_scaling.py: 8 cases within final 169-case publication suite` -> `pass`
+- `S02` `verify:` `python -m ty check and strict basedpyright: S02 changed files with main .venv interpreter` -> `pass`
+- `S02` `verify:` `8 route guard mutations and both indexed SQL candidate cost guards: intended assertion fail, immediate restoration pass` -> `pass`
+- `S02` `verify:` `1000-unit delta traversal mutation: old per-path filter fails, grouped derivation passes` -> `pass`
+- `S01` `M` `src/vaultspec_rag/indexer/_vault_indexer.py`
+- `S01` `M` `src/vaultspec_rag/indexer/_vault_incremental.py`
+- `S01` `A` `src/vaultspec_rag/tests/test_vault_checkpoint_exposure.py`
+- `S01` `verify:` `python -m pytest test_incremental_receipt_recovery test_receipt_finalization_recovery test_vault_checkpoint_exposure: 37 tests` -> `pass`
+- `S01` `verify:` `6 durable recovery-progress and 5 vault checkpoint exposure guard mutations: intended fail, immediate restored pass` -> `pass`
+- `S01` `verify:` `ruff check src dev tools conftest.py` -> `pass`
+- `S01` `verify:` `ruff format --check src dev tools conftest.py: 921 files` -> `pass`
+- `S01` `by:` `vaultspec-high-executor`
+- `S02` `verify:` `ruff check src dev tools conftest.py: applicable unchanged S02 snapshot` -> `pass`
+- `S02` `verify:` `ruff format --check src dev tools conftest.py: applicable unchanged S02 snapshot` -> `pass`
+- `S02` `verify:` `python -m ty check and basedpyright all changed Python files before checkpoint: zero diagnostics` -> `pass`
+- `S02` `by:` `Codex supervisor`
+- `S03` `M` `src/vaultspec_rag/watcher_retry_policy.py`
+- `S03` `M` `src/vaultspec_rag/job_dispatch.py`
+- `S03` `M` `src/vaultspec_rag/watcher_runtime.py`
+- `S03` `M` `src/vaultspec_rag/watcher_durability.py`
+- `S03` `M` `src/vaultspec_rag/server/_watcher.py`
+- `S03` `A` `src/vaultspec_rag/tests/test_watcher_rebuild_settlement.py`
+- `S03` `A` `src/vaultspec_rag/tests/test_watcher_publication_certification.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_watcher_scheduler.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_watcher_retry.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_watcher_recovery.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_job_resilience.py`
+- `S03` `verify:` `python -m pytest all unit test_watcher and test_job modules plus config/CLI watcher modules -q --tb=short: 751 tests` -> `pass`
+- `S03` `verify:` `python -m ruff check src dev tools conftest.py` -> `pass`
+- `S03` `verify:` `python -m ruff format --check src dev tools conftest.py: 921 files` -> `pass`
+- `S03` `verify:` `python -m ty check --python main .venv interpreter all changed Python files from 14269e8e` -> `pass`
+- `S03` `verify:` `python -m basedpyright --pythonpath main .venv interpreter all changed Python files from 14269e8e: zero diagnostics` -> `pass`
+- `S03` `verify:` `127 intended-red/restored-green watcher guard records, 125 distinct mutations, zero invalid records` -> `pass`
+- `S03` `verify:` `52-case persisted historical matrix and 8 actual production dispatch orchestration cases` -> `pass`
+- `S03` `by:` `vaultspec-high-executor`
+- `S04` `verify:` `2026-10-04 feature/monitor integration focused vault audit/checkpoint/integrity/schema tests: 42 passed; TEMP/vaultspec-monitor-S04-tests-20261004.log` -> `pass`
+- `S04` `by:` `Codex integration supervisor`
+- `S02` `M` `src/vaultspec_rag/tests/test_content_route_migration.py`
+- `S02` `verify:` `2026-10-04 monitor integration real-store route, SQL scaling, compaction and generation suites: 50 passed; TEMP/vaultspec-monitor-route-port-final-20261004.log` -> `pass`
+- `S02` `verify:` `Raw audit projection source-path filter omission: intended assertion red then byte restoration green 1 passed; TEMP/vaultspec-monitor-route-guard-red-20261004.log and route-guard-green log` -> `pass`
+- `S02` `by:` `Codex integration supervisor`
+- `S01` `verify:` `Monitor integration receipt module: 35 cases including six empty/populated FULL, incremental and scoped no-ops; worker tool transcript session 97936` -> `pass`
+- `S01` `verify:` `Checkpoint restart, ledger lifetime and live resilience interactions: 23 passed; worker session 65044` -> `pass`
+- `S01` `verify:` `Final empty receipt recovery/progress regressions: 7 passed; worker session 44457` -> `pass`
+- `S01` `verify:` `Ruff, Ruff format check and strict Basedpyright on assigned changed files: exit zero; worker handoff` -> `pass`
+- `S01` `verify:` `Unjournaled committed-unit, observer and receipt-pruning guards: intended assertion red then immediate restored green; comments in receipt/vault observer/compaction tests` -> `pass`
+- `S01` `by:` `Codex integration supervisor`
+- `S02` `M` `src/vaultspec_rag/tests/test_cli_storage_generation_diagnostics.py`
+- `S02` `verify:` `Portable storage survey CLI fixture module: 22 passed; TEMP/vaultspec-monitor-storage-diagnostics-fixture-20261004.log` -> `pass`
+- `S02` `verify:` `Ignoring published temp-root fact: intended CLI assertion red, immediate byte restoration green; TEMP/vaultspec-monitor-survey-guard-red-20261004.log and survey-guard-green log` -> `pass`
+- `S03` `M` `src/vaultspec_rag/tests/test_watcher_rebuild_reconciliation.py`
+- `S03` `verify:` `S03 Ruff, format, ty and complexity` -> `pass`
+- `S03` `verify:` `28 applicable uninterrupted intended-red/restored-green guard sequences` -> `pass`
+- `S03` `by:` `Codex integration supervisor`
+- `S02` `M` `src/vaultspec_rag/tests/test_route_scan_classification_cache.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_qdrant_supervise_diagnostics.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S02` `verify:` `Root route-cache and real child witness fixtures 7 cases` -> `pass`
+- `S02` `verify:` `Exact five-site reviewed substitution contract 2 cases` -> `pass`
+- `S02` `verify:` `Substitution allowance four intended-red, five byte-restored-green` -> `pass`
+- `S03` `M` `src/vaultspec_rag/tests/test_watcher_controller_intake.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_watcher_publication_certification.py`
+- `S03` `verify:` `Integrated watcher repair focus40 cases` -> `pass`
+- `S03` `verify:` `Four integrated intended-red/byte-restored-green guard proofs` -> `pass`
+- `S03` `verify:` `Integrated Ruff, format, ty, pylint and complexity` -> `pass`
+- `S01` `M` `src/vaultspec_rag/tests/test_publication_recovery.py`
+- `S01` `verify:` `Final publication recovery and unchanged readiness parent identity 70 cases` -> `pass`
+- `S01` `verify:` `Three independent receipt rebuild/checkpoint/ledger intended-red and immediate restored-green guards` -> `pass`
+- `S01` `verify:` `Scoped Ruff format ty and strict Basedpyright` -> `pass`
+- `S03` `verify:` `Full CPU test-all 7110 passed/7 platform skips at staged tree045d3357` -> `pass`
+- `S03` `verify:` `Strict Basedpyright zero errors/warnings at tree045d3357` -> `pass`
+- `S03` `verify:` `Exact combined dev.complexity gate with Complexipy and Xenon` -> `pass`
+- `S03` `verify:` `216 watcher cases covered by215 main passes plus unchanged fixture retry1 pass` -> `pass`
+- `S03` `verify:` `Four relocated guards intended-red/immediately byte-restored-green` -> `pass`
+- `S03` `verify:` `Scoped Ruff format ty and pylint` -> `pass`
+- `S03` `verify:` `Final full check-all at tree947c0513` -> `pass`
+- `S03` `verify:` `Three exact startup/HTTP timeout cases without concurrent static checks` -> `pass`
+- `S03` `M` `.github/workflows/merge-gate.yml`
+- `S03` `verify:` `Windows four-worker workflow actionlint` -> `pass`
+- `S01` `verify:` `Final shared just test-all with four Windows workers: 7110 passed/7 platform skips, exit0 at executable tree72edafee; TEMP/vaultspec-monitor-push-test-all-four-workers-20261004.log` -> `pass`
+- `S01` `verify:` `Full just check-all and build-all exit0 at tree947c0513; unchanged Python/frontend/deps, final workflow actionlint and full CPU workflow guards pass` -> `pass`
+- `S01` `verify:` `Applicable audit-deps, dev check and verified native monitor build pass; all guard mutations restored` -> `pass`
+- `S02` `verify:` `Final shared just test-all with four Windows workers: 7110 passed/7 platform skips, exit0 at executable tree72edafee; TEMP/vaultspec-monitor-push-test-all-four-workers-20261004.log` -> `pass`
+- `S02` `verify:` `Full just check-all and build-all exit0 at tree947c0513; unchanged Python/frontend/deps, final workflow actionlint and full CPU workflow guards pass` -> `pass`
+- `S02` `verify:` `Applicable audit-deps, dev check and verified native monitor build pass; all guard mutations restored` -> `pass`
+- `S03` `verify:` `Final shared just test-all with four Windows workers: 7110 passed/7 platform skips, exit0 at executable tree72edafee; TEMP/vaultspec-monitor-push-test-all-four-workers-20261004.log` -> `pass`
+- `S03` `verify:` `Full just check-all and build-all exit0 at tree947c0513; unchanged Python/frontend/deps, final workflow actionlint and full CPU workflow guards pass` -> `pass`
+- `S03` `verify:` `Applicable audit-deps, dev check and verified native monitor build pass; all guard mutations restored` -> `pass`
+- `S04` `verify:` `Final shared just test-all with four Windows workers: 7110 passed/7 platform skips, exit0 at executable tree72edafee; TEMP/vaultspec-monitor-push-test-all-four-workers-20261004.log` -> `pass`
+- `S04` `verify:` `Full just check-all and build-all exit0 at tree947c0513; unchanged Python/frontend/deps, final workflow actionlint and full CPU workflow guards pass` -> `pass`
+- `S04` `verify:` `Applicable audit-deps, dev check and verified native monitor build pass; all guard mutations restored` -> `pass`
+
+## Notes
+
+- `S03` Additional full-package complexipy remains red solely for untouched `_routes_search._execute_search_request` at 21 against 20; all changed production functions pass. No threshold or suppression changes.
+- `S04` Current user authorized consolidation into feature/monitor and push after local gates. S04 source and test match the reviewed recovery branch; its 17 restored guard proofs remain applicable.
+- `S02` Bounded path selection preserves newer raw audit metadata scans, geometry/owner deletion gates and local classification caching. Older seven integration cases already live in the canonical CPU `test_content_route_migration` module; retain those instead of duplicating them. Existing SQL/receipt traversal guard inputs and changes remain applicable.
+- `S01` Keep modern progress observer and recovery owners; preserve FULL PUBLICATION no-op compatibility with exact parent/key/revision/sequence and zero journal/commit-unit fences. Explicit rebuild cannot abandon an empty receipt with unjournaled committed units. Compaction fixtures now publish truthfully on a distinct backend while retaining the open receipt owner.
+- `S02` Prior PR Linux 3.14 run 37202615302 failed because the environment-disagreement fixture remained under /tmp. Use a synthetic read-only non-temp root; retain all published-fact assertions and unchanged production adapters.
+- `S03` Source frozen after actual checkpoint dispatch, exact certified FULL ownership, current live fencing and persisted settlement-time integration. TEMP/vaultspec-monitor-s03-mutations-20261004.jsonl retains one invalid removed-duplicate experiment, explicitly superseded by the valid canonical-owner-compatibility-boundary proof; 28 applicable records pass and all mutation bytes are restored. Initial focused command 179pass/2 obsolete reservation-fixture failures is retained honestly; corrected live-fence cases 2pass, plus final owner/result13, legacy-fence6, observation-time3, success-time2 and observer/job25 cases pass. Modern canonical modules replace duplicate legacy API assertions.
+- `S02` First integrated shared gates honestly failed: CPU19failed/7091passed; static gate only policy pylint R0916 (11/9). Root corrected exact new optional `source_paths` argument expectations, joined the real witness child before stop to prevent empty-marker races, and documented five adversarial source-return/hardware/lease substitutions without replacing dispatch or ledger safety owners. Proof logs TEMP/vaultspec-monitor-substitution-guard-red-20261004.log and green; original failed aggregate logs retained. Workers own receipt and watcher contract corrections before final aggregate rerun.
+- `S03` Equivalent rebuild header eligibility and timing predicates resolve R0916 without removing ownership requirements. Intake now asserts exact captured-scope preservation, later union and restart; dispatch harness documents all five reviewed boundaries. All mutations restored and source frozen. TEMP/vaultspec-monitor-s03-integrated-mutations-20261004.jsonl and vaultspec-monitor-s03-integrated-repair-20261004.log hold evidence.
+- `S01` Incomplete unsealed receipt fixtures now require both incremental and explicit rebuild refusal with exact durable proof, receipt and storage preservation. Valid-phase proof-loss fixtures independently exercise ledger transition and checkpoint publication gates. Shared test certification returns for an exact canonical completed FULL no-op, retaining existing readiness parent-proof assertions unchanged. Production bytes unchanged during this repair and all mutations restored. TEMP/vaultspec-monitor-receipt-readiness-focused-final-20261004.log and receipt-rebuild-admission/checkpoint-publication/ledger-publication red/green logs hold evidence.
+- `S03` Correction to initial static diagnostic: both integrated check-all runs also fail Xenon because `reconcile_rebuild` has cyclomatic rank E; cognitive complexipy passed. Initial R0916 was corrected, but the earlier claim it was the sole failing static dimension was incomplete. Latest test-all exits0, build-all exits0; check-all remains failed/pending canonical helper extraction and full rerun. Logs TEMP/vaultspec-monitor-integrated-final-test-all-20261004.log and integrated-final-check-all preserve actual outcomes. No threshold or suppression will change.
+- `S03` Canonical typed completed-job window replaces spec-only matcher; existing eligibility owns latest unknown-observation cutoff; pure settlement construction leaves lock, ownership checks, durable commit and token release ordering intact. `reconcile_rebuild` now cyclomatic15/cognitive11. One historical running-vault child-startup fixture timeout occurred before reconciliation; unchanged isolated rerun passed in2.04sec and original failure log retained. TEMP/vaultspec-monitor-s03-complexity-gate-20261004.log, refactor-tests/retry logs and mutationJSONL hold actual outcomes. Source frozen after all production bytes restored.
+- `S03` Latest combined-load test-all reports3 setup/HTTP timeouts and7107passes: two actual owner subprocess20sec deadlines and one monitorHTTP8sec deadline. Exact unchanged cases pass3/3 in9.60sec after static checks finish, with owner calls1.21/1.27sec and monitor response2sec. Corrected shared-gate orchestration runs CPU aggregate alone, retaining all assertions, deadlines and gate selections. TEMP/vaultspec-monitor-push-check-all-20261004.log exits0; push-test-all failure log retained; timeout-repair log exits0. Full standalone CPU rerun remains pending.
+- `S03` Standalone default-auto12 run also hits unrelated startup and strict network-timing failures (5failed/7104passed/7skip/1fixtureerror); full failure log retained. Installed xdist plugin honors `PYTEST_XDIST_AUTO_NUM_WORKERS,` so Windows full CI now reserves host scheduling headroom with4 workers while selecting the same entire CPU suite. Every existing latency/startup assertion and deadline remains unchanged. This host has12physical/24logical cores; four-worker complete CPU validation is pending. Other static dimensions remain applicable because only this workflow environment budget changed after full check-all passed.
+- `S01` Final shared evidence closes prior pending verification. Windows runner budget4 retains the complete CPU suite and every latency/startup deadline. Explicit GPU/MPS/performance environment skips remain unclaimed; failed earlier scheduling logs and restored guard evidence are retained. Final metadata checks follow this append.
+- `S02` Final shared evidence closes prior pending verification. Windows runner budget4 retains the complete CPU suite and every latency/startup deadline. Explicit GPU/MPS/performance environment skips remain unclaimed; failed earlier scheduling logs and restored guard evidence are retained. Final metadata checks follow this append.
+- `S03` Final shared evidence closes prior pending verification. Windows runner budget4 retains the complete CPU suite and every latency/startup deadline. Explicit GPU/MPS/performance environment skips remain unclaimed; failed earlier scheduling logs and restored guard evidence are retained. Final metadata checks follow this append.
+- `S04` Final shared evidence closes prior pending verification. Windows runner budget4 retains the complete CPU suite and every latency/startup deadline. Explicit GPU/MPS/performance environment skips remain unclaimed; failed earlier scheduling logs and restored guard evidence are retained. Final metadata checks follow this append.

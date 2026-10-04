@@ -455,7 +455,9 @@ async def test_durable_queued_prepare_recovers_after_restart_without_new_id(
     assert (
         restarted_controller.complete_warming().snapshot.state is QuiesceState.RUNNING
     )
-    assert restarted.recover_running_quiesced_resume() == (job_id,)
+    assert restarted.dispatch_prepared_quiesced_resume(
+        restarted.prepare_quiesced_resume(expected_state=QuiesceState.RUNNING)
+    ) == (job_id,)
     await _await_state(restarted, job_id, JobState.SUCCEEDED)
     assert attempts == [2]
 
@@ -535,7 +537,12 @@ async def test_prepared_dispatch_rechecks_operator_intent(
     )
     assert controller.complete_warming().snapshot.state is QuiesceState.RUNNING
     assert manager.dispatch_prepared_quiesced_resume(prepared) == ()
-    assert manager.recover_running_quiesced_resume() == ()
+    assert (
+        manager.dispatch_prepared_quiesced_resume(
+            manager.prepare_quiesced_resume(expected_state=QuiesceState.RUNNING)
+        )
+        == ()
+    )
     assert not runner_started.is_set()
 
 
@@ -642,7 +649,12 @@ async def test_blocked_loop_control_invalidates_recovery_claim(
     assert final is not None
     assert final.state is (JobState.QUEUED if shutdown else JobState.CANCELLED)
     assert attempts == [1]
-    assert manager.recover_running_quiesced_resume() == ()
+    assert (
+        manager.dispatch_prepared_quiesced_resume(
+            manager.prepare_quiesced_resume(expected_state=QuiesceState.RUNNING)
+        )
+        == ()
+    )
 
 
 def test_no_loop_recovery_claim_is_released_for_a_later_owner_loop() -> None:
@@ -662,7 +674,9 @@ def test_no_loop_recovery_claim_is_released_for_a_later_owner_loop() -> None:
     assert manager.dispatch_prepared_quiesced_resume(prepared) == ()
 
     async def recover_on_owner_loop() -> None:
-        assert manager.recover_running_quiesced_resume() == (job_id,)
+        assert manager.dispatch_prepared_quiesced_resume(
+            manager.prepare_quiesced_resume(expected_state=QuiesceState.RUNNING)
+        ) == (job_id,)
         await _await_state(manager, job_id, JobState.SUCCEEDED)
 
     asyncio.run(recover_on_owner_loop())
@@ -722,7 +736,9 @@ def test_stopped_owner_loop_recovery_claim_moves_to_later_owner_loop() -> None:
     assert manager.dispatch_prepared_quiesced_resume(prepared) == ()
 
     async def recover_on_later_owner_loop() -> None:
-        assert manager.recover_running_quiesced_resume() == (job_id,)
+        assert manager.dispatch_prepared_quiesced_resume(
+            manager.prepare_quiesced_resume(expected_state=QuiesceState.RUNNING)
+        ) == (job_id,)
         await _await_state(manager, job_id, JobState.SUCCEEDED)
 
     asyncio.run(recover_on_later_owner_loop())

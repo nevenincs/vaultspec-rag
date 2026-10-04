@@ -46,11 +46,19 @@ pytestmark = [pytest.mark.unit]
 def test_tail_daemon_log_returns_last_nonempty_lines(tmp_path: Path) -> None:
     log = tmp_path / "service.log"
     log.write_text(
-        "line one\n\n  \nline two\nRuntimeError: CUDA GPU required\n",
+        "dropped\nline one\n\n  \nline two\nthree\nfour\nfive\n"
+        "RuntimeError: CUDA GPU required\n",
         encoding="utf-8",
     )
-    tail = _tail_daemon_log(log, max_lines=2)
-    assert tail == ["line two", "RuntimeError: CUDA GPU required"]
+    tail = _tail_daemon_log(log)
+    assert tail == [
+        "line one",
+        "line two",
+        "three",
+        "four",
+        "five",
+        "RuntimeError: CUDA GPU required",
+    ]
 
 
 def test_tail_daemon_log_missing_file_is_empty(tmp_path: Path) -> None:

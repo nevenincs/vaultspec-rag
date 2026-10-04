@@ -32,7 +32,6 @@ from ._index import CU130_INDEX_NAME, CU130_INDEX_URL
 from ._inspect import (
     classify_doc,
     detect_crlf,
-    detect_state,
     get_indices_aot,
     get_tool_uv_table,
     is_half_applied,
@@ -70,19 +69,6 @@ _SNIPPET_DIRECT_DEP_COMMENT: Final[str] = (
     f"# Add torch as a direct dep too, e.g. in [project].dependencies\n"
     f'# or [dependency-groups].dev:  "{DIRECT_TORCH_REQUIREMENT}"\n'
 )
-
-
-def preview_patch(pyproject: Path) -> str:
-    """Return the TOML snippet ``apply_patch`` would write.
-
-    Returns an empty string when state is ``CANONICAL`` (nothing to
-    do) or ``CUSTOMISED`` (apply refuses). Returns
-    :func:`manual_snippet` for ``MISSING`` and ``NO_PROJECT_FILE``.
-    """
-    state = detect_state(pyproject)
-    if state in (TorchConfigState.MISSING, TorchConfigState.NO_PROJECT_FILE):
-        return manual_snippet()
-    return ""
 
 
 def apply_patch(pyproject: Path) -> PatchReport:

@@ -18,19 +18,18 @@ fakes - so the assertions are about persisted state, not about call recording.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import pytest
 
 from .._source_types import PublicSourceType
 from ..indexer._checkpoint_common import (
-    RunCheckpointBase,
     classify_interrupted_generation,
     configuration_fingerprint,
 )
 from ..indexer._document_checkpoint import DocumentRunConfiguration
 from ..indexer._publication_proof import ProofMutationState
-from ..indexer._run_checkpoint import CodeRunConfiguration
+from ..indexer._run_checkpoint import CodeRunCheckpoint, CodeRunConfiguration
 from ..indexer._run_ledger_models import (
     CommitUnit,
     CommitUnitKind,
@@ -42,11 +41,10 @@ from ..indexer._run_ledger_models import (
 )
 from ..indexer._run_ledger_publication_identity import compatibility_for_signature
 from ..indexer._run_ledger_runtime import RunLedger
+from ..indexer._run_policy import RunPolicy
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    from ..indexer._run_policy import RunPolicy
 
 pytestmark = [pytest.mark.unit]
 
@@ -164,11 +162,11 @@ def test_empty_incremental_closes_receipt_without_rewriting_proof(
         incremental.generation_id,
         expected_parent_revision=original.revision,
     )
-    checkpoint = RunCheckpointBase(
+    checkpoint = CodeRunCheckpoint(
         ledger,
         incremental,
         None,
-        cast("RunPolicy", None),
+        RunPolicy(no_progress_timeout_seconds=30.0),
         RunAuthority.PUBLICATION,
         receipt,
     )
@@ -213,11 +211,11 @@ def test_reopened_checkpoint_confirms_applied_mutation_without_replaying_store(
         is_file_end=True,
         point_ids=("point-a",),
     )
-    lifecycle = RunCheckpointBase(
+    lifecycle = CodeRunCheckpoint(
         ledger,
         incremental,
         None,
-        cast("RunPolicy", None),
+        RunPolicy(no_progress_timeout_seconds=30.0),
         RunAuthority.PUBLICATION,
         receipt,
     ).mutation_lifecycle(unit)
@@ -228,11 +226,11 @@ def test_reopened_checkpoint_confirms_applied_mutation_without_replaying_store(
     reopened = RunLedger(ledger.path)
     active = reopened.active_publication_receipt(key)
     assert active is not None
-    resumed = RunCheckpointBase(
+    resumed = CodeRunCheckpoint(
         reopened,
         reopened.generation(incremental.generation_id),
         None,
-        cast("RunPolicy", None),
+        RunPolicy(no_progress_timeout_seconds=30.0),
         RunAuthority.PUBLICATION,
         active,
     ).mutation_lifecycle(unit)

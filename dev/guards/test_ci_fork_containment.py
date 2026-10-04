@@ -14,8 +14,8 @@ from typing import cast
 
 import pytest
 
-from dev.ci_names import GATE_JOB, Workflow
 from dev.guards import _workflows as workflows
+from dev.guards._ci_names import GATE_JOB, Workflow
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
 

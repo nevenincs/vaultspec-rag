@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from ..config._settings import get_config, reset_config
+from ..config._settings import get_config
 from ..config._types import EnvVar
 from ..job_control import (
     NO_RUN_CONTROL,
@@ -23,6 +23,7 @@ from ..job_control import (
     RunControlToken,
     ShutdownRequested,
 )
+from ._config_fixtures import reset_config
 
 pytestmark = [pytest.mark.unit]
 

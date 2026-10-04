@@ -769,7 +769,7 @@ def _reclaim_generations_for_cycle(
             now=now,
             grace_hours=policy.grace_hours_data,
             reader_present=_reader_present,
-            dry_run=dry_run,
+            dry_run=dry_run or policy.max_per_cycle <= 0,
         )
     )
     if not dry_run:
@@ -888,7 +888,7 @@ def run_maintenance_cycle(
             reclaimed += outcome.footprint_bytes
     swept = (
         []
-        if request.dry_run
+        if request.dry_run or request.policy.max_per_cycle <= 0
         else sweep_archive(
             request.archive_dir,
             now=request.now,

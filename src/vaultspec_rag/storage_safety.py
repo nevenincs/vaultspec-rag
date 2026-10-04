@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-__all__ = ["StorageSafetyError", "is_within", "resolve_within"]
+__all__ = ["StorageSafetyError", "resolve_within"]
 
 
 class StorageSafetyError(RuntimeError):
@@ -57,23 +57,3 @@ def resolve_within(target: Path | str, base: Path | str) -> Path:
             f"base {base_resolved}"
         )
     return target_resolved
-
-
-def is_within(target: Path | str, base: Path | str) -> bool:
-    """Return whether ``target`` resolves inside ``base`` (or equals it).
-
-    The non-raising companion to :func:`resolve_within`, for survey/preview
-    paths that need to classify rather than enforce.
-
-    Args:
-        target: The path to test.
-        base: The permitted root.
-
-    Returns:
-        ``True`` if the resolved target is the resolved base or a descendant.
-    """
-    try:
-        resolve_within(target, base)
-    except StorageSafetyError:
-        return False
-    return True

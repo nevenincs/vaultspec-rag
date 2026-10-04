@@ -9,10 +9,8 @@ from . import store_schema
 from ._store_models import (
     CodeChunk,
     VaultChunk,
-    VaultDocument,
     _code_chunk_payload,
     _vault_chunk_payload,
-    _vault_doc_payload,
 )
 from ._store_models import DocumentChunk as _DocumentChunk
 from ._store_writes import (
@@ -66,6 +64,7 @@ class _VaultIngestMixin:
 
     if TYPE_CHECKING:
         TABLE_NAME: str
+        CODE_TABLE_NAME: str
         DOCUMENT_TABLE_NAME: str
         _server_mode: bool
         _storage_probe_path: Path
@@ -83,6 +82,8 @@ class _VaultIngestMixin:
         def ensure_code_table(self, collection: str | None = None) -> None: ...
 
         def ensure_document_table(self) -> None: ...
+
+        def _collection_exists(self, name: str) -> bool: ...
 
         def _point_lock(self, collection: str) -> AbstractContextManager[object]: ...
 
@@ -127,46 +128,6 @@ class _VaultIngestMixin:
             "extractor_version": chunk.payload.extractor_version,
         }
 
-    def upsert_documents(
-        self,
-        docs: list[VaultDocument],
-        *,
-        write_policy: StoreWritePolicy | None,
-    ) -> None:
-        """Insert or update documents by ``id``.
-
-        Args:
-            docs: Documents to insert or replace.
-            write_policy: Caller-owned retry/deadline policy for managed runs;
-                direct store callers pass ``None``.
-        """
-        if not docs:
-            return
-
-        from qdrant_client import models
-
-        points: list[PointStruct] = []
-        for doc in docs:
-            points.append(
-                models.PointStruct(
-                    id=self._stable_id(doc.id),
-                    vector=_point_vector(
-                        doc.vector, doc.sparse_indices, doc.sparse_values
-                    ),
-                    payload=cast("dict[str, Any]", _vault_doc_payload(doc)),
-                ),
-            )
-
-        self.ensure_table()
-        with self._point_lock(self.TABLE_NAME):
-            self._guarded_upsert(
-                self.TABLE_NAME,
-                points,
-                "vault documents",
-                write_policy=write_policy,
-            )
-        logger.info("Upserted %d document(s)", len(docs))
-
     def upsert_document_chunks(
         self,
         chunks: list[VaultChunk],
@@ -208,7 +169,7 @@ class _VaultIngestMixin:
             )
 
         self.ensure_table()
-        with self._point_lock(self.TABLE_NAME):
+        with self._point_write_lock(self.TABLE_NAME, write_policy):
             self._guarded_upsert(
                 self.TABLE_NAME,
                 points,
@@ -248,22 +209,47 @@ class _VaultIngestMixin:
         if not chunks:
             return
 
+        from qdrant_client import models
+
+        from .config._settings import get_config
+
+        batch_size = max(1, int(get_config().embedding_batch_size))
         ensure_disk_headroom(self._storage_probe_path)
         self.ensure_table()
         description = f"overwrite vault chunk payload in {self.TABLE_NAME}"
-        with self._point_lock(self.TABLE_NAME):
-            for chunk in chunks:
-                payload = cast("dict[str, Any]", _vault_chunk_payload(chunk))
-                point_id = self._stable_id(chunk.point_key)
-                run_store_operation_with_retry(
-                    lambda attempt_timeout, payload=payload, point_id=point_id: (
-                        self.client.overwrite_payload(
-                            collection_name=self.TABLE_NAME,
-                            payload=payload,
-                            points=[point_id],
-                            timeout=attempt_timeout,
+        with self._point_write_lock(self.TABLE_NAME, write_policy):
+            for start in range(0, len(chunks), batch_size):
+                operations = [
+                    models.OverwritePayloadOperation(
+                        overwrite_payload=models.SetPayload(
+                            payload=cast("dict[str, Any]", _vault_chunk_payload(chunk)),
+                            points=[self._stable_id(chunk.point_key)],
                         )
-                    ),
+                    )
+                    for chunk in chunks[start : start + batch_size]
+                ]
+
+                def attempt(
+                    attempt_timeout: int,
+                    current: list[models.OverwritePayloadOperation] = operations,
+                ) -> None:
+                    results = self.client.batch_update_points(
+                        collection_name=self.TABLE_NAME,
+                        update_operations=current,
+                        wait=True,
+                        timeout=attempt_timeout,
+                    )
+                    if len(results) != len(current) or any(
+                        result.status is not models.UpdateStatus.COMPLETED
+                        for result in results
+                    ):
+                        raise IngestVerificationError(
+                            f"payload overwrite in {self.TABLE_NAME} did not confirm "
+                            f"all {len(current)} operation(s) as completed"
+                        )
+
+                run_store_operation_with_retry(
+                    attempt,
                     description=description,
                     policy=write_policy,
                 )
@@ -563,14 +549,27 @@ class _VaultIngestMixin:
             )
         logger.info("Deleted %d document chunk(s)", len(ids))
 
-    def delete_document_sources(self, source_paths: set[str]) -> None:
-        """Remove every document chunk belonging to the selected sources."""
-        if not source_paths:
+    def delete_migration_origin_points(
+        self, collection: str, ids: Sequence[str]
+    ) -> None:
+        """Delete journaled origin identities without reading or relabelling vectors.
+
+        The route owner confirms a current destination before invoking this
+        administrative cleanup. Normal deletes retain their conformance guard.
+        An absent origin is already reconciled and is never recreated.
+        """
+        if collection not in {self.CODE_TABLE_NAME, self.DOCUMENT_TABLE_NAME}:
+            raise ValueError("migration origin is not an active content projection")
+        if not ids or not self._collection_exists(collection):
             return
-        self._delete_by_payload_any(
-            collection=self.DOCUMENT_TABLE_NAME,
-            ensure=self.ensure_document_table,
-            key="source_path",
-            values=sorted(source_paths),
-        )
-        logger.info("Deleted document chunks for %d source(s)", len(source_paths))
+        from qdrant_client import models
+
+        with self._point_lock(collection):
+            point_ids: list[int | str | UUID] = [
+                self._stable_id(value) for value in ids
+            ]
+            self._delete_points(
+                collection_name=collection,
+                points_selector=models.PointIdsList(points=point_ids),
+            )
+        logger.info("Deleted %d confirmed migration origin point(s)", len(ids))

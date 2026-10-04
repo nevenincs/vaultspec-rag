@@ -17,7 +17,6 @@ from vaultspec_core.config import (
     reset_config,
 )
 
-from ..config._settings import reset_config as reset_rag_config
 from ..indexer._vault_fingerprint import (
     SCHEME,
     VaultDelta,
@@ -26,6 +25,7 @@ from ..indexer._vault_fingerprint import (
     fingerprint_path,
     parse,
 )
+from ._config_fixtures import reset_config as reset_rag_config
 
 if TYPE_CHECKING:
     from pathlib import Path

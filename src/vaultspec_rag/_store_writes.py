@@ -585,7 +585,6 @@ def ensure_disk_headroom(
     storage_path: pathlib.Path,
     *,
     new_points: int = 0,
-    floor_bytes: int = DISK_FLOOR_BYTES,
 ) -> None:
     """Refuse a write or bulk index the store volume cannot absorb.
 
@@ -604,7 +603,7 @@ def ensure_disk_headroom(
     free = free_bytes(storage_path)
     if free is None:
         return
-    needed = floor_bytes + new_points * BYTES_PER_POINT_ESTIMATE
+    needed = DISK_FLOOR_BYTES + new_points * BYTES_PER_POINT_ESTIMATE
     if free >= needed:
         return
     from ._job_errors import DISK_FULL_PHRASE

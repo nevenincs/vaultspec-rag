@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-import vaultspec_rag.mcp._admin_client as admin
 import vaultspec_rag.mcp._tools as tools
+import vaultspec_rag.tests._admin_client as admin
 
 from ._service_jobs_support import (
     _assert_cli_job_attribution,

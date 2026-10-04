@@ -25,18 +25,18 @@ from vaultspec_core.config import (
     reset_config,
 )
 
-from .._test_isolation import (
-    PYTEST_MANAGED_SINGLETON_ACTIVE_ENV,
-    PYTEST_MANAGED_SINGLETON_ROOT_ENV,
-    register_pytest_singleton_root,
-)
 from ..config._settings import VaultSpecConfigWrapper as VaultSpecConfig
 from ..config._settings import get_config
-from ..config._settings import reset_config as reset_rag_config
 from ..config._types import EnvVar
 from ..operator_state._installation import InstallRole
 from ..progress import NullProgressReporter
+from ._config_fixtures import reset_config as reset_rag_config
 from ._model_setup import ensure_model_snapshots, model_setup_timeout_seconds
+from ._operator_directory_guard import canonical_path
+from ._singleton_root_fixtures import (
+    PYTEST_SESSION_ACTIVE_ENV,
+    PYTEST_SESSION_ROOT_ENV,
+)
 from .corpus import CorpusManifest, build_synthetic_vault
 
 # GPU-only: Sentence Transformers with Qwen3 dense and ModernBERT SPARSEUP sparse.
@@ -71,12 +71,12 @@ def isolated_machine_singleton_dirs(
     from ..config._types import EnvVar
     from .integration._helpers import _mirror_managed_qdrant_binary
 
-    raw_root = os.environ.get(PYTEST_MANAGED_SINGLETON_ROOT_ENV)
+    raw_root = os.environ.get(PYTEST_SESSION_ROOT_ENV)
     if not raw_root:
         raise RuntimeError(
             "repository pytest bootstrap did not publish singleton containment"
         )
-    session_root = register_pytest_singleton_root(raw_root)
+    session_root = canonical_path(raw_root)
     status_dir = os.environ.get(EnvVar.STATUS_DIR.value)
     qdrant_storage_dir = os.environ.get(EnvVar.QDRANT_STORAGE_DIR.value)
     if not status_dir or not qdrant_storage_dir:
@@ -86,15 +86,14 @@ def isolated_machine_singleton_dirs(
     base = Path(status_dir).expanduser().resolve().parent
     session_paths = MappingProxyType(
         {
-            PYTEST_MANAGED_SINGLETON_ACTIVE_ENV: "1",
-            PYTEST_MANAGED_SINGLETON_ROOT_ENV: str(session_root),
+            PYTEST_SESSION_ACTIVE_ENV: "1",
+            PYTEST_SESSION_ROOT_ENV: str(session_root),
             EnvVar.STATUS_DIR.value: status_dir,
             EnvVar.QDRANT_STORAGE_DIR.value: qdrant_storage_dir,
         }
     )
     prior = {var: os.environ.get(var) for var in session_paths}
     try:
-        register_pytest_singleton_root(session_root)
         _force_machine_singleton_test_paths(session_paths)
         if host_provisioned_qdrant_source is not None:
             _mirror_managed_qdrant_binary(
@@ -480,17 +479,6 @@ def rag_components_full(
     )
 
     components["store"].close()
-
-
-@pytest.fixture
-def malformed_vault(tmp_path: pathlib.Path) -> CorpusManifest:
-    """Function-scoped vault including malformed documents."""
-    return build_synthetic_vault(
-        tmp_path,
-        n_docs=12,
-        include_malformed=True,
-        seed=77,
-    )
 
 
 @pytest.fixture

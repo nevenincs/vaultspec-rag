@@ -1,9 +1,9 @@
 """Real-behavior integration coverage for cooperative indexing control.
 
 The tests use the production streaming and indexing paths with local Qdrant,
-real vault and code files, and a CPU-backed SentenceTransformer model. Keeping
-the model tiny makes the control races deterministic without substituting test
-implementations for any production indexing behavior.
+real vault and code files, and the session's real GPU embedding model. Control
+is observed at production checkpoints rather than raced against a particular
+encode duration, so no test implementation stands in for indexing behavior.
 """
 
 from __future__ import annotations
@@ -23,8 +23,8 @@ import pytest
 from ... import jobs
 from ..._source_types import PublicSourceType
 from ..._store_writes import workspace_volume_path
-from ...concurrency import limiter_stats, reset_limiters
-from ...config._settings import get_config, reset_config
+from ...concurrency import limiter_stats
+from ...config._settings import get_config
 from ...embeddings import EmbeddingModel  # noqa: TC001
 from ...indexer import CodebaseIndexer, VaultIndexer  # noqa: TC001
 from ...indexer._run_ledger_models import RunAuthority, index_run_ledger_path
@@ -43,10 +43,12 @@ from ...job_models import (
     ResumeStrategy,
 )
 from ...progress import NullProgressReporter
-from ...registry import get_registry, reset_registry
+from ...registry import get_registry
 from ...store_runtime import VaultStore
+from .._config_fixtures import reset_config
 from .._publication_assertions import published_content_identities
-from ._helpers import cpu_backed_embedding_model
+from .._state_fixtures import reset_limiters, reset_registry
+from .._store_fixtures import get_all_ids
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Generator
@@ -104,41 +106,37 @@ def _managed_test_config(*, status_dir: Path | None = None) -> dict[str, object]
 
 
 @pytest.fixture
-def cpu_embedding_model(clean_config: None) -> EmbeddingModel:
-    """Build a real production embedding path around a tiny CPU BoW model."""
+def index_control_model(
+    clean_config: None,
+    embedding_model: EmbeddingModel,
+) -> EmbeddingModel:
+    """Configure one index-control run around the session's real GPU model.
+
+    The model is the session-wide production instance, constructed by its own
+    constructor through the accelerator loader. Only the run's configuration is
+    set here, and the embedding dimension is taken from the loaded model so the
+    store and the encoder agree on vector width.
+    """
     del clean_config
-    vocabulary = [
-        "alpha",
-        "beta",
-        "gamma",
-        "delta",
-        "index",
-        "control",
-        "document",
-        "content",
-    ]
-
-    def configure(dimension: int) -> None:
-        get_config(
-            {
-                "data_dir": ".index-control",
-                "embedding_batch_size": 1,
-                "embedding_dimension": dimension,
-                "embedding_encode_batch_size": 1,
-                "index_chunk_workers": 2,
-                # Force more than one durable weighted slice so pause/cancel
-                # can be observed between production publication checkpoints.
-                # The batch-size setting intentionally does not cap segment
-                # capacity.
-                "index_segment_max_chunks": 8,
-                "index_queue_max_chunks": 16,
-                "qdrant_url": None,
-                "sparse_enabled": False,
-                "vault_chunk_chars": 10_000,
-            }
-        )
-
-    return cpu_backed_embedding_model(vocabulary, configure)
+    get_config(
+        {
+            "data_dir": ".index-control",
+            "embedding_batch_size": 1,
+            "embedding_dimension": embedding_model.dimension,
+            "embedding_encode_batch_size": 1,
+            "index_chunk_workers": 2,
+            # Force more than one durable weighted slice so pause/cancel
+            # can be observed between production publication checkpoints.
+            # The batch-size setting intentionally does not cap segment
+            # capacity.
+            "index_segment_max_chunks": 8,
+            "index_queue_max_chunks": 16,
+            "qdrant_url": None,
+            "sparse_enabled": False,
+            "vault_chunk_chars": 10_000,
+        }
+    )
+    return embedding_model
 
 
 def write_vault_documents(root: Path, count: int) -> list[VaultDocument]:
@@ -412,13 +410,13 @@ async def assert_cancelled_vault_stops_writes(
     metadata_mtime = (
         metadata_path.stat().st_mtime_ns if metadata_path.exists() else None
     )
-    point_ids = slot.store.get_all_ids()
+    point_ids = get_all_ids(slot.store)
     point_count = slot.store.count()
     payloads = {point_id: slot.store.get_by_id(point_id) for point_id in point_ids}
     await asyncio.sleep(0.25)
 
     assert manager.get(job_id) == cancelled
-    assert slot.store.get_all_ids() == point_ids
+    assert get_all_ids(slot.store) == point_ids
     assert slot.store.count() == point_count
     current_payloads = {
         point_id: slot.store.get_by_id(point_id) for point_id in point_ids
@@ -700,7 +698,7 @@ def assert_revised_vault_publication(
     publication: _RevisedVaultPublication,
     token: RunControlToken,
 ) -> None:
-    assert store.get_all_ids() == publication.expected_ids
+    assert get_all_ids(store) == publication.expected_ids
     metadata_after = published_content_identities(
         indexer.root_dir, PublicSourceType.VAULT
     )

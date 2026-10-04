@@ -29,6 +29,9 @@ class CountingProgressReporter:
     def advance(self, n: int = 1) -> None:
         self.events.append(("advance", n))
 
+    def confirmed_chunks(self, n: int) -> None:
+        self.events.append(("confirmed_chunks", n))
+
     def phase_end(self) -> None:
         self.events.append(("phase_end", None))
 
@@ -68,6 +71,15 @@ class TestNullProgressReporter:
 
 
 class TestRichProgressReporterFallback:
+    def test_chunk_work_does_not_advance_the_file_bar(self) -> None:
+        console, output = _make_non_tty_console()
+        reporter = RichProgressReporter(console)
+        reporter.phase_start("files", 2)
+        reporter.advance(1)
+        reporter.confirmed_chunks(50)
+        reporter.phase_end()
+        assert "done (1/2)" in output.getvalue()
+
     def test_non_tty_detection(self) -> None:
         console, _ = _make_non_tty_console()
         reporter = RichProgressReporter(console)

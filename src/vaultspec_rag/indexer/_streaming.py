@@ -21,7 +21,6 @@ from ._slicing import (
     vault_embed_text,
 )
 from ._streaming_types import (
-    CodebaseStreamRequest,
     CodeSliceRequest,
     CpuTransferable,
     DenseRowIterable,
@@ -57,7 +56,6 @@ __all__ = [
     "UnsettledStoreWriterError",
     "_SliceWriter",
     "_release_cuda_cache",
-    "_stream_encode_and_upsert_codebase",
     "_stream_encode_and_upsert_vault",
     "encode_and_upsert_code_slice",
     "encode_and_upsert_document_slice",
@@ -75,6 +73,11 @@ _WRITER_POLL_SECONDS = 0.1
 # write yet finite, so a wedged Qdrant call escalates to a raised error
 # instead of hanging the encoding thread under the indexer's writer lock.
 _WRITER_SHUTDOWN_TIMEOUT_S = 300.0
+
+# How many encoded slices may queue ahead of the writer thread. One in flight
+# plus one waiting is what overlaps slice N's storage I/O with slice N+1's
+# encode; more only buys memory held by vectors already paid for.
+_WRITER_MAX_PENDING_SLICES = 2
 
 
 # Conservative 64-bit CPython lifetime estimates. A dense element exists once
@@ -388,16 +391,13 @@ class _SliceWriter:
         self,
         *,
         name: str,
-        max_pending: int = 2,
         poll_seconds: float = _WRITER_POLL_SECONDS,
         shutdown_timeout_seconds: float = _WRITER_SHUTDOWN_TIMEOUT_S,
     ) -> None:
         import threading
 
-        if isinstance(max_pending, bool) or max_pending <= 0:
-            raise ValueError("max_pending must be a positive integer")
         self._queue: queue.Queue[StoreWriteTask | None] = queue.Queue(
-            maxsize=max_pending
+            maxsize=_WRITER_MAX_PENDING_SLICES
         )
         self._poll_seconds = poll_seconds
         self._shutdown_timeout = shutdown_timeout_seconds
@@ -554,6 +554,7 @@ class _VaultSliceRequest:
     on_encode_bucket: Callable[[str, EncodeBucketProgress], None] | None = None
     mutation_lifecycle: StoreMutationLifecycle | None = None
     after_acknowledgement: Callable[[], None] | None = None
+    write_policy: StoreWritePolicy | None = None
 
 
 def _encode_and_upsert_vault_slice(request: _VaultSliceRequest) -> None:
@@ -599,7 +600,7 @@ def _encode_and_upsert_vault_slice(request: _VaultSliceRequest) -> None:
                 partial(
                     request.store.upsert_document_chunks,
                     request.slice_chunks,
-                    write_policy=None,
+                    write_policy=request.write_policy,
                     wait=request.ingest_wait,
                 ),
                 request.mutation_lifecycle,
@@ -611,7 +612,7 @@ def _encode_and_upsert_vault_slice(request: _VaultSliceRequest) -> None:
                     write=partial(
                         request.store.upsert_document_chunks,
                         request.slice_chunks,
-                        write_policy=None,
+                        write_policy=request.write_policy,
                         wait=request.ingest_wait,
                     ),
                     release=partial(_release_vector_fields, request.slice_chunks),
@@ -774,13 +775,24 @@ def _stream_encode_and_upsert_vault(request: VaultStreamRequest) -> dict[str, in
     cfg = get_config()
     sparse_enabled = cfg.sparse_enabled
     chunk_chars = int(cfg.vault_chunk_chars)
+    run_control = (
+        request.checkpoint.run_policy
+        if request.checkpoint is not None
+        else request.run_control
+    )
+    write_policy = (
+        request.checkpoint.run_policy.store_write_policy
+        if request.checkpoint is not None
+        else None
+    )
+    run_control.checkpoint()
 
     # Expand documents into heading-aware chunks (one point each), then
     # sort by embed-text length, longest first. SentenceTransformer
     # sorts again per call, but the slice-level sort makes each slice's
     # longest text close in length to its shortest, bounding the
     # slice's worst-case padding cost.
-    chunks = split_documents(request.docs, chunk_chars, run_control=request.run_control)
+    chunks = split_documents(request.docs, chunk_chars, run_control=run_control)
     chunk_counts = {c.doc_id: c.chunk_count for c in chunks}
     sorted_chunks = sorted(chunks, key=lambda c: -len(vault_embed_text(c)))
 
@@ -797,6 +809,7 @@ def _stream_encode_and_upsert_vault(request: VaultStreamRequest) -> dict[str, in
                 for slice_index, i in enumerate(
                     range(0, len(sorted_chunks), request.slice_size)
                 ):
+                    run_control.checkpoint()
                     slice_chunks = sorted_chunks[i : i + request.slice_size]
                     is_last = i + request.slice_size >= len(sorted_chunks)
                     lifecycle = (
@@ -826,7 +839,7 @@ def _stream_encode_and_upsert_vault(request: VaultStreamRequest) -> dict[str, in
                             sparse_enabled=sparse_enabled,
                             probe=probe,
                             ingest_wait=request.ingest_wait,
-                            run_control=request.run_control,
+                            run_control=run_control,
                             reuse=request.reuse,
                             writer=writer,
                             release_cache=(
@@ -851,6 +864,7 @@ def _stream_encode_and_upsert_vault(request: VaultStreamRequest) -> dict[str, in
                             ),
                             mutation_lifecycle=lifecycle,
                             after_acknowledgement=after_acknowledgement,
+                            write_policy=write_policy,
                         )
                     )
                     probe.checkpoint(f"slice-{i}-after-empty-cache")
@@ -858,7 +872,7 @@ def _stream_encode_and_upsert_vault(request: VaultStreamRequest) -> dict[str, in
             except BaseException:
                 writer.abandon()
                 raise
-            writer.close(run_control=request.run_control)
+            writer.close(run_control=run_control)
         finally:
             # Always close the phase so progress reporters never see
             # an unbalanced phase_start/phase_end pair, even when the
@@ -1041,47 +1055,3 @@ def encode_and_upsert_code_slice(request: CodeSliceRequest) -> None:
         _release_vector_fields(request.chunks)
         if request.release_cache:
             _release_cuda_cache()
-
-
-def _stream_encode_and_upsert_codebase(request: CodebaseStreamRequest) -> None:
-    """Encode and publish an in-memory code chunk set in bounded slices."""
-    from ..config._settings import get_config
-    from ..memory_probe import MemoryProbe
-
-    cfg = get_config()
-    encode_batch_size = int(cfg.embedding_code_encode_batch_size)
-    flush_slices = max(1, int(cfg.index_cache_flush_slices))
-    sorted_chunks = sorted(request.chunks, key=lambda chunk: -len(chunk.content))
-    request.store.disk_headroom_preflight(len(sorted_chunks))
-
-    with MemoryProbe(name="codebase-full-index") as probe:
-        request.reporter.phase_start("embed + upsert chunks", len(sorted_chunks))
-        try:
-            for slice_index, offset in enumerate(
-                range(0, len(sorted_chunks), request.slice_size)
-            ):
-                request.run_control.checkpoint()
-                slice_chunks = sorted_chunks[offset : offset + request.slice_size]
-                probe.checkpoint(f"slice-{offset}-before-encode")
-                is_last = offset + request.slice_size >= len(sorted_chunks)
-                release = is_last or (slice_index + 1) % flush_slices == 0
-                encode_and_upsert_code_slice(
-                    CodeSliceRequest(
-                        chunks=slice_chunks,
-                        model=request.model,
-                        store=request.store,
-                        gpu_lock=request.gpu_lock,
-                        release_cache=release,
-                        encode_batch_size=encode_batch_size,
-                        run_control=request.run_control,
-                        reuse=request.reuse,
-                    )
-                )
-                probe.checkpoint(f"slice-{offset}-after-empty-cache")
-                request.reporter.advance(len(slice_chunks))
-                request.run_control.checkpoint()
-        finally:
-            request.reporter.phase_end()
-
-    if probe.samples:
-        logger.info("%s", probe.report())

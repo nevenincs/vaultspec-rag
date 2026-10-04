@@ -25,6 +25,7 @@ from ..indexer._preprocess_config import (
     PreprocessRule,
 )
 from ._import_probe import assert_fresh_import_excludes, import_probe_source
+from ._indexer_fixtures import chunk_document_and_hash_file
 
 pytestmark = [pytest.mark.unit]
 
@@ -83,7 +84,7 @@ def test_document_rule_produces_preproc_chunks(tmp_path: Path) -> None:
     source = tmp_path / "report.pdf"
     source.write_bytes(b"\x00\x01 not real pdf bytes")
     prep = _context(tmp_path)
-    chunks = _chunk_worker.chunk_document_and_hash_file(
+    chunks = chunk_document_and_hash_file(
         source, tmp_path, _chunk_worker.DocumentChunkingOptions(prep=prep)
     ).chunks
     assert len(chunks) == 2
@@ -107,7 +108,7 @@ def test_chunk_document_and_hash_file_marks_status_ok(tmp_path: Path) -> None:
     source = tmp_path / "report.pdf"
     source.write_bytes(b"\x00\x01binary")
     prep = _context(tmp_path)
-    result = _chunk_worker.chunk_document_and_hash_file(
+    result = chunk_document_and_hash_file(
         source, tmp_path, _chunk_worker.DocumentChunkingOptions(prep=prep)
     )
     assert result is not None
@@ -120,8 +121,6 @@ def test_code_worker_refuses_a_document_targeted_rule(tmp_path: Path) -> None:
     source = tmp_path / "report.pdf"
     source.write_bytes(b"\x00\x01binary")
     prep = _context(tmp_path)
-    with pytest.raises(ValueError, match="non-code extraction rule"):
-        _chunk_worker.chunk_file(source, tmp_path, prep)
     with pytest.raises(ValueError, match="non-code extraction rule"):
         _chunk_worker.chunk_and_hash_file(source, tmp_path, prep)
 
@@ -136,7 +135,7 @@ def test_document_worker_refuses_a_code_targeted_rule(tmp_path: Path) -> None:
     source.write_bytes(b"\x00\x01binary")
     prep = _context(tmp_path, target=ContentKind.CODE)
     with pytest.raises(ValueError, match="non-document extraction rule"):
-        _chunk_worker.chunk_document_and_hash_file(
+        chunk_document_and_hash_file(
             source, tmp_path, _chunk_worker.DocumentChunkingOptions(prep=prep)
         )
 
@@ -164,12 +163,12 @@ def test_cache_hit_skips_second_invocation(tmp_path: Path) -> None:
     source = tmp_path / "report.pdf"
     source.write_bytes(b"\x00\x01binary")
     prep = _context(tmp_path)
-    first = _chunk_worker.chunk_document_and_hash_file(
+    first = chunk_document_and_hash_file(
         source, tmp_path, _chunk_worker.DocumentChunkingOptions(prep=prep)
     ).chunks
     # Delete the extractor script: a cache hit must not need to re-run it.
     (tmp_path / "extractor.py").unlink()
-    second = _chunk_worker.chunk_document_and_hash_file(
+    second = chunk_document_and_hash_file(
         source, tmp_path, _chunk_worker.DocumentChunkingOptions(prep=prep)
     ).chunks
     assert [c.payload.content for c in first] == [c.payload.content for c in second]
@@ -179,7 +178,7 @@ def test_unmatched_file_chunks_normally(tmp_path: Path) -> None:
     source = tmp_path / "module.py"
     source.write_text("def foo():\n    return 1\n", encoding="utf-8")
     prep = _context(tmp_path, pattern="*.pdf")
-    chunks = _chunk_worker.chunk_file(source, tmp_path, prep)
+    chunks = _chunk_worker.chunk_and_hash_file(source, tmp_path, prep).chunks
     assert chunks
     assert all(c.preprocessor_id is None for c in chunks)
 

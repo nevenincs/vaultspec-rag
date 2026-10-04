@@ -83,8 +83,8 @@ class TestManagedJobQuarantine:
             JobMode.INCREMENTAL,
             RunAuthority.PUBLICATION,
         )
-        initiator = JobInitiator("http", "POST /jobs", str(tmp_path))
-        manager.create(spec, initiator, idempotency_key="validation-1")
+        initiator = JobInitiator("http", "POST /reindex", str(tmp_path))
+        manager.create(spec, initiator)
         payload = json.loads(state_path.read_text(encoding="utf-8"))
 
         payload["jobs"][0]["desired_state"] = "paused"
@@ -98,17 +98,6 @@ class TestManagedJobQuarantine:
         assert inconsistent.list_jobs() == []
 
         payload["jobs"][0]["desired_state"] = "running"
-        payload["idempotency"][0]["job_id"] = "missing-job"
-        state_path.write_text(json.dumps(payload), encoding="utf-8")
-        dangling = JobManager(
-            quiesce_controller=ServiceQuiesceController(),
-            max_nonterminal=1,
-            state_path=state_path,
-        )
-        assert dangling.restore_persisted().code == "job_state_quarantined"
-        assert dangling.list_jobs() == []
-
-        payload["idempotency"][0]["job_id"] = payload["jobs"][0]["id"]
         payload["jobs"][0]["state"] = "running"
         payload["jobs"][0]["started_at"] = None
         state_path.write_text(json.dumps(payload), encoding="utf-8")
@@ -142,10 +131,10 @@ class TestManagedJobQuarantine:
         )
         assert false_first_resume.restore_persisted().code == "job_state_quarantined"
         assert false_first_resume.list_jobs() == []
-        # Five same-named quarantines in rapid succession must land as five
+        # Four same-named quarantines in rapid succession must land as four
         # distinct siblings; losing one means a later quarantine replaced
         # earlier evidence.
-        assert len(list(tmp_path.glob("managed-jobs.json.invalid-*"))) == 5
+        assert len(list(tmp_path.glob("managed-jobs.json.invalid-*"))) == 4
 
     @pytest.mark.asyncio
     @pytest.mark.usefixtures("isolated_status_dir")
@@ -409,7 +398,7 @@ class TestManagedJobQuarantine:
                 JobMode.INCREMENTAL,
                 RunAuthority.PUBLICATION,
             ),
-            JobInitiator("http", "POST /jobs", str(tmp_path)),
+            JobInitiator("http", "POST /reindex", str(tmp_path)),
         )
         assert created.job is not None
         owner_task = asyncio.create_task(pending_attempt())

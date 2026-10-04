@@ -397,7 +397,11 @@ def _status_metadata_from_health(
     }
 
 
-def _tail_daemon_log(log_path: Path, max_lines: int = 6) -> list[str]:
+#: How many trailing non-empty daemon-log lines a startup failure reports.
+_DAEMON_LOG_TAIL_LINES = 6
+
+
+def _tail_daemon_log(log_path: Path) -> list[str]:
     """Return the last few non-empty lines of the daemon log, best-effort.
 
     Surfaces why a detached daemon died during startup (e.g. the model-load
@@ -414,7 +418,7 @@ def _tail_daemon_log(log_path: Path, max_lines: int = 6) -> list[str]:
     except OSError:
         return []
     lines = [ln.rstrip() for ln in tail.splitlines() if ln.strip()]
-    return lines[-max_lines:]
+    return lines[-_DAEMON_LOG_TAIL_LINES:]
 
 
 @dataclass(frozen=True, slots=True)
@@ -479,7 +483,7 @@ def _existing_service_running() -> _AttachCandidate | None:
     # status file only when the recorded PID is confirmed dead; leave it in
     # place on an ambiguous miss against a live PID (issue #204).
     if _should_unlink_discovery_file(pid_alive(existing_pid)):
-        _delete_service_status()
+        _delete_service_status(expected_pid=existing_pid, expected_port=existing_port)
     return None
 
 
@@ -1101,7 +1105,7 @@ def _fail_start_died(
     Tailing that log here is what turns "the process died" into a diagnosis
     the operator can act on without going looking for the file first.
     """
-    _delete_service_status()
+    _delete_service_status(expected_pid=pid, expected_port=port)
     tail = _tail_daemon_log(log_path)
     human = [_process_line(pid), address_line(port)]
     if tail:

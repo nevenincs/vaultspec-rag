@@ -7,6 +7,12 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+def _configured_backend() -> Literal["qdrant-local", "qdrant-server"]:
+    from .config._settings import get_config
+
+    return "qdrant-server" if get_config().qdrant_url else "qdrant-local"
+
+
 class BackendCapabilities(BaseModel):
     """Search backend concurrency capabilities exposed to callers.
 
@@ -22,8 +28,8 @@ class BackendCapabilities(BaseModel):
             can be opened by multiple vaultspec-rag processes at once.
     """
 
-    backend: Literal["qdrant-local"] = Field(
-        default="qdrant-local",
+    backend: Literal["qdrant-local", "qdrant-server"] = Field(
+        default_factory=_configured_backend,
         description="Vector-store backend identifier",
     )
     concurrent_search_supported: bool = Field(

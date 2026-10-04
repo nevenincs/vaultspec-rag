@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#monitor-delivery'
 date: '2026-10-02'
-modified: '2026-10-02'
+modified: '2026-10-04'
 body_schema: 'body-v2'
-body_hash: 'sha256:c55d3a03f592ce794fa6ceaedd5a846575d062a47484770466b33998a0a67c3a'
+body_hash: 'sha256:2a89b7a5d69816fc5534221a20b2312872c0140b72f2ba48fd7a245ecad9e11a'
 related:
   - "[[2026-10-02-monitor-delivery-reference]]"
   - "[[2026-10-02-monitor-delivery-research]]"
@@ -26,7 +26,7 @@ The React build does not deliver the local server bridge, and that bridge curren
 ## Considerations
 
 - Approved 2026-10-02: the user replied "sounds lovely" to the presented delivery ADR and six-Step implementation plan. This authorizes the recorded distribution/pin contract and implementation scope.
-- React/Vite/npm and the shared devserver contract are accepted in `2026-09-30-monitor-tooling-adr`; local/tailnet transport, credentials and service ownership are accepted in `2026-09-30-monitor-browser-adr`.
+- React/Vite/npm and the shared devserver contract are accepted in `2026-09-30-monitor-tooling-adr`; credentials and service ownership are accepted in `2026-09-30-monitor-browser-adr`; the current loopback-only boundary is the scoped security exception in `2026-10-04-monitor-access-adr`.
 - Concurrent `2026-10-02-monitor-lifecycle-adr` records explicit user authorization for backend-coupled monitor start/stop, backend-plus-one upward allocation and user-scratch discovery. Packaging integrates with that same owner; its current compiled-executable contract is fulfilled by this delivery producer without introducing another lifecycle owner.
 - Archive ownership and draft-first publication are accepted in `2026-09-11-binary-release-bundles-adr` and `2026-09-30-release-standard-adr`. Four targets are present in current code, as the new reference establishes.
 - Toolchain provisioning and public binary launch must honor independently reviewed committed pins; a release's live checksum is insufficient as the only trust source.
@@ -44,7 +44,7 @@ The delivered command is `vaultspec-rag-monitor` (`.exe` on Windows). Every supp
 
 The monitor embeds every local asset produced by the Vite release build, including fonts. It starts and serves the shell from any cwd without a checkout, external dist tree, JS runtime, Python or network acquisition. Startup/readiness and `--version` must not probe/start/bootstrap the backend. The backend-unavailable view remains useful when no RAG service or command is installed. Full monitoring requires the existing local service; service controls and persisted inventory use the canonical RAG owner and retain that owner's accelerator/bootstrap requirements. No offline-backend promise is introduced.
 
-Use one shared bridge implementation across Vite dev/preview and the compiled server. Preserve bounded reads, timeouts, cancellation, exact operation admission, redaction, local service discovery, same-origin authority and the accepted local/tailnet client policy. Production retains the declared 0.0.0.0 host. Normal installed use is the canonical daemon's managed monitor: begin at the actual backend port plus one, retry upward without wrapping, publish the chosen assignment and couple shutdown to the daemon as monitor-lifecycle rules. The compiled command preserves the existing readiness line and parent-pipe EOF shutdown contract. A direct diagnostic launch may accept a validated explicit strict port; it neither starts the backend nor creates a second supervisor. Fixed manifest ports continue to govern source dev/preview only. Tailscale/proxy enrollment remains with its existing owner. No login or browser token is added.
+Use one shared bridge implementation across Vite dev/preview and the compiled server. Preserve bounded reads, timeouts, cancellation, exact operation admission, redaction, local service discovery, same-origin authority and the loopback-only client policy. Production uses the declared 127.0.0.1 host. Every request is guarded before dispatch, including assets and metadata, under `2026-10-04-monitor-access-adr`. Normal installed use is the canonical daemon's managed monitor: begin at the actual backend port plus one, retry upward without wrapping, publish the chosen assignment and couple shutdown to the daemon as monitor-lifecycle rules. The compiled command preserves the existing readiness line and parent-pipe EOF shutdown contract. A direct diagnostic launch may accept a validated explicit strict port; it neither starts the backend nor creates a second supervisor. Fixed manifest ports continue to govern source dev/preview only. Local proxy enrollment remains with its existing owner. Direct Tailnet and Tailscale Serve exposure are unsupported. No login or browser token is added to local operation.
 
 In managed mode, reuse the absolute Python runtime supplied by the canonical daemon owner; it belongs to that owner's initialized environment and is not a system-Python prerequisite. For independent diagnostic use, resolve the shipped sibling RAG command relative to the executable, with an explicit absolute operator override and a verified installed-command option. Do not derive production cwd/PYTHONPATH from source imports or require uv/system Python. Subprocesses use fixed arguments, no shell, bounded output/time and cancellation. Expose persisted inventory through the canonical RAG CLI using `monitor_inventory.read_inventory` and its existing domain owners; command spelling is an implementation hypothesis. Missing/mismatched owners produce actionable unavailable results. Browser input cannot choose executables, modules or arbitrary arguments.
 

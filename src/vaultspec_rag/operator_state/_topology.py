@@ -15,6 +15,8 @@ import os
 from enum import StrEnum
 from pathlib import Path
 
+from ..config._types import EnvVar
+
 __all__ = [
     "TOOL_RECEIPT_NAME",
     "RuntimeEnvKind",
@@ -100,12 +102,12 @@ def classify_environment(root: str | Path) -> RuntimeEnvKind:
     resolved = Path(os.path.abspath(root))
     parts = {part.lower() for part in resolved.parts}
     if "archive-v0" in parts or _named_under(
-        resolved, os.environ.get("UV_CACHE_DIR", "")
+        resolved, os.environ.get(EnvVar.UV_CACHE_DIR.value, "")
     ):
         return RuntimeEnvKind.UVX_EPHEMERAL
     if (resolved / TOOL_RECEIPT_NAME).is_file():
         return RuntimeEnvKind.UV_TOOL
-    if _named_under(resolved, os.environ.get("UV_TOOL_DIR", "")):
+    if _named_under(resolved, os.environ.get(EnvVar.UV_TOOL_DIR.value, "")):
         return RuntimeEnvKind.UV_TOOL
     if resolved.name.lower() in {".venv", "venv"}:
         return RuntimeEnvKind.PROJECT_VENV

@@ -22,13 +22,14 @@ from typer.testing import CliRunner
 
 from ..._process_probe import pid_alive
 from ...cli import app
-from ...cli._process import _spawn_service, _terminate_pid
+from ...cli._process import _terminate_pid
 from ...cli._service_status import (
     _status_file,
     _write_service_status,
 )
 from .._model_setup import model_setup_timeout_seconds
 from .._ports import free_loopback_port
+from .._session_job_anchor import spawn_anchored_service
 from ._helpers import (
     _poll_health,
     _service_env,
@@ -152,7 +153,7 @@ def test_deleted_discovery_views_self_heal_on_the_next_heartbeat(
         port = free_loopback_port()
         log_path = tmp_path / "service.log"
 
-        pid = _spawn_service(port, log_path)
+        pid = spawn_anchored_service(port, log_path)
         request.addfinalizer(lambda: _terminate_pid(pid))
         # A spawned service loads the whole configured model stack before it
         # reports ready, so it gets the fixture model budget rather than the
@@ -228,7 +229,7 @@ def test_shutdown_cleanup_cannot_be_resurrected_by_a_late_heartbeat(
         port = free_loopback_port()
         log_path = tmp_path / "service.log"
 
-        pid = _spawn_service(port, log_path)
+        pid = spawn_anchored_service(port, log_path)
         request.addfinalizer(lambda: _terminate_pid(pid))
         # A spawned service loads the whole configured model stack before it
         # reports ready, so it gets the fixture model budget rather than the
@@ -282,7 +283,7 @@ def test_reconcile_recovers_discovery_without_touching_the_daemon(
         port = free_loopback_port()
         log_path = tmp_path / "service.log"
 
-        pid = _spawn_service(port, log_path)
+        pid = spawn_anchored_service(port, log_path)
         request.addfinalizer(lambda: _terminate_pid(pid))
         # A spawned service loads the whole configured model stack before it
         # reports ready, so it gets the fixture model budget rather than the

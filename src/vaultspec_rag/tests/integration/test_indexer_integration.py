@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ...progress import NullProgressReporter
+from .._indexer_fixtures import support_measurement
 from ..benchmarks.bench_large_index_resilience import (
     CorpusSpec,
     MeasuredIndexRun,
@@ -31,11 +32,16 @@ if TYPE_CHECKING:
     from ..conftest import RagComponentsWithManifest
 
 
-def _configure_cpu_code_index(
+def _configure_code_index(
     dimension: int,
     **overrides: object,
 ) -> None:
-    """Select a tiny real CPU encoder while retaining production indexing."""
+    """Bound one real code-index run to a single chunk in flight.
+
+    The dimension comes from the loaded model so the store and the encoder
+    agree on vector width; everything else narrows the pipeline until a
+    single chunk is enough to reach the boundary under test.
+    """
     from ...config._settings import get_config
 
     values: dict[str, object] = {
@@ -55,15 +61,19 @@ def _configure_cpu_code_index(
 
 
 @pytest.fixture
-def cpu_code_embedding_model(clean_config: None) -> EmbeddingModel:
-    """Build the production embedding API around a real CPU BoW encoder."""
-    del clean_config
-    from ._helpers import cpu_backed_embedding_model
+def code_index_model(
+    clean_config: None,
+    embedding_model: EmbeddingModel,
+) -> EmbeddingModel:
+    """Configure a bounded code-index run around the session's real GPU model.
 
-    return cpu_backed_embedding_model(
-        ["alpha", "beta", "gamma", "index", "memory"],
-        _configure_cpu_code_index,
-    )
+    The model is the session-wide production instance, built by its own
+    constructor through the accelerator loader; only the run's configuration
+    is set here.
+    """
+    del clean_config
+    _configure_code_index(embedding_model.dimension)
+    return embedding_model
 
 
 def _write_code_memory_corpus(root: Path, count: int = 4) -> None:
@@ -209,7 +219,7 @@ class TestLargeCodeIndexHighWater:
                     clean=True,
                 )
                 assert measured.result.total == spec.expected_chunks
-                assert indexer.support_measurement.generated_chunks == (
+                assert support_measurement(indexer).generated_chunks == (
                     spec.expected_chunks
                 )
                 return measured
@@ -302,25 +312,26 @@ class TestCodeIndexMemoryCeilings:
     @pytest.mark.timeout(30)
     def test_low_rss_ceiling_returns_typed_outcome_and_releases_pipeline(
         self,
-        cpu_code_embedding_model: EmbeddingModel,
+        code_index_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
         from ... import CodebaseIndexer
         from ..._job_errors import JobError, JobErrorKind
-        from ...job_dispatch import _code_resilience
+        from ...job_dispatch import _admitted_resilience, _indexer_resilience
+        from ...job_models import JobSource
         from ...store_runtime import VaultStore
 
-        _configure_cpu_code_index(
-            cpu_code_embedding_model.dimension,
+        _configure_code_index(
+            code_index_model.dimension,
             index_rss_ceiling_mib=1.0,
         )
         _write_code_memory_corpus(tmp_path)
 
         with VaultStore(
             tmp_path,
-            embedding_dim=cpu_code_embedding_model.dimension,
+            embedding_dim=code_index_model.dimension,
         ) as store:
-            indexer = CodebaseIndexer(tmp_path, cpu_code_embedding_model, store)
+            indexer = CodebaseIndexer(tmp_path, code_index_model, store)
             with pytest.raises(JobError) as stopped:
                 indexer.full_index(
                     reporter=NullProgressReporter(),
@@ -336,7 +347,9 @@ class TestCodeIndexMemoryCeilings:
             assert rss_ceiling_mib is not None
             assert rss_ceiling_mib == 1.0
             assert snapshot.peak_rss_mib > rss_ceiling_mib
-            resilience = _code_resilience(indexer)
+            resilience = _indexer_resilience(
+                indexer, indexer.last_checkpoint, _admitted_resilience(JobSource.CODE)
+            )
             assert resilience.rss_ceiling_mib == rss_ceiling_mib
             assert resilience.peak_rss_mib == snapshot.peak_rss_mib
             assert store.count_code() == 0
@@ -371,7 +384,8 @@ class TestCodeIndexMemoryCeilings:
         from ... import CodebaseIndexer
         from ..._job_errors import JobError, JobErrorKind
         from ...config._settings import get_config
-        from ...job_dispatch import _code_resilience
+        from ...job_dispatch import _admitted_resilience, _indexer_resilience
+        from ...job_models import JobSource
         from ...memory_probe import (
             current_cuda_mib,
             current_rss_mib,
@@ -423,7 +437,9 @@ class TestCodeIndexMemoryCeilings:
             # rides above it as a diagnostic the comparison never reads.
             assert snapshot.peak_cuda_allocated_mib > cuda_ceiling_mib
             assert snapshot.peak_cuda_reserved_mib >= snapshot.peak_cuda_allocated_mib
-            resilience = _code_resilience(indexer)
+            resilience = _indexer_resilience(
+                indexer, indexer.last_checkpoint, _admitted_resilience(JobSource.CODE)
+            )
             assert resilience.cuda_ceiling_mib == cuda_ceiling_mib
             assert (
                 resilience.peak_cuda_allocated_mib == snapshot.peak_cuda_allocated_mib
@@ -440,15 +456,15 @@ class TestCodeIndexBlockedStoreDeadline:
     @pytest.mark.timeout(30)
     def test_blocked_store_consumer_releases_queue_and_writer_at_deadline(
         self,
-        cpu_code_embedding_model: EmbeddingModel,
+        code_index_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
         from ... import CodebaseIndexer
         from ..._job_errors import JobError, JobErrorKind
         from ...store_runtime import VaultStore
 
-        _configure_cpu_code_index(
-            cpu_code_embedding_model.dimension,
+        _configure_code_index(
+            code_index_model.dimension,
             index_no_progress_timeout_seconds=5.0,
         )
         _write_code_memory_corpus(tmp_path, count=8)
@@ -456,12 +472,12 @@ class TestCodeIndexBlockedStoreDeadline:
 
         with VaultStore(
             tmp_path,
-            embedding_dim=cpu_code_embedding_model.dimension,
+            embedding_dim=code_index_model.dimension,
         ) as store:
             store.ensure_code_table()
             indexer = CodebaseIndexer(
                 tmp_path,
-                cpu_code_embedding_model,
+                code_index_model,
                 store,
                 options=CodebaseIndexer.Options(
                     gpu_lock=gpu_gate,
@@ -526,16 +542,17 @@ class TestDocumentIndexMemoryAndWriteDeadline:
     @pytest.mark.timeout(30)
     def test_document_memory_budget_projects_real_peaks_and_effective_ceilings(
         self,
-        cpu_code_embedding_model: EmbeddingModel,
+        code_index_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
         from ... import DocumentIndexer
         from ...config._settings import get_config
-        from ...job_dispatch import _document_resilience
+        from ...job_dispatch import _admitted_resilience, _indexer_resilience
+        from ...job_models import JobSource
         from ...store_runtime import VaultStore
 
-        _configure_cpu_code_index(
-            cpu_code_embedding_model.dimension,
+        _configure_code_index(
+            code_index_model.dimension,
             index_rss_ceiling_mib=4096.0,
         )
         source = tmp_path / "bounded.txt"
@@ -544,11 +561,11 @@ class TestDocumentIndexMemoryAndWriteDeadline:
 
         with VaultStore(
             tmp_path,
-            embedding_dim=cpu_code_embedding_model.dimension,
+            embedding_dim=code_index_model.dimension,
         ) as store:
             indexer = DocumentIndexer(
                 tmp_path,
-                cpu_code_embedding_model,
+                code_index_model,
                 store,
                 content_policy=policy,
             )
@@ -565,10 +582,21 @@ class TestDocumentIndexMemoryAndWriteDeadline:
                 4096.0,
                 indexer._support_limits().rss_bytes / 1024**2,
             )
-            resilience = _document_resilience(indexer)
+            resilience = _indexer_resilience(
+                indexer,
+                indexer.last_checkpoint,
+                _admitted_resilience(JobSource.DOCUMENT),
+            )
             assert resilience.peak_rss_mib == snapshot.peak_rss_mib
-            assert resilience.peak_cuda_allocated_mib == 0.0
-            assert resilience.peak_cuda_reserved_mib == 0.0
+            # A real document encode runs a dense forward on the device, so
+            # the projection must carry that forward's measured peak rather
+            # than a zero. Projecting a constant instead of reading the
+            # snapshot is the mutation these two catch.
+            assert snapshot.peak_cuda_allocated_mib > 0.0
+            assert (
+                resilience.peak_cuda_allocated_mib == snapshot.peak_cuda_allocated_mib
+            )
+            assert resilience.peak_cuda_reserved_mib == snapshot.peak_cuda_reserved_mib
             assert resilience.rss_ceiling_mib == snapshot.rss_ceiling_mib
             assert resilience.support_profile == get_config().index_support_profile
 
@@ -576,16 +604,17 @@ class TestDocumentIndexMemoryAndWriteDeadline:
     @pytest.mark.timeout(30)
     def test_low_document_rss_ceiling_is_typed_and_canonical(
         self,
-        cpu_code_embedding_model: EmbeddingModel,
+        code_index_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
         from ... import DocumentIndexer
         from ..._job_errors import JobError, JobErrorKind
-        from ...job_dispatch import _document_resilience
+        from ...job_dispatch import _admitted_resilience, _indexer_resilience
+        from ...job_models import JobSource
         from ...store_runtime import VaultStore
 
-        _configure_cpu_code_index(
-            cpu_code_embedding_model.dimension,
+        _configure_code_index(
+            code_index_model.dimension,
             index_rss_ceiling_mib=1.0,
         )
         source = tmp_path / "limited.txt"
@@ -594,11 +623,11 @@ class TestDocumentIndexMemoryAndWriteDeadline:
 
         with VaultStore(
             tmp_path,
-            embedding_dim=cpu_code_embedding_model.dimension,
+            embedding_dim=code_index_model.dimension,
         ) as store:
             indexer = DocumentIndexer(
                 tmp_path,
-                cpu_code_embedding_model,
+                code_index_model,
                 store,
                 content_policy=policy,
             )
@@ -612,7 +641,11 @@ class TestDocumentIndexMemoryAndWriteDeadline:
             snapshot = indexer.memory_budget_snapshot
             assert snapshot is not None
             assert snapshot.peak_rss_mib > 1.0
-            resilience = _document_resilience(indexer)
+            resilience = _indexer_resilience(
+                indexer,
+                indexer.last_checkpoint,
+                _admitted_resilience(JobSource.DOCUMENT),
+            )
             assert resilience.peak_rss_mib == snapshot.peak_rss_mib
             assert resilience.rss_ceiling_mib == snapshot.rss_ceiling_mib == 1.0
             assert resilience.terminal_outcome == "rebuild_incomplete"
@@ -622,15 +655,15 @@ class TestDocumentIndexMemoryAndWriteDeadline:
     @pytest.mark.timeout(30)
     def test_blocked_document_write_polls_cancel_and_releases_writer(
         self,
-        cpu_code_embedding_model: EmbeddingModel,
+        code_index_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
         from ... import DocumentIndexer
         from ...job_control import CancelRequested, RunControlToken
         from ...store_runtime import VaultStore
 
-        _configure_cpu_code_index(
-            cpu_code_embedding_model.dimension,
+        _configure_code_index(
+            code_index_model.dimension,
             index_no_progress_timeout_seconds=10.0,
         )
         source = tmp_path / "cancelled.txt"
@@ -640,12 +673,12 @@ class TestDocumentIndexMemoryAndWriteDeadline:
 
         with VaultStore(
             tmp_path,
-            embedding_dim=cpu_code_embedding_model.dimension,
+            embedding_dim=code_index_model.dimension,
         ) as store:
             store.ensure_document_table()
             indexer = DocumentIndexer(
                 tmp_path,
-                cpu_code_embedding_model,
+                code_index_model,
                 store,
                 content_policy=policy,
             )
@@ -678,15 +711,15 @@ class TestDocumentIndexMemoryAndWriteDeadline:
     @pytest.mark.timeout(30)
     def test_blocked_document_write_expires_at_no_progress_deadline(
         self,
-        cpu_code_embedding_model: EmbeddingModel,
+        code_index_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
         from ... import DocumentIndexer
         from ..._job_errors import JobError, JobErrorKind
         from ...store_runtime import VaultStore
 
-        _configure_cpu_code_index(
-            cpu_code_embedding_model.dimension,
+        _configure_code_index(
+            code_index_model.dimension,
             index_no_progress_timeout_seconds=2.0,
         )
         source = tmp_path / "timed-out.txt"
@@ -695,12 +728,12 @@ class TestDocumentIndexMemoryAndWriteDeadline:
 
         with VaultStore(
             tmp_path,
-            embedding_dim=cpu_code_embedding_model.dimension,
+            embedding_dim=code_index_model.dimension,
         ) as store:
             store.ensure_document_table()
             indexer = DocumentIndexer(
                 tmp_path,
-                cpu_code_embedding_model,
+                code_index_model,
                 store,
                 content_policy=policy,
             )
@@ -1019,7 +1052,7 @@ class _CorpusChurn:
 @pytest.mark.integration
 @pytest.mark.timeout(600)
 def test_a_resumed_code_run_over_a_moving_tree_completes(
-    cpu_code_embedding_model: EmbeddingModel,
+    code_index_model: EmbeddingModel,
     tmp_path: Path,
 ) -> None:
     """A resumed run whose tree keeps changing finishes instead of aborting.
@@ -1041,9 +1074,9 @@ def test_a_resumed_code_run_over_a_moving_tree_completes(
 
     count = 8
     _write_code_memory_corpus(tmp_path, count)
-    dimension = cpu_code_embedding_model.dimension
+    dimension = code_index_model.dimension
     with VaultStore(tmp_path, embedding_dim=dimension) as store:
-        indexer = CodebaseIndexer(tmp_path, cpu_code_embedding_model, store)
+        indexer = CodebaseIndexer(tmp_path, code_index_model, store)
 
         # Interrupt a real attempt so the next one resumes carrying the indexed
         # paths of a generation that never published.

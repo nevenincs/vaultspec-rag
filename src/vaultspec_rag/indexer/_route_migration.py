@@ -7,16 +7,19 @@ import itertools
 import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from .. import store_schema
 from .._source_types import PublicSourceType
 from ._content_policy import ContentKind
+from ._publication_proof import ProofReceiptState
 from ._run_ledger_models import (
     PublicationPointCandidate,
+    RunLedgerStateError,
     index_run_ledger_path,
     ledger_connection,
     ledger_transaction,
@@ -26,11 +29,12 @@ from ._run_policy import DurableProgressKind
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from qdrant_client.conversions.common_types import PointId
 
     from ..store_runtime import VaultStore
+    from ._content_policy import ClassifiedContent
     from ._file_state import FileState
     from ._resolved_policy import ResolvedIndexPolicy
     from ._run_ledger_models import PublicationReceipt
@@ -277,6 +281,8 @@ class RouteScanOptions:
 
     page_size: int = _DEFAULT_PAGE_SIZE
     code_collection: str | None = None
+    origin_metadata_only: bool = False
+    source_paths: frozenset[str] | None = None
 
 
 _DEFAULT_ROUTE_SCAN_OPTIONS = RouteScanOptions()
@@ -286,28 +292,50 @@ def _scroll_stored_route_page(
     store: VaultStore,
     stored_kind: ContentKind,
     *,
-    page_size: int,
     offset: PointId | None,
-    code_collection: str | None = None,
+    options: RouteScanOptions,
 ) -> tuple[list[dict[str, Any]], PointId | None, str, str]:
     """Read one bounded collection page with its payload field names."""
+    page_size, code_collection = options.page_size, options.code_collection
+    source_paths = (
+        set(options.source_paths) if options.source_paths is not None else None
+    )
+    if options.origin_metadata_only:
+        if code_collection is not None:
+            raise ValueError("origin metadata must name the active content projection")
+        collection = (
+            store.CODE_TABLE_NAME
+            if stored_kind is ContentKind.CODE
+            else store.DOCUMENT_TABLE_NAME
+        )
+        rows, next_offset = store.scroll_index_audit_content(
+            collection, limit=page_size, offset=offset, source_paths=source_paths
+        )
+        path_key, id_key = (
+            ("path", "chunk_id")
+            if stored_kind is ContentKind.CODE
+            else ("source_path", "document_id")
+        )
+        return rows, next_offset, path_key, id_key
     if stored_kind is ContentKind.CODE:
         rows, next_offset = store.scroll_code_content(
             collection=code_collection,
             limit=page_size,
             offset=offset,
+            source_paths=source_paths,
         )
         return rows, next_offset, "path", "chunk_id"
     rows, next_offset = store.scroll_document_content(
         limit=page_size,
         offset=offset,
+        source_paths=source_paths,
     )
     return rows, next_offset, "source_path", "document_id"
 
 
 def _classify_stored_route_rows(
     rows: list[dict[str, object]],
-    policy: ResolvedIndexPolicy,
+    classify: Callable[[str], ClassifiedContent],
     stored_kind: ContentKind,
     *,
     path_key: str,
@@ -323,7 +351,7 @@ def _classify_stored_route_rows(
         raw_path = payload.get(path_key)
         if not isinstance(raw_path, str) or not raw_path:
             continue
-        disposition = policy.classify(raw_path).disposition
+        disposition = classify(raw_path).disposition
         page.append(
             StoredRouteRow(
                 point_id=str(payload.get(id_key) or row["id"]),
@@ -351,6 +379,14 @@ def iter_stored_route_pages(
         raise ValueError("route migration page size must be between 1 and 1000")
     if code_collection is not None and stored_kind is not ContentKind.CODE:
         raise ValueError("only code route scans accept an explicit collection")
+    if options.source_paths is not None:
+        if len(options.source_paths) > _LEDGER_LOOKUP_BATCH:
+            raise ValueError("route path selection exceeds the bounded lookup batch")
+        if not options.source_paths:
+            return
+    # Classification depends only on the exact path and this immutable snapshot.
+    # Keep reuse bounded and local so every new scan starts with fresh policy.
+    classify = lru_cache(maxsize=4096)(policy.classify)
     offset: PointId | None = None
     while True:
         if run_policy is not None:
@@ -358,13 +394,12 @@ def iter_stored_route_pages(
         rows, next_offset, path_key, id_key = _scroll_stored_route_page(
             store,
             stored_kind,
-            page_size=page_size,
             offset=offset,
-            code_collection=code_collection,
+            options=options,
         )
         page = _classify_stored_route_rows(
             rows,
-            policy,
+            classify,
             stored_kind,
             path_key=path_key,
             id_key=id_key,
@@ -392,16 +427,14 @@ def origin_point_ids(
     # payload content is genuinely dynamic, but the rows collection
     # itself is not, so narrow it once here instead of at every access.
     rows: list[dict[str, object]]
-    if origin_kind is ContentKind.CODE:
-        rows, _next_offset = store.scroll_code_content(
-            limit=page_size,
-            source_paths={rel_path},
-        )
-    else:
-        rows, _next_offset = store.scroll_document_content(
-            limit=page_size,
-            source_paths={rel_path},
-        )
+    collection = (
+        store.CODE_TABLE_NAME
+        if origin_kind is ContentKind.CODE
+        else store.DOCUMENT_TABLE_NAME
+    )
+    rows, _next_offset = store.scroll_index_audit_content(
+        collection, limit=page_size, offset=None, source_paths={rel_path}
+    )
     id_key = "chunk_id" if origin_kind is ContentKind.CODE else "document_id"
     ids: list[str] = []
     for row in rows:
@@ -501,9 +534,11 @@ def reconcile_checkpoint_routes(
     policy: ResolvedIndexPolicy,
     destination_kind: ContentKind,
     *,
-    page_size: int = _DEFAULT_PAGE_SIZE,
+    options: RouteScanOptions = _DEFAULT_ROUTE_SCAN_OPTIONS,
 ) -> int:
     """Reconcile complete destinations through one bounded origin scan."""
+    if options.code_collection is not None:
+        raise ValueError("cross-kind reconciliation requires served origin collections")
     origin_kind = (
         ContentKind.DOCUMENT
         if destination_kind is ContentKind.CODE
@@ -519,7 +554,7 @@ def reconcile_checkpoint_routes(
         policy,
         origin_kind,
         run_policy=checkpoint.run_policy,
-        options=RouteScanOptions(page_size=page_size),
+        options=replace(options, origin_metadata_only=True),
     ):
         states = _file_states_for_rows(checkpoint, page)
         point_ids_by_path: dict[str, list[str]] = {}
@@ -685,30 +720,48 @@ def reconcile_generation_storage(
     breadth while allowing only destination-confirmed cross-kind cleanup.
     In-place code and document generations already select their destinations.
     """
+    path_batches: tuple[frozenset[str] | None, ...] = (None,)
     if checkpoint.receipt is not None:
         checkpoint.seal_incremental_proof()
+        receipt = checkpoint.ledger.publication_receipt_for_generation(
+            checkpoint.generation_id
+        )
+        if receipt is None or receipt.receipt_id != checkpoint.receipt.receipt_id:
+            raise RunLedgerStateError("incremental route receipt disappeared")
+        if receipt.state is ProofReceiptState.ROLLED_BACK and not receipt.mutations:
+            path_batches = ()
+        elif receipt.state is ProofReceiptState.SEALED:
+            paths = sorted({mutation.unit.rel_path for mutation in receipt.mutations})
+            path_batches = tuple(
+                frozenset(paths[start : start + _LEDGER_LOOKUP_BATCH])
+                for start in range(0, len(paths), _LEDGER_LOOKUP_BATCH)
+            )
+        else:
+            raise RunLedgerStateError("incremental route receipt is not sealed")
     resumed = resume_pending_migrations(
         store,
         checkpoint.ledger.path.parent,
         run_policy=checkpoint.run_policy,
         destination_kind=destination_kind,
     )
-    purged = (
-        purge_unpublished_rows(
+    purged = 0
+    migrated = 0
+    for source_paths in path_batches:
+        if include_same_kind:
+            purged += purge_unpublished_rows(
+                store,
+                checkpoint,
+                policy,
+                destination_kind,
+                options=RouteScanOptions(source_paths=source_paths),
+            )
+        migrated += reconcile_checkpoint_routes(
             store,
             checkpoint,
             policy,
             destination_kind,
+            options=RouteScanOptions(source_paths=source_paths),
         )
-        if include_same_kind
-        else 0
-    )
-    migrated = reconcile_checkpoint_routes(
-        store,
-        checkpoint,
-        policy,
-        destination_kind,
-    )
     if resumed or purged or migrated:
         # Reconciliation deletes without touching the run's own counters, so
         # this line is the only record a publication removed anything at all.
@@ -772,6 +825,10 @@ def resume_pending_migrations(
         journal.mark_origin_deleted(migration.migration_id)
         completed += 1
         if run_policy is not None:
+            run_policy.record_durable_progress(
+                kind=DurableProgressKind.RECONCILIATION_BATCH_COMMITTED,
+                label="route migration replay committed",
+            )
             run_policy.checkpoint("route migration replay after origin delete")
     return completed
 
@@ -817,7 +874,12 @@ def _retained_ids_for_rows(
 
 
 def _delete_origin_points(store: VaultStore, migration: RouteMigration) -> None:
-    _delete_kind_points(store, migration.origin_kind, list(migration.point_ids))
+    collection = (
+        store.CODE_TABLE_NAME
+        if migration.origin_kind is ContentKind.CODE
+        else store.DOCUMENT_TABLE_NAME
+    )
+    store.delete_migration_origin_points(collection, migration.point_ids)
 
 
 def _delete_kind_points(
@@ -918,16 +980,27 @@ def _destination_evidence_is_current(
         request.destination_generation_id,
         rel_path=request.rel_path,
     )
+    if request.destination_kind is ContentKind.CODE:
+        ids_exist, ensure = store.code_content_ids_exist, store.ensure_code_table
+    else:
+        ids_exist, ensure = (
+            store.document_content_ids_exist,
+            store.ensure_document_table,
+        )
     found_any = False
     while batch := tuple(itertools.islice(point_ids, _DEFAULT_PAGE_SIZE)):
-        found_any = True
         if request.run_policy is not None:
             request.run_policy.checkpoint("route destination evidence before retrieve")
-        if request.destination_kind is ContentKind.CODE:
-            if not store.code_content_ids_exist(batch):
-                return False
-        elif not store.document_content_ids_exist(batch):
+        if not ids_exist(batch):
             return False
+        if not found_any:
+            from ..store_runtime import StorageGeometryError
+
+            try:
+                ensure()
+            except StorageGeometryError:
+                return False
+        found_any = True
         if request.run_policy is not None:
             request.run_policy.checkpoint("route destination evidence after retrieve")
     return found_any

@@ -42,6 +42,7 @@ if TYPE_CHECKING:
 
     from .embeddings import EmbeddingModel
     from .job_manager.manager import JobManager
+    from .job_manager.models import QuiescedResumeResult
 
 
 class GPUResidencyMixin:
@@ -131,26 +132,58 @@ class GPUResidencyMixin:
                 code=QuiesceTransitionCode.WARMUP_FAILED,
                 reason="gpu_dependency_rebuild_failed",
             )
+        _, failure = self._prepare_quiesced_recovery(QuiesceState.WARMING)
+        if failure is not None:
+            return failure
+        completed = self._quiesce_controller.complete_warming()
+        return self._complete_reopened_recovery(completed)
+
+    def _prepare_quiesced_recovery(
+        self, expected_state: QuiesceState
+    ) -> tuple[QuiescedResumeResult, QuiesceTransition | None]:
+        """Persist eligible held work and report a closed recovery failure."""
         from .job_manager.models import QuiescedResumeStatus
 
-        manager = self.create_job_manager()
-        prepared = manager.prepare_quiesced_resume()
+        prepared = self.create_job_manager().prepare_quiesced_resume(
+            expected_state=expected_state
+        )
         match prepared.status:
             case QuiescedResumeStatus.PREPARED | QuiescedResumeStatus.NO_WORK:
-                pass
+                return prepared, None
             case QuiescedResumeStatus.PERSISTENCE_UNPUBLISHED:
-                return self._quiesce_controller.fail_transition(
-                    code=QuiesceTransitionCode.RESUME_RECOVERY_FAILED,
-                    reason="job_resume_persistence_unpublished",
-                )
+                reason = "job_resume_persistence_unpublished"
             case QuiescedResumeStatus.PERSISTENCE_PUBLISHED_NOT_DURABLE:
-                return self._quiesce_controller.fail_transition(
-                    code=QuiesceTransitionCode.RESUME_RECOVERY_FAILED,
-                    reason="job_resume_persistence_published_not_durable",
-                )
-        completed = self._quiesce_controller.complete_warming()
-        if completed.achieved and completed.snapshot.state is QuiesceState.RUNNING:
-            manager.dispatch_prepared_quiesced_resume(prepared)
+                reason = "job_resume_persistence_published_not_durable"
+        if expected_state is QuiesceState.RUNNING:
+            # Close new admission only. Existing workers and their epoch-scoped
+            # tickets stay owned; a persistence fault is not a global job pause.
+            self._quiesce_controller.begin_pause()
+        recovery_state = (
+            QuiesceState.WARMING
+            if expected_state is QuiesceState.WARMING
+            else QuiesceState.PAUSING
+        )
+        return prepared, self._quiesce_controller.fail_transition(
+            code=QuiesceTransitionCode.RESUME_RECOVERY_FAILED,
+            reason=reason,
+            recovery_state=recovery_state,
+        )
+
+    def _complete_reopened_recovery(
+        self, completed: QuiesceTransition
+    ) -> QuiesceTransition:
+        """Catch an attempt that acknowledged pause between preparation and open."""
+        if (
+            not completed.achieved
+            or completed.snapshot.state is not QuiesceState.RUNNING
+        ):
+            return completed
+        prepared, failure = self._prepare_quiesced_recovery(QuiesceState.RUNNING)
+        if failure is not None:
+            return failure
+        # A later acknowledgement sees RUNNING and uses the existing same-ID
+        # self-requeue path. Dispatch claims also fence overlapping callers.
+        self.create_job_manager().dispatch_prepared_quiesced_resume(prepared)
         return completed
 
     def _recover_already_running_resources(
@@ -158,11 +191,12 @@ class GPUResidencyMixin:
         snapshot: QuiesceSnapshot,
     ) -> QuiesceTransition:
         """Reconcile retained durable work before reporting an idempotent resume."""
-        self.create_job_manager().recover_running_quiesced_resume()
-        return QuiesceTransition(
-            code=QuiesceTransitionCode.RUNNING,
-            achieved=True,
-            snapshot=snapshot,
+        return self._complete_reopened_recovery(
+            QuiesceTransition(
+                code=QuiesceTransitionCode.RUNNING,
+                achieved=True,
+                snapshot=snapshot,
+            )
         )
 
     def _abort_pause_once(self, admission_epoch: int) -> QuiesceTransition:
@@ -183,10 +217,10 @@ class GPUResidencyMixin:
                 code=QuiesceTransitionCode.QUIESCE_FAILED,
                 reason="gpu_dependency_rebuild_failed",
             )
-        aborted = self._quiesce_controller.abort_pause()
-        if aborted.achieved and aborted.snapshot.state is QuiesceState.RUNNING:
-            self.create_job_manager().recover_running_quiesced_resume()
-        return aborted
+        _, failure = self._prepare_quiesced_recovery(QuiesceState.PAUSING)
+        if failure is not None:
+            return failure
+        return self._complete_reopened_recovery(self._quiesce_controller.abort_pause())
 
     def _run_resource_transition(
         self,

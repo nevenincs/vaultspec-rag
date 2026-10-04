@@ -20,9 +20,7 @@ from tools.binaries.windows_icon import (
     VersionResourceError,
     parse_ico,
     product_version_info,
-    stamp_icon,
     stamp_icon_and_version,
-    stamp_version_info,
     verify_icon,
     verify_version_info,
     version_resource,
@@ -122,22 +120,11 @@ def test_version_resource_rejects_invalid_versions(version: str) -> None:
         version_resource(info)
 
 
-def test_stamping_is_rejected_off_windows(tmp_path: Path) -> None:
-    """A non-Windows release host cannot silently claim it stamped a PE."""
-    if sys.platform == "win32":
-        pytest.skip("non-Windows contract")
-    executable = tmp_path / "sample.exe"
-    executable.write_bytes(b"MZ")
-
-    with pytest.raises(IconResourceError, match="only be updated on Windows"):
-        stamp_icon(executable, APPLICATION_ICON)
-
-
-def test_version_stamping_is_rejected_off_windows(
+def test_stamping_is_rejected_off_windows(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A non-Windows release host cannot silently claim it stamped PE metadata."""
+    """A non-Windows release host cannot silently claim it stamped a PE."""
     monkeypatch.setattr("tools.binaries.windows_icon.sys.platform", "linux")
     executable = tmp_path / "sample.exe"
     executable.write_bytes(b"MZ")
@@ -145,8 +132,8 @@ def test_version_stamping_is_rejected_off_windows(
         VAULTSPEC_RAG, VAULTSPEC_RAG.executables[0], "0.4.6", "x86_64-pc-windows-msvc"
     )
 
-    with pytest.raises(VersionResourceError, match="only be updated on Windows"):
-        stamp_version_info(executable, info)
+    with pytest.raises(IconResourceError, match="only be updated on Windows"):
+        stamp_icon_and_version(executable, APPLICATION_ICON, info)
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="requires the Win32 resource API")

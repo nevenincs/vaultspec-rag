@@ -92,11 +92,10 @@ def _recording_scan(seen: list[str], holders: tuple[EnvironmentHolder, ...] = ()
     def scan(
         root: object,
         *,
-        exclude_pids: object = (),
         exclude_launch_chain: bool = False,
         timeout: float | None = None,
     ) -> EnvironmentHolders:
-        del exclude_pids, timeout
+        del timeout
         from pathlib import Path as _Path
 
         seen.append(str(root))

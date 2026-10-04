@@ -25,7 +25,6 @@ from ._process_probe import (
     send_signal,
     wait_for_exit,
 )
-from ._test_isolation import enforce_pytest_managed_singleton_containment
 from .config._settings import managed_status_dir
 from .config._types import EnvVar
 from .serviceclient._discovery import status_write_lock
@@ -67,9 +66,6 @@ class MonitorIdentity:
 
 def _identity_path() -> Path:
     path = managed_status_dir() / "monitor.json"
-    enforce_pytest_managed_singleton_containment(
-        operation="manage the local monitor process", targets=(path,)
-    )
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 

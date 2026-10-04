@@ -327,7 +327,7 @@ def test_remove_on_no_project_file(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# manual_snippet / preview_patch
+# manual_snippet
 # ---------------------------------------------------------------------------
 
 
@@ -340,24 +340,6 @@ def test_manual_snippet_is_valid_toml() -> None:
     assert doc["tool"]["uv"]["index"][0]["url"] == _index.CU130_INDEX_URL
     torch_source = doc["tool"]["uv"]["sources"]["torch"][0]
     assert torch_source["index"] == _index.CU130_INDEX_NAME
-
-
-def test_preview_patch_on_missing(tmp_path: Path) -> None:
-    p = tmp_path / "pyproject.toml"
-    _write(p, PROJECT_ONLY)
-    assert _mutate.preview_patch(p) == _mutate.manual_snippet()
-
-
-def test_preview_patch_on_canonical(tmp_path: Path) -> None:
-    p = tmp_path / "pyproject.toml"
-    _write(p, PROJECT_ONLY + CANONICAL_TAIL)
-    assert _mutate.preview_patch(p) == ""
-
-
-def test_preview_patch_on_customised(tmp_path: Path) -> None:
-    p = tmp_path / "pyproject.toml"
-    _write(p, PROJECT_ONLY + CUSTOM_WRONG_URL_TAIL)
-    assert _mutate.preview_patch(p) == ""
 
 
 # ---------------------------------------------------------------------------

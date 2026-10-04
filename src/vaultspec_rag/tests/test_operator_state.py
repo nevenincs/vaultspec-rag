@@ -99,11 +99,6 @@ def test_every_down_lifecycle_tells_the_operator_what_to_do(
     )
 
 
-def test_a_paused_service_is_neither_serving_nor_broken() -> None:
-    serving = {verdict for verdict in HealthVerdict if verdict.is_serving}
-    assert serving == {HealthVerdict.READY, HealthVerdict.DEGRADED}
-
-
 @pytest.mark.parametrize("hooks", list(PreprocessHookState), ids=str)
 def test_hooks_that_do_not_run_as_configured_say_why(
     hooks: PreprocessHookState,

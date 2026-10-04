@@ -43,7 +43,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import yaml
 
 from dev import toolchain
-from dev.ci_names import FULL_RUN_LABEL, MEASURING_GROUPS
+from dev.guards._ci_names import FULL_RUN_LABEL, MEASURING_GROUPS
 from dev.runner import Cmd, Echo, Ref, ToolOrDocker, ToolOrSkip
 
 if TYPE_CHECKING:

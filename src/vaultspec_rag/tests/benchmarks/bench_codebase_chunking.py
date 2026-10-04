@@ -21,9 +21,9 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from ... import CodebaseIndexer
-from ...config._settings import reset_config
 from ...config._types import EnvVar
 from .._chunk_production import produce_chunks
+from .._config_fixtures import reset_config
 
 if TYPE_CHECKING:
     from pathlib import Path

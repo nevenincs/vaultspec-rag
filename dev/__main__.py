@@ -13,7 +13,7 @@ scan that yields leads rather than verdicts must not gate a build. A tool that
 failed to RUN is a different event and propagates as ADVISORY_BROKEN: the
 `; exit 0` this replaced mapped every status onto success, so a scanner that
 crashed or was never installed reported exactly like a clean run.
-``dev/EXIT-CODES.md`` states the contract in full. The shell form
+``dev/exit_codes.py`` states the contract in full. The shell form
 this replaced restated that decision in every case body, which is how a step
 labelled report-only came to gate and a complexity gate came to never run.
 """

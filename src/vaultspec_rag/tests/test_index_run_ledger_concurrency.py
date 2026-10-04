@@ -34,6 +34,7 @@ from ..indexer._run_ledger_models import (
     with_contention_retry,
 )
 from ..indexer._run_ledger_runtime import RunLedger
+from ._ledger_fixtures import acquire_publication_read_token, latest_generation
 from ._run_ledger_test_support import (
     ledger_test_digest,
     ledger_test_seal_publication_receipt,
@@ -144,7 +145,7 @@ def test_independent_connection_observes_an_active_publication_receipt(
     )
     reader = RunLedger(ledger.path)
     writer = RunLedger(ledger.path)
-    token = reader.acquire_publication_read_token(key)
+    token = acquire_publication_read_token(reader, key)
     ready = threading.Event()
     release = threading.Event()
     receipts: list[PublicationReceipt] = []
@@ -191,7 +192,7 @@ def test_independent_connection_observes_an_active_publication_receipt(
             ProofReadConflictError,
             match="an open receipt prevents proof certification",
         ):
-            reader.acquire_publication_read_token(key)
+            acquire_publication_read_token(reader, key)
         with pytest.raises(
             ProofReadConflictError,
             match="proof state changed during the backend read",
@@ -256,7 +257,7 @@ def test_read_token_rejects_a_revision_committed_by_an_independent_writer(
     publisher.start()
     try:
         assert ready.wait(timeout=30.0), "writer never reached the race barrier"
-        token = reader.acquire_publication_read_token(key)
+        token = acquire_publication_read_token(reader, key)
         release.set()
         assert done.wait(timeout=30.0), "writer never committed its revision"
     finally:
@@ -284,7 +285,7 @@ def test_read_token_rejects_a_revision_committed_by_an_independent_writer(
     ):
         reader.validate_publication_read_token(revision_stale)
 
-    current = reader.acquire_publication_read_token(key)
+    current = acquire_publication_read_token(reader, key)
     assert current.revision == replacement.revision
     assert current.reservation_sequence == replacement.reservation_sequence
     reader.validate_publication_read_token(current)
@@ -411,7 +412,7 @@ def test_a_held_read_blocks_neither_kind_on_the_shared_ledger(
         release.set()
         reader.join(timeout=10.0)
 
-    assert ledger.latest_generation(ContentKind.CODE) == ledger.generation(
+    assert latest_generation(ledger, ContentKind.CODE) == ledger.generation(
         code.generation_id
     )
 

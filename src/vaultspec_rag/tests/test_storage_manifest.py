@@ -25,8 +25,7 @@ from ..storage_manifest import (
     reconcile_manifest,
     record_root,
     rekey_prefix,
-    remove_root,
-    reverse_map,
+    remove_prefix,
     write_snapshot_manifest,
 )
 from ..store_schema import STORAGE_SCHEMA_VERSION, CollectionIdentity
@@ -71,8 +70,8 @@ def test_reverse_map_known_and_unknown(tmp_path: Path) -> None:
     root = tmp_path / "proj"
     root.mkdir()
     entry = record_root(root, backend="server")
-    assert reverse_map(entry.prefix) == str(root.resolve())
-    assert reverse_map("rdeadbeefdead_") is None
+    assert load_manifest()[entry.prefix].root == str(root.resolve())
+    assert load_manifest().get("rdeadbeefdead_") is None
 
 
 def test_record_preserves_other_entries(tmp_path: Path) -> None:
@@ -92,10 +91,10 @@ def test_remove_root_drops_entry(tmp_path: Path) -> None:
     root = tmp_path / "proj"
     root.mkdir()
     record_root(root, backend="server")
-    assert remove_root(root) is True
+    assert remove_prefix(root_collection_prefix(root)) is True
     assert load_manifest() == {}
     # Removing a missing root is a no-op, not an error.
-    assert remove_root(root) is False
+    assert remove_prefix(root_collection_prefix(root)) is False
 
 
 def test_classify_live_then_orphaned(tmp_path: Path) -> None:

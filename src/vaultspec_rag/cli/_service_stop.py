@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import sys
+from dataclasses import dataclass
 from typing import Annotated
 
 import typer
@@ -21,12 +22,13 @@ import vaultspec_rag.cli as _cli
 from .._loopback_http import probe_loopback_connect
 from .._operator_commands import server_status_command
 from .._process_probe import (
-    SERVER_LAUNCH_MARKER,
-    argv_contains,
-    argv_of,
     iter_process_info,
     pid_alive,
+    pid_argv,
+    pid_matches_start_time,
+    pid_start_time,
     pid_terminated,
+    server_launch_port,
     wait_for_exit,
 )
 from ..serviceclient._discovery import _delete_service_status, read_service_status
@@ -36,6 +38,7 @@ from ._core import logger
 from ._process import (
     _DEFAULT_GRACEFUL_DRAIN_SECONDS,
     _is_our_service,
+    _is_service_command,
     _may_carry_launch_witness,
     _terminate_pid,
 )
@@ -99,8 +102,9 @@ def _reclaim_machine_singleton(
     travels with the pid because a reclaim that could not kill the holder has
     not freed the machine, and reporting it as reclaimed would send the
     operator into the same start-fails-on-a-held-port dead end the status-file
-    path used to produce. The ``_is_our_service`` executable check guards
-    against terminating an unrelated process after pid reuse.
+    path used to produce. The same strict launch and process-birth check as
+    every stop target guards against adopting an unrelated process after PID
+    reuse; its port comes from the actual application arguments.
 
     A lock that is held but whose owner record cannot be read is a distinct
     failure, not a no-op: something owns the machine, this verb has no pid to
@@ -128,9 +132,24 @@ def _reclaim_machine_singleton(
             ),
             next_actions=(server_status_command(verbose=True),),
         )
-    if holder != os.getpid() and pid_alive(holder) and _is_our_service(holder):
-        return holder, _terminate_and_confirm(holder)
-    return None
+    if holder == os.getpid() or not pid_alive(holder):
+        return None
+    confirmed, birth = _confirm_service_stop_target(_ServiceStopTarget(holder, None))
+    if not confirmed:
+        raise _fail_stop(
+            json_mode,
+            error="identity_unconfirmed",
+            message="Service stop skipped",
+            human_lines=(
+                f"The machine lock names process {holder}, but its resident "
+                "launch identity could not be confirmed; it was left running.",
+            ),
+            next_actions=(server_status_command(verbose=True),),
+            pid=holder,
+        )
+    return holder, _terminate_and_confirm(
+        holder, console_group_signal=False, expected_start_time=birth
+    )
 
 
 def _initiator_fields() -> dict[str, str]:
@@ -151,38 +170,6 @@ def _initiator_fields() -> dict[str, str]:
         "initiator_cmd": cmd,
         "initiator_cwd": os.getcwd(),
     }
-
-
-def _refuse_terminate_from_unisolated_test() -> None:
-    """Refuse to touch the machine-global service from an unisolated test run.
-
-    A pytest run in a development worktree once resolved the operator's
-    real managed service (no isolated status/storage dirs in its
-    environment) and terminated it mid-index, killing two in-flight
-    production jobs. Tests must run against isolated dirs; when the
-    terminate path detects a pytest context whose environment still
-    resolves the machine-global singleton, failing the test loudly is
-    strictly better than stopping the operator's daemon.
-
-    Raises:
-        RuntimeError: When called under pytest without either machine-dir
-            env override in place.
-    """
-    if "PYTEST_CURRENT_TEST" not in os.environ:
-        return
-    from ..config._types import EnvVar
-
-    if os.environ.get(EnvVar.STATUS_DIR.value) or os.environ.get(
-        EnvVar.QDRANT_STORAGE_DIR.value
-    ):
-        return
-    raise RuntimeError(
-        "refusing to terminate the machine-global vaultspec-rag service from "
-        "a test run: neither VAULTSPEC_RAG_STATUS_DIR nor "
-        "VAULTSPEC_RAG_QDRANT_STORAGE_DIR is isolated. Point both at a temp "
-        "dir (the test-suite conftest does this automatically) so the test "
-        "exercises its own sandboxed service instead of the operator's."
-    )
 
 
 def _stop_graceful_drain_seconds() -> float:
@@ -251,7 +238,10 @@ def _clean_orphaned_machine_pointer() -> bool:
 
 
 def _terminate_and_confirm(
-    pid: int, *, console_group_signal: bool = True
+    pid: int,
+    *,
+    console_group_signal: bool = True,
+    expected_start_time: float | None = None,
 ) -> _cli.TerminationResult:
     """Terminate *pid*, confirm its exit, then clear its discovery records.
 
@@ -268,12 +258,12 @@ def _terminate_and_confirm(
     failed on that port. Callers MUST raise ``_fail_still_running`` when the
     returned result is still alive.
     """
-    _refuse_terminate_from_unisolated_test()
     result = _terminate_pid(
         pid,
         timeout=_STOP_TERMINATION_BUDGET_SECONDS,
         graceful_drain=_stop_graceful_drain_seconds(),
         console_group_signal=console_group_signal,
+        expected_start_time=expected_start_time,
     )
 
     wait_for_exit(pid, timeout=5.0, poll_seconds=0.1)
@@ -413,7 +403,11 @@ def _service_pid_on_port(port: int) -> tuple[int, str | None] | None:
     if health is None:
         return None
     serving_pid = health.get("pid")
-    if not isinstance(serving_pid, int) or serving_pid <= 0:
+    if (
+        not isinstance(serving_pid, int)
+        or isinstance(serving_pid, bool)
+        or serving_pid <= 0
+    ):
         return None
     raw_token = health.get("service_token")
     token = raw_token if isinstance(raw_token, str) and raw_token else None
@@ -492,16 +486,100 @@ def _fail_stop(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _ServiceStopTarget:
+    pid: int
+    token: str | None
+    recorded: bool = False
+    launch_token: str | None = None
+
+
+def _starting_service_on_port(port: int, json_mode: bool) -> _ServiceStopTarget | None:
+    """Resolve a recorded daemon or the sole machine-lock holder before health."""
+    from .._machine_lock import probe_machine_lock
+
+    status = read_service_status()
+    probe = probe_machine_lock()
+    if probe.held and probe.holder_pid <= 0:
+        raise _fail_stop(
+            json_mode,
+            error="machine_holder_unnamed",
+            message="Service stop skipped",
+            human_lines=(
+                "The resident-service lock is held but its owner could not "
+                "be identified; no process was reported stopped.",
+            ),
+            next_actions=(server_status_command(port, verbose=True),),
+            port=port,
+        )
+    if (
+        probe.held
+        and probe.holder_pid != os.getpid()
+        and (
+            status is None
+            or status.get("pid") != probe.holder_pid
+            or status.get("port") != port
+        )
+    ):
+        return _ServiceStopTarget(probe.holder_pid, None)
+    if status is None:
+        return None
+    if status.get("port") != port:
+        return None
+    pid = status.get("pid")
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return None
+    raw_token = status.get("service_token")
+    raw_launch_token = status.get("launch_token")
+    return _ServiceStopTarget(
+        pid,
+        raw_token if isinstance(raw_token, str) and raw_token else None,
+        recorded=True,
+        launch_token=(
+            raw_launch_token
+            if isinstance(raw_launch_token, str) and raw_launch_token
+            else None
+        ),
+    )
+
+
+def _confirm_service_stop_target(
+    target: _ServiceStopTarget, port: int | None = None
+) -> tuple[bool, float]:
+    """Bracket identity inspection with the same OS process incarnation."""
+    birth = pid_start_time(target.pid, timeout=1.0)
+    if birth == 0.0:
+        return False, birth
+    if port is None:
+        port = server_launch_port(pid_argv(target.pid, timeout=1.0) or ())
+    confirmed = _is_our_service(
+        target.pid,
+        port=port,
+        expected_token=target.token,
+        require_launch_witness=True,
+        expected_launch_token=target.launch_token,
+    )
+    confirmed = confirmed and pid_matches_start_time(target.pid, birth, timeout=1.0)
+    return confirmed, birth
+
+
 def _stop_service_on_port(port: int, json_mode: bool = False) -> None:
-    """Stop the service answering on *port*, status-file independent.
+    """Stop the identified daemon serving or starting on *port*.
 
     Targets the running instance the operator named with ``--port`` even when
-    the status file is missing or records a divergent port. The
+    the status file is missing or records a divergent port. Before its listener
+    opens, a matching persisted PID must carry the resident launch witness. The
     discovery file is only removed when it actually points at this port, so
     stopping one config's service never erases another's discovery file.
     """
     resolved = _service_pid_on_port(port)
-    if resolved is None:
+    target = (
+        _ServiceStopTarget(*resolved)
+        if resolved is not None
+        else _starting_service_on_port(port, json_mode)
+    )
+    if target is None:
+        _guard_unconfirmed_port_holder(port, None, json_mode)
         _stop_success(
             json_mode,
             status="already_stopped",
@@ -510,32 +588,45 @@ def _stop_service_on_port(port: int, json_mode: bool = False) -> None:
             port=port,
         )
         return
-    pid, token = resolved
-    if not _is_our_service(pid, port=port, expected_token=token):
+    pid = target.pid
+    confirmed, start_time = _confirm_service_stop_target(target, port)
+    if not confirmed:
+        if target.recorded and _should_unlink_discovery_file(pid_alive(pid)):
+            _delete_service_status(expected_pid=pid, expected_port=port)
+            _stop_success(
+                json_mode,
+                status="cleaned",
+                human_title="Service status cleaned",
+                human_lines=(f"Recorded process {pid} is no longer running.",),
+                pid=pid,
+                port=port,
+            )
+            return
         raise _fail_stop(
             json_mode,
             error="identity_unconfirmed",
             message="Service stop skipped",
             human_lines=(
-                f"A process is answering on port {port} but its identity could "
+                f"Process {pid} for port {port} is alive but its identity could "
                 "not be confirmed as a vaultspec-rag service; it was left "
-                "running.",
+                "running, and its discovery record was left in place.",
             ),
             next_actions=(server_status_command(port, verbose=True),),
             pid=pid,
             port=port,
         )
 
-    result = _terminate_and_confirm(pid)
+    # A resolved worker PID is not proof of a Windows console group leader.
+    result = _terminate_and_confirm(
+        pid, console_group_signal=False, expected_start_time=start_time
+    )
     if result.alive:
         raise _fail_still_running(json_mode, pid=pid, result=result, port=port)
 
     # Remove the discovery file only when it points at the port we just stopped,
     # so stopping a non-default-port service never erases a different config's
     # status file.
-    status = read_service_status()
-    if status is not None and int(status.get("port", 0)) == port:
-        _delete_service_status()
+    _delete_service_status(expected_pid=pid, expected_port=port)
     _stop_success(
         json_mode,
         status="stopped",
@@ -589,7 +680,6 @@ def _orphan_daemon_pids(port: int) -> dict[int, int]:
             daemon that loses the singleton race to the orphan the scan never
             saw. An unachieved reap must be a fault, never a quiet zero.
     """
-    marker = (*SERVER_LAUNCH_MARKER, "--port", str(port))
     found: dict[int, int] = {}
     for info in iter_process_info(["pid", "ppid", "name", "cmdline"]):
         # The image is the cheapest discriminator and is asked first; see
@@ -597,7 +687,7 @@ def _orphan_daemon_pids(port: int) -> dict[int, int]:
         # line of every process on the machine instead.
         if not _may_carry_launch_witness(info.get("name")):
             continue
-        if not argv_contains(argv_of(info.get("cmdline")), marker):
+        if not _is_service_command(info.get("cmdline"), port, launch_token=None):
             continue
         pid = info.get("pid")
         ppid = info.get("ppid")
@@ -636,12 +726,11 @@ def _guard_unconfirmed_port_holder(
     raise _fail_stop(
         json_mode,
         error="port_holder_unconfirmed",
-        message="Orphan reap refused: the port is held by an unconfirmed process",
+        message="The port is held by an unconfirmed process",
         human_lines=(
             f"Something is listening on port {port} but did not answer the "
             "identity probe, so it cannot be told apart from a live service.",
-            "No daemon was reaped. An orphan holds no port, so nothing this "
-            "command clears is affected by stopping here.",
+            "No process was terminated.",
         ),
         next_actions=(server_status_command(port, verbose=True),),
         port=port,
@@ -676,7 +765,7 @@ def _protected_pids(matched: dict[int, int], anchors: set[int]) -> set[int]:
 
 
 def _reap_unprotected(
-    matched: dict[int, int], protected: set[int]
+    matched: dict[int, int], protected: set[int], port: int
 ) -> tuple[list[int], list[int], bool]:
     """Terminate every matched daemon outside *protected*, confirming each.
 
@@ -688,11 +777,20 @@ def _reap_unprotected(
     survivors: list[int] = []
     denied = False
     for pid in matched:
-        if pid in protected or not _is_our_service(pid):
+        if pid in protected:
+            continue
+        confirmed, birth = _confirm_service_stop_target(
+            _ServiceStopTarget(pid, None), port
+        )
+        if not confirmed:
+            if not pid_terminated(pid):
+                survivors.append(pid)
             continue
         # Discovered pid, not one we spawned: force-kill by pid, never a
         # console-group CTRL_BREAK that could reach the operator's own console.
-        result = _terminate_and_confirm(pid, console_group_signal=False)
+        result = _terminate_and_confirm(
+            pid, console_group_signal=False, expected_start_time=birth
+        )
         denied = denied or result.signal_denied
         (reaped if pid_terminated(pid) else survivors).append(pid)
     return reaped, survivors, denied
@@ -766,7 +864,7 @@ def _reap_orphan_daemons(port: int, json_mode: bool) -> None:
 
     anchors = {os.getpid(), lock_holder, pointer_pid, serving_pid}
     reaped, survivors, denied = _reap_unprotected(
-        matched, _protected_pids(matched, anchors)
+        matched, _protected_pids(matched, anchors), port
     )
 
     if survivors:
@@ -814,7 +912,8 @@ def service_stop(
             "--port",
             help=(
                 "Stop the service answering on this port, resolving its identity "
-                "from /health rather than the status file. Use when the service "
+                "from /health, or from a matching launch identity in the status "
+                "file before its listener opens. Use when the service "
                 "runs on a non-default port or the status file diverges from the "
                 "running instance."
             ),
@@ -868,7 +967,8 @@ def service_stop(
 
     With ``--port`` the running instance on that port is targeted directly via
     its ``/health`` identity, so a non-default-port service whose status file is
-    missing or divergent is still stoppable.
+    missing or divergent is still stoppable. A daemon still starting is targeted
+    only through a matching persisted port and exact resident launch witness.
 
     Exit codes: 0 for every satisfied outcome (``stopped``, ``already_stopped``,
     ``cleaned``, ``reclaimed``, ``reaped``); 1 when the stop is skipped because a
@@ -933,13 +1033,21 @@ def service_stop(
     port = int(status["port"])
     raw_token = status.get("service_token")
     expected_token = raw_token if isinstance(raw_token, str) else None
-    if not _is_our_service(pid, port=port, expected_token=expected_token):
+    raw_launch_token = status.get("launch_token")
+    target = _ServiceStopTarget(
+        pid,
+        expected_token,
+        recorded=True,
+        launch_token=raw_launch_token if isinstance(raw_launch_token, str) else None,
+    )
+    confirmed, birth = _confirm_service_stop_target(target, port)
+    if not confirmed:
         # Identity not confirmed. Remove the discovery file only when the PID
         # is confirmed dead; an alive-but-unconfirmed PID (a transient
         # /health/identity miss) must not have its file erased, which would
         # both mis-report a live daemon as gone and break discovery (#204).
         if _should_unlink_discovery_file(pid_alive(pid)):
-            _delete_service_status()
+            _delete_service_status(expected_pid=pid, expected_port=port)
             _stop_success(
                 json_mode,
                 status="cleaned",
@@ -961,10 +1069,12 @@ def service_stop(
             port=port,
         )
 
-    result = _terminate_and_confirm(pid)
+    result = _terminate_and_confirm(
+        pid, console_group_signal=False, expected_start_time=birth
+    )
     if result.alive:
         raise _fail_still_running(json_mode, pid=pid, result=result, port=port)
-    _delete_service_status()
+    _delete_service_status(expected_pid=pid, expected_port=port)
     _stop_success(
         json_mode,
         status="stopped",

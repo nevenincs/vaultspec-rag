@@ -6,11 +6,8 @@ at a terminal and wrong in CI, where a job gets an exit code and a wall of
 scrollback nobody parses - a failing lint annotates nothing on the pull request
 that caused it, even though every one of these tools can emit exactly that.
 
-Two switches, deliberately separate:
-
-* ``GITHUB_ACTIONS`` turns on GitHub workflow annotations, which go to stdout
-  and are meaningful only inside a workflow run.
-* ``VAULTSPEC_CI_REPORTS`` names a directory for report artifacts.
+``GITHUB_ACTIONS`` turns on GitHub workflow annotations, which go to stdout
+and are meaningful only inside a workflow run.
 
 UNSET - every local run, and any CI job that has not opted in - every command
 runs exactly as it does today. The switch is additive on purpose: adopting it
@@ -28,9 +25,6 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
-
-#: Names a directory for report artifacts, and enables machine-readable output.
-REPORTS_ENV = "VAULTSPEC_CI_REPORTS"
 
 #: Set by the Actions runner. Annotations are only meaningful under it.
 ANNOTATIONS_ENV = "GITHUB_ACTIONS"

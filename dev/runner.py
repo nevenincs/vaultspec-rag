@@ -262,20 +262,6 @@ def uv_run(*argv: str) -> Cmd:
     return Cmd(("uv", "run", *NO_SYNC, *argv))
 
 
-def uv_run_env(env: Mapping[str, str], *argv: str, cwd: str | None = None) -> Cmd:
-    """Build an environment-run command with overrides and a working directory.
-
-    Args:
-        env: Variables overlaid on the inherited environment.
-        *argv: The command and arguments to run inside the environment.
-        cwd: Directory to run in, relative to the repository root.
-
-    Returns:
-        The corresponding :class:`Cmd`.
-    """
-    return Cmd(uv_run(*argv).argv, env, cwd)
-
-
 def dev_module(module: str, *argv: str) -> Cmd:
     """Build a command that runs one of this harness's own instruments.
 

@@ -29,10 +29,10 @@ from .._integrity_remediation import (
     REPAIR_REQUEST_MIN_INTERVAL_SECONDS,
     _record_verdict,
     _spawn_repair,
-    reset_observations,
     shrunken_observations,
 )
 from .._source_types import PublicSourceType
+from ._state_fixtures import reset_observations
 from .conftest import managed_env
 
 if TYPE_CHECKING:

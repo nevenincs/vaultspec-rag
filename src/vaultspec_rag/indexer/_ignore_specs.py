@@ -35,11 +35,11 @@ def is_ignored(
 def collect_gitignore_patterns(root_dir: pathlib.Path) -> list[str]:
     """Collect the hardcoded and ``.gitignore``-sourced exclusion patterns.
 
-    Walks all ``.gitignore`` files in the project tree (the single tree
-    walk on any index run), prefixing each pattern by the file's relative
-    directory so nested patterns resolve from the project root. Returns the
-    raw pattern list so both the compiled spec and the membership epoch can
-    be built from one traversal.
+    Walks reachable ``.gitignore`` files in the project tree, prefixing each
+    pattern by the file's relative directory so nested patterns resolve from
+    the project root. Ignore files inside excluded directories cannot affect
+    membership and must not enter its fingerprint. Returns the raw pattern
+    list so both the compiled spec and membership epoch use one traversal.
     """
     from ..config._settings import get_config
 
@@ -60,29 +60,37 @@ def collect_gitignore_patterns(root_dir: pathlib.Path) -> list[str]:
     patterns: list[str] = []
     import pathspec
 
-    fixed_spec = pathspec.GitIgnoreSpec.from_lines(fixed_patterns)
+    git_spec = pathspec.GitIgnoreSpec.from_lines(fixed_patterns)
+    rag_patterns = collect_vaultragignore_patterns(root_dir)
+    rag_spec = pathspec.GitIgnoreSpec.from_lines(rag_patterns) if rag_patterns else None
     root_str = str(root_dir)
     for dirpath, dirs, files in os.walk(root_dir, topdown=True, followlinks=False):
         rel_dir = os.path.relpath(dirpath, root_str).replace("\\", "/")
+        if ".gitignore" in files:
+            gitignore = root_dir / (
+                ".gitignore" if rel_dir == "." else f"{rel_dir}/.gitignore"
+            )
+            try:
+                lines = gitignore.read_text(encoding="utf-8").splitlines()
+            except OSError as exc:
+                logger.debug("gitignore %s unreadable; skipping: %s", gitignore, exc)
+            else:
+                process_gitignore_lines(
+                    lines, gitignore.parent.relative_to(root_dir), patterns
+                )
+                git_spec = pathspec.GitIgnoreSpec.from_lines(
+                    [*patterns, *fixed_patterns]
+                )
         dirs.sort()
         dirs[:] = [
             dirname
             for dirname in dirs
-            if not fixed_spec.match_file(
-                f"{dirname}/" if rel_dir == "." else f"{rel_dir}/{dirname}/"
+            if not is_ignored(
+                f"{dirname}/" if rel_dir == "." else f"{rel_dir}/{dirname}/",
+                git_spec,
+                rag_spec,
             )
         ]
-        if ".gitignore" not in files:
-            continue
-        gitignore = root_dir / (
-            ".gitignore" if rel_dir == "." else f"{rel_dir}/.gitignore"
-        )
-        try:
-            lines = gitignore.read_text(encoding="utf-8").splitlines()
-        except OSError as exc:
-            logger.debug("gitignore %s unreadable; skipping: %s", gitignore, exc)
-            continue
-        process_gitignore_lines(lines, gitignore.parent.relative_to(root_dir), patterns)
     # Project-authored negations must not reopen directories declared above as
     # always excluded. Keeping the fixed rules last makes that invariant true
     # both for this pruned discovery walk and the final production scan spec.

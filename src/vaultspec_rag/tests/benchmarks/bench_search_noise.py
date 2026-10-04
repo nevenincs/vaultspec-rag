@@ -143,9 +143,9 @@ def noise_searcher(
     import os
 
     from ... import CodebaseIndexer, VaultSearcher
-    from ...config._settings import reset_config
     from ...progress import NullProgressReporter
     from ...store_runtime import VaultStore
+    from .._config_fixtures import reset_config
 
     # The noise policy (hide/demote/dedup) runs after rerank and is independent
     # of it; disabling the CrossEncoder keeps this benchmark deterministic and

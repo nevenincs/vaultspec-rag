@@ -27,4 +27,7 @@
 #   reason = "torch.jit memory corruption, no fixed release; dev-only tooling, never shipped in the wheel. Remove when a fixed torch lands."
 #   expires = 2026-12-31
 
-# (no advisories are currently accepted)
+[[suppression]]
+id = "GHSA-vfj7-8cjw-p6xm"
+reason = "braces 3.0.3 stack exhaustion on deeply nested patterns, no fixed release. Reached only through patch-package > find-yarn-workspace-root > micromatch at npm install time, on patterns this repository writes; never shipped in the wheel or the monitor bundle. Remove when a fixed braces lands or patch-package stops depending on it."
+expires = 2026-11-04

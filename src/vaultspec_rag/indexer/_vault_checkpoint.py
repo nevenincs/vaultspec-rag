@@ -25,7 +25,7 @@ from ._run_ledger_models import (
     index_run_ledger_path,
 )
 from ._run_ledger_runtime import RunLedger
-from ._run_policy import RunPolicy
+from ._run_policy import DurableProgressKind, RunPolicy
 from ._vault_fingerprint import SCHEME
 
 if TYPE_CHECKING:
@@ -88,8 +88,14 @@ class VaultRunCheckpoint(RunCheckpointBase):
             backend_identity=backend_identity,
         )
         ledger = RunLedger(index_run_ledger_path(workspace_volume_path(root.resolve())))
+        run_policy = RunPolicy.from_config(run_control=run_control)
         try:
-            generation = cls.start_compatible_generation(ledger, signature)
+            generation = cls.start_compatible_generation(
+                ledger,
+                signature,
+                authority,
+                run_policy,
+            )
             receipt = cls.open_publication_receipt(ledger, generation, authority)
         except RunLedgerCompatibilityError as exc:
             # An index written under an older chunk or point shape cannot be
@@ -105,7 +111,7 @@ class VaultRunCheckpoint(RunCheckpointBase):
             ledger=ledger,
             generation=generation,
             policy=None,
-            run_policy=RunPolicy.from_config(run_control=run_control),
+            run_policy=run_policy,
             authority=authority,
             receipt=receipt,
         )
@@ -142,7 +148,12 @@ class VaultRunCheckpoint(RunCheckpointBase):
         content_identities: dict[str, str],
     ) -> None:
         units = self.units_for_chunks(chunks, content_identities)
-        self.ledger.record_storage_confirmed_units(self.generation_id, units)
+        inserted = self.ledger.record_storage_confirmed_units(self.generation_id, units)
+        if inserted:
+            self.run_policy.record_durable_progress(
+                kind=DurableProgressKind.LEDGER_UNIT_COMMITTED,
+                label=f"vault store mutation with {inserted} new ledger unit(s)",
+            )
 
     def _verified_evidence(self) -> list[ProofEvidence]:
         """Build full vault proof evidence from confirmed chunk units."""

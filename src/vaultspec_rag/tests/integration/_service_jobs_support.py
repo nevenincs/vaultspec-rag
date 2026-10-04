@@ -30,16 +30,16 @@ import pytest
 import uvicorn
 from typer.testing import CliRunner
 
-import vaultspec_rag.mcp._admin_client as admin
+import vaultspec_rag.tests._admin_client as admin
 
 from ... import jobs as _jobs
 from ... import jobs as _managed_jobs
 from ...cli import app
-from ...config._settings import reset_config
 from ...config._types import EnvVar
 from ...server import ServerRouteRuntime, create_http_app
 from ...service import ServiceRegistry
 from ...serviceclient._compat import SERVICE_VERSION_FIELD, local_package_version
+from .._config_fixtures import reset_config
 from .._http_stubs import QuietHandler
 from .._ports import free_loopback_port
 

@@ -26,7 +26,10 @@ def test_health_reports_daemon_enrollment(monkeypatch: pytest.MonkeyPatch) -> No
         ServerRouteRuntime(token="test", registry=ServiceRegistry(), port=8766),
         lifespan=None,
     )
-    data = cast("dict[str, object]", TestClient(app).get("/health").json())
+    data = cast(
+        "dict[str, object]",
+        TestClient(app, base_url="http://127.0.0.1").get("/health").json(),
+    )
     features = cast("dict[str, object]", data["features"])
     snapshot = cast("dict[str, object]", features["typesafe"])
     assert snapshot["state"] == "pending"

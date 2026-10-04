@@ -90,10 +90,11 @@ def test_maintenance_cycle_reclaims_only_time_confirmed_orphans(
     Aged empty orphan reclaimed; fresh orphan left waiting; reappearing
     root's grace clock cleared; cycles visible in the jobs registry.
     """
-    from ...cli._process import _spawn_service, _terminate_pid
+    from ...cli._process import _terminate_pid
     from ...cli._service_status import _write_service_status
     from ...config._settings import get_config
     from .._ports import free_loopback_port
+    from .._session_job_anchor import spawn_anchored_service
     from ._helpers import _poll_health, _service_env
 
     with _service_env(
@@ -116,7 +117,7 @@ def test_maintenance_cycle_reclaims_only_time_confirmed_orphans(
 
         port = free_loopback_port()
         log_path = tmp_path / "service.log"
-        pid = _spawn_service(port, log_path)
+        pid = spawn_anchored_service(port, log_path)
         request.addfinalizer(lambda: _terminate_pid(pid))
         _write_service_status(pid, port)
         _poll_health(port)

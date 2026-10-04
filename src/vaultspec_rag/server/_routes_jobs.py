@@ -284,7 +284,12 @@ def _job_is_waiting(record: dict[str, object]) -> bool:
     return _job_progress_step(record) == JobState.QUEUED.value
 
 
-def _job_stalled(record: dict[str, object], now: float) -> bool:
+def _job_stalled(
+    record: dict[str, object],
+    now: float,
+    *,
+    confirmed_work: dict[str, object] | None = None,
+) -> bool:
     """Return the truthful service-domain stall signal.
 
     Running work is stalled only when real work has stopped reporting progress.
@@ -297,8 +302,31 @@ def _job_stalled(record: dict[str, object], now: float) -> bool:
         return control_age is not None and control_age >= STALL_THRESHOLD_SECONDS
     if state != "running" or _job_is_waiting(record):
         return False
-    age = _job_last_progress_age_seconds(record, now)
+    age = _age_seconds(
+        _job_progress.last_work_timestamp(
+            _job_progress_timestamp(record), confirmed_work
+        ),
+        now,
+    )
     return age is not None and age >= STALL_THRESHOLD_SECONDS
+
+
+def _job_confirmed_chunk_progress(
+    record: dict[str, object],
+) -> dict[str, object] | None:
+    """Capture the CODE acknowledgement facts used throughout one projection."""
+    if (
+        job_source(record) != "code"
+        or job_state(record) != JobState.RUNNING.value
+        or _job_is_waiting(record)
+    ):
+        return None
+    identifier = record.get("id")
+    return (
+        _job_progress.confirmed_chunk_progress(identifier)
+        if isinstance(identifier, str) and identifier
+        else None
+    )
 
 
 def _job_telemetry(record: dict[str, object], name: str) -> dict[str, object] | None:
@@ -375,6 +403,32 @@ def _shaped_rate_baseline(
     }
 
 
+def _degradation_rate_baseline(
+    record: dict[str, object],
+    file_baseline: dict[str, object] | None,
+    confirmed_work: dict[str, object] | None,
+) -> dict[str, object] | None:
+    """Compare CODE chunk work; decline unknown work without a file fallback."""
+    if job_source(record) != "code":
+        return file_baseline
+    work = confirmed_work or {}
+    baseline = _shaped_rate_baseline(
+        _job_values.measurement(work.get("recent_per_second")),
+        _job_values.measurement(work.get("median_per_second")),
+    )
+    return {
+        "unit": "confirmed_chunks",
+        **(
+            baseline
+            or {
+                "recent_per_second": None,
+                "median_per_second": None,
+                "ratio": None,
+            }
+        ),
+    }
+
+
 def _forward_signal_age(
     forward: dict[str, object] | None,
     now: float,
@@ -420,6 +474,7 @@ def _job_degradation(
     *,
     forward: dict[str, object] | None,
     rate_baseline: dict[str, object] | None,
+    confirmed_work: dict[str, object] | None = None,
 ) -> str:
     """Return the three-way service verdict: healthy, degraded, or stalled.
 
@@ -441,7 +496,7 @@ def _job_degradation(
     own run baseline, because a run can report continuously while delivering
     a fraction of the work it has proved it can do.
     """
-    if _job_stalled(record, now):
+    if _job_stalled(record, now, confirmed_work=confirmed_work):
         return "stalled"
     state = job_state(record)
     if state in _TRANSITIONAL_STATES:
@@ -454,7 +509,12 @@ def _job_degradation(
     ages = [
         age
         for age in (
-            _job_last_progress_age_seconds(record, now),
+            _age_seconds(
+                _job_progress.last_work_timestamp(
+                    _job_progress_timestamp(record), confirmed_work
+                ),
+                now,
+            ),
             _forward_signal_age(forward, now),
         )
         if age is not None
@@ -583,6 +643,65 @@ def _activity_record_capabilities(state: str) -> dict[str, object]:
     )
 
 
+def _job_work_projection(record: dict[str, object], now: float) -> dict[str, object]:
+    """Shape measured work and its health from one acknowledged-work snapshot."""
+    enriched: dict[str, object] = {}
+    confirmed_work = _job_confirmed_chunk_progress(record)
+    enriched["confirmed_chunk_progress"] = confirmed_work
+    enriched["stalled"] = _job_stalled(record, now, confirmed_work=confirmed_work)
+    forward = _job_telemetry(record, "forward")
+    if forward is not None:
+        enriched["forward"] = dict(forward)
+    encode = _job_telemetry(record, "encode")
+    if encode is not None:
+        enriched["encode"] = dict(encode)
+    recent_rate, median_rate = _job_rates(record)
+    rate_baseline = _shaped_rate_baseline(recent_rate, median_rate)
+    degradation_baseline = _degradation_rate_baseline(
+        record, rate_baseline, confirmed_work
+    )
+    verdict = _job_degradation(
+        record,
+        now,
+        forward=forward,
+        rate_baseline=degradation_baseline,
+        confirmed_work=confirmed_work,
+    )
+    enriched["degradation"] = verdict
+    # Present-and-null when healthy: absent means a daemon that predates the
+    # verdict, and renderers read that difference the same way they do for
+    # the completion estimate.
+    enriched["degradation_evidence"] = (
+        _job_evidence.degradation_evidence(
+            now=now,
+            inputs=_job_evidence.DegradationInputs(
+                source=job_source(record),
+                project_root=job_project_root(record),
+                step=_job_progress_step(record) or None,
+                forward=forward,
+                encode=encode,
+                rate_baseline=degradation_baseline,
+            ),
+        )
+        if verdict != "healthy"
+        else None
+    )
+    rate, remaining = _job_completion_estimate(record, recent_rate)
+    enriched["progress_rate_per_second"] = rate
+    enriched["estimated_remaining_seconds"] = remaining
+    # Present-and-null on the same terms as the evidence block above: a
+    # published null is the service declining to compare this job against
+    # itself, and an absent key is a daemon that never made the comparison.
+    enriched["progress_rate_baseline"] = rate_baseline
+    enriched["confirmed_chunk_rate_baseline"] = (
+        degradation_baseline if job_source(record) == "code" else None
+    )
+    enriched["degradation_rate_unit"] = (
+        "confirmed_chunks" if job_source(record) == "code" else "phase_items"
+    )
+    return enriched
+
+
 def _job_with_liveness(
     record: dict[str, object],
     *,
@@ -626,47 +745,7 @@ def _job_with_liveness(
         record
     )
     enriched["control_pending_age_seconds"] = _control_pending_age_seconds(record, now)
-    enriched["stalled"] = _job_stalled(record, now)
-    forward = _job_telemetry(record, "forward")
-    if forward is not None:
-        enriched["forward"] = dict(forward)
-    encode = _job_telemetry(record, "encode")
-    if encode is not None:
-        enriched["encode"] = dict(encode)
-    recent_rate, median_rate = _job_rates(record)
-    rate_baseline = _shaped_rate_baseline(recent_rate, median_rate)
-    verdict = _job_degradation(
-        record,
-        now,
-        forward=forward,
-        rate_baseline=rate_baseline,
-    )
-    enriched["degradation"] = verdict
-    # Present-and-null when healthy: absent means a daemon that predates the
-    # verdict, and renderers read that difference the same way they do for
-    # the completion estimate.
-    enriched["degradation_evidence"] = (
-        _job_evidence.degradation_evidence(
-            now=now,
-            inputs=_job_evidence.DegradationInputs(
-                source=job_source(record),
-                project_root=job_project_root(record),
-                step=_job_progress_step(record) or None,
-                forward=forward,
-                encode=encode,
-                rate_baseline=rate_baseline,
-            ),
-        )
-        if verdict != "healthy"
-        else None
-    )
-    rate, remaining = _job_completion_estimate(record, recent_rate)
-    enriched["progress_rate_per_second"] = rate
-    enriched["estimated_remaining_seconds"] = remaining
-    # Present-and-null on the same terms as the evidence block above: a
-    # published null is the service declining to compare this job against
-    # itself, and an absent key is a daemon that never made the comparison.
-    enriched["progress_rate_baseline"] = rate_baseline
+    enriched.update(_job_work_projection(record, now))
     resources = record.get("resources")
     if isinstance(resources, dict):
         resources_map = cast("dict[str, object]", resources)
@@ -822,14 +901,18 @@ def _tally_job_runtime_user(tally: _JobSummaryTally, record: dict[str, object]) 
 
 def _tally_job(tally: _JobSummaryTally, record: dict[str, object], now: float) -> None:
     """Fold one job record's counts into the running summary tally."""
-    if _job_stalled(record, now):
+    confirmed_work = _job_confirmed_chunk_progress(record)
+    if _job_stalled(record, now, confirmed_work=confirmed_work):
         tally.stalled += 1
     recent_rate, median_rate = _job_rates(record)
     verdict = _job_degradation(
         record,
         now,
         forward=_job_telemetry(record, "forward"),
-        rate_baseline=_shaped_rate_baseline(recent_rate, median_rate),
+        rate_baseline=_degradation_rate_baseline(
+            record, _shaped_rate_baseline(recent_rate, median_rate), confirmed_work
+        ),
+        confirmed_work=confirmed_work,
     )
     if verdict == "degraded":
         tally.degraded += 1

@@ -8,12 +8,11 @@ import pytest
 
 from ._service_jobs_route_helpers import (
     _assert_route_control_conflicts,
-    _assert_route_creation_contract,
     _assert_route_exact_id_contract,
     _assert_route_paused_filter,
     _cancel_route_job,
-    _create_route_job,
     _retry_delete_route_job,
+    _seed_paused_route_job,
 )
 from ._service_jobs_route_helpers import (
     _routes_app as _routes_app_fixture,
@@ -37,7 +36,7 @@ def test_jobs_route_canonical_control_retry_and_delete(
     (tmp_path / ".vault").mkdir()
     client, token = _routes_app
     headers = {"Authorization": f"Bearer {token}"}
-    job_id = _assert_route_creation_contract(client, headers, tmp_path)
+    job_id = _seed_paused_route_job(tmp_path).id
     _assert_route_exact_id_contract(client, headers, job_id)
     _assert_route_paused_filter(client, headers, job_id)
 
@@ -50,12 +49,10 @@ def test_jobs_route_control_retry_and_terminal_delete(
     (tmp_path / ".vault").mkdir()
     client, token = _routes_app
     headers = {"Authorization": f"Bearer {token}"}
-    created = _create_route_job(client, headers, tmp_path)
-    assert created.status_code == 202
-    job = created.json()["job"]
-    job_id = str(job["id"])
+    job = _seed_paused_route_job(tmp_path)
+    job_id = job.id
     _assert_route_control_conflicts(client, headers, job_id)
-    _cancel_route_job(client, headers, job_id, int(job["revision"]))
+    _cancel_route_job(client, headers, job_id, job.revision)
     _retry_delete_route_job(client, headers, job_id)
 
 
@@ -66,9 +63,9 @@ def test_jobs_route_enforces_nonterminal_capacity(
 ) -> None:
     import os
 
-    from ...config._settings import reset_config
     from ...config._types import EnvVar
-    from ...jobs import reset
+    from ...jobs import get_job_manager, reset
+    from .._config_fixtures import reset_config
 
     client, token = _routes_app
     headers = {"Authorization": f"Bearer {token}"}
@@ -78,44 +75,35 @@ def test_jobs_route_enforces_nonterminal_capacity(
     prior = {
         EnvVar.STATUS_DIR: os.environ.get(EnvVar.STATUS_DIR),
         EnvVar.JOB_MAX_NONTERMINAL: os.environ.get(EnvVar.JOB_MAX_NONTERMINAL),
+        EnvVar.WATCH_ENABLED: os.environ.get(EnvVar.WATCH_ENABLED),
     }
     os.environ[EnvVar.STATUS_DIR] = str(tmp_path / "status")
     os.environ[EnvVar.JOB_MAX_NONTERMINAL] = "1"
+    os.environ[EnvVar.WATCH_ENABLED] = "false"
     reset_config()
     reset()
+    # Admission still persists while dispatch is stopped, so the first job
+    # stays queued and occupies the only nonterminal slot without running.
+    get_job_manager().begin_shutdown()
     try:
-        first = cast(
-            "httpx.Response",
-            client.post(
-                "/jobs",
-                headers=headers,
-                json={
-                    "operation": "index",
-                    "source": "vault",
-                    "project_root": str(roots[0]),
-                    "mode": "incremental",
-                    "authority": "publication",
-                    "start_paused": True,
-                },
-            ),
+        first, second = (
+            cast(
+                "httpx.Response",
+                client.post(
+                    "/reindex",
+                    headers=headers,
+                    json={
+                        "type": "vault",
+                        "clean": False,
+                        "authority": "publication",
+                        "project_root": str(root),
+                    },
+                ),
+            )
+            for root in roots
         )
-        assert first.status_code == 202
-        second = cast(
-            "httpx.Response",
-            client.post(
-                "/jobs",
-                headers=headers,
-                json={
-                    "operation": "index",
-                    "source": "vault",
-                    "project_root": str(roots[1]),
-                    "mode": "incremental",
-                    "authority": "publication",
-                    "start_paused": True,
-                },
-            ),
-        )
-        assert second.status_code == 429
+        assert first.status_code == 200, first.text
+        assert second.status_code == 429, second.text
         assert second.json()["code"] == "job_capacity_exceeded"
     finally:
         reset()

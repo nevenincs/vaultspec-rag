@@ -19,12 +19,9 @@ from typing import TYPE_CHECKING
 import pytest
 
 from .._machine_lock import (
-    acquire_machine_lock,
     machine_discovery_path,
     machine_lock_path,
-    release_machine_lock,
 )
-from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..serviceclient._discovery import (
     DISCOVERY_REASON_HOLDER_UNNAMED,
@@ -42,6 +39,8 @@ from ..serviceclient._discovery import (
     _status_file,
     resolve_machine_service,
 )
+from ._config_fixtures import reset_config
+from ._machine_lock_fixtures import acquire_machine_lock, release_machine_lock
 from ._unnamed_lock_holder import unnamed_machine_lock_holder
 
 if TYPE_CHECKING:
@@ -188,7 +187,7 @@ class TestTypedMachineResolution:
         assert resolution.state == DISCOVERY_STATE_ABSENT
         assert resolution.source == DISCOVERY_SOURCE_NONE
         assert resolution.is_ready is False
-        assert resolution.is_degraded is False
+        assert resolution.state != DISCOVERY_STATE_DEGRADED
         assert resolution.port is None
         assert resolution.reason is None
 
@@ -226,7 +225,7 @@ class TestTypedMachineResolution:
         assert resolution.reason == DISCOVERY_REASON_POINTER_MISSING
         assert resolution.holder_pid == os.getpid()
         assert resolution.port is None
-        assert resolution.is_degraded is True
+        assert resolution.state == DISCOVERY_STATE_DEGRADED
 
     def test_unparseable_pointer_is_degraded(self) -> None:
         """Corrupt pointer bytes under a live holder never resolve an address."""

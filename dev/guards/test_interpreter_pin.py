@@ -25,8 +25,8 @@ from typing import TYPE_CHECKING
 import pytest
 import yaml
 
-from dev.ci_names import Workflow
 from dev.guards import _workflows as workflows
+from dev.guards._ci_names import Workflow
 
 if TYPE_CHECKING:
     from pathlib import Path

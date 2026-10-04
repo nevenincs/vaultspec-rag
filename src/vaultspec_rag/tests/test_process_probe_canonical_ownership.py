@@ -19,6 +19,11 @@ from ._process_probe_guard_helpers import (
 
 pytestmark = [pytest.mark.unit]
 
+#: Filter keys whose payload field is spelled differently. ``tag`` filters one
+#: value against the ``tags`` list, so the caller's singular and the payload's
+#: plural are both correct.
+_FILTER_KEY_PAYLOAD_FIELD: dict[str, str] = {"tag": "tags"}
+
 
 def _collection_vocabulary_offenders(
     vocabularies: dict[str, frozenset[str]],
@@ -220,7 +225,7 @@ class TestSearchFilterVocabularyHasOneHome:
             unbacked = [
                 key
                 for key in keys
-                if store_schema.FILTER_KEY_PAYLOAD_FIELD.get(key, key) not in indexes
+                if _FILTER_KEY_PAYLOAD_FIELD.get(key, key) not in indexes
             ]
             assert not unbacked, (
                 f"{label} filter keys with no payload index behind them: "

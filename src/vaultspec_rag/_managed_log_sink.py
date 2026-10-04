@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ._atomic_write import replace_atomically
-from ._test_isolation import enforce_pytest_singleton_containment
 
 if TYPE_CHECKING:
     from typing import BinaryIO
@@ -42,9 +41,6 @@ class RawRotatingLogSink:
         self._pending_return = False
 
     def _open(self, *, truncate: bool = False) -> BinaryIO:
-        enforce_pytest_singleton_containment(
-            self.path, operation="open managed log sink"
-        )
         flags = (
             os.O_WRONLY
             | os.O_CREAT
@@ -78,10 +74,6 @@ class RawRotatingLogSink:
 
     def _trim_to_tail(self, candidate: Path) -> None:
         """Bound a retained file immediately, preserving its newest bytes."""
-        enforce_pytest_singleton_containment(
-            candidate,
-            operation="bound oversized managed log generation",
-        )
         flags = os.O_RDWR | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
         try:
             fd = os.open(candidate, flags)
@@ -112,10 +104,6 @@ class RawRotatingLogSink:
     def _enforce_backup_count(self) -> None:
         """Remove stale numeric generations outside the configured set."""
         prefix = f"{self.path.name}."
-        enforce_pytest_singleton_containment(
-            self.path.parent,
-            operation="scan managed log generations",
-        )
         with os.scandir(self.path.parent) as entries:
             for entry in entries:
                 if not entry.name.startswith(prefix):
@@ -130,10 +118,6 @@ class RawRotatingLogSink:
                     or suffix != str(generation)
                 ):
                     candidate = Path(entry.path)
-                    enforce_pytest_singleton_containment(
-                        candidate,
-                        operation="remove stale managed log generation",
-                    )
                     try:
                         os.unlink(candidate)
                     except FileNotFoundError:
@@ -143,23 +127,11 @@ class RawRotatingLogSink:
 
     def _shift_backups(self) -> None:
         oldest = self._backup_path(self.backup_count)
-        enforce_pytest_singleton_containment(
-            oldest,
-            operation="remove oldest managed log generation",
-        )
         with contextlib.suppress(FileNotFoundError):
             os.unlink(oldest)
         for generation in range(self.backup_count - 1, 0, -1):
             source = self._backup_path(generation)
             destination = self._backup_path(generation + 1)
-            enforce_pytest_singleton_containment(
-                source,
-                operation="shift managed log generation source",
-            )
-            enforce_pytest_singleton_containment(
-                destination,
-                operation="shift managed log generation destination",
-            )
             try:
                 replace_atomically(source, destination)
             except FileNotFoundError:
@@ -168,20 +140,12 @@ class RawRotatingLogSink:
 
     def _copy_active_to_first_backup(self) -> None:
         """Copy active bytes securely for the Windows rename fallback."""
-        enforce_pytest_singleton_containment(
-            self.path,
-            operation="copy managed log rollover source",
-        )
         source_flags = (
             os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
         )
         source_fd = os.open(self.path, source_flags)
         try:
             destination = self._backup_path(1)
-            enforce_pytest_singleton_containment(
-                destination,
-                operation="copy managed log rollover destination",
-            )
             destination_flags = (
                 os.O_WRONLY
                 | os.O_CREAT
@@ -221,14 +185,6 @@ class RawRotatingLogSink:
 
         self._shift_backups()
         first_backup = self._backup_path(1)
-        enforce_pytest_singleton_containment(
-            self.path,
-            operation="rotate managed log source",
-        )
-        enforce_pytest_singleton_containment(
-            first_backup,
-            operation="rotate managed log destination",
-        )
         try:
             replace_atomically(self.path, first_backup)
         except PermissionError:

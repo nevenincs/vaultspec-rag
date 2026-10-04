@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from .._store_search import HybridSearchRequest
+from ._store_fixtures import get_all_document_content_ids, get_all_ids
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -402,13 +403,19 @@ class TestStoreLocalClientSerialization:
     def _seed_searchable_points(self, store: VaultStore, dim: int) -> None:
         from .._store_models import (
             CodeChunk,
-            VaultDocument,
+            VaultChunk,
         )
 
-        store.upsert_documents(
+        store.upsert_document_chunks(
             [
-                VaultDocument(
-                    id=f"parallel-doc-{idx}",
+                VaultChunk(
+                    doc_id=f"parallel-doc-{idx}",
+                    ordinal=0,
+                    chunk_count=1,
+                    text=(
+                        "Local Qdrant searches are serialized per store "
+                        f"while request threads continue safely {idx}."
+                    ),
                     path=f".vault/adr/parallel-doc-{idx}.md",
                     doc_type="adr",
                     feature="parallel-search",
@@ -416,7 +423,7 @@ class TestStoreLocalClientSerialization:
                     tags=["search", "parallel"],
                     related=[],
                     title=f"Parallel search ADR {idx}",
-                    content=(
+                    doc_content=(
                         "Local Qdrant searches are serialized per store "
                         f"while request threads continue safely {idx}."
                     ),
@@ -543,9 +550,9 @@ class TestQdrantServerMode:
 
         from qdrant_client.qdrant_remote import QdrantRemote
 
-        from ..config._settings import reset_config
         from ..config._types import EnvVar
         from ..store_runtime import VaultStore
+        from ._config_fixtures import reset_config
 
         variables = (EnvVar.QDRANT_URL, EnvVar.STORE_OPERATION_TIMEOUT_SECONDS)
         previous = {variable: os.environ.get(variable.value) for variable in variables}
@@ -579,8 +586,8 @@ class TestQdrantServerMode:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """When VAULTSPEC_RAG_QDRANT_URL is set, VaultStore bypasses FileLock."""
-        from ..config._settings import reset_config
         from ..store_runtime import VaultStore
+        from ._config_fixtures import reset_config
         from ._qdrant_warnings import (
             INSECURE_KEY_WARNING,
             VERSION_WARNING,
@@ -625,8 +632,8 @@ class TestQdrantServerMode:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Verify qdrant_quantization builds correct models configs."""
-        from ..config._settings import reset_config
         from ..store_runtime import VaultStore
+        from ._config_fixtures import reset_config
 
         # Test scalar quantization config mapping
         monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_QUANTIZATION", "scalar")
@@ -707,15 +714,18 @@ class TestDropTable:
         collection's sqlite handle open, rmtree silently failed on Windows, and a
         same-name create_collection resurrected the deleted points.
         """
-        from .._store_models import VaultDocument
+        from .._store_models import VaultChunk
         from ..store_runtime import VaultStore
 
         store = VaultStore(tmp_path, embedding_dim=4)
         try:
-            store.upsert_documents(
+            store.upsert_document_chunks(
                 [
-                    VaultDocument(
-                        id="doc-1",
+                    VaultChunk(
+                        doc_id="doc-1",
+                        ordinal=0,
+                        chunk_count=1,
+                        text="hello world",
                         path="doc-1.md",
                         doc_type="research",
                         feature="demo",
@@ -723,7 +733,7 @@ class TestDropTable:
                         tags=["#research", "#demo"],
                         related=[],
                         title="Doc 1",
-                        content="hello world",
+                        doc_content="hello world",
                         vector=[0.1, 0.2, 0.3, 0.4],
                     )
                 ],
@@ -844,7 +854,7 @@ _CATALOG_READS: list[tuple[Callable[[VaultStore], object], object, str]] = [
     (lambda s: s.scroll_document_content(), ([], None), "DOCUMENT_TABLE_NAME"),
     (lambda s: s.code_content_ids_exist(["absent"]), False, "CODE_TABLE_NAME"),
     (lambda s: s.document_content_ids_exist(["absent"]), False, "DOCUMENT_TABLE_NAME"),
-    (lambda s: s.get_all_document_content_ids(), set(), "DOCUMENT_TABLE_NAME"),
+    (lambda s: get_all_document_content_ids(s), set(), "DOCUMENT_TABLE_NAME"),
     (
         lambda s: s.scroll_index_audit_content(
             s.TABLE_NAME,
@@ -956,7 +966,7 @@ class TestReadsCreateNothing:
         try:
             assert not store.client.collection_exists(store.TABLE_NAME)
 
-            assert store.get_all_ids() == set()
+            assert get_all_ids(store) == set()
             assert not store.client.collection_exists(store.TABLE_NAME), (
                 f"get_all_ids() created {store.TABLE_NAME}; a read must not create"
             )
@@ -1214,9 +1224,9 @@ class TestServerModeNamespacing:
         import os
 
         from .._store_models import root_collection_prefix
-        from ..config._settings import reset_config
         from ..config._types import EnvVar
         from ..store_runtime import VaultStore
+        from ._config_fixtures import reset_config
 
         root_a = tmp_path / "project-a"
         root_b = tmp_path / "project-b"

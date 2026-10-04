@@ -121,36 +121,6 @@ class TestUvSyncTorchBranches:
         assert report.torch_sync_action == "timed-out"
         assert any("did not finish within" in w for w in report.warnings)
 
-    def test_a_sync_outside_the_pytest_root_never_runs(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Guard assertion: this reinstalls packages in the project it is given.
-
-        A test reaching a real workspace would re-resolve and reinstall
-        inside it. The refusal lives in the launcher, so no caller can reach
-        around it.
-
-        Mutation check: deleting the containment call lets the run reach the
-        subprocess double, which fails with "a foreign workspace must not be
-        synced".
-        """
-        import pathlib
-
-        from .._test_isolation import ManagedSingletonIsolationError
-        from ..commands import _uv_sync
-        from ..commands._models import InstallReport
-
-        def _refuse(*_args: object, **_kwargs: object) -> object:
-            raise AssertionError("a foreign workspace must not be synced")
-
-        monkeypatch.setattr(_uv_sync.subprocess, "run", _refuse)
-        outside = pathlib.Path.home() / "not-a-real-workspace"
-
-        with pytest.raises(ManagedSingletonIsolationError):
-            _uv_sync._run_uv_sync_torch(
-                target=outside, report=InstallReport(action="install", target=outside)
-            )
-
     def test_install_sync_after_records_uv_not_found_when_uv_absent(
         self, tmp_path: Path
     ) -> None:

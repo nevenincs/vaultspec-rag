@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING
 import pytest
 
 from .._sync_vocabulary import ProvisionAction
-from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..qdrant_runtime._constants import (
     QDRANT_ASSET_SHA256,
@@ -41,6 +40,7 @@ from ..qdrant_runtime._resolve import (
     qdrant_bin_dir,
     resolve_binary,
 )
+from ._config_fixtures import reset_config
 from .conftest import managed_env
 
 if TYPE_CHECKING:

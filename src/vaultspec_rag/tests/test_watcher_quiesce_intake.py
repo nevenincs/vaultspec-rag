@@ -26,12 +26,15 @@ from ..watcher_execution import (
 )
 from ..watcher_intake import _new_controller
 from ..watcher_retry import (
+    WatcherPathEvent,
+    WatcherPathObservation,
     WatcherSource,
 )
 from ..watcher_retry_policy import (
     WatcherRetryPolicy,
 )
 from ..watcher_runtime import WatcherConvergenceSlot
+from ._watcher_fixtures import dirty_paths
 
 pytestmark = [pytest.mark.unit]
 
@@ -42,7 +45,19 @@ if TYPE_CHECKING:
 def _slot(root: Path, registry: ServiceRegistry) -> WatcherConvergenceSlot:
     """Build one real on-disk retry owner with deferred code work."""
     policy = WatcherRetryPolicy.for_root(root, WatcherSource.CODE)
-    policy.mark_convergence_pending(now=1.0)
+    policy.mark_scope_pending(
+        (
+            WatcherPathObservation(
+                relative_path="changed.py",
+                source=WatcherSource.CODE,
+                first_observed_at=1.0,
+                latest_observed_at=1.0,
+                event_kinds=frozenset({WatcherPathEvent.MODIFIED}),
+                generation=1,
+            ),
+        ),
+        now=1.0,
+    )
     slot = WatcherConvergenceSlot(
         JobSource.CODE,
         root,
@@ -70,7 +85,7 @@ async def test_pause_between_watcher_observation_and_start_defers_exact_work(
     assert admitted.admitted
     assert admitted.attempt_generation is not None
     retry_before = slot.retry_policy.state
-    candidate_paths = slot.dirty_paths()
+    candidate_paths = dirty_paths(slot)
     created = manager.create(
         JobSpec(
             JobOperation.INDEX,
@@ -114,7 +129,7 @@ async def test_pause_between_watcher_observation_and_start_defers_exact_work(
     assert deferred.state is JobState.PAUSED
     assert deferred.desired_state is DesiredJobState.RUNNING
     assert not deferred.resources.holds_anything
-    assert slot.dirty_paths() == candidate_paths
+    assert dirty_paths(slot) == candidate_paths
     assert slot.retry_policy.state == retry_before
     assert any(
         "event=quiesce_admission_deferred" in record.getMessage()

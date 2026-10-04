@@ -111,11 +111,11 @@ class SearchDomainOutcome:
 
 @dataclass(frozen=True, slots=True)
 class CombinedSearchOutcome:
-    """Three-domain search outcome that never collapses partial failure."""
+    """Selected-domain search outcome that never collapses partial failure."""
 
     vault: SearchDomainOutcome
     code: SearchDomainOutcome
-    document: SearchDomainOutcome
+    document: SearchDomainOutcome | None
     top_k: int
 
     def __post_init__(self) -> None:
@@ -123,40 +123,42 @@ class CombinedSearchOutcome:
             raise ValueError("vault outcome carries the wrong source")
         if self.code.source is not PublicSourceType.CODE:
             raise ValueError("code outcome carries the wrong source")
-        if self.document.source is not PublicSourceType.DOCUMENT:
+        if (
+            self.document is not None
+            and self.document.source is not PublicSourceType.DOCUMENT
+        ):
             raise ValueError("document outcome carries the wrong source")
         if isinstance(self.top_k, bool) or self.top_k < 0:
             raise ValueError("top_k must be a non-negative integer")
 
     @property
+    def domains(self) -> tuple[SearchDomainOutcome, ...]:
+        """Return only the domains this request searched."""
+        return (self.vault, self.code) + (
+            (self.document,) if self.document is not None else ()
+        )
+
+    @property
     def partial(self) -> bool:
         """Return whether at least one domain failed and another succeeded."""
-        statuses = (self.vault.ok, self.code.ok, self.document.ok)
+        statuses = tuple(domain.ok for domain in self.domains)
         return any(statuses) and not all(statuses)
 
     @property
     def ok(self) -> bool:
         """Return whether at least one domain completed successfully."""
-        return any((self.vault.ok, self.code.ok, self.document.ok))
+        return any(domain.ok for domain in self.domains)
 
     @property
     def results(self) -> list[AnySearchResult]:
         """Select deterministic top-k from every successful domain."""
-        candidates = [
-            result
-            for outcome in (self.vault, self.code, self.document)
-            for result in outcome.results
-        ]
+        candidates = [result for outcome in self.domains for result in outcome.results]
         return select_combined_results(candidates, self.top_k)
 
     @property
     def source_facts(self) -> tuple[SearchSourceFact, ...]:
         """Return every constituent fact in the stable domain order."""
-        return (
-            self.vault.source_fact,
-            self.code.source_fact,
-            self.document.source_fact,
-        )
+        return tuple(domain.source_fact for domain in self.domains)
 
     @property
     def readiness(self) -> SearchReadinessAggregate:
@@ -173,5 +175,5 @@ class CombinedSearchOutcome:
                 "detail": outcome.detail,
                 "readiness": outcome.source_fact.as_dict(),
             }
-            for outcome in (self.vault, self.code, self.document)
+            for outcome in self.domains
         }

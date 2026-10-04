@@ -20,7 +20,7 @@ from ._run_ledger_models import (
 from ._run_policy import DurableProgressKind, RunPolicy
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
+    from collections.abc import Mapping
     from pathlib import Path
 
     from ._resolved_policy import ResolvedIndexPolicy
@@ -110,40 +110,21 @@ class CodeRunCheckpoint(RunCheckpointBase):
             point_ids=tuple(chunk.id for chunk in segment.chunks),
         )
 
-    def pending_segments(
-        self,
-        segments: Iterable[CodeFileSegment],
-        source_digest: str,
-    ) -> Iterable[CodeFileSegment]:
-        """Yield only units not already confirmed by a compatible attempt."""
-        for segment in segments:
-            unit = self.unit_for(segment, source_digest)
-            if self.ledger.unit_committed(self.generation_id, unit):
-                self.resumed_units += 1
-                if segment.is_file_end:
-                    self._record_indexed_file(segment.path, source_digest)
-                continue
-            yield segment
-
-    def record_confirmed_segment(
+    def segment_committed(
         self,
         segment: CodeFileSegment,
         source_digest: str,
     ) -> bool:
-        """Checkpoint exactly one matching storage mutation after it returns."""
+        """Select resume work after the complete producer stream is validated."""
         unit = self.unit_for(segment, source_digest)
-        inserted = self.ledger.record_storage_confirmed_unit(
-            self.generation_id,
-            unit,
-        )
-        if inserted:
-            self.run_policy.record_durable_progress(
-                kind=DurableProgressKind.LEDGER_UNIT_COMMITTED,
-                label=f"code segment {segment.path}#{segment.ordinal}",
-            )
-        if segment.is_file_end:
+        if not self.ledger.unit_committed(self.generation_id, unit):
+            return False
+        self.resumed_units += 1
+        if segment.is_file_end and self.ledger.file_complete(
+            self.generation_id, segment.path
+        ):
             self._record_indexed_file(segment.path, source_digest)
-        return inserted
+        return True
 
     def record_confirmed_segments(
         self,
@@ -168,11 +149,11 @@ class CodeRunCheckpoint(RunCheckpointBase):
                     f"and {inserted} new ledger unit(s)"
                 ),
             )
-        for segment in segments:
-            if segment.is_file_end:
+        for path in dict.fromkeys(segment.path for segment in segments):
+            if self.ledger.file_complete(self.generation_id, path):
                 self._record_indexed_file(
-                    segment.path,
-                    source_digests[segment.path],
+                    path,
+                    source_digests[path],
                 )
         return inserted
 

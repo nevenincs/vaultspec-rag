@@ -1,12 +1,12 @@
-"""Validated compatibility adapters over canonical ``POST /jobs`` creation.
+"""The routes that create index jobs, one per requested domain.
 
-``/reindex`` and ``/clean`` predate the canonical jobs resource and stay as
-independent-per-domain adapters: each admits and creates its own job through
-the same validation and admission pipeline :mod:`._routes` exposes for the
-canonical resource, so a partial failure in one domain (e.g. ``code``) never
-blocks the others in a ``combined`` request. That pipeline is reached through
-function-local imports here to avoid a module-load cycle with ``._routes``,
-which imports ``reindex_route``/``clean_route`` for its route table.
+``/reindex`` and ``/clean`` are the only way a job is created over HTTP, and
+they stay independent-per-domain: each admits and creates its own job through
+the validation and admission pipeline :mod:`._routes` owns, so a partial
+failure in one domain (e.g. ``code``) never blocks the others in a
+``combined`` request. That pipeline is reached through function-local imports
+here to avoid a module-load cycle with ``._routes``, which imports
+``reindex_route``/``clean_route`` for its route table.
 """
 
 from __future__ import annotations
@@ -42,8 +42,6 @@ if TYPE_CHECKING:
     _ValidatedIndexRequest = tuple[
         JobSpec,
         JobInitiator,
-        bool,
-        str | None,
         CodeIndexPreflight | DocumentIndexPreflight | None,
     ]
 
@@ -135,7 +133,6 @@ def _reindex_failure(*, error_kind: str, detail: str) -> _DomainResponse:
 
 
 async def _validate_reindex_domains(
-    request: Request,
     payload: dict[str, object],
     source_type: PublicSourceType,
     *,
@@ -157,16 +154,9 @@ async def _validate_reindex_domains(
             "source": source.value,
             "mode": "rebuild" if clean else "incremental",
             "authority": authority.value,
-            "start_paused": False,
         }
         try:
-            request_parts = await validated_index_request(
-                request,
-                canonical_payload,
-                idempotency_suffix=(
-                    source.value if source_type is PublicSourceType.COMBINED else None
-                ),
-            )
+            request_parts = await validated_index_request(canonical_payload)
         except InvalidJobRequestError as exc:
             if source_type is not PublicSourceType.COMBINED:
                 raise
@@ -224,17 +214,9 @@ async def _create_reindex_domains(
     first_root: Path | None = None
     first_admission: CodeIndexPreflight | None = None
     for source, request_parts in validated:
-        spec, initiator, start_paused, idempotency_key, admission = request_parts
+        spec, initiator, admission = request_parts
         try:
-            outcome = await _run_in_thread(
-                partial(
-                    manager.create,
-                    spec,
-                    initiator,
-                    start_paused=start_paused,
-                    idempotency_key=idempotency_key,
-                )
-            )
+            outcome = await _run_in_thread(partial(manager.create, spec, initiator))
             outcome = await activate_index_job(outcome, admission)
         except Exception as exc:
             if source_type is not PublicSourceType.COMBINED:
@@ -271,7 +253,7 @@ async def _create_reindex_domains(
 
 
 async def reindex_route(request: Request) -> JSONResponse:
-    """Validated compatibility adapter over canonical ``POST /jobs`` creation."""
+    """Validate one reindex request and create a job for every named domain."""
     from ._routes import (
         InvalidJobRequestError,
         job_error,
@@ -306,7 +288,6 @@ async def reindex_route(request: Request) -> JSONResponse:
         except ValueError as exc:
             raise InvalidJobRequestError("invalid_job_spec", str(exc)) from exc
         validated, domain_responses = await _validate_reindex_domains(
-            request,
             payload,
             source_type,
             clean=clean,

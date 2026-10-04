@@ -108,9 +108,12 @@ jobs:
             browser_image: ""
     timeout-minutes: 150
     runs-on: ${{ matrix.runner }}
+    # Ubuntu 24.04 denies user namespaces to unconfined processes, which leaves
+    # Chromium no sandbox. The host's own unconfined-mode `chrome` profile grants
+    # exactly that permission, so the browser keeps its sandbox.
     container:
       image: ${{ matrix.browser_image }}
-      options: --user 1001 --cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined
+      options: --user 1001 --cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=chrome
     env:
       CI_EXEC_BUDGET_MINUTES: 30
     steps:

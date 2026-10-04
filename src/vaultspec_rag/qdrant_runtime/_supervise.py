@@ -17,6 +17,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -64,7 +65,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 __all__ = [
     "QdrantSupervisor",
     "active_supervisor",
@@ -87,6 +87,8 @@ _STOP_TIMEOUT_SECONDS = 10.0
 # storage-lock error) instead of an opaque timeout.
 _RECENT_OUTPUT_LINES = 50
 _RECENT_OUTPUT_LINE_CHARS = 16 * 1024
+#: How many of those retained lines a diagnostic tail reports.
+_RECENT_OUTPUT_TAIL_LINES = 20
 _QDRANT_DRAIN_CHUNK_BYTES = 64 * 1024
 _DRAIN_JOIN_TIMEOUT_SECONDS = 3.0
 #: Read from the settings defaults rather than restated here: the managed log
@@ -140,6 +142,12 @@ _LOAD_FAILURE_MARKERS = (
     "unable to load",
     "could not load",
     "error loading",
+)
+
+# Explicit sharing failures describe file ownership, not collection corruption.
+# Match the native OS-error forms, not arbitrary application codes or prefixes.
+_WINDOWS_SHARING_VIOLATION = re.compile(
+    r"\b(?:os error\s+32|Os\s*\{\s*code:\s*32)\b", re.IGNORECASE
 )
 
 
@@ -196,7 +204,8 @@ def _corrupt_collection_from_output(tail: str, storage_dir: Path) -> str | None:
     a collection merely logged (healthily) earlier in the buffer while an
     unrelated, collection-less fault (corrupt ``raft_state.json``, disk-full,
     OOM) panics later. Abstaining on no match is deliberate - guessing would risk
-    quarantining a healthy index.
+    quarantining a healthy index. Explicit Windows sharing violations on a
+    candidate failure line abstain too: a locked file is not corrupt.
     """
     on_disk = _list_on_disk_collections(storage_dir)
     if not on_disk:
@@ -207,6 +216,8 @@ def _corrupt_collection_from_output(tail: str, storage_dir: Path) -> str | None:
     for line in tail.splitlines():
         lowered = line.lower()
         if not any(marker in lowered for marker in _LOAD_FAILURE_MARKERS):
+            continue
+        if _WINDOWS_SHARING_VIOLATION.search(line):
             continue
         for name in names:
             if name in line:
@@ -415,6 +426,8 @@ class QdrantSupervisor:
         return self._proc.pid if self._proc is not None else None
 
     def _child_env(self) -> dict[str, str]:
+        from ..config._settings import get_config
+
         # Least privilege: pass only OS-operation variables plus the QDRANT__*
         # knobs, never the daemon's full environment, so any secrets the daemon
         # holds (cloud creds, tokens) are not exposed to the qdrant child.
@@ -433,6 +446,9 @@ class QdrantSupervisor:
                     self.storage_dir.parent / "snapshots"
                 ),
                 "QDRANT__TELEMETRY_DISABLED": "true",
+                "QDRANT__STORAGE__PERFORMANCE__MAX_CONCURRENT_COLLECTION_LOADS": str(
+                    get_config().qdrant_collection_load_concurrency
+                ),
             }
         )
         return env
@@ -446,17 +462,6 @@ class QdrantSupervisor:
                 the rotating log sink.
             OSError: If the spawn itself fails.
         """
-        from .._test_isolation import enforce_pytest_managed_singleton_containment
-
-        snapshots_dir = self.storage_dir.parent / "snapshots"
-        containment_targets = [self.storage_dir, snapshots_dir]
-        if self.log_path is not None:
-            containment_targets.append(self.log_path)
-        enforce_pytest_managed_singleton_containment(
-            operation="create supervised managed Qdrant storage",
-            targets=containment_targets,
-        )
-
         if self.is_alive():
             raise RuntimeError(f"qdrant child pid={self.pid} is already running")
         if not self._join_output_drain(timeout=0.0):
@@ -464,8 +469,9 @@ class QdrantSupervisor:
                 "previous qdrant output drain is still active; refusing to spawn "
                 "a second log writer"
             )
+        child_env = self._child_env()
         self.storage_dir.mkdir(parents=True, exist_ok=True)
-        snapshots_dir.mkdir(parents=True, exist_ok=True)
+        (self.storage_dir.parent / "snapshots").mkdir(parents=True, exist_ok=True)
         if self.log_path is not None:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
         self._recent_output.clear()
@@ -483,7 +489,7 @@ class QdrantSupervisor:
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                env=self._child_env(),
+                env=child_env,
                 # Pin the child's working directory to the managed qdrant dir:
                 # the binary writes runtime markers (.qdrant-initialized) into
                 # its cwd, which must never be the service's start directory.
@@ -502,7 +508,7 @@ class QdrantSupervisor:
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                env=self._child_env(),
+                env=child_env,
                 # Same managed-cwd pin as the Windows branch above.
                 cwd=str(self.storage_dir.parent),
                 text=False,
@@ -511,11 +517,13 @@ class QdrantSupervisor:
             )
         self._start_output_drain()
         logger.info(
-            "qdrant child spawned: pid=%d http=%d grpc=%d storage=%s",
+            "qdrant child spawned: pid=%d http=%d grpc=%d storage=%s "
+            "collection_load_concurrency=%s",
             self._proc.pid,
             self.http_port,
             self.grpc_port,
             self.storage_dir,
+            child_env["QDRANT__STORAGE__PERFORMANCE__MAX_CONCURRENT_COLLECTION_LOADS"],
         )
 
     def _start_output_drain(self) -> None:
@@ -606,10 +614,10 @@ class QdrantSupervisor:
         self._drain_thread = None
         return True
 
-    def recent_output_tail(self, max_lines: int = 20) -> str:
+    def recent_output_tail(self) -> str:
         """Return the most-recent captured child output lines, joined."""
         lines = list(self._recent_output)
-        return "".join(lines[-max_lines:])
+        return "".join(lines[-_RECENT_OUTPUT_TAIL_LINES:])
 
     def _ready_probe(self) -> bool:
         # Until the child binds its port, a poll would otherwise wait out the
@@ -637,7 +645,7 @@ class QdrantSupervisor:
         """Poll ``/readyz`` until ready, until the child goes quiet, or the ceiling.
 
         *timeout* is the no-progress patience window, not a total budget. The
-        server loads every collection eagerly and sequentially before it
+        server loads every collection eagerly with bounded concurrency before it
         listens, and how long that takes varies by several times across
         otherwise identical starts, so elapsed wall time says nothing about
         whether a start is healthy. Every new line of child output restarts the
@@ -898,14 +906,6 @@ class QdrantSupervisor:
         proc = self._proc
         child_stopped = proc is None or proc.poll() is not None
         if proc is not None and proc.poll() is None:
-            from .._test_isolation import (
-                enforce_pytest_managed_singleton_containment,
-            )
-
-            enforce_pytest_managed_singleton_containment(
-                operation="stop a supervised managed Qdrant process",
-                targets=(self.storage_dir,),
-            )
             try:
                 if sys.platform == "win32":
                     proc.terminate()

@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from dataclasses import dataclass, replace
 from math import isfinite
 from pathlib import Path
 from threading import RLock
-from typing import TYPE_CHECKING, Final, Protocol, cast
+from typing import TYPE_CHECKING, Final, cast
 
-from .._source_types import INDEX_SOURCES, IndexSource
+from .._root_identity import canonical_root_key
+from .._source_types import INDEX_SOURCES, IndexSource, PublicSourceType
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -18,7 +18,6 @@ if TYPE_CHECKING:
 __all__ = [
     "MAX_READINESS_OBSERVERS",
     "PublicationTarget",
-    "ReadinessDeadlineScheduler",
     "ReadinessObserverCapacityError",
     "ReadinessRegistryClosedError",
     "ReadinessRegistryNotStartedError",
@@ -43,43 +42,20 @@ class ReadinessObserverCapacityError(RuntimeError):
     """Raised when the bounded observer set is full."""
 
 
-class ReadinessDeadlineScheduler(Protocol):
-    """One clock and wait authority for a monotonic readiness deadline."""
-
-    def now(self, loop: asyncio.AbstractEventLoop) -> float:
-        """Return the current monotonic time for ``loop``."""
-        ...
-
-    async def wait(
-        self,
-        future: asyncio.Future[None],
-        *,
-        deadline: float,
-        loop: asyncio.AbstractEventLoop,
-    ) -> bool:
-        """Return true for a notification or false when ``deadline`` expires."""
-        ...
-
-
-class _AsyncioDeadlineScheduler:
-    def now(self, loop: asyncio.AbstractEventLoop) -> float:
-        return loop.time()
-
-    async def wait(
-        self,
-        future: asyncio.Future[None],
-        *,
-        deadline: float,
-        loop: asyncio.AbstractEventLoop,
-    ) -> bool:
-        remaining = deadline - loop.time()
-        if remaining <= 0:
-            return False
-        try:
-            await asyncio.wait_for(asyncio.shield(future), timeout=remaining)
-        except TimeoutError:
-            return False
-        return True
+async def _wait_until_notified(
+    future: asyncio.Future[None],
+    *,
+    deadline: float,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Return on a notification, or when the monotonic ``deadline`` expires."""
+    remaining = deadline - loop.time()
+    if remaining <= 0:
+        return
+    try:
+        await asyncio.wait_for(asyncio.shield(future), timeout=remaining)
+    except TimeoutError:
+        return
 
 
 def _canonical_root(value: object) -> str:
@@ -88,10 +64,9 @@ def _canonical_root(value: object) -> str:
     ):
         raise ValueError("root must be a non-empty path")
     try:
-        resolved = Path(value).expanduser().resolve(strict=False)
+        return canonical_root_key(Path(value).expanduser())
     except (OSError, RuntimeError, ValueError) as error:
         raise ValueError("root must be a valid path") from error
-    return os.path.normcase(str(resolved))
 
 
 def _concrete_source(value: object) -> IndexSource:
@@ -155,6 +130,18 @@ class ReadinessRevisionSnapshot:
         _revision(self.publication_revision, field="publication_revision")
         _revision(self.controller_revision, field="controller_revision")
 
+    def publication_target(self) -> PublicationTarget | None:
+        """Capture the controller target, or the publication already served."""
+        if self.controller_revision is not None:
+            return PublicationTarget(
+                self.key, self.controller_revision, self.desired_generation
+            )
+        if self.publication_revision is not None:
+            return PublicationTarget(
+                self.key, self.publication_revision, self.published_generation
+            )
+        return None
+
 
 @dataclass(frozen=True, slots=True)
 class PublicationTarget:
@@ -186,20 +173,7 @@ class _Observer:
 class ReadinessRevisionRegistry:
     """Own publication evidence and bounded waiters for one service lifetime."""
 
-    def __init__(
-        self,
-        *,
-        max_observers: int = MAX_READINESS_OBSERVERS,
-        deadline_scheduler: ReadinessDeadlineScheduler | None = None,
-    ) -> None:
-        if (
-            not isinstance(cast("object", max_observers), int)
-            or isinstance(max_observers, bool)
-            or max_observers <= 0
-        ):
-            raise ValueError("max_observers must be a positive integer")
-        self._max_observers = max_observers
-        self._deadline_scheduler = deadline_scheduler or _AsyncioDeadlineScheduler()
+    def __init__(self) -> None:
         self._lock = RLock()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._closed = False
@@ -236,11 +210,38 @@ class ReadinessRevisionRegistry:
     def snapshot(
         self, root: str | Path, source: IndexSource
     ) -> ReadinessRevisionSnapshot:
-        """Return current immutable evidence without performing external work."""
+        """Restore missing publication evidence from its receipt-free authority."""
+        from .._publication_state import (
+            UNREADABLE_PUBLICATION_ERRORS,
+            acquire_publication_snapshot,
+        )
+
         key = ReadinessSourceKey.from_root(root, source)
         with self._lock:
             self._require_live_locked()
-            return self._snapshots.get(key, ReadinessRevisionSnapshot(key=key))
+            current = self._snapshots.get(key, ReadinessRevisionSnapshot(key=key))
+            if current.publication_revision is not None:
+                return current
+        generation = None
+        try:
+            publication = acquire_publication_snapshot(
+                Path(root).expanduser(), PublicSourceType(source)
+            )
+            publication.validate()
+            generation = publication.proof.generation_id
+        except UNREADABLE_PUBLICATION_ERRORS:
+            pass
+        with self._lock:
+            self._require_live_locked()
+            current = self._snapshots.get(key, ReadinessRevisionSnapshot(key=key))
+            if current.publication_revision is None and generation is not None:
+                # This predates every controller notification in this lifetime.
+                # Durable proof revisions belong to a different sequence.
+                current = replace(
+                    current, published_generation=generation, publication_revision=0
+                )
+                self._snapshots[key] = current
+            return current
 
     def publish_next(
         self,
@@ -324,7 +325,7 @@ class ReadinessRevisionRegistry:
             raise ValueError("targets must contain each source key at most once")
 
         loop = asyncio.get_running_loop()
-        deadline = self._deadline_scheduler.now(loop) + timeout_seconds
+        deadline = loop.time() + timeout_seconds
         while True:
             observer_id: int | None = None
             future: asyncio.Future[None] | None = None
@@ -332,9 +333,9 @@ class ReadinessRevisionRegistry:
                 self._require_owner_locked(loop)
                 if self._targets_satisfied_locked(target_tuple):
                     return True
-                if self._deadline_scheduler.now(loop) >= deadline:
+                if loop.time() >= deadline:
                     return False
-                if len(self._observers) >= self._max_observers:
+                if len(self._observers) >= MAX_READINESS_OBSERVERS:
                     raise ReadinessObserverCapacityError(
                         "readiness observer capacity is exhausted"
                     )
@@ -343,11 +344,7 @@ class ReadinessRevisionRegistry:
                 self._next_observer_id += 1
                 self._observers[observer_id] = _Observer(keys=keys, future=future)
             try:
-                await self._deadline_scheduler.wait(
-                    future,
-                    deadline=deadline,
-                    loop=loop,
-                )
+                await _wait_until_notified(future, deadline=deadline, loop=loop)
             finally:
                 with self._lock:
                     self._observers.pop(observer_id, None)

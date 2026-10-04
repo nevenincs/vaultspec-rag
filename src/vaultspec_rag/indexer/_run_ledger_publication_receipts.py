@@ -25,12 +25,17 @@ from ._run_ledger_models import (
     GenerationRow,
     PublicationProof,
     PublicationReceipt,
+    RunAuthority,
     RunLedgerCorruptionError,
     RunLedgerStateError,
+    RunOperation,
+    RunSignature,
+    RunTerminalState,
     column_text,
     fetch_all,
     fetch_one,
     in_ledger_transaction,
+    ledger_connection,
 )
 from ._run_ledger_publication_identity import (
     stable_parameters,
@@ -39,10 +44,12 @@ from ._run_ledger_publication_storage import (
     OPEN_RECEIPT_SQL,
     all_evidence_for_paths,
     hydrate_receipt,
+    latest_receipt_row,
     proof_from_row,
     receipt_committed_at,
     receipt_corrupt,
     receipt_row_by_id,
+    require_exact_key,
     require_proof_row,
     require_receipt_ready_to_commit,
 )
@@ -53,6 +60,25 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ._run_ledger_models import RunGeneration
+
+
+def _require_rebuild_projection(
+    signature: RunSignature,
+    key: ProofCompatibilityKey,
+) -> None:
+    if signature.operation is not RunOperation.FULL:
+        raise PermissionError(
+            "receipt recovery requires an explicit full rebuild signature"
+        )
+    if (
+        signature.source_type.value,
+        signature.root_identity,
+        signature.backend_identity,
+        signature.collection_identity,
+    ) != stable_parameters(key):
+        raise PermissionError(
+            "receipt recovery requires the exact full rebuild projection"
+        )
 
 
 class RunLedgerPublicationReceiptMethods:
@@ -69,6 +95,79 @@ class RunLedgerPublicationReceiptMethods:
 
         @staticmethod
         def _generation_from_row(row: GenerationRow) -> RunGeneration: ...
+
+        @staticmethod
+        def _assert_ready_for_finalization(
+            connection: sqlite3.Connection,
+            generation_id: str,
+        ) -> None: ...
+
+    def publication_receipt_for_generation(
+        self,
+        generation_id: str,
+    ) -> PublicationReceipt | None:
+        """Read the latest durable receipt, including a completed reservation."""
+        with ledger_connection(self.path) as connection:
+            connection.execute("BEGIN")
+            try:
+                row = latest_receipt_row(connection, generation_id)
+                return None if row is None else hydrate_receipt(connection, row)
+            finally:
+                connection.rollback()
+
+    def rebuild_recovery_receipt(
+        self,
+        signature: RunSignature,
+        authority: RunAuthority,
+    ) -> PublicationReceipt | None:
+        """Read unfinished work for exactly the explicitly rebuilt projection.
+
+        The requested pipeline can differ from the old publication. Recovery
+        validates that receipt against its own proof, never interprets its
+        evidence as input to the replacement build.
+        """
+        if (
+            authority is not RunAuthority.REBUILD
+            or signature.operation is not RunOperation.FULL
+        ):
+            raise PermissionError(
+                "receipt recovery requires explicit rebuild authority"
+            )
+        stable = (
+            signature.source_type.value,
+            signature.root_identity,
+            signature.backend_identity,
+            signature.collection_identity,
+        )
+        with ledger_connection(self.path) as connection:
+            connection.execute("BEGIN")
+            try:
+                row = fetch_one(
+                    connection,
+                    f"""
+                    SELECT * FROM publication_receipts
+                    WHERE source_type = ? AND root_identity = ?
+                      AND backend_identity = ? AND collection_identity = ?
+                      AND {OPEN_RECEIPT_SQL}
+                    """,
+                    stable,
+                )
+                if row is None:
+                    return None
+                receipt = hydrate_receipt(connection, row)
+                proof_row = require_proof_row(connection, receipt.compatibility_key)
+                require_exact_key(
+                    proof_row, receipt.compatibility_key, subject="recovery proof"
+                )
+                proof = proof_from_row(proof_row)
+                if (
+                    receipt.parent_revision != proof.revision
+                    or receipt.reservation_sequence != proof.reservation_sequence
+                ):
+                    receipt_corrupt("recovery receipt does not match its current proof")
+                return receipt
+            finally:
+                connection.rollback()
 
     @staticmethod
     def _new_point_ids(receipt: PublicationReceipt) -> tuple[str, ...]:
@@ -308,8 +407,27 @@ class RunLedgerPublicationReceiptMethods:
         generation_id: str,
         key: ProofCompatibilityKey,
         proof: PublicationProof,
+        *,
+        rebuild_signature: RunSignature | None = None,
     ) -> RunGeneration:
-        row = self._require_mutable_generation(connection, generation_id)
+        if rebuild_signature is None:
+            row = self._require_mutable_generation(connection, generation_id)
+        else:
+            _require_rebuild_projection(rebuild_signature, key)
+            stored: GenerationRow | None = fetch_one(
+                connection,
+                "SELECT * FROM generations WHERE generation_id = ?",
+                (generation_id,),
+            )
+            if stored is None:
+                raise RunLedgerCorruptionError(
+                    "recovery receipt cites a missing generation"
+                )
+            if RunTerminalState(stored["terminal_state"]) is RunTerminalState.SUCCEEDED:
+                raise RunLedgerStateError(
+                    "successful generations cannot own unfinished recovery"
+                )
+            row = stored
         generation = self._generation_from_row(row)
         signature = generation.signature
         if (
@@ -347,10 +465,29 @@ class RunLedgerPublicationReceiptMethods:
     def commit_publication_receipt(
         self,
         receipt_id: str,
+        *,
+        authority: RunAuthority = RunAuthority.PUBLICATION,
+        rebuild_signature: RunSignature | None = None,
     ) -> PublicationProof:
-        """Commit one sealed, confirmed receipt with an exact revision CAS."""
+        """Commit one sealed, confirmed receipt with an exact revision CAS.
+
+        Explicit rebuild recovery can close exact recorded work left on a
+        terminal owner without reactivating or editing its generation history.
+        Ordinary publication still requires a running, reconciled generation.
+        """
         if not isinstance(receipt_id, str) or not receipt_id.strip():  # pyright: ignore[reportUnnecessaryIsInstance] - runtime boundary
             raise ValueError("receipt_id must be non-empty")
+        recovery = authority is RunAuthority.REBUILD
+        if recovery:
+            if (
+                rebuild_signature is None
+                or rebuild_signature.operation is not RunOperation.FULL
+            ):
+                raise PermissionError(
+                    "receipt recovery requires an explicit full rebuild signature"
+                )
+        elif authority is not RunAuthority.PUBLICATION or rebuild_signature is not None:
+            raise PermissionError("receipt recovery requires rebuild authority")
         committed_at = time.time()
 
         def body(connection: sqlite3.Connection) -> PublicationProof:
@@ -358,21 +495,18 @@ class RunLedgerPublicationReceiptMethods:
             if row is None:
                 raise KeyError(receipt_id)
             receipt = hydrate_receipt(connection, row)
+            if rebuild_signature is not None:
+                _require_rebuild_projection(
+                    rebuild_signature, receipt.compatibility_key
+                )
             if receipt.state is ProofReceiptState.COMMITTED:
                 return self._committed_receipt_replay(connection, receipt)
             require_receipt_ready_to_commit(receipt)
             committed_receipt_at = receipt_committed_at(receipt, committed_at)
             proof = self._validate_receipt_authority(connection, receipt)
-            generation = self._require_compatible_receipt_generation(
-                connection,
-                receipt.generation_id,
-                receipt.compatibility_key,
-                proof,
+            self._require_receipt_commit_generation(
+                connection, receipt, proof, rebuild_signature
             )
-            if generation.finalization_phase is not FinalizationPhase.STALE_RECONCILED:
-                raise RunLedgerStateError(
-                    "publication proof commits only after stale reconciliation"
-                )
             aggregate = proof.aggregate
             for delta in receipt.deltas:
                 aggregate = aggregate.apply(delta)
@@ -436,6 +570,35 @@ class RunLedgerPublicationReceiptMethods:
             )
 
         return in_ledger_transaction(self.path, body)
+
+    def _require_receipt_commit_generation(
+        self,
+        connection: sqlite3.Connection,
+        receipt: PublicationReceipt,
+        proof: PublicationProof,
+        rebuild_signature: RunSignature | None,
+    ) -> None:
+        """Validate readiness without changing a recovery owner's durable history."""
+        generation = self._require_compatible_receipt_generation(
+            connection,
+            receipt.generation_id,
+            receipt.compatibility_key,
+            proof,
+            rebuild_signature=rebuild_signature,
+        )
+        if rebuild_signature is not None:
+            if generation.finalization_phase not in {
+                FinalizationPhase.INGESTING,
+                FinalizationPhase.STALE_RECONCILED,
+            }:
+                raise RunLedgerStateError(
+                    "unfinished recovery has an incompatible finalization phase"
+                )
+            self._assert_ready_for_finalization(connection, generation.generation_id)
+        elif generation.finalization_phase is not FinalizationPhase.STALE_RECONCILED:
+            raise RunLedgerStateError(
+                "publication proof commits only after stale reconciliation"
+            )
 
     def _validate_receipt_authority(
         self,

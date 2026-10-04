@@ -42,6 +42,12 @@ class RunLedgerFinalizationMethods:
         @staticmethod
         def _generation_from_row(row: GenerationRow) -> RunGeneration: ...
 
+        def assert_generation_proof_committed(
+            self,
+            connection: sqlite3.Connection,
+            generation_id: str,
+        ) -> None: ...
+
         @staticmethod
         def _prune_closed_publication_receipts(
             connection: sqlite3.Connection,
@@ -77,6 +83,8 @@ class RunLedgerFinalizationMethods:
                 )
             if current is FinalizationPhase.INGESTING:
                 self._assert_ready_for_finalization(connection, generation_id)
+            if phase is FinalizationPhase.GENERATION_PUBLISHED:
+                self.assert_generation_proof_committed(connection, generation_id)
             connection.execute(
                 """
                 UPDATE generations SET finalization_phase = ?, updated_at = ?

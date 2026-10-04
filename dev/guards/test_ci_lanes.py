@@ -13,8 +13,8 @@ from typing import Any, cast
 
 import pytest
 
-from dev.ci_names import GATE_CHECK, GATE_JOB, Workflow
 from dev.guards import _workflows as workflows
+from dev.guards._ci_names import GATE_CHECK, GATE_JOB, Workflow
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
 

@@ -30,15 +30,12 @@ if TYPE_CHECKING:
 
     from ..config._types import PreprocessMode
     from ._content_policy import ContentKind, RootContentPolicy
-    from ._preprocess_config import PreprocessRule
     from ._resolved_policy import ResolvedPreprocessRule
 
 __all__ = [
     "ContentKindFingerprints",
     "NormalizedPolicyFingerprints",
     "PerKindPolicyFingerprints",
-    "code_content_epoch",
-    "code_membership_epoch",
     "resolved_policy_fingerprints",
     "vault_content_epoch",
 ]
@@ -157,11 +154,6 @@ def _digest(payload: object) -> str:
         default=str,
     )
     return hashlib.blake2b(canonical.encode("utf-8")).hexdigest()
-
-
-def _preprocess_patterns(rules: Sequence[PreprocessRule]) -> list[str]:
-    """Return the rule patterns in resolved-precedence order."""
-    return [rule.pattern for rule in rules]
 
 
 def resolved_policy_fingerprints(
@@ -389,60 +381,6 @@ def _per_kind_fingerprints(
         code=by_kind[ContentKind.CODE],
         document=by_kind[ContentKind.DOCUMENT],
     )
-
-
-def code_membership_epoch(
-    *,
-    gitignore_patterns: Sequence[str],
-    vaultragignore_patterns: Sequence[str],
-    preprocess_rules: Sequence[PreprocessRule],
-) -> str:
-    """Hash the inputs that decide which code files are indexed.
-
-    Gitignore order remains significant because later rules and negations may
-    override earlier rules. Directory traversal is already normalized by the
-    collector. The ``.vaultragignore`` file patterns keep their file order, and CLI
-    ``--exclude`` patterns are deliberately excluded upstream so the epoch does
-    not thrash between an ephemeral CLI run and the resident service.
-    """
-    payload = {
-        "gitignore": list(gitignore_patterns),
-        "vaultragignore": list(vaultragignore_patterns),
-        "preprocess_patterns": _preprocess_patterns(preprocess_rules),
-    }
-    return _digest(payload)
-
-
-def code_content_epoch(
-    *,
-    preprocess_rules: Sequence[PreprocessRule],
-    html_strip: bool,
-    max_emitted_bytes: int,
-) -> str:
-    """Hash the inputs that decide how code bytes become chunks.
-
-    Covers the preprocess invocation surface (command/entry_point, options,
-    on_error, resolved timeout, and per-rule order), ``html_strip``, and the
-    emitted-text cap - a cap change re-truncates any extraction that exceeds
-    it, so it is content-shaping for unchanged bytes. A change here escalates
-    to a clean rebuild.
-    """
-    payload = {
-        "html_strip": bool(html_strip),
-        "max_emitted_bytes": int(max_emitted_bytes),
-        "preprocess": [
-            {
-                "command": rule.command,
-                "entry_point": rule.entry_point,
-                "on_error": rule.on_error,
-                "timeout_s": rule.timeout_s,
-                "options": dict(rule.options),
-                "order": rule.order,
-            }
-            for rule in preprocess_rules
-        ],
-    }
-    return _digest(payload)
 
 
 def vault_content_epoch(*, vault_chunk_chars: int) -> str:

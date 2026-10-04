@@ -92,8 +92,8 @@ def server_mode_store(
     isolation fixture.
     """
     del isolated_status_dir
-    from ..config._settings import reset_config
     from ..store_runtime import VaultStore
+    from ._config_fixtures import reset_config
     from ._qdrant_warnings import VERSION_WARNING, await_client_warnings
 
     monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_URL", _DEAD_QDRANT_URL)

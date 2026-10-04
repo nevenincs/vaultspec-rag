@@ -25,7 +25,6 @@ import vaultspec_rag.server as _m
 from .._atomic_write import JsonWriteOptions, write_json_atomically
 from .._machine_lock import acquire_machine_lock_lease, release_machine_lock_lease
 from ..cli._service_status import _write_service_status
-from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..server import ServerRouteRuntime
 from ..server._lifecycle import _DiscoveryPublisher
@@ -43,6 +42,7 @@ from ..serviceclient._discovery import (
     _status_file,
 )
 from ._child_signal import CHILD_PROCESS_TIMEOUT_SECONDS, await_marker
+from ._config_fixtures import reset_config
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

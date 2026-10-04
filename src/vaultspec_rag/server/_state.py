@@ -55,7 +55,6 @@ __all__ = [
     "observe",
     "publish_survey_snapshot",
     "render_prometheus",
-    "reset_metrics",
     "search_activity_ledger",
     "survey_snapshot",
 ]
@@ -273,15 +272,6 @@ def observe(name: str, value: float) -> None:
     with _metrics_lock:
         if name in _gauges:
             _gauges[name] = value
-
-
-def reset_metrics() -> None:
-    """Zero all counters and gauges (test-only)."""
-    with _metrics_lock:
-        for key in _counters:
-            _counters[key] = 0
-        for key in _gauges:
-            _gauges[key] = 0.0
 
 
 @dataclass(frozen=True, slots=True)

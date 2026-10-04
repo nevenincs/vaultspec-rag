@@ -27,7 +27,6 @@ import pytest
 
 from .. import CodebaseIndexer
 from .._store_models import CodeChunk
-from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..indexer import _chunk_worker
 from ..indexer._content_policy import ContentKind
@@ -47,6 +46,7 @@ from ..indexer._preprocess_runner import (
     run_preprocessor_batch,
 )
 from ._chunk_production import produce_chunks
+from ._config_fixtures import reset_config
 
 pytestmark = [pytest.mark.unit]
 

@@ -297,7 +297,7 @@ class TestRestoreRefusesInOneEnvelope:
         # connection attempt and raises its real transport exception.
         monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_PORT", "59997")
         monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_URL", "http://127.0.0.1:59997")
-        from ..config._settings import reset_config
+        from ._config_fixtures import reset_config
 
         reset_config()
 
@@ -475,7 +475,7 @@ class TestUnreachableStorageStillAnswers:
         # attempt and raises its real transport exception. Nothing is stubbed.
         monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_PORT", "59997")
         monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_URL", "http://127.0.0.1:59997")
-        from ..config._settings import reset_config
+        from ._config_fixtures import reset_config
 
         reset_config()
 

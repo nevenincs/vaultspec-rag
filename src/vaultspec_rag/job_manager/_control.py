@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from typing import TYPE_CHECKING, Literal
 
@@ -876,6 +876,7 @@ class JobManagerControl(JobManagerQuiesceControl):
                 capabilities=_capabilities_for_state(
                     parent.snapshot.spec,
                     JobState.QUEUED,
+                    desired_state=DesiredJobState.RUNNING,
                 ),
                 attempt=JobAttempt(number=1, parent_job_id=parent.snapshot.id),
                 timestamps=JobTimestamps(created_at=now, state_changed_at=now),
@@ -1003,7 +1004,6 @@ class JobManagerControl(JobManagerQuiesceControl):
                     attribution=RequestAttribution(job_id=job_id),
                 )
             self._terminal.remove(terminal)
-            self._forget_idempotency_locked(job_id)
             persistence_error = self._persist_locked()
             if persistence_error is not None:
                 if not persistence_error.published:
@@ -1027,7 +1027,7 @@ class JobManagerControl(JobManagerQuiesceControl):
         managed: ManagedJob,
         state: JobState,
     ) -> JobOutcome:
-        if state is JobState.QUEUED:
+        if state in (JobState.QUEUED, JobState.PAUSED):
             now = time.time()
             self._replace_snapshot_locked(
                 managed,
@@ -1041,7 +1041,7 @@ class JobManagerControl(JobManagerQuiesceControl):
             )
             code = "job_paused"
             status = JobOutcomeStatus.OK
-        elif state is JobState.RUNNING:
+        elif state in (JobState.RUNNING, JobState.PAUSING):
             now = time.time()
             self._replace_snapshot_locked(
                 managed,
@@ -1148,6 +1148,10 @@ class JobManagerControl(JobManagerQuiesceControl):
         now: float,
     ) -> None:
         previous_attempt = managed.snapshot.attempt.number
+        managed.snapshot = replace(
+            managed.snapshot,
+            resources=replace(managed.snapshot.resources, started=None, finished=None),
+        )
         self._replace_snapshot_locked(
             managed,
             SnapshotTransition(

@@ -16,6 +16,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, cast
 
+from .._indexer_fixtures import chunk_document_and_hash_file
+from .._ledger_fixtures import latest_generation
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -297,7 +300,6 @@ def measure_document_workload(root: Path) -> DocumentWorkloadMeasurement:
     from ...indexer import DocumentIndexer
     from ...indexer._chunk_worker import (
         DocumentChunkingOptions,
-        chunk_document_and_hash_file,
     )
     from ...indexer._slicing import iter_weighted_document_slices
     from ...indexer._streaming_types import DocumentSliceStreamRequest
@@ -492,7 +494,8 @@ def _document_generation_units(ledger_path: Path) -> tuple[str, int]:
     if not ledger_path.is_file():
         return "", 0
     ledger = RunLedger(ledger_path)
-    generation = ledger.latest_generation(
+    generation = latest_generation(
+        ledger,
         ContentKind.DOCUMENT,
         collection_identity=store_schema.DOCUMENT_COLLECTION,
     )
@@ -550,7 +553,8 @@ def run_document_acceptance(
                 preflight=resumed.preflight_content(),
             )
         ledger = RunLedger(index_run_ledger_path(resolved / cfg.data_dir))
-        published = ledger.latest_generation(
+        published = latest_generation(
+            ledger,
             ContentKind.DOCUMENT,
             collection_identity=store_schema.DOCUMENT_COLLECTION,
         )

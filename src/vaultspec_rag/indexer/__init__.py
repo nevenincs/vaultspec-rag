@@ -8,7 +8,7 @@ The package's public surface is exported here: the ``VaultIndexer`` /
 ``CodebaseIndexer`` / ``DocumentIndexer`` orchestration classes, the
 ``IndexResult`` dataclass, the ``prepare_document`` helper, the
 ``ASTChunker`` / ``TextSplitter`` chunkers, and the shared
-``LANGUAGE_MAP`` / ``SUPPORTED_EXTENSIONS`` tables. Internal helpers,
+``LANGUAGE_MAP`` table. Internal helpers,
 AST node-type constants and the streaming pipeline stay private to the
 modules that own them and are imported from there.
 """
@@ -18,7 +18,6 @@ from __future__ import annotations
 from ._ast_chunker import ASTChunker
 from ._chunking import (
     LANGUAGE_MAP,
-    SUPPORTED_EXTENSIONS,
     TextSplitter,
 )
 from ._codebase_indexer import CodebaseIndexer
@@ -28,7 +27,6 @@ from ._vault_prep import IndexResult, prepare_document
 
 __all__ = [
     "LANGUAGE_MAP",
-    "SUPPORTED_EXTENSIONS",
     "ASTChunker",
     "CodebaseIndexer",
     "DocumentIndexer",

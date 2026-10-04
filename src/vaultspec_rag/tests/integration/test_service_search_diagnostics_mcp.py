@@ -280,7 +280,11 @@ def _assert_official_readiness_metadata(
     """Assert the envelope and readiness facts common to every scenario."""
     assert response.is_error is False
     structured = cast("dict[str, object]", response.structured_content)
-    assert structured == canonical_service_envelope(scenario)
+    assert "source/doc_type" in str(structured["advisory"])
+    service_fields = {
+        key: value for key, value in structured.items() if key != "advisory"
+    }
+    assert service_fields == canonical_service_envelope(scenario)
     readiness = cast("dict[str, object]", structured["readiness"])
     expected_sources: list[str] = [str(fact.source) for fact in scenario.source_facts]
     source_facts = cast("list[dict[str, object]]", readiness["sources"])

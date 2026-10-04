@@ -32,9 +32,7 @@ from ...index_profiles import (
 )
 from ...indexer._chunk_worker import (
     DocumentChunkingOptions,
-    DocumentFileChunkResult,
-    chunk_document_and_hash_file,
-    chunk_file_with_status,
+    chunk_and_hash_file,
     stream_document_and_hash_file,
 )
 from ...indexer._document_indexer import _DocumentResourceBudget
@@ -63,11 +61,17 @@ from ...job_models import (
 from ...service import ServiceRegistry
 from ...service_quiesce import ServiceQuiesceController
 from ...watcher_retry import (
+    WatcherPathEvent,
+    WatcherPathObservation,
     WatcherSource,
 )
 from ...watcher_retry_policy import (
     WatcherRetryPolicy,
     _WatcherRetryOptions,
+)
+from .._indexer_fixtures import (
+    DocumentFileChunkResult,
+    chunk_document_and_hash_file,
 )
 from ._helpers import _document_policy
 
@@ -193,7 +197,7 @@ def test_document_passthrough_stays_document_owned_and_code_worker_fails_closed(
 
     marker.unlink()
     with pytest.raises(ValueError, match="non-code extraction rule"):
-        chunk_file_with_status(source, tmp_path, context)
+        chunk_and_hash_file(source, tmp_path, context)
     assert not marker.exists()
 
 
@@ -366,7 +370,6 @@ async def test_document_attempt_honors_cancellation_before_admission(
                 context,
                 dispatch=_AttemptDispatch(
                     JobSource.DOCUMENT,
-                    manager,
                     created.job.id,
                     tmp_path,
                     JobMode.INCREMENTAL,
@@ -421,12 +424,17 @@ def test_document_runtime_budget_enforces_extracted_rss_and_cuda_dimensions() ->
     assert runtime_budget.rss_bytes > 1
     assert runtime_budget.cuda_bytes >= 0
 
-    cuda_budget = _DocumentResourceBudget(
-        replace(limits, cuda_bytes=1),
+
+def _watched_path(source: WatcherSource) -> WatcherPathObservation:
+    """One exact observation of the shape watcher intake persists."""
+    return WatcherPathObservation(
+        relative_path="docs/report.pdf",
+        source=source,
+        first_observed_at=1.0,
+        latest_observed_at=1.0,
+        event_kinds=frozenset({WatcherPathEvent.MODIFIED}),
+        generation=1,
     )
-    with pytest.raises(JobError, match="CUDA allocated") as cuda:
-        cuda_budget.record_runtime_resources(rss_bytes=1, cuda_bytes=2)
-    assert cuda.value.error_kind is JobErrorKind.CUDA_MEMORY_CEILING
 
 
 def test_document_retry_state_and_resource_profile_are_independent(
@@ -457,9 +465,9 @@ def test_document_retry_state_and_resource_profile_are_independent(
             now=0,
         ),
     )
-    code.mark_convergence_pending(now=1)
+    code.mark_scope_pending((_watched_path(WatcherSource.CODE),), now=1)
     code_before = code.state
-    document.mark_convergence_pending(now=1)
+    document.mark_scope_pending((_watched_path(WatcherSource.DOCUMENT),), now=1)
     admitted = document.admit(now=1)
     assert admitted.attempt_generation is not None
     document.record_failure(

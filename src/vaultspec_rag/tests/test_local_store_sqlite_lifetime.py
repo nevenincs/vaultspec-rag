@@ -28,7 +28,7 @@ def test_local_store_collection_creation_has_no_unclosed_database(
             "-c",
             "import gc, os, sys\n"
             "from pathlib import Path\n"
-            "from vaultspec_rag.config._settings import reset_config\n"
+            "from vaultspec_rag.tests._config_fixtures import reset_config\n"
             "from vaultspec_rag.config._types import EnvVar\n"
             "from vaultspec_rag.store_runtime import VaultStore\n"
             "os.environ[EnvVar.QDRANT_SERVER.value] = 'false'\n"

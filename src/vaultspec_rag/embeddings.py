@@ -297,27 +297,20 @@ def _shrink_after_bucket_oom(
 
 
 def _joined_bucket_outputs(
-    outputs: list[object],
+    outputs: list[Tensor],
     *,
     accelerator: AcceleratorContext,
-    retain_on_device: bool,
-) -> object:
-    """Join per-bucket encode outputs into one result in the caller's mode.
+) -> Tensor:
+    """Join per-bucket encode outputs into one on-device result.
 
     A single bucket is handed back exactly as the library produced it, so
     the common case pays no concatenation copy.
     """
     if len(outputs) == 1:
         return outputs[0]
-    if retain_on_device:
-        return accelerator.torch.cat(  # pyright: ignore[reportUnknownMemberType] - runtime torch module
-            [cast("Tensor", output) for output in outputs], dim=0
-        )
-    import numpy as np
-
-    return np.concatenate(
-        [np.asarray(output) for output in outputs],
-        axis=0,
+    return cast(
+        "Tensor",
+        accelerator.torch.cat(outputs, dim=0),  # pyright: ignore[reportUnknownMemberType] - runtime torch module
     )
 
 
@@ -681,6 +674,7 @@ class EmbeddingModel:
         accelerator = _check_rag_deps()
         torch = accelerator.torch
         self._accelerator = accelerator
+        self._device = accelerator.device
 
         from .config._settings import get_config
 
@@ -760,7 +754,7 @@ class EmbeddingModel:
         else:
             self._load_sparse_model(sparse_name, local_files_only=local_files_only)
 
-        self._init_encode_state(cfg, device=accelerator.device)
+        self._init_encode_state(cfg)
 
         logger.info(
             "Embedding models loaded on %s (dense=%s, sparse=%s, dense_dim=%d, "
@@ -772,28 +766,21 @@ class EmbeddingModel:
             self.sparse_dimension,
         )
 
-    def _init_encode_state(
-        self,
-        cfg: VaultSpecConfigWrapper,
-        *,
-        device: str,
-    ) -> None:
+    def _init_encode_state(self, cfg: VaultSpecConfigWrapper) -> None:
         """Set the encode state that does not depend on which weights loaded.
 
         Everything here is derived from configuration rather than from a
         loaded model, so it is the whole of what an instance needs before
-        an encode call is legal. Keeping it in one method is what lets a
-        caller holding an already-constructed backend reach the same state
-        without a second copy of these assignments drifting away from this
-        one: a missing knob surfaces as an attribute error several frames
-        inside a bucket plan, far from the assignment that was never made.
+        an encode call is legal. Keeping it in one method keeps those knobs
+        together: a missing one surfaces as an attribute error several
+        frames inside a bucket plan, far from the assignment that was never
+        made.
         """
         self.dimension: int = (
             cfg.embedding_dimension
             if hasattr(cfg, "embedding_dimension")
             else self.DEFAULT_DIMENSION
         )
-        self._device = device
         self.query_cache = QueryEmbeddingCache()
         self._dense_batch_ceiling = EncodeBatchCeiling()
         self._sparse_batch_ceiling = EncodeBatchCeiling()
@@ -852,73 +839,7 @@ class EmbeddingModel:
         """
         return self._device
 
-    def encode_documents(
-        self,
-        texts: list[str],
-        *,
-        batch_size: int | None = None,
-    ) -> np.ndarray:
-        """Encode document texts as dense embeddings on GPU.
-
-        Args:
-            texts: List of document texts (title + body).
-            batch_size: Item-count cap per planned encode bucket, applied
-                on top of the token budget. Defaults to
-                :meth:`_default_encode_batch_size` (config
-                ``embedding_encode_batch_size``).
-
-        Returns:
-            numpy array of shape ``(n, dimension)`` with normalized
-            embeddings.
-
-        Raises:
-            torch.cuda.OutOfMemoryError: If a single-text bucket still
-                fails after the allocator cache is flushed.
-        """
-        import numpy as np
-
-        embeddings = self._encode_documents_output(
-            texts,
-            batch_size=batch_size,
-            retain_on_device=False,
-        )
-        return np.asarray(embeddings, dtype=np.float32)
-
-    def encode_documents_on_device(
-        self,
-        texts: list[str],
-        *,
-        batch_size: int | None = None,
-        gpu_lock: threading.Lock | None = None,
-        on_bucket: Callable[[str, EncodeBucketProgress], None] | None = None,
-    ) -> Tensor:
-        """Encode documents while retaining the bounded result on CUDA.
-
-        Index streaming calls this and performs the single device-to-host
-        transfer once it returns. Each planned bucket's forward holds
-        ``gpu_lock`` independently, so concurrent searches on the shared
-        device wait for at most one bucket, never a whole slice.
-        ``on_bucket`` observes bucket boundaries under the contract
-        documented on :meth:`_run_bucketed_encode`. Other callers use
-        :meth:`encode_documents` and receive a CPU NumPy result.
-        """
-        return cast(
-            "Tensor",
-            self._encode_documents_output(
-                texts,
-                batch_size=batch_size,
-                retain_on_device=True,
-                gpu_lock=gpu_lock,
-                on_bucket=on_bucket,
-            ),
-        )
-
-    def _dense_encode_call(
-        self,
-        bucket_texts: list[str],
-        *,
-        retain_on_device: bool,
-    ) -> object:
+    def _dense_encode_call(self, bucket_texts: list[str]) -> Tensor:
         """Run one library encode call over one bucket as a single forward.
 
         The bucket is passed as one ``encode`` sub-batch (``batch_size``
@@ -927,20 +848,13 @@ class EmbeddingModel:
         internal length sort is a no-op for the length-homogeneous
         buckets the planner produces.
         """
-        if retain_on_device:
-            return self._dense_model.encode(  # pyright: ignore[reportUnknownMemberType]  # sentence_transformers encode overloads are partially stubbed
-                bucket_texts,
-                batch_size=max(1, len(bucket_texts)),
-                show_progress_bar=False,
-                normalize_embeddings=True,
-                convert_to_numpy=False,
-                convert_to_tensor=True,
-            )
         return self._dense_model.encode(  # pyright: ignore[reportUnknownMemberType]  # sentence_transformers encode overloads are partially stubbed
             bucket_texts,
             batch_size=max(1, len(bucket_texts)),
             show_progress_bar=False,
             normalize_embeddings=True,
+            convert_to_numpy=False,
+            convert_to_tensor=True,
         )
 
     def _run_bucketed_encode[T](
@@ -1051,41 +965,37 @@ class EmbeddingModel:
         self,
         bucket_texts: list[str],
         gpu_lock: threading.Lock | None,
-        *,
-        retain_on_device: bool,
-    ) -> object:
+    ) -> Tensor:
         """Run one bucket as one dense forward, holding the GPU lock across it.
 
-        Nothing but the forward is inside the hold. Retaining on device
-        brackets it with the peak capture in the same hold, so the captured
-        peak attributes that forward's demand to the calling job alone.
+        Nothing but the forward is inside the hold. The peak capture
+        brackets it in the same hold, so the captured peak attributes that
+        forward's demand to the calling job alone.
         """
         from .memory_probe import cuda_forward_peak_capture
 
-        if retain_on_device:
-            with timed_gpu_lock(gpu_lock), cuda_forward_peak_capture():
-                return self._dense_encode_call(bucket_texts, retain_on_device=True)
-        with timed_gpu_lock(gpu_lock):
-            return self._dense_encode_call(bucket_texts, retain_on_device=False)
+        with timed_gpu_lock(gpu_lock), cuda_forward_peak_capture():
+            return self._dense_encode_call(bucket_texts)
 
-    def _encode_documents_output(
+    def encode_documents_on_device(
         self,
         texts: list[str],
         *,
-        batch_size: int | None,
-        retain_on_device: bool,
+        batch_size: int | None = None,
         gpu_lock: threading.Lock | None = None,
         on_bucket: Callable[[str, EncodeBucketProgress], None] | None = None,
-    ) -> object:
-        """Encode texts bucket by bucket under the learned token budget.
+    ) -> Tensor:
+        """Encode documents bucket by bucket, retaining the result on CUDA.
 
-        Bucket planning, OOM-scoped retry, and the ``on_bucket`` callback
-        contract are owned by :meth:`_run_bucketed_encode`, driving the
-        dense token ceiling; this method contributes the dense forward
-        itself. When ``retain_on_device`` is true every bucket forward is
-        bracketed by ``cuda_forward_peak_capture`` inside its own
-        ``gpu_lock`` hold, so each captured peak attributes that
-        forward's demand to the calling job alone.
+        Index streaming calls this and performs the single device-to-host
+        transfer once it returns. Bucket planning, OOM-scoped retry, and
+        the ``on_bucket`` callback contract are owned by
+        :meth:`_run_bucketed_encode`, driving the dense token ceiling;
+        this method contributes the dense forward itself. Each planned
+        bucket's forward holds ``gpu_lock`` independently, so concurrent
+        searches on the shared device wait for at most one bucket, never a
+        whole slice, and each bucket's peak capture lives inside that same
+        hold.
         """
         if batch_size is None:
             batch_size = self._default_encode_batch_size()
@@ -1094,15 +1004,11 @@ class EmbeddingModel:
         truncated = [t[:max_chars] for t in texts]
         if not truncated:
             # No forward runs; the library owns the canonical empty
-            # result shape for each output mode.
-            return self._dense_encode_call(truncated, retain_on_device=retain_on_device)
+            # result shape.
+            return self._dense_encode_call(truncated)
 
-        def encode_bucket(bucket_texts: list[str]) -> object:
-            return self._encode_dense_bucket(
-                bucket_texts,
-                gpu_lock,
-                retain_on_device=retain_on_device,
-            )
+        def encode_bucket(bucket_texts: list[str]) -> Tensor:
+            return self._encode_dense_bucket(bucket_texts, gpu_lock)
 
         outputs = self._run_bucketed_encode(
             _BucketPlanContext(
@@ -1116,11 +1022,7 @@ class EmbeddingModel:
             encode_bucket=encode_bucket,
             on_bucket=on_bucket,
         )
-        return _joined_bucket_outputs(
-            outputs,
-            accelerator=self._accelerator,
-            retain_on_device=retain_on_device,
-        )
+        return _joined_bucket_outputs(outputs, accelerator=self._accelerator)
 
     #: Task-specific instruction prompts for the dense encoder. Qwen3
     #: embeddings are instruction-tuned: telling the model what kind of
@@ -1268,11 +1170,8 @@ class EmbeddingModel:
 
         sparse_model = self._require_sparse_model()
         prepared = sparse_model.prepare(bucket_texts, kind="document")
-        if gpu_lock is None:
+        with timed_gpu_lock(gpu_lock), cuda_forward_peak_capture():
             accelerator_tensor = sparse_model.forward(prepared)
-        else:
-            with timed_gpu_lock(gpu_lock), cuda_forward_peak_capture():
-                accelerator_tensor = sparse_model.forward(prepared)
         cpu_tensor = accelerator_tensor.cpu()
         del accelerator_tensor
         return _sparse_tensor_to_results(cpu_tensor, self._accelerator)

@@ -39,6 +39,7 @@ from ..qdrant_runtime._resolve import (
 )
 from ..torch_config._constants import TorchConfigState
 from ..torch_config._inspect import detect_state
+from ._provision_fixtures import result_for
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -215,8 +216,8 @@ class TestOutcomeModel:
     def test_result_for_finds_the_matching_step(self) -> None:
         result = ProvisionStepResult(ProvisionStep.MODELS, ProvisionAction.UNCHANGED)
         outcome = ProvisionOutcome(steps=[result])
-        assert outcome.result_for(ProvisionStep.MODELS) is result
-        assert outcome.result_for(ProvisionStep.QDRANT) is None
+        assert result_for(outcome, ProvisionStep.MODELS) is result
+        assert result_for(outcome, ProvisionStep.QDRANT) is None
 
     def test_to_dict_is_json_serialisable_and_honest(self) -> None:
         outcome = ProvisionOutcome(
@@ -269,8 +270,9 @@ class TestModelStep:
         # considering exactly the dense-only inventory (two repos, not
         # three) - proving it reads the shared, configured inventory rather than
         # a repo list of its own that could drift from it.
-        from ..config._settings import configured_model_repos, get_config, reset_config
+        from ..config._settings import configured_model_repos, get_config
         from ..config._types import EnvVar
+        from ._config_fixtures import reset_config
 
         prev = os.environ.get(EnvVar.SPARSE_ENABLED.value)
         os.environ[EnvVar.SPARSE_ENABLED.value] = "0"
@@ -302,7 +304,7 @@ class TestTorchStep:
             skip={"models"},  # skip the model fetch
             assume_yes=True,
         )
-        torch = outcome.result_for(ProvisionStep.TORCH)
+        torch = result_for(outcome, ProvisionStep.TORCH)
         assert torch is not None
         assert torch.action == ProvisionAction.CREATED
         assert torch.sync_pending is True
@@ -319,14 +321,14 @@ class TestTorchStep:
         first = provision_dependencies(
             consumer_workspace, local_only=True, skip={"models"}, assume_yes=True
         )
-        first_torch = first.result_for(ProvisionStep.TORCH)
+        first_torch = result_for(first, ProvisionStep.TORCH)
         assert first_torch is not None
         assert first_torch.action == ProvisionAction.CREATED
 
         second = provision_dependencies(
             consumer_workspace, local_only=True, skip={"models"}, assume_yes=True
         )
-        torch = second.result_for(ProvisionStep.TORCH)
+        torch = result_for(second, ProvisionStep.TORCH)
         assert torch is not None
         assert torch.action == ProvisionAction.UNCHANGED
 
@@ -339,7 +341,7 @@ class TestTorchStep:
             skip={"models"},
             configure_torch=False,
         )
-        torch = outcome.result_for(ProvisionStep.TORCH)
+        torch = result_for(outcome, ProvisionStep.TORCH)
         assert torch is not None
         assert torch.action == ProvisionAction.SKIPPED
 
@@ -353,7 +355,7 @@ class TestQdrantStep:
             local_only=True,
             skip={"torch", "models"},
         )
-        qdrant = outcome.result_for(ProvisionStep.QDRANT)
+        qdrant = result_for(outcome, ProvisionStep.QDRANT)
         assert qdrant is not None
         assert qdrant.action == ProvisionAction.SKIPPED
         assert "local-only" in qdrant.detail
@@ -368,7 +370,7 @@ class TestQdrantStep:
             consumer_workspace,
             skip={"torch", "models", "qdrant"},
         )
-        qdrant = outcome.result_for(ProvisionStep.QDRANT)
+        qdrant = result_for(outcome, ProvisionStep.QDRANT)
         assert qdrant is not None
         assert qdrant.action == ProvisionAction.SKIPPED
         assert not (isolated_status_dir / "bin").exists()
@@ -384,7 +386,7 @@ class TestQdrantStep:
             consumer_workspace,
             skip={"torch", "models"},
         )
-        qdrant = outcome.result_for(ProvisionStep.QDRANT)
+        qdrant = result_for(outcome, ProvisionStep.QDRANT)
         assert qdrant is not None
         assert qdrant.action == ProvisionAction.UNCHANGED
         # An unchanged no-op must not rewrite the verified binary.
@@ -399,7 +401,7 @@ class TestQdrantStep:
             dry_run=True,
         )
         assert outcome.dry_run is True
-        qdrant = outcome.result_for(ProvisionStep.QDRANT)
+        qdrant = result_for(outcome, ProvisionStep.QDRANT)
         assert qdrant is not None
         assert qdrant.action == ProvisionAction.DRY_RUN
         # Dry-run must not have provisioned a binary into the isolated dir.
@@ -425,7 +427,7 @@ class TestFrontDoorComposition:
         }
         # The skipped model step is still represented, so the report is
         # complete rather than silently dropping opted-out dependencies.
-        models = outcome.result_for(ProvisionStep.MODELS)
+        models = result_for(outcome, ProvisionStep.MODELS)
         assert models is not None
         assert models.action == ProvisionAction.SKIPPED
 
@@ -456,7 +458,7 @@ class TestFrontDoorIdempotency:
             skip={"models"},
             assume_yes=True,
         )
-        first_torch = first.result_for(ProvisionStep.TORCH)
+        first_torch = result_for(first, ProvisionStep.TORCH)
         assert first_torch is not None
         assert first_torch.action == ProvisionAction.CREATED
 
@@ -473,9 +475,9 @@ class TestFrontDoorIdempotency:
             skip={"models"},
             assume_yes=True,
         )
-        torch = second.result_for(ProvisionStep.TORCH)
-        qdrant = second.result_for(ProvisionStep.QDRANT)
-        models = second.result_for(ProvisionStep.MODELS)
+        torch = result_for(second, ProvisionStep.TORCH)
+        qdrant = result_for(second, ProvisionStep.QDRANT)
+        models = result_for(second, ProvisionStep.MODELS)
         assert torch is not None and torch.action == ProvisionAction.UNCHANGED
         assert qdrant is not None and qdrant.action == ProvisionAction.UNCHANGED
         assert models is not None and models.action == ProvisionAction.SKIPPED
@@ -500,8 +502,8 @@ class TestFrontDoorIdempotency:
         second = provision_dependencies(
             consumer_workspace, skip={"models"}, assume_yes=True
         )
-        torch = second.result_for(ProvisionStep.TORCH)
-        qdrant = second.result_for(ProvisionStep.QDRANT)
+        torch = result_for(second, ProvisionStep.TORCH)
+        qdrant = result_for(second, ProvisionStep.QDRANT)
         assert torch is not None and torch.action == ProvisionAction.UNCHANGED
         assert qdrant is not None and qdrant.action == ProvisionAction.UNCHANGED
 
@@ -515,8 +517,8 @@ class TestFrontDoorIdempotency:
             assume_yes=True,
         )
         assert outcome.dry_run is True
-        torch = outcome.result_for(ProvisionStep.TORCH)
-        qdrant = outcome.result_for(ProvisionStep.QDRANT)
+        torch = result_for(outcome, ProvisionStep.TORCH)
+        qdrant = result_for(outcome, ProvisionStep.QDRANT)
         assert torch is not None and torch.action == ProvisionAction.DRY_RUN
         assert torch.sync_pending is True
         assert qdrant is not None and qdrant.action == ProvisionAction.DRY_RUN
@@ -537,8 +539,8 @@ class TestFrontDoorIdempotency:
             skip={"models"},
             assume_yes=True,
         )
-        qdrant = outcome.result_for(ProvisionStep.QDRANT)
-        torch = outcome.result_for(ProvisionStep.TORCH)
+        qdrant = result_for(outcome, ProvisionStep.QDRANT)
+        torch = result_for(outcome, ProvisionStep.TORCH)
         assert qdrant is not None
         assert qdrant.action == ProvisionAction.SKIPPED
         assert "local-only" in qdrant.detail

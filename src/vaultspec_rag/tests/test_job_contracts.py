@@ -399,7 +399,9 @@ def _valid_snapshot() -> JobSnapshot:
         spec=spec,
         state=JobState.QUEUED,
         desired_state=DesiredJobState.RUNNING,
-        capabilities=capabilities_for_state(spec, JobState.QUEUED),
+        capabilities=capabilities_for_state(
+            spec, JobState.QUEUED, desired_state=DesiredJobState.RUNNING
+        ),
         attempt=JobAttempt(number=1),
         timestamps=JobTimestamps(created_at=1000.0, state_changed_at=1000.0),
         progress=JobProgress(
@@ -737,7 +739,9 @@ def _snapshot_in_state(
         spec=resolved,
         state=state,
         desired_state=_DESIRED_FOR_STATE[state],
-        capabilities=capabilities_for_state(resolved, state),
+        capabilities=capabilities_for_state(
+            resolved, state, desired_state=_DESIRED_FOR_STATE[state]
+        ),
         attempt=JobAttempt(number=1),
         timestamps=JobTimestamps(
             created_at=1000.0,
@@ -921,7 +925,7 @@ _ROUND_TRIP_CASES = _round_trip_cases()
 
 
 def _generation(*jobs: JobSnapshot) -> PersistedManagerState:
-    return PersistedManagerState(jobs=jobs, bindings=())
+    return PersistedManagerState(jobs=jobs)
 
 
 def _age(path: Path, seconds: float) -> None:

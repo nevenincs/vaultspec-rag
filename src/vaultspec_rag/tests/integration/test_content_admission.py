@@ -170,11 +170,11 @@ def _assert_public_admission_views(
     path_count: int,
 ) -> None:
     """Assert API, service, and CLI projections retain the same scan."""
-    from ..._job_admission import scan_code_index_preflight
+    from ..._job_admission import validate_code_index_policy
     from ...api import scan_codebase
 
     api_scan = scan_codebase(tmp_path, sample_limit=path_count)
-    service_scan = scan_code_index_preflight(tmp_path)
+    service_scan = validate_code_index_policy(tmp_path).scan
     assert api_scan == full_scan
     assert service_scan == full_scan
     cli_result = runner.invoke(

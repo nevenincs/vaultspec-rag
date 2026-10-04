@@ -13,6 +13,7 @@ Covers:
 from __future__ import annotations
 
 import logging
+import sys
 import threading
 import time
 from typing import TYPE_CHECKING, ClassVar
@@ -25,14 +26,13 @@ from ..service import ProjectSlot, RegistryFullError, ServiceRegistry
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+    from types import FrameType
 
     from sentence_transformers import CrossEncoder
 
     from ..embeddings import EmbeddingModel
     from ..search import SearchResult
     from ..store_runtime import VaultStore
-
-pytestmark = [pytest.mark.integration]
 
 
 def _make_vault_dir(tmp_path: Path) -> Path:
@@ -348,6 +348,118 @@ class TestHealth:
             assert str(root.resolve()) in h["projects"]
         finally:
             registry.close_project(root)
+
+
+class TestServedConformanceHealth:
+    """Real storage-only slots project current conformance without GPU work."""
+
+    pytestmark: ClassVar = [pytest.mark.unit]
+
+    def test_health_changes_when_replacement_becomes_served(
+        self, tmp_path: Path, clean_config: None
+    ) -> None:
+        """Catch old-cache degradation, premature build selection and reprobes."""
+        del clean_config
+        from .. import store_schema
+        from .test_storage_identity import (
+            _code_replacement,
+            _seed_nonconforming_namespaces,
+        )
+
+        _seed_nonconforming_namespaces(tmp_path)
+        registry = ServiceRegistry()
+        try:
+            slot = registry.peek_project(tmp_path)
+            store = slot.store
+            with _code_replacement(store) as (indexer, checkpoint, target):
+                old = store.CODE_TABLE_NAME
+                unchanged = {store.TABLE_NAME, store.DOCUMENT_TABLE_NAME}
+                root = str(tmp_path.resolve())
+                before = registry.health()
+                assert set(before["nonconforming"]) == {
+                    f"{root}:{name}" for name in unchanged | {old}
+                }, "active served degradation was hidden during rebuild"
+                assert slot.compute_runtime is None
+                indexer._lifecycle.publish(
+                    checkpoint,
+                    build_target=target,
+                    reporter=NullProgressReporter(),
+                    phase_label="CPU health replacement",
+                )
+                backend_calls: list[str] = []
+
+                def observe(frame: FrameType, event: str, _argument: object) -> None:
+                    if event == "call" and str(
+                        frame.f_globals.get("__name__", "")
+                    ).startswith("qdrant_client"):
+                        backend_calls.append(frame.f_code.co_name)
+
+                prior_profile = sys.getprofile()
+                sys.setprofile(observe)
+                try:
+                    after = registry.health()
+                finally:
+                    sys.setprofile(prior_profile)
+                assert set(after["nonconforming"]) == {
+                    f"{root}:{name}" for name in unchanged
+                }, "health still degrades on the superseded code generation"
+                assert not backend_calls, "health reprobed the backend"
+                assert not after["model_loaded"] and not after["reranker_loaded"]
+                assert slot.compute_runtime is None
+                assert store._conformance[old].verdict == store_schema.NONCONFORMING
+                assert store.client.count(collection_name=old).count == 1
+        finally:
+            registry.close_all()
+
+    @pytest.mark.parametrize("source", ["vault", "code", "document"])
+    def test_active_sparse_refusal_still_degrades_health(
+        self, tmp_path: Path, clean_config: None, source: str
+    ) -> None:
+        """Filtering retained generations cannot hide a current hard refusal."""
+        del clean_config
+        import json
+
+        from ..storage_identity import sidecar_path
+        from ..store_runtime import StorageModelError, VaultStore
+        from .test_storage_identity import _seed_nonconforming_namespaces
+
+        _seed_nonconforming_namespaces(tmp_path)
+        with VaultStore(tmp_path, embedding_dim=2) as store:
+            if source == "code":
+                from .test_storage_identity import _code_replacement
+
+                with _code_replacement(store) as (indexer, checkpoint, target):
+                    indexer._lifecycle.publish(
+                        checkpoint,
+                        build_target=target,
+                        reporter=NullProgressReporter(),
+                        phase_label="CPU active refusal publication",
+                    )
+            collection = {
+                "vault": store.TABLE_NAME,
+                "code": store.CODE_TABLE_NAME,
+                "document": store.DOCUMENT_TABLE_NAME,
+            }[source]
+            identity_path = sidecar_path(store.db_path)
+        raw = json.loads(identity_path.read_text(encoding="utf-8"))
+        raw["collections"][collection]["sparse_model"] = "superseded/sparse"
+        identity_path.write_text(json.dumps(raw), encoding="utf-8")
+        registry = ServiceRegistry()
+        try:
+            slot = registry.peek_project(tmp_path)
+            ensure = {
+                "vault": slot.store.ensure_table,
+                "code": slot.store.ensure_code_table,
+                "document": slot.store.ensure_document_table,
+            }[source]
+            with pytest.raises(StorageModelError):
+                ensure()
+            assert registry.health()["nonconforming"] == [
+                f"{tmp_path.resolve()}:{collection}"
+            ], "current hard refusal disappeared from health"
+            assert not slot.store._ensured.get(collection, False)
+        finally:
+            registry.close_all()
 
 
 class TestConcurrency:

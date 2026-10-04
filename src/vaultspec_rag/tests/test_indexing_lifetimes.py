@@ -70,6 +70,7 @@ def test_actual_acquisition_owners_close_after_success_or_persist_failure(
     def invoke() -> None:
         if owner == "code":
             indexer = object.__new__(CodebaseIndexer)
+            indexer.root_dir = tmp_path
             indexer._stat_gate_cache = store
             indexer._hash_changed_paths(
                 {"source.py": source}, NullProgressReporter(), full_membership=True

@@ -166,13 +166,6 @@ class ProvisionOutcome:
         """True when no step failed."""
         return all(r.action != ProvisionAction.FAILED for r in self.steps)
 
-    def result_for(self, step: ProvisionStep) -> ProvisionStepResult | None:
-        """Return the result for *step*, or ``None`` if not considered."""
-        for result in self.steps:
-            if result.step == step:
-                return result
-        return None
-
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-serialisable view of the whole outcome."""
         return {

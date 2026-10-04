@@ -33,8 +33,7 @@ not complete. Only ``0`` is a pass. The numbers are this repository's
 exit-code contract (``dev/exit_codes.py``): ``OK``, ``FAILED``, and the "the
 scanner did not actually run" code -- used here on a GATING target because a
 gate that could not run must not be readable either as a pass or as a
-finding. The values are restated rather than imported so this file stays
-standalone and stdlib-only.
+finding.
 
 Output
 ------
@@ -66,10 +65,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-#: See the module docstring: these mirror ``dev/exit_codes.py``.
-EXIT_OK = 0
-EXIT_FINDINGS = 1
-EXIT_BROKEN = 7
+from dev.exit_codes import ADVISORY_BROKEN as EXIT_BROKEN
+from dev.exit_codes import FAILED as EXIT_FINDINGS
+from dev.exit_codes import OK as EXIT_OK
 
 _OSV_QUERYBATCH = "https://api.osv.dev/v1/querybatch"
 _OSV_VULN = "https://api.osv.dev/v1/vulns/"

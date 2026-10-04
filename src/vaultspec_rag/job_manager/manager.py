@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-from collections import OrderedDict, deque
+from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Never, cast
 
@@ -12,7 +12,6 @@ if TYPE_CHECKING:
     import os
     from collections.abc import Callable
 
-    from .. import job_persistence as _job_persistence
     from ..job_models import JobSnapshot
     from ..service_quiesce import ServiceQuiesceController
     from .state import AttemptExit, JobLifecycleState
@@ -68,7 +67,6 @@ class JobManager(
 
         self._max_nonterminal = resolved_max
         self._max_terminal_history = max_terminal_history
-        self._max_idempotency = resolved_max + max_terminal_history
         if state_path is CONFIGURED_STATE_PATH:
             self._state_path = managed_status_dir() / MANAGED_STATE_FILENAME
         else:
@@ -95,10 +93,6 @@ class JobManager(
         self._last_flush_monotonic = float("-inf")
         self._active: dict[str, ManagedJob] = {}
         self._terminal: deque[ManagedJob] = deque()
-        self._idempotency: OrderedDict[str, _job_persistence.IdempotencyBinding] = (
-            OrderedDict()
-        )
-        self._job_idempotency_keys: dict[str, set[str]] = {}
         self._dispatchers: dict[str, JobDispatchBinding] = {}
         self._next_dispatch_binding_nonce = 0
         self._next_quiesced_dispatch_generation = 0

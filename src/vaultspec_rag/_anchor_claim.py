@@ -75,7 +75,6 @@ __all__ = [
     "claim_anchor",
     "hardware_anchor_path",
     "observe_existing_anchor",
-    "probe_existing_anchor_holder",
     "publish_anchor_record",
     "read_anchor_record",
     "record_claim_owner",
@@ -501,18 +500,6 @@ def observe_existing_anchor(
         holder_pid=0,
         fault=None,
     )
-
-
-def probe_existing_anchor_holder(
-    anchor: Path,
-    *,
-    pid_record: bool = False,
-) -> int | None:
-    """Return a positive PID only for a contended no-create observation."""
-    observation = observe_existing_anchor(anchor, pid_record=pid_record)
-    if observation.outcome is AnchorOutcome.CONTENDED and observation.holder_pid > 0:
-        return observation.holder_pid
-    return None
 
 
 def publish_anchor_record(
