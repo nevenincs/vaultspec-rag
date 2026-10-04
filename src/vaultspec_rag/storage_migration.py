@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, TypedDict, Unpack, cast
 
 if TYPE_CHECKING:
@@ -17,6 +17,7 @@ def _no_progress(_line: str) -> None:
 
 
 class _MigrationOptions(TypedDict, total=False):
+    root_dir: Path | str
     dry_run: bool
     batch_size: int
     on_progress: Callable[[str], None]
@@ -28,6 +29,7 @@ class _MigrationRequest:
     dst_client: QdrantClient
     name_map: dict[str, str]
     dry_run: bool
+    root_dir: Path | str | None = None
     batch_size: int = 256
     on_progress: Callable[[str], None] = _no_progress
 
@@ -173,7 +175,30 @@ def _migrate_collections(request: _MigrationRequest) -> list[MigrateResult]:
         status = "migrated" if copied == expected else "failed"
         reason = None if copied == expected else f"count_mismatch:{copied}!={expected}"
         results.append(MigrateResult(source, target, status, copied, reason))
+    if request.root_dir is not None and not dry_run:
+        _publish_migrated_code(request.root_dir, results)
     return results
+
+
+def _publish_migrated_code(root: Path | str, results: list[MigrateResult]) -> None:
+    """Hand off served identity only after the complete copy has succeeded."""
+    from ._store_models import (
+        publish_served_code_collection,
+        root_code_collection_names,
+    )
+
+    if any(result.status == "failed" for result in results):
+        return
+    owned = root_code_collection_names(root)
+    for position, result in enumerate(results):
+        if result.status != "migrated" or result.target not in owned:
+            continue
+        try:
+            publish_served_code_collection(root, result.target)
+        except (OSError, ValueError) as exc:
+            results[position] = replace(
+                result, status="failed", reason=f"served_pointer_failed:{exc}"
+            )
 
 
 def carry_migrated_identity(

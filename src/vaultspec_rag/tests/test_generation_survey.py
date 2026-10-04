@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from .._store_models import root_collection_prefix
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
@@ -79,15 +81,16 @@ class TestGenerationSurvey:
         from ..generation_survey import survey_generations
 
         _publish_code_proof(tmp_path)
-        publish_served_code_collection(tmp_path, f"{_DERIVED}_gnew")
+        derived = root_collection_prefix(tmp_path) + "codebase_docs"
+        publish_served_code_collection(tmp_path, f"{derived}_gnew")
         reports = survey_generations(
-            {str(tmp_path): _DERIVED},
-            [_DERIVED, f"{_DERIVED}_gold", f"{_DERIVED}_gnew"],
+            {str(tmp_path): derived},
+            [derived, f"{derived}_gold", f"{derived}_gnew"],
         )
 
         assert len(reports) == 1
-        assert reports[0].served == f"{_DERIVED}_gnew"
-        assert reports[0].unreferenced == (f"{_DERIVED}_gold",)
+        assert reports[0].served == f"{derived}_gnew"
+        assert reports[0].unreferenced == (f"{derived}_gold",)
 
     def test_the_generation_the_proof_names_is_never_unreferenced(
         self, tmp_path: Path
@@ -107,18 +110,19 @@ class TestGenerationSurvey:
         from ..generation_survey import survey_generations
 
         proof_generation = _publish_code_proof(tmp_path)
-        published = generation_code_collection(_DERIVED, proof_generation)
-        publish_served_code_collection(tmp_path, f"{_DERIVED}_gold")
+        derived = root_collection_prefix(tmp_path) + "codebase_docs"
+        published = generation_code_collection(derived, proof_generation)
+        publish_served_code_collection(tmp_path, f"{derived}_gold")
 
         reports = survey_generations(
-            {str(tmp_path): _DERIVED},
-            [_DERIVED, f"{_DERIVED}_gold", published, f"{_DERIVED}_gstray"],
+            {str(tmp_path): derived},
+            [derived, f"{derived}_gold", published, f"{derived}_gstray"],
         )
 
         # Catches the sidecar reference being dropped from the protected set:
         # without it ``published`` joins the unreferenced tuple and this fires.
         assert published not in reports[0].unreferenced
-        assert reports[0].unreferenced == (f"{_DERIVED}_gstray",)
+        assert reports[0].unreferenced == (f"{derived}_gstray",)
 
     def test_a_root_without_proof_is_omitted(self, tmp_path: Path) -> None:
         from ..generation_survey import survey_generations
@@ -142,9 +146,10 @@ class TestGenerationSurvey:
         from ..generation_survey import survey_generations
 
         _publish_code_proof(tmp_path)
-        publish_served_code_collection(tmp_path, f"{_DERIVED}_gnew")
+        derived = root_collection_prefix(tmp_path) + "codebase_docs"
+        publish_served_code_collection(tmp_path, f"{derived}_gnew")
         reports = survey_generations(
-            {str(tmp_path): _DERIVED}, [_DERIVED, f"{_DERIVED}_gnew"]
+            {str(tmp_path): derived}, [derived, f"{derived}_gnew"]
         )
 
         assert reports[0].unreferenced == ()
@@ -245,13 +250,12 @@ class TestNamesResolveThroughThePointer:
             _served_donor_collection,
         )
 
-        publish_served_code_collection(tmp_path, "rabc_codebase_docs_gserved")
+        derived = root_collection_prefix(tmp_path) + "codebase_docs"
+        publish_served_code_collection(tmp_path, derived + "_gserved")
 
         assert (
-            _served_donor_collection(
-                str(tmp_path), CollectionKind.CODE, "rabc_codebase_docs"
-            )
-            == "rabc_codebase_docs_gserved"
+            _served_donor_collection(str(tmp_path), CollectionKind.CODE, derived)
+            == derived + "_gserved"
         )
 
     def test_a_code_donor_without_publication_authority_is_ineligible(
@@ -303,18 +307,19 @@ class TestGenerationDebtInTheSurveyPayload:
 
         root = str(tmp_path)
         _publish_code_proof(tmp_path)
-        publish_served_code_collection(tmp_path, f"{_DERIVED}_gnew")
+        derived = root_collection_prefix(tmp_path) + "codebase_docs"
+        publish_served_code_collection(tmp_path, f"{derived}_gnew")
         survey = NamespaceSurvey(
-            prefix="r0123456789ab_",
+            prefix=root_collection_prefix(tmp_path),
             root=root,
             status="live",
-            collections=[f"{_DERIVED}_gold", f"{_DERIVED}_gnew"],
+            collections=[f"{derived}_gold", f"{derived}_gnew"],
         )
 
         namespace = _namespace_of(_shape([survey]), root)
 
-        assert namespace["served_code_collection"] == f"{_DERIVED}_gnew"
-        assert namespace["unreferenced_generations"] == [f"{_DERIVED}_gold"]
+        assert namespace["served_code_collection"] == f"{derived}_gnew"
+        assert namespace["unreferenced_generations"] == [f"{derived}_gold"]
 
     def test_an_unreadable_pointer_reports_null_not_an_empty_debt_list(
         self, tmp_path: Path

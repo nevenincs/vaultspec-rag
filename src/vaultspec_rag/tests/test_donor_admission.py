@@ -97,7 +97,8 @@ def admission(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Admission:
     pointer_calls: list[str] = []
     proof_calls: list[str] = []
 
-    def pointer(root: Path | str) -> str | None:
+    def pointer(root: Path | str, derived: str | None = None) -> str | None:
+        del derived
         pointer_calls.append(str(root))
         value = pointers.get(str(root))
         if isinstance(value, Exception):

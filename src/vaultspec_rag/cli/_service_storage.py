@@ -929,9 +929,9 @@ def _migrate_name_map(root: str, *, to_server: bool) -> dict[str, str]:
     data, or silently migrating none of it.
 
     The TARGET stays the derived base name in both directions. The target
-    store has no pointer of its own, so it resolves to the derived name, and
-    landing there means the migrated index is served immediately without
-    carrying the source's generation history across.
+    migration publishes that destination name after the copy succeeds, so a
+    backend switch serves the copied index without carrying the source's
+    generation history across.
     """
     from .. import store_schema
     from .._store_models import resolve_served_code_collection, root_collection_prefix
@@ -1042,7 +1042,12 @@ def storage_migrate(
         with StartupStatusReporter(json_mode=json_mode) as progress:
             progress.announce(f"Migrating {root} to the {to_backend} backend...")
             results = migrate_collections(
-                src, dst, name_map, dry_run=preview, on_progress=progress.stage
+                src,
+                dst,
+                name_map,
+                root_dir=root,
+                dry_run=preview,
+                on_progress=progress.stage,
             )
     except TRANSPORT_FAILURES as exc:
         _emit_or_echo_error(

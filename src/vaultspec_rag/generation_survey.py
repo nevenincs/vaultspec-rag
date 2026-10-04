@@ -24,7 +24,7 @@ import pathlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple, cast
 
-from ._store_models import read_served_pointer
+from ._store_models import code_collection_matches_derived, read_served_pointer
 from ._timestamps import parse_iso_timestamp
 
 if TYPE_CHECKING:
@@ -110,7 +110,7 @@ def survey_generations(
     names = tuple(existing)
     reports: list[RootGenerations] = []
     for root, derived in roots.items():
-        pointer = read_served_pointer(root)
+        pointer = read_served_pointer(root, derived)
         if not pointer.verifiable:
             continue
         served = pointer.collection or derived
@@ -122,7 +122,9 @@ def survey_generations(
         if proof_referenced is None:
             continue
         unreferenced = reclaimable_generation_collections(
-            existing=(name for name in names if name.startswith(derived)),
+            existing=(
+                name for name in names if code_collection_matches_derived(name, derived)
+            ),
             served=(served, *proof_referenced),
         )
         reports.append(

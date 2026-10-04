@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from . import store_schema
 from ._qdrant_local_lifetime import close_local_collection
+from ._store_models import code_collection_matches_derived, read_served_pointer
 
 if TYPE_CHECKING:
     import pathlib
@@ -54,6 +55,7 @@ class _VaultCollectionMixin:
     if TYPE_CHECKING:
         TABLE_NAME: str
         CODE_TABLE_NAME: str
+        DERIVED_CODE_TABLE_NAME: str
         DOCUMENT_TABLE_NAME: str
         root_dir: pathlib.Path
         db_path: pathlib.Path | str
@@ -233,10 +235,20 @@ class _VaultCollectionMixin:
         one store is shared between search and indexing: rebinding it on the
         instance would drag concurrent readers onto the half-built generation.
         """
-        return collection or self.CODE_TABLE_NAME
+        target = self.CODE_TABLE_NAME if collection is None else collection
+        if not code_collection_matches_derived(target, self.DERIVED_CODE_TABLE_NAME):
+            raise ValueError("collection must be a root-owned code collection")
+        return target
 
     def drop_code_table(self, collection: str | None = None) -> None:
         """Drop a code collection if it exists, defaulting to the served one."""
+        if collection is None:
+            pointer = read_served_pointer(self.root_dir, self.DERIVED_CODE_TABLE_NAME)
+            if not pointer.verifiable:
+                raise RuntimeError(
+                    "cannot drop code without a verifiable served pointer"
+                )
+            collection = pointer.collection or self.DERIVED_CODE_TABLE_NAME
         self._drop_collection(self._code_collection(collection))
 
     def drop_document_table(self) -> None:

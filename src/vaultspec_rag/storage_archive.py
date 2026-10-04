@@ -62,7 +62,7 @@ def _active_publication_collections(
         PublicSourceType.VAULT: prefix + store_schema.VAULT_COLLECTION,
         PublicSourceType.DOCUMENT: prefix + store_schema.DOCUMENT_COLLECTION,
     }
-    pointer = read_served_pointer(root)
+    pointer = read_served_pointer(root, prefix + store_schema.CODE_COLLECTION)
     if not pointer.verifiable:
         raise RuntimeError("cannot archive code without a verifiable served pointer")
     active[PublicSourceType.CODE] = (

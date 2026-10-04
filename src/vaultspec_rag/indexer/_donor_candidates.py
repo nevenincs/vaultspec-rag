@@ -310,7 +310,7 @@ def _served_donor_collection(
         return None
     from .._store_models import read_served_code_collection
 
-    return read_served_code_collection(root)
+    return read_served_code_collection(root, derived)
 
 
 def _rank_donor_candidates(

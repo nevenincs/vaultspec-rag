@@ -800,6 +800,16 @@ def clean(
     do_document = source_type is PublicSourceType.DOCUMENT or combined
 
     with registry.lease_maintenance_store(root) as store:
+        code_target = None
+        if do_code:
+            from ._store_models import read_served_pointer
+
+            pointer = read_served_pointer(root, store.DERIVED_CODE_TABLE_NAME)
+            if not pointer.verifiable:
+                raise RuntimeError(
+                    "cannot clean code without a verifiable served pointer"
+                )
+            code_target = pointer.collection or store.DERIVED_CODE_TABLE_NAME
         if do_vault:
             clear_publication_state(
                 root,
@@ -824,8 +834,8 @@ def clean(
             store.ensure_table()
             cleared.append("vault")
         if do_code:
-            store.drop_code_table()
-            store.ensure_code_table()
+            store.drop_code_table(code_target)
+            store.ensure_code_table(code_target)
             cleared.append("code")
         if do_document:
             store.drop_document_table()

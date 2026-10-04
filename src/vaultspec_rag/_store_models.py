@@ -542,6 +542,41 @@ def _code_chunk_payload(chunk: CodeChunk) -> store_schema.CodeChunkPayload:
 #: reads. Its absence is the normal state for a root that has never published a
 #: replacement generation, and resolves to the derived name.
 SERVED_CODE_POINTER_FILE = "code_served_collection.json"
+_GENERATION_TOKEN_MAX_LENGTH = 16
+
+
+def code_collection_matches_derived(collection: str, derived_name: str) -> bool:
+    """Accept only the base collection or one suffix minted by the writer."""
+    if collection == derived_name:
+        return True
+    prefix = derived_name + "_g"
+    if not collection.startswith(prefix):
+        return False
+    token = collection[len(prefix) :]
+    return 0 < len(token) <= _GENERATION_TOKEN_MAX_LENGTH and token.isalnum()
+
+
+def root_code_collection_names(root_dir: pathlib.Path | str) -> tuple[str, str]:
+    """Derive the local and shared-backend code names without routing metadata."""
+    from . import store_schema
+
+    return (
+        store_schema.CODE_COLLECTION,
+        root_collection_prefix(root_dir) + store_schema.CODE_COLLECTION,
+    )
+
+
+def _root_owned_code_collection(
+    root_dir: pathlib.Path | str,
+    collection: str,
+    derived_name: str | None = None,
+) -> bool:
+    owned = root_code_collection_names(root_dir)
+    candidates = owned if derived_name is None else (derived_name,)
+    return any(
+        base in owned and code_collection_matches_derived(collection, base)
+        for base in candidates
+    )
 
 
 def served_code_pointer_path(root_dir: pathlib.Path | str) -> pathlib.Path:
@@ -553,13 +588,13 @@ def served_code_pointer_path(root_dir: pathlib.Path | str) -> pathlib.Path:
 
 
 class ServedPointer(NamedTuple):
-    """What a root's served-collection pointer says, and whether it was legible.
+    """What a root's served-collection pointer says, and whether it was verified.
 
     The two ``None`` cases are not the same fact and must never be collapsed.
     ``collection is None`` with ``verifiable`` true means no replacement was
     ever published, so the derived name is authoritative. ``verifiable`` false
-    means the pointer could not be read at all - an offline share, a
-    permissions blip, a half-written file - and absence is simply not proven.
+    means the pointer is unreadable, malformed, or names an unowned collection,
+    so absence of a published generation is not proven.
 
     Reading matters little: both fall back to the derived name, which is the
     safe direction. Deletion matters entirely. A consumer that treats an
@@ -573,8 +608,11 @@ class ServedPointer(NamedTuple):
     verifiable: bool
 
 
-def read_served_pointer(root_dir: pathlib.Path | str) -> ServedPointer:
-    """Return *root_dir*'s served-collection pointer and whether it was legible."""
+def read_served_pointer(
+    root_dir: pathlib.Path | str,
+    derived_name: str | None = None,
+) -> ServedPointer:
+    """Read a root-owned pointer for the configured or explicitly named backend."""
     path = served_code_pointer_path(root_dir)
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -584,16 +622,26 @@ def read_served_pointer(root_dir: pathlib.Path | str) -> ServedPointer:
         logger.debug("served-collection pointer %s unreadable: %s", path, exc)
         return ServedPointer(collection=None, verifiable=False)
     if not isinstance(raw, dict):
-        # Present and parseable but not the shape this writes: the file exists
-        # and was read, so absence of a usable name is an observed fact.
-        return ServedPointer(collection=None, verifiable=True)
+        return ServedPointer(collection=None, verifiable=False)
     name = cast("dict[str, object]", raw).get("collection")
-    if isinstance(name, str) and name:
+    if derived_name is None:
+        from .config._settings import get_config
+
+        derived_name = root_code_collection_names(root_dir)[
+            bool(get_config().qdrant_url)
+        ]
+    if isinstance(name, str) and _root_owned_code_collection(
+        root_dir, name, derived_name
+    ):
         return ServedPointer(collection=name, verifiable=True)
-    return ServedPointer(collection=None, verifiable=True)
+    logger.debug("served-collection pointer %s has an unowned or invalid name", path)
+    return ServedPointer(collection=None, verifiable=False)
 
 
-def read_served_code_collection(root_dir: pathlib.Path | str) -> str | None:
+def read_served_code_collection(
+    root_dir: pathlib.Path | str,
+    derived_name: str | None = None,
+) -> str | None:
     """Return the collection *root_dir* publishes code reads against.
 
     ``None`` covers both "never published" and "could not be read", because a
@@ -602,7 +650,7 @@ def read_served_code_collection(root_dir: pathlib.Path | str) -> str | None:
     anything destructive must use :func:`read_served_pointer` instead, which
     keeps the two apart.
     """
-    return read_served_pointer(root_dir).collection
+    return read_served_pointer(root_dir, derived_name).collection
 
 
 def resolve_served_code_collection(
@@ -618,7 +666,7 @@ def resolve_served_code_collection(
     published its first generation; publication proof, not this resolver,
     decides whether its contents are readable.
     """
-    return read_served_code_collection(root_dir) or derived_name
+    return read_served_code_collection(root_dir, derived_name) or derived_name
 
 
 def publish_served_code_collection(
@@ -631,8 +679,8 @@ def publish_served_code_collection(
     observes a partially written pointer and a crash mid-write leaves the
     previous one intact.
     """
-    if not collection:
-        raise ValueError("collection must be a non-empty name")
+    if not _root_owned_code_collection(root_dir, collection):
+        raise ValueError("collection must be a root-owned code collection")
     write_json_atomically(
         served_code_pointer_path(root_dir), {"collection": collection}
     )
@@ -658,7 +706,7 @@ def generation_code_collection(derived_name: str, generation_id: str) -> str:
     token = "".join(ch for ch in generation_id if ch.isalnum())
     if not token:
         raise ValueError("generation_id must contain alphanumeric characters")
-    return f"{derived_name}_g{token[:16]}"
+    return f"{derived_name}_g{token[:_GENERATION_TOKEN_MAX_LENGTH]}"
 
 
 def publish_generation_as_served(
@@ -680,8 +728,8 @@ def publish_generation_as_served(
     breadth could not be recorded has not proven what it holds, and serving the
     older complete collection is better than serving an unverified one.
     """
-    if not collection:
-        raise ValueError("collection must be a non-empty name")
+    if not _root_owned_code_collection(root_dir, collection):
+        raise ValueError("collection must be a root-owned code collection")
     record_breadth()
     publish_served_code_collection(root_dir, collection)
 
