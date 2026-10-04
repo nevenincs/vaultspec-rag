@@ -1,0 +1,67 @@
+name: Windows pytest shutdown diagnostic
+'on':
+  push:
+    branches:
+    - diag/pytest-shutdown-20261004
+    paths:
+    - .github/workflows/pytest-shutdown-diagnostic.yml
+permissions:
+  contents: read
+jobs:
+  tests-windows:
+    name: Profile Windows pytest shutdown
+    timeout-minutes: 80
+    runs-on:
+    - self-hosted
+    - Windows
+    - X64
+    env:
+      UV_PYTHON: '3.13'
+    steps:
+    - name: Checkout
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      with:
+        persist-credentials: false
+        ref: ${{ github.sha }}
+    - name: Set up uv
+      uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+      with:
+        prune-cache: false
+        enable-cache: false
+    - name: Set up just
+      uses: taiki-e/install-action@6012bba2f8e3e666a2b212f8823c06831704ce92
+      with:
+        tool: just@1.38.0
+    - name: Initialize the worktree
+      run: just init
+    - name: Initialization is idempotent
+      run: just init
+    - name: The worktree reports itself initialized
+      run: just init-check
+    - name: Set up Node for local monitor route tests
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      with:
+        package-manager-cache: false
+        node-version-file: .nvmrc
+    - name: Restore monitor dependencies for installed-browser checks
+      run: npm ci
+    - name: Compile the native monitor for lifecycle tests
+      run: just build-monitor-test
+    - name: Profile full test suite
+      shell: pwsh
+      run: "$profile = Join-Path 'X:\\ci-shared\\t' ('fleet-pytest-profile-' + $env:GITHUB_RUN_ID)\nNew-Item -ItemType\
+        \ Directory -Force $profile | Out-Null\n@'\nimport faulthandler, json, os, shutil, time\nfrom pathlib import\
+        \ Path\nimport pytest\nroot = Path(os.environ[\"FLEET_PYTEST_PROFILE\"])\nlog = (root / (str(os.getpid())\
+        \ + \".jsonl\")).open(\"a\", buffering=1)\ntrace = (root / (str(os.getpid()) + \".stacks\")).open(\"a\"\
+        , buffering=1)\ndef event(name, **fields):\n    log.write(json.dumps(dict(time=time.time(), event=name,\
+        \ **fields)) + \"\\n\")\noriginal = shutil.rmtree\ndef timed_rmtree(path, *args, **kwargs):\n    started\
+        \ = time.monotonic()\n    event(\"rmtree-start\", path=str(path))\n    try:\n        return original(path,\
+        \ *args, **kwargs)\n    finally:\n        event(\"rmtree-end\", path=str(path), seconds=time.monotonic()-started)\n\
+        shutil.rmtree = timed_rmtree\nfaulthandler.dump_traceback_later(20, repeat=True, file=trace)\nevent(\"plugin-start\"\
+        )\ndef pytest_runtest_logreport(report):\n    event(\"test\", nodeid=report.nodeid, when=report.when, duration=report.duration)\n\
+        @pytest.hookimpl(hookwrapper=True, tryfirst=True)\ndef pytest_sessionfinish(session, exitstatus):\n    event(\"\
+        sessionfinish-start\")\n    yield\n    event(\"sessionfinish-end\")\n@pytest.hookimpl(hookwrapper=True,\
+        \ tryfirst=True)\ndef pytest_unconfigure(config):\n    event(\"unconfigure-start\")\n    yield\n    event(\"\
+        unconfigure-end\")\n'@ | Set-Content (Join-Path $profile 'fleet_pytest_profile.py')\n$env:PYTHONPATH = $profile\n\
+        $env:PYTEST_PLUGINS = 'fleet_pytest_profile'\n$env:FLEET_PYTEST_PROFILE = $profile\nWrite-Output \"PROFILE_DIRECTORY=$profile\"\
+        \njust test-python\nexit $LASTEXITCODE\n"
