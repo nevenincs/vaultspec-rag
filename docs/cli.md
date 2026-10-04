@@ -70,6 +70,8 @@ Generated from the live command surface. Each entry lists the command's argument
 - **preprocess**
   - [list](#preprocess-list)
   - [check](#preprocess-check)
+  - [approve](#preprocess-approve)
+  - [revoke](#preprocess-revoke)
   - [run-one](#preprocess-run-one)
   - [status](#preprocess-status)
 
@@ -1048,6 +1050,42 @@ None.
 | --- | --- | --- | --- | --- |
 | `--json` | boolean | no | off | Emit JSON for scripts instead of human text. |
 
+## preprocess approve
+
+Approve this project's current preprocess rules so indexing may run their commands. Any later change to the rules needs approval again.
+
+```bash
+vaultspec-rag preprocess approve
+```
+
+### Arguments
+
+None.
+
+### Options
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `--json` | boolean | no | off | Emit JSON for scripts instead of human text. |
+
+## preprocess revoke
+
+Withdraw approval of this project's preprocess rules so they stop running.
+
+```bash
+vaultspec-rag preprocess revoke
+```
+
+### Arguments
+
+None.
+
+### Options
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `--json` | boolean | no | off | Emit JSON for scripts instead of human text. |
+
 ## preprocess run-one
 
 Run the matching rule against one file (no indexing).
@@ -1070,7 +1108,7 @@ vaultspec-rag preprocess run-one
 
 ## preprocess status
 
-Report the preprocess mode, config presence, and rule count.
+Report the preprocess mode, approval, config presence, and rule count.
 
 ```bash
 vaultspec-rag preprocess status

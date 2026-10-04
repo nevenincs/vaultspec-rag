@@ -7,7 +7,10 @@ from typing import TYPE_CHECKING
 import pytest
 
 from .._public_index import scan_documents
+from ..config._types import EnvVar
 from ..indexer._preprocess_config import PREPROCESS_CONFIG_FILENAME
+from ._preprocess_approval import approve_preprocess_policy
+from .conftest import managed_env
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -41,3 +44,33 @@ extractor_version = "1"
     assert result.membership_fingerprint
     assert result.content_fingerprint
     assert result.policy_snapshot
+
+
+def test_document_scan_says_whether_the_routed_rules_will_run(
+    tmp_path: Path,
+    isolated_status_dir: Path,
+) -> None:
+    """The mode alone cannot answer it: an unapproved root is in default mode.
+
+    Mutation check: reporting the hook state from the mode and rule count
+    alone calls this unapproved root active and fails here; reading it off
+    the resolved policy passes.
+    """
+    del isolated_status_dir
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / PREPROCESS_CONFIG_FILENAME).write_text(
+        'version = 2\n\n[[rule]]\npattern = "*.bin"\ncommand = "extract {path}"\n'
+        'target = "document"\nextractor_version = "1"\n',
+        encoding="utf-8",
+    )
+    (root / "first.bin").write_bytes(b"one")
+
+    with managed_env(**{EnvVar.PREPROCESS.value: None}):
+        withheld = scan_documents(root)
+        approve_preprocess_policy(root)
+        approved = scan_documents(root)
+
+    assert (withheld.execution_mode, withheld.preprocess_rule_count) == ("default", 1)
+    assert withheld.preprocess_hooks == "unapproved"
+    assert approved.preprocess_hooks == "active"

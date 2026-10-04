@@ -26,6 +26,9 @@ class DocumentScanResult:
     policy_snapshot: str
     preprocess_rule_count: int
     execution_mode: str
+    # Whether those rules will run. The mode alone cannot say: an unapproved
+    # root resolves the default mode and launches nothing.
+    preprocess_hooks: str
 
 
 def scan_documents(
@@ -57,4 +60,5 @@ def scan_documents(
         policy_snapshot=preflight.policy.fingerprints.snapshot,
         preprocess_rule_count=len(preflight.policy.preprocess_rules),
         execution_mode=preflight.policy.execution_mode,
+        preprocess_hooks=preflight.policy.hook_state.value,
     )
