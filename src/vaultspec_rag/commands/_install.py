@@ -71,6 +71,7 @@ from ._torch_flow import TorchInstallOptions, _run_torch_config_install
 from ._workspace import (
     _ensure_workspace_dirs,
     _init_core_context,
+    _require_plain_workspace,
     _resolve_target,
 )
 
@@ -903,10 +904,13 @@ def _refused_report(
 def _install_run(request: _InstallRunRequest) -> InstallReport:
     """Run install behind one required-node topology transaction."""
     skip_tokens = request.skip or set()
+    target = _resolve_target(request.path, bootstrap=False)
     if "mcp" in skip_tokens:
+        # Skipping MCP skips the required-node transaction below, never the
+        # question of whether this workspace's directories stay inside it.
+        _require_plain_workspace(target)
         return _install_run_unchecked(replace(request, skip=skip_tokens))
 
-    target = _resolve_target(request.path, bootstrap=False)
     action = (
         "dry_run" if request.dry_run else ("upgrade" if request.upgrade else "install")
     )
@@ -930,6 +934,10 @@ def _install_run(request: _InstallRunRequest) -> InstallReport:
         message = LINKED_NODES_NOT_REMOVABLE
         record_mcp_failure(failure, message)
         return failure
+    # The preflight above proves only the required MCP nodes. ``.vault`` and
+    # the rule and skill sources are not among them, and are written all the
+    # same.
+    _require_plain_workspace(target)
 
     def run() -> InstallReport:
         return _install_run_unchecked(

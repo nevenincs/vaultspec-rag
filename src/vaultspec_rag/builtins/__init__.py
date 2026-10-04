@@ -18,7 +18,6 @@ core's upgrade-management surface.
 
 from __future__ import annotations
 
-import logging
 from importlib import resources
 from pathlib import Path
 
@@ -26,7 +25,7 @@ from vaultspec_core.core.helpers import (
     atomic_write,
 )
 
-logger = logging.getLogger(__name__)
+from .._plain_directory import open_plain_directory
 
 
 def _builtins_root() -> Path:
@@ -53,27 +52,6 @@ def _iter_builtin_files(root: Path) -> list[Path]:
             continue
         files.append(path)
     return files
-
-
-def _within_target(dest: Path, target_resolved: Path) -> bool:
-    """Return True when ``dest`` resolves inside ``target_resolved``.
-
-    Defense-in-depth so a bundled member can never escape the target dir.
-    Logs and returns False on a resolution failure or an out-of-target dest.
-    """
-    try:
-        dest_resolved = dest.resolve()
-    except OSError as exc:
-        logger.warning("Cannot resolve dest %s: %s", dest, exc)
-        return False
-    if not dest_resolved.is_relative_to(target_resolved):
-        logger.warning(
-            "Refusing dest outside target: %s (target=%s)",
-            dest_resolved,
-            target_resolved,
-        )
-        return False
-    return True
 
 
 def _classify_action(dest: Path, src_file: Path) -> str:
@@ -112,11 +90,12 @@ def seed_builtins(
     Reporting matches ``vaultspec_core.builtins.seed_builtins``: a
     ``(relative_path, action)`` pair per builtin acted on, ``action`` in
     ``[ADD]`` / ``[UPDATE]`` / ``[UNCHANGED]``. rag additionally keeps its own
-    seed hardening that core's minimal seeder omits: destination containment (a
-    member can never escape ``target_dir``), crash-safe ``atomic_write``, a
-    **raised** per-file ``OSError`` (never a silent partial seed), and an
-    optional ``written`` out-list of the paths actually written so a caller can
-    roll back a partial seed before the error propagates.
+    seed hardening that core's minimal seeder omits: destination containment
+    (``target_dir`` and every directory beneath it on the way to a member must
+    be a real directory, so a link cannot carry a write outside it), crash-safe
+    ``atomic_write``, a **raised** per-file ``OSError`` (never a silent partial
+    seed), and an optional ``written`` out-list of the paths actually written
+    so a caller can roll back a partial seed before the error propagates.
 
     Args:
         target_dir: The ``.vaultspec/`` framework directory to populate.
@@ -134,28 +113,27 @@ def seed_builtins(
         they exist and *force* is False are omitted.
 
     Raises:
-        OSError: If a destination file write fails.
+        OSError: If a destination file write fails, or ``target_dir`` or a
+            directory beneath it is a link or not a directory.
     """
     src_root = _builtins_root()
     if written is None:
         written = []
-    target_resolved = target_dir.resolve()
     results: list[tuple[str, str]] = []
     for src_file in _iter_builtin_files(src_root):
         rel = str(src_file.relative_to(src_root)).replace("\\", "/")
         if rel.startswith(exclude_prefixes):
             continue
         dest = target_dir / rel
-        if not _within_target(dest, target_resolved):
-            continue
-        if dest.exists() and not force:
-            continue
-        action = _classify_action(dest, src_file)
-        if action != "[UNCHANGED]" and not dry_run:
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            atomic_write(dest, src_file.read_text(encoding="utf-8"))
-            written.append(rel)
-        results.append((rel, action))
+        container = (Path(target_dir.name) / rel).parent
+        with open_plain_directory(target_dir.parent, container, create=not dry_run):
+            if dest.exists() and not force:
+                continue
+            action = _classify_action(dest, src_file)
+            if action != "[UNCHANGED]" and not dry_run:
+                atomic_write(dest, src_file.read_text(encoding="utf-8"))
+                written.append(rel)
+            results.append((rel, action))
     results.sort()
     return results
 
