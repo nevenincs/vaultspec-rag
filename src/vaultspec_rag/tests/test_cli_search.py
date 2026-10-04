@@ -223,6 +223,7 @@ class TestCLIReadinessContract:
 
         assert result.exit_code == 0
         emitted = json.loads(result.output)
+        assert "--doc-type" in emitted["data"].pop("advisory")
         expected = dict(payload)
         expected.update({"query": "readiness", "search_type": "code", "via": "service"})
         # Mutation evidence: dropping readiness before JSON emission failed this

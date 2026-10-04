@@ -154,6 +154,17 @@ class SearchRequest:
     freshness_policy: FreshnessWaitPolicy = FreshnessWaitPolicy.IMMEDIATE
     freshness_wait_seconds: float = 0.0
 
+    @property
+    def sources(self) -> tuple[IndexSource, ...]:
+        """Concrete sources whose availability this request depends on."""
+        if self.search_type is PublicSourceType.COMBINED:
+            return (
+                INDEX_SOURCES
+                if self.payload.get("include_documents", True)
+                else ("vault", "code")
+            )
+        return (self.search_type.value,)
+
 
 @dataclass(frozen=True, slots=True)
 class SearchRouteError:
@@ -222,11 +233,7 @@ def _backend_unavailable_result(
     request: SearchRequest, port: int | None
 ) -> dict[str, object]:
     """Render a proven backend refusal without inferring index state."""
-    sources: tuple[IndexSource, ...] = (
-        INDEX_SOURCES
-        if request.search_type is PublicSourceType.COMBINED
-        else (request.search_type.value,)
-    )
+    sources = request.sources
     remediation = server_status_command(port, verbose=True)
     facts = tuple(
         SearchSourceFact(
@@ -548,6 +555,7 @@ def _dispatch_public_search(
         return results, timings, None
     combined, timings = search_combined_timed(
         CombinedSearchRequest(
+            include_documents=request.payload.get("include_documents", True),
             root_dir=request.root,
             query=request.query,
             top_k=request.top_k,
@@ -771,7 +779,9 @@ def _normalise_search_request(
     # _search_field_error narrows query to str, top_k to a non-bool int, and
     # project_root to str | None; a None return means every field already
     # has the type each cast below asserts.
-    field_error = _search_field_error(query, top_k, project_root)
+    field_error = _search_field_error(
+        query, top_k, project_root, payload.get("include_documents", True)
+    )
     if field_error is not None:
         return field_error
     query = _validate_query(cast("str", query))
@@ -843,8 +853,13 @@ def _search_field_error(
     query: object,
     top_k: object,
     project_root: object,
+    include_documents: object = True,
 ) -> SearchRouteError | None:
     """Return the first scalar request-shape error, if any."""
+    if not isinstance(include_documents, bool):
+        return _bad_search_field(
+            "invalid_include_documents", "include_documents must be a boolean"
+        )
     if not isinstance(query, str):
         return _bad_search_field("invalid_query", "query must be a string")
     if isinstance(top_k, bool) or not isinstance(top_k, int):
@@ -924,11 +939,7 @@ def _capture_publication_targets(
     readiness: ReadinessRevisionRegistry,
 ) -> tuple[PublicationTarget, ...] | None:
     """Capture immutable per-source convergence targets at request admission."""
-    sources: tuple[IndexSource, ...] = (
-        INDEX_SOURCES
-        if search_request.search_type is PublicSourceType.COMBINED
-        else (search_request.search_type.value,)
-    )
+    sources = search_request.sources
     targets: list[PublicationTarget] = []
     for source in sources:
         snapshot = readiness.snapshot(search_request.root, source)

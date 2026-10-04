@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pathlib
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from ._index_integrity import IntegrityVerdict
@@ -110,6 +110,20 @@ class CombinedSearchRequest:
     document_filters: DocumentCombinedSearchFilters = field(
         default_factory=DocumentCombinedSearchFilters
     )
+    include_documents: bool = True
+
+    def __post_init__(self) -> None:
+        from .search._parsing import parse_query
+
+        if self.include_documents:
+            return
+        if (
+            self.vault_filters.doc_type is None
+            and "doc_type" not in parse_query(self.query).filters
+        ):
+            object.__setattr__(
+                self, "vault_filters", replace(self.vault_filters, doc_type="adr")
+            )
 
 
 def search_documents(
@@ -268,6 +282,8 @@ def _combined_source_fact(
 def _count_combined_domains(
     root: pathlib.Path,
     registry: ServiceRegistry,
+    *,
+    include_documents: bool,
 ) -> tuple[
     dict[PublicSourceType, int],
     dict[PublicSourceType, SearchDomainOutcome],
@@ -289,6 +305,8 @@ def _count_combined_domains(
 
     jobs = canonical_job_snapshot()
     for source, operation in operations.items():
+        if source is PublicSourceType.DOCUMENT and not include_documents:
+            continue
         try:
             integrity_snapshot = acquire_index_integrity_snapshot_if_proven(
                 root, source
@@ -333,7 +351,9 @@ def _empty_or_failed_combined_outcome(
     return CombinedSearchOutcome(
         outcome(PublicSourceType.VAULT),
         outcome(PublicSourceType.CODE),
-        outcome(PublicSourceType.DOCUMENT),
+        outcome(PublicSourceType.DOCUMENT)
+        if PublicSourceType.DOCUMENT in facts
+        else None,
         top_k,
     )
 
@@ -357,7 +377,7 @@ def _indexed_domain_outcome(
 def search_combined(
     request: CombinedSearchRequest,
 ) -> CombinedSearchOutcome:
-    """Search all domains while retaining independent failures."""
+    """Search selected domains while retaining independent failures."""
     outcome, _timings = search_combined_timed(request)
     return outcome
 
@@ -396,7 +416,7 @@ def _search_combined_domains(
     counts: dict[PublicSourceType, int],
     failures: dict[PublicSourceType, SearchDomainOutcome],
     facts: dict[PublicSourceType, SearchSourceFact],
-) -> tuple[SearchDomainOutcome, SearchDomainOutcome, SearchDomainOutcome]:
+) -> tuple[SearchDomainOutcome, SearchDomainOutcome, SearchDomainOutcome | None]:
     """Execute each domain against its independently counted readiness fact."""
     vault = _indexed_domain_outcome(
         _DomainSearch(
@@ -441,6 +461,8 @@ def _search_combined_domains(
         failures,
         facts,
     )
+    if not request.include_documents:
+        return vault, code, None
     document = _indexed_domain_outcome(
         _DomainSearch(
             PublicSourceType.DOCUMENT,
@@ -466,15 +488,16 @@ def search_combined_timed(
     *,
     registry: ServiceRegistry | None = None,
 ) -> tuple[CombinedSearchOutcome, dict[str, float]]:
-    """Search all domains under one lease with explicit partial outcomes."""
+    """Search selected domains under one lease with explicit partial outcomes."""
     validate_search_filters(
         PublicSourceType.COMBINED,
         _combined_filter_options(request),
+        include_documents=request.include_documents,
     )
     root = pathlib.Path(request.root_dir).resolve()
     active_registry = registry if registry is not None else get_registry()
     counts, count_failures, source_facts, timings = _count_combined_domains(
-        root, active_registry
+        root, active_registry, include_documents=request.include_documents
     )
     if not any(counts.values()):
         return (
@@ -518,6 +541,6 @@ def search_combined_timed(
             timings["classification_fallback"] = 1.0
         if session is not None:
             timings.update(session.timings)
-    if vault is None or code is None or document is None:
+    if vault is None or code is None:
         raise RuntimeError("combined search lease ended without domain outcomes")
     return CombinedSearchOutcome(vault, code, document, request.top_k), timings

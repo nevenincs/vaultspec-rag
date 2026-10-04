@@ -71,7 +71,9 @@ def test_valid_search_envelope_is_unchanged() -> None:
     result = _search_response_envelope(expected, 8766)
 
     assert result is expected
-    assert _validated_search_result(result).model_dump(mode="json") == expected
+    rendered = _validated_search_result(result).model_dump(mode="json")
+    assert 'search_vault(doc_type="adr")' in rendered.pop("advisory")
+    assert rendered == expected
 
 
 def test_structured_search_error_is_unchanged() -> None:
@@ -701,7 +703,9 @@ def test_mcp_preserves_structured_error_remediation() -> None:
 
     result = _validated_search_result(envelope)
 
-    assert result.model_dump(mode="json") == envelope
+    rendered = result.model_dump(mode="json")
+    assert 'search_vault(doc_type="adr")' in rendered.pop("advisory")
+    assert rendered == envelope
     assert result.error == "index_unavailable"
     assert result.remediation == envelope["remediation"]
 

@@ -157,8 +157,10 @@ def _assert_rebuild_mcp_response(
             )
         )
     assert mcp_response.is_error is False
-    assert mcp_response.structured_content == expected
-    assert "results" not in cast("dict[str, object]", mcp_response.structured_content)
+    structured = dict(cast("dict[str, object]", mcp_response.structured_content))
+    assert 'search_vault(doc_type="adr")' in str(structured.pop("advisory"))
+    assert structured == expected
+    assert "results" not in structured
     mcp_text = " ".join(
         block.text for block in mcp_response.content if isinstance(block, TextContent)
     )

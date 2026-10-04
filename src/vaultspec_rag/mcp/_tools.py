@@ -162,6 +162,11 @@ class SearchResults(BaseModel):
         default=None, exclude_if=lambda value: value is None
     )
     readiness: SearchReadinessContent
+    advisory: str = (
+        'Filter with search_vault(doc_type="adr"), search_codebase(language="python"), '
+        "or search_documents(); check result source/doc_type; "
+        "search_combined(include_documents=true) searches all domains."
+    )
 
     @model_validator(mode="after")
     def _validate_envelope_variant(self) -> Self:
@@ -549,8 +554,15 @@ async def search_combined(  # noqa: PLR0913 - MCP exposes each owned filter expl
     freshness_policy: FreshnessWaitPolicy = FreshnessWaitPolicy.IMMEDIATE,
     freshness_wait_seconds: FreshnessWaitSeconds | None = None,
     project_root: str | None = None,
+    include_documents: bool = False,
 ) -> SearchResults:
-    """Search vault, code, and document domains with partial outcomes intact."""
+    """Search relevant ADRs and code together for project orientation by default.
+
+    Set include_documents=true to search all vault, code, and document domains.
+    doc_type (or inline type:plan) overrides the ADR default; language and path
+    filters narrow code. Read each result's source and doc_type to verify its kind.
+    Partial outcomes retain failures for every requested domain.
+    """
     port = _require_port()
     result = await _delegate(
         partial(
@@ -565,6 +577,7 @@ async def search_combined(  # noqa: PLR0913 - MCP exposes each owned filter expl
             top_k,
             port,
             _resolve_project_root(project_root),
+            include_documents=include_documents,
             freshness_policy=freshness_policy.value,
             freshness_wait_seconds=freshness_wait_seconds,
             language=language,

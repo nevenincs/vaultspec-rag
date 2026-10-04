@@ -102,8 +102,11 @@ A connected server publishes twelve tools. Six read:
   [Filter noise by domain](search-and-index.md#filter-noise-by-domain).
 - `search_documents` searches extracted documents, meaning preprocessed
   non-source content, as an independent domain.
-- `search_combined` searches all three domains together, allocating candidates
-  across them.
+- `search_combined` defaults to relevant ADRs and code, ranked together. Set
+  `include_documents=true` to search all three domains and all vault record types.
+  Explicit `doc_type` or inline `type:plan` overrides the ADR default. Each search
+  response includes an `advisory` with MCP filter syntax and points to `source`
+  and `doc_type` for verifying result kinds.
 - `get_code_file` returns the full content of a source file by path.
 - `get_index_status` reports whether a content kind is indexed, so an assistant
   can skip one that has no index. It also returns the running service's

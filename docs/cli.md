@@ -75,7 +75,7 @@ Generated from the live command surface. Each entry lists the command's argument
 
 ## search
 
-Search project documents or source code by meaning. Uses the running service when available. Local search runs only with an explicit mandate (--allow-fallback or configured local-only mode).
+Search ADRs and source code by meaning by default. Uses the running service when available. Local search runs only with an explicit mandate (--allow-fallback or configured local-only mode).
 
 ```bash
 vaultspec-rag search
@@ -91,7 +91,7 @@ vaultspec-rag search
 
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `--type` | str | no | vault | Search area: vault documentation, source code, extracted documents, or all three with combined. Aliases: docs, codebase, all. |
+| `--type` | str | no | combined | Search area: vault documentation, source code, extracted documents, or all three with explicit combined. Without --type: ADRs and code. Aliases: docs, codebase, all. |
 | `--max-results`, `--limit` | int | no | 10 | Maximum number of results to show. Default 10 keeps the output focused. |
 | `--language` | str | no | - | Only show code results in this programming language. |
 | `--path` | str | no | - | Only show code results from this one exact project-relative path. Use --include-path to select a subtree or a glob. |

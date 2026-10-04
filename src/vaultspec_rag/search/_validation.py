@@ -229,6 +229,8 @@ def _reject_filters_for_mismatched_search_type(
 def validate_search_filters(
     search_type: str | PublicSourceType,
     options: SearchFilterOptions | None = None,
+    *,
+    include_documents: bool = True,
 ) -> None:
     """Validate that the search filters match the requested search_type.
 
@@ -264,6 +266,17 @@ def validate_search_filters(
     if canonical not in {PublicSourceType.VAULT, PublicSourceType.COMBINED}:
         _reject_filters_for_mismatched_search_type(
             "vault", canonical_name, vault_supplied
+        )
+    if (
+        canonical is PublicSourceType.COMBINED
+        and not include_documents
+        and document_supplied
+    ):
+        raise InvalidFilterForSearchTypeError(
+            "Document filters require include_documents=true "
+            "(CLI: --type combined or --type document).",
+            "document",
+            document_supplied,
         )
     if canonical not in {PublicSourceType.DOCUMENT, PublicSourceType.COMBINED}:
         _reject_filters_for_mismatched_search_type(

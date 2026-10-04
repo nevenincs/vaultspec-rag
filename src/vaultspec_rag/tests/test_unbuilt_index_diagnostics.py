@@ -226,7 +226,9 @@ def test_verified_empty_publication_is_authoritative(tmp_path: Path) -> None:
 
 def test_mcp_and_cli_preserve_first_index_diagnostics(tmp_path: Path) -> None:
     response = _classify(_unbuilt_context(tmp_path, "code")).response
-    assert _validated_search_result(response).model_dump(mode="json") == response
+    rendered = _validated_search_result(response).model_dump(mode="json")
+    assert 'search_vault(doc_type="adr")' in rendered.pop("advisory")
+    assert rendered == response
     with _search_envelope_service(response, status=503) as (port, _requests):
         result = _invoke_readiness_search(tmp_path, port, "--json")
         human = _invoke_readiness_search(tmp_path, port)
