@@ -21,10 +21,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from starlette.responses import JSONResponse
+from vaultspec_core.env_values import BOOL_SHAPE, parse_bool
 
 from .._error_payload import error_payload
 from ._auth import require_token
-from ._utils import _TRUTHY_QUERY_VALUES
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -400,8 +400,16 @@ async def storage_survey_route(request: Request) -> JSONResponse:
             error_payload("bad_request", "root must be a non-empty path."),
             status_code=400,
         )
-    raw_fresh = request.query_params.get("fresh")
-    fresh = raw_fresh is not None and raw_fresh.strip().lower() in _TRUTHY_QUERY_VALUES
+    raw_fresh = (request.query_params.get("fresh") or "").strip()
+    fresh = False
+    if raw_fresh:
+        parsed_fresh = parse_bool(raw_fresh)
+        if parsed_fresh is None:
+            return JSONResponse(
+                error_payload("bad_request", f"fresh must be {BOOL_SHAPE}."),
+                status_code=400,
+            )
+        fresh = parsed_fresh
 
     def _run() -> dict[str, Any]:
         return _gather_storage_survey(raw_status, limit, raw_root, fresh=fresh)

@@ -461,12 +461,6 @@ def reap_qdrant_orphan(
     """
     import time as _time
 
-    from .._test_isolation import enforce_pytest_managed_singleton_containment
-
-    enforce_pytest_managed_singleton_containment(
-        operation="signal a managed Qdrant orphan",
-    )
-
     deadline = _time.monotonic() + max(0.0, wait_seconds)
 
     def target_is_gone_or_replaced() -> bool:
@@ -524,12 +518,7 @@ def write_qdrant_identity(
     if qdrant_start_time is None:
         qdrant_start_time = pid_start_time(request.qdrant_pid)
     path = qdrant_identity_path()
-    from .._test_isolation import enforce_pytest_managed_singleton_containment
 
-    enforce_pytest_managed_singleton_containment(
-        operation="write the managed Qdrant identity",
-        targets=(path,),
-    )
     write_json_atomically(
         path,
         {
@@ -657,8 +646,6 @@ def _verify_attach_identity_witnesses(
 def classify_qdrant_state(
     probe: QdrantEndpointProbe,
     identity: QdrantIdentity | None,
-    *,
-    owner_timeout: float | None = None,
 ) -> str:
     """Classify the Qdrant port/owner state for the attach/spawn decision.
 
@@ -679,7 +666,7 @@ def classify_qdrant_state(
     - ``"foreign"``: listening but no/again-mismatched managed identity - an
       unrelated process owns the port; never spawn a competitor, never attach.
     """
-    owner_state = owner_pid_witness_state(identity, timeout=owner_timeout)
+    owner_state = owner_pid_witness_state(identity)
     if not probe.listening:
         return _classify_non_listening_identity(identity, owner_state)
     if identity is None:

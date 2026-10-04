@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from math import isfinite
 from pathlib import Path
 from threading import RLock
-from typing import TYPE_CHECKING, Final, Protocol, cast
+from typing import TYPE_CHECKING, Final, cast
 
 from .._root_identity import canonical_root_key
 from .._source_types import INDEX_SOURCES, IndexSource, PublicSourceType
@@ -18,7 +18,6 @@ if TYPE_CHECKING:
 __all__ = [
     "MAX_READINESS_OBSERVERS",
     "PublicationTarget",
-    "ReadinessDeadlineScheduler",
     "ReadinessObserverCapacityError",
     "ReadinessRegistryClosedError",
     "ReadinessRegistryNotStartedError",
@@ -43,43 +42,20 @@ class ReadinessObserverCapacityError(RuntimeError):
     """Raised when the bounded observer set is full."""
 
 
-class ReadinessDeadlineScheduler(Protocol):
-    """One clock and wait authority for a monotonic readiness deadline."""
-
-    def now(self, loop: asyncio.AbstractEventLoop) -> float:
-        """Return the current monotonic time for ``loop``."""
-        ...
-
-    async def wait(
-        self,
-        future: asyncio.Future[None],
-        *,
-        deadline: float,
-        loop: asyncio.AbstractEventLoop,
-    ) -> bool:
-        """Return true for a notification or false when ``deadline`` expires."""
-        ...
-
-
-class _AsyncioDeadlineScheduler:
-    def now(self, loop: asyncio.AbstractEventLoop) -> float:
-        return loop.time()
-
-    async def wait(
-        self,
-        future: asyncio.Future[None],
-        *,
-        deadline: float,
-        loop: asyncio.AbstractEventLoop,
-    ) -> bool:
-        remaining = deadline - loop.time()
-        if remaining <= 0:
-            return False
-        try:
-            await asyncio.wait_for(asyncio.shield(future), timeout=remaining)
-        except TimeoutError:
-            return False
-        return True
+async def _wait_until_notified(
+    future: asyncio.Future[None],
+    *,
+    deadline: float,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Return on a notification, or when the monotonic ``deadline`` expires."""
+    remaining = deadline - loop.time()
+    if remaining <= 0:
+        return
+    try:
+        await asyncio.wait_for(asyncio.shield(future), timeout=remaining)
+    except TimeoutError:
+        return
 
 
 def _canonical_root(value: object) -> str:
@@ -197,20 +173,7 @@ class _Observer:
 class ReadinessRevisionRegistry:
     """Own publication evidence and bounded waiters for one service lifetime."""
 
-    def __init__(
-        self,
-        *,
-        max_observers: int = MAX_READINESS_OBSERVERS,
-        deadline_scheduler: ReadinessDeadlineScheduler | None = None,
-    ) -> None:
-        if (
-            not isinstance(cast("object", max_observers), int)
-            or isinstance(max_observers, bool)
-            or max_observers <= 0
-        ):
-            raise ValueError("max_observers must be a positive integer")
-        self._max_observers = max_observers
-        self._deadline_scheduler = deadline_scheduler or _AsyncioDeadlineScheduler()
+    def __init__(self) -> None:
         self._lock = RLock()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._closed = False
@@ -362,7 +325,7 @@ class ReadinessRevisionRegistry:
             raise ValueError("targets must contain each source key at most once")
 
         loop = asyncio.get_running_loop()
-        deadline = self._deadline_scheduler.now(loop) + timeout_seconds
+        deadline = loop.time() + timeout_seconds
         while True:
             observer_id: int | None = None
             future: asyncio.Future[None] | None = None
@@ -370,9 +333,9 @@ class ReadinessRevisionRegistry:
                 self._require_owner_locked(loop)
                 if self._targets_satisfied_locked(target_tuple):
                     return True
-                if self._deadline_scheduler.now(loop) >= deadline:
+                if loop.time() >= deadline:
                     return False
-                if len(self._observers) >= self._max_observers:
+                if len(self._observers) >= MAX_READINESS_OBSERVERS:
                     raise ReadinessObserverCapacityError(
                         "readiness observer capacity is exhausted"
                     )
@@ -381,11 +344,7 @@ class ReadinessRevisionRegistry:
                 self._next_observer_id += 1
                 self._observers[observer_id] = _Observer(keys=keys, future=future)
             try:
-                await self._deadline_scheduler.wait(
-                    future,
-                    deadline=deadline,
-                    loop=loop,
-                )
+                await _wait_until_notified(future, deadline=deadline, loop=loop)
             finally:
                 with self._lock:
                     self._observers.pop(observer_id, None)

@@ -532,7 +532,6 @@ class RunLedgerFileMethods:
         self,
         generation_id: str,
         *,
-        converged_only: bool = False,
         batch_size: int = FETCH_BATCH,
     ) -> Iterator[FileState]:
         """Yield explicit outcomes without materializing generation metadata."""
@@ -565,9 +564,7 @@ class RunLedgerFileMethods:
             if not rows:
                 return
             for row in rows:
-                state = file_state_from_row(row)
-                if not converged_only or state.converged:
-                    yield state
+                yield file_state_from_row(row)
             last_path = str(rows[-1]["rel_path"])
 
     def file_states_for_paths(

@@ -397,7 +397,11 @@ def _status_metadata_from_health(
     }
 
 
-def _tail_daemon_log(log_path: Path, max_lines: int = 6) -> list[str]:
+#: How many trailing non-empty daemon-log lines a startup failure reports.
+_DAEMON_LOG_TAIL_LINES = 6
+
+
+def _tail_daemon_log(log_path: Path) -> list[str]:
     """Return the last few non-empty lines of the daemon log, best-effort.
 
     Surfaces why a detached daemon died during startup (e.g. the model-load
@@ -414,7 +418,7 @@ def _tail_daemon_log(log_path: Path, max_lines: int = 6) -> list[str]:
     except OSError:
         return []
     lines = [ln.rstrip() for ln in tail.splitlines() if ln.strip()]
-    return lines[-max_lines:]
+    return lines[-_DAEMON_LOG_TAIL_LINES:]
 
 
 @dataclass(frozen=True, slots=True)

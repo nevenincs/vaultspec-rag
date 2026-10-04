@@ -19,7 +19,8 @@ from ..job_control import NO_RUN_CONTROL
 from ..store_runtime import StorageGeometryError
 from . import _chunk_worker, _preprocess_glue, _stat_gate
 from ._checkpoint_common import PublicationExecution
-from ._content_policy import ContentKind, RootContentPolicy, SourceProfileVersion
+from ._content_discovery import CodeContentDiscovery
+from ._content_policy import ContentKind, RootContentPolicy
 from ._document_checkpoint import (
     DocumentRunCheckpoint,
     DocumentRunConfiguration,
@@ -288,9 +289,10 @@ class DocumentIndexer:
         self.model = model
         self.store = store
         self._gpu_lock = config.gpu_lock
-        self._extra_excludes = tuple(config.extra_excludes or ())
-        self._content_policy = config.content_policy or RootContentPolicy(
-            SourceProfileVersion.CONVENTIONAL_V1
+        self._discovery = CodeContentDiscovery(
+            self.root_dir,
+            content_policy=config.content_policy,
+            extra_excludes=config.extra_excludes or (),
         )
         self._publish_readiness = config.publish_readiness
         self._writer_lock = threading.RLock()
@@ -384,15 +386,7 @@ class DocumentIndexer:
 
     def resolve_policy_snapshot(self) -> ResolvedIndexPolicy:
         """Resolve the immutable admission and extraction policy for one run."""
-        from ._resolved_policy import IndexPolicyResolutionOptions, resolve_index_policy
-
-        return resolve_index_policy(
-            self.root_dir,
-            IndexPolicyResolutionOptions(
-                content_policy=self._content_policy,
-                extra_excludes=self._extra_excludes,
-            ),
-        )
+        return self._discovery.resolve_policy()
 
     @staticmethod
     def _ignored_directory(policy: ResolvedIndexPolicy, rel_path: str) -> bool:

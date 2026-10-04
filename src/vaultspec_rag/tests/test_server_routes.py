@@ -335,31 +335,6 @@ finally:
         assert terminal[0]["outcome"] == "validation_rejected"
         assert terminal[0]["status_code"] == 400
 
-    def test_benchmark_route_returns_400_without_project_root(self):
-        from starlette.testclient import TestClient
-
-        import vaultspec_rag.server as mod
-
-        app = self._make_app()
-        orig_mode = mod._http_mode
-        mod._http_mode = True
-        try:
-            client: httpx.Client = cast(
-                "httpx.Client", TestClient(app, raise_server_exceptions=False)
-            )
-            resp: httpx.Response = client.post(
-                "/benchmark",
-                json={},
-                headers=self._auth_headers(),
-            )
-            assert resp.status_code == 400
-            data: dict[str, object] = cast("dict[str, object]", resp.json())
-            assert data["ok"] is False
-            assert data["error"] == "bad_request"
-            assert "project_root" in cast("str", data["message"])
-        finally:
-            mod._http_mode = orig_mode
-
     def test_reindex_route_returns_400_without_project_root(self):
         from starlette.testclient import TestClient
 

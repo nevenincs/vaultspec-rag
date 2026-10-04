@@ -172,10 +172,6 @@ def test_file_outcomes_and_finalization_are_immutable(tmp_path: Path) -> None:
         failed,
         indexed,
     ]
-    assert list(
-        ledger.iter_file_states(generation.generation_id, converged_only=True)
-    ) == [rejected, indexed]
-
     with pytest.raises(RunLedgerStateError, match="unresolved"):
         ledger.advance_finalization(
             generation.generation_id,

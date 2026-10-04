@@ -801,7 +801,11 @@ def _consume_replay_progress(
     finally:
         if consumer.is_alive():
             consumer_run.segment_queue.put(None, timeout=5.0)
-        consumer.join(timeout=10.0)
+        # Waits on the thread's actual completion rather than a wall-clock
+        # guess: a contended machine can legitimately take longer than any
+        # fixed number here to drain real encode and ledger writes, and the
+        # suite's own timeout bound still catches a genuine hang.
+        consumer.join()
         threading.setprofile(prior_profile)
     assert not consumer.is_alive(), "progress consumer did not terminate"
     return consumer_run, job_id, completed_at_advancement

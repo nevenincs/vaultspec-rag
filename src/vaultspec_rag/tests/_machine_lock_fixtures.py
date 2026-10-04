@@ -14,7 +14,6 @@ from .._machine_lock import (
     machine_lock_path,
     release_machine_lock_lease,
 )
-from .._test_isolation import enforce_pytest_managed_singleton_containment
 
 
 def acquire_machine_lock() -> tuple[bool, int]:
@@ -30,10 +29,6 @@ def release_machine_lock() -> None:
     configured anchor is refused whether or not a lease is held.
     """
     path = machine_lock_path()
-    enforce_pytest_managed_singleton_containment(
-        operation="release the machine service lock",
-        targets=(path,),
-    )
     with _machine_lock._lease_guard:
         lease = _machine_lock._held_leases.get(str(path))
     if lease is None:

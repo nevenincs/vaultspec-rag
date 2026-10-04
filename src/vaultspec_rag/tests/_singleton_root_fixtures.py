@@ -14,10 +14,18 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .._test_isolation import _canonical_path
+from ._operator_directory_guard import canonical_path
 
 if TYPE_CHECKING:
     from os import PathLike
+
+#: The session root, and the marker saying one is already pinned above this
+#: process. Both are set by the repository-root conftest and inherited by a
+#: nested pytest session, which is the only thing that reads them: production
+#: knows nothing about either. Declared here so the conftest, the package
+#: conftest and the tests all spell them the same way.
+PYTEST_SESSION_ACTIVE_ENV = "_VAULTSPEC_RAG_PYTEST_SINGLETON_ACTIVE"
+PYTEST_SESSION_ROOT_ENV = "_VAULTSPEC_RAG_PYTEST_SINGLETON_ROOT"
 
 _PYTEST_SINGLETON_ROOT_PREFIX = "vaultspec-rag-pytest-"
 # A concurrently live pytest run writes into its session root throughout the
@@ -114,11 +122,11 @@ def sweep_orphaned_singleton_roots(
     Returns the roots actually reclaimed.
     """
     parent = (
-        _canonical_path(base_dir)
+        canonical_path(base_dir)
         if base_dir is not None
         else Path(tempfile.gettempdir())
     )
-    keep_resolved = _canonical_path(keep)
+    keep_resolved = canonical_path(keep)
     reclaimed: list[Path] = []
     try:
         candidates = sorted(parent.glob(f"{_PYTEST_SINGLETON_ROOT_PREFIX}*"))
@@ -128,7 +136,7 @@ def sweep_orphaned_singleton_roots(
         if not candidate.is_dir():
             continue
         try:
-            if _canonical_path(candidate) == keep_resolved:
+            if canonical_path(candidate) == keep_resolved:
                 continue
             if _root_recently_touched(candidate, now=now):
                 continue

@@ -427,10 +427,6 @@ class TestNoStructurallyIdenticalFunctions:
             "_publication_state.py:_collection",
         ): _PER_SOURCE_NAME,
         (
-            "cli/_service_jobs_query.py:job_revision",
-            "storage_manifest.py:_decode_schema_version",
-        ): _SMALL_GUARD,
-        (
             "cli/_search.py:_render_breadth_shortfall",
             "cli/_search.py:_render_file_breadth_shortfall",
         ): _DISTINCT_PROSE,
@@ -489,20 +485,12 @@ class TestNoStructurallyIdenticalFunctions:
             "indexer/_generation_lifecycle.py:drift_snapshot",
         ): _OPTIONAL_ATTR,
         (
-            "indexer/_codebase_indexer.py:memory_budget_snapshot",
-            "indexer/_document_indexer.py:memory_budget_snapshot",
-        ): _OPTIONAL_ATTR,
-        (
             "cli/_service_start.py:_fail_start",
             "cli/_service_stop.py:_fail_stop",
         ): _PARAMETERISATION,
         (
             "cli/_service_start.py:_start_success",
             "cli/_service_stop.py:_stop_success",
-        ): _PARAMETERISATION,
-        (
-            "indexer/_content_discovery.py:resolve_policy",
-            "indexer/_document_indexer.py:resolve_policy_snapshot",
         ): _PARAMETERISATION,
         (
             "store_runtime.py:_retrieve",

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -298,11 +299,13 @@ def _seed_restart_jobs(
         _vault_job_spec(queued_root),
         _integration_initiator(queued_root, "restart queued probe"),
     )
-    paused = manager.create(
+    admitted = manager.create(
         _vault_job_spec(paused_root),
         _integration_initiator(paused_root, "restart paused probe"),
-        start_paused=True,
     )
+    assert admitted.job is not None
+    paused = manager.set_desired_state(admitted.job.id, DesiredJobState.PAUSED)
+    assert paused.code == "job_paused"
     interrupted = manager.create(
         _vault_job_spec(interrupted_root),
         _integration_initiator(interrupted_root, "restart interrupted probe"),
@@ -564,7 +567,7 @@ async def test_paused_code_job_rediscovers_current_corpus_before_resume(
     tmp_path: Path,
     _e2e_runtime: tuple[ServiceRegistry, JobManager],
 ) -> None:
-    """A paused admission must not freeze its code-discovery authority."""
+    """A job paused before dispatch must not freeze its code-discovery authority."""
     registry, manager = _e2e_runtime
     root = tmp_path / "paused-code-refresh"
     source_dir = root / "src"
@@ -594,11 +597,14 @@ async def test_paused_code_job_rediscovers_current_corpus_before_resume(
             authority=RunAuthority.PUBLICATION,
         ),
         _integration_initiator(root, "paused code discovery refresh"),
-        start_paused=True,
     )
     assert created.job is not None
+    paused_admission = manager.set_desired_state(created.job.id, DesiredJobState.PAUSED)
+    assert paused_admission.code == "job_paused"
+    # Activation binds the admitted job as it now stands: paused before its
+    # first dispatch, so it stays inert until the resume below.
     activated = await jobs.activate_index_job(
-        created,
+        replace(created, job=paused_admission.job),
         code_preflight=preflight,
         registry=registry,
     )

@@ -29,7 +29,7 @@ import logging
 import os
 import sys
 import time
-from collections.abc import Collection, Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from functools import cache
@@ -55,12 +55,10 @@ __all__ = [
     "LineageEntry",
     "argv_of",
     "bounded_call",
-    "close_process_handle",
     "environment_holders",
     "is_server_launch",
     "iter_process_info",
     "kill_process_descendants",
-    "open_process_handle",
     "pid_alive",
     "pid_argv",
     "pid_cmdline",
@@ -95,6 +93,8 @@ START_TIME_TOLERANCE_SECONDS = 1e-6
 
 _ERROR_ACCESS_DENIED = 5
 _STILL_ACTIVE = 259
+_SYNCHRONIZE = 0x00100000
+_WAIT_TIMEOUT = 0x102
 
 
 def win_kernel32() -> ctypes.WinDLL:
@@ -123,6 +123,8 @@ def win_kernel32() -> ctypes.WinDLL:
     kernel32.GetExitCodeProcess.restype = wintypes.BOOL
     kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
     kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
     kernel32.QueryFullProcessImageNameW.argtypes = (
         wintypes.HANDLE,
         wintypes.DWORD,
@@ -131,33 +133,6 @@ def win_kernel32() -> ctypes.WinDLL:
     )
     kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
     return kernel32
-
-
-def open_process_handle(pid: int, access: int) -> int | None:
-    """Open *pid* with *access*, or ``None`` when refused or absent.
-
-    Exists so a caller needing a HANDLE for something other than a probe - job
-    membership, a waitable object - does not redeclare ``OpenProcess`` to get
-    one. That redeclaration is the exact defect this module was built to end:
-    three copies existed and only one got the pointer-sized ``HANDLE`` restype
-    right, so the others truncated it and read a live process as dead.
-
-    The caller owns the returned handle and must pass it to
-    :func:`close_process_handle`. ``None`` collapses "refused" and "absent"
-    deliberately: a caller that needs to tell those apart is asking a liveness
-    question and should call :func:`pid_alive`, which separates them properly.
-    """
-    if pid <= 0 or sys.platform != "win32":
-        return None
-    handle = win_kernel32().OpenProcess(access, False, pid)
-    return int(handle) if handle else None
-
-
-def close_process_handle(handle: int) -> None:
-    """Release a handle from :func:`open_process_handle`."""
-    if sys.platform != "win32":
-        return
-    win_kernel32().CloseHandle(handle)
 
 
 def bounded_call[T](
@@ -216,10 +191,25 @@ def pid_alive(pid: int) -> bool:
 
 
 def _windows_pid_alive(pid: int) -> bool:
-    """Read Windows liveness while preserving access-denied as alive."""
+    """Read Windows liveness while preserving access-denied as alive.
+
+    A process is dead only once its process object is signalled. Termination
+    publishes the exit code first and closes the process's handles - the
+    locks and listening sockets it held - afterwards, so a process that has an
+    exit code but is not yet signalled still holds what it owned. Where the
+    wait right is refused, the exit code is the best evidence left.
+    """
     import ctypes
 
     kernel32 = win_kernel32()
+    handle = kernel32.OpenProcess(
+        _SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, False, pid
+    )
+    if handle:
+        try:
+            return int(kernel32.WaitForSingleObject(handle, 0)) == _WAIT_TIMEOUT
+        finally:
+            kernel32.CloseHandle(handle)
     handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
     if not handle:
         # A null handle carries two opposite facts, and the error code is
@@ -1002,7 +992,6 @@ def _holder_of(
     info: Mapping[str, object],
     resolved: Path,
     named: Path,
-    excluded: frozenset[int],
     resolved_paths: dict[str, Path | None],
 ) -> EnvironmentHolder | Literal["blind"] | None:
     """Classify one process: a holder, not a holder, or not inspectable.
@@ -1014,7 +1003,7 @@ def _holder_of(
     twice, which costs a duplicate ``resolve`` and changes nothing.
     """
     pid = info["pid"]
-    if not isinstance(pid, int) or pid in excluded:
+    if not isinstance(pid, int):
         return None
     image = info["exe"]
     working_directory: object = None
@@ -1052,7 +1041,6 @@ def _holder_of(
 def _scan_environment_holders(
     resolved: Path,
     named: Path,
-    excluded: frozenset[int],
 ) -> tuple[tuple[EnvironmentHolder, ...], int] | None:
     from concurrent.futures import ThreadPoolExecutor
 
@@ -1063,7 +1051,7 @@ def _scan_environment_holders(
     def classify(
         info: Mapping[str, object],
     ) -> EnvironmentHolder | Literal["blind"] | None:
-        return _holder_of(info, resolved, named, excluded, resolved_paths)
+        return _holder_of(info, resolved, named, resolved_paths)
 
     try:
         # Drained inside the guard: enumerating the table is what raises, and
@@ -1119,7 +1107,6 @@ def _pair_launchers(
 def environment_holders(
     root: str | Path,
     *,
-    exclude_pids: Collection[int] = (),
     exclude_launch_chain: bool = False,
     timeout: float | None = 10.0,
 ) -> EnvironmentHolders:
@@ -1160,10 +1147,9 @@ def environment_holders(
         named = Path(root).absolute()
     except OSError:
         named = resolved
-    excluded = frozenset(exclude_pids)
 
     outcome = bounded_call(
-        lambda: _scan_environment_holders(resolved, named, excluded),
+        lambda: _scan_environment_holders(resolved, named),
         timeout=timeout,
         fallback=None,
         label="environment-holders",

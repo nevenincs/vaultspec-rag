@@ -93,7 +93,7 @@ class TestStoreCodebase:
         text = "print('hello')"
         vector = cast(
             "list[float]",
-            model.encode_documents_on_device([text])[0].cpu().tolist(),
+            model.encode_documents_on_device([text])[0].cpu().numpy().tolist(),
         )
         sparse = model.encode_documents_sparse([text])[0]
         chunks = [
@@ -206,7 +206,7 @@ class TestStoreCodebase:
         text = "test"
         vector = cast(
             "list[float]",
-            model.encode_documents_on_device([text])[0].cpu().tolist(),
+            model.encode_documents_on_device([text])[0].cpu().numpy().tolist(),
         )
         sparse = model.encode_documents_sparse([text])[0]
         chunks = [

@@ -19,7 +19,6 @@ from ..indexer._run_ledger_models import (
     index_run_ledger_path,
     ledger_connection,
 )
-from ..indexer._run_ledger_publication_identity import compatibility_for_signature
 from ..indexer._run_ledger_runtime import RunLedger
 from ..indexer._run_policy import RunPolicy
 from ..job_control import (
@@ -165,7 +164,6 @@ def test_late_failure_keeps_published_success_and_releases_handle(
         ledger_test_publish_generation_with_proof(
             checkpoint.ledger,
             checkpoint.generation_id,
-            key=compatibility_for_signature(checkpoint.generation.signature),
         )
         checkpoint.generation = checkpoint.ledger.generation(checkpoint.generation_id)
         assert checkpoint.generation.terminal_state is RunTerminalState.SUCCEEDED

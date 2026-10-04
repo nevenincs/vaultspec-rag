@@ -74,6 +74,11 @@ _WRITER_POLL_SECONDS = 0.1
 # instead of hanging the encoding thread under the indexer's writer lock.
 _WRITER_SHUTDOWN_TIMEOUT_S = 300.0
 
+# How many encoded slices may queue ahead of the writer thread. One in flight
+# plus one waiting is what overlaps slice N's storage I/O with slice N+1's
+# encode; more only buys memory held by vectors already paid for.
+_WRITER_MAX_PENDING_SLICES = 2
+
 
 # Conservative 64-bit CPython lifetime estimates. A dense element exists once
 # in the float32 encode output and once as a Python float/list slot while the
@@ -386,16 +391,13 @@ class _SliceWriter:
         self,
         *,
         name: str,
-        max_pending: int = 2,
         poll_seconds: float = _WRITER_POLL_SECONDS,
         shutdown_timeout_seconds: float = _WRITER_SHUTDOWN_TIMEOUT_S,
     ) -> None:
         import threading
 
-        if isinstance(max_pending, bool) or max_pending <= 0:
-            raise ValueError("max_pending must be a positive integer")
         self._queue: queue.Queue[StoreWriteTask | None] = queue.Queue(
-            maxsize=max_pending
+            maxsize=_WRITER_MAX_PENDING_SLICES
         )
         self._poll_seconds = poll_seconds
         self._shutdown_timeout = shutdown_timeout_seconds

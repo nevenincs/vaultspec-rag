@@ -15,4 +15,3 @@ import os
 
 _TEST_PROJECT_ROOT = os.path.abspath(os.path.join(os.sep, "project"))
 _TEST_PROJECT_ROOT_OTHER = os.path.abspath(os.path.join(os.sep, "other"))
-_TEST_PROJECT_ROOT_DIFFERENT = os.path.abspath(os.path.join(os.sep, "different"))

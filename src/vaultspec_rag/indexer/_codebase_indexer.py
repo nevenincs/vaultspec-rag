@@ -245,8 +245,9 @@ class CodebaseIndexer(CodebasePreprocessMixin):
     @property
     def memory_budget_snapshot(self) -> MemoryBudgetSnapshot | None:
         """Return the latest immutable enforced-memory observation."""
-        budget = self._support_budget.memory_budget
-        return budget.snapshot if budget is not None else None
+        from ..memory_probe import held_budget_snapshot
+
+        return held_budget_snapshot(self._support_budget.memory_budget)
 
     def reset_memory_telemetry(self) -> None:
         """Clear prior attempt observations under managed worker ownership."""

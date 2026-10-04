@@ -582,7 +582,9 @@ def _code_replacement(
     store.ensure_code_table()
     store.ensure_document_table()
     model = EmbeddingModel.__new__(EmbeddingModel)
-    model._init_encode_state(get_config(), device="unloaded")
+    # No weights are loaded here, so there is no device to name.
+    model._device = "unloaded"
+    model._init_encode_state(get_config())
     indexer = CodebaseIndexer(store.root_dir, model, store)
     with indexer._writer_lock:
         checkpoint = indexer._lifecycle.open_checkpoint(

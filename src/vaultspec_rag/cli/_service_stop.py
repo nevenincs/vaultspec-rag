@@ -172,38 +172,6 @@ def _initiator_fields() -> dict[str, str]:
     }
 
 
-def _refuse_terminate_from_unisolated_test() -> None:
-    """Refuse to touch the machine-global service from an unisolated test run.
-
-    A pytest run in a development worktree once resolved the operator's
-    real managed service (no isolated status/storage dirs in its
-    environment) and terminated it mid-index, killing two in-flight
-    production jobs. Tests must run against isolated dirs; when the
-    terminate path detects a pytest context whose environment still
-    resolves the machine-global singleton, failing the test loudly is
-    strictly better than stopping the operator's daemon.
-
-    Raises:
-        RuntimeError: When called under pytest without either machine-dir
-            env override in place.
-    """
-    if "PYTEST_CURRENT_TEST" not in os.environ:
-        return
-    from ..config._types import EnvVar
-
-    if os.environ.get(EnvVar.STATUS_DIR.value) or os.environ.get(
-        EnvVar.QDRANT_STORAGE_DIR.value
-    ):
-        return
-    raise RuntimeError(
-        "refusing to terminate the machine-global vaultspec-rag service from "
-        "a test run: neither VAULTSPEC_RAG_STATUS_DIR nor "
-        "VAULTSPEC_RAG_QDRANT_STORAGE_DIR is isolated. Point both at a temp "
-        "dir (the test-suite conftest does this automatically) so the test "
-        "exercises its own sandboxed service instead of the operator's."
-    )
-
-
 def _stop_graceful_drain_seconds() -> float:
     """Return the drain window worth funding on this platform.
 
@@ -290,7 +258,6 @@ def _terminate_and_confirm(
     failed on that port. Callers MUST raise ``_fail_still_running`` when the
     returned result is still alive.
     """
-    _refuse_terminate_from_unisolated_test()
     result = _terminate_pid(
         pid,
         timeout=_STOP_TERMINATION_BUDGET_SECONDS,

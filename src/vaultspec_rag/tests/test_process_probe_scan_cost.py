@@ -231,7 +231,7 @@ def test_holder_scan_does_not_read_parent_of_a_nonholder(tmp_path: Path) -> None
             for entry in iter_process_info(["pid", "ppid", "exe", "cwd", "cmdline"])
             if entry["pid"] == process.pid
         )
-        assert _holder_of(info, tmp_path, tmp_path, frozenset(), {}) is None
+        assert _holder_of(info, tmp_path, tmp_path, {}) is None
         process.kill()
         process.wait(timeout=10)
         deadline = time.monotonic() + 10.0

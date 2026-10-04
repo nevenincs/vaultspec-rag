@@ -534,20 +534,12 @@ def _spawn_service_request(request: _ServiceSpawnRequest) -> int:
         PID of the spawned process.
 
     """
-    from .._test_isolation import (
-        anchor_spawned_process_to_pytest,
-        enforce_pytest_managed_singleton_containment,
-    )
 
     port, log_path, timeout, cleanup_timeout = (
         request.port,
         request.log_path,
         request.timeout,
         request.cleanup_timeout,
-    )
-    enforce_pytest_managed_singleton_containment(
-        operation="spawn the managed service process",
-        targets=(log_path,),
     )
     deadline = time.monotonic() + timeout if timeout is not None else None
     launch_token = uuid.uuid4().hex
@@ -607,12 +599,6 @@ def _spawn_service_request(request: _ServiceSpawnRequest) -> int:
         if cleanup_error:
             exc.add_note(f"detached launcher ownership cleanup failed: {cleanup_error}")
         raise
-    # Inert in production; under pytest this is what stops a hard-killed run
-    # from stranding the daemon it spawned. It must follow the spawn because
-    # the daemon breaks away from its birth Job Object first, and it covers the
-    # launcher: on Windows the venv shim is the process just created, and the
-    # worker it execs inherits job membership.
-    anchor_spawned_process_to_pytest(proc.pid)
     if deadline is not None and time.monotonic() >= deadline:
         launcher_start_time = pid_start_time(proc.pid, timeout=_PROBE_BUDGET_SECONDS)
         cleanup_error = _cleanup_late_service_spawn(
@@ -993,11 +979,7 @@ def _terminate_pid(
         next start.
 
     """
-    from .._test_isolation import enforce_pytest_managed_singleton_containment
 
-    enforce_pytest_managed_singleton_containment(
-        operation="signal the managed service process",
-    )
     deadline = time.monotonic() + max(0.0, timeout)
     qdrant_identity = _owned_qdrant_identity(pid, deadline=deadline)
     if expected_start_time is not None and not pid_matches_start_time(

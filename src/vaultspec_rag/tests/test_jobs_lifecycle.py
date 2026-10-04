@@ -10,6 +10,7 @@ import pytest
 from ..indexer._run_ledger_models import RunAuthority
 from ..job_manager.manager import JobManager
 from ..job_models import (
+    DesiredJobState,
     JobInitiator,
     JobMode,
     JobOperation,
@@ -200,10 +201,11 @@ class TestJobStallShaping:
                 RunAuthority.PUBLICATION,
             ),
             JobInitiator("cli", "server job create", _TEST_PROJECT_ROOT),
-            start_paused=True,
         )
         assert created.job is not None
-        return created.job.to_dict()
+        paused = manager.set_desired_state(created.job.id, DesiredJobState.PAUSED)
+        assert paused.job is not None
+        return paused.job.to_dict()
 
     def _running_record(
         self,
@@ -285,7 +287,9 @@ class TestJobStallShaping:
         from ..server._routes_jobs import _job_with_liveness
 
         record = self._paused_canonical_record()
-        now = cast("float", record["created_at"]) + 400.0
+        # The pause is requested after creation, so ages anchor on the
+        # control stamp rather than on ``created_at``.
+        now = cast("float", record["control_requested_at"]) + 400.0
         shaped = _job_with_liveness(record, now=now)
 
         assert shaped["state"] == "paused"
@@ -605,26 +609,6 @@ class TestInterruptedJobRestore:
         from ..jobs import restore_interrupted
 
         assert restore_interrupted() == 0
-
-
-class TestMachineServiceTestGuard:
-    """The terminate path refuses to act from an unisolated test run."""
-
-    def test_unisolated_pytest_env_is_refused(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from ..cli._service_stop import _refuse_terminate_from_unisolated_test
-
-        monkeypatch.delenv("VAULTSPEC_RAG_STATUS_DIR", raising=False)
-        monkeypatch.delenv("VAULTSPEC_RAG_QDRANT_STORAGE_DIR", raising=False)
-        with pytest.raises(RuntimeError, match="refusing to terminate"):
-            _refuse_terminate_from_unisolated_test()
-
-    def test_isolated_env_passes(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from ..cli._service_stop import _refuse_terminate_from_unisolated_test
-
-        monkeypatch.setenv("VAULTSPEC_RAG_STATUS_DIR", "somewhere-isolated")
-        _refuse_terminate_from_unisolated_test()
 
 
 class TestSuiteIsolationGuard:

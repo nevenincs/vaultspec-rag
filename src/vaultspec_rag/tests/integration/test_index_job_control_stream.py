@@ -2,9 +2,9 @@
 """Real-behavior integration coverage for cooperative indexing control.
 
 The tests use the production streaming and indexing paths with local Qdrant,
-real vault and code files, and a CPU-backed SentenceTransformer model. Keeping
-the model tiny makes the control races deterministic without substituting test
-implementations for any production indexing behavior.
+real vault and code files, and the session's real GPU embedding model. Control
+is observed at production checkpoints rather than raced against a particular
+encode duration, so no test implementation stands in for indexing behavior.
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ from ._index_job_control_support import (
 )
 def test_vault_stream_observes_control_between_published_slices(
     tmp_path: Path,
-    cpu_embedding_model: EmbeddingModel,
+    index_control_model: EmbeddingModel,
     control_request: ControlRequest,
     signal_type: type[RunControlSignal],
 ) -> None:
@@ -72,7 +72,7 @@ def test_vault_stream_observes_control_between_published_slices(
     documents = write_vault_documents(tmp_path, 128)
     token = RunControlToken()
 
-    with VaultStore(tmp_path, embedding_dim=cpu_embedding_model.dimension) as store:
+    with VaultStore(tmp_path, embedding_dim=index_control_model.dimension) as store:
         store.ensure_table()
         with ThreadPoolExecutor(max_workers=1) as executor:
             requester = executor.submit(
@@ -86,7 +86,7 @@ def test_vault_stream_observes_control_between_published_slices(
                     VaultStreamRequest(
                         docs=documents,
                         slice_size=1,
-                        model=cpu_embedding_model,
+                        model=index_control_model,
                         store=store,
                         gpu_lock=None,
                         reporter=NullProgressReporter(),
@@ -102,7 +102,7 @@ def test_vault_stream_observes_control_between_published_slices(
 
 def test_clean_rebuild_defers_pause_until_complete_publication(
     tmp_path: Path,
-    cpu_embedding_model: EmbeddingModel,
+    index_control_model: EmbeddingModel,
 ) -> None:
     """A clean rebuild publishes all points and metadata before pausing."""
     documents = write_vault_documents(tmp_path, 16)
@@ -110,10 +110,10 @@ def test_clean_rebuild_defers_pause_until_complete_publication(
     token = RunControlToken()
     gpu_lock = threading.Lock()
 
-    with VaultStore(tmp_path, embedding_dim=cpu_embedding_model.dimension) as store:
+    with VaultStore(tmp_path, embedding_dim=index_control_model.dimension) as store:
         indexer = VaultIndexer(
             tmp_path,
-            cpu_embedding_model,
+            index_control_model,
             store,
             gpu_lock=gpu_lock,
         )

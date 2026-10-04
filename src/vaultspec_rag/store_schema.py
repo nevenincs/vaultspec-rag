@@ -492,7 +492,6 @@ def assert_compatible(
     known_version: int,
     expected_dense_dim: int,
     dense_vector_name: str = DENSE_VECTOR_NAME,
-    required_domains: tuple[str, ...] = ("vault",),
 ) -> SchemaCompatibility:
     """Apply the consumer compatibility rules to a storage descriptor.
 
@@ -529,52 +528,36 @@ def assert_compatible(
                 f"known version {known_version}; the shape may have changed"
             ),
         }
-    known_domains = frozenset({"vault", "code", "document"})
-    unknown = tuple(
-        domain for domain in required_domains if domain not in known_domains
+    reason = _vault_compatibility_reason(
+        descriptor,
+        dense_vector_name=dense_vector_name,
+        expected_dense_dim=expected_dense_dim,
     )
-    if unknown:
-        return {
-            "compatible": False,
-            "reason": f"unknown required storage domain {unknown[0]!r}",
-        }
-    for domain in required_domains:
-        reason = _domain_compatibility_reason(
-            descriptor,
-            domain=domain,
-            dense_vector_name=dense_vector_name,
-            expected_dense_dim=expected_dense_dim,
-        )
-        if reason is not None:
-            return {
-                "compatible": False,
-                "reason": reason,
-            }
+    if reason is not None:
+        return {"compatible": False, "reason": reason}
     return {"compatible": True, "reason": ""}
 
 
-def _domain_compatibility_reason(
+def _vault_compatibility_reason(
     descriptor: dict[str, object],
     *,
-    domain: str,
     dense_vector_name: str,
     expected_dense_dim: int,
 ) -> str | None:
-    """Return one domain's first incompatible storage shape, if any."""
-    block = _as_str_dict(descriptor.get(domain))
+    """Return the vault domain's first incompatible storage shape, if any."""
+    block = _as_str_dict(descriptor.get("vault"))
     if not block:
-        return f"descriptor carries no {domain!r} storage domain"
+        return "descriptor carries no 'vault' storage domain"
     vectors = _as_str_dict(block.get("vectors"))
     dense = _as_str_dict(vectors.get("dense"))
     if dense.get("name") != dense_vector_name:
         return (
-            f"no dense vector named {dense_vector_name!r} in the "
-            f"{domain!r} storage domain"
+            f"no dense vector named {dense_vector_name!r} in the 'vault' storage domain"
         )
     actual_dim = dense.get("dim")
     if actual_dim != expected_dense_dim:
         return (
-            f"{domain!r} dense dimension {actual_dim} does not match "
+            f"'vault' dense dimension {actual_dim} does not match "
             f"the consumer's expected {expected_dense_dim}"
         )
     return None

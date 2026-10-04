@@ -77,7 +77,9 @@ def case(
         }
     )
     model = EmbeddingModel.__new__(EmbeddingModel)
-    model._init_encode_state(config, device="unloaded")
+    # No weights are loaded here, so there is no device to name.
+    model._device = "unloaded"
+    model._init_encode_state(config)
 
     def encode(texts: list[str], **options: object) -> list[list[float]]:
         del options

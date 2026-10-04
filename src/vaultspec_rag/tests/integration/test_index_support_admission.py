@@ -188,13 +188,12 @@ async def _post_index_job(token: str, root: Path, source: str) -> httpx.Response
         base_url="http://testserver",
     ) as client:
         return await client.post(
-            "/jobs",
+            "/reindex",
             headers={"Authorization": f"Bearer {token}"},
             json={
-                "operation": "index",
-                "source": source,
+                "type": source,
+                "clean": False,
                 "project_root": str(root),
-                "mode": "incremental",
                 "authority": "publication",
             },
         )

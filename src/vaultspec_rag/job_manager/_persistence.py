@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections import OrderedDict, deque
+from collections import deque
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
@@ -127,28 +127,7 @@ class JobManagerPersistence(JobManagerState):
     def _trim_restored_history_locked(self) -> None:
         """Apply the configured terminal bound to restored history."""
         while len(self._terminal) > self._max_terminal_history:
-            evicted = self._terminal.popleft()
-            self._forget_idempotency_locked(evicted.snapshot.id)
-
-    def _restore_bindings_locked(
-        self,
-        restored_bindings: tuple[
-            tuple[str, _job_persistence.IdempotencyBinding],
-            ...,
-        ],
-    ) -> None:
-        """Restore only bindings whose target survived configured retention."""
-        retained_ids = {
-            *self._active,
-            *(managed.snapshot.id for managed in self._terminal),
-        }
-        for key, binding in restored_bindings:
-            if binding.job_id in retained_ids:
-                self._bind_idempotency_locked(
-                    key,
-                    binding.signature,
-                    binding.job_id,
-                )
+            self._terminal.popleft()
 
     def restore_persisted(self) -> JobOutcome:
         """Restore durable jobs without partially applying an invalid state file."""
@@ -159,7 +138,6 @@ class JobManagerPersistence(JobManagerState):
         persisted = loaded
 
         restored_jobs = persisted.jobs
-        restored_bindings = persisted.bindings
         with self._lock:
             if self._active or self._terminal:
                 return self._error(
@@ -171,7 +149,6 @@ class JobManagerPersistence(JobManagerState):
             now = time.time()
             self._restore_jobs_locked(restored_jobs, now=now)
             self._trim_restored_history_locked()
-            self._restore_bindings_locked(restored_bindings)
             self._report_restored_capacity_locked()
 
             persistence_error = self._persist_locked()
@@ -478,10 +455,6 @@ class JobManagerPersistence(JobManagerState):
             terminal=deque(self._terminal),
             snapshots={job.snapshot.id: job.snapshot for job in managed_jobs},
             runtimes={job.snapshot.id: job.runtime for job in managed_jobs},
-            idempotency=OrderedDict(self._idempotency),
-            job_idempotency_keys={
-                job_id: set(keys) for job_id, keys in self._job_idempotency_keys.items()
-            },
             dispatchers=dict(self._dispatchers),
             persistence_dirty=self._persistence_dirty,
         )
@@ -503,26 +476,15 @@ class JobManagerPersistence(JobManagerState):
                 assign_runtime_owner(managed, runtime)
         self._active = backup.active
         self._terminal = backup.terminal
-        self._idempotency = OrderedDict(backup.idempotency)
-        self._job_idempotency_keys = backup.job_idempotency_keys
         self._dispatchers = backup.dispatchers
         self._persistence_dirty = backup.persistence_dirty
 
     def _persisted_generation_locked(self) -> _job_persistence.PersistedManagerState:
         """Serialize the complete current manager generation for one write."""
-        retained_ids = {
-            *self._active,
-            *(managed.snapshot.id for managed in self._terminal),
-        }
         return _job_persistence.PersistedManagerState(
             jobs=tuple(
                 self._snapshot_locked(managed)
                 for managed in [*self._active.values(), *self._terminal]
-            ),
-            bindings=tuple(
-                (key, binding)
-                for key, binding in self._idempotency.items()
-                if binding.job_id in retained_ids
             ),
         )
 

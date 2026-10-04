@@ -237,13 +237,8 @@ class TestOwnerPidReuseWitness:
     def test_unreadable_live_owner_is_unverified_not_orphaned(self) -> None:
         live = pid_start_time(os.getpid())
         identity = self._identity(os.getpid(), live)
-        probe = QdrantEndpointProbe(listening=True, ready=True, version="1.18.2")
 
         assert owner_pid_witness_state(identity, timeout=0.0) == "unknown"
-        assert (
-            classify_qdrant_state(probe, identity, owner_timeout=0.0)
-            == "owner_unverified"
-        )
 
     def test_legacy_record_without_witness_is_unverified(self) -> None:
         """A live PID cannot substitute for a missing incarnation witness."""

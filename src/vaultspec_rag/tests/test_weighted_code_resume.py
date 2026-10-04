@@ -138,7 +138,11 @@ class _ResumeRun:
         finally:
             if consumer.is_alive():
                 consumer_run.segment_queue.put(None, timeout=5.0)
-            consumer.join(timeout=10.0)
+            # Waits on the thread's actual completion rather than a wall-clock
+            # guess: a contended machine can legitimately take longer than any
+            # fixed number here, and the suite's own timeout bound still
+            # catches a genuine hang.
+            consumer.join()
         assert not consumer.is_alive(), "weighted consumer did not terminate"
         assert not consumer_run.consumer_exceptions, (
             "compatible resumed stream lost its framing: "

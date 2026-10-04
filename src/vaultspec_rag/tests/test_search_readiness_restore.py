@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
+import sqlite3
+from contextlib import closing, suppress
 from dataclasses import replace
 from functools import partial
 from typing import TYPE_CHECKING, cast
@@ -27,6 +28,7 @@ from ..indexer._run_ledger_models import (
     RunTerminalState,
     index_run_ledger_path,
 )
+from ..indexer._run_ledger_publication_identity import compatibility_for_signature
 from ..indexer._run_ledger_runtime import RunLedger
 from ..indexer._run_policy import RunPolicy
 from ..job_control import PauseRequested, RunControlToken
@@ -55,9 +57,7 @@ from ..service_quiesce import ServiceQuiesceController
 from ..store_runtime import configured_backend_identity
 from ._job_manager_transition_helpers import pending_attempt
 from ._run_ledger_test_support import (
-    ledger_test_proof_key_for_signature,
     ledger_test_publish_and_compact,
-    ledger_test_seed_publication_proof,
     ledger_test_signature,
 )
 
@@ -95,22 +95,37 @@ def _published(
         collection_identity=collections[source],
         payload_schema=store_schema.STORAGE_SCHEMA_VERSION,
     )
-    generation = ledger.start_generation(signature)
-    ledger_test_publish_and_compact(ledger, generation.generation_id)
-    key = ledger_test_proof_key_for_signature(signature)
-    changes: dict[str, object] = {
+    # Every incompatibility but the storage schema is a run that really
+    # published under a different identity: a moved root, another backend, a
+    # renamed collection, a different content kind, an older payload. The
+    # signature carries each, and the proof the rebuild writes carries it on.
+    signature_changes: dict[str, object] = {
         "root_identity": str(root / "other-root"),
         "backend_identity": "other-backend",
         "collection_identity": "other-collection",
         "source_type": PublicSourceType.VAULT,
-        "storage_schema": store_schema.STORAGE_SCHEMA_VERSION - 1,
         "payload_schema": store_schema.STORAGE_SCHEMA_VERSION - 1,
     }
-    if incompatible is not None:
-        key = replace(key, **{incompatible: changes[incompatible]})
-    ledger_test_seed_publication_proof(
-        ledger, generation_id=generation.generation_id, key=key, evidence=evidence
+    if incompatible in signature_changes:
+        signature = replace(
+            signature, **{incompatible: signature_changes[incompatible]}
+        )
+    generation = ledger.start_generation(signature)
+    ledger.establish_verified_publication(
+        generation.generation_id, RunAuthority.REBUILD, evidence
     )
+    ledger_test_publish_and_compact(ledger, generation.generation_id)
+    key = compatibility_for_signature(signature)
+    if incompatible == "storage_schema":
+        # No build stamps a storage schema other than its own, so the one a
+        # previous release left behind is written onto the committed row.
+        key = replace(key, storage_schema=store_schema.STORAGE_SCHEMA_VERSION - 1)
+        with closing(sqlite3.connect(ledger.path)) as connection, connection:
+            connection.execute(
+                "UPDATE publication_proofs SET storage_schema = ?",
+                (key.storage_schema,),
+            )
+            connection.commit()
     return ledger, signature, key, generation.generation_id
 
 
@@ -468,10 +483,11 @@ async def test_active_job_preserves_updating_and_non_authoritative_empty(
             RunAuthority.PUBLICATION,
         ),
         JobInitiator("test", "readiness", str(tmp_path)),
-        start_paused=True,
     )
     assert created.job is not None
-    jobs = [created.job.to_dict()]
+    paused = manager.set_desired_state(created.job.id, DesiredJobState.PAUSED)
+    assert paused.job is not None
+    jobs = [paused.job.to_dict()]
     monkeypatch.setattr(_routes, "canonical_job_snapshot", lambda: jobs)
     registry = _registry()
     try:

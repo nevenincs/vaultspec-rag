@@ -80,22 +80,6 @@ ready, stop = (Path(arg) for arg in sys.argv[1:3])
     + _WAIT_FOR_STOP
 )
 
-# A child that holds a storage-scoped service lock at the path given, with its
-# owner record, as a service of any release does.
-_LOCK_HOLDER = (
-    """
-import os, sys, time
-from pathlib import Path
-from vaultspec_rag._anchor_claim import claim_anchor, record_claim_owner
-
-lock, ready, stop = (Path(arg) for arg in sys.argv[1:4])
-claim = claim_anchor(lock, pid_record=True, create_parent=True)
-assert claim.descriptor is not None, claim
-record_claim_owner(claim.descriptor)
-"""
-    + _WAIT_FOR_STOP
-)
-
 # A child that holds this session's storage-scoped service lock, as a service
 # does between claiming its machine and loading its first model.
 _SERVICE = (
@@ -403,34 +387,6 @@ def test_a_load_refused_inside_a_json_command_emits_one_envelope(
     assert envelope["command"] == "index"
     assert envelope["error"] == "gpu_owned"
     assert envelope["gpu_owner"]["holder_pid"] == 4242
-
-
-def test_a_held_default_location_service_lock_is_seen_as_a_service(
-    tmp_path: Path,
-) -> None:
-    from .._gpu_owner import _holder_of_service_lock
-
-    lock = tmp_path / "service.lock"
-    with _child(_LOCK_HOLDER, tmp_path, str(lock)) as holder_pid:
-        # Catches the default-location check being dropped or reading a held
-        # lock as free: a service of an earlier release would then be invisible.
-        assert _holder_of_service_lock(lock) == holder_pid
-    assert _holder_of_service_lock(lock) is None
-    assert _holder_of_service_lock(tmp_path / "never-created.lock") is None
-
-
-def test_an_unobservable_service_lock_fails_closed(tmp_path: Path) -> None:
-    from .._gpu_owner import _holder_of_service_lock
-
-    # Something exists where the lock should be and cannot be opened as one -
-    # a directory refuses on every platform.
-    unobservable = tmp_path / "service.lock"
-    unobservable.mkdir()
-
-    # Catches an unobservable lock being read as "no service": that is the
-    # fail-open answer on the one path that sees services of earlier releases.
-    with pytest.raises(OSError, match="could not be observed"):
-        _holder_of_service_lock(unobservable)
 
 
 def test_importing_the_ownership_module_leaves_torch_unimported() -> None:

@@ -29,7 +29,14 @@ from mcp.types import TextContent
 from ..._search_state import SearchReasonCode
 from ...indexer._run_ledger_models import RunAuthority
 from ...job_manager.manager import JobManager
-from ...job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
+from ...job_models import (
+    DesiredJobState,
+    JobInitiator,
+    JobMode,
+    JobOperation,
+    JobSource,
+    JobSpec,
+)
 from ...service_quiesce import ServiceQuiesceController
 from ...serviceclient._search_transport import try_http_search
 from .._search_readiness_scenarios import (
@@ -798,13 +805,14 @@ def _persist_paused_matching_rebuild(state_path: Path, root: Path) -> str:
             RunAuthority.REBUILD,
         ),
         JobInitiator("integration", "paused nonempty search probe", str(root)),
-        start_paused=True,
     )
     assert created.job is not None, created.to_dict()
-    assert created.job.state.value == "paused", created.to_dict()
-    assert created.job.runtime.task_active is False, created.to_dict()
-    assert created.job.runtime.worker_active is False, created.to_dict()
-    return created.job.id
+    paused = manager.set_desired_state(created.job.id, DesiredJobState.PAUSED)
+    assert paused.job is not None, paused.to_dict()
+    assert paused.job.state.value == "paused", paused.to_dict()
+    assert paused.job.runtime.task_active is False, paused.to_dict()
+    assert paused.job.runtime.worker_active is False, paused.to_dict()
+    return paused.job.id
 
 
 def _assert_paused_rebuild_snapshot(

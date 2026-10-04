@@ -28,7 +28,6 @@ from ...serviceclient._transport import (
     _try_http_retry_job,
     _try_http_set_job_desired_state,
 )
-from .._admin_client import _try_http_create_job
 from .._import_probe import assert_fresh_import_excludes, import_probe_source
 from .._scaffold import make_workspace
 from ._service_jobs_support import _canonical_resilience_server
@@ -42,8 +41,10 @@ pytestmark = [pytest.mark.unit]
 
 
 def _seed_paused_job(project_root: Path, job_id: str) -> dict[str, object]:
+    """Admit one exact job, then pause it before anything dispatches it."""
     (project_root / ".vault").mkdir(parents=True)
-    outcome = get_job_manager().create(
+    manager = get_job_manager()
+    outcome = manager.create(
         JobSpec(
             operation=JobOperation.INDEX,
             source=JobSource.VAULT,
@@ -56,12 +57,13 @@ def _seed_paused_job(project_root: Path, job_id: str) -> dict[str, object]:
             command="test_seed_job_control",
             project_root=str(project_root),
         ),
-        start_paused=True,
         job_id=job_id,
     )
     assert outcome.code == "job_created"
-    assert outcome.job is not None
-    return outcome.job.to_dict()
+    paused = manager.set_desired_state(job_id, DesiredJobState.PAUSED)
+    assert paused.code == "job_paused"
+    assert paused.job is not None
+    return paused.job.to_dict()
 
 
 def _invoke_job_json(*args: str) -> tuple[int, dict[str, object]]:
@@ -71,26 +73,6 @@ def _invoke_job_json(*args: str) -> tuple[int, dict[str, object]]:
     payload = json.loads(lines[0])
     assert isinstance(payload, dict)
     return result.exit_code, cast("dict[str, object]", payload)
-
-
-def _create_paused_transport_job(port: int, project_root: Path) -> tuple[str, int]:
-    """Create one paused job through the typed transport."""
-    created = _try_http_create_job(
-        JobSource.VAULT,
-        str(project_root),
-        port,
-        authority=RunAuthority.PUBLICATION,
-        start_paused=True,
-        idempotency_key="real-transport-lifecycle",
-        timeout=5.0,
-    )
-    assert created is not None
-    assert created["ok"] is True, created
-    assert created["status"] == "accepted"
-    assert created["code"] == "job_created"
-    created_job = cast("dict[str, object]", created["job"])
-    assert created_job["state"] == "paused"
-    return cast("str", created_job["id"]), cast("int", created_job["revision"])
 
 
 def _assert_transport_conflicts(port: int, job_id: str) -> None:
@@ -157,11 +139,11 @@ def _complete_transport_lifecycle(
 def test_typed_job_control_transport_uses_real_http_methods_and_conflicts(
     tmp_path: Path,
 ) -> None:
-    project_root = tmp_path / "project"
-    (project_root / ".vault").mkdir(parents=True)
+    job_id = "0badc0de-0000-4000-8000-000000000001"
 
     with _canonical_resilience_server(tmp_path) as (port, _token):
-        job_id, revision = _create_paused_transport_job(port, project_root)
+        seeded = _seed_paused_job(tmp_path / "project", job_id)
+        revision = cast("int", seeded["revision"])
         _assert_transport_conflicts(port, job_id)
         _complete_transport_lifecycle(port, job_id, revision)
 

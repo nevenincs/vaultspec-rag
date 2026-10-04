@@ -62,7 +62,7 @@ from ._search_readiness_render import (
 
 if TYPE_CHECKING:
     import pathlib
-    from collections.abc import Callable, Generator, Iterator
+    from collections.abc import Generator, Iterator
     from typing import NoReturn
 
     from ..search import (
@@ -1016,14 +1016,12 @@ def _local_search_deadline(
     seconds: float | None,
     *,
     json_mode: bool,
-    on_timeout: Callable[[], object] | None = None,
 ) -> Generator[None]:
     """Bound a mandated local search by a wall-clock deadline.
 
-    A daemon timer fires ``on_timeout`` (default: write a timeout envelope and
-    force-exit) if the body has not finished within ``seconds``. The timer is
-    cancelled on normal completion. ``on_timeout`` is an injectable seam so the
-    timer mechanism is testable without the default's process exit.
+    A daemon timer writes a timeout envelope and force-exits the process if the
+    body has not finished within ``seconds``. The timer is cancelled on normal
+    completion.
     """
     import threading
 
@@ -1031,10 +1029,10 @@ def _local_search_deadline(
         yield
         return
 
-    def _default_timeout() -> None:
+    def _on_timeout() -> None:
         _abort_on_local_deadline(float(seconds), json_mode)
 
-    timer = threading.Timer(float(seconds), on_timeout or _default_timeout)
+    timer = threading.Timer(float(seconds), _on_timeout)
     timer.daemon = True
     timer.start()
     try:

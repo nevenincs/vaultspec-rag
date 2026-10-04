@@ -75,7 +75,9 @@ def unloaded_model(clean_config: None) -> EmbeddingModel:
         {"embedding_dimension": 2, "qdrant_url": None, "sparse_enabled": False}
     )
     model = EmbeddingModel.__new__(EmbeddingModel)
-    model._init_encode_state(config, device="unloaded")
+    # No weights are loaded here, so there is no device to name.
+    model._device = "unloaded"
+    model._init_encode_state(config)
     return model
 
 

@@ -96,13 +96,8 @@ def is_borrower_capability(capability: object) -> bool:
 
 def acquire_gpu_borrow_lease() -> GPUBorrowLease | None:
     """Acquire and retain the borrower lease, or return ``None`` on contention."""
-    from ._test_isolation import enforce_pytest_managed_singleton_containment
 
     path = gpu_borrow_lease_path()
-    enforce_pytest_managed_singleton_containment(
-        operation="acquire the GPU borrower lease",
-        targets=(path,),
-    )
     with _lease_guard:
         retained = _held_leases.get(str(path))
         if retained is not None:
@@ -134,13 +129,8 @@ def acquire_gpu_borrow_lease() -> GPUBorrowLease | None:
 
 def release_gpu_borrow_lease(lease: GPUBorrowLease) -> None:
     """Release *lease* only when it is this process's retained exact handle."""
-    from ._test_isolation import enforce_pytest_managed_singleton_containment
 
     path_key = str(lease.path)
-    enforce_pytest_managed_singleton_containment(
-        operation="release the GPU borrower lease",
-        targets=(lease.path,),
-    )
     with _lease_guard:
         if _held_leases.get(path_key) is not lease:
             return
@@ -153,12 +143,7 @@ def borrower_lease_status(capability: str) -> BorrowerLeaseStatus:
     if not is_borrower_capability(capability):
         return BorrowerLeaseStatus.CAPABILITY_INVALID
     path = gpu_borrow_lease_path()
-    from ._test_isolation import enforce_pytest_managed_singleton_containment
 
-    enforce_pytest_managed_singleton_containment(
-        operation="verify the GPU borrower lease",
-        targets=(path,),
-    )
     claim = claim_anchor(path, pid_record=True, create_parent=True)
     if claim.fault is not None:
         return BorrowerLeaseStatus.UNAVAILABLE

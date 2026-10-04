@@ -386,7 +386,9 @@ def test_publication_rollback_preserves_elapsed_acknowledged_work(
         tmp_path / "publication", ()
     )
     receipt = ledger.reserve_publication_receipt(
-        key, successor_id, expected_parent_revision=3
+        key,
+        successor_id,
+        expected_parent_revision=ledger.publication_proof(key).revision,
     )
     unit = ledger_test_unit("pkg/a.py", 0, 3)
     stored: set[str] = set()

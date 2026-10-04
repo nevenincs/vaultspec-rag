@@ -321,7 +321,7 @@ def test_local_bridge_forwards_operator_inventory_and_controls(
         port, "/service-state?" + urllib.parse.urlencode({"project_root": str(root)})
     )
     assert status == 200 and "quiesce" in state and "root_features" in state
-    status, resources = _read(port, "/runtime-observations?client_limit=2")
+    status, resources = _read(port, "/runtime-observations")
     assert status == 200 and "cpu" in resources and "clients" in resources
     status, survey = _read(port, "/storage/survey?status=unsupported")
     assert status in (400, 409)

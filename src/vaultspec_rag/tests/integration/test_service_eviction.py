@@ -19,8 +19,9 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from ...cli._process import _spawn_service, _terminate_pid
+from ...cli._process import _terminate_pid
 from .._ports import free_loopback_port
+from .._session_job_anchor import spawn_anchored_service
 from ._helpers import (
     _poll_health,
     _service_env,
@@ -208,7 +209,7 @@ def test_idle_ttl_evicts_quiescent_slots(tmp_path: Path) -> None:
         # Watch disabled: otherwise the async watcher would auto-index and
         # admit slots behind the test, and the admission accounting under test
         # would be non-deterministic.
-        pid = _spawn_service(port, log_path, watch=False)
+        pid = spawn_anchored_service(port, log_path, watch=False)
         try:
             _poll_health(port)
             proj_a = _make_vault_project(tmp_path / "a", label="alpha")
@@ -252,7 +253,7 @@ def test_lru_cap_evicts_oldest(tmp_path: Path) -> None:
         port = free_loopback_port()
         log_path = tmp_path / "service.log"
         # Watch disabled so no async watcher admits slots behind the test.
-        pid = _spawn_service(port, log_path, watch=False)
+        pid = spawn_anchored_service(port, log_path, watch=False)
         try:
             _poll_health(port)
             proj_a = _make_vault_project(tmp_path / "a", label="alpha")
@@ -306,7 +307,7 @@ def test_log_rotation_creates_backups(tmp_path: Path) -> None:
     with _service_env(tmp_path, overrides):
         port = free_loopback_port()
         log_path = tmp_path / "service.log"
-        pid = _spawn_service(port, log_path)
+        pid = spawn_anchored_service(port, log_path)
         try:
             _poll_health(port)
             proj = _make_vault_project(tmp_path / "logs", label="logs")
@@ -358,7 +359,7 @@ def test_log_rotation_post_rollover_writes_to_active(tmp_path: Path) -> None:
     with _service_env(tmp_path, overrides):
         port = free_loopback_port()
         log_path = tmp_path / "service.log"
-        pid = _spawn_service(port, log_path)
+        pid = spawn_anchored_service(port, log_path)
         try:
             _poll_health(port)
             proj = _make_vault_project(tmp_path / "postroll", label="postroll")
@@ -433,7 +434,7 @@ def test_close_all_drains_busy_slots(tmp_path: Path) -> None:
     with _service_env(tmp_path, overrides):
         port = free_loopback_port()
         log_path = tmp_path / "service.log"
-        pid = _spawn_service(port, log_path)
+        pid = spawn_anchored_service(port, log_path)
         try:
             token = str(_poll_health(port)["service_token"])
             projects = [

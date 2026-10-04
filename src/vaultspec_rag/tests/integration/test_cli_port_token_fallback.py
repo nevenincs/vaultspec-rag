@@ -15,10 +15,11 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from ...cli._process import _spawn_service, _terminate_pid
+from ...cli._process import _terminate_pid
 from ...serviceclient._discovery import _status_file
 from ...serviceclient._transport import _do_http_call
 from .._ports import free_loopback_port
+from .._session_job_anchor import spawn_anchored_service
 from ._helpers import (
     _poll_health,
     _service_env,
@@ -46,7 +47,7 @@ def test_jobs_via_port_authenticates_via_health_when_status_token_absent(
     """
     with _service_env(tmp_path, _LOCAL_ONLY):
         port = free_loopback_port()
-        pid = _spawn_service(port, tmp_path / "service.log")
+        pid = spawn_anchored_service(port, tmp_path / "service.log")
         try:
             _poll_health(port)
             # Drop the status file so the client has no token to send.
@@ -75,7 +76,7 @@ def test_jobs_via_port_refreshes_stale_status_token_from_health(
     """
     with _service_env(tmp_path, _LOCAL_ONLY):
         port = free_loopback_port()
-        pid = _spawn_service(port, tmp_path / "service.log")
+        pid = spawn_anchored_service(port, tmp_path / "service.log")
         try:
             _poll_health(port)
             # Corrupt the persisted token so it no longer matches the running

@@ -70,7 +70,9 @@ def recovery_model(clean_config: None) -> EmbeddingModel:
     del clean_config
     _configure_model(2)
     model = EmbeddingModel.__new__(EmbeddingModel)
-    model._init_encode_state(get_config(), device="unloaded")
+    # No weights are loaded here, so there is no device to name.
+    model._device = "unloaded"
+    model._init_encode_state(get_config())
     return model
 
 

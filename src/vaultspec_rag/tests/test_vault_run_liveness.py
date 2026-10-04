@@ -61,7 +61,9 @@ def unloaded_model(clean_config: None) -> EmbeddingModel:
         }
     )
     model = EmbeddingModel.__new__(EmbeddingModel)
-    model._init_encode_state(cfg, device="unloaded")
+    # No weights are loaded here, so there is no device to name.
+    model._device = "unloaded"
+    model._init_encode_state(cfg)
     return model
 
 
@@ -341,7 +343,17 @@ def test_actual_stream_and_payload_writes_receive_exact_checkpoint_policy(
     )
     doc = prepare_document(path, tmp_path)
     assert doc is not None
-    cfg = get_config()
+    # This observes argument delivery, not the deadline. Profiling every call
+    # on every thread slows the real writes past the two-second window the
+    # deadline tests here rely on, so this run gets one only a hang exceeds.
+    cfg = get_config(
+        {
+            "embedding_dimension": 2,
+            "qdrant_url": None,
+            "sparse_enabled": False,
+            "index_no_progress_timeout_seconds": 60.0,
+        }
+    )
     with VaultStore(tmp_path, embedding_dim=2) as store:
         chunks = split_documents([doc], int(cfg.vault_chunk_chars))
         for chunk in chunks:

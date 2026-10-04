@@ -66,7 +66,9 @@ def case(tmp_path: Path, clean_config: None) -> Generator[_Case]:
     del clean_config
     cfg = get_config(_CONFIG)
     model = EmbeddingModel.__new__(EmbeddingModel)
-    model._init_encode_state(cfg, device="unloaded")
+    # No weights are loaded here, so there is no device to name.
+    model._device = "unloaded"
+    model._init_encode_state(cfg)
     with VaultStore(tmp_path, embedding_dim=2) as store:
         yield _Case(tmp_path, store, VaultIndexer(tmp_path, model, store))
 

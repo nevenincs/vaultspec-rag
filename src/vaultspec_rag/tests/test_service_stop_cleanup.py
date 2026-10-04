@@ -33,6 +33,8 @@ if TYPE_CHECKING:
 
 pytestmark = [pytest.mark.unit]
 
+_OLD_EXIT_SIGNAL_SECONDS = 10.0
+
 
 @pytest.mark.parametrize("explicit_port", [True, False])
 @pytest.mark.parametrize("successor_port_changed", [True, False])
@@ -84,7 +86,14 @@ def test_a_stop_finishing_after_successor_publication_preserves_discovery(
             "port": successor_port,
         }
         assert successor.poll() is None, "old stop terminated the successor"
-        assert old.poll() is not None
+        # Windows publishes the exit code before the process object signals,
+        # so a stop confirmed through the exit code can still race an
+        # instantaneous poll. The witness outlives this bound by minutes, so
+        # only the stop's termination can satisfy it.
+        try:
+            old.wait(timeout=_OLD_EXIT_SIGNAL_SECONDS)
+        except subprocess.TimeoutExpired:
+            pytest.fail("old stop reported success but left the old process alive")
 
 
 @pytest.mark.parametrize(

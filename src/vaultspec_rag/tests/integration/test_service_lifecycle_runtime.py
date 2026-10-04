@@ -22,13 +22,14 @@ from typer.testing import CliRunner
 from ..._job_values import count
 from ..._process_probe import pid_alive
 from ...cli import app
-from ...cli._process import _spawn_service, _terminate_pid
+from ...cli._process import _terminate_pid
 from ...cli._service_status import (
     _status_file,
     _write_service_status,
     read_service_status,
 )
 from .._ports import free_loopback_port
+from .._session_job_anchor import spawn_anchored_service
 from ._helpers import (
     _poll_health,
     _service_env,
@@ -189,7 +190,7 @@ def test_start_health_stop(request: pytest.FixtureRequest, tmp_path: Path) -> No
         port = free_loopback_port()
         log_path = tmp_path / "service.log"
 
-        pid = _spawn_service(port, log_path)
+        pid = spawn_anchored_service(port, log_path)
         request.addfinalizer(lambda: _terminate_pid(pid))
 
         health = _poll_health(port)
@@ -258,12 +259,14 @@ def test_daemon_restart_restores_queued_work_and_preserves_paused_intent(
             RunAuthority.PUBLICATION,
         ),
         JobInitiator("integration", "restart paused probe", str(paused_root)),
-        start_paused=True,
     )
     assert queued.job is not None
     assert paused.job is not None
     queued_id = queued.job.id
     paused_id = paused.job.id
+    held = seed_manager.set_desired_state(paused_id, DesiredJobState.PAUSED)
+    assert held.job is not None
+    assert held.job.state is JobState.PAUSED
 
     with _signalable_live_service(tmp_path, required_host_provisioned_qdrant_source):
         completed = _wait_for_persisted_job(
@@ -516,7 +519,7 @@ def test_start_already_running(request: pytest.FixtureRequest, tmp_path: Path) -
         port = free_loopback_port()
         log_path = tmp_path / "service.log"
 
-        pid = _spawn_service(port, log_path)
+        pid = spawn_anchored_service(port, log_path)
         request.addfinalizer(lambda: _terminate_pid(pid))
         _poll_health(port)
 
@@ -593,7 +596,7 @@ def test_stop_running_service(request: pytest.FixtureRequest, tmp_path: Path) ->
         port = free_loopback_port()
         log_path = tmp_path / "service.log"
 
-        pid = _spawn_service(port, log_path)
+        pid = spawn_anchored_service(port, log_path)
         request.addfinalizer(lambda: _terminate_pid(pid))
         _poll_health(port)
 
@@ -624,7 +627,7 @@ def test_stop_running_service_by_port_without_status_file(
         port = free_loopback_port()
         log_path = tmp_path / "service.log"
 
-        pid = _spawn_service(port, log_path)
+        pid = spawn_anchored_service(port, log_path)
         request.addfinalizer(lambda: _terminate_pid(pid))
         health = _poll_health(port)
         serving_pid = int(str(health["pid"]))
@@ -656,7 +659,7 @@ def test_service_status_running(
         port = free_loopback_port()
         log_path = tmp_path / "service.log"
 
-        pid = _spawn_service(port, log_path)
+        pid = spawn_anchored_service(port, log_path)
         request.addfinalizer(lambda: _terminate_pid(pid))
         # Write service.json BEFORE the daemon finishes starting, mirroring
         # the production `service start` ordering (spawn -> write -> wait).
@@ -715,7 +718,7 @@ def test_multi_project_search_isolation(
         port = free_loopback_port()
         log_path = tmp_path / "service.log"
 
-        pid = _spawn_service(port, log_path)
+        pid = spawn_anchored_service(port, log_path)
         request.addfinalizer(lambda: _terminate_pid(pid))
         _poll_health(port)
 

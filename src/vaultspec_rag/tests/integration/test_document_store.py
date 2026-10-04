@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import copy
 import json
 import os
 from typing import TYPE_CHECKING
@@ -215,41 +214,6 @@ def test_document_schema_and_identity_contract() -> None:
         locator=DocumentLocator("page", 2),
     )
     assert first == second
-
-
-def test_document_descriptor_version_compatibility_contract() -> None:
-    """Direct consumers refuse missing document and unknown newer shapes."""
-    descriptor = store_schema.describe_storage_schema()
-    compatible = store_schema.assert_compatible(
-        descriptor,
-        known_version=store_schema.STORAGE_SCHEMA_VERSION,
-        expected_dense_dim=store_schema.effective_dense_dim(),
-        required_domains=("document",),
-    )
-    assert compatible == {"compatible": True, "reason": ""}
-
-    older = copy.deepcopy(descriptor)
-    older["version"] = store_schema.STORAGE_SCHEMA_VERSION - 1
-    del older["document"]
-    older_verdict = store_schema.assert_compatible(
-        older,
-        known_version=store_schema.STORAGE_SCHEMA_VERSION,
-        expected_dense_dim=store_schema.effective_dense_dim(),
-        required_domains=("document",),
-    )
-    assert older_verdict["compatible"] is False
-    assert "document" in older_verdict["reason"]
-
-    newer = copy.deepcopy(descriptor)
-    newer["version"] = store_schema.STORAGE_SCHEMA_VERSION + 1
-    newer_verdict = store_schema.assert_compatible(
-        newer,
-        known_version=store_schema.STORAGE_SCHEMA_VERSION,
-        expected_dense_dim=store_schema.effective_dense_dim(),
-        required_domains=("document",),
-    )
-    assert newer_verdict["compatible"] is False
-    assert "newer" in newer_verdict["reason"]
 
 
 def test_document_count_appears_in_real_storage_survey(

@@ -1,9 +1,9 @@
 """Real-behavior integration coverage for cooperative indexing control.
 
 The tests use the production streaming and indexing paths with local Qdrant,
-real vault and code files, and a CPU-backed SentenceTransformer model. Keeping
-the model tiny makes the control races deterministic without substituting test
-implementations for any production indexing behavior.
+real vault and code files, and the session's real GPU embedding model. Control
+is observed at production checkpoints rather than raced against a particular
+encode duration, so no test implementation stands in for indexing behavior.
 """
 
 from __future__ import annotations
@@ -49,7 +49,6 @@ from .._config_fixtures import reset_config
 from .._publication_assertions import published_content_identities
 from .._state_fixtures import reset_limiters, reset_registry
 from .._store_fixtures import get_all_ids
-from ._helpers import cpu_backed_embedding_model
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Generator
@@ -107,41 +106,37 @@ def _managed_test_config(*, status_dir: Path | None = None) -> dict[str, object]
 
 
 @pytest.fixture
-def cpu_embedding_model(clean_config: None) -> EmbeddingModel:
-    """Build a real production embedding path around a tiny CPU BoW model."""
+def index_control_model(
+    clean_config: None,
+    embedding_model: EmbeddingModel,
+) -> EmbeddingModel:
+    """Configure one index-control run around the session's real GPU model.
+
+    The model is the session-wide production instance, constructed by its own
+    constructor through the accelerator loader. Only the run's configuration is
+    set here, and the embedding dimension is taken from the loaded model so the
+    store and the encoder agree on vector width.
+    """
     del clean_config
-    vocabulary = [
-        "alpha",
-        "beta",
-        "gamma",
-        "delta",
-        "index",
-        "control",
-        "document",
-        "content",
-    ]
-
-    def configure(dimension: int) -> None:
-        get_config(
-            {
-                "data_dir": ".index-control",
-                "embedding_batch_size": 1,
-                "embedding_dimension": dimension,
-                "embedding_encode_batch_size": 1,
-                "index_chunk_workers": 2,
-                # Force more than one durable weighted slice so pause/cancel
-                # can be observed between production publication checkpoints.
-                # The batch-size setting intentionally does not cap segment
-                # capacity.
-                "index_segment_max_chunks": 8,
-                "index_queue_max_chunks": 16,
-                "qdrant_url": None,
-                "sparse_enabled": False,
-                "vault_chunk_chars": 10_000,
-            }
-        )
-
-    return cpu_backed_embedding_model(vocabulary, configure)
+    get_config(
+        {
+            "data_dir": ".index-control",
+            "embedding_batch_size": 1,
+            "embedding_dimension": embedding_model.dimension,
+            "embedding_encode_batch_size": 1,
+            "index_chunk_workers": 2,
+            # Force more than one durable weighted slice so pause/cancel
+            # can be observed between production publication checkpoints.
+            # The batch-size setting intentionally does not cap segment
+            # capacity.
+            "index_segment_max_chunks": 8,
+            "index_queue_max_chunks": 16,
+            "qdrant_url": None,
+            "sparse_enabled": False,
+            "vault_chunk_chars": 10_000,
+        }
+    )
+    return embedding_model
 
 
 def write_vault_documents(root: Path, count: int) -> list[VaultDocument]:

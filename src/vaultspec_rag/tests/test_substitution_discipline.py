@@ -296,6 +296,13 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "central torch gate and importlib lookup are substituted only to "
         "produce those otherwise destructive dependency states",
     ),
+    "test_encode_bucket_planner.py": (
+        1,
+        "proves the lockless sparse forward now enters the peak-capture "
+        "bracket the locked branch already used, but a real capture is "
+        "indistinguishable from a no-op without a CUDA device; the bracket is "
+        "substituted only to count entries, and the forward itself stays real",
+    ),
     "gpu_admission/test_floor_and_window.py": (
         1,
         "forces a present-but-unreadable memory reading, because the streak "
@@ -482,7 +489,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "replaced",
     ),
     "test_uv_sync.py": (
-        2,
+        1,
         "stands in for the uv the project sync launches: a uv that never "
         "returns cannot be staged with a real one, and the "
         "workspace-containment refusal must be observed without any uv "
@@ -564,7 +571,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "never runs",
     ),
     "test_tool_torch_repair.py": (
-        29,
+        28,
         "the persistent uv tool interpreter and machine singleton cannot be "
         "safely forced through a CUDA repair during a test: that would install "
         "packages into the developer's own tool environment, which is how a "

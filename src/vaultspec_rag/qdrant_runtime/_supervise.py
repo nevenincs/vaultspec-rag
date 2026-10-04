@@ -65,7 +65,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 __all__ = [
     "QdrantSupervisor",
     "active_supervisor",
@@ -88,6 +87,8 @@ _STOP_TIMEOUT_SECONDS = 10.0
 # storage-lock error) instead of an opaque timeout.
 _RECENT_OUTPUT_LINES = 50
 _RECENT_OUTPUT_LINE_CHARS = 16 * 1024
+#: How many of those retained lines a diagnostic tail reports.
+_RECENT_OUTPUT_TAIL_LINES = 20
 _QDRANT_DRAIN_CHUNK_BYTES = 64 * 1024
 _DRAIN_JOIN_TIMEOUT_SECONDS = 3.0
 #: Read from the settings defaults rather than restated here: the managed log
@@ -142,7 +143,6 @@ _LOAD_FAILURE_MARKERS = (
     "could not load",
     "error loading",
 )
-
 
 # Explicit sharing failures describe file ownership, not collection corruption.
 # Match the native OS-error forms, not arbitrary application codes or prefixes.
@@ -462,17 +462,6 @@ class QdrantSupervisor:
                 the rotating log sink.
             OSError: If the spawn itself fails.
         """
-        from .._test_isolation import enforce_pytest_managed_singleton_containment
-
-        snapshots_dir = self.storage_dir.parent / "snapshots"
-        containment_targets = [self.storage_dir, snapshots_dir]
-        if self.log_path is not None:
-            containment_targets.append(self.log_path)
-        enforce_pytest_managed_singleton_containment(
-            operation="create supervised managed Qdrant storage",
-            targets=containment_targets,
-        )
-
         if self.is_alive():
             raise RuntimeError(f"qdrant child pid={self.pid} is already running")
         if not self._join_output_drain(timeout=0.0):
@@ -482,7 +471,7 @@ class QdrantSupervisor:
             )
         child_env = self._child_env()
         self.storage_dir.mkdir(parents=True, exist_ok=True)
-        snapshots_dir.mkdir(parents=True, exist_ok=True)
+        (self.storage_dir.parent / "snapshots").mkdir(parents=True, exist_ok=True)
         if self.log_path is not None:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
         self._recent_output.clear()
@@ -625,10 +614,10 @@ class QdrantSupervisor:
         self._drain_thread = None
         return True
 
-    def recent_output_tail(self, max_lines: int = 20) -> str:
+    def recent_output_tail(self) -> str:
         """Return the most-recent captured child output lines, joined."""
         lines = list(self._recent_output)
-        return "".join(lines[-max_lines:])
+        return "".join(lines[-_RECENT_OUTPUT_TAIL_LINES:])
 
     def _ready_probe(self) -> bool:
         # Until the child binds its port, a poll would otherwise wait out the
@@ -917,14 +906,6 @@ class QdrantSupervisor:
         proc = self._proc
         child_stopped = proc is None or proc.poll() is not None
         if proc is not None and proc.poll() is None:
-            from .._test_isolation import (
-                enforce_pytest_managed_singleton_containment,
-            )
-
-            enforce_pytest_managed_singleton_containment(
-                operation="stop a supervised managed Qdrant process",
-                targets=(self.storage_dir,),
-            )
             try:
                 if sys.platform == "win32":
                     proc.terminate()

@@ -925,7 +925,7 @@ _ROUND_TRIP_CASES = _round_trip_cases()
 
 
 def _generation(*jobs: JobSnapshot) -> PersistedManagerState:
-    return PersistedManagerState(jobs=jobs, bindings=())
+    return PersistedManagerState(jobs=jobs)
 
 
 def _age(path: Path, seconds: float) -> None:

@@ -63,7 +63,6 @@ __all__ = [
     "index_codebase",
     "index_documents",
     "list_documents",
-    "run_benchmark",
     "run_quality_probe",
     "scan_codebase",
     "scan_codebase_files",
@@ -938,121 +937,6 @@ def scan_codebase_files(
             sample_limit=0,
         ).files
     )
-
-
-def run_benchmark(
-    root_dir: pathlib.Path,
-    *,
-    n_queries: int = 20,
-    registry: ServiceRegistry,
-) -> dict[str, Any]:
-    """Run search latency benchmarks against the indexed vault.
-
-    Args:
-        root_dir: Workspace root directory.
-        n_queries: Number of search queries to time.
-
-    Returns:
-        Dict containing benchmark results: p50, p95, p99, mean, stdev,
-        vault_count, code_count, gpu, accelerator_backend, memory_kind,
-        memory_allocated_mib, vram_mib.
-    """
-    import statistics
-    import time
-
-    root = _resolve(root_dir)
-    with registry.lease_store(root) as store:
-        vault_count = store.count()
-        if vault_count == 0:
-            raise ValueError("No vault documents indexed.")
-
-        code_count = store.count_code()
-
-    benchmark: dict[str, object] | None = None
-    with registry.search_lease(root) as lease:
-        # Warmup
-        lease.searcher.search_vault("warmup", top_k=1)
-
-        _bench_queries = [
-            "architecture decision",
-            "pipeline execution model",
-            "connector protocol design",
-            "security audit vulnerability",
-            "implementation plan phase",
-            "type:adr architecture",
-            "feature:pipeline-engine execution",
-            "scheduler algorithm selection",
-            "pipeline executor implementation",
-            "dag execution research",
-            "data transformation pipeline",
-            "worker pool thread",
-            "type:plan implementation",
-            "semantic search embedding",
-            "Qdrant vector store",
-            "date:2026-01 decisions",
-            "checkpoint storage performance",
-            "connector grpc streaming",
-            "execution graph dependency",
-            "incremental indexing hash",
-        ]
-
-        latencies: list[float] = []
-        for i in range(n_queries):
-            q = _bench_queries[i % len(_bench_queries)]
-            t0 = time.perf_counter()
-            lease.searcher.search_vault(q, top_k=5)
-            latencies.append((time.perf_counter() - t0) * 1000)
-
-        latencies.sort()
-        p50 = latencies[n_queries // 2]
-        p95 = latencies[int(n_queries * 0.95)]
-        p99 = latencies[int(n_queries * 0.99)]
-        mean = statistics.mean(latencies)
-        stdev = statistics.stdev(latencies) if len(latencies) > 1 else 0.0
-
-        accelerator = None
-        try:
-            import torch
-
-            from ._gpu import resolve_accelerator
-
-            accelerator = resolve_accelerator(torch)
-        except (ImportError, RuntimeError):
-            pass
-
-        memory = None
-        if accelerator is not None:
-            from .memory_probe import accelerator_memory
-
-            memory = accelerator_memory()
-        allocated_mib = memory.allocated_mib if memory is not None else None
-        vram_mib = (
-            allocated_mib
-            if accelerator is not None and accelerator.memory_kind == "vram"
-            else None
-        )
-
-        benchmark = {
-            "p50": p50,
-            "p95": p95,
-            "p99": p99,
-            "mean": mean,
-            "stdev": stdev,
-            "vault_count": vault_count,
-            "code_count": code_count,
-            "gpu": accelerator.name if accelerator is not None else "N/A",
-            "accelerator_backend": (
-                accelerator.backend if accelerator is not None else None
-            ),
-            "memory_kind": (
-                accelerator.memory_kind if accelerator is not None else None
-            ),
-            "memory_allocated_mib": allocated_mib,
-            "vram_mib": vram_mib,
-        }
-    if benchmark is None:
-        raise RuntimeError("benchmark search lease ended without a result")
-    return benchmark
 
 
 def run_quality_probe(

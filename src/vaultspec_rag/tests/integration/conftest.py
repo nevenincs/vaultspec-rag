@@ -597,9 +597,9 @@ def _live_service_context(
     daemon was started under, so a caller outliving a single test can re-point
     each test's client at this exact daemon.
     """
-    from ...cli._process import _spawn_service
     from ...cli._service_status import _write_service_status
     from .._ports import free_loopback_port
+    from .._session_job_anchor import spawn_anchored_service
     from ._helpers import (
         _poll_health,
         _service_env,
@@ -636,7 +636,7 @@ def _live_service_context(
             port = free_loopback_port()
             startup.current_stage = "service spawn"
             stage_started = time.monotonic()
-            pid = _spawn_service(
+            pid = spawn_anchored_service(
                 port,
                 startup.log_path,
                 watch=watch,

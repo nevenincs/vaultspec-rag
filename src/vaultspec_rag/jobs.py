@@ -1080,9 +1080,12 @@ async def activate_index_job(
 ) -> JobOutcome:
     """Bind and dispatch one newly admitted job without blocking its event loop.
 
-    Replayed or deduplicated creation outcomes already refer to an activated
-    resource and are returned unchanged. Newly created paused jobs are bound
-    but remain inert until their desired state changes to ``running``. Code
+    Error outcomes, and creation outcomes deduplicated against equivalent
+    active work, already refer to an activated resource or to none and are
+    returned unchanged. A created job whose snapshot desires ``paused`` is
+    bound but stays inert until its desired state changes to ``running``; any
+    other created job is dispatched, stays queued when dispatch is stopped for
+    shutdown, and is failed durably when dispatch refuses it. Code
     admission must be validated before durable creation. Activation accepts the
     exact domain authority that admitted the resource; runnable attempts then
     rediscover so paused, retried, and restored work cannot use stale scope.

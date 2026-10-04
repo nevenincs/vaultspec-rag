@@ -1004,7 +1004,6 @@ class JobManagerControl(JobManagerQuiesceControl):
                     attribution=RequestAttribution(job_id=job_id),
                 )
             self._terminal.remove(terminal)
-            self._forget_idempotency_locked(job_id)
             persistence_error = self._persist_locked()
             if persistence_error is not None:
                 if not persistence_error.published:

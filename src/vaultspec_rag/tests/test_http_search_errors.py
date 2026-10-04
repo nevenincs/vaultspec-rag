@@ -326,11 +326,6 @@ def test_mutating_routes_reject_a_closed_runtime_before_global_or_gpu_work(
                 headers=headers,
                 json={"project_root": str(root), "type": "vault"},
             )
-            benchmark = client.post(
-                "/benchmark",
-                headers=headers,
-                json={"project_root": str(root), "n_queries": 1},
-            )
             quality = client.post("/quality", headers=headers)
 
         assert global_registry is not runtime_registry
@@ -340,7 +335,6 @@ def test_mutating_routes_reject_a_closed_runtime_before_global_or_gpu_work(
         clean_domains = clean.json()["domains"]
         assert clean_domains["vault"]["error_kind"] == "RuntimeError"
         assert clean_domains["vault"]["detail"] == "ServiceRegistry is shutting down"
-        assert benchmark.status_code == 500, benchmark.text
         assert quality.status_code == 500, quality.text
     finally:
         runtime_registry.close_all()

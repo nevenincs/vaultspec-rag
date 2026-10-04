@@ -50,16 +50,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "MAX_IDEMPOTENCY_KEY_LENGTH",
-    "IdempotencyBinding",
     "NewerStateVersionError",
     "PersistedManagerState",
     "PersistenceWriteError",
     "load_persisted_state",
     "save_persisted_state",
 ]
-
-MAX_IDEMPOTENCY_KEY_LENGTH = 256
 
 _SCHEMA = "vaultspec.rag.jobs"
 
@@ -73,35 +69,11 @@ _VERSION = 2
 _ORPHANED_TEMPORARY_GRACE_SECONDS = 24 * 60 * 60
 
 
-#: Stated once because the reader narrows this field and the producer is held
-#: to it; two spellings of one requirement is how the pair drifts apart.
-_START_PAUSED_REQUIREMENT = "idempotency start_paused must be boolean"
-
-
-@dataclass(frozen=True, slots=True)
-class IdempotencyBinding:
-    """One durable request signature bound to its exact logical job."""
-
-    signature: tuple[JobSpec, JobInitiator, bool]
-    job_id: str
-
-    def __post_init__(self) -> None:
-        _required_str(self.job_id, "idempotency job_id")
-        # The reader checks this flag's type explicitly, so anything else
-        # written here is a binding that loads fine today and is refused on
-        # the next start, in another process. Refused at the producer instead.
-        _typed_fields.required_bool(
-            self.signature[2],
-            on_invalid=lambda: TypeError(_START_PAUSED_REQUIREMENT),
-        )
-
-
 @dataclass(frozen=True, slots=True)
 class PersistedManagerState:
     """One complete generation of manager-owned durable values."""
 
     jobs: tuple[JobSnapshot, ...]
-    bindings: tuple[tuple[str, IdempotencyBinding], ...]
 
 
 class PersistenceWriteError(Exception):
@@ -259,28 +231,6 @@ def _persisted_manager_state_to_dict(
         "schema": _SCHEMA,
         "version": _VERSION,
         "jobs": [job.to_dict() for job in state.jobs],
-        "idempotency": [
-            _idempotency_binding_to_dict(key, binding)
-            for key, binding in state.bindings
-        ],
-    }
-
-
-def _idempotency_binding_to_dict(
-    key: str,
-    binding: IdempotencyBinding,
-) -> dict[str, object]:
-    spec, initiator, start_paused = binding.signature
-    return {
-        "key": key,
-        "job_id": binding.job_id,
-        "spec": spec.to_dict(),
-        "initiator": {
-            "kind": initiator.kind,
-            "command": initiator.command,
-            "project_root": initiator.project_root,
-        },
-        "start_paused": start_paused,
     }
 
 
@@ -306,36 +256,13 @@ def _parse_persisted_manager_state(payload: object) -> PersistedManagerState:
     ids = [job.id for job in jobs]
     if len(ids) != len(set(ids)):
         raise ValueError("persisted job IDs must be unique")
-
-    raw_bindings = _required_list(root.get("idempotency"), "idempotency")
-    bindings: list[tuple[str, IdempotencyBinding]] = []
-    keys: set[str] = set()
-    for item in raw_bindings:
-        record = _required_mapping(item, "idempotency entry")
-        key = _required_str(record.get("key"), "idempotency key")
-        if len(key) > MAX_IDEMPOTENCY_KEY_LENGTH:
-            raise ValueError("persisted idempotency key exceeds the supported length")
-        if key in keys:
-            raise ValueError("persisted idempotency keys must be unique")
-        keys.add(key)
-        job_id = _required_str(record.get("job_id"), "idempotency job_id")
-        spec = _job_spec_from_dict(record.get("spec"))
-        initiator = _job_initiator_from_dict(record.get("initiator"))
-        start_paused = _typed_fields.required_bool(
-            record.get("start_paused"),
-            on_invalid=lambda: TypeError(_START_PAUSED_REQUIREMENT),
-        )
-        bindings.append(
-            (
-                key,
-                IdempotencyBinding(
-                    signature=(spec, initiator, start_paused),
-                    job_id=job_id,
-                ),
-            )
-        )
-    _validate_persisted_generation(jobs, bindings)
-    return PersistedManagerState(jobs=tuple(jobs), bindings=tuple(bindings))
+    # A file written by an earlier release of this layout carries an
+    # ``idempotency`` section. Nothing reads replay bindings any more, so the
+    # key is skipped rather than parsed: an operator's existing state file
+    # must still load, and refusing a key this build no longer needs would
+    # strand their job history on upgrade.
+    _validate_persisted_generation(jobs)
+    return PersistedManagerState(jobs=tuple(jobs))
 
 
 def _validate_schema_header(root: dict[str, object]) -> None:
@@ -361,11 +288,7 @@ def _validate_schema_header(root: dict[str, object]) -> None:
         )
 
 
-def _validate_persisted_generation(
-    jobs: list[JobSnapshot],
-    bindings: list[tuple[str, IdempotencyBinding]],
-) -> None:
-    by_id = {job.id: job for job in jobs}
+def _validate_persisted_generation(jobs: list[JobSnapshot]) -> None:
     active_identities: set[
         tuple[JobOperation, JobSource, JobMode | None, RunAuthority, str | None]
     ] = set()
@@ -376,19 +299,6 @@ def _validate_persisted_generation(
             if identity in active_identities:
                 raise ValueError("persisted active jobs contain equivalent work")
             active_identities.add(identity)
-
-    for key, binding in bindings:
-        referenced = by_id.get(binding.job_id)
-        if referenced is None:
-            raise ValueError(f"idempotency key {key!r} references a missing job")
-        spec, _initiator, _start_paused = binding.signature
-        spec_error = job_spec_error(spec)
-        if spec_error is not None:
-            raise ValueError(f"idempotency key {key!r}: {spec_error}")
-        if active_work_identity(spec) != active_work_identity(referenced.spec):
-            raise ValueError(
-                f"idempotency key {key!r} does not identify equivalent work"
-            )
 
 
 def _validate_persisted_job(job: JobSnapshot) -> None:

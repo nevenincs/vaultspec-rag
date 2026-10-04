@@ -7,6 +7,7 @@ import os
 import socket
 import threading
 import time
+import urllib.request
 import uuid
 from typing import TYPE_CHECKING
 
@@ -36,6 +37,11 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 pytestmark = pytest.mark.unit
+
+
+#: Generous because the parallel lane starves the server and the app's first
+#: poll; a hang still fails within it.
+_SCREEN_WAIT_SECONDS = 20.0
 
 
 @pytest.fixture
@@ -71,6 +77,13 @@ def monitor_http(isolated_status_dir: Path) -> Iterator[tuple[int, Path]]:
             if not worker.is_alive() or time.monotonic() >= deadline:
                 raise TimeoutError("production test routes did not start")
             time.sleep(0.005)
+        # A daemon has its accelerator stack loaded before it serves; this
+        # in-process server loads it on the first health reading instead, which
+        # outlasts the monitor's one-second health probe. Answer one first.
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/health", timeout=_SCREEN_WAIT_SECONDS
+        ) as response:
+            assert response.status == 200
         yield port, isolated_status_dir
     finally:
         server.should_exit = True
@@ -80,8 +93,19 @@ def monitor_http(isolated_status_dir: Path) -> Iterator[tuple[int, Path]]:
             raise TimeoutError("production test routes did not stop")
 
 
+async def _wait_for_selection(app: ServerWatchApp, job_id: str) -> None:
+    """Wait until a poll has listed and selected *job_id*."""
+    deadline = time.monotonic() + _SCREEN_WAIT_SECONDS
+    while app.selected_id != job_id:
+        if time.monotonic() >= deadline:
+            raise AssertionError(
+                f"the job list never selected {job_id!r}: {_screen_text(app)}"
+            )
+        await asyncio.sleep(0.01)
+
+
 async def _wait_for_log(app: ServerWatchApp, expected: str) -> str:
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + _SCREEN_WAIT_SECONDS
     while time.monotonic() < deadline:
         rendered = _screen_text(app)
         if expected in rendered:
@@ -116,7 +140,9 @@ async def test_selected_job_and_request_logs_update_without_reselection(
     app = ServerWatchApp(fetch=fetch_jobs, port=port, interval=1, watch_mode="server")
     try:
         async with app.run_test(size=size) as pilot:
-            await pilot.pause()
+            # Focusing the log before the first poll has listed the job
+            # selects nothing, so the press would open an empty pane.
+            await _wait_for_selection(app, job_id)
             await pilot.press("l")
             await _wait_for_log(app, "initial-job")
             with path.open("a", encoding="utf-8") as log:

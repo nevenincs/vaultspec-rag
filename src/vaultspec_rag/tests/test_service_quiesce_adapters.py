@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 import pytest
+from vaultspec_core.env_values import BOOL_SHAPE
 
 from ..config._types import EnvVar
 from ..service_quiesce import (
@@ -309,6 +310,6 @@ async def test_jobs_tui_shows_quiesce_unavailable_after_a_route_error(
         )
 
     assert retained is None
-    assert fetch_error == "controllable must be true or false when provided."
+    assert fetch_error == f"controllable must be {BOOL_SHAPE} when provided."
     assert "quiesce unavailable" in painted
     assert "borrower safety safe" not in painted

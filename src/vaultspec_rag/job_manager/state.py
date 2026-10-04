@@ -12,7 +12,7 @@ from .models import JobAttemptContext, JobExecutionResult, QuiescedDispatchClaim
 if TYPE_CHECKING:
     import asyncio
     import threading
-    from collections import OrderedDict, deque
+    from collections import deque
     from pathlib import Path
     from typing import Literal
 
@@ -25,7 +25,6 @@ if TYPE_CHECKING:
         ShutdownRequested,
     )
     from ..job_models import (
-        JobInitiator,
         JobOutcome,
         JobRuntimeSnapshot,
         JobSpec,
@@ -66,13 +65,10 @@ if TYPE_CHECKING:
         _active: dict[str, ManagedJob]
         _dispatchers: dict[str, JobDispatchBinding]
         _flushed_generation: int
-        _idempotency: OrderedDict[str, _job_persistence.IdempotencyBinding]
-        _job_idempotency_keys: dict[str, set[str]]
         _last_flush_monotonic: float
         _lifecycle_state: JobLifecycleState
         _lock: threading.RLock
         _on_controller_target: Callable[[JobSnapshot], object] | None
-        _max_idempotency: int
         _max_nonterminal: int
         _max_terminal_history: int
         _next_dispatch_binding_nonce: int
@@ -90,12 +86,6 @@ if TYPE_CHECKING:
 
         def _archive_terminal_locked(self, managed: ManagedJob) -> None: ...
         def _begin_progress_flush_locked(self) -> PendingProgressFlush | None: ...
-        def _bind_idempotency_locked(
-            self,
-            key: str,
-            signature: tuple[JobSpec, JobInitiator, bool],
-            job_id: str,
-        ) -> None: ...
         def _capture_state_locked(self) -> ManagerStateBackup: ...
         def _clear_quiesced_dispatch_claim_locked(
             self, claim: QuiescedDispatchClaim | None
@@ -121,7 +111,6 @@ if TYPE_CHECKING:
         def _find_equivalent_active_locked(
             self, spec: JobSpec
         ) -> JobSnapshot | None: ...
-        def _forget_idempotency_locked(self, job_id: str) -> None: ...
         def _get_locked(self, job_id: str) -> JobSnapshot | None: ...
         def _get_terminal_locked(self, job_id: str) -> ManagedJob | None: ...
         def _live_runtime_ids_locked(self) -> tuple[str, ...]: ...
@@ -270,7 +259,5 @@ class ManagerStateBackup:
     terminal: deque[ManagedJob]
     snapshots: dict[str, JobSnapshot]
     runtimes: dict[str, JobRuntimeOwner]
-    idempotency: OrderedDict[str, _job_persistence.IdempotencyBinding]
-    job_idempotency_keys: dict[str, set[str]]
     dispatchers: dict[str, JobDispatchBinding]
     persistence_dirty: bool

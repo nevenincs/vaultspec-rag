@@ -16,16 +16,14 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-# Identify pytest before importing project modules or collecting test modules.
-# Until pytest_configure pins the session root, guarded effects fail closed.
-_PYTEST_SINGLETON_BOOTSTRAP_ENV = "_VAULTSPEC_RAG_PYTEST_SINGLETON_BOOTSTRAP"
-_PRIOR_PYTEST_SINGLETON_BOOTSTRAP = os.environ.get(_PYTEST_SINGLETON_BOOTSTRAP_ENV)
-os.environ[_PYTEST_SINGLETON_BOOTSTRAP_ENV] = "1"
+import pytest
 
-import pytest  # noqa: E402  # bootstrap sentinel must precede project imports
+from vaultspec_rag.config._types import EnvVar
+from vaultspec_rag.tests._singleton_root_fixtures import (
+    PYTEST_SESSION_ACTIVE_ENV,
+    PYTEST_SESSION_ROOT_ENV,
+)
 
-_PYTEST_SINGLETON_ACTIVE_ENV = "_VAULTSPEC_RAG_PYTEST_SINGLETON_ACTIVE"
-_PYTEST_SINGLETON_ROOT_ENV = "_VAULTSPEC_RAG_PYTEST_SINGLETON_ROOT"
 #: Set by the process that took the borrower lease, on the pytest process it
 #: starts inside that borrow. It says "somebody above you already borrowed the
 #: GPU" and nothing more: the session still proves the loan reaches it by
@@ -40,13 +38,11 @@ _PYTEST_GPU_TIER_PROBE_ENV = "_VAULTSPEC_RAG_PYTEST_GPU_TIER_PROBE"
 #: this harness did not choose is never read as one of them.
 _PROBE_GPU_TIER_SELECTED = 70
 _PROBE_NO_GPU_TIER = 71
-_STATUS_DIR_ENV = "VAULTSPEC_RAG_STATUS_DIR"
-_QDRANT_STORAGE_DIR_ENV = "VAULTSPEC_RAG_QDRANT_STORAGE_DIR"
 _SINGLETON_ENV_NAMES = (
-    _PYTEST_SINGLETON_ACTIVE_ENV,
-    _PYTEST_SINGLETON_ROOT_ENV,
-    _STATUS_DIR_ENV,
-    _QDRANT_STORAGE_DIR_ENV,
+    PYTEST_SESSION_ACTIVE_ENV,
+    PYTEST_SESSION_ROOT_ENV,
+    EnvVar.STATUS_DIR.value,
+    EnvVar.QDRANT_STORAGE_DIR.value,
 )
 _singleton_prior_env: dict[str, str | None] | None = None
 _singleton_root: Path | None = None
@@ -64,9 +60,8 @@ if TYPE_CHECKING:
 
 # The tier vocabulary and its collection-time gate live in the package, at
 # vaultspec_rag.tests._tier_gate, so they can be exercised by ordinary tests.
-# They are imported inside the hooks below rather than here: this module runs
-# before the pytest session pins its root, and the guarded effects above must
-# stay the first thing that happens.
+# They are imported inside the hooks below rather than here, because the gate
+# reaches the CLI and this module is loaded by every invocation.
 
 
 # ===========================================================================
@@ -280,19 +275,19 @@ def _require_host_provisioned_qdrant_for_gpu_tier() -> None:
 #  WHY THE SESSION RUNS IN A CHILD. The call has to see the operator's real
 #  service, and the session must not. Those are not reconcilable in one
 #  process: `pytest_configure` points the managed directories at a temporary
-#  root and PINS that root for the life of the process, deliberately one-way,
-#  so that nothing a test does to the environment can move the boundary
-#  afterwards. Every production effect on a real managed path is refused from
-#  that moment on - the borrow's own resume and release included.
+#  root and installs the audit hook that refuses every mutation of the real
+#  ones for the rest of the process - the borrow's own resume and release
+#  included.
 #
 #  So the borrow is taken BEFORE any of that exists. This hook runs ahead of
-#  `pytest_configure` (the default `pytest_cmdline_main` is what calls it), in
-#  a process that has pinned nothing, with the operator's own configuration
-#  still ambient. The suite then runs as a child pytest, which does its own
-#  isolation and pins its own root, while this process holds the lease and
-#  does nothing else. The loan the service records covers the borrower's whole
-#  process tree, so the child is inside it; its own check proves that rather
-#  than assuming it.
+#  `pytest_configure` (the default `pytest_cmdline_main` is what calls it), and
+#  returning a status from here means `pytest_configure` is never reached in
+#  this process at all: no redirection, no guard, the operator's own
+#  configuration still ambient. The suite then runs as a child pytest, which
+#  does its own isolation and installs its own guard, while this process holds
+#  the lease and does nothing else. The loan the service records covers the
+#  borrower's whole process tree, so the child is inside it; its own check
+#  proves that rather than assuming it.
 #
 #  WHAT DECIDES. Only a selection that actually holds a GPU-tier test may
 #  pause the operator's service, and the marker expression cannot answer that:
@@ -304,12 +299,6 @@ def _require_host_provisioned_qdrant_for_gpu_tier() -> None:
 #  borrows nothing, runs nothing, and reaches no service. An answer that is
 #  neither of its two statuses is a collection fault, and this process stands
 #  aside so the ordinary in-process run reports it exactly as it always did.
-#
-#  The only marker switched is this harness's own bootstrap sentinel, which is
-#  set at import so that effects before the root is pinned fail closed. It is
-#  cleared across the borrow - this process pins no root and runs no test, so
-#  there is nothing here for containment to protect - and restored afterwards.
-#  The child sets its own on import.
 # ===========================================================================
 
 #: Options that collect, list or explain and then stop. None of them reaches a
@@ -329,7 +318,7 @@ def _session_borrows_the_gpu(config: pytest.Config) -> bool:
     """Whether this process should take the borrower lease for its session."""
     if os.environ.get(_PYTEST_GPU_BORROWED_ENV) == "1":
         return False
-    if os.environ.get(_PYTEST_SINGLETON_ACTIVE_ENV) == "1":
+    if os.environ.get(PYTEST_SESSION_ACTIVE_ENV) == "1":
         # Inherited containment: an outer pytest session owns this process
         # tree, so the borrow - if the tier needs one - is already held above.
         return False
@@ -472,7 +461,6 @@ def pytest_cmdline_main(config: pytest.Config) -> int | None:
         file=sys.stderr,
     )
     status = 1
-    prior_bootstrap = os.environ.pop(_PYTEST_SINGLETON_BOOTSTRAP_ENV, None)
 
     def run_the_suite() -> None:
         nonlocal status
@@ -483,9 +471,6 @@ def pytest_cmdline_main(config: pytest.Config) -> int | None:
     except BorrowGPUError as exc:
         print(f"pytest: {exc}", file=sys.stderr)
         return 1
-    finally:
-        if prior_bootstrap is not None:
-            os.environ[_PYTEST_SINGLETON_BOOTSTRAP_ENV] = prior_bootstrap
     return status
 
 
@@ -545,8 +530,25 @@ def pytest_configure(config: pytest.Config) -> None:
         return
 
     _singleton_prior_env = {name: os.environ.get(name) for name in _SINGLETON_ENV_NAMES}
-    inherited_root = os.environ.get(_PYTEST_SINGLETON_ROOT_ENV)
-    inherited_active = os.environ.get(_PYTEST_SINGLETON_ACTIVE_ENV) == "1"
+    inherited_root = os.environ.get(PYTEST_SESSION_ROOT_ENV)
+    inherited_active = os.environ.get(PYTEST_SESSION_ACTIVE_ENV) == "1"
+
+    # Before the redirection below, while the ambient configuration still names
+    # the operator's own directories. This hook runs for the rest of the
+    # process and is the backstop for a managed path the redirection misses.
+    # It is installed here rather than at import so the GPU-borrowing parent -
+    # which runs no test, keeps the operator's configuration and deliberately
+    # drives the production borrow against the real service - never reaches it:
+    # returning from pytest_cmdline_main means this hook is never called there.
+    from vaultspec_rag.tests._operator_directory_guard import (
+        install_operator_directory_guard,
+        operator_managed_roots,
+    )
+
+    install_operator_directory_guard(
+        operator_managed_roots(inherited_isolation=inherited_active)
+    )
+
     if inherited_active and inherited_root:
         root = Path(inherited_root).expanduser().resolve()
     else:
@@ -571,17 +573,17 @@ def pytest_configure(config: pytest.Config) -> None:
     status_dir.mkdir(parents=True, exist_ok=True)
     qdrant_storage_dir.mkdir(parents=True, exist_ok=True)
 
-    os.environ[_PYTEST_SINGLETON_ACTIVE_ENV] = "1"
-    os.environ[_PYTEST_SINGLETON_ROOT_ENV] = str(root)
-    os.environ[_STATUS_DIR_ENV] = str(status_dir)
-    os.environ[_QDRANT_STORAGE_DIR_ENV] = str(qdrant_storage_dir)
+    os.environ[PYTEST_SESSION_ACTIVE_ENV] = "1"
+    os.environ[PYTEST_SESSION_ROOT_ENV] = str(root)
+    os.environ[EnvVar.STATUS_DIR.value] = str(status_dir)
+    os.environ[EnvVar.QDRANT_STORAGE_DIR.value] = str(qdrant_storage_dir)
 
-    from vaultspec_rag._test_isolation import register_pytest_singleton_root
+    from vaultspec_rag.tests._operator_directory_guard import canonical_path
     from vaultspec_rag.tests._singleton_root_fixtures import (
         sweep_orphaned_singleton_roots,
     )
 
-    _singleton_root = register_pytest_singleton_root(root)
+    _singleton_root = canonical_path(root)
     _reset_singleton_config_caches()
     if _singleton_root_owned:
         # Register an atexit backstop so a soft exit that bypasses
@@ -621,10 +623,6 @@ def pytest_unconfigure(config: pytest.Config) -> None:
             else:
                 os.environ[name] = value
         _reset_singleton_config_caches()
-    if _PRIOR_PYTEST_SINGLETON_BOOTSTRAP is None:
-        os.environ.pop(_PYTEST_SINGLETON_BOOTSTRAP_ENV, None)
-    else:
-        os.environ[_PYTEST_SINGLETON_BOOTSTRAP_ENV] = _PRIOR_PYTEST_SINGLETON_BOOTSTRAP
     if root is not None:
         from vaultspec_rag.tests._singleton_root_fixtures import (
             reclaim_singleton_paths,

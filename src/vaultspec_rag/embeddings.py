@@ -674,6 +674,7 @@ class EmbeddingModel:
         accelerator = _check_rag_deps()
         torch = accelerator.torch
         self._accelerator = accelerator
+        self._device = accelerator.device
 
         from .config._settings import get_config
 
@@ -753,7 +754,7 @@ class EmbeddingModel:
         else:
             self._load_sparse_model(sparse_name, local_files_only=local_files_only)
 
-        self._init_encode_state(cfg, device=accelerator.device)
+        self._init_encode_state(cfg)
 
         logger.info(
             "Embedding models loaded on %s (dense=%s, sparse=%s, dense_dim=%d, "
@@ -765,28 +766,21 @@ class EmbeddingModel:
             self.sparse_dimension,
         )
 
-    def _init_encode_state(
-        self,
-        cfg: VaultSpecConfigWrapper,
-        *,
-        device: str,
-    ) -> None:
+    def _init_encode_state(self, cfg: VaultSpecConfigWrapper) -> None:
         """Set the encode state that does not depend on which weights loaded.
 
         Everything here is derived from configuration rather than from a
         loaded model, so it is the whole of what an instance needs before
-        an encode call is legal. Keeping it in one method is what lets a
-        caller holding an already-constructed backend reach the same state
-        without a second copy of these assignments drifting away from this
-        one: a missing knob surfaces as an attribute error several frames
-        inside a bucket plan, far from the assignment that was never made.
+        an encode call is legal. Keeping it in one method keeps those knobs
+        together: a missing one surfaces as an attribute error several
+        frames inside a bucket plan, far from the assignment that was never
+        made.
         """
         self.dimension: int = (
             cfg.embedding_dimension
             if hasattr(cfg, "embedding_dimension")
             else self.DEFAULT_DIMENSION
         )
-        self._device = device
         self.query_cache = QueryEmbeddingCache()
         self._dense_batch_ceiling = EncodeBatchCeiling()
         self._sparse_batch_ceiling = EncodeBatchCeiling()
@@ -1176,11 +1170,8 @@ class EmbeddingModel:
 
         sparse_model = self._require_sparse_model()
         prepared = sparse_model.prepare(bucket_texts, kind="document")
-        if gpu_lock is None:
+        with timed_gpu_lock(gpu_lock), cuda_forward_peak_capture():
             accelerator_tensor = sparse_model.forward(prepared)
-        else:
-            with timed_gpu_lock(gpu_lock), cuda_forward_peak_capture():
-                accelerator_tensor = sparse_model.forward(prepared)
         cpu_tensor = accelerator_tensor.cpu()
         del accelerator_tensor
         return _sparse_tensor_to_results(cpu_tensor, self._accelerator)

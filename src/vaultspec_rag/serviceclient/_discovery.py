@@ -156,12 +156,7 @@ def _status_dir() -> Path:
     from ..config._settings import managed_status_dir
 
     d = managed_status_dir()
-    from .._test_isolation import enforce_pytest_managed_singleton_containment
 
-    enforce_pytest_managed_singleton_containment(
-        operation="create the managed service status directory",
-        targets=(d,),
-    )
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -206,12 +201,7 @@ def _unlock_fd(fd: int) -> None:
 @contextmanager
 def status_write_lock(path: Path, *, timeout: float = 1.0) -> Generator[None]:
     """Serialize cross-process status merges with one bounded OS file lock."""
-    from .._test_isolation import enforce_pytest_managed_singleton_containment
 
-    enforce_pytest_managed_singleton_containment(
-        operation="acquire the managed service status write lock",
-        targets=(path,),
-    )
     lock_path = path.with_name("service.json.lock")
     fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
     acquired = False
@@ -339,12 +329,7 @@ def _replace_service_status(
     the complete snapshot makes missing and corrupt operator views repairable.
     """
     path = path or _status_file()
-    from .._test_isolation import enforce_pytest_managed_singleton_containment
 
-    enforce_pytest_managed_singleton_containment(
-        operation="replace the managed service status snapshot",
-        targets=(path,),
-    )
     # Before the lock, not inside it: the lock file is a sibling opened with
     # O_CREAT, so the directory has to exist to take the lock at all. Leaving
     # this to the writer put the mkdir after the acquisition, and heartbeat

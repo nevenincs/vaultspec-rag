@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from contextlib import contextmanager
 from itertools import pairwise
 from typing import TYPE_CHECKING, ClassVar, Protocol, cast
 
@@ -17,6 +18,7 @@ from ..embeddings import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
     from types import ModuleType
 
     import torch
@@ -696,6 +698,41 @@ class TestBucketedSparseEncode:
         assert model._encode_sparse_batch(["text"], gpu_lock)[0].values == [1.0]
         assert model.encode_query_sparse("text", gpu_lock=gpu_lock).values == [1.0]
         assert events == ["document", "forward", "cpu", "query", "forward", "cpu"]
+
+    def test_lockless_sparse_forward_captures_peak_like_the_dense_path(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A ``None`` gpu_lock no longer skips the forward peak capture bracket.
+
+        The dense path always brackets its forward in
+        ``cuda_forward_peak_capture``, lock or no lock, because a ``None``
+        lock only means single-tenant local use, not that nothing forwarded.
+        The sparse path used to skip the bracket entirely on a ``None`` lock;
+        this proves it now enters it exactly like the locked branch, so a
+        direct, lockless construction still gets an attributed peak reading
+        instead of a silent gap. A real capture cannot be told apart from a
+        no-op without a CUDA device, so the bracket itself is substituted to
+        count entries; the forward and the sparse-to-dense tensor path stay
+        real.
+        """
+        from .. import memory_probe
+
+        entries: list[bool] = []
+
+        @contextmanager
+        def _recording_capture() -> Generator[None]:
+            entries.append(True)
+            yield
+
+        monkeypatch.setattr(
+            memory_probe, "cuda_forward_peak_capture", _recording_capture
+        )
+        fake = _BucketRecordingSparseModel()
+        model = _model_shell()
+        model._sparse_model = cast("SparseModelAdapter", fake)
+        results = model._encode_sparse_batch(["text"], None)
+        assert results[0].values[0] == 4.0
+        assert entries == [True]
 
     def test_oom_discards_only_the_failing_bucket(self):
         texts = _distinct_texts(6)

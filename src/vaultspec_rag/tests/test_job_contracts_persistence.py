@@ -27,7 +27,6 @@ from ..job_models import (
     capabilities_for_state,
 )
 from ..job_persistence import (
-    IdempotencyBinding,
     NewerStateVersionError,
     PersistedManagerState,
     PersistenceWriteError,
@@ -93,35 +92,18 @@ def _assert_authority_create_lifecycle(
     other_spec: JobSpec,
     authority: RunAuthority,
 ) -> JobSnapshot:
-    """Assert creation, replay, conflict, and distinct-job authority rules."""
-    created = manager.create(
-        spec,
-        initiator,
-        idempotency_key="closed-authority-key",
-    )
+    """Assert creation, deduplication, and distinct-job authority rules."""
+    created = manager.create(spec, initiator)
     assert created.code == "job_created"
     assert created.job is not None
     created_job = created.job
     assert created_job.spec.authority is authority
 
-    replayed = manager.create(
-        spec,
-        initiator,
-        idempotency_key="closed-authority-key",
-    )
-    assert replayed.code == "idempotency_replayed"
-    assert replayed.job is not None
-    assert replayed.job.id == created_job.id
-    assert replayed.job.spec.authority is authority
-
-    conflict = manager.create(
-        other_spec,
-        initiator,
-        idempotency_key="closed-authority-key",
-    )
-    assert conflict.code == "idempotency_key_conflict"
-    assert conflict.job is not None
-    assert conflict.job.spec.authority is authority
+    deduplicated = manager.create(spec, initiator)
+    assert deduplicated.code == "active_job_exists"
+    assert deduplicated.job is not None
+    assert deduplicated.job.id == created_job.id
+    assert deduplicated.job.spec.authority is authority
 
     distinct = manager.create(other_spec, initiator)
     assert distinct.code == "job_created"
@@ -150,11 +132,10 @@ def _assert_authority_restart(
     state_path: Path,
     initiator: JobInitiator,
     spec: JobSpec,
-    created_and_retried: tuple[JobSnapshot, JobSnapshot],
+    retried: JobSnapshot,
     authority: RunAuthority,
 ) -> None:
     """Assert restart restores both retry history and deduplication authority."""
-    created, retried = created_and_retried
     restored = JobManager(
         quiesce_controller=ServiceQuiesceController(),
         max_nonterminal=4,
@@ -164,16 +145,6 @@ def _assert_authority_restart(
     restored_retry = restored.get(retried.id)
     assert restored_retry is not None
     assert restored_retry.spec.authority is authority
-
-    replayed_after_restart = restored.create(
-        spec,
-        initiator,
-        idempotency_key="closed-authority-key",
-    )
-    assert replayed_after_restart.code == "idempotency_replayed"
-    assert replayed_after_restart.job is not None
-    assert replayed_after_restart.job.id == created.id
-    assert replayed_after_restart.job.spec.authority is authority
 
     deduplicated_after_restart = restored.create(spec, initiator)
     assert deduplicated_after_restart.code == "active_job_exists"
@@ -212,18 +183,7 @@ class TestPersistedJobStateRoundTrip:
             JobState.QUEUED,
             spec=replace(_spec(), authority=authority),
         )
-        state = PersistedManagerState(
-            jobs=(snapshot,),
-            bindings=(
-                (
-                    "closed-authority",
-                    IdempotencyBinding(
-                        signature=(snapshot.spec, snapshot.initiator, False),
-                        job_id=snapshot.id,
-                    ),
-                ),
-            ),
-        )
+        state = PersistedManagerState(jobs=(snapshot,))
         path = tmp_path / "jobs-state.json"
 
         save_persisted_state(path, state)
@@ -232,39 +192,8 @@ class TestPersistedJobStateRoundTrip:
             "dict[str, object]", json.loads(path.read_text(encoding="utf-8"))
         )
         job = cast("list[dict[str, object]]", payload["jobs"])[0]
-        binding = cast("list[dict[str, object]]", payload["idempotency"])[0]
         assert cast("dict[str, object]", job["spec"])["authority"] == authority.value
-        assert (
-            cast("dict[str, object]", binding["spec"])["authority"] == authority.value
-        )
         assert load_persisted_state(path) == state
-
-    def test_idempotency_spec_writes_the_same_explicit_authority(
-        self, tmp_path: Path
-    ) -> None:
-        snapshot = _snapshot_in_state(JobState.QUEUED)
-        state = PersistedManagerState(
-            jobs=(snapshot,),
-            bindings=(
-                (
-                    "authority-key",
-                    IdempotencyBinding(
-                        signature=(snapshot.spec, snapshot.initiator, False),
-                        job_id=snapshot.id,
-                    ),
-                ),
-            ),
-        )
-        path = tmp_path / "jobs-state.json"
-
-        save_persisted_state(path, state)
-        payload = cast(
-            "dict[str, object]", json.loads(path.read_text(encoding="utf-8"))
-        )
-        record = cast("list[dict[str, object]]", payload["idempotency"])[0]
-        encoded = cast("dict[str, object]", record["spec"])
-
-        assert encoded["authority"] == RunAuthority.PUBLICATION.value
 
     @pytest.mark.parametrize(
         "authority",
@@ -291,13 +220,11 @@ class TestPersistedJobStateRoundTrip:
             state_path,
             initiator,
             spec,
-            (created, retried),
+            retried,
             authority,
         )
 
-    def test_a_whole_generation_of_distinct_jobs_survives_with_its_bindings(
-        self, tmp_path: Path
-    ) -> None:
+    def test_a_whole_generation_of_distinct_jobs_survives(self, tmp_path: Path) -> None:
         # Nonterminal jobs must name distinct work, so each takes its own root.
         running = _snapshot_in_state(
             JobState.RUNNING,
@@ -310,25 +237,7 @@ class TestPersistedJobStateRoundTrip:
             spec=_spec(source=JobSource.DOCUMENT, project_root=str(tmp_path / "b")),
         )
         finished = _fully_populated_snapshot()
-        state = PersistedManagerState(
-            jobs=(running, queued, finished),
-            bindings=(
-                (
-                    "key-running",
-                    IdempotencyBinding(
-                        signature=(running.spec, running.initiator, False),
-                        job_id=running.id,
-                    ),
-                ),
-                (
-                    "键-unicode",
-                    IdempotencyBinding(
-                        signature=(queued.spec, queued.initiator, True),
-                        job_id=queued.id,
-                    ),
-                ),
-            ),
-        )
+        state = PersistedManagerState(jobs=(running, queued, finished))
         path = tmp_path / "jobs-state.json"
         save_persisted_state(path, state)
         assert load_persisted_state(path) == state
@@ -549,6 +458,54 @@ class TestPersistedJobStateSchemaContract:
     def _rewrite(self, path: Path, payload: dict[str, object]) -> None:
         path.write_text(json.dumps(payload), encoding="utf-8")
 
+    def test_the_retired_idempotency_section_is_neither_written_nor_required(
+        self, tmp_path: Path
+    ) -> None:
+        """Both sides of the upgrade must load under the same schema version.
+
+        The release that preceded this one wrote an ``idempotency`` array
+        beside ``jobs``, and its reader required that array. Nothing reads
+        replay bindings now, and the version is unchanged, so one build has to
+        read both shapes: an operator's existing file still carries the
+        section, and every file written from here on omits it. The section is
+        reconstructed below exactly as that writer emitted it - key, job id,
+        the job's own spec and initiator, and the boolean paused flag.
+
+        Mutation check: restoring the reader's
+        ``_required_list(root.get("idempotency"), "idempotency")`` fails this
+        test on the section-free load, naming ``idempotency must be a list``;
+        removing it again passes.
+        """
+        snapshot = _snapshot_in_state(JobState.QUEUED)
+        current_path = tmp_path / "current.json"
+        save_persisted_state(current_path, _generation(snapshot))
+        current_payload = cast(
+            "dict[str, object]", json.loads(current_path.read_text(encoding="utf-8"))
+        )
+        assert "idempotency" not in current_payload
+
+        legacy_path = tmp_path / "legacy.json"
+        legacy_payload = {
+            **current_payload,
+            "idempotency": [
+                {
+                    "key": "request-7",
+                    "job_id": snapshot.id,
+                    "spec": snapshot.spec.to_dict(),
+                    "initiator": {
+                        "kind": snapshot.initiator.kind,
+                        "command": snapshot.initiator.command,
+                        "project_root": snapshot.initiator.project_root,
+                    },
+                    "start_paused": False,
+                }
+            ],
+        }
+        self._rewrite(legacy_path, legacy_payload)
+
+        assert load_persisted_state(legacy_path).jobs == (snapshot,)
+        assert load_persisted_state(current_path).jobs == (snapshot,)
+
     def test_version_one_is_refused_after_the_required_authority_cutover(
         self, tmp_path: Path
     ) -> None:
@@ -590,57 +547,6 @@ class TestPersistedJobStateSchemaContract:
         path, payload = self._written_payload(tmp_path)
         job = cast("list[dict[str, object]]", payload["jobs"])[0]
         cast("dict[str, object]", job["spec"])["authority"] = value
-        self._rewrite(path, payload)
-
-        with pytest.raises(error_type, match=message):
-            load_persisted_state(path)
-
-    @pytest.mark.parametrize(
-        ("case", "error_type", "message"),
-        [
-            ("missing", TypeError, "job authority must be a non-empty string"),
-            ("unknown", ValueError, "is not a valid RunAuthority"),
-            (
-                "mismatched",
-                ValueError,
-                "does not identify equivalent work",
-            ),
-        ],
-    )
-    def test_idempotency_specs_require_the_same_closed_authority(
-        self,
-        tmp_path: Path,
-        case: str,
-        error_type: type[Exception],
-        message: str,
-    ) -> None:
-        """Bindings cannot omit, invent, or replace the job's authority."""
-        snapshot = _snapshot_in_state(JobState.QUEUED)
-        state = PersistedManagerState(
-            jobs=(snapshot,),
-            bindings=(
-                (
-                    "closed-authority",
-                    IdempotencyBinding(
-                        signature=(snapshot.spec, snapshot.initiator, False),
-                        job_id=snapshot.id,
-                    ),
-                ),
-            ),
-        )
-        path = tmp_path / "jobs-state.json"
-        save_persisted_state(path, state)
-        payload = cast(
-            "dict[str, object]", json.loads(path.read_text(encoding="utf-8"))
-        )
-        record = cast("list[dict[str, object]]", payload["idempotency"])[0]
-        spec = cast("dict[str, object]", record["spec"])
-        if case == "missing":
-            del spec["authority"]
-        elif case == "unknown":
-            spec["authority"] = "migration"
-        else:
-            spec["authority"] = RunAuthority.REBUILD.value
         self._rewrite(path, payload)
 
         with pytest.raises(error_type, match=message):
@@ -778,31 +684,10 @@ class TestPersistedJobStateWriteSide:
         with pytest.raises(ValueError, match=message):
             construct()
 
-    def test_an_idempotency_binding_refuses_an_empty_job_id(self) -> None:
-        snapshot = _valid_snapshot()
-        with pytest.raises(TypeError, match="idempotency job_id must be a non-empty"):
-            IdempotencyBinding(
-                signature=(snapshot.spec, snapshot.initiator, False), job_id=""
-            )
-
-    def test_an_idempotency_binding_refuses_a_non_boolean_start_paused(self) -> None:
-        # The loader checks this flag's type, so a binding carrying anything
-        # else is written without complaint and refused one boot later.
-        snapshot = _valid_snapshot()
-        with pytest.raises(TypeError, match="idempotency start_paused must be boolean"):
-            IdempotencyBinding(
-                signature=(
-                    snapshot.spec,
-                    snapshot.initiator,
-                    cast("bool", 1),
-                ),
-                job_id=snapshot.id,
-            )
-
     def test_a_constructible_generation_survives_the_real_writer(
         self, tmp_path: Path
     ) -> None:
-        state = PersistedManagerState(jobs=(_valid_snapshot(),), bindings=())
+        state = PersistedManagerState(jobs=(_valid_snapshot(),))
         path = tmp_path / "jobs-state.json"
         save_persisted_state(path, state)
         assert load_persisted_state(path) == state
@@ -851,7 +736,7 @@ class TestPersistedJobStateWriteSide:
             desired_state=DesiredJobState.CANCELLED,
         )
         path = tmp_path / "jobs-state.json"
-        save_persisted_state(path, PersistedManagerState(jobs=(snapshot,), bindings=()))
+        save_persisted_state(path, PersistedManagerState(jobs=(snapshot,)))
         with pytest.raises(ValueError, match="observed and desired states disagree"):
             load_persisted_state(path)
 
@@ -862,9 +747,7 @@ class TestPersistedJobStateWriteSide:
         # was the defect. Loosening this read path to tolerate damaged records
         # would hide the next producer bug instead of surfacing it.
         path = tmp_path / "jobs-state.json"
-        save_persisted_state(
-            path, PersistedManagerState(jobs=(_valid_snapshot(),), bindings=())
-        )
+        save_persisted_state(path, PersistedManagerState(jobs=(_valid_snapshot(),)))
         payload = cast(
             "dict[str, object]", json.loads(path.read_text(encoding="utf-8"))
         )

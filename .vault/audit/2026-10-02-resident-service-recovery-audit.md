@@ -3,9 +3,9 @@ tags:
   - '#audit'
   - '#resident-service-recovery'
 date: '2026-10-02'
-modified: '2026-10-03'
+modified: '2026-10-04'
 body_schema: 'body-v2'
-body_hash: 'sha256:8e80e80e3dc4d348772528d5f6440cd684d606e73d234c5f78b8263f41f5263f'
+body_hash: 'sha256:1fd5f0ec183be25d21149c9c5390f42c78068af94dc6c74ea8a861fb025df9d8'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -792,7 +792,7 @@ Fresh Torch-denied CPU policy/ledger-header readers completed in 4.43 seconds fo
 
 Fresh health at 22:10 UTC found the resident PAUSED with models unloaded, admissions closed, zero compute tickets, native PID 69532 alive/restarts zero, and borrower_bound=true. Managed logs record a local POST /pause at 22:10:07 UTC outside root's recovery commands; TUI VAULT watcher job 98f629daf481445abdb36d8bb055d7ca is paused with all four resource ownership flags false. A canonical admission snapshot under the exact owned incident hold reports no attempts. Root asked whether the user or another session still owns GPU work and has not resumed the resident or admitted recovery while that ownership question remains pending. Newly dirty Main codebase-indexer and search-route files are foreign edits and remain unstaged and unchanged by root. S04 remains open; S09 authority deployment is still pending a source safety check for independence from resident GPU state.
 
-Independent deployment source review identified a further confirmed defect: canonical ci-fleet deployment.py overwrites an existing operator hold in _wait_idle and unconditionally deletes the hold after success or rollback. S48 now assigns only the isolated CI deployment module and its existing focused CPU tests to the control-caller worker; root retains operations and the recovery reviewer remains independent. Existing operator readiness holds intentionally block grants while still permitting resident preparation/restoration; accepted resident tests cover that behavior, so no separate global no-action hold defect or S49 change is claimed.
+Independent deployment source review identified a further confirmed defect: canonical ci-fleet deployment.py overwrites an existing operator hold in \_wait_idle and unconditionally deletes the hold after success or rollback. S48 now assigns only the isolated CI deployment module and its existing focused CPU tests to the control-caller worker; root retains operations and the recovery reviewer remains independent. Existing operator readiness holds intentionally block grants while still permitting resident preparation/restoration; accepted resident tests cover that behavior, so no separate global no-action hold defect or S49 change is claimed.
 
 Root verified the exact resident restart-ownership record at X:/ci-fleet/admission/private/resident.json separately from forgiving canonical-reader semantics: 81 bytes, valid schema ci-fleet.host-admission.resident/version 1, held={}. At 22:35:56 UTC the exact incident restoration task's trigger was extended from 23:00 UTC to 2026-10-04 01:00 UTC (03:00 Europe/Madrid). Its non-trigger XML and SDDL remained identical, enabled status stayed true, PT1M action limit was preserved, and incident hold ownership was rechecked. Evidence is H:/vaultspec-rag-recovery-20261003-1746/maintenance-pending-gpu-s48-extension-2237/verified.json. This prevents premature grant restoration while S48 is unresolved; it does not start a killed diagnostic or resume GPU work. Source and task ownership fences allow preparation of a separate authority-only rollout while resident Start/Stop stay disabled and the existing hold is preserved, subject to S48 tests/review and actual post-deployment verification. GPU clarification, publication recovery, final watcher/search/health and maintenance restoration remain required for S04/S09 completion.
 

@@ -74,7 +74,9 @@ def project(
         }
     )
     model = EmbeddingModel.__new__(EmbeddingModel)
-    model._init_encode_state(cfg, device="unloaded")
+    # No weights are loaded here, so there is no device to name.
+    model._device = "unloaded"
+    model._init_encode_state(cfg)
 
     def encode(texts: list[str], **_options: object) -> list[list[float]]:
         return [[1.0, 0.0] for _ in texts]

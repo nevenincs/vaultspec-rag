@@ -21,17 +21,15 @@ from ..indexer._run_ledger_models import (
     CommitUnit,
     CommitUnitKind,
     FinalizationPhase,
+    RunAuthority,
     RunLedgerStateError,
 )
 from ..indexer._run_ledger_runtime import RunLedger
 from ._run_ledger_test_support import (
     ledger_test_assert_generation_proof_gate,
     ledger_test_digest,
-    ledger_test_insert_reserved_receipt,
-    ledger_test_proof_key_for_signature,
     ledger_test_seal_publication_receipt,
     ledger_test_sealed_modify_receipt,
-    ledger_test_seed_publication_proof,
     ledger_test_seeded_publication_lineage,
     ledger_test_signature,
 )
@@ -108,46 +106,26 @@ def test_generation_finalization_refuses_a_parent_owned_proof_without_a_receipt(
 def test_generation_finalization_refuses_proof_pair_incompatible_with_generation(
     tmp_path: Path,
 ) -> None:
-    """Mutation: trusting proof/receipt agreement alone makes this guard red."""
+    """Mutation: dropping the key comparison makes this guard red.
+
+    The proof is the one a rebuild really committed for this generation. Its
+    stored ``policy_identity`` is then damaged on disk - the one state a
+    writer cannot produce, because every write derives that column from the
+    generation it publishes - so the row is found by stable identity and
+    rejected on the full key.
+    """
     ledger = RunLedger(tmp_path / "runs.sqlite3")
     generation = ledger.start_generation(ledger_test_signature(tmp_path))
     ledger.advance_finalization(
         generation.generation_id,
         FinalizationPhase.STALE_RECONCILED,
     )
-    key = replace(
-        ledger_test_proof_key_for_signature(generation.signature),
-        policy_identity="policy-other",
-    )
-    ledger_test_seed_publication_proof(
-        ledger,
-        generation_id=generation.generation_id,
-        key=key,
-        evidence=(),
+    ledger.establish_verified_publication(
+        generation.generation_id, RunAuthority.REBUILD, ()
     )
     with closing(sqlite3.connect(ledger.path)) as connection, connection:
         connection.execute(
-            """
-            UPDATE publication_proofs
-            SET provenance = 'delta_derived', verified_at = NULL
-            WHERE generation_id = ?
-            """,
-            (generation.generation_id,),
-        )
-        ledger_test_insert_reserved_receipt(
-            connection,
-            receipt_id="incompatible-generation",
-            reservation_sequence=5,
-            generation_id=generation.generation_id,
-            projection=(key, 1),
-        )
-        connection.execute(
-            """
-            UPDATE publication_receipts
-            SET parent_revision = 2, target_revision = 3,
-                state = 'committed', sealed_at = 2.0, committed_at = 3.0
-            WHERE receipt_id = 'incompatible-generation'
-            """
+            "UPDATE publication_proofs SET policy_identity = 'policy-other'"
         )
         connection.commit()
 
@@ -165,7 +143,7 @@ def test_generation_finalization_refuses_an_open_receipt_even_if_proof_points_at
     ledger.reserve_publication_receipt(
         key,
         successor_id,
-        expected_parent_revision=3,
+        expected_parent_revision=ledger.publication_proof(key).revision,
     )
     with closing(sqlite3.connect(ledger.path)) as connection, connection:
         connection.execute(
@@ -189,157 +167,110 @@ def test_generation_finalization_refuses_an_open_receipt_even_if_proof_points_at
         ledger_test_assert_generation_proof_gate(ledger, successor_id)
 
 
+def _committed_publication(tmp_path: Path) -> tuple[RunLedger, str]:
+    """Publish a real delta through the API, leaving its committed receipt.
+
+    Everything the damage tests below start from: a parent generation whose
+    rebuild established a verified proof, a successor that reserved, sealed
+    and committed one receipt against it, and the delta-derived proof that
+    commit installed. Returns the ledger and the successor generation.
+    """
+    (
+        ledger,
+        _key,
+        _parent_id,
+        successor_id,
+        receipt,
+        *_rest,
+    ) = ledger_test_sealed_modify_receipt(tmp_path, point_ids=("point-a",))
+    ledger.advance_finalization(successor_id, FinalizationPhase.STALE_RECONCILED)
+    ledger.commit_publication_receipt(receipt.receipt_id)
+    ledger_test_assert_generation_proof_gate(ledger, successor_id)
+    return ledger, successor_id
+
+
 def test_generation_finalization_refuses_a_noncommitted_latest_receipt(
     tmp_path: Path,
 ) -> None:
-    """Mutation: accepting rolled-back history as proof closure makes this red."""
-    ledger = RunLedger(tmp_path / "runs.sqlite3")
-    generation = ledger.start_generation(ledger_test_signature(tmp_path))
-    ledger.advance_finalization(
-        generation.generation_id,
-        FinalizationPhase.STALE_RECONCILED,
-    )
-    key = ledger_test_proof_key_for_signature(generation.signature)
-    ledger_test_seed_publication_proof(
-        ledger,
-        generation_id=generation.generation_id,
-        key=key,
-        evidence=(),
-    )
+    """Mutation: accepting rolled-back history as proof closure makes this red.
+
+    The committed receipt's state column is damaged on disk; no transition
+    moves a committed receipt back to rolled back.
+    """
+    ledger, successor_id = _committed_publication(tmp_path)
     with closing(sqlite3.connect(ledger.path)) as connection, connection:
-        ledger_test_insert_reserved_receipt(
-            connection,
-            receipt_id="rolled-back-latest",
-            reservation_sequence=6,
-            generation_id=generation.generation_id,
-            projection=(key, 1),
-        )
         connection.execute(
             """
             UPDATE publication_receipts
-            SET state = 'rolled_back', rollback_started_at = 2.0,
-                rolled_back_at = 3.0
-            WHERE receipt_id = 'rolled-back-latest'
+            SET state = 'rolled_back', rollback_started_at = sealed_at,
+                rolled_back_at = sealed_at, committed_at = NULL
             """
         )
         connection.commit()
 
     with pytest.raises(RunLedgerStateError, match="receipt must commit"):
-        ledger_test_assert_generation_proof_gate(ledger, generation.generation_id)
+        ledger_test_assert_generation_proof_gate(ledger, successor_id)
 
 
 def test_generation_finalization_requires_receipt_for_delta_derived_proof(
     tmp_path: Path,
 ) -> None:
-    """Mutation: accepting receiptless delta provenance makes this guard red."""
-    ledger = RunLedger(tmp_path / "runs.sqlite3")
-    generation = ledger.start_generation(ledger_test_signature(tmp_path))
-    ledger.advance_finalization(
-        generation.generation_id,
-        FinalizationPhase.STALE_RECONCILED,
-    )
-    ledger_test_seed_publication_proof(
-        ledger,
-        generation_id=generation.generation_id,
-        key=ledger_test_proof_key_for_signature(generation.signature),
-        evidence=(),
-    )
+    """Mutation: accepting receiptless delta provenance makes this guard red.
+
+    The proof is the delta-derived one its receipt really committed, and the
+    receipt row is then lost from the file.
+    """
+    ledger, successor_id = _committed_publication(tmp_path)
     with closing(sqlite3.connect(ledger.path)) as connection, connection:
-        connection.execute(
-            """
-            UPDATE publication_proofs
-            SET provenance = 'delta_derived', verified_at = NULL
-            WHERE generation_id = ?
-            """,
-            (generation.generation_id,),
-        )
+        connection.execute("DELETE FROM publication_receipts")
         connection.commit()
 
     with pytest.raises(RunLedgerStateError, match="requires its committed receipt"):
-        ledger_test_assert_generation_proof_gate(ledger, generation.generation_id)
+        ledger_test_assert_generation_proof_gate(ledger, successor_id)
 
 
-@pytest.mark.parametrize(
-    "mismatch",
-    ("state", "compatibility", "revision", "sequence", "provenance"),
-)
+#: One damaged column per equality the finalization gate asserts between a
+#: committed receipt and the proof it installed. Each statement runs over the
+#: committed publication a real receipt produced.
+_MISMATCH_DAMAGE = {
+    "state": """
+        UPDATE publication_receipts
+        SET state = 'rolled_back', rollback_started_at = sealed_at,
+            rolled_back_at = sealed_at, committed_at = NULL
+    """,
+    "compatibility": """
+        UPDATE publication_receipts
+        SET root_identity = root_identity || '-other'
+    """,
+    "revision": """
+        UPDATE publication_receipts
+        SET parent_revision = parent_revision + 1,
+            target_revision = target_revision + 1
+    """,
+    "sequence": """
+        UPDATE publication_receipts
+        SET reservation_sequence = reservation_sequence + 1
+    """,
+    "provenance": """
+        UPDATE publication_proofs
+        SET provenance = 'verified', verified_at = committed_at
+    """,
+}
+
+
+@pytest.mark.parametrize("mismatch", tuple(_MISMATCH_DAMAGE))
 def test_generation_finalization_refuses_mismatched_committed_receipt(
     tmp_path: Path,
     mismatch: str,
 ) -> None:
     """Mutation: removing any receipt/proof equality guard makes a case red."""
-    ledger = RunLedger(tmp_path / "runs.sqlite3")
-    generation = ledger.start_generation(ledger_test_signature(tmp_path))
-    ledger.advance_finalization(
-        generation.generation_id,
-        FinalizationPhase.STALE_RECONCILED,
-    )
-    key = ledger_test_proof_key_for_signature(generation.signature)
-    ledger_test_seed_publication_proof(
-        ledger,
-        generation_id=generation.generation_id,
-        key=key,
-        evidence=(),
-    )
-    receipt_key = (
-        replace(key, root_identity=f"{key.root_identity}-other")
-        if mismatch == "compatibility"
-        else key
-    )
-    target_revision = 4 if mismatch == "revision" else 3
-    reservation_sequence = 6 if mismatch == "sequence" else 5
+    ledger, successor_id = _committed_publication(tmp_path)
     with closing(sqlite3.connect(ledger.path)) as connection, connection:
-        if mismatch != "provenance":
-            connection.execute(
-                """
-                UPDATE publication_proofs
-                SET provenance = 'delta_derived', verified_at = NULL
-                WHERE generation_id = ?
-                """,
-                (generation.generation_id,),
-            )
-        ledger_test_insert_reserved_receipt(
-            connection,
-            receipt_id=f"mismatch-{mismatch}",
-            reservation_sequence=reservation_sequence,
-            generation_id=generation.generation_id,
-            projection=(receipt_key, 1),
-        )
-        connection.execute(
-            """
-            UPDATE publication_receipts
-            SET parent_revision = ?, target_revision = ?
-            WHERE receipt_id = ?
-            """,
-            (
-                target_revision - 1,
-                target_revision,
-                f"mismatch-{mismatch}",
-            ),
-        )
-        if mismatch == "state":
-            connection.execute(
-                """
-                UPDATE publication_receipts
-                SET state = 'rolled_back', rollback_started_at = 2.0,
-                    rolled_back_at = 3.0
-                WHERE receipt_id = ?
-                """,
-                (f"mismatch-{mismatch}",),
-            )
-        else:
-            connection.execute(
-                """
-                UPDATE publication_receipts
-                SET state = 'committed', sealed_at = 2.0, committed_at = 3.0
-                WHERE receipt_id = ?
-                """,
-                (f"mismatch-{mismatch}",),
-            )
+        connection.execute(_MISMATCH_DAMAGE[mismatch])
         connection.commit()
 
     with pytest.raises(RunLedgerStateError, match="receipt must commit"):
-        ledger_test_assert_generation_proof_gate(ledger, generation.generation_id)
+        ledger_test_assert_generation_proof_gate(ledger, successor_id)
 
 
 def test_late_receipt_transition_failure_rolls_back_the_entire_proof_commit(

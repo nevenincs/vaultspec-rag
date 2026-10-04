@@ -256,7 +256,7 @@ def test_publication_mutation_journal_is_monotonic_exact_and_replayable(
     receipt = ledger.reserve_publication_receipt(
         key,
         successor_id,
-        expected_parent_revision=3,
+        expected_parent_revision=ledger.publication_proof(key).revision,
     )
     unit = ledger_test_unit("src/a.py", 0, 1)
 
@@ -330,7 +330,7 @@ def test_publication_receipt_seal_is_exact_atomic_and_identity_ordered(
     receipt = ledger.reserve_publication_receipt(
         key,
         successor_id,
-        expected_parent_revision=3,
+        expected_parent_revision=ledger.publication_proof(key).revision,
     )
     digest = ledger_test_digest("a-v1")
     first = ledger_test_unit("src/a.py", 0, 2, digest=digest)
@@ -393,7 +393,7 @@ def test_publication_mutation_prepare_refuses_foreign_point_ownership(
     receipt = ledger.reserve_publication_receipt(
         key,
         successor_id,
-        expected_parent_revision=3,
+        expected_parent_revision=ledger.publication_proof(key).revision,
     )
     evidence = ProofEvidence(
         rel_path="src/new.py",
@@ -433,7 +433,7 @@ def test_publication_receipt_seal_rechecks_late_point_ownership(
     receipt = ledger.reserve_publication_receipt(
         key,
         successor_id,
-        expected_parent_revision=3,
+        expected_parent_revision=ledger.publication_proof(key).revision,
     )
     evidence = ProofEvidence(
         rel_path="src/new.py",
@@ -494,7 +494,7 @@ def test_publication_receipt_rollback_requires_exact_confirmed_compensation(
     receipt = ledger.reserve_publication_receipt(
         key,
         successor_id,
-        expected_parent_revision=3,
+        expected_parent_revision=ledger.publication_proof(key).revision,
     )
     unit = ledger_test_unit("src/a.py", 0, 1)
     ledger.prepare_publication_mutation(receipt.receipt_id, unit)

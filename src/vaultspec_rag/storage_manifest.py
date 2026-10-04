@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, cast
 
 from . import store_schema
 from ._atomic_write import JsonWriteOptions, write_json_atomically
+from ._job_values import count
 from ._store_models import root_collection_prefix
 
 if TYPE_CHECKING:
@@ -262,14 +263,6 @@ def _decode_collections(
     return tuple(cast("str", value) for value in values)
 
 
-def _decode_schema_version(record: dict[str, object]) -> int | None:
-    """Read the required current-format storage schema version."""
-    raw = record.get("storage_schema_version")
-    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
-        return None
-    return raw
-
-
 def _decode_observed_points(record: dict[str, object]) -> int | None:
     """Read the required current-format observed point count."""
     raw = record.get("observed_points")
@@ -313,7 +306,7 @@ def _entry_from_record(prefix: str, record_obj: object) -> ManifestEntry | None:
     last_indexed = record.get("last_indexed")
     first_seen_orphaned = record.get("first_seen_orphaned")
     collections = _decode_collections(record)
-    storage_schema_version = _decode_schema_version(record)
+    storage_schema_version = count(record.get("storage_schema_version"), minimum=1)
     observed_points = _decode_observed_points(record)
     if (
         not isinstance(backend, str)

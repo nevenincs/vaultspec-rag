@@ -45,7 +45,6 @@ __all__ = [
     "MachineLockLease",
     "MachineLockProbe",
     "acquire_machine_lock_lease",
-    "default_machine_lock_path",
     "delete_machine_discovery",
     "machine_discovery_path",
     "machine_lock_path",
@@ -91,20 +90,6 @@ def machine_lock_path() -> Path:
     from .config._settings import get_config
 
     storage = Path(str(get_config().qdrant_storage_dir)).expanduser()
-    return storage.parent / _MACHINE_LOCK_FILENAME
-
-
-def default_machine_lock_path() -> Path:
-    """Path of the service lock a service with no storage override holds.
-
-    Differs from :func:`machine_lock_path` only when this process is configured
-    with its own storage directory. A service started without one - the common
-    case, and the only place a service from a release that predates GPU
-    ownership can be found without being told where - holds this lock.
-    """
-    from .config._settings import rag_default
-
-    storage = Path(str(rag_default("qdrant_storage_dir"))).expanduser()
     return storage.parent / _MACHINE_LOCK_FILENAME
 
 
@@ -178,12 +163,7 @@ def publish_machine_discovery(
         msg = "machine discovery payload PID must match the machine-lock lease"
         raise ValueError(msg)
     pointer = _lease_discovery_path(lease)
-    from ._test_isolation import enforce_pytest_managed_singleton_containment
 
-    enforce_pytest_managed_singleton_containment(
-        operation="publish the machine service discovery pointer",
-        targets=(lease.path, pointer),
-    )
     with _lease_guard:
         _require_active_lease(lease, operation="publish machine discovery")
         write_json_atomically(
@@ -194,12 +174,7 @@ def publish_machine_discovery(
 def delete_machine_discovery(lease: MachineLockLease) -> None:
     """Delete the machine pointer only while *lease* remains authoritative."""
     pointer = _lease_discovery_path(lease)
-    from ._test_isolation import enforce_pytest_managed_singleton_containment
 
-    enforce_pytest_managed_singleton_containment(
-        operation="delete the machine service discovery pointer",
-        targets=(lease.path, pointer),
-    )
     with _lease_guard:
         _require_active_lease(lease, operation="delete machine discovery")
         pointer.unlink(missing_ok=True)
@@ -215,12 +190,7 @@ def acquire_machine_lock_lease() -> tuple[MachineLockLease | None, int]:
     later acquire simply succeeds with no stale-file reclaim.
     """
     path = machine_lock_path()
-    from ._test_isolation import enforce_pytest_managed_singleton_containment
 
-    enforce_pytest_managed_singleton_containment(
-        operation="acquire the machine service lock",
-        targets=(path,),
-    )
     with _lease_guard:
         retained = _held_leases.get(str(path))
         if retained is not None:
@@ -266,12 +236,7 @@ def release_machine_lock_lease(lease: MachineLockLease) -> None:
     holders. The lingering file is harmless; the next acquirer overwrites the
     stale pid, and a dead/empty file is always acquirable.
     """
-    from ._test_isolation import enforce_pytest_managed_singleton_containment
 
-    enforce_pytest_managed_singleton_containment(
-        operation="release the machine service lock",
-        targets=(lease.path,),
-    )
     from ._anchor_claim import release_anchor_claim
 
     with _lease_guard:
@@ -308,12 +273,7 @@ def probe_machine_lock() -> MachineLockProbe:
     so a holder whose record cannot be read is still reported held.
     """
     path = machine_lock_path()
-    from ._test_isolation import enforce_pytest_managed_singleton_containment
 
-    enforce_pytest_managed_singleton_containment(
-        operation="probe the machine service lock",
-        targets=(path,),
-    )
     with _lease_guard:
         retained = _held_leases.get(str(path))
         if retained is not None:
