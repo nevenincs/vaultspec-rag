@@ -254,7 +254,8 @@ in the repository's assistant configuration. Your assistant can then call these 
 
 - `search_codebase`, `search_vault`, `search_documents`, and `search_combined` search by
   meaning.
-- `get_code_file` reads a file, and `get_index_status` reports index health.
+- `get_code_file` reads an indexable source file, and `get_index_status` reports index
+  health.
 - Four `reindex_*` tools rebuild indexes, and `clean_documents` and `clean_all` delete
   them.
 

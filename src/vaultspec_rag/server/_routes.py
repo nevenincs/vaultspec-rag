@@ -30,7 +30,9 @@ the canonical job-admission pipeline they build on.
 
 from __future__ import annotations
 
+import io
 import logging
+import os
 import time
 from functools import partial
 from pathlib import Path
@@ -90,6 +92,7 @@ from ._state import search_activity_ledger
 from ._utils import (
     _BAD_REQUEST_MISSING_ROOT,
     ProjectRootRequiredError,
+    _is_sensitive_path,
     _resolve_root,
 )
 
@@ -920,6 +923,61 @@ async def get_readiness_route(request: Request) -> JSONResponse:
     return JSONResponse(res)
 
 
+def _code_file_admitted(root_resolved: Path, full_path: Path, path: str) -> bool:
+    """Decide whether a contained path may be returned as source.
+
+    Authorization is decided on the canonical root-relative name, which must
+    be visible, match no sensitive pattern, and be admitted as code by the
+    same resolved policy that decides index membership. The requested
+    spelling is held to the name rules as well, so an alias is refused when
+    either its own name or its target's is.
+    """
+    from ..indexer._content_discovery import CodeContentDiscovery
+    from ..indexer._content_policy import ContentKind
+
+    canonical_path = full_path.relative_to(root_resolved).as_posix()
+    if _is_sensitive_path(path) or _is_sensitive_path(canonical_path):
+        return False
+    policy = CodeContentDiscovery(root_resolved).resolve_policy()
+    disposition = policy.classify(canonical_path).disposition
+    return disposition.admitted and disposition.kind is ContentKind.CODE
+
+
+def _read_code_file(root: Path, path: str) -> dict[str, str]:
+    """Return one admitted source file's text, or the reason it is withheld.
+
+    The service reads with its own filesystem authority on behalf of a caller
+    that may hold less, so a contained path is not enough: it must also be
+    admitted. Every refusal of admission is the one undifferentiated denial,
+    issued before the object is opened, so a response reveals neither which
+    rule fired nor whether the refused object exists.
+    """
+    from ..indexer._chunking import _MAX_FILE_SIZE
+    from ..indexer._source_file import open_source_file
+
+    root_resolved = root.resolve()
+    full_path = (root_resolved / path).resolve()
+    if not full_path.is_relative_to(root_resolved):
+        return {"error": f"path '{path}' is outside the workspace"}
+    if not _code_file_admitted(root_resolved, full_path, path):
+        return {"error": "access denied"}
+    try:
+        # The name was authorized above; the read binds to the object that
+        # name denotes now, so a link or non-regular file swapped in after
+        # canonicalization is refused rather than followed.
+        with open_source_file(full_path, root_resolved) as stream:
+            if os.fstat(stream.fileno()).st_size > _MAX_FILE_SIZE:
+                limit_mb = _MAX_FILE_SIZE // (1024 * 1024)
+                return {
+                    "error": f"File '{path}' exceeds maximum read size of {limit_mb} MB"
+                }
+            return {"content": io.TextIOWrapper(stream, encoding="utf-8").read()}
+    except FileNotFoundError:
+        return {"error": f"File '{path}' not found"}
+    except OSError:
+        return {"error": "access denied"}
+
+
 async def code_file_route(request: Request) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
@@ -936,21 +994,7 @@ async def code_file_route(request: Request) -> JSONResponse:
 
     def _run():
         try:
-            root_resolved = root.resolve()
-            full_path = (root_resolved / path).resolve()
-            if not full_path.is_relative_to(root_resolved):
-                return {"error": f"path '{path}' is outside the workspace"}
-            from ._utils import _is_sensitive_path
-
-            canonical_path = full_path.relative_to(root_resolved).as_posix()
-            if _is_sensitive_path(path) or _is_sensitive_path(canonical_path):
-                return {"error": "access denied"}
-            if not full_path.exists():
-                return {"error": f"File '{path}' not found"}
-            max_read_size = 10 * 1024 * 1024
-            if full_path.stat().st_size > max_read_size:
-                return {"error": f"File '{path}' exceeds maximum read size of 10 MB"}
-            return {"content": full_path.read_text(encoding="utf-8")}
+            return _read_code_file(root, path)
         except Exception as e:
             return {"error": str(e)}
 

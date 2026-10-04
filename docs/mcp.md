@@ -107,7 +107,10 @@ A connected server publishes twelve tools. Six read:
   Explicit `doc_type` or inline `type:plan` overrides the ADR default. Each search
   response includes an `advisory` with MCP filter syntax and points to `source`
   and `doc_type` for verifying result kinds.
-- `get_code_file` returns the full content of a source file by path.
+- `get_code_file` returns the full content of a source file by path. It returns
+  only files the code index admits: a path that is ignored, is not source, or
+  has a dot-prefixed file or directory name anywhere in it is refused with
+  `access denied`, as is a file whose name suggests keys or credentials.
 - `get_index_status` reports whether a content kind is indexed, so an assistant
   can skip one that has no index. It also returns the running service's
   installation (whether it can run inference, and on what hardware) and the
