@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 import sys
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, BinaryIO, cast
 
 from ._publication_state import clear_publication_state
 from ._source_types import PublicSourceType
@@ -56,6 +58,115 @@ class ArchiveIntegrityError(RuntimeError):
 #: The extension qdrant gives every snapshot it writes, and so the extension
 #: an artifact in an archive directory carries.
 _SNAPSHOT_SUFFIX = ".snapshot"
+
+
+def _is_link(metadata: os.stat_result) -> bool:
+    return stat.S_ISLNK(metadata.st_mode) or bool(
+        getattr(metadata, "st_file_attributes", 0)
+        & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    )
+
+
+def _archive_root(archive_dir: Path) -> tuple[Path, os.stat_result]:
+    metadata = archive_dir.lstat()
+    if not stat.S_ISDIR(metadata.st_mode) or _is_link(metadata):
+        raise ArchiveIntegrityError(
+            f"archive root must be a non-symlink directory: {archive_dir}"
+        )
+    return archive_dir.resolve(strict=True), metadata
+
+
+def _open_member_descriptor(member: str | Path, dir_fd: int | None) -> int:
+    if os.name != "nt":
+        return os.open(
+            member, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dir_fd
+        )
+
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.argtypes = (
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    )
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    # OPEN_EXISTING with FILE_FLAG_OPEN_REPARSE_POINT opens the link itself.
+    # Share reads and writes, but keep the usual protection against deletion.
+    handle = cast(
+        "int | None",
+        kernel32.CreateFileW(
+            os.fspath(member), 0x80000000, 3, None, 3, 0x00200000, None
+        ),
+    )
+    if handle is None or handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        return msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+    except BaseException:
+        kernel32.CloseHandle(handle)
+        raise
+
+
+def _open_archive_file(path: Path) -> BinaryIO:
+    """Open a contained regular member and retain the descriptor we verified."""
+    directory_fd = -1
+    member_fd = -1
+    try:
+        root, root_metadata = _archive_root(path.parent)
+        if os.open in os.supports_dir_fd:
+            directory_fd = os.open(
+                root,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            )
+            if not os.path.samestat(root_metadata, os.fstat(directory_fd)):
+                raise ArchiveIntegrityError(f"archive directory changed: {path.parent}")
+        dir_fd = directory_fd if directory_fd >= 0 else None
+        member = path.name if dir_fd is not None else root / path.name
+        metadata = os.stat(member, dir_fd=dir_fd, follow_symlinks=False)
+        if not stat.S_ISREG(metadata.st_mode) or _is_link(metadata):
+            raise ArchiveIntegrityError(
+                f"archive member must be a regular file: {path}"
+            )
+        if metadata.st_size <= 0:
+            raise ArchiveIntegrityError(f"archive member is missing or empty: {path}")
+        if path.resolve(strict=True).parent != root:
+            raise ArchiveIntegrityError(
+                f"archive member is outside its directory: {path}"
+            )
+        member_fd = _open_member_descriptor(member, dir_fd)
+        opened = os.fstat(member_fd)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or _is_link(opened)
+            or not os.path.samestat(metadata, opened)
+            or not os.path.samestat(root_metadata, path.parent.lstat())
+        ):
+            raise ArchiveIntegrityError(f"archive member changed while opening: {path}")
+        if opened.st_size <= 0:
+            raise ArchiveIntegrityError(f"archive member is missing or empty: {path}")
+        stream = cast("BinaryIO", os.fdopen(member_fd, "rb"))
+        member_fd = -1
+        return stream
+    except FileNotFoundError as exc:
+        raise ArchiveIntegrityError(
+            f"archive member is missing or empty: {path}"
+        ) from exc
+    except (OSError, ValueError) as exc:
+        raise ArchiveIntegrityError(f"archive member is unreadable: {path}") from exc
+    finally:
+        if member_fd >= 0:
+            os.close(member_fd)
+        if directory_fd >= 0:
+            os.close(directory_fd)
 
 
 def _no_progress(_line: str) -> None:
@@ -156,8 +267,9 @@ def read_archive(archive_dir: Path) -> ArchiveRead:
     """Read a complete archive without creating collections or writing state."""
     manifest_path = snapshot_manifest_path(archive_dir)
     try:
-        raw: object = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        with _open_archive_file(manifest_path) as manifest:
+            raw: object = json.loads(manifest.read().decode("utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ArchiveIntegrityError(
             f"archive manifest is unreadable: {manifest_path}"
         ) from exc
@@ -211,15 +323,8 @@ def _read_collection(
             f"archive manifest has an invalid record: {manifest_path}"
         )
     snapshot = archive_dir / filename
-    try:
-        if not snapshot.is_file() or snapshot.stat().st_size <= 0:
-            raise ArchiveIntegrityError(
-                f"archive snapshot is missing or empty: {snapshot}"
-            )
-    except OSError as exc:
-        raise ArchiveIntegrityError(
-            f"archive snapshot is unreadable: {snapshot}"
-        ) from exc
+    with _open_archive_file(snapshot):
+        pass
     identity_raw = record.get("identity")
     identity = (
         None if identity_raw is None else CollectionIdentity.from_payload(identity_raw)
@@ -464,11 +569,11 @@ def restore_archive(
 
         for item, name in zip(archive.collections, names, strict=True):
             on_progress(f"Restoring {item.source} -> {name}")
-            # Recovery can create the collection before its response crosses
-            # the transport boundary. Register it first so every such failure
-            # is cleaned up under the already-empty destination preflight.
-            restored.append(name)
-            with item.snapshot.open("rb") as snapshot:
+            with _open_archive_file(item.snapshot) as snapshot:
+                # Recovery can create the collection before its response crosses
+                # the transport boundary. Register it before uploading so every
+                # such failure is cleaned up under the empty destination preflight.
+                restored.append(name)
                 client.http.snapshots_api.recover_from_uploaded_snapshot(
                     collection_name=name,
                     wait=True,

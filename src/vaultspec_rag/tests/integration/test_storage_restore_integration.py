@@ -20,7 +20,12 @@ from ...storage_manifest import (
     record_root,
     remove_prefix,
 )
-from ...storage_restore import RestoreRequest, read_archive, restore_archive
+from ...storage_restore import (
+    ArchiveIntegrityError,
+    RestoreRequest,
+    read_archive,
+    restore_archive,
+)
 from ...store_schema import STORAGE_SCHEMA_VERSION, CollectionIdentity
 from ._helpers import provisioned_qdrant_binary, serve_qdrant
 
@@ -273,6 +278,59 @@ def test_restore_rolls_back_after_a_real_corrupt_snapshot_failure(
 
         assert not client.collection_exists(f"{destination_prefix}aaa")
         assert not client.collection_exists(f"{destination_prefix}zzz")
+    finally:
+        client.close()
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
+@pytest.mark.parametrize("replace_root", [False, True])
+def test_restore_rejects_links_replaced_after_validation(
+    restore_qdrant: QdrantSupervisor,
+    tmp_path: Path,
+    replace_root: bool,
+) -> None:
+    """Ordinary pathname upload would restore the external snapshot successfully.
+
+    Mutation: replace the checked upload opener with ``item.snapshot.open('rb')``.
+    Observed DID NOT RAISE for both replacements, then both passed with the
+    checked opener restored. The external bytes are a valid snapshot, so
+    Qdrant's parser cannot stand in for the archive boundary.
+    """
+    from qdrant_client import QdrantClient
+
+    client = QdrantClient(url=restore_qdrant.url, timeout=60)
+    try:
+        source_root = tmp_path / "source"
+        source_root.mkdir()
+        source_name = f"{root_collection_prefix(source_root)}vault_docs"
+        archive = _archive_namespace(
+            client, restore_qdrant, source_root, (source_name,)
+        )
+        member = read_archive(archive).collections[0].snapshot
+        outside = tmp_path / "operator-file"
+        outside.write_bytes(member.read_bytes())
+        destination = tmp_path / "destination"
+        destination.mkdir()
+        request = RestoreRequest(archive, destination, local_mode=False, dry_run=False)
+
+        def replace_with_link(_line: str) -> None:
+            if replace_root:
+                original = tmp_path / "original-archive"
+                archive.rename(original)
+                archive.symlink_to(original, target_is_directory=True)
+            else:
+                member.unlink()
+                member.symlink_to(outside)
+
+        if sys.platform == "win32":
+            result = restore_archive(client, request, on_progress=replace_with_link)
+            assert result.reason == WINDOWS_SERVER_ARCHIVE_RESTORE_UNSUPPORTED_REASON
+        else:
+            with pytest.raises(ArchiveIntegrityError):
+                restore_archive(client, request, on_progress=replace_with_link)
+
+        assert client.get_collections().collections == []
+        assert root_collection_prefix(destination) not in load_manifest()
     finally:
         client.close()
 
