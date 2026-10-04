@@ -146,6 +146,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
+          prune-cache: false
           enable-cache: false
 
       - name: Install Python
@@ -200,6 +201,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
+          prune-cache: false
           enable-cache: false
       - name: Install Python
         run: uv python install 3.13
@@ -289,6 +291,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
+          prune-cache: false
           enable-cache: false
 
       - name: Install Python
@@ -309,6 +312,7 @@ jobs:
       - name: Set up Node for the installed-browser verification driver
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
+          package-manager-cache: false
           node-version-file: .nvmrc
 
       - name: Set up just
@@ -394,6 +398,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
+          prune-cache: false
           enable-cache: false
 
       - name: Verify all four native monitor proofs before release attachment
@@ -607,6 +612,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
+          prune-cache: false
           enable-cache: false
 
       - name: Require every declared target on the draft release
