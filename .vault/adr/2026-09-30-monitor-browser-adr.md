@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#monitor-browser'
 date: '2026-09-30'
-modified: '2026-10-02'
+modified: '2026-10-04'
 body_schema: 'body-v2'
-body_hash: 'sha256:f259a28922870ca1735ef477b98f886ce4ab4e6dc0df09b8fdc1859ce3fe1475'
+body_hash: 'sha256:77ecff6e41a9fe7e78966f8936a491a7bde68c3db99b66980025184b61762390'
 related:
   - "[[2026-09-30-monitor-tooling-adr]]"
   - "[[2026-09-30-monitor-refinement-audit]]"
@@ -48,6 +48,8 @@ Preserve service-owned bounded jobs, queued/active/recent requests, correct diag
 Use pinned official @carbon/react and Sass, Carbon Grid at all breakpoints, IBM Plex from the package, accessible shell/tabs/tables/status indicators, and Carbon tokens in custom SCSS. This scopes the previous vanilla-CSS preference to custom browser styling compiled with Carbon SCSS; the shared runtime, lockfile, port allocation, lifecycle script and workflows remain governed by monitor-tooling.
 
 2026-10-01 operations expansion authorized explicitly by the user: add service start/stop through the canonical local lifecycle owner, pause/resume through existing service routes, repository path/watch enrollment, resident eviction, storage survey refresh, resource/client read projections and bounded query return evidence. This replaces the earlier scope-only prohibition on service start and new monitoring endpoints; inference/rebuild remains an explicit separate operation. The frontend remains a presentation adapter with automatic internal credentials. Dashboard shows service status/state, system metrics, version, capacity and diagnostics. Index Requests, Queries and Logs are separate pages reached through a Carbon left navigation rail, with relational evidence nested under its parent. Repositories, Storage, Clients and Performance have their own pages. Storage management uses survey refresh and resident eviction; no destructive storage HTTP operation is added. No persistent query/result archive is introduced.
+
+2026-10-04 authorized credential-recovery refinement: loopback-http-security replaces the health-based token recovery described above. The bridge obtains and refreshes its credential only from protected same-user discovery for the addressed port. Browser users retain automatic server-side credentials and the existing monitor network policy.
 
 ## Implementation
 

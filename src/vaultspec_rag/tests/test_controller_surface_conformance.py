@@ -68,7 +68,7 @@ def fixture_controller_surfaces(
         ServerRouteRuntime(token="surface-token", registry=registry, port=8765),
         lifespan=None,
     )
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         yield client, registry, root, expected, job_id
     jobs.reset()
     _watcher._watcher_scheduler = previous_scheduler

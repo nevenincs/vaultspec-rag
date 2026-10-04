@@ -185,7 +185,7 @@ async def _post_index_job(token: str, root: Path, source: str) -> httpx.Response
     )
     async with httpx.AsyncClient(
         transport=transport,
-        base_url="http://testserver",
+        base_url="http://127.0.0.1",
     ) as client:
         return await client.post(
             "/reindex",

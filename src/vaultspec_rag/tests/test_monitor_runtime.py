@@ -53,7 +53,7 @@ def test_runtime_route_observes_real_ram_disk_models_and_tcp_peer() -> None:
                 ),
                 lifespan=None,
             )
-            with TestClient(app) as client:
+            with TestClient(app, base_url="http://127.0.0.1") as client:
                 result = client.get(
                     "/runtime-observations",
                     headers={"Authorization": "Bearer resource-test"},
@@ -142,7 +142,7 @@ def test_route_finalization_retains_detached_request_and_nested_response() -> No
         ),
         lifespan=None,
     )
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         result = client.get(
             f"/search-activity?request_id={request_id}",
             headers={"Authorization": "Bearer evidence-test"},
@@ -190,7 +190,7 @@ def test_rejected_search_keeps_its_actual_returned_validation_body() -> None:
         ),
         lifespan=None,
     )
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         returned = client.post(
             "/search",
             json={"query": "", "type": "code", "project_root": "/repo"},

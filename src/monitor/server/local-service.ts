@@ -472,15 +472,9 @@ async function forward(
     let result = await send(local.token);
     let payload = await responseJSON(result);
     if (result.status === 401) {
-      const health = await responseJSON(
-        await fetch(`${base}/health`, {
-          signal: upstreamSignal,
-          redirect: "error",
-        }),
-      );
-      const token = health.service_token;
-      if (typeof token === "string" && token) {
-        result = await send(token);
+      const refreshed = await connection();
+      if (refreshed.port === local.port && refreshed.token) {
+        result = await send(refreshed.token);
         payload = await responseJSON(result);
       }
     }

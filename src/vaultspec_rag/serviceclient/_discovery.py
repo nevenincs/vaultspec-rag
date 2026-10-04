@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
-from .._atomic_write import write_json_atomically
+from .._atomic_write import JsonWriteOptions, write_json_atomically
 from .._timestamps import age_seconds
 
 if TYPE_CHECKING:
@@ -311,7 +311,7 @@ def _merge_service_status(
             fields,
             preserve_authoritative_identity=preserve_authoritative_identity,
         )
-        write_json_atomically(path, data)
+        write_json_atomically(path, data, JsonWriteOptions(private=True))
         return data
 
 
@@ -338,7 +338,7 @@ def _replace_service_status(
     path.parent.mkdir(parents=True, exist_ok=True)
     data = dict(fields)
     with status_write_lock(path, timeout=timeout):
-        write_json_atomically(path, data)
+        write_json_atomically(path, data, JsonWriteOptions(private=True))
     return data
 
 
@@ -684,6 +684,8 @@ def _status_file_resolution() -> MachineResolution:
         )
     raw_pid = data.get("pid")
     token = data.get("service_token")
+    if token is None:
+        token = data.get("token")
     return MachineResolution(
         state=DISCOVERY_STATE_READY,
         source=DISCOVERY_SOURCE_STATUS_FILE,

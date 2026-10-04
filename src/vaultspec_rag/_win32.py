@@ -282,6 +282,110 @@ def _anchor_acl_api() -> tuple[ctypes.WinDLL, ctypes.WinDLL]:
     return advapi32, kernel32
 
 
+def _current_user_sid(api: ctypes.WinDLL, kernel32: ctypes.WinDLL) -> str:
+    """Return the process account's SID without shell or environment lookup."""
+    from ctypes import wintypes
+
+    kernel32.GetCurrentProcess.argtypes = ()
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    api.OpenProcessToken.argtypes = (
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.HANDLE),
+    )
+    api.OpenProcessToken.restype = wintypes.BOOL
+    api.GetTokenInformation.argtypes = (
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    api.GetTokenInformation.restype = wintypes.BOOL
+    api.ConvertSidToStringSidW.argtypes = (
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_wchar_p),
+    )
+    api.ConvertSidToStringSidW.restype = wintypes.BOOL
+    token = wintypes.HANDLE()
+    sid_text = ctypes.c_wchar_p()
+    if not api.OpenProcessToken(
+        kernel32.GetCurrentProcess(), 0x0008, ctypes.byref(token)
+    ):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        needed = wintypes.DWORD()
+        api.GetTokenInformation(token, 1, None, 0, ctypes.byref(needed))
+        if not needed.value:
+            raise ctypes.WinError(ctypes.get_last_error())
+        buffer = ctypes.create_string_buffer(needed.value)
+        if not api.GetTokenInformation(
+            token, 1, buffer, needed.value, ctypes.byref(needed)
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+        sid = ctypes.cast(buffer, ctypes.POINTER(ctypes.c_void_p)).contents
+        if not api.ConvertSidToStringSidW(sid, ctypes.byref(sid_text)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if sid_text.value is None:
+            raise OSError("the process account has no SID")
+        return sid_text.value
+    finally:
+        kernel32.LocalFree(sid_text)
+        kernel32.CloseHandle(token)
+
+
+def create_private_file(path: str) -> int:
+    """Create a new file with a protected DACL granting only this user access."""
+    import msvcrt
+    import os
+    from ctypes import wintypes
+
+    class SecurityAttributes(ctypes.Structure):
+        _fields_ = [
+            ("length", wintypes.DWORD),
+            ("descriptor", ctypes.c_void_p),
+            ("inherit_handle", wintypes.BOOL),
+        ]
+
+    api, kernel32 = _anchor_acl_api()
+    kernel32.CreateFileW.argtypes = (
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.POINTER(SecurityAttributes),
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    )
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    descriptor = ctypes.c_void_p()
+    sid = _current_user_sid(api, kernel32)
+    if not api.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        f"D:P(A;;FA;;;{sid})", _SDDL_REVISION_1, ctypes.byref(descriptor), None
+    ):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        attributes = SecurityAttributes(
+            ctypes.sizeof(SecurityAttributes), descriptor, False
+        )
+        # CREATE_NEW refuses preexisting files and links. The protected DACL
+        # is installed at creation, before any other account can open the file.
+        handle = kernel32.CreateFileW(
+            path, 0x40000000, 0, ctypes.byref(attributes), 1, 0x80, None
+        )
+        if handle is None or handle == ctypes.c_void_p(-1).value:
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            return msvcrt.open_osfhandle(handle, os.O_WRONLY | os.O_BINARY)
+        except BaseException:
+            kernel32.CloseHandle(handle)
+            raise
+    finally:
+        kernel32.LocalFree(descriptor)
+
+
 def _read_acl_aces(api: ctypes.WinDLL, acl: ctypes.c_void_p) -> tuple[int, list[bytes]]:
     """Copy existing entries without interpreting or rewriting trustee rights."""
     assert acl.value is not None

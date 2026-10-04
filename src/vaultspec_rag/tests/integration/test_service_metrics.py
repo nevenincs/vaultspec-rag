@@ -288,7 +288,7 @@ def _routes_app(  # pyright: ignore[reportUnusedFunction]
         ),
         lifespan=None,
     )
-    client = TestClient(app_under_test)
+    client = TestClient(app_under_test, base_url="http://127.0.0.1")
     try:
         yield client, "test-token-metrics"
     finally:

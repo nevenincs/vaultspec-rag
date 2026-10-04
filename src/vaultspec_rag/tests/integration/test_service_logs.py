@@ -84,7 +84,8 @@ def managed_log_app(
                     port=8765,
                 ),
                 lifespan=None,
-            )
+            ),
+            base_url="http://127.0.0.1",
         ),
     )
     try:

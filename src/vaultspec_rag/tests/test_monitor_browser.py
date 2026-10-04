@@ -139,7 +139,7 @@ def test_local_bridge_connects_without_browser_credentials(
         assert logs["filters"] == {"job_id": job_id}
         assert "browser-correlated-record" in json.dumps(logs)
         _, upstream = _read(monitor_http[0], "/health", prefix="")
-        assert upstream["service_token"] == "monitor-test-token"
+        assert "service_token" not in upstream
         _, health = _read(port, "/health")
         # Removing token deletion failed this assertion; restored it passes.
         assert "service_token" not in health
@@ -147,6 +147,11 @@ def test_local_bridge_connects_without_browser_credentials(
         discovery = directory / "service.json"
         metadata = json.loads(discovery.read_text(encoding="utf-8"))
         metadata["service_token"] = "obsolete-test-token"
+        discovery.write_text(json.dumps(metadata), encoding="utf-8")
+        status, refreshed = _read(port, f"/jobs?limit=100&job_id={job_id}")
+        assert status == 401
+        assert refreshed["error"] == "unauthorized"
+        metadata["service_token"] = "monitor-test-token"
         discovery.write_text(json.dumps(metadata), encoding="utf-8")
         status, refreshed = _read(port, f"/jobs?limit=100&job_id={job_id}")
         assert status == 200

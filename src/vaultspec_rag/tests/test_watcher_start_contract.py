@@ -81,7 +81,7 @@ async def watcher_client() -> AsyncIterator[httpx.AsyncClient]:
             ),
             raise_app_exceptions=False,
         ),
-        base_url="http://service",
+        base_url="http://127.0.0.1",
         headers={"Authorization": f"Bearer {_TOKEN}"},
     ) as client:
         yield client

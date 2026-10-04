@@ -167,7 +167,7 @@ def publish_machine_discovery(
     with _lease_guard:
         _require_active_lease(lease, operation="publish machine discovery")
         write_json_atomically(
-            pointer, payload, JsonWriteOptions(indent=2, durable=True)
+            pointer, payload, JsonWriteOptions(indent=2, durable=True, private=True)
         )
 
 

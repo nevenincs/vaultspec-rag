@@ -37,6 +37,9 @@ def test_health_payload_carries_the_device_load_key() -> None:
         ),
         lifespan=None,
     )
-    data = cast("dict[str, object]", TestClient(app).get("/health").json())
+    data = cast(
+        "dict[str, object]",
+        TestClient(app, base_url="http://127.0.0.1").get("/health").json(),
+    )
 
     assert "device_load" in data

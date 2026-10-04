@@ -1374,7 +1374,16 @@ async def health_handler(request: Request) -> object:
     from ..qdrant_runtime import _supervise
     from ..search._typesafe_transport import enrollment_status
     from ..serviceclient._compat import local_package_version
+    from ._auth import require_token
 
+    authenticated = False
+    if request.scope.get("headers") and (
+        request.headers.get("authorization") or request.query_params.get("token")
+    ):
+        refusal = require_token(request)
+        if refusal is not None:
+            return refusal
+        authenticated = True
     runtime = get_request_runtime(request)
     # Cached conformance still takes store lifecycle locks shared with
     # collection I/O. A contended snapshot must not hold the serving loop.
@@ -1431,7 +1440,7 @@ async def health_handler(request: Request) -> object:
         # Per-process identity token. Mirrors the value written to
         # service.json. The CLI compares the two to detect PID reuse and an
         # unrelated HTTP server on the port.
-        service_token=runtime.token,
+        service_token=runtime.token if authenticated else None,
         jobs=jobs_health,
         qdrant=qdrant_state.to_dict(),
         quiesce=quiesce_snapshot.as_envelope(),
@@ -1439,4 +1448,7 @@ async def health_handler(request: Request) -> object:
         backend_capabilities=backend_capabilities_dict(),
         support_profile=active_index_support_profiles(),
     )
-    return JSONResponse(report.model_dump(mode="json"))
+    payload = report.model_dump(mode="json")
+    if report.service_token is None:
+        payload.pop("service_token")
+    return JSONResponse(payload)

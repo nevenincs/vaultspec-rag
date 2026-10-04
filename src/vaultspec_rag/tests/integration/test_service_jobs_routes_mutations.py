@@ -347,7 +347,7 @@ async def test_job_mutations_keep_real_asgi_loop_responsive(
         transport = httpx.ASGITransport(app=app_under_test)
         async with httpx.AsyncClient(
             transport=transport,
-            base_url="http://testserver",
+            base_url="http://127.0.0.1",
         ) as client:
             await _assert_reindex_refuses_unauthorised_modes(
                 client, headers, target_root

@@ -542,7 +542,9 @@ class TestJobsRoutePressureExposure:
             ServerRouteRuntime(token=token, registry=ServiceRegistry(), port=8765),
             lifespan=None,
         )
-        client: httpx.Client = cast("httpx.Client", TestClient(app))
+        client: httpx.Client = cast(
+            "httpx.Client", TestClient(app, base_url="http://127.0.0.1")
+        )
         response: httpx.Response = client.get(
             "/jobs", headers={"Authorization": f"Bearer {token}"}
         )

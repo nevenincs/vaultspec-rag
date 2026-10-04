@@ -194,7 +194,9 @@ def test_search_route_keeps_the_runtime_registry_after_global_shutdown(
         lifespan=None,
     )
     try:
-        with TestClient(app, raise_server_exceptions=False) as client:
+        with TestClient(
+            app, raise_server_exceptions=False, base_url="http://127.0.0.1"
+        ) as client:
             response = client.post(
                 "/search",
                 headers={"Authorization": "Bearer runtime-registry-search-token"},
@@ -265,7 +267,9 @@ def test_a_never_indexed_root_answers_rather_than_failing(
         lifespan=None,
     )
     try:
-        with TestClient(app, raise_server_exceptions=False) as client:
+        with TestClient(
+            app, raise_server_exceptions=False, base_url="http://127.0.0.1"
+        ) as client:
             response = client.post(
                 "/search",
                 headers={"Authorization": f"Bearer {token}"},
@@ -316,7 +320,9 @@ def test_mutating_routes_reject_a_closed_runtime_before_global_or_gpu_work(
         lifespan=None,
     )
     try:
-        with TestClient(app, raise_server_exceptions=False) as client:
+        with TestClient(
+            app, raise_server_exceptions=False, base_url="http://127.0.0.1"
+        ) as client:
             headers = {"Authorization": f"Bearer {token}"}
             watcher = client.post(
                 "/watcher/start",
@@ -782,7 +788,9 @@ class TestCombinedSearchBuildsNoAvailabilityFacts:
             ),
             lifespan=None,
         )
-        with TestClient(app, raise_server_exceptions=False) as client:
+        with TestClient(
+            app, raise_server_exceptions=False, base_url="http://127.0.0.1"
+        ) as client:
             response = client.post(
                 "/search",
                 headers={"Authorization": "Bearer combined-carve-out-token"},
@@ -860,7 +868,9 @@ def _combined_http_response(
         ServerRouteRuntime(token="combined-token", registry=registry, port=8765),
         lifespan=None,
     )
-    with TestClient(app, raise_server_exceptions=False) as client:
+    with TestClient(
+        app, raise_server_exceptions=False, base_url="http://127.0.0.1"
+    ) as client:
         response = client.post(
             "/search",
             headers={"Authorization": "Bearer combined-token"},
