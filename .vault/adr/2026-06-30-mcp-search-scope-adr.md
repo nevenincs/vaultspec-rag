@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#mcp-search-scope'
 date: '2026-06-30'
-modified: '2026-07-27'
-body_hash: 'sha256:fe5dc5901991b2afb25c2182cfa21610b5216cf507ca8197dded4107da2349ab'
+modified: '2026-10-04'
+body_hash: 'sha256:cf3b499e33bf7f30f28b40a288ad812a86bf4747381bd3a9928541a1928b8f3e'
 related:
   - "[[2026-06-30-mcp-conformance-research]]"
   - "[[2026-06-30-mcp-conformance-reference]]"
@@ -12,6 +12,7 @@ related:
   - "[[2026-06-18-mcp-service-client-adr]]"
   - "[[2026-06-07-mcp-server-deconflation-adr]]"
   - '[[2026-07-22-mcp-search-scope-surface-reconciliation-research]]'
+  - '[[2026-10-04-search-default-orientation-adr]]'
 ---
 
 # `mcp-search-scope` adr: `MCP search-surface scope boundary` | (**status:** `accepted`)
@@ -122,6 +123,10 @@ The MCP server is narrowed to a semantic-search surface and brought into line wi
   SB4's retirement of the parity-matrix framing is unaffected and reaffirmed: this amendment does not mandate CLI/MCP mirroring. It defines the MCP surface by a kind-parametric rule of its own, which happens to grow with content kinds rather than by matching the CLI verb for verb.
 
   The conformance guard is updated to assert this rule - a search and refresh verb per kind, the named conveniences, status, and clean - rather than a frozen five-name list, so it keeps enforcing the boundary as kinds are added rather than failing the next time the surface legitimately grows. The prior five-name enumeration in SB1 and the removals in SB2/SB3 are retained above as the superseded record.
+
+### Orientation default refinement (2026-10-04)
+
+The search_combined union convenience in SB7 now starts with ADR and code retrieval; include_documents=true explicitly selects the full union. Explicit doc_type or inline type filters override the ADR default. The tool family and operational boundary remain unchanged. This authorized refinement is recorded in `2026-10-04-search-default-orientation-adr`.
 
 ## Rationale
 

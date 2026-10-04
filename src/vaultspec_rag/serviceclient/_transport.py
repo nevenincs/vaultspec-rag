@@ -234,6 +234,7 @@ class SearchCallArguments(TypedDict, total=False):
     like_ids: list[str | int] | None
     unlike_ids: list[str | int] | None
     document_filters: DocumentSearchFilters | None
+    include_documents: bool
 
 
 @dataclass(frozen=True)
@@ -263,6 +264,7 @@ class SearchCallRequest:
     like_ids: list[str | int] | None = None
     unlike_ids: list[str | int] | None = None
     document_filters: DocumentSearchFilters | None = None
+    include_documents: bool = True
 
 
 class ServiceResponseTooLargeError(ValueError):

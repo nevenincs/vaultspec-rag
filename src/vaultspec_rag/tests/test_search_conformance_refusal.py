@@ -389,7 +389,7 @@ def test_combined_count_refusal_uses_the_same_typed_source_fact(
                 count,
             )
         counts, failures, facts, timings = _public_search._count_combined_domains(
-            tmp_path, registry
+            tmp_path, registry, include_documents=True
         )
         assert source not in counts
         assert f"{source}_indexed_count" not in timings
