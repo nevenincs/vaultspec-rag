@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from tree_sitter_language_pack import downloaded_languages
+from tree_sitter_language_pack import get_parser
 
 from .._store_models import (
     CodeChunk,
@@ -62,9 +62,15 @@ def _code_payload(chunk: CodeChunk) -> dict[str, object]:
     return dict(_code_chunk_payload(chunk))
 
 
+@pytest.fixture
+def python_grammar() -> None:
+    """Load the real grammar before chunking; an unavailable prerequisite fails."""
+    get_parser("python")
+
+
+@pytest.mark.usefixtures("python_grammar")
 def test_actual_ast_same_id_body_changed_class_refuses_reuse() -> None:
-    if "python" not in downloaded_languages():
-        pytest.skip("isolated AST proof requires an already-cached Python grammar")
+    # Bypassing donor-evidence equality failed the refusal; byte restoration passed.
     methods = "".join(
         f"    def method_{index}(self):\n"
         f"        value = '{'x' * 1000}'\n        return value\n"

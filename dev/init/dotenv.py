@@ -43,8 +43,10 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import stat
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -193,10 +195,19 @@ def seed_source(worktree: Path, env_name: str) -> Path | None:
 
 
 def _replace(target: Path, text: str) -> None:
-    """Write *text* to *target* through a sibling file and one rename."""
-    scratch = target.with_name(f"{target.name}.provisioning")
-    scratch.write_text(text, encoding="utf-8", newline="\n")
-    os.replace(scratch, target)
+    """Publish through a private sibling without broadening existing POSIX modes."""
+    descriptor, name = tempfile.mkstemp(
+        prefix=f".{target.name}.", suffix=".provisioning", dir=target.parent
+    )
+    scratch = Path(name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            if os.name != "nt" and target.exists():
+                os.fchmod(handle.fileno(), stat.S_IMODE(target.stat().st_mode) & 0o600)
+            handle.write(text)
+        os.replace(scratch, target)
+    finally:
+        scratch.unlink(missing_ok=True)
 
 
 def provision(example: Path, target: Path, seed: Path | None = None) -> int:

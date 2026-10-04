@@ -19,6 +19,7 @@ content assertion.
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -105,6 +106,71 @@ def test_a_new_file_takes_the_seed_values_in_the_example_structure(
     assert target.read_text(encoding="utf-8") == EXAMPLE.replace(
         "# BETA=", "BETA=secret value"
     )
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
+@pytest.mark.parametrize("existing_mode", [None, 0o600, 0o644, 0o400])
+def test_credentials_are_private_before_writing_and_after_publication(
+    tmp_path: Path, existing_mode: int | None
+) -> None:
+    """Observe the actual descriptor before any credential bytes reach it.
+
+    Creation with 0666 failed the pre-write mode assertion; restoring private
+    creation passed all four modes. Forcing fchmod to 0600 failed read-only
+    preservation; immediate byte restoration passed all four modes again.
+    """
+    script = """
+import os
+import stat
+import sys
+from pathlib import Path
+from dev.init.dotenv import provision
+
+root = Path(sys.argv[1])
+mode = None if sys.argv[2] == 'new' else int(sys.argv[2])
+example = root / '.env.example'
+example.write_text('# BETA=\\n', encoding='utf-8')
+seed = root / 'seed.env'
+seed.write_text('BETA=test-credential\\n', encoding='utf-8')
+target = root / '.env'
+if mode is not None:
+    target.write_text('# stale layout\\nBETA=test-credential\\n', encoding='utf-8')
+    target.chmod(mode)
+seen = []
+def audit(event, arguments):
+    if event == 'open' and isinstance(arguments[0], int):
+        descriptor = arguments[0]
+        metadata = os.fstat(descriptor)
+        assert stat.S_IMODE(metadata.st_mode) & 0o077 == 0, (
+            'scratch exposes credentials before writing'
+        )
+        assert metadata.st_size == 0, 'scratch observation happened after writing'
+        seen.append(descriptor)
+os.umask(0o022)
+sys.addaudithook(audit)
+assert provision(example, target, seed) == 0
+assert seen, 'private scratch descriptor was not observed'
+expected_mode = 0o600 if mode is None else mode & 0o600
+assert stat.S_IMODE(target.stat().st_mode) == expected_mode, (
+    'publication broadened credential permissions'
+)
+assert target.read_text(encoding='utf-8') == 'BETA=test-credential\\n'
+assert not list(root.glob('*.provisioning')), 'credential scratch was left behind'
+"""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            script,
+            str(tmp_path),
+            "new" if existing_mode is None else str(existing_mode),
+        ],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_a_seed_value_the_example_does_not_declare_is_not_copied(
