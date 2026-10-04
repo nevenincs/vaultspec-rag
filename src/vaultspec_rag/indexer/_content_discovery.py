@@ -21,7 +21,6 @@ from typing import TYPE_CHECKING
 
 from ..index_profiles import SupportMeasurement
 from ..job_control import NO_RUN_CONTROL
-from ..operator_state._features import PreprocessHookState
 from . import _ignore_specs
 from ._chunking import _MAX_FILE_SIZE, _is_binary
 from ._content_policy import (
@@ -32,7 +31,6 @@ from ._content_policy import (
     RootContentPolicy,
     SourceProfileVersion,
 )
-from ._preprocess_config import hook_state
 from ._scan_cache import MembershipScanCache
 from ._source_file import open_source_file, source_file_stat
 
@@ -43,6 +41,7 @@ if TYPE_CHECKING:
 
     from ..config._types import PreprocessMode
     from ..job_control import RunControl
+    from ..operator_state._features import PreprocessHookState
     from ._resolved_policy import ResolvedIndexPolicy
 
 DEFAULT_SCAN_SAMPLE_LIMIT = 100
@@ -127,7 +126,7 @@ class ContentScanResult:
     policy_fingerprint: str
     preprocess_mode: PreprocessMode
     preprocess_rule_count: int
-    hooks_will_run: bool
+    preprocess_hooks: PreprocessHookState
     measurement: SupportMeasurement
 
 
@@ -444,7 +443,14 @@ class CodeContentDiscovery:
         fingerprint = policy.fingerprints.snapshot
         cached = self._served_from_scan_cache(fingerprint, sample_limit)
         if cached is not None:
-            return cached
+            # The fingerprint identifies what a run executes, not why its
+            # hooks are held back: a switched-off root and an unapproved one
+            # share it. A cached walk therefore reports this policy's reason.
+            return dataclasses.replace(
+                cached,
+                preprocess_mode=policy.execution_mode,
+                preprocess_hooks=policy.hook_state,
+            )
 
         result: list[pathlib.Path] = []
         source_files = 0
@@ -496,10 +502,7 @@ class CodeContentDiscovery:
             policy_fingerprint=fingerprint,
             preprocess_mode=policy.execution_mode,
             preprocess_rule_count=len(policy.preprocess_rules),
-            hooks_will_run=(
-                hook_state(len(policy.preprocess_rules), policy.execution_mode)
-                is PreprocessHookState.ACTIVE
-            ),
+            preprocess_hooks=policy.hook_state,
             measurement=SupportMeasurement(
                 source_files=source_files,
                 source_bytes=source_bytes,

@@ -118,7 +118,7 @@ How code search classifies a source file's role: `prod`, `tests`, `docs`, `local
 
 ## Preprocessing hook
 
-A rule in a project's `.vaultragpreprocess.toml` naming a command or entry point that converts a file into indexable text. A hook runs with your own privileges and is not sandboxed, so indexing a repository means trusting the commands its hooks run. See [the preprocessing hooks guide](preprocessing-hooks.md).
+A rule in a project's `.vaultragpreprocess.toml` naming a command or entry point that converts a file into indexable text. A hook runs with your own privileges and is not sandboxed, so it runs only after you approve the project's rules with `vaultspec-rag preprocess approve`, and any change to them needs approval again. See [the preprocessing hooks guide](preprocessing-hooks.md).
 
 ## Project root
 

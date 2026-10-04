@@ -34,7 +34,6 @@ from ._index_lifecycle import (
     preprocess_completion_fields,
     run_index_lifecycle,
 )
-from ._resolved_policy import preprocess_stale_note
 from ._route_migration import reconcile_generation_storage, reconcile_scoped_routes
 from ._run_ledger_models import (
     FETCH_BATCH,
@@ -884,7 +883,7 @@ class DocumentIndexer:
                 retained = previous_files.get(rel)
                 if retained is not None:
                     published.append(retained)
-                failures.append(preprocess_stale_note(rel))
+                failures.append(request.policy.stale_note(rel))
                 continue
             metadata, chunk_count, failure = self._publish_file(
                 path,
@@ -1020,7 +1019,7 @@ class DocumentIndexer:
                     counts.removed += len(old.point_ids)
                 continue
             if request.policy.transform_disabled(rel):
-                failures.append(preprocess_stale_note(rel))
+                failures.append(request.policy.stale_note(rel))
                 continue
             old = current.get(rel)
             metadata, chunk_count, failure = self._publish_file(

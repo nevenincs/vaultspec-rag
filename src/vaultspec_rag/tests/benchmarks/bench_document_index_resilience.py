@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Final, cast
 
 from .._indexer_fixtures import chunk_document_and_hash_file
 from .._ledger_fixtures import latest_generation
+from .._preprocess_approval import approve_preprocess_policy
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -286,6 +287,9 @@ def prepare_document_workload(
     (resolved / ".vaultragpreprocess.toml").write_text(
         _configuration(resolved, spec), encoding="utf-8", newline="\n"
     )
+    # The harness wrote this extractor and this policy itself, so it stands in
+    # for the operator approving them; without that nothing is extracted.
+    approve_preprocess_policy(resolved)
     return PreparedDocumentWorkload(
         created,
         retained,

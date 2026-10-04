@@ -3,14 +3,15 @@ tags:
   - '#adr'
   - '#index-drift-hardening'
 date: '2026-07-13'
-modified: '2026-09-26'
-body_hash: 'sha256:057dec9db3ccd950c9e3c2d1f5b7f12b18a8c04a16b490defabca6d087850784'
+modified: '2026-10-04'
+body_hash: 'sha256:e66aac99598d4d1154f1382e712083a7af214a263f4ddd9fc6d80a3f8ec88627'
 related:
   - '[[2026-07-13-index-drift-hardening-research]]'
   - '[[2026-04-04-vaultragignore-adr]]'
   - '[[2026-06-02-watcher-targeted-reindex-adr]]'
   - '[[2026-06-10-preprocess-hooks-adr]]'
   - '[[2026-06-19-destructive-ops-security-audit]]'
+  - '[[2026-10-04-preprocess-root-approval-adr]]'
 ---
 
 # `index-drift-hardening` adr: `config-epoch drift sentinel and preprocess TOFU default` | (**status:** `accepted`)
@@ -136,6 +137,8 @@ Decision set, cited by the plan:
   flow, and the drift-epoch self-healing behavior.
 
 **Amendment note, 2026-09-26**: D4's tri-state `preprocess_mode` (`default`/`trust_all`/`off`) and `VAULTSPEC_RAG_PREPROCESS_TRUST_ALL` do not exist in the code today. `2026-07-14-preprocess-sandbox-removal-adr` (accepted, one day later) collapsed the mode to two states (`default`/`off`) and removed the sandbox/trust-store apparatus this D4-D9 trust model depended on; `config/_types.py:15` now declares `VALID_PREPROCESS_MODES: frozenset[str] = frozenset({"default", "off"})` with no `trust_all` member and no `PREPROCESS_TRUST_ALL` `EnvVar`. See that later record for the governing decision; D1-D3 (config-epoch drift sentinel) are unaffected and remain current.
+
+**Amendment note, 2026-10-04**: per-root consent is restored in a narrower form by `2026-10-04-preprocess-root-approval-adr`, which now governs whether a root's hooks execute. It differs from D4-D8 as written here: approval binds the canonical root and the digest of the policy file's bytes rather than a hash of the resolved rule set, it is enforced at the execution predicate rather than in the rule loader, the approval command takes no interactive confirmation, and there is no `trust_all` mode. D4-D8 remain historical.
 
 ## Rationale
 

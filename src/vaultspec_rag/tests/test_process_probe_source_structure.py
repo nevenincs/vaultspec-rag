@@ -400,7 +400,6 @@ class TestNoStructurallyIdenticalFunctions:
             "operator_state/_installation.py:fixed_by_torch_reinstall",
         ): _NAMED_SUBSET,
         (
-            "operator_state/_features.py:label",
             "operator_state/_holders.py:label",
             "operator_state/_installation.py:label",
             "operator_state/_service.py:label",

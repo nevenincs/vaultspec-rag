@@ -243,9 +243,10 @@ explains how to phrase a query and every filter.
 
 To index PDFs and other formats, add a
 [converter](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/preprocessing-hooks.md).
-Converters run without a sandbox, with your account's permissions, so read
-`.vaultragpreprocess.toml` before you index a repository that has one.
-`vaultspec-rag preprocess status` shows the rules without running them.
+Converters run without a sandbox, with your account's permissions, so a
+repository's `.vaultragpreprocess.toml` runs nothing until you approve it with
+`vaultspec-rag preprocess approve`, and any change to it needs approval again.
+`vaultspec-rag preprocess list` shows the rules without running them.
 
 ## Use it from an AI assistant
 

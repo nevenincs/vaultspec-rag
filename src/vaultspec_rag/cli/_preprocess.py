@@ -1,21 +1,26 @@
-"""``preprocess`` command group: inspect, validate, and trial rules.
+"""``preprocess`` command group: inspect, validate, approve, and trial rules.
 
-Hooks are gated only by the ``off`` kill switch: there is no sandbox and no
-trust store. A root's preprocess config is repo-authored code and runs directly
-with the operator's privileges.
+A root's rules run only once the operator has approved that root's exact
+policy, and never under the ``off`` kill switch. There is no sandbox: an
+approved rule is repo-authored code that runs directly with the operator's
+privileges.
 
 - ``preprocess list``    - show the resolved rules for the project root.
 - ``preprocess check``   - validate ``.vaultragpreprocess.toml`` and report
   configuration problems.
+- ``preprocess approve`` - let the root's current rules run when it is indexed.
+- ``preprocess revoke``  - withdraw that approval.
 - ``preprocess run-one`` - run the matching rule against one file and print the
   validated output, for authoring/debugging. No indexing side effect.
-- ``preprocess status``  - report the mode, config presence, and rule count.
+- ``preprocess status``  - report the mode, approval, config presence, and rule
+  count.
 
 All honour the shared script-facing ``--json`` output.
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, cast
 
@@ -23,19 +28,22 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
+from .._operator_commands import index_command
+from .._root_identity import canonical_root_path
 from ..config._settings import get_config
+from ..indexer._preprocess_approval import approve_policy, revoke_approval
 from ..indexer._preprocess_config import (
     PREPROCESS_CONFIG_FILENAME,
     PreprocessConfigError,
     PreprocessPolicyError,
+    config_hook_state,
     hook_state,
     load_preprocess_rules,
-    root_hook_state,
 )
 from ..indexer._preprocess_runner import PreprocessAbortError, run_preprocessor
 from ..operator_state._features import PreprocessHookState
 from ._app import CLIState, JsonMode, preprocess_app
-from ._render import _emit_json, _emit_json_error_and_exit, _plain
+from ._render import _emit_json, _emit_json_error_and_exit, _plain, _print_next_action
 
 if TYPE_CHECKING:
     from ..config._types import PreprocessMode
@@ -188,35 +196,176 @@ def handle_preprocess_check(
     _cli.console.print(f"Preprocess config is valid: {count} {rule_word}.")
 
 
-def _report_preprocess_no_match(
-    root: Path,
+def _format_invocation(command: str | None, entry_point: str | None) -> str:
+    return command if command is not None else f"entry point {entry_point}"
+
+
+def _report_store_error(command: str, exc: OSError, *, json_mode: bool) -> None:
+    """Report that the approval store could not be read or written.
+
+    Nothing was changed: the store is rewritten whole, so a failed read is
+    refused rather than treated as an empty store.
+    """
+    message = (
+        f"The preprocess approval store could not be updated ({exc}). "
+        "Nothing was changed; run the command again."
+    )
+    if json_mode:
+        _emit_json_error_and_exit(command, "approval-store-unavailable", message, 1)
+    _plain(message, soft_wrap=True)
+    raise typer.Exit(code=1) from exc
+
+
+@preprocess_app.command(
+    "approve",
+    help=(
+        "Approve this project's current preprocess rules so indexing may run "
+        "their commands. Any later change to the rules needs approval again."
+    ),
+)
+def handle_preprocess_approve(
+    ctx: typer.Context,
+    json_mode: JsonMode = False,
+) -> None:
+    """Record the operator's approval of the root's exact current policy."""
+    root = _root(ctx)
+    try:
+        config = load_preprocess_rules(root, strict=True)
+    except PreprocessConfigError as exc:
+        _report_config_error("preprocess approve", exc, json_mode=json_mode)
+        return
+    digest = config.policy_digest
+    rules = [
+        {
+            "pattern": rule.pattern,
+            "invocation": _format_invocation(rule.command, rule.entry_point),
+        }
+        for rule in config.rules
+    ]
+    if digest is None or not rules:
+        status = "no_rules"
+    elif config.approved_for(root):
+        status = "already_approved"
+    else:
+        try:
+            approve_policy(
+                root,
+                digest,
+                approved_at=datetime.now(UTC).isoformat(timespec="seconds"),
+            )
+        except OSError as exc:
+            _report_store_error("preprocess approve", exc, json_mode=json_mode)
+            return
+        status = "approved"
+
+    if json_mode:
+        _emit_json(
+            True,
+            "preprocess approve",
+            data={
+                "status": status,
+                "root": str(canonical_root_path(root)),
+                "policy_digest": digest if rules else None,
+                "rule_count": len(rules),
+                "rules": rules,
+            },
+        )
+        return
+    if status == "no_rules":
+        _plain("No preprocess rules configured; there is nothing to approve.")
+        return
+    word = "rule" if len(rules) == 1 else "rules"
+    lead = "Already approved" if status == "already_approved" else "Approved"
+    # Soft-wrapped so a path, a command or the digest stays one line a reader
+    # can take whole.
+    _plain(
+        f"{lead}: {len(rules)} preprocess {word} for {canonical_root_path(root)}",
+        soft_wrap=True,
+    )
+    for index, rule in enumerate(rules, start=1):
+        _plain(f"{index}. Files: {rule['pattern']}", soft_wrap=True)
+        _plain(f"   Invocation: {rule['invocation']}", soft_wrap=True)
+    _plain(f"Policy digest: {digest}", soft_wrap=True)
+    _plain(
+        "These commands run with your privileges when this project is indexed. "
+        f"Any change to {PREPROCESS_CONFIG_FILENAME} needs approval again.",
+        soft_wrap=True,
+    )
+    if status == "approved":
+        _print_next_action(index_command())
+
+
+@preprocess_app.command(
+    "revoke",
+    help="Withdraw approval of this project's preprocess rules so they stop running.",
+)
+def handle_preprocess_revoke(
+    ctx: typer.Context,
+    json_mode: JsonMode = False,
+) -> None:
+    """Remove the operator's approval of the root's policy."""
+    root = _root(ctx)
+    try:
+        status = "revoked" if revoke_approval(root) else "not_approved"
+    except OSError as exc:
+        _report_store_error("preprocess revoke", exc, json_mode=json_mode)
+        return
+    if json_mode:
+        _emit_json(
+            True,
+            "preprocess revoke",
+            data={"status": status, "root": str(canonical_root_path(root))},
+        )
+        return
+    if status == "revoked":
+        _plain(
+            f"Revoked approval of preprocess rules for {canonical_root_path(root)}",
+            soft_wrap=True,
+        )
+        return
+    _plain("This project's preprocess rules were not approved; nothing to revoke.")
+
+
+def _report_gated_run_one(
     rel: str,
+    state: PreprocessHookState,
+    rule_count: int,
     *,
     json_mode: bool,
 ) -> None:
-    """Report that no preprocess rule matched *rel*, honoring the off kill switch.
+    """Report that the root's rules are held back, so nothing ran for *rel*.
 
-    Routing remains resolved while execution is off. Surface the actionable
-    off notice before considering a matching rule so this diagnostic command
-    obeys the same execution gate as indexing.
+    This diagnostic command obeys the same execution gate as indexing, and
+    says which half of it is closed before considering a matching rule.
     """
-    gate = _gated_rule_state(root)
-    if gate is not None:
-        if json_mode:
-            _emit_json(
-                True,
-                "preprocess run-one",
-                data={
-                    "matched": False,
-                    "path": rel,
-                    "gated": True,
-                    "mode": "off",
-                    "rule_count": gate,
-                },
-            )
-            return
-        _plain(_gated_run_one_message(gate))
+    if json_mode:
+        _emit_json(
+            True,
+            "preprocess run-one",
+            data={
+                "matched": False,
+                "path": rel,
+                "gated": True,
+                "mode": get_config().preprocess_mode,
+                "hooks": state.value,
+                "rule_count": rule_count,
+            },
+        )
         return
+    counted = "1 rule is" if rule_count == 1 else f"{rule_count} rules are"
+    if state is PreprocessHookState.DISABLED:
+        # This command runs in the calling shell, so the switch to clear is
+        # the shell's own rather than a service's.
+        lead = "Preprocessing is off"
+        remedy = "Unset VAULTSPEC_RAG_PREPROCESS=off to run them."
+    else:
+        lead = "Preprocess rules are not approved"
+        remedy = state.remediation
+    _plain(f"{lead}; {counted} configured but skipped. {remedy}", soft_wrap=True)
+
+
+def _report_preprocess_no_match(rel: str, *, json_mode: bool) -> None:
+    """Report that no preprocess rule matched *rel*."""
     if json_mode:
         _emit_json(True, "preprocess run-one", data={"matched": False, "path": rel})
         return
@@ -232,8 +381,6 @@ def handle_preprocess_run_one(
     json_mode: JsonMode = False,
 ) -> None:
     """Trial the matching preprocessor against one file for authoring/debugging."""
-    from ..config._settings import get_config
-
     root = _root(ctx)
     try:
         config = load_preprocess_rules(root)
@@ -246,12 +393,15 @@ def handle_preprocess_run_one(
         rel = str(abs_path.resolve().relative_to(root.resolve())).replace("\\", "/")
     except ValueError:
         rel = str(path).replace("\\", "/")
-    if _gated_rule_state(root) is not None:
-        _report_preprocess_no_match(root, rel, json_mode=json_mode)
+    # Gated on the config object the rule below is taken from, so what runs is
+    # what was approved.
+    state = config_hook_state(root, config, get_config().preprocess_mode)
+    if state in {PreprocessHookState.DISABLED, PreprocessHookState.UNAPPROVED}:
+        _report_gated_run_one(rel, state, len(config.rules), json_mode=json_mode)
         return
     rule = config.match(rel)
     if rule is None:
-        _report_preprocess_no_match(root, rel, json_mode=json_mode)
+        _report_preprocess_no_match(rel, json_mode=json_mode)
         return
 
     max_bytes = int(get_config().preprocess_max_emitted_bytes)
@@ -299,27 +449,6 @@ def handle_preprocess_run_one(
         _cli.console.print(f"Output: {content}")
 
 
-def _gated_rule_state(root: Path) -> int | None:
-    """Return the rule count when a root's rules are switched off, else ``None``.
-
-    Policy routing stays available while the execution kill switch is off, so
-    the rules the root declares still give the diagnostic count.
-    """
-    from ..config._settings import get_config
-
-    state, rule_count = root_hook_state(root, get_config().preprocess_mode)
-    return rule_count if state is PreprocessHookState.DISABLED else None
-
-
-def _gated_run_one_message(rule_count: int) -> str:
-    """Return the actionable line for a switched-off rule set in ``run-one``."""
-    word = "rule" if rule_count == 1 else "rules"
-    return (
-        f"Preprocessing is off; {rule_count} {word} are configured but skipped. "
-        "Unset VAULTSPEC_RAG_PREPROCESS=off to run them."
-    )
-
-
 def _running_service_preprocess_mode() -> PreprocessMode | None:
     """Return the preprocess mode of the service that would run the hooks.
 
@@ -338,15 +467,21 @@ def _running_service_preprocess_mode() -> PreprocessMode | None:
     return health.features.preprocess_mode if health is not None else None
 
 
+def _print_approval(rule_count: int, approved: bool) -> None:
+    """Say whether a root's rules are approved; a root without rules has none."""
+    if rule_count:
+        _plain(f"Approval: {'approved' if approved else 'not approved'}")
+
+
 @preprocess_app.command(
     "status",
-    help="Report the preprocess mode, config presence, and rule count.",
+    help="Report the preprocess mode, approval, config presence, and rule count.",
 )
 def handle_preprocess_status(
     ctx: typer.Context,
     json_mode: JsonMode = False,
 ) -> None:
-    """Report the preprocess mode and the root's rule configuration."""
+    """Report the preprocess mode, approval, and the root's rule configuration."""
     root = _root(ctx)
     service_mode = _running_service_preprocess_mode()
     mode = service_mode or get_config().preprocess_mode
@@ -357,6 +492,8 @@ def handle_preprocess_status(
     targets: list[str] = []
     extractor_versions: list[str] = []
     path_independent_rules = 0
+    policy_digest: str | None = None
+    approved = False
     config_valid = True
     config_error_kind: str | None = None
     config_error_message: str | None = None
@@ -375,9 +512,11 @@ def handle_preprocess_status(
                 {rule.extractor_version for rule in config.rules}
             )
             path_independent_rules = sum(rule.path_independent for rule in config.rules)
+            policy_digest = config.policy_digest
+            approved = config.approved_for(root)
 
     state = (
-        hook_state(rule_count, mode)
+        hook_state(rule_count, mode, approved=approved)
         if config_valid
         else PreprocessHookState.INVALID_CONFIG
     )
@@ -399,6 +538,8 @@ def handle_preprocess_status(
                 "targets": targets,
                 "extractor_versions": extractor_versions,
                 "path_independent_rules": path_independent_rules,
+                "policy_digest": policy_digest,
+                "approved": approved,
                 "would_run": state is PreprocessHookState.ACTIVE,
                 "hooks": state.value,
             },
@@ -412,6 +553,7 @@ def handle_preprocess_status(
         f"{'' if config_valid else ' (invalid)'}"
     )
     _plain(f"Rules: {rule_count}")
+    _print_approval(rule_count, approved)
     if config_error_kind is not None:
         _plain(f"Config error: {config_error_kind}: {config_error_message}")
     if schema_version is not None:
@@ -421,4 +563,5 @@ def handle_preprocess_status(
             f"cross-path cache rules: {path_independent_rules}"
         )
     remedy = f" {state.remediation}" if state.remediation else ""
-    _plain(f"Hooks: {state.label}.{remedy}")
+    # Soft-wrapped so a command in the remedy is not folded mid-token.
+    _plain(f"Hooks: {state.label}.{remedy}", soft_wrap=True)

@@ -7,12 +7,12 @@ the scoped/incremental path routes a changed binary through the preprocessor;
 and a failing preprocessor remains unresolved and retryable rather than
 publishing a silently converged gap.
 
-Hooks run BY DEFAULT for any root - there is no trust step and no OS containment:
-a root's preprocess config is repo-authored code that runs directly with the
-operator's privileges. The tests below prove
-the direct-execution path end to end: a hook runs through the local index, its
-unit is indexed and searchable with a deep-link anchor to the real source, and
-the ``off`` kill switch skips hooks entirely.
+A root's preprocess config is repo-authored code that runs directly with the
+operator's privileges and no OS containment, so it runs only once the operator
+has approved that root's exact policy. The tests below prove both halves end to
+end: an approved hook runs through the local index, its unit is indexed and
+searchable with a deep-link anchor to the real source; an unapproved or edited
+policy executes nothing; and the ``off`` kill switch skips hooks entirely.
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ from ...config._types import EnvVar
 from ...progress import NullProgressReporter
 from .._config_fixtures import reset_config
 from .._ledger_fixtures import latest_generation
+from .._preprocess_approval import approve_preprocess_policy
 from .._publication_assertions import published_content_identities
 from .._sqlite_state import assert_sqlite_unchanged, sqlite_contents
 
@@ -57,9 +58,8 @@ def _preprocess_env(  # pyright: ignore[reportUnusedFunction]
     """Isolate the managed status dir to a per-test tmp path.
 
     The status dir is relocated so no test touches the operator's real
-    ``~/.vaultspec-rag``. No trust store exists anymore: under the default mode
-    the runner resolves and runs a root's rules for any root directly, so there
-    is no per-root consent setup to perform.
+    ``~/.vaultspec-rag``, and so each test starts with an empty approval
+    store: a test that expects a hook to run approves its root first.
     """
     status_key = EnvVar.STATUS_DIR.value
     prev_status = os.environ.get(status_key)
@@ -133,6 +133,12 @@ def _write_config(root: Path, rules: str) -> None:
     (root / ".vaultragpreprocess.toml").write_text(rules, encoding="utf-8")
 
 
+def _write_approved_config(root: Path, rules: str) -> None:
+    """Write the policy and approve it, as the root's operator would."""
+    _write_config(root, rules)
+    approve_preprocess_policy(root)
+
+
 def _file_tree_bytes(root: Path) -> dict[str, bytes]:
     """Snapshot exact files below one bounded test-owned directory."""
     return {
@@ -179,7 +185,7 @@ def _prepare_off_hook_setup(
     model = rag_components["model"]
     sentinel = tmp_path / "EXECUTED.flag"
     extractor = _sentinel_extractor(tmp_path, sentinel)
-    _write_config(
+    _write_approved_config(
         tmp_path,
         "version = 2\n\n"
         '[[rule]]\npattern = "*.pdf"\n'
@@ -498,7 +504,7 @@ def preproc_project(
 
     script = tmp_path / "pdf_extractor.py"
     script.write_text(textwrap.dedent(_PDF_EXTRACTOR), encoding="utf-8")
-    _write_config(
+    _write_approved_config(
         tmp_path,
         "version = 2\n\n"
         f"[[rule]]\npattern = \"*.pdf\"\ncommand = '''{_command(script)}'''\n"
@@ -553,7 +559,7 @@ class TestPreprocessEndToEnd:
     def test_hook_runs_directly_through_local_index(
         self, preproc_project: _PreprocProject
     ) -> None:
-        # The default-mode path with no trust step and no containment: a real
+        # The default-mode path with no containment: an approved, real
         # command hook runs directly through the local index, its unit is
         # indexed and searchable, and the deep-link anchor references the real
         # source - never the ephemeral ``vsrag-hook-`` scratch cwd the child
@@ -593,6 +599,7 @@ class TestPreprocessEndToEnd:
             AdmissionReason,
             ContentKind,
         )
+        from ...operator_state._features import PreprocessHookState
 
         setup = _prepare_off_hook_setup(rag_components, tmp_path)
         try:
@@ -604,7 +611,7 @@ class TestPreprocessEndToEnd:
             assert (
                 scan.preprocess_mode,
                 scan.preprocess_rule_count,
-                scan.hooks_will_run,
+                scan.preprocess_hooks,
                 sample.kind,
                 sample.admitted,
                 sample.reason,
@@ -612,7 +619,7 @@ class TestPreprocessEndToEnd:
             ) == (
                 "off",
                 1,
-                False,
+                PreprocessHookState.DISABLED,
                 ContentKind.CODE,
                 True,
                 AdmissionReason.EXPLICIT_ROUTE,
@@ -638,6 +645,143 @@ class TestPreprocessEndToEnd:
             )
             assert_sqlite_unchanged(setup.metadata_path, setup.before_metadata)
             assert _file_tree_bytes(setup.cache_root) == setup.before_cache
+        finally:
+            setup.store.close()
+            if setup.previous_env is None:
+                os.environ.pop(setup.env_key, None)
+            else:
+                os.environ[setup.env_key] = setup.previous_env
+            reset_config()
+
+    @pytest.mark.timeout(600)
+    def test_unapproved_root_never_executes_its_hooks(
+        self, rag_components: RagComponentsWithManifest, tmp_path: Path
+    ) -> None:
+        """Indexing a root is not consent to run what its policy file names.
+
+        Mutation check: resolving every root as approved runs the extractor,
+        creates the sentinel and fails here on its absence; restoring the
+        store lookup passes.
+        """
+        from ... import CodebaseIndexer
+        from ...store_runtime import VaultStore
+
+        sentinel = tmp_path / "EXECUTED.flag"
+        extractor = _sentinel_extractor(tmp_path, sentinel)
+        _write_config(
+            tmp_path,
+            "version = 2\n\n"
+            '[[rule]]\npattern = "*.pdf"\n'
+            f"command = '''{_command(extractor)}'''\n"
+            'target = "code"\n'
+            'extractor_version = "1"\n'
+            'on_error = "skip"\n',
+        )
+        (tmp_path / ".vaultragignore").write_text(
+            f"/{extractor.name}\n", encoding="utf-8"
+        )
+        (tmp_path / "doc.pdf").write_bytes(b"\x00\x01 binary")
+        (tmp_path / "seed.py").write_text(
+            "def seed():\n    return 1\n", encoding="utf-8"
+        )
+
+        store = VaultStore(tmp_path)
+        try:
+            indexer = CodebaseIndexer(tmp_path, rag_components["model"], store)
+            withheld = indexer.full_index(
+                reporter=NullProgressReporter(),
+                preflight=indexer.preflight_content(),
+            )
+
+            assert not sentinel.exists()
+            assert withheld.preprocess_ok == 0
+            assert withheld.preprocess_failures == [
+                "doc.pdf: preprocessing awaiting approval; not extracted"
+            ]
+            assert store.get_code_ids_by_paths({"doc.pdf"}) == []
+            assert store.get_code_ids_by_paths({"seed.py"})
+
+            approve_preprocess_policy(tmp_path)
+            approved = indexer.full_index(
+                reporter=NullProgressReporter(),
+                preflight=indexer.preflight_content(),
+            )
+
+            assert sentinel.exists()
+            assert approved.preprocess_ok == 1
+            assert store.get_code_ids_by_paths({"doc.pdf"})
+        finally:
+            store.close()
+
+    @pytest.mark.timeout(600)
+    def test_changed_policy_stops_hooks_until_reapproved(
+        self, rag_components: RagComponentsWithManifest, tmp_path: Path
+    ) -> None:
+        # An approval names exact bytes. Editing the policy returns the root
+        # to unapproved without erasing ownership: the previously extracted
+        # path stays published as stale, exactly as under the kill switch.
+        from ...indexer._content_policy import (
+            AdmissionReason,
+            ContentKind,
+        )
+        from ...operator_state._features import PreprocessHookState
+
+        setup = _prepare_off_hook_setup(rag_components, tmp_path)
+        try:
+            config = setup.root / ".vaultragpreprocess.toml"
+            config.write_text(
+                config.read_text(encoding="utf-8") + "# edited after approval\n",
+                encoding="utf-8",
+            )
+            setup.source.write_bytes(b"\x00\x02 changed binary")
+            scan = setup.indexer.scan_content()
+            sample = next(item for item in scan.samples if item.path == "doc.pdf")
+            assert (
+                scan.preprocess_mode,
+                scan.preprocess_rule_count,
+                scan.preprocess_hooks,
+                sample.kind,
+                sample.admitted,
+                sample.reason,
+                setup.source in scan.files,
+            ) == (
+                "default",
+                1,
+                PreprocessHookState.UNAPPROVED,
+                ContentKind.CODE,
+                True,
+                AdmissionReason.EXPLICIT_ROUTE,
+                True,
+            )
+
+            result = setup.indexer.incremental_index(
+                reporter=NullProgressReporter(),
+                changed_paths=[setup.source],
+                preflight=setup.indexer.preflight_changed_paths([setup.source]),
+            )
+
+            assert (result.added, result.updated, result.removed) == (0, 0, 0)
+            assert result.preprocess_ok == 0
+            assert result.preprocess_skipped == 1
+            assert result.preprocess_failures == [
+                "doc.pdf: preprocessing awaiting approval; not extracted"
+            ]
+            assert not setup.sentinel.exists()
+            assert setup.store.get_all_code_ids() == setup.before_ids
+            assert (
+                setup.store.get_code_ids_by_paths({"doc.pdf"}) == setup.before_path_ids
+            )
+            assert_sqlite_unchanged(setup.metadata_path, setup.before_metadata)
+            assert _file_tree_bytes(setup.cache_root) == setup.before_cache
+
+            approve_preprocess_policy(setup.root)
+            resumed = setup.indexer.incremental_index(
+                reporter=NullProgressReporter(),
+                changed_paths=[setup.source],
+                preflight=setup.indexer.preflight_changed_paths([setup.source]),
+            )
+            assert setup.sentinel.exists()
+            assert resumed.preprocess_ok == 1
         finally:
             setup.store.close()
             if setup.previous_env is None:
@@ -688,7 +832,7 @@ class TestPreprocessEndToEnd:
         model = rag_components["model"]
         script = tmp_path / "boom.py"
         script.write_text(_FAILING_EXTRACTOR, encoding="utf-8")
-        _write_config(
+        _write_approved_config(
             tmp_path,
             "version = 2\n\n"
             f"[[rule]]\npattern = \"*.pdf\"\ncommand = '''{_command(script)}'''\n"
@@ -792,7 +936,7 @@ class TestPreprocessEndToEnd:
         model = rag_components["model"]
         script = tmp_path / "boom.py"
         script.write_text(_FAILING_EXTRACTOR, encoding="utf-8")
-        _write_config(
+        _write_approved_config(
             tmp_path,
             "version = 2\n\n"
             f"[[rule]]\npattern = \"*.log\"\ncommand = '''{_command(script)}'''\n"
@@ -860,7 +1004,7 @@ class TestPreprocessEndToEnd:
 
         store = VaultStore(tmp_path)
         try:
-            _write_config(tmp_path, _config(_command(_emit("alpha"))))
+            _write_approved_config(tmp_path, _config(_command(_emit("alpha"))))
             indexer = CodebaseIndexer(tmp_path, model, store)
             indexer.full_index(
                 reporter=NullProgressReporter(),
@@ -875,7 +1019,8 @@ class TestPreprocessEndToEnd:
             )
 
             # Bump the command -> new cache key -> re-extract on clean rebuild.
-            _write_config(tmp_path, _config(_command(_emit("beta"))))
+            # The new command is a new policy, so the operator approves again.
+            _write_approved_config(tmp_path, _config(_command(_emit("beta"))))
             indexer.full_index(
                 clean=True,
                 reporter=NullProgressReporter(),
@@ -903,7 +1048,7 @@ class TestPreprocessEndToEnd:
         model = rag_components["model"]
         script = tmp_path / "boom.py"
         script.write_text(_FAILING_EXTRACTOR, encoding="utf-8")
-        _write_config(
+        _write_approved_config(
             tmp_path,
             "version = 2\n\n"
             f"[[rule]]\npattern = \"*.pdf\"\ncommand = '''{_command(script)}'''\n"

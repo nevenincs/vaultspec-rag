@@ -13,11 +13,7 @@ from typing import TYPE_CHECKING
 
 from ..operator_state._features import PreprocessHookState
 from ._preprocess_cache import preprocess_cache_dir
-from ._preprocess_config import (
-    PreprocessConfig,
-    PreprocessContext,
-    hook_state,
-)
+from ._preprocess_config import PreprocessConfig, PreprocessContext
 
 if TYPE_CHECKING:
     import pathlib
@@ -34,10 +30,7 @@ def resolve_policy_preprocess_context(
     max_source_bytes: int | None = None,
 ) -> PreprocessContext | None:
     """Materialize worker execution state from one immutable policy snapshot."""
-    if (
-        hook_state(len(policy.preprocess_rules), policy.execution_mode)
-        is not PreprocessHookState.ACTIVE
-    ):
+    if policy.hook_state is not PreprocessHookState.ACTIVE:
         return None
     config = PreprocessConfig(
         [rule.materialize() for rule in policy.preprocess_rules],

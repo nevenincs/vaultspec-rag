@@ -105,6 +105,7 @@ def test_hooks_that_do_not_run_as_configured_say_why(
 ) -> None:
     needs_action = hooks in {
         PreprocessHookState.DISABLED,
+        PreprocessHookState.UNAPPROVED,
         PreprocessHookState.INVALID_CONFIG,
     }
     assert bool(hooks.remediation) is needs_action

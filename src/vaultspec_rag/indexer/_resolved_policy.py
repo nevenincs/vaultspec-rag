@@ -17,6 +17,7 @@ import pathspec
 
 from .. import _typed_fields
 from ..config._settings import get_config
+from ..operator_state._features import PreprocessHookState
 from . import _config_epoch, _ignore_specs
 from ._content_policy import (
     ClassifiedContent,
@@ -24,7 +25,12 @@ from ._content_policy import (
     RootContentPolicy,
     classify_content,
 )
-from ._preprocess_config import OnError, PreprocessRule, load_preprocess_rules
+from ._preprocess_config import (
+    OnError,
+    PreprocessRule,
+    hook_state,
+    load_preprocess_rules,
+)
 from ._preprocess_schema import UNIT_TEXT_MAX_CHARS, validate_max_emitted_bytes
 
 if TYPE_CHECKING:
@@ -39,7 +45,6 @@ __all__ = [
     "IndexPolicyResolutionOptions",
     "ResolvedIndexPolicy",
     "ResolvedPreprocessRule",
-    "preprocess_stale_note",
     "resolve_index_policy",
 ]
 
@@ -407,6 +412,9 @@ class ResolvedIndexPolicy:
     document_chunking: DocumentChunkingPolicy = field(
         default_factory=DocumentChunkingPolicy
     )
+    # Whether the operator approved exactly the policy these rules were parsed
+    # from. A snapshot built without that fact launches no extractor.
+    preprocess_approved: bool = False
     fingerprints: _config_epoch.NormalizedPolicyFingerprints = field(init=False)
     _git_spec: pathspec.GitIgnoreSpec = field(init=False, repr=False, compare=False)
     _rag_spec: pathspec.GitIgnoreSpec | None = field(
@@ -442,6 +450,9 @@ class ResolvedIndexPolicy:
             raise ValueError(
                 f"unknown preprocess execution mode {self.execution_mode!r}"
             )
+        preprocess_approved = cast("object", self.preprocess_approved)
+        if not isinstance(preprocess_approved, bool):
+            raise ValueError("preprocess_approved must be a boolean")
 
         route_owners = {
             route.pattern: route.kind for route in self.content_policy.routes
@@ -480,7 +491,15 @@ class ResolvedIndexPolicy:
             decoder_encoding=self.decoder.encoding,
             decoder_errors=self.decoder.errors,
             normalize_newlines=self.decoder.normalize_newlines,
-            execution_mode=self.execution_mode,
+            # An unapproved root executes exactly what a switched-off one
+            # does, so it shares that identity: granting or losing approval
+            # reconverges the index the way toggling the switch does, and no
+            # root without rules sees its identity move.
+            execution_mode=(
+                "off"
+                if self.hook_state is PreprocessHookState.UNAPPROVED
+                else self.execution_mode
+            ),
             html_strip=self.html_strip,
             max_emitted_bytes=self.max_emitted_bytes,
             document_chunking={
@@ -512,7 +531,17 @@ class ResolvedIndexPolicy:
                 self.vaultragignore_patterns,
                 self.extra_excludes,
                 self.document_chunking,
+                self.preprocess_approved,
             ),
+        )
+
+    @property
+    def hook_state(self) -> PreprocessHookState:
+        """Whether this snapshot's rules execute, and if not, why."""
+        return hook_state(
+            len(self.preprocess_rules),
+            self.execution_mode,
+            approved=self.preprocess_approved,
         )
 
     def match_preprocess(self, rel_path: str) -> ResolvedPreprocessRule | None:
@@ -525,12 +554,26 @@ class ResolvedIndexPolicy:
     def transform_disabled(self, rel_path: str) -> bool:
         """Return whether routing is retained while its transform is disabled.
 
-        A path in this state keeps its published membership and its prior
-        points; the run reports it through ``preprocess_stale_note``.
+        A path in this state launches no extractor; the run reports it
+        through :meth:`stale_note`.
         """
         return (
-            self.execution_mode == "off" and self.match_preprocess(rel_path) is not None
+            self.match_preprocess(rel_path) is not None
+            and self.hook_state is not PreprocessHookState.ACTIVE
         )
+
+    def stale_note(self, rel_path: str) -> str:
+        """Report one path held back under a disabled transform.
+
+        The companion to :meth:`transform_disabled`: every run that holds a
+        path back on that predicate surfaces it with this one wording, which
+        names the reason so the operator reaches for the right remedy. The
+        unapproved wording promises only what every caller delivers: whether
+        earlier output survives differs by domain and by kind of run.
+        """
+        if self.hook_state is PreprocessHookState.UNAPPROVED:
+            return f"{rel_path}: preprocessing awaiting approval; not extracted"
+        return f"{rel_path}: preprocessing disabled; retained work as stale"
 
     def classify(self, rel_path: str) -> ClassifiedContent:
         """Classify one path using only this snapshot's resolved inputs."""
@@ -548,15 +591,6 @@ class ResolvedIndexPolicy:
     ) -> _config_epoch.ContentKindFingerprints:
         """Return the independent membership/content identity for one kind."""
         return self.fingerprints.per_kind.for_kind(kind)
-
-
-def preprocess_stale_note(rel_path: str) -> str:
-    """Report one path whose retained work went stale under a disabled transform.
-
-    The companion to ``ResolvedIndexPolicy.transform_disabled``: every run that
-    retains a path on that predicate surfaces it with this one wording.
-    """
-    return f"{rel_path}: preprocessing disabled; retained work as stale"
 
 
 def resolve_index_policy(
@@ -581,12 +615,15 @@ def resolve_index_policy(
     )
 
     # Strict loading both rejects malformed ownership and bypasses the kill
-    # switch. Routing stays present when execution is off; consumers consult
-    # execution_mode before launching an extractor.
+    # switch. Routing stays present when execution is off or unapproved;
+    # consumers consult hook_state before launching an extractor.
     preprocess_config = load_preprocess_rules(root_dir, strict=True)
     rules = tuple(
         ResolvedPreprocessRule.from_rule(rule) for rule in preprocess_config.rules
     )
+    # Approval is resolved here, once, against the digest of the bytes these
+    # rules were parsed from: the rules a run executes are the ones approved.
+    approved = preprocess_config.approved_for(root_dir)
     return ResolvedIndexPolicy(
         root_dir=root_dir.resolve(),
         policy_schema_version=POLICY_SCHEMA_VERSION,
@@ -607,4 +644,5 @@ def resolve_index_policy(
             chunk_overlap_chars=int(cfg.document_chunk_overlap_chars),
             unit_text_max_chars=UNIT_TEXT_MAX_CHARS,
         ),
+        preprocess_approved=approved,
     )
