@@ -12,9 +12,13 @@ if (!executable || !directory)
   );
 await mkdir(directory, { recursive: true });
 let server;
+let monitorAccess;
 if (!deliveredURL) {
   const { createServer } = await import("vite");
   const { default: config } = await import("../vite.config.ts");
+  // The natively imported config shares this module instance, and with it
+  // the capability the middleware enforces.
+  ({ monitorAccess } = await import("../src/monitor/server/local-service.ts"));
   server = await createServer({
     ...config,
     configFile: false,
@@ -57,7 +61,7 @@ const evaluate = async (expression, timeout) => {
 try {
   await server?.listen();
   const address = server?.httpServer.address();
-  const url = deliveredURL ?? `http://127.0.0.1:${address.port}`;
+  const url = deliveredURL ?? monitorAccess(address.port);
   browser = spawn(
     executable,
     [
@@ -150,7 +154,7 @@ try {
   if (deliveredURL)
     await send("Fetch.enable", { patterns: [{ urlPattern: "*" }] });
   await send("Page.navigate", { url });
-  process.stdout.write(`${JSON.stringify({ ready: true, url })}\n`);
+  process.stdout.write(`${JSON.stringify({ ready: true })}\n`);
   const input = createInterface({ input: process.stdin });
   for await (const line of input) {
     try {

@@ -505,10 +505,16 @@ def _start_success(
     data.setdefault("typesafe", None)
     discovery = read_service_status()
     monitor_port = discovery.get("monitor_port") if discovery is not None else None
-    if isinstance(monitor_port, int) and monitor_port > 0:
+    monitor_url = discovery.get("monitor_url") if discovery is not None else None
+    if (
+        isinstance(monitor_port, int)
+        and monitor_port > 0
+        and isinstance(monitor_url, str)
+        and monitor_url
+    ):
         data["monitor_port"] = monitor_port
-        data["monitor_url"] = f"http://127.0.0.1:{monitor_port}"
-        human_lines = (*human_lines, f"Monitor: {data['monitor_url']}")
+        data["monitor_url"] = monitor_url
+        human_lines = (*human_lines, f"Monitor: {monitor_url}")
     _lifecycle_success(
         json_mode,
         command=_START_COMMAND,

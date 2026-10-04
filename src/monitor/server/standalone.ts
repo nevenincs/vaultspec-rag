@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { createServer as createPortProbe, type Server } from "node:net";
-import { monitorMiddleware } from "./local-service.ts";
+import { monitorAccess, monitorMiddleware } from "./local-service.ts";
 import manifest from "../../../package.json" with { type: "json" };
 
 export type EmbeddedAsset = {
@@ -188,5 +188,5 @@ export async function startMonitor(
     process.stdin.once("end", stop);
     process.stdin.resume();
   }
-  console.log(`vaultspec.monitor.ready ${port}`);
+  console.log(`vaultspec.monitor.ready ${monitorAccess(port)}`);
 }

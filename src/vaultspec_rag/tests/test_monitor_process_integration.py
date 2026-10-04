@@ -13,6 +13,9 @@ import sys
 import threading
 from http.client import HTTPConnection
 from typing import TYPE_CHECKING, cast
+from urllib.error import HTTPError
+from urllib.parse import urlsplit
+from urllib.request import Request
 
 import pytest
 from typer.testing import CliRunner
@@ -109,6 +112,9 @@ def test_monitor_allocates_after_custom_backend_and_republishes_discovery(
                 )
                 envelope = json.loads(stdout.getvalue())
                 assert envelope["data"]["monitor_port"] == backend_port + 3
+                # The owner's start output is the only place the link is shown.
+                assert envelope["data"]["monitor_url"] == fields["monitor_url"]
+                assert urlsplit(cast("str", fields["monitor_url"])).fragment
             with pytest.raises(OSError):
                 bind_released_loopback_port(backend_port + 3)
             asyncio.run(
@@ -127,18 +133,34 @@ def test_monitor_allocates_after_custom_backend_and_republishes_discovery(
 def test_managed_monitor_connects_to_backend_and_canonical_lifecycle(
     monitor_http: tuple[int, Path],
 ) -> None:
+    """A compiled monitor admitting every loopback caller fails the 401
+    assertions; restoring its capability check passes.
+    """
     backend_port, _ = monitor_http
     monitor = MonitorProcess(backend_port)
     try:
         monitor.start()
-        port = monitor.discovery_fields()["monitor_port"]
+        access = urlsplit(cast("str", monitor.discovery_fields()["monitor_url"]))
+        assert access.port == monitor.discovery_fields()["monitor_port"]
+        base = f"http://{access.netloc}/api/monitor"
+        for bearer in ({}, {"Authorization": "Bearer monitor-test-token"}):
+            for path in ("/health", "/lifecycle"):
+                with pytest.raises(HTTPError) as refused:
+                    LOOPBACK_OPENER.open(
+                        Request(base + path, headers=bearer), timeout=15
+                    )
+                with refused.value:
+                    assert refused.value.code == 401
+        owner = {
+            "Authorization": f"Bearer {access.fragment.removeprefix('capability=')}"
+        }
         with LOOPBACK_OPENER.open(
-            f"http://127.0.0.1:{port}/api/monitor/health", timeout=15
+            Request(f"{base}/health", headers=owner), timeout=15
         ) as response:
             assert response.status == 200
             assert json.load(response)["pid"] == os.getpid()
         with LOOPBACK_OPENER.open(
-            f"http://127.0.0.1:{port}/api/monitor/lifecycle", timeout=15
+            Request(f"{base}/lifecycle", headers=owner), timeout=15
         ) as response:
             assert response.status == 200
             assert json.load(response)["command"] == "service.status"

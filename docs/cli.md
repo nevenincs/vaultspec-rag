@@ -477,9 +477,11 @@ Start the background search service. Defaults to the managed Qdrant server backe
 
 Also starts the managed browser monitor. Its port begins at the actual
 backend port plus one and increments until free: `--port 9000` first
-tries monitor port 9001. Human output prints `Monitor: http://127.0.0.1:<port>`;
-JSON includes `data.monitor_port` and `data.monitor_url` when recorded.
-An already-running response redisplays the recorded assignment.
+tries monitor port 9001. Human output prints the monitor's access link as
+`Monitor: http://127.0.0.1:<port>/#capability=<secret>`; JSON includes
+`data.monitor_port` and `data.monitor_url` when recorded. The link is a
+credential: the monitor operates the service only for a caller presenting
+its capability. An already-running response redisplays the recorded link.
 
 Requires the compiled `vaultspec-rag-monitor` command on PATH or its
 absolute path in `VAULTSPEC_RAG_MONITOR_BINARY`. Startup does not compile

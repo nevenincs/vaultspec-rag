@@ -33,17 +33,19 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def browser_bridge(monitor_http: tuple[int, Path]) -> Iterator[tuple[int, Path]]:
+def browser_bridge(monitor_http: tuple[int, Path]) -> Iterator[tuple[str, Path]]:
     _, directory = monitor_http
     node = shutil.which("node")
     assert node is not None, "the enrolled monitor Node runtime is required"
     source = Path(__file__).resolve().parents[2] / "monitor/server/local-service.ts"
     script = (
         "import { createServer } from 'node:http'; "
-        f"import {{ monitorMiddleware }} from {json.dumps(source.as_uri())}; "
+        "import { monitorAccess, monitorMiddleware } from "
+        f"{json.dumps(source.as_uri())}; "
         "const server = createServer((req,res) => monitorMiddleware(req,res,() => {"
         "res.writeHead(404); res.end();})); "
-        "server.listen(0,'0.0.0.0',() => console.log(server.address().port));"
+        "server.listen(0,'0.0.0.0',() => "
+        "console.log(monitorAccess(server.address().port)));"
     )
     environment = dict(os.environ)
     environment.pop("VAULTSPEC_RAG_PORT", None)
@@ -65,8 +67,7 @@ def browser_bridge(monitor_http: tuple[int, Path]) -> Iterator[tuple[int, Path]]
             target=lambda: answer.put(output.readline()), daemon=True
         )
         reader.start()
-        port = int(answer.get(timeout=10).strip())
-        yield port, directory
+        yield answer.get(timeout=10).strip(), directory
     finally:
         process.terminate()
         try:
@@ -80,15 +81,30 @@ def browser_bridge(monitor_http: tuple[int, Path]) -> Iterator[tuple[int, Path]]
             process.stderr.close()
 
 
+def _request(
+    access: str, path: str, *, bearer: str | None = None
+) -> urllib.request.Request:
+    """Address the bridge behind an access link, presenting its capability.
+
+    ``bearer`` replaces the credential; an empty string sends none.
+    """
+    link = urllib.parse.urlsplit(access)
+    request = urllib.request.Request(f"http://{link.netloc}/api/monitor{path}")
+    credential = link.fragment.removeprefix("capability=") if bearer is None else bearer
+    if credential:
+        request.add_header("Authorization", f"Bearer {credential}")
+    return request
+
+
 def _read(
-    port: int,
+    access: str,
     path: str,
     *,
     origin: str | None = None,
     host: str | None = None,
-    prefix: str = "/api/monitor",
+    bearer: str | None = None,
 ) -> tuple[int, dict[str, object]]:
-    request = urllib.request.Request(f"http://127.0.0.1:{port}{prefix}{path}")
+    request = _request(access, path, bearer=bearer)
     if origin:
         request.add_header("Origin", origin)
     if host:
@@ -97,13 +113,11 @@ def _read(
 
 
 def _post(
-    port: int, path: str, body: dict[str, object]
+    access: str, path: str, body: dict[str, object], *, bearer: str | None = None
 ) -> tuple[int, dict[str, object]]:
-    request = urllib.request.Request(
-        f"http://127.0.0.1:{port}/api/monitor{path}",
-        data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json"},
-    )
+    request = _request(access, path, bearer=bearer)
+    request.data = json.dumps(body).encode()
+    request.add_header("Content-Type", "application/json")
     return _response(request)
 
 
@@ -118,29 +132,31 @@ def _response(request: urllib.request.Request) -> tuple[int, dict[str, object]]:
         return status, cast("dict[str, object]", json.load(response))
 
 
-def test_local_bridge_connects_without_browser_credentials(
-    browser_bridge: tuple[int, Path],
+def test_local_bridge_keeps_the_backend_credential_from_the_browser(
+    browser_bridge: tuple[str, Path],
     monitor_http: tuple[int, Path],
 ) -> None:
-    port, directory = browser_bridge
+    access, directory = browser_bridge
     job_id = record_start(JobSource.CODE, "tool", project_root=directory)
     path = directory / get_config().log_file
     path.write_text(f"job_id={job_id} browser-correlated-record\n", encoding="utf-8")
     try:
-        status, jobs = _read(port, f"/jobs?limit=100&job_id={job_id}")
+        status, jobs = _read(access, f"/jobs?limit=100&job_id={job_id}")
         assert status == 200
         assert any(
             job["id"] == job_id for job in cast("list[dict[str, object]]", jobs["jobs"])
         )
         status, logs = _read(
-            port, f"/logs/json?source=service&lines=200&job_id={job_id}"
+            access, f"/logs/json?source=service&lines=200&job_id={job_id}"
         )
         assert status == 200
         assert logs["filters"] == {"job_id": job_id}
         assert "browser-correlated-record" in json.dumps(logs)
-        _, upstream = _read(monitor_http[0], "/health", prefix="")
+        _, upstream = _response(
+            urllib.request.Request(f"http://127.0.0.1:{monitor_http[0]}/health")
+        )
         assert "service_token" not in upstream
-        _, health = _read(port, "/health")
+        _, health = _read(access, "/health")
         # Removing token deletion failed this assertion; restored it passes.
         assert "service_token" not in health
         assert "token" not in health
@@ -148,35 +164,98 @@ def test_local_bridge_connects_without_browser_credentials(
         metadata = json.loads(discovery.read_text(encoding="utf-8"))
         metadata["service_token"] = "obsolete-test-token"
         discovery.write_text(json.dumps(metadata), encoding="utf-8")
-        status, refreshed = _read(port, f"/jobs?limit=100&job_id={job_id}")
+        status, refreshed = _read(access, f"/jobs?limit=100&job_id={job_id}")
         assert status == 401
         assert refreshed["error"] == "unauthorized"
         metadata["service_token"] = "monitor-test-token"
         discovery.write_text(json.dumps(metadata), encoding="utf-8")
-        status, refreshed = _read(port, f"/jobs?limit=100&job_id={job_id}")
+        status, refreshed = _read(access, f"/jobs?limit=100&job_id={job_id}")
         assert status == 200
         refreshed_jobs = cast("list[dict[str, object]]", refreshed["jobs"])
         assert len(refreshed_jobs) == 1 and refreshed_jobs[0]["id"] == job_id
-        status, activity = _read(port, "/search-activity?limit=100")
+        status, activity = _read(access, "/search-activity?limit=100")
         assert status == 200 and "queued" in activity and "recent" in activity
     finally:
         record_finish(job_id, result="completed")
 
 
 def test_local_bridge_refuses_foreign_origins_and_unrelated_routes(
-    browser_bridge: tuple[int, Path],
+    browser_bridge: tuple[str, Path],
 ) -> None:
-    port, _ = browser_bridge
+    access, _ = browser_bridge
     # Bypassing localRequest failed the foreign-origin assertion, then passed
     # after restoration. Bypassing allowedRoute exposes /readiness.
-    status, answer = _read(port, "/health", origin="http://example.invalid")
+    status, answer = _read(access, "/health", origin="http://example.invalid")
     assert status == 403
     assert answer["message"] == (
         "The monitor accepts only loopback clients at a local host."
     )
-    status, answer = _read(port, "/readiness")
+    status, answer = _read(access, "/readiness")
     assert status == 404
     assert answer["message"] == "Unknown monitor operation."
+
+
+@pytest.mark.parametrize("bearer", ["", "not-the-capability", "monitor-test-token"])
+def test_bridge_refuses_loopback_callers_without_its_capability(
+    browser_bridge: tuple[str, Path], tmp_path: Path, bearer: str
+) -> None:
+    """Admitting every loopback caller fails the first 401 assertion; restoring
+    the capability check passes.
+
+    ``monitor-test-token`` is the backend credential recorded in discovery. It
+    authenticates the bridge upstream and must not authenticate a caller here;
+    a backend refusal would answer ``error: unauthorized`` instead.
+    """
+    access, directory = browser_bridge
+    discovery = json.loads((directory / "service.json").read_text(encoding="utf-8"))
+    assert discovery["service_token"] == "monitor-test-token"
+    refusal = {
+        "ok": False,
+        "message": (
+            "The monitor requires its access link. Open the address reported by "
+            "`vaultspec-rag server start`, or printed by a monitor you launched "
+            "directly."
+        ),
+    }
+    root = tmp_path / "unconfirmed-root"
+    root.mkdir()
+    for path in (
+        "/health",
+        "/jobs?limit=100",
+        "/search-activity?limit=100",
+        "/logs/json?source=service&lines=10",
+        "/service-state",
+        "/runtime-observations",
+        "/repositories?limit=100",
+        "/storage/survey",
+        "/projects",
+        "/lifecycle",
+        "/not-an-operation",
+    ):
+        assert _read(access, path, bearer=bearer) == (401, refusal), path
+    mutations: tuple[tuple[str, dict[str, object]], ...] = (
+        ("/repositories/enroll", {"root": str(root), "watch": False}),
+        ("/projects/evict", {"root": str(root)}),
+        ("/pause", {}),
+        ("/resume", {}),
+        ("/lifecycle/start", {}),
+        ("/lifecycle/stop", {}),
+        ("/jobs/job/retry", {}),
+    )
+    for path, body in mutations:
+        assert _post(access, path, body, bearer=bearer) == (401, refusal), path
+    for method, path in (("PUT", "/jobs/job/desired-state"), ("DELETE", "/jobs/job")):
+        request = _request(access, path, bearer=bearer)
+        request.method = method
+        assert _response(request) == (401, refusal), path
+    # The refused mutations left the owner's service as it was.
+    status, inventory = _read(access, "/repositories?limit=100")
+    assert status == 200
+    rows = cast("list[dict[str, object]]", inventory["repositories"])
+    assert all(row["root"] != str(root.resolve()) for row in rows)
+    status, health = _read(access, "/health")
+    assert status == 200
+    assert cast("dict[str, object]", health["quiesce"])["state"] == "running"
 
 
 @pytest.mark.parametrize("installed", [True, False])
@@ -216,16 +295,29 @@ def test_local_bridge_lifecycle_uses_fixed_canonical_commands(
         "verb==='start'?'already_running':'already_stopped',"
         "health:{service_token:'never-browser',nested:[{token:'private'}]}}}),'');"
         "}; syncBuiltinESMExports();"
-        f"const {{ monitorMiddleware }}=await import({json.dumps(source.as_uri())});"
+        "const { monitorAccess, monitorMiddleware }="
+        f"await import({json.dumps(source.as_uri())});"
         "const server=createServer((req,res)=>monitorMiddleware(req,res,()=>{"
         "res.writeHead(404);res.end();}));"
         "await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));"
-        "const base='http://127.0.0.1:'+server.address().port+'/api/monitor';"
+        "const access=new URL(monitorAccess(server.address().port));"
+        "const base=access.origin+'/api/monitor';"
+        "const owner='Bearer '+access.hash.slice('#capability='.length);"
+        "let bearer=owner;"
         "async function action(path,body,expected){"
         "const response=await fetch(base+path,{method:body===undefined?'GET':'POST',"
+        "headers:bearer?{authorization:bearer}:{},"
         "body:body===undefined?undefined:JSON.stringify(body)});"
         "assert.equal(response.status,expected);return response.json();}"
         "try {"
+        # Admitting every loopback caller fails these assertions; restoring
+        # the capability check passes. No owner command may have been spawned.
+        "for(bearer of ['','Bearer never-browser']){"
+        "await action('/lifecycle',undefined,401);"
+        "await action('/lifecycle/start',{},401);"
+        "await action('/lifecycle/stop',{},401);}"
+        "assert.equal(calls.length,0);assert.equal(probes.length,0);"
+        "bearer=owner;"
         "for(observedState of ['stopped','warming','crashed-pid-dead']){"
         "const state=await action('/lifecycle',undefined,200);"
         "assert.equal(state.state,observedState);assert.equal(state.ok,false);"
@@ -289,11 +381,11 @@ def test_local_bridge_lifecycle_uses_fixed_canonical_commands(
 
 
 def test_local_bridge_status_reads_stopped_owner_without_starting(
-    browser_bridge: tuple[int, Path],
+    browser_bridge: tuple[str, Path],
 ) -> None:
-    port, directory = browser_bridge
+    access, directory = browser_bridge
     (directory / "service.json").unlink()
-    status, answer = _read(port, "/lifecycle")
+    status, answer = _read(access, "/lifecycle")
     assert status == 200
     assert answer["command"] == "service.status"
     assert answer["state"] == "stopped"
@@ -302,39 +394,39 @@ def test_local_bridge_status_reads_stopped_owner_without_starting(
 
 
 def test_local_bridge_forwards_operator_inventory_and_controls(
-    browser_bridge: tuple[int, Path], tmp_path: Path
+    browser_bridge: tuple[str, Path], tmp_path: Path
 ) -> None:
-    port, _ = browser_bridge
+    access, _ = browser_bridge
     root = tmp_path / "enrolled-root"
     root.mkdir()
     (root / ".vault").mkdir()
     status, enrollment = _post(
-        port, "/repositories/enroll", {"root": str(root), "watch": False}
+        access, "/repositories/enroll", {"root": str(root), "watch": False}
     )
     assert status == 200 and enrollment["status"] == "enrolled"
     assert enrollment["watcher_status"] == "disabled"
-    status, inventory = _read(port, "/repositories?limit=100")
+    status, inventory = _read(access, "/repositories?limit=100")
     assert status == 200
     rows = cast("list[dict[str, object]]", inventory["repositories"])
     assert any(row["root"] == str(root.resolve()) and row["enrolled"] for row in rows)
     assert "seats" in inventory
-    status, projects = _read(port, "/projects")
+    status, projects = _read(access, "/projects")
     assert status == 200 and projects["projects"] == []
-    status, eviction = _post(port, "/projects/evict", {"root": str(root)})
+    status, eviction = _post(access, "/projects/evict", {"root": str(root)})
     assert status == 200 and eviction["reason"] == "not_found"
     status, state = _read(
-        port, "/service-state?" + urllib.parse.urlencode({"project_root": str(root)})
+        access, "/service-state?" + urllib.parse.urlencode({"project_root": str(root)})
     )
     assert status == 200 and "quiesce" in state and "root_features" in state
-    status, resources = _read(port, "/runtime-observations")
+    status, resources = _read(access, "/runtime-observations")
     assert status == 200 and "cpu" in resources and "clients" in resources
-    status, survey = _read(port, "/storage/survey?status=unsupported")
+    status, survey = _read(access, "/storage/survey?status=unsupported")
     assert status in (400, 409)
     assert survey["error"] in ("bad_request", "server_mode_required")
-    status, paused = _post(port, "/pause", {})
+    status, paused = _post(access, "/pause", {})
     assert status == 200 and paused["ok"] is True
     assert paused["status"] == QuiesceTransitionCode.QUIESCED
-    status, resumed = _post(port, "/resume", {})
+    status, resumed = _post(access, "/resume", {})
     assert status == 200 and resumed["ok"] is True
     assert resumed["status"] == QuiesceTransitionCode.RUNNING
 
@@ -349,12 +441,12 @@ def test_local_bridge_forwards_operator_inventory_and_controls(
 )
 @pytest.mark.parametrize("send_origin", [True, False])
 def test_bridge_refuses_tailnet_proxy_authorities(
-    browser_bridge: tuple[int, Path], host: str, send_origin: bool
+    browser_bridge: tuple[str, Path], host: str, send_origin: bool
 ) -> None:
-    port, _ = browser_bridge
+    access, _ = browser_bridge
     # Restoring Tailnet Host admission fails this assertion; loopback-only passes.
     status, answer = _read(
-        port, "/health", host=host, origin=f"https://{host}" if send_origin else None
+        access, "/health", host=host, origin=f"https://{host}" if send_origin else None
     )
     assert status == 403
     assert answer["message"] == (
@@ -366,10 +458,10 @@ def test_bridge_refuses_tailnet_proxy_authorities(
     "host", ["localhost:5420", "vaultspec-rag-monitor.localhost", "[::1]:5420"]
 )
 def test_bridge_accepts_local_proxy_authorities(
-    browser_bridge: tuple[int, Path], host: str
+    browser_bridge: tuple[str, Path], host: str
 ) -> None:
-    port, _ = browser_bridge
-    status, health = _read(port, "/health", host=host, origin=f"https://{host}")
+    access, _ = browser_bridge
+    status, health = _read(access, "/health", host=host, origin=f"https://{host}")
     assert status == 200
     assert "service_token" not in health
     assert "token" not in health
@@ -377,22 +469,25 @@ def test_bridge_accepts_local_proxy_authorities(
 
 @pytest.mark.parametrize("host", ["other.taild36992.ts.net", "100.128.0.1"])
 def test_bridge_refuses_undeclared_proxy_authorities(
-    browser_bridge: tuple[int, Path], host: str
+    browser_bridge: tuple[str, Path], host: str
 ) -> None:
-    port, _ = browser_bridge
+    access, _ = browser_bridge
     # Bypassing host validation failed here; restoring the check passed.
-    status, _ = _read(port, "/health", host=host, origin=f"https://{host}")
+    status, _ = _read(access, "/health", host=host, origin=f"https://{host}")
     assert status == 403
 
 
 def test_bridge_refuses_a_client_outside_admitted_loopback_addresses(
-    browser_bridge: tuple[int, Path],
+    browser_bridge: tuple[str, Path],
 ) -> None:
-    port, _ = browser_bridge
+    access, _ = browser_bridge
     # Removing client-address validation failed this real-source assertion;
     # restoring it passed. Proof: .pytest-tmp/tailnet-client-{broken,restored}.log.
     connection = HTTPConnection(
-        "127.0.0.1", port, timeout=8, source_address=("127.0.0.2", 0)
+        "127.0.0.1",
+        urllib.parse.urlsplit(access).port,
+        timeout=8,
+        source_address=("127.0.0.2", 0),
     )
     try:
         connection.request("GET", "/api/monitor/health")
@@ -404,20 +499,20 @@ def test_bridge_refuses_a_client_outside_admitted_loopback_addresses(
 
 
 def test_local_bridge_reports_missing_discovery(
-    browser_bridge: tuple[int, Path],
+    browser_bridge: tuple[str, Path],
 ) -> None:
-    port, directory = browser_bridge
+    access, directory = browser_bridge
     (directory / "service.json").write_text("{}", encoding="utf-8")
-    status, answer = _read(port, "/jobs?limit=100")
+    status, answer = _read(access, "/jobs?limit=100")
     assert status == 503
     assert "No local service is recorded" in str(answer["message"])
 
 
 def test_browser_projection_rejects_misattributed_production_observations(
-    browser_bridge: tuple[int, Path],
+    browser_bridge: tuple[str, Path],
     tmp_path: Path,
 ) -> None:
-    port, directory = browser_bridge
+    access, directory = browser_bridge
     job_id = record_start(JobSource.CODE, "tool", project_root=directory)
     ledger = search_activity_ledger()
     ticket = ledger.start(
@@ -429,9 +524,9 @@ def test_browser_projection_rejects_misattributed_production_observations(
     path.write_text(f"job_id={job_id} projection-record\n", encoding="utf-8")
     try:
         _, log_payload = _read(
-            port, f"/logs/json?source=service&lines=200&job_id={job_id}"
+            access, f"/logs/json?source=service&lines=200&job_id={job_id}"
         )
-        _, activity_payload = _read(port, "/search-activity?limit=100")
+        _, activity_payload = _read(access, "/search-activity?limit=100")
         source = Path(__file__).resolve().parents[2] / "monitor/model.ts"
         node = shutil.which("node")
         assert node is not None

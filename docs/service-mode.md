@@ -55,9 +55,10 @@ stops. The monitor uses the service's initialized Python runtime for lifecycle a
 persisted inventory operations.
 
 For a separate diagnostic session, run `vaultspec-rag-monitor --port 5420` and open
-`http://127.0.0.1:5420`. This directly launched process uses a strict port and is stopped
-with Ctrl+C. Its frontend remains useful while the backend is unavailable; search and
-backend control retain the host installation's accelerator and bootstrap requirements.
+the access link it prints after `vaultspec.monitor.ready`. This directly launched process
+uses a strict port and is stopped with Ctrl+C. Its frontend remains useful while the
+backend is unavailable; search and backend control retain the host installation's
+accelerator and bootstrap requirements.
 
 ### Read service status
 
@@ -231,13 +232,23 @@ uv run vaultspec-rag server start
 uv run vaultspec-rag server stop
 ```
 
-Start prints a `Monitor: http://127.0.0.1:<assigned-port>` line. Open that URL
-in a browser on the machine running the service. `server status` reports the
-backend address; its human, verbose and JSON output do not currently report
-the monitor URL. To redisplay a recorded monitor URL, run `server start` again:
-an already-running owned service is reused. For scripts, `server start --json`
+Start prints a `Monitor: http://127.0.0.1:<assigned-port>/#capability=<secret>`
+line. Open that whole link in a browser on the machine running the service.
+`server status` reports the backend address; its human, verbose and JSON output
+do not report the monitor link. To redisplay it, run `server start` again: an
+already-running owned service is reused. For scripts, `server start --json`
 returns the assignment as `data.monitor_port` and `data.monitor_url` when
 recorded.
+
+The link is a credential. Every local account can reach a loopback port, so
+the monitor operates the service only for a caller that presents the
+capability in the link. The monitor mints a new one each time it starts and
+keeps it in memory; the daemon records the link in its owner-only discovery
+file. The page moves the capability out of the address bar into that tab's
+session storage, so a new tab needs the link again, and a bookmark of the bare
+address shows a notice instead of the service. Treat the link like the service
+token: do not paste it into shared logs or tickets. Restarting the service
+replaces it.
 
 The monitor port starts at the backend's actual port plus one and advances
 until free. With the default backend port 8766, it first tries 8767. For a
@@ -281,9 +292,11 @@ before running `just test-python`. This uses the pinned release compiler and
 embedded Vite assets, marks the local executable as a development build, and
 writes it under `dist-bin`. The CI test jobs prepare and select it automatically.
 
-Open `http://127.0.0.1:5420`. The monitor automatically connects to the local
-service recorded in the managed status directory. It requires no login,
-credential entry, or admin role. The standalone monitor has its own lifecycle.
+Open the `Monitor:` access link the dev server logs when it starts listening;
+`just dev logs` shows it again. The monitor automatically connects to the local
+service recorded in the managed status directory. It has no login form,
+credential prompt, or admin role: the link's capability is the only caller
+credential. The standalone monitor has its own lifecycle.
 A stopped service shows a connection
 message and retains any previous observations with their timestamps.
 
@@ -294,15 +307,20 @@ degraded, or foreign server on that port. Its canonical **Dev server** workflow
 runs `just dev ci` to verify start, reattach, and stop.
 
 The devservers repository owns the local reverse proxy at
-`https://vaultspec-rag-monitor.localhost`. Every monitor request requires a
+`https://vaultspec-rag-monitor.localhost`; append the logged link's
+`#capability=...` fragment to that address. Every monitor request requires a
 loopback client and a local Host, with a matching browser Origin when supplied.
-The monitor uses local operator authority for both reads and controls. Tailnet
-reachability and forwarded identity headers do not authorize access.
+Every read and control under `/api/monitor/` also requires the capability as a
+bearer credential, and is refused with 401 before the monitor reads the service
+token or runs a service command. The service token itself is not accepted
+there. Tailnet reachability and forwarded identity headers do not authorize
+access.
 
 For remote use, connect through an authenticated SSH tunnel to the printed
-loopback monitor address. Direct remote access and Tailscale Serve exposure are
-unsupported. Keep local proxies local; an unauthenticated proxy that rewrites
-remote requests to a loopback Host would expose the same operator authority.
+loopback monitor address and open the full access link through it. Direct
+remote access and Tailscale Serve exposure are unsupported. Keep local proxies
+local; a proxy that rewrites remote requests to a loopback Host would defeat
+the loopback boundary and leave the capability as the only control.
 
 Health and TypeSafe details sit above separate indexing and serving tabs.
 Inspect a job or request for its current details and correlated live logs;

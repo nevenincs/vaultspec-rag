@@ -92,6 +92,21 @@ export function clock(value: unknown): string {
   return Number.isNaN(date.getTime()) ? "Not reported" : date.toLocaleString();
 }
 
+/** Move the access link's capability out of the address bar into this tab. */
+function capability(): string {
+  const offered = /^#capability=([\w-]+)$/.exec(location.hash)?.[1];
+  try {
+    if (offered) {
+      sessionStorage.setItem("monitor-capability", offered);
+      history.replaceState(null, "", location.pathname + location.search);
+    }
+    return sessionStorage.getItem("monitor-capability") ?? "";
+  } catch {
+    // Disabled storage leaves the link in place to be read again.
+    return offered ?? "";
+  }
+}
+
 export async function request(
   path: string,
   options: RequestInit = {},
@@ -103,7 +118,10 @@ export async function request(
   const response = await fetch(`/api/monitor${path}`, {
     ...options,
     signal,
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${capability()}`,
+    },
     cache: "no-store",
   });
   const raw: unknown = await response.json();

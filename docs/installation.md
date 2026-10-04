@@ -299,8 +299,11 @@ After adding the extracted directory to your `PATH`, run:
 vaultspec-rag-monitor --port 5420
 ```
 
-Open `http://127.0.0.1:5420`. The frontend starts independently of the search service;
-when no backend is available it shows that state. An occupied port fails explicitly.
+It prints `vaultspec.monitor.ready` followed by an access link such as
+`http://127.0.0.1:5420/#capability=<secret>`. Open that whole link: the capability in it
+is what lets the page operate the service, and it changes on every launch. The frontend
+starts independently of the search service; when no backend is available it shows that
+state. An occupied port fails explicitly.
 Press Ctrl+C to stop a monitor you launched directly. `--version --json` reports the
 release version, full producer commit and embedded frontend identity without starting
 the backend.
