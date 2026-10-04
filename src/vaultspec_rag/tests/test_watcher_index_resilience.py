@@ -71,6 +71,9 @@ def project(
             "qdrant_url": None,
             "sparse_enabled": False,
             "reranker_enabled": False,
+            # A few-file corpus on a local store: the service profile's RAM
+            # floor would refuse it on any host smaller than a workstation.
+            "index_support_profile": "embedded-local",
         }
     )
     model = EmbeddingModel.__new__(EmbeddingModel)
