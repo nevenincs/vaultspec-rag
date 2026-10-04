@@ -11,6 +11,7 @@ import socket
 import subprocess
 import sys
 import threading
+from http.client import HTTPConnection
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -32,6 +33,7 @@ from ..server._lifespan import _shutdown_components
 from ..server._runtime import ServerRouteRuntime
 from ..service import ServiceRegistry
 from ..serviceclient._discovery import read_service_status
+from ._ports import bind_released_loopback_port
 from .test_monitor_logs import monitor_http as monitor_http
 from .test_monitor_process import _ports
 
@@ -52,16 +54,6 @@ def compiled_monitor_required() -> None:
         "Build/install the compiled monitor or provide its absolute path in "
         "VAULTSPEC_RAG_MONITOR_BINARY before running compiled lifecycle integration."
     )
-
-
-def _assert_monitor_port_released(port: int) -> None:
-    with socket.socket() as released:
-        # POSIX TIME_WAIT is not a live listener; Windows must keep the bind
-        # exclusive because its address-reuse option permits live sharing.
-        option = socket.SO_EXCLUSIVEADDRUSE if os.name == "nt" else socket.SO_REUSEADDR
-        released.setsockopt(socket.SOL_SOCKET, option, 1)
-        released.bind(("127.0.0.1", port))
-        released.listen()
 
 
 def test_monitor_allocates_after_custom_backend_and_republishes_discovery(
@@ -118,13 +110,13 @@ def test_monitor_allocates_after_custom_backend_and_republishes_discovery(
                 envelope = json.loads(stdout.getvalue())
                 assert envelope["data"]["monitor_port"] == backend_port + 3
             with pytest.raises(OSError):
-                _assert_monitor_port_released(backend_port + 3)
+                bind_released_loopback_port(backend_port + 3)
             asyncio.run(
                 _shutdown_components([], None, publisher, publisher.runtime.registry)
             )
             assert process.poll() is not None
             assert not (isolated_singleton_dirs / "monitor.json").exists()
-            _assert_monitor_port_released(backend_port + 3)
+            bind_released_loopback_port(backend_port + 3)
         finally:
             monitor.stop()
             publisher.quiesce()
@@ -152,6 +144,49 @@ def test_managed_monitor_connects_to_backend_and_canonical_lifecycle(
             assert json.load(response)["command"] == "service.status"
     finally:
         monitor.stop()
+
+
+@pytest.mark.usefixtures("isolated_singleton_dirs")
+def test_managed_monitor_confines_requests_and_listener_to_loopback() -> None:
+    """A compiled wildcard listener fails the destination refusal assertion;
+    restoring loopback passes. Removing admission fails the request assertion.
+    """
+    with _ports(1) as listeners:
+        monitor = MonitorProcess(listeners[0].getsockname()[1])
+        try:
+            monitor.start()
+            port = cast("int", monitor.discovery_fields()["monitor_port"])
+            with (
+                pytest.raises(ConnectionRefusedError),
+                socket.create_connection(("127.0.0.2", port), timeout=3),
+            ):
+                pass
+            for path in ("/", "/index.html", "/monitor.json"):
+                with LOOPBACK_OPENER.open(
+                    f"http://127.0.0.1:{port}{path}", timeout=8
+                ) as response:
+                    assert response.status == 200
+            for source, host in (
+                ("127.0.0.2", "127.0.0.1"),
+                ("127.0.0.1", "100.84.254.21"),
+            ):
+                for path in ("/", "/monitor.json", "/api/monitor/jobs"):
+                    connection = HTTPConnection(
+                        "127.0.0.1", port, timeout=8, source_address=(source, 0)
+                    )
+                    try:
+                        connection.request(
+                            "GET",
+                            path,
+                            headers={"Host": host, "Origin": f"http://{host}"},
+                        )
+                        response = connection.getresponse()
+                        assert response.status == 403
+                        response.read()
+                    finally:
+                        connection.close()
+        finally:
+            monitor.stop()
 
 
 def test_forced_parent_death_closes_frontend_and_stop_clears_assignment(
@@ -195,7 +230,7 @@ def test_forced_parent_death_closes_frontend_and_stop_clears_assignment(
             envelope = json.loads(result.stdout)
             assert envelope["ok"] is True
             assert not (isolated_singleton_dirs / "monitor.json").exists()
-            _assert_monitor_port_released(cast("int", fields["monitor_port"]))
+            bind_released_loopback_port(cast("int", fields["monitor_port"]))
         finally:
             if parent.poll() is None:
                 parent.kill()

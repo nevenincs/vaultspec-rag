@@ -5,20 +5,25 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, Unpack
+from urllib.parse import urlsplit
 
 from . import store_schema
+from ._store_models import root_collection_prefix
 from ._store_writes import DISK_FLOOR_BYTES as _DISK_FLOOR_BYTES
 from ._store_writes import free_bytes
-from .storage_survey import is_canonical_prefix
+from .storage_manifest import classify_root, load_manifest
+from .storage_survey import _prefix_of, is_canonical_prefix
 from .storage_survey_ops import directory_size_bytes
 
 if TYPE_CHECKING:
     import threading
-    from collections.abc import Callable
-    from pathlib import Path
+    from collections.abc import Callable, Mapping
 
     from qdrant_client import QdrantClient
+
+    from .storage_manifest import ManifestEntry
 
 logger = logging.getLogger(__name__)
 
@@ -200,17 +205,72 @@ def _is_settled(info: object) -> bool:
     return str(getattr(info, "status", "")).lower().endswith("green")
 
 
+def _is_attributed_collection(
+    collection: str, manifest: Mapping[str, ManifestEntry]
+) -> bool:
+    """Require a verifiable server-root record naming this exact collection."""
+    prefix = _prefix_of(collection)
+    entry = manifest.get(prefix)
+    if (
+        not is_canonical_prefix(prefix)
+        or entry is None
+        or entry.prefix != prefix
+        or entry.backend != "server"
+        or (
+            collection not in entry.collections
+            and collection not in entry.collection_identity
+        )
+    ):
+        return False
+    try:
+        root = Path(entry.root)
+        return (
+            root.is_absolute()
+            and root_collection_prefix(root) == prefix
+            and classify_root(entry) in {"live", "orphaned"}
+        )
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
+def _is_managed_backend(client: QdrantClient) -> bool:
+    """Bind the host manifest to the managed loopback backend only.
+
+    Server entries carry no remote endpoint identity, so they cannot
+    authorize maintenance against an external or reassigned endpoint.
+    """
+    from .config._settings import get_config
+
+    cfg = get_config()
+    options = client.init_options
+    url = options.get("url")
+    if not isinstance(url, str) or options.get("prefer_grpc") or options.get("prefix"):
+        return False
+    try:
+        endpoints = (urlsplit(url), urlsplit(cfg.effective_qdrant_url))
+        return all(
+            endpoint.scheme == "http"
+            and endpoint.hostname in {"127.0.0.1", "localhost"}
+            and endpoint.port == cfg.qdrant_port
+            and endpoint.path in {"", "/"}
+            and not endpoint.query
+            and not endpoint.fragment
+            for endpoint in endpoints
+        )
+    except ValueError:
+        return False
+
+
 def read_geometry(
     client: QdrantClient,
     storage_dir: Path | None,
 ) -> list[GeometryEntry]:
     """Read this project's collections' segment geometry and footprint.
 
-    Scoped to canonically-prefixed namespaces (``r`` + 12 hex + ``_``), the
-    same guard every mutating path in this module applies. Reconcile is a
-    mutation, and a shared Qdrant instance may hold collections this
-    project does not own; widening a segment merge onto foreign data is not
-    ours to trigger.
+    Live collection names are joined to validated server entries in the
+    storage manifest. A namespace shape alone proves no ownership on a
+    shared backend; unknown or unverifiable attribution is skipped. Remote
+    backends are skipped because the host manifest cannot identify them.
 
     Args:
         client: Qdrant client for the managed server.
@@ -222,8 +282,12 @@ def read_geometry(
         config cannot be read are omitted - an unreadable collection is
         not evidence of drift.
     """
-    from .storage_survey import _prefix_of
-
+    if not _is_managed_backend(client):
+        logger.warning(
+            "geometry reconciliation skipped: backend ownership unverifiable"
+        )
+        return []
+    manifest = load_manifest()
     try:
         descriptors = sorted(client.get_collections().collections, key=lambda c: c.name)
     except Exception:
@@ -232,7 +296,7 @@ def read_geometry(
     entries: list[GeometryEntry] = []
     for descriptor in descriptors:
         name = descriptor.name
-        if not is_canonical_prefix(_prefix_of(name)):
+        if not _is_attributed_collection(name, manifest):
             continue
         try:
             info = client.get_collection(collection_name=name)
@@ -516,6 +580,22 @@ def _reconcile_collection(request: _CollectionRequest) -> ReconcileResult:
                     f"bytes free, has {free}"
                 ),
             )
+
+    # Attribution can change during selection, footprint IO or an earlier
+    # collection's convergence wait. Reload it at the mutation boundary.
+    ownership_reason = None
+    if not _is_managed_backend(client):
+        ownership_reason = "backend_unverifiable"
+    elif not _is_attributed_collection(entry.collection, load_manifest()):
+        ownership_reason = "ownership_unverifiable"
+    if ownership_reason is not None:
+        return ReconcileResult(
+            entry.collection,
+            "skipped",
+            segments_before=entry.segments,
+            bytes_before=bytes_before,
+            reason=ownership_reason,
+        )
 
     try:
         client.update_collection(

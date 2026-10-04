@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from functools import partial
 from math import ceil, isfinite
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
 from qdrant_client.http.exceptions import (
@@ -117,7 +117,7 @@ if TYPE_CHECKING:
 
     from ..service import ServiceRegistry
     from ..service_quiesce import QuiesceSnapshot
-    from ._search_availability import SearchResponseClassification
+    from ._search_availability import SearchResponseClassification, SearchStatusCode
     from ._search_readiness import (
         PublicationTarget,
         ReadinessRevisionRegistry,
@@ -153,6 +153,17 @@ class SearchRequest:
     request_id: str
     freshness_policy: FreshnessWaitPolicy = FreshnessWaitPolicy.IMMEDIATE
     freshness_wait_seconds: float = 0.0
+
+    @property
+    def sources(self) -> tuple[IndexSource, ...]:
+        """Concrete sources whose availability this request depends on."""
+        if self.search_type is PublicSourceType.COMBINED:
+            return (
+                INDEX_SOURCES
+                if self.payload.get("include_documents", True)
+                else ("vault", "code")
+            )
+        return (self.search_type.value,)
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,11 +233,7 @@ def _backend_unavailable_result(
     request: SearchRequest, port: int | None
 ) -> dict[str, object]:
     """Render a proven backend refusal without inferring index state."""
-    sources: tuple[IndexSource, ...] = (
-        INDEX_SOURCES
-        if request.search_type is PublicSourceType.COMBINED
-        else (request.search_type.value,)
-    )
+    sources = request.sources
     remediation = server_status_command(port, verbose=True)
     facts = tuple(
         SearchSourceFact(
@@ -351,7 +358,7 @@ def _complete_classified_search(
     facts: SearchAvailabilityRequestFacts,
     registry: ServiceRegistry,
     total_seconds: float,
-) -> tuple[dict[str, object], Literal[200, 409, 503]]:
+) -> tuple[dict[str, object], SearchStatusCode]:
     """Complete watcher and log effects from one classification decision."""
     result = classification.response
     # The classifier owns the canonical failure code and evidence. HTTP owns
@@ -525,9 +532,6 @@ def _dispatch_public_search(
                 exclude_paths=request.payload.get("exclude_paths"),
                 dedup_locales=request.payload.get("dedup_locales"),
                 prefer=request.payload.get("prefer"),
-                exclude_domains=request.payload.get("exclude_domains"),
-                only_domains=request.payload.get("only_domains"),
-                include_domains=request.payload.get("include_domains"),
                 like_ids=request.payload.get("like_ids"),
                 unlike_ids=request.payload.get("unlike_ids"),
                 notes=notes,
@@ -551,6 +555,7 @@ def _dispatch_public_search(
         return results, timings, None
     combined, timings = search_combined_timed(
         CombinedSearchRequest(
+            include_documents=request.payload.get("include_documents", True),
             root_dir=request.root,
             query=request.query,
             top_k=request.top_k,
@@ -571,9 +576,6 @@ def _dispatch_public_search(
                 exclude_paths=tuple(request.payload.get("exclude_paths") or ()),
                 dedup_locales=request.payload.get("dedup_locales"),
                 prefer=request.payload.get("prefer"),
-                exclude_domains=tuple(request.payload.get("exclude_domains") or ()),
-                only_domains=tuple(request.payload.get("only_domains") or ()),
-                include_domains=tuple(request.payload.get("include_domains") or ()),
             ),
             document_filters=DocumentCombinedSearchFilters(
                 source_path=request.payload.get("source_path"),
@@ -777,7 +779,9 @@ def _normalise_search_request(
     # _search_field_error narrows query to str, top_k to a non-bool int, and
     # project_root to str | None; a None return means every field already
     # has the type each cast below asserts.
-    field_error = _search_field_error(query, top_k, project_root)
+    field_error = _search_field_error(
+        query, top_k, project_root, payload.get("include_documents", True)
+    )
     if field_error is not None:
         return field_error
     query = _validate_query(cast("str", query))
@@ -849,8 +853,13 @@ def _search_field_error(
     query: object,
     top_k: object,
     project_root: object,
+    include_documents: object = True,
 ) -> SearchRouteError | None:
     """Return the first scalar request-shape error, if any."""
+    if not isinstance(include_documents, bool):
+        return _bad_search_field(
+            "invalid_include_documents", "include_documents must be a boolean"
+        )
     if not isinstance(query, str):
         return _bad_search_field("invalid_query", "query must be a string")
     if isinstance(top_k, bool) or not isinstance(top_k, int):
@@ -930,31 +939,14 @@ def _capture_publication_targets(
     readiness: ReadinessRevisionRegistry,
 ) -> tuple[PublicationTarget, ...] | None:
     """Capture immutable per-source convergence targets at request admission."""
-    from ._search_readiness import PublicationTarget, ReadinessSourceKey
-
-    sources: tuple[IndexSource, ...] = (
-        INDEX_SOURCES
-        if search_request.search_type is PublicSourceType.COMBINED
-        else (search_request.search_type.value,)
-    )
+    sources = search_request.sources
     targets: list[PublicationTarget] = []
     for source in sources:
         snapshot = readiness.snapshot(search_request.root, source)
-        if snapshot.controller_revision is not None:
-            revision = snapshot.controller_revision
-            generation = snapshot.desired_generation
-        elif snapshot.publication_revision is not None:
-            revision = snapshot.publication_revision
-            generation = snapshot.published_generation
-        else:
+        target = snapshot.publication_target()
+        if target is None:
             return None
-        targets.append(
-            PublicationTarget(
-                key=ReadinessSourceKey.from_root(search_request.root, source),
-                revision=revision,
-                generation=generation,
-            )
-        )
+        targets.append(target)
     return tuple(targets)
 
 
@@ -974,7 +966,12 @@ async def _admit_requested_freshness(
             raise
         return FreshnessAdmission(FreshnessAdmissionOutcome.UNAVAILABLE)
     try:
-        targets = _capture_publication_targets(search_request, readiness)
+        targets = await _run_in_thread(
+            _capture_publication_targets,
+            search_request,
+            readiness,
+            limiter=get_search_limiter(),
+        )
         if targets is None:
             return FreshnessAdmission(
                 FreshnessAdmissionOutcome.UNVERIFIABLE, readiness=readiness
@@ -986,9 +983,12 @@ async def _admit_requested_freshness(
         )
         waited_seconds = time.perf_counter() - wait_started
         if not satisfied:
-            snapshots = tuple(
-                readiness.snapshot(target.key.canonical_root, target.key.source)
-                for target in targets
+            snapshots = await _run_in_thread(
+                lambda: tuple(
+                    readiness.snapshot(target.key.canonical_root, target.key.source)
+                    for target in targets
+                ),
+                limiter=get_search_limiter(),
             )
             return FreshnessAdmission(
                 FreshnessAdmissionOutcome.TIMEOUT,
@@ -999,7 +999,12 @@ async def _admit_requested_freshness(
             )
         target = targets[0] if len(targets) == 1 else None
         snapshot = (
-            readiness.snapshot(search_request.root, target.key.source)
+            await _run_in_thread(
+                readiness.snapshot,
+                search_request.root,
+                target.key.source,
+                limiter=get_search_limiter(),
+            )
             if target is not None
             else None
         )
@@ -1155,10 +1160,12 @@ async def _execute_search_route(
             readiness_snapshot=(
                 admission.snapshot
                 if admission.readiness is not None
-                else _readiness_snapshot(
+                else await _run_in_thread(
+                    _readiness_snapshot,
                     registry,
                     search_request.root,
                     search_request.search_type.value,
+                    limiter=get_search_limiter(),
                 )
             ),
             readiness_target=admission.target,
@@ -1259,7 +1266,7 @@ async def _execute_search_route(
 
 def _search_response_status(
     result: dict[str, object],
-) -> Literal[200, 409, 503]:
+) -> SearchStatusCode:
     """Map canonical search outcomes onto their stable HTTP status.
 
     Retrieval envelopes carry no ``ok`` key, so only a failure declares one.

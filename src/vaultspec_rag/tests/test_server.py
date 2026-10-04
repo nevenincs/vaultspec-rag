@@ -20,15 +20,15 @@ if TYPE_CHECKING:
 
     import httpx
     from starlette.requests import Request
-    from starlette.responses import Response
+    from starlette.responses import JSONResponse, Response
+
+    from ..store_runtime import VaultStore
 
 from ..capabilities import BackendCapabilities
-from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..mcp._mcp import mcp
 from ..mcp._resources import analyze_feature
 from ..server import (
-    SearchResponse,
     SearchResultItem,
     ServerRouteRuntime,
     create_http_app,
@@ -43,6 +43,7 @@ from ..server._utils import (
 )
 from ..service import ServiceRegistry
 from ..serviceclient._discovery import HEARTBEAT_STALENESS_SECONDS
+from ._config_fixtures import reset_config
 
 pytestmark = [pytest.mark.unit]
 
@@ -125,7 +126,10 @@ class TestServerRouteRuntime:
             )
 
         app.add_route("/failing", failing)
-        client = cast("httpx.Client", TestClient(app, raise_server_exceptions=False))
+        client = cast(
+            "httpx.Client",
+            TestClient(app, raise_server_exceptions=False, base_url="http://127.0.0.1"),
+        )
 
         response = client.get("/failing")
 
@@ -550,33 +554,6 @@ class TestPydanticModels:
         assert item.rerank_text == "def main():\n    return 0"
         assert "rerank_text" not in item.model_dump()
 
-    def test_search_response(self):
-        resp = SearchResponse(
-            results=[
-                SearchResultItem(
-                    id="1",
-                    path="a.md",
-                    title="A",
-                    score=0.9,
-                    snippet="text",
-                    source="vault",
-                ),
-            ],
-            summary="Found 1 result",
-        )
-        assert len(resp.results) == 1
-        assert "1 result" in resp.summary
-        assert resp.backend_capabilities.backend == "qdrant-local"
-        assert resp.backend_capabilities.concurrent_search_supported is True
-        assert resp.backend_capabilities.same_project_search_strategy == "serialized"
-        assert resp.backend_capabilities.cross_project_search_strategy == "parallel"
-        assert resp.backend_capabilities.local_storage_process_model == "exclusive"
-
-    def test_search_response_empty(self):
-        resp = SearchResponse(results=[], summary="No results")
-        assert len(resp.results) == 0
-        assert resp.backend_capabilities.concurrent_search_supported is True
-
     def test_backend_capabilities_serializes_to_tool_schema(self):
         caps = BackendCapabilities()
         data = caps.model_dump()
@@ -843,7 +820,7 @@ class TestMainTransportSetup:
         )
         monkeypatch.setattr("vaultspec_rag.mcp.mcp", _FakeMcp())
 
-        from ..registry import reset_registry
+        from ._state_fixtures import reset_registry
 
         original_hook = mod._registry._on_close_project
         mod._registry._on_close_project = None
@@ -883,8 +860,106 @@ class TestServiceRegistryIntegration:
         assert isinstance(_registry.gpu_lock, threading.Lock)
 
 
+def _mark_health_document_nonconforming(store: VaultStore) -> str:
+    """Record a real dense-model disagreement through the storage owner."""
+    from dataclasses import replace
+
+    from ..storage_identity import record_identity
+
+    store.ensure_document_table()
+    record_identity(
+        store.root_dir,
+        backend="local",
+        collection=store.DOCUMENT_TABLE_NAME,
+        local_dir=store.db_path,
+        identity=replace(
+            store._expected_identity(), dense_model="previous/dense-model"
+        ),
+    )
+    store._ensured.pop(store.DOCUMENT_TABLE_NAME)
+    store.ensure_document_table()
+    return f"{store.root_dir.resolve()}:{store.DOCUMENT_TABLE_NAME}"
+
+
 class TestHealthHandler:
     """Test the health_handler async function."""
+
+    @pytest.mark.parametrize("lock_owner", ["registry", "store"])
+    async def test_health_lock_wait_keeps_event_loop_responsive(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        lock_owner: str,
+    ) -> None:
+        """Real health waits retain their facts without holding the loop."""
+        from starlette.requests import Request
+
+        from .. import server as server_module
+        from ..operator_state._models import HealthReport
+        from ..operator_state._service import DegradationReason, HealthVerdict
+        from ..server._lifespan import health_handler
+        from .conftest import managed_env
+
+        # Device inspection is an external CUDA boundary, unrelated to the
+        # real registry/store locking and conformance owner exercised here.
+        monkeypatch.setattr(
+            "vaultspec_rag._gpu_admission.device_load_reading", lambda: None
+        )
+        monkeypatch.setattr(server_module, "_start_time", 0.0)
+        with managed_env(
+            **{EnvVar.QDRANT_URL.value: None, EnvVar.LOCAL_ONLY.value: "1"}
+        ):
+            registry = ServiceRegistry()
+            slot = registry.peek_project(tmp_path)
+            store = slot.store
+            assert store._server_mode is False
+            expected_collection = _mark_health_document_nonconforming(store)
+            app = create_http_app(
+                ServerRouteRuntime(
+                    token="health-lock-test-token", registry=registry, port=8765
+                ),
+                lifespan=None,
+            )
+            lock = registry._lock if lock_owner == "registry" else store._lifecycle_lock
+            entered = threading.Event()
+            release = threading.Event()
+            expired = threading.Event()
+
+            def hold_lock() -> None:
+                with lock:
+                    entered.set()
+                    # A broken synchronous handoff must fail, never hang the
+                    # test process waiting for an event-loop-owned release.
+                    if not release.wait(timeout=2.0):
+                        expired.set()
+
+            owner = threading.Thread(target=hold_lock, name="health-lock-owner")
+            owner.start()
+            assert entered.wait(timeout=2.0), "the real health lock was not held"
+            health = asyncio.create_task(
+                health_handler(Request({"type": "http", "app": app}))
+            )
+            try:
+                await asyncio.sleep(0)
+                assert not expired.is_set(), (
+                    "event-loop responsiveness required releasing the health lock"
+                )
+                assert not health.done(), "health bypassed the held canonical lock"
+            finally:
+                release.set()
+                response = cast("JSONResponse", await health)
+                owner.join(timeout=2.0)
+                registry.close_project(tmp_path)
+            assert not owner.is_alive(), "the health lock owner did not stop"
+            report = HealthReport.model_validate_json(bytes(response.body))
+            assert report.status is HealthVerdict.ERROR
+            assert report.models_loaded is False
+            assert report.project_count == 1
+            assert report.nonconforming == (expected_collection,)
+            assert DegradationReason.NONCONFORMING in {
+                degradation.reason for degradation in report.degradations
+            }
+            assert report.service_token is None
 
     def test_health_handler_returns_json(self):
         """health_handler returns a JSONResponse with expected keys."""
@@ -898,7 +973,9 @@ class TestHealthHandler:
             ),
             lifespan=None,
         )
-        client: httpx.Client = cast("httpx.Client", TestClient(app))
+        client: httpx.Client = cast(
+            "httpx.Client", TestClient(app, base_url="http://127.0.0.1")
+        )
         resp: httpx.Response = client.get("/health")
         assert resp.status_code == 200
         data: dict[str, object] = cast("dict[str, object]", resp.json())
@@ -944,7 +1021,9 @@ class TestHealthHandler:
             ),
             lifespan=None,
         )
-        client: httpx.Client = cast("httpx.Client", TestClient(app))
+        client: httpx.Client = cast(
+            "httpx.Client", TestClient(app, base_url="http://127.0.0.1")
+        )
         # A fresh registry is not enough: the not-started verdict reads a
         # reassigned process global that lifespan startup stamps once and
         # never clears, so any earlier test that ran a lifespan leaves this
@@ -978,7 +1057,9 @@ class TestHealthInfoReduction:
             ),
             lifespan=None,
         )
-        client: httpx.Client = cast("httpx.Client", TestClient(app))
+        client: httpx.Client = cast(
+            "httpx.Client", TestClient(app, base_url="http://127.0.0.1")
+        )
         raw = client.get("/health").json()
         data: dict[str, object] = cast("dict[str, object]", raw)
         assert "projects" not in data
@@ -997,7 +1078,9 @@ class TestHealthInfoReduction:
             ),
             lifespan=None,
         )
-        client: httpx.Client = cast("httpx.Client", TestClient(app))
+        client: httpx.Client = cast(
+            "httpx.Client", TestClient(app, base_url="http://127.0.0.1")
+        )
         raw = client.get("/health").json()
         data: dict[str, object] = cast("dict[str, object]", raw)
         assert "gpu_name" not in data

@@ -25,7 +25,6 @@ import pytest
 from ..cli._status_labels import (
     degradation_findings,
 )
-from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..operator_state._service import DegradationReason
 from ..qdrant_runtime._constants import QdrantRuntimeState
@@ -46,6 +45,7 @@ from ..server._lifespan import (
     _service_health_status,
 )
 from ..store_schema import CONFORMING, NONCONFORMING, UNVERIFIABLE
+from ._config_fixtures import reset_config
 from ._ports import free_loopback_port
 from ._quiesce_helpers import running_quiesce_snapshot
 from .conftest import managed_env

@@ -11,7 +11,6 @@ import pytest
 from starlette.requests import Request
 
 from .._search_state import FreshnessWaitPolicy
-from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..server._main import create_http_app
 from ..server._routes_search import (
@@ -26,6 +25,7 @@ from ..server._routes_search import (
 from ..server._runtime import ServerRouteRuntime
 from ..service import ServiceRegistry
 from ..serviceclient._transport import _logs_route_path
+from ._config_fixtures import reset_config
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -433,7 +433,10 @@ async def test_asgi_disconnect_cancels_without_response_and_cleans_waiter(
         "raw_path": b"/search",
         "query_string": b"",
         "root_path": "",
-        "headers": [(b"authorization", f"Bearer {token}".encode())],
+        "headers": [
+            (b"host", b"127.0.0.1:8765"),
+            (b"authorization", f"Bearer {token}".encode()),
+        ],
         "client": ("127.0.0.1", 50000),
         "server": ("127.0.0.1", 8765),
         "state": {},

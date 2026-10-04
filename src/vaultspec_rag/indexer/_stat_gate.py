@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final, Self
 
 from ..job_control import NO_RUN_CONTROL
+from ._source_file import open_source_file
 
 if TYPE_CHECKING:
     import pathlib
@@ -105,13 +106,14 @@ class _StatEvidence:
     hashed_at_ns: int
 
 
-def file_digest(path: pathlib.Path) -> str:
+def file_digest(path: pathlib.Path, *, root_dir: pathlib.Path | None = None) -> str:
     """Digest a file's raw bytes - the default a domain gets without asking.
 
     Raises:
         OSError: The file could not be opened or read.
     """
-    with open(path, "rb") as stream:
+    source = path.open("rb") if root_dir is None else open_source_file(path, root_dir)
+    with source as stream:
         return hashlib.file_digest(stream, "blake2b").hexdigest()
 
 
@@ -192,23 +194,6 @@ class StatEvidenceGate:
             )
             if version == 0:
                 connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
-
-    def hash_file(self, key: str, path: pathlib.Path) -> str:
-        """Return *path*'s content hash, reading it only when evidence demands.
-
-        Raises:
-            OSError: The file could not be statted or read, exactly as the
-                ungated digest call would have raised.
-        """
-        stat = os.stat(path)
-        reused = self.probe(key, stat)
-        if reused is not None:
-            return reused
-        hashed_at_ns = time.time_ns()
-        digest = self.digest(path)
-        self.record(key, stat, digest, hashed_at_ns)
-        self.rehashed += 1
-        return digest
 
     def probe(self, key: str, stat: os.stat_result) -> str | None:
         """Return the reusable recorded hash for *stat*'s identity, or ``None``.

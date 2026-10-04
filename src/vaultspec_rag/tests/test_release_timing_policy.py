@@ -90,23 +90,23 @@ def test_release_qdrant_clients_override_the_short_transport_default() -> None:
 def test_borrower_resume_uses_the_model_operation_hard_cutoff() -> None:
     """A slow model rebuild must not inherit the short admin-call deadline.
 
-    Mutation: remove the explicit timeout keyword from the resume lifecycle
+    Mutation: remove the explicit timeout keyword from the resume admin
     call. The exact expression assertion below then fails.
     """
     path = _TEST_ROOT.parent / "cli" / "_gpu_lease.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
     resume = _function(tree, "_resume_is_acknowledged")
-    lifecycle_calls = [
+    admin_calls = [
         node
         for node in ast.walk(resume)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == "_try_borrower_lifecycle_call"
+        and node.func.id == "_try_http_admin"
     ]
 
-    assert len(lifecycle_calls) == 1
+    assert len(admin_calls) == 1
     timeout = next(
-        (item.value for item in lifecycle_calls[0].keywords if item.arg == "timeout"),
+        (item.value for item in admin_calls[0].keywords if item.arg == "timeout"),
         None,
     )
     assert (

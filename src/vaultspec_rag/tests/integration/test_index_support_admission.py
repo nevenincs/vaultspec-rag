@@ -11,7 +11,6 @@ import pytest
 
 from ..._job_errors import JobError, JobErrorKind
 from ..._store_models import CodeChunk
-from ...config._settings import reset_config
 from ...config._types import EnvVar
 from ...index_profiles import SupportMeasurement, SupportProfileLimits
 from ...indexer import CodebaseIndexer
@@ -19,6 +18,8 @@ from ...indexer._streaming_types import CodeFileSegment
 from ...jobs import get_job_manager, reset
 from ...server import ServerRouteRuntime, create_http_app
 from ...service import ServiceRegistry
+from .._config_fixtures import reset_config
+from .._indexer_fixtures import support_measurement
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -91,7 +92,7 @@ def test_code_segment_measurement_rejects_before_overweight_segment_yields(
         next(iter(indexer._support_budget.measure_code_segments((segment,))))
 
     assert raised.value.error_kind is JobErrorKind.CORPUS_LIMIT_EXCEEDED
-    assert indexer.support_measurement == SupportMeasurement(1, 64, 1, 33)
+    assert support_measurement(indexer) == SupportMeasurement(1, 64, 1, 33)
 
 
 def test_code_runtime_measurement_keeps_extractor_host_and_device_bounds_separate(
@@ -119,7 +120,7 @@ def test_code_runtime_measurement_keeps_extractor_host_and_device_bounds_separat
 
     indexer._support_budget.record_extracted_bytes(17)
     indexer._support_budget._record_resource_measurement(rss_bytes=31, cuda_bytes=23)
-    assert indexer.support_measurement == SupportMeasurement(
+    assert support_measurement(indexer) == SupportMeasurement(
         1,
         64,
         extracted_bytes=17,
@@ -184,16 +185,15 @@ async def _post_index_job(token: str, root: Path, source: str) -> httpx.Response
     )
     async with httpx.AsyncClient(
         transport=transport,
-        base_url="http://testserver",
+        base_url="http://127.0.0.1",
     ) as client:
         return await client.post(
-            "/jobs",
+            "/reindex",
             headers={"Authorization": f"Bearer {token}"},
             json={
-                "operation": "index",
-                "source": source,
+                "type": source,
+                "clean": False,
                 "project_root": str(root),
-                "mode": "incremental",
                 "authority": "publication",
             },
         )

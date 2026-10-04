@@ -173,7 +173,7 @@ class TestPersistenceFailureClassification:
         with pytest.raises(PersistenceWriteError) as caught:
             save_persisted_state(
                 state_path,
-                PersistedManagerState(jobs=(), bindings=()),
+                PersistedManagerState(jobs=()),
             )
 
         assert caught.value.published is False

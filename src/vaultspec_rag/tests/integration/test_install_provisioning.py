@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ...commands._install import install_run
+from .._provision_fixtures import result_for
 from ._install_helpers import (
     _CONSUMER_PYPROJECT,
 )
@@ -119,7 +120,7 @@ class TestProvisioningReport:
         assert report.provision_outcome.dry_run is True
         # A dry-run preview must not have provisioned a qdrant binary into
         # the isolated managed dir nor disturbed the live service.
-        qdrant = report.provision_outcome.result_for(ProvisionStep.QDRANT)
+        qdrant = result_for(report.provision_outcome, ProvisionStep.QDRANT)
         assert qdrant is not None
         assert qdrant.action in {ProvisionAction.DRY_RUN, ProvisionAction.SKIPPED}
         assert not (isolated_status_dir / "bin").exists()

@@ -294,7 +294,7 @@ class TestManagedJobPersistence:
 
     pytestmark = pytest.mark.unit
 
-    def test_paused_state_and_idempotency_restore_under_the_same_id(
+    def test_paused_state_restores_under_the_same_id(
         self,
         tmp_path: Path,
     ) -> None:
@@ -311,9 +311,9 @@ class TestManagedJobPersistence:
             JobMode.INCREMENTAL,
             RunAuthority.PUBLICATION,
         )
-        initiator = JobInitiator("http", "POST /jobs", str(tmp_path))
+        initiator = JobInitiator("http", "POST /reindex", str(tmp_path))
 
-        created = manager.create(spec, initiator, idempotency_key="persist-1")
+        created = manager.create(spec, initiator)
         assert created.job is not None
         job_id = created.job.id
         assert state_path.exists()
@@ -338,76 +338,6 @@ class TestManagedJobPersistence:
         assert snapshot is not None
         assert snapshot.state is JobState.PAUSED
         assert snapshot.revision == paused.job.revision
-        replay = restarted.create(
-            spec,
-            initiator,
-            idempotency_key="persist-1",
-        )
-        assert replay.code == "idempotency_replayed"
-        assert replay.job == snapshot
-
-    def test_equivalent_deduplication_binding_restores_and_replays(
-        self,
-        tmp_path: Path,
-    ) -> None:
-        state_path = tmp_path / "managed-jobs.json"
-        project_root = tmp_path / "project"
-        project_root.mkdir()
-        canonical_spec = JobSpec(
-            JobOperation.INDEX,
-            JobSource.CODE,
-            str(project_root),
-            JobMode.INCREMENTAL,
-            RunAuthority.PUBLICATION,
-        )
-        alias_spec = JobSpec(
-            JobOperation.INDEX,
-            JobSource.CODE,
-            str(project_root / "uncreated" / ".."),
-            JobMode.INCREMENTAL,
-            RunAuthority.PUBLICATION,
-        )
-        canonical_initiator = JobInitiator(
-            "watcher",
-            "watcher_code_index",
-            str(project_root),
-        )
-        alias_initiator = JobInitiator(
-            "http",
-            "POST /jobs",
-            str(project_root),
-        )
-        manager = JobManager(
-            quiesce_controller=ServiceQuiesceController(),
-            max_nonterminal=2,
-            state_path=state_path,
-        )
-
-        created = manager.create(canonical_spec, canonical_initiator)
-        deduplicated = manager.create(
-            alias_spec,
-            alias_initiator,
-            idempotency_key="equivalent-request",
-        )
-        assert created.job is not None
-        assert deduplicated.job is not None
-        assert deduplicated.job.id == created.job.id
-
-        restarted = JobManager(
-            quiesce_controller=ServiceQuiesceController(),
-            max_nonterminal=2,
-            state_path=state_path,
-        )
-        assert restarted.restore_persisted().code == "job_state_restored"
-        replay = restarted.create(
-            alias_spec,
-            alias_initiator,
-            idempotency_key="equivalent-request",
-        )
-
-        assert replay.code == "idempotency_replayed"
-        assert replay.job is not None
-        assert replay.job.id == created.job.id
 
     @pytest.mark.asyncio
     async def test_exact_task_ownership_and_interrupted_recovery(
@@ -504,7 +434,7 @@ class TestManagedJobPersistence:
                 JobMode.INCREMENTAL,
                 RunAuthority.PUBLICATION,
             ),
-            JobInitiator("http", "POST /jobs", str(completed_root)),
+            JobInitiator("http", "POST /reindex", str(completed_root)),
         )
         assert completed.job is not None
         completed_task = asyncio.create_task(pending_attempt())
@@ -580,7 +510,7 @@ class TestManagedJobPersistence:
                 with pytest.raises(asyncio.CancelledError):
                     await task
 
-    def test_lower_terminal_retention_filters_obsolete_idempotency(
+    def test_lower_terminal_retention_trims_restored_history(
         self,
         tmp_path: Path,
     ) -> None:
@@ -591,7 +521,7 @@ class TestManagedJobPersistence:
             max_terminal_history=3,
             state_path=state_path,
         )
-        requests: list[tuple[JobSpec, JobInitiator, str, str]] = []
+        created_ids: list[str] = []
         for index in range(3):
             root = tmp_path / f"project-{index}"
             spec = JobSpec(
@@ -601,9 +531,8 @@ class TestManagedJobPersistence:
                 JobMode.INCREMENTAL,
                 RunAuthority.PUBLICATION,
             )
-            initiator = JobInitiator("http", "POST /jobs", str(root))
-            key = f"request-{index}"
-            created = manager.create(spec, initiator, idempotency_key=key)
+            initiator = JobInitiator("http", "POST /reindex", str(root))
+            created = manager.create(spec, initiator)
             assert created.job is not None
             assert (
                 manager.set_desired_state(
@@ -612,7 +541,7 @@ class TestManagedJobPersistence:
                 ).code
                 == "job_cancelled"
             )
-            requests.append((spec, initiator, key, created.job.id))
+            created_ids.append(created.job.id)
 
         restarted = JobManager(
             quiesce_controller=ServiceQuiesceController(),
@@ -621,17 +550,7 @@ class TestManagedJobPersistence:
             state_path=state_path,
         )
         assert restarted.restore_persisted().code == "job_state_restored"
-        latest_spec, latest_initiator, latest_key, latest_id = requests[-1]
-        assert [job.id for job in restarted.terminal()] == [latest_id]
-
-        replay = restarted.create(
-            latest_spec,
-            latest_initiator,
-            idempotency_key=latest_key,
-        )
-        assert replay.code == "idempotency_replayed"
-        assert replay.job is not None
-        assert replay.job.id == latest_id
+        assert [job.id for job in restarted.terminal()] == [created_ids[-1]]
 
     def test_atomic_replacement_never_exposes_partial_json(
         self, tmp_path: Path
@@ -738,8 +657,8 @@ class TestManagedJobPersistence:
             JobMode.INCREMENTAL,
             RunAuthority.PUBLICATION,
         )
-        initiator = JobInitiator("http", "POST /jobs", str(tmp_path))
-        created = manager.create(spec, initiator, idempotency_key="rollback-1")
+        initiator = JobInitiator("http", "POST /reindex", str(tmp_path))
+        created = manager.create(spec, initiator)
         assert created.job is not None
 
         state_path.unlink()
@@ -752,14 +671,6 @@ class TestManagedJobPersistence:
         assert outcome.code == "job_persistence_failed"
         unchanged = manager.get(created.job.id)
         assert unchanged == created.job
-        assert (
-            manager.create(
-                spec,
-                initiator,
-                idempotency_key="rollback-1",
-            ).code
-            == "idempotency_replayed"
-        )
         assert list(tmp_path.glob(".managed-jobs.json.*.tmp")) == []
 
     @pytest.mark.asyncio
@@ -850,7 +761,7 @@ class TestManagedJobPersistence:
                 JobMode.INCREMENTAL,
                 RunAuthority.PUBLICATION,
             ),
-            JobInitiator("http", "POST /jobs", str(tmp_path)),
+            JobInitiator("http", "POST /reindex", str(tmp_path)),
         )
         assert created.job is not None
         payload = json.loads(state_path.read_text(encoding="utf-8"))
@@ -911,15 +822,16 @@ class TestManagedJobPersistence:
                 RunAuthority.REBUILD,
             ),
             JobInitiator("cli", "server job create", str(tmp_path)),
-            start_paused=True,
         )
-
         assert created.job is not None
-        assert created.job.state is JobState.PAUSED
-        assert created.job.timestamps.control_requested_at is not None
+        paused = manager.set_desired_state(created.job.id, DesiredJobState.PAUSED)
+
+        assert paused.job is not None
+        assert paused.job.state is JobState.PAUSED
+        assert paused.job.timestamps.control_requested_at is not None
         assert (
-            created.job.timestamps.control_acknowledged_at
-            == created.job.timestamps.control_requested_at
+            paused.job.timestamps.control_acknowledged_at
+            == paused.job.timestamps.control_requested_at
         )
         invalid_payload = json.loads(state_path.read_text(encoding="utf-8"))
         invalid_payload["jobs"][0]["control_requested_at"] = None
@@ -1200,77 +1112,10 @@ class TestManagedJobPersistence:
         assert refused.status is JobOutcomeStatus.ERROR
         assert refused.code == "job_capacity_exceeded"
 
-    def test_over_capacity_restore_keeps_every_live_replay_binding(
-        self,
-        tmp_path: Path,
-    ) -> None:
-        """A job that survived restore keeps the key that names it.
-
-        The replay-binding ceiling is derived from the retention bounds, so
-        restoring more nonterminal jobs than the current bound allows would
-        evict against a number smaller than the jobs actually retained. The
-        binding dropped that way belongs to a job that is still live and
-        still addressable, and the caller replaying its key would be told
-        equivalent work exists instead of that its own request was replayed -
-        a different answer to the same question, and a duplicate submission
-        for anything that keys retries on it.
-
-        Both halves matter: the binding survives, and the replay still
-        resolves through it.
-        """
-        state_path = tmp_path / "managed-jobs.json"
-        first = JobManager(
-            quiesce_controller=ServiceQuiesceController(),
-            max_nonterminal=3,
-            max_terminal_history=1,
-            state_path=state_path,
-        )
-        for index in range(3):
-            created = first.create(
-                JobSpec(
-                    JobOperation.INDEX,
-                    JobSource.CODE,
-                    str(tmp_path / f"project-{index}"),
-                    JobMode.REBUILD,
-                    RunAuthority.REBUILD,
-                ),
-                JobInitiator("test", "replay_binding", None),
-                idempotency_key=f"key-{index}",
-            )
-            assert created.job is not None
-
-        # The lowered bound makes the configured ceiling (bound + history)
-        # smaller than the three jobs the file legitimately carries.
-        restarted = JobManager(
-            quiesce_controller=ServiceQuiesceController(),
-            max_nonterminal=1,
-            max_terminal_history=1,
-            state_path=state_path,
-        )
-        assert restarted.restore_persisted().code == "job_state_restored"
-        assert len(restarted.active()) == 3
-
-        for index in range(3):
-            replayed = restarted.create(
-                JobSpec(
-                    JobOperation.INDEX,
-                    JobSource.CODE,
-                    str(tmp_path / f"project-{index}"),
-                    JobMode.REBUILD,
-                    RunAuthority.REBUILD,
-                ),
-                JobInitiator("test", "replay_binding", None),
-                idempotency_key=f"key-{index}",
-            )
-            assert replayed.code == "idempotency_replayed", (
-                f"key-{index} lost its binding: {replayed.code}"
-            )
-
     @pytest.mark.parametrize(
         "sequence",
         [
             "created",
-            "start_paused",
             "paused",
             "quiesce_deferred",
             "cancelled",
@@ -1278,7 +1123,6 @@ class TestManagedJobPersistence:
             "failed_unstarted",
             "retried",
             "deleted",
-            "idempotent",
         ],
     )
     def test_every_persisted_transition_reloads(
@@ -1306,12 +1150,7 @@ class TestManagedJobPersistence:
             state_path=state_path,
         )
 
-        def admit(
-            name: str,
-            *,
-            start_paused: bool = False,
-            idempotency_key: str | None = None,
-        ) -> str:
+        def admit(name: str) -> str:
             created = manager.create(
                 JobSpec(
                     JobOperation.INDEX,
@@ -1321,16 +1160,12 @@ class TestManagedJobPersistence:
                     RunAuthority.REBUILD,
                 ),
                 JobInitiator("test", "transition_reload", None),
-                start_paused=start_paused,
-                idempotency_key=idempotency_key,
             )
             assert created.job is not None
             return created.job.id
 
         if sequence == "created":
             admit("a")
-        elif sequence == "start_paused":
-            admit("a", start_paused=True)
         elif sequence == "paused":
             manager.set_desired_state(admit("a"), DesiredJobState.PAUSED)
         elif sequence == "quiesce_deferred":
@@ -1344,21 +1179,20 @@ class TestManagedJobPersistence:
         elif sequence == "cancelled":
             manager.set_desired_state(admit("a"), DesiredJobState.CANCELLED)
         elif sequence == "resumed":
-            manager.set_desired_state(
-                admit("a", start_paused=True), DesiredJobState.RUNNING
-            )
+            job_id = admit("a")
+            manager.set_desired_state(job_id, DesiredJobState.PAUSED)
+            manager.set_desired_state(job_id, DesiredJobState.RUNNING)
         elif sequence == "failed_unstarted":
             manager.fail_unstarted(admit("a"), result="no runtime")
         elif sequence == "retried":
             job_id = admit("a")
             manager.fail_unstarted(job_id, result="no runtime")
             assert manager.retry(job_id).code == "job_retry_created"
-        elif sequence == "deleted":
+        else:
+            assert sequence == "deleted"
             job_id = admit("a")
             manager.fail_unstarted(job_id, result="no runtime")
             assert manager.delete(job_id).code == "job_deleted"
-        else:
-            admit("a", idempotency_key="replay-key")
 
         # The real file the daemon would find on its next start, read by the
         # real loader that start would use.

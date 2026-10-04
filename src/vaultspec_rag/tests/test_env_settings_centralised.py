@@ -17,13 +17,13 @@ documentation restated its claim as fact.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pytest
 
 from .. import memory_probe
 from ..config._types import EnvVar
+from ._env_surface import product_setting_is_consumed, source_surface
 
 pytestmark = [pytest.mark.unit]
 
@@ -39,18 +39,16 @@ _NOT_SETTINGS = frozenset(
     }
 )
 
-_SRC = Path(__file__).resolve().parent.parent
-_ENV_LITERAL = re.compile(r"\"(_?VAULTSPEC(?:_RAG)?_[A-Z0-9_]+)\"")
+#: The shipped Python package, as the source scan spells its files.
+_PACKAGE = "src/vaultspec_rag/"
 
 #: Prefix marking a name this project defines, as opposed to one it merely
 #: references because another library honours it. The two carry different
 #: admission rules, which the enum's own docstring states.
 _FIRST_PARTY_PREFIX = "VAULTSPEC_RAG_"
 
-#: Members exempt from needing an ``EnvVar.<NAME>`` reference in production.
-#: Empty, and worth keeping empty: the memory probe was the one restatement,
-#: and it now takes its name from the enum like everything else.
-_READ_WITHOUT_THE_ENUM: frozenset[str] = frozenset()
+#: The namespace a settings name lives in, with the harness's private form.
+_SETTINGS_NAMESPACES = ("VAULTSPEC_", "_VAULTSPEC_")
 
 
 def test_the_memory_probe_takes_its_name_from_the_settings_enum() -> None:
@@ -77,21 +75,21 @@ def test_every_first_party_variable_is_read_somewhere_in_production() -> None:
     scope here: those are declared to keep a literal in one place, and the
     behaviour behind them belongs to the library that honours them.
 
+    Being mapped onto a settings key is not being read. Two metadata-filename
+    members passed an earlier form of this check on exactly that: the override
+    map named them, and nothing read the settings they fed.
+
     Mutation: re-added a ``SERVICE_DAEMON = "VAULTSPEC_RAG_SERVICE_DAEMON"``
-    member to the enum without any reader. Observed this assertion fail naming
-    that member.
+    member to the enum, described in the registry, without any reader.
+    Observed this assertion fail naming that member. Then re-added one of the
+    metadata-filename members with its override-map entry, default and
+    annotation, and observed it fail naming that member too.
     """
-    production = "\n".join(
-        path.read_text(encoding="utf-8")
-        for path in _SRC.rglob("*.py")
-        if "tests" not in path.parts
-    )
     unread = sorted(
         member.name
         for member in EnvVar
         if member.value.startswith(_FIRST_PARTY_PREFIX)
-        and member.name not in _READ_WITHOUT_THE_ENUM
-        and not re.search(rf"EnvVar\.{member.name}\b", production)
+        and not product_setting_is_consumed(member)
     )
     assert not unread, (
         "the settings enum declares these variables but no production module "
@@ -102,19 +100,19 @@ def test_every_first_party_variable_is_read_somewhere_in_production() -> None:
 
 
 def test_no_module_reads_a_settings_env_var_the_enum_does_not_own() -> None:
-    """Every ``VAULTSPEC_*`` literal in production code is a known setting."""
+    """Every ``VAULTSPEC_*`` literal in production code is a known setting.
+
+    Mutation: added the string ``"VAULTSPEC_RAG_UNOWNED"`` to a production
+    module. Observed this assertion fail naming that variable and the module.
+    """
     known = {member.value for member in EnvVar} | _NOT_SETTINGS
-    offenders: dict[str, set[str]] = {}
-    for path in _SRC.rglob("*.py"):
-        if "tests" in path.parts:
-            continue
-        found = {
-            name
-            for name in _ENV_LITERAL.findall(path.read_text(encoding="utf-8"))
-            if name not in known
-        }
-        if found:
-            offenders[str(path.relative_to(_SRC))] = found
+    offenders = {
+        name: sorted(file for file in files if file.startswith(_PACKAGE))
+        for name, files in source_surface().names.items()
+        if name.startswith(_SETTINGS_NAMESPACES)
+        and name not in known
+        and any(file.startswith(_PACKAGE) for file in files)
+    }
     assert not offenders, (
         "these modules name a VAULTSPEC_* environment variable the settings "
         f"enum does not declare, so it is a setting with no canonical home: {offenders}"

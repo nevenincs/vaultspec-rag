@@ -14,8 +14,7 @@ from ._process_probe import pid_tcp_connections
 from .config._settings import get_config
 from .memory_probe import memory_observation
 
-MAX_OBSERVED_CLIENTS = 256
-DEFAULT_OBSERVED_CLIENTS = 64
+OBSERVED_CLIENTS_LIMIT = 64
 _HOST_CPU_SAMPLE_SECONDS = 5.0
 _host_cpu_lock = threading.Lock()
 _host_cpu_sample: tuple[float, float | None] | None = None
@@ -105,11 +104,8 @@ def _client_observation(*, port: int, limit: int) -> dict[str, object]:
     return result
 
 
-def runtime_observations(
-    *, port: int, client_limit: int = DEFAULT_OBSERVED_CLIENTS
-) -> dict[str, object]:
+def runtime_observations(*, port: int) -> dict[str, object]:
     """Observe this process; TCP peers are transport evidence, not sessions."""
-    limit = max(1, min(MAX_OBSERVED_CLIENTS, client_limit))
     cpu = process_cpu_snapshot()
     cpu["system_utilization_percent"] = _host_cpu_utilization()
     cpu["process_percent_basis"] = "one_cpu_core"
@@ -124,5 +120,5 @@ def runtime_observations(
         "ram": memory_observation(),
         "gpu": gpu,
         "disk": _disk_observation(),
-        "clients": _client_observation(port=port, limit=limit),
+        "clients": _client_observation(port=port, limit=OBSERVED_CLIENTS_LIMIT),
     }

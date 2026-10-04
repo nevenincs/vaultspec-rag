@@ -29,6 +29,23 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.unit]
 
 
+def _hash_file(gate: StatEvidenceGate, key: str, path: Path) -> str:
+    """Return *path*'s hash through the gate, reading it only when it must.
+
+    The composition production spreads across a scan: probe the evidence,
+    and on a miss digest the file and record what was seen.
+    """
+    stat = os.stat(path)
+    reused = gate.probe(key, stat)
+    if reused is not None:
+        return reused
+    hashed_at_ns = time.time_ns()
+    digest = gate.digest(path)
+    gate.record(key, stat, digest, hashed_at_ns)
+    gate.rehashed += 1
+    return digest
+
+
 def _digest(payload: bytes) -> str:
     return hashlib.blake2b(payload).hexdigest()
 
@@ -56,7 +73,7 @@ def test_trusted_evidence_answers_from_stat_alone(tmp_path: Path) -> None:
     sidecar = tmp_path / "gate.sqlite3"
 
     with StatEvidenceGate.load(sidecar) as first:
-        original = first.hash_file("mod.py", source)
+        original = _hash_file(first, "mod.py", source)
         assert original == _digest(b"x = 1\n")
         assert (first.reused, first.rehashed) == (0, 1)
         first.persist()
@@ -65,7 +82,7 @@ def test_trusted_evidence_answers_from_stat_alone(tmp_path: Path) -> None:
         # hash, which is the observable proof the file was not read again.
         _swap_content_same_stat(source, b"x = 2\n")
         with StatEvidenceGate.load(sidecar) as second:
-            assert second.hash_file("mod.py", source) == original
+            assert _hash_file(second, "mod.py", source) == original
             assert (second.reused, second.rehashed) == (1, 0)
 
 
@@ -76,13 +93,13 @@ def test_stat_visible_change_rehashes(tmp_path: Path) -> None:
     sidecar = tmp_path / "gate.json"
 
     with StatEvidenceGate.load(sidecar) as first:
-        first.hash_file("mod.py", source)
+        _hash_file(first, "mod.py", source)
         first.persist()
 
         source.write_bytes(b"x = 22\n")
         _backdate(source, seconds=30.0)
         with StatEvidenceGate.load(sidecar) as second:
-            assert second.hash_file("mod.py", source) == _digest(b"x = 22\n")
+            assert _hash_file(second, "mod.py", source) == _digest(b"x = 22\n")
             assert (second.reused, second.rehashed) == (0, 1)
 
 
@@ -98,14 +115,14 @@ def test_racy_evidence_is_never_trusted(tmp_path: Path) -> None:
     sidecar = tmp_path / "gate.json"
 
     with StatEvidenceGate.load(sidecar) as first:
-        first.hash_file("mod.py", source)
+        _hash_file(first, "mod.py", source)
         first.persist()
 
         _swap_content_same_stat(source, b"x = 2\n")
         with StatEvidenceGate.load(sidecar) as second:
             # A rehash returns the new digest; a (wrongly) trusted entry would have
             # returned the old one.
-            assert second.hash_file("mod.py", source) == _digest(b"x = 2\n")
+            assert _hash_file(second, "mod.py", source) == _digest(b"x = 2\n")
             assert (second.reused, second.rehashed) == (0, 1)
 
 
@@ -119,8 +136,8 @@ def test_prune_drops_only_absent_keys(tmp_path: Path) -> None:
     sidecar = tmp_path / "gate.json"
 
     with StatEvidenceGate.load(sidecar) as first:
-        first.hash_file("kept.py", kept)
-        first.hash_file("gone.py", gone)
+        _hash_file(first, "kept.py", kept)
+        _hash_file(first, "gone.py", gone)
         first.prune({"kept.py"})
         first.persist()
 
@@ -132,7 +149,7 @@ def test_prune_drops_only_absent_keys(tmp_path: Path) -> None:
 def test_missing_file_raises_oserror_like_the_ungated_path(tmp_path: Path) -> None:
     with StatEvidenceGate.load(tmp_path / "gate.json") as gate:
         with pytest.raises(OSError):
-            gate.hash_file("gone.py", tmp_path / "gone.py")
+            _hash_file(gate, "gone.py", tmp_path / "gone.py")
         assert (gate.reused, gate.rehashed) == (0, 0)
 
 
@@ -151,6 +168,9 @@ class _CountingReporter:
 
     def advance(self, n: int = 1) -> None:
         self.batches.append(n)
+
+    def confirmed_chunks(self, n: int) -> None:
+        del n
 
     def phase_end(self) -> None:
         return None
@@ -228,7 +248,7 @@ class TestBatchHashing:
             items.append((rel, path))
 
         with StatEvidenceGate.load(tmp_path / "serial.json") as serial_gate:
-            serial = {rel: serial_gate.hash_file(rel, path) for rel, path in items}
+            serial = {rel: _hash_file(serial_gate, rel, path) for rel, path in items}
             with StatEvidenceGate.load(tmp_path / "pooled.json") as pooled_gate:
                 pooled = hash_paths(pooled_gate, items)
                 assert pooled.hashes == serial
@@ -260,7 +280,7 @@ class TestRecordKnownHash:
             # The banked evidence answers the next pass from stat alone: content
             # swapped behind the same identity comes back as the recorded hash.
             _swap_content_same_stat(source, b"x = 2\n")
-            assert gate.hash_file("mod.py", source) == _digest(b"x = 1\n")
+            assert _hash_file(gate, "mod.py", source) == _digest(b"x = 1\n")
             assert (gate.reused, gate.rehashed) == (1, 0)
 
     def test_fresh_mtime_is_never_bound(self, tmp_path: Path) -> None:
@@ -279,7 +299,7 @@ class TestRecordKnownHash:
             )
             assert not recorded
             _swap_content_same_stat(source, b"x = 2\n")
-            assert gate.hash_file("mod.py", source) == _digest(b"x = 2\n")
+            assert _hash_file(gate, "mod.py", source) == _digest(b"x = 2\n")
             assert (gate.reused, gate.rehashed) == (0, 1)
 
     def test_missing_file_is_skipped(self, tmp_path: Path) -> None:

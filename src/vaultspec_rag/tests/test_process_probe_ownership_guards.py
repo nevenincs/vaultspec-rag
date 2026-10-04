@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import os
 import tempfile
 from pathlib import Path
 from typing import ClassVar
@@ -637,29 +638,29 @@ class TestOperatorCommandsHaveOneSpelling:
         )
 
     @pytest.mark.parametrize(
-        ("path", "windows", "expected"),
+        ("path", "windows_expected", "posix_expected"),
         [
-            ("C:/code/proj", True, "C:/code/proj"),
-            ("C:/my proj", True, "'C:/my proj'"),
-            ("C:/work/O'Brien/proj", True, "'C:/work/O''Brien/proj'"),
-            ("C:/a$b;c", True, "'C:/a$b;c'"),
-            ("/work/project", False, "/work/project"),
-            ("/work/my project", False, "'/work/my project'"),
-            ("/srv/O'Brien", False, "'/srv/O'\"'\"'Brien'"),
-            ("/a$b;c", False, "'/a$b;c'"),
+            ("C:/code/proj", "C:/code/proj", "C:/code/proj"),
+            ("/work/project", "/work/project", "/work/project"),
+            ("/work/my project", "'/work/my project'", "'/work/my project'"),
+            ("/srv/O'Brien", "'/srv/O''Brien'", "'/srv/O'\"'\"'Brien'"),
+            ("/a$b;c", "'/a$b;c'", "'/a$b;c'"),
         ],
     )
     def test_a_target_path_pastes_back_as_one_literal_argument(
-        self, path: str, *, windows: bool, expected: str
+        self, path: str, windows_expected: str, posix_expected: str
     ) -> None:
         """A space, a quote, a ``$`` or a separator must not split or expand.
+
+        The expectation is the quoting of the shell this test runs under.
 
         Mutation: quoting only paths that contain whitespace. The quote, ``$``
         and separator cases then render bare and fail their equality.
         """
         from .._operator_commands import _shell_argument
 
-        assert _shell_argument(path, windows=windows) == expected
+        expected = windows_expected if os.name == "nt" else posix_expected
+        assert _shell_argument(path) == expected
 
     def test_the_renamed_flag_is_not_reachable(self) -> None:
         """``--running`` was replaced by ``--state active`` and must stay gone.

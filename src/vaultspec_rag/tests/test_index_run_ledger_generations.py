@@ -22,7 +22,9 @@ from ..indexer._run_ledger_models import (
     index_run_ledger_path,
 )
 from ..indexer._run_ledger_runtime import RunLedger
+from ._ledger_fixtures import latest_generation
 from ._run_ledger_test_support import (
+    ledger_test_certify_generation,
     ledger_test_digest,
     ledger_test_signature,
     ledger_test_unit,
@@ -107,9 +109,10 @@ def test_shared_path_and_latest_generation_are_independent_per_kind(
         )
     )
 
-    assert ledger.latest_generation(ContentKind.CODE) == code
+    assert latest_generation(ledger, ContentKind.CODE) == code
     assert (
-        ledger.latest_generation(
+        latest_generation(
+            ledger,
             ContentKind.DOCUMENT,
             collection_identity="document-v1",
         )
@@ -170,10 +173,6 @@ def test_file_outcomes_and_finalization_are_immutable(tmp_path: Path) -> None:
         failed,
         indexed,
     ]
-    assert list(
-        ledger.iter_file_states(generation.generation_id, converged_only=True)
-    ) == [rejected, indexed]
-
     with pytest.raises(RunLedgerStateError, match="unresolved"):
         ledger.advance_finalization(
             generation.generation_id,
@@ -194,6 +193,7 @@ def test_file_outcomes_and_finalization_are_immutable(tmp_path: Path) -> None:
             generation.generation_id,
             FinalizationPhase.METADATA_PUBLISHED,
         )
+    ledger_test_certify_generation(ledger, generation.generation_id)
     for phase in (
         FinalizationPhase.STALE_RECONCILED,
         FinalizationPhase.METADATA_PUBLISHED,
@@ -278,6 +278,7 @@ def test_a_succeeding_generation_never_accrues_resume_failures(
     """Only unsuccessful outcomes advance the bound."""
     ledger = RunLedger(tmp_path / "runs.sqlite3")
     generation = ledger.start_generation(ledger_test_signature(tmp_path))
+    ledger_test_certify_generation(ledger, generation.generation_id)
     for phase in (
         FinalizationPhase.STALE_RECONCILED,
         FinalizationPhase.METADATA_PUBLISHED,

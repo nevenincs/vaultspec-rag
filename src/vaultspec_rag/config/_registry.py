@@ -61,7 +61,6 @@ PACKAGE: Final = "vaultspec-rag"
 #: prefix, and an external one must not - so a misfiling here cannot be built.
 _EXTERNAL: Final = frozenset(
     {
-        EnvVar.HF_ENDPOINT,
         EnvVar.HF_HOME,
         EnvVar.HF_HUB_OFFLINE,
         EnvVar.HF_HUB_DOWNLOAD_TIMEOUT,
@@ -178,10 +177,6 @@ _DESCRIPTIONS: Final[Mapping[EnvVar, str]] = {
         "blank or an unrecognised word leaves it armed: it is a protective "
         "switch, so a typo warns rather than turning the guard off. The "
         "shared VAULTSPEC_STDIO_WATCHDOG is read behind it."
-    ),
-    EnvVar.HF_ENDPOINT: (
-        "Hugging Face Hub endpoint, honoured by huggingface_hub. Named here "
-        "so the literal lives in one place; the behaviour is the library's."
     ),
     EnvVar.HF_HOME: (
         "Hugging Face cache location, honoured by huggingface_hub. Reported "

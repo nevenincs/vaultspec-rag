@@ -65,7 +65,6 @@ __all__ = [
     "classify_qdrant_state",
     "decide_qdrant_action",
     "has_provisioned_binary",
-    "owner_pid_is_live_owner",
     "owner_pid_witness_state",
     "probe_qdrant_endpoint",
     "qdrant_bin_dir",
@@ -370,18 +369,6 @@ def read_qdrant_identity() -> QdrantIdentity | None:
         return None
 
 
-def owner_pid_is_live_owner(identity: QdrantIdentity | None) -> bool:
-    """Return whether *identity*'s owner pid is the live original owner.
-
-    Hardens the bare ``pid_alive`` check against pid reuse: a dead owner's pid
-    recycled by an unrelated live process must NOT read as a live owner. The
-    owner is live only when its pid is alive AND its recorded creation time
-    matches the live process's creation time. A legacy record without a recorded
-    start time is unverified and therefore fails closed.
-    """
-    return owner_pid_witness_state(identity) == "live"
-
-
 def owner_pid_witness_state(
     identity: QdrantIdentity | None,
     *,
@@ -474,12 +461,6 @@ def reap_qdrant_orphan(
     """
     import time as _time
 
-    from .._test_isolation import enforce_pytest_managed_singleton_containment
-
-    enforce_pytest_managed_singleton_containment(
-        operation="signal a managed Qdrant orphan",
-    )
-
     deadline = _time.monotonic() + max(0.0, wait_seconds)
 
     def target_is_gone_or_replaced() -> bool:
@@ -537,12 +518,7 @@ def write_qdrant_identity(
     if qdrant_start_time is None:
         qdrant_start_time = pid_start_time(request.qdrant_pid)
     path = qdrant_identity_path()
-    from .._test_isolation import enforce_pytest_managed_singleton_containment
 
-    enforce_pytest_managed_singleton_containment(
-        operation="write the managed Qdrant identity",
-        targets=(path,),
-    )
     write_json_atomically(
         path,
         {
@@ -670,8 +646,6 @@ def _verify_attach_identity_witnesses(
 def classify_qdrant_state(
     probe: QdrantEndpointProbe,
     identity: QdrantIdentity | None,
-    *,
-    owner_timeout: float | None = None,
 ) -> str:
     """Classify the Qdrant port/owner state for the attach/spawn decision.
 
@@ -692,7 +666,7 @@ def classify_qdrant_state(
     - ``"foreign"``: listening but no/again-mismatched managed identity - an
       unrelated process owns the port; never spawn a competitor, never attach.
     """
-    owner_state = owner_pid_witness_state(identity, timeout=owner_timeout)
+    owner_state = owner_pid_witness_state(identity)
     if not probe.listening:
         return _classify_non_listening_identity(identity, owner_state)
     if identity is None:

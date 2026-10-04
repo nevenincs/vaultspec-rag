@@ -93,6 +93,9 @@ def _publish_health(state: _HealthServiceState, **fields: object) -> None:
     payload: dict[str, object] = {
         "status": "ready",
         "service_token": "tok-live",
+        # Identity now requires the serving pid alongside the token, as the
+        # real report always sends it (``pid=os.getpid()`` on the daemon side).
+        "pid": os.getpid(),
         **fields,
     }
     state.body = json.dumps(payload).encode("utf-8")

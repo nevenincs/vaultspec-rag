@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import pathlib
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from ._index_integrity import IntegrityVerdict
-from ._search_state import BreadthFindings, search_index_state
+from ._search_state import BreadthFindings, SearchReasonCode, search_index_state
 from ._source_types import PublicSourceType
 from .registry import get_registry
 from .search import validate_search_filters
@@ -16,6 +16,7 @@ from .server._search_availability import (
     CanonicalSearchEvidence,
     SearchAvailabilityContext,
     classify_search_response,
+    storage_conformance_refusal_fact,
 )
 
 if TYPE_CHECKING:
@@ -109,6 +110,20 @@ class CombinedSearchRequest:
     document_filters: DocumentCombinedSearchFilters = field(
         default_factory=DocumentCombinedSearchFilters
     )
+    include_documents: bool = True
+
+    def __post_init__(self) -> None:
+        from .search._parsing import parse_query
+
+        if self.include_documents:
+            return
+        if (
+            self.vault_filters.doc_type is None
+            and "doc_type" not in parse_query(self.query).filters
+        ):
+            object.__setattr__(
+                self, "vault_filters", replace(self.vault_filters, doc_type="adr")
+            )
 
 
 def search_documents(
@@ -158,22 +173,43 @@ def search_documents_timed(
     return results, timings
 
 
-def _search_domain(
+@dataclass(frozen=True, slots=True)
+class _DomainSearch:
+    """A concrete operation bound to its actual source and requested root."""
+
+    source: PublicSourceType
+    root: pathlib.Path
+    operation: Callable[[], Sequence[AnySearchResult]]
+
+
+def _domain_failure(
     source: PublicSourceType,
+    root: pathlib.Path,
+    exc: Exception,
     source_fact: SearchSourceFact,
-    operation: Callable[[], Sequence[AnySearchResult]],
+) -> SearchDomainOutcome:
+    """Retain the exception and project typed compatibility refusals."""
+    refused_fact = storage_conformance_refusal_fact(exc, source_fact, root=root)
+    return SearchDomainOutcome.failure(
+        source,
+        SearchReasonCode.REBUILD_REQUIRED.value
+        if refused_fact is not None
+        else type(exc).__name__,
+        str(exc) or type(exc).__name__,
+        source_fact=refused_fact or source_fact,
+    )
+
+
+def _search_domain(
+    request: _DomainSearch,
+    source_fact: SearchSourceFact,
 ) -> SearchDomainOutcome:
     try:
         return SearchDomainOutcome.success(
-            source, list(operation()), source_fact=source_fact
+            request.source, list(request.operation()), source_fact=source_fact
         )
     except Exception as exc:
-        return SearchDomainOutcome.failure(
-            source,
-            type(exc).__name__,
-            str(exc) or type(exc).__name__,
-            source_fact=source_fact,
-        )
+        return _domain_failure(request.source, request.root, exc, source_fact)
 
 
 def _combined_source_fact(
@@ -202,23 +238,23 @@ def _combined_source_fact(
             snapshot = readiness.snapshot(root, concrete_source)
         except ReadinessRegistryClosedError:
             snapshot = None
+    target = snapshot.publication_target() if snapshot is not None else None
     evidence = CanonicalSearchEvidence(
         served_generation=(
             snapshot.published_generation if snapshot is not None else None
         ),
-        desired_generation=(
-            snapshot.desired_generation if snapshot is not None else None
-        ),
+        desired_generation=(target.generation if target is not None else None),
         publication_revision=(
             snapshot.publication_revision if snapshot is not None else None
         ),
-        desired_revision=(
-            snapshot.controller_revision if snapshot is not None else None
-        ),
+        desired_revision=(target.revision if target is not None else None),
         collection_present=True if observation is not None else None,
         target_matches=True,
         integrity_verified=observation is not None
-        and observation.verdict is IntegrityVerdict.CONSISTENT,
+        and observation.verdict is IntegrityVerdict.CONSISTENT
+        and snapshot is not None
+        and snapshot.published_generation is not None
+        and observation.generation_id == snapshot.published_generation,
     )
     classification = classify_search_response(
         {},
@@ -246,6 +282,8 @@ def _combined_source_fact(
 def _count_combined_domains(
     root: pathlib.Path,
     registry: ServiceRegistry,
+    *,
+    include_documents: bool,
 ) -> tuple[
     dict[PublicSourceType, int],
     dict[PublicSourceType, SearchDomainOutcome],
@@ -267,6 +305,8 @@ def _count_combined_domains(
 
     jobs = canonical_job_snapshot()
     for source, operation in operations.items():
+        if source is PublicSourceType.DOCUMENT and not include_documents:
+            continue
         try:
             integrity_snapshot = acquire_index_integrity_snapshot_if_proven(
                 root, source
@@ -281,13 +321,8 @@ def _count_combined_domains(
                 observation=None,
                 job_snapshot=jobs,
             )
-            facts[source] = source_fact
-            failures[source] = SearchDomainOutcome.failure(
-                source,
-                type(exc).__name__,
-                str(exc) or type(exc).__name__,
-                source_fact=source_fact,
-            )
+            failures[source] = _domain_failure(source, root, exc, source_fact)
+            facts[source] = failures[source].source_fact
         else:
             counts[source] = count
             facts[source] = _combined_source_fact(
@@ -316,31 +351,33 @@ def _empty_or_failed_combined_outcome(
     return CombinedSearchOutcome(
         outcome(PublicSourceType.VAULT),
         outcome(PublicSourceType.CODE),
-        outcome(PublicSourceType.DOCUMENT),
+        outcome(PublicSourceType.DOCUMENT)
+        if PublicSourceType.DOCUMENT in facts
+        else None,
         top_k,
     )
 
 
 def _indexed_domain_outcome(
-    source: PublicSourceType,
+    request: _DomainSearch,
     counts: dict[PublicSourceType, int],
     failures: dict[PublicSourceType, SearchDomainOutcome],
     facts: dict[PublicSourceType, SearchSourceFact],
-    operation: Callable[[], Sequence[AnySearchResult]],
 ) -> SearchDomainOutcome:
     """Search one counted domain or return its preserved count outcome."""
+    source = request.source
     failure = failures.get(source)
     if failure is not None:
         return failure
     if counts.get(source, 0) == 0:
         return SearchDomainOutcome.success(source, [], source_fact=facts[source])
-    return _search_domain(source, facts[source], operation)
+    return _search_domain(request, facts[source])
 
 
 def search_combined(
     request: CombinedSearchRequest,
 ) -> CombinedSearchOutcome:
-    """Search all domains while retaining independent failures."""
+    """Search selected domains while retaining independent failures."""
     outcome, _timings = search_combined_timed(request)
     return outcome
 
@@ -379,58 +416,69 @@ def _search_combined_domains(
     counts: dict[PublicSourceType, int],
     failures: dict[PublicSourceType, SearchDomainOutcome],
     facts: dict[PublicSourceType, SearchSourceFact],
-) -> tuple[SearchDomainOutcome, SearchDomainOutcome, SearchDomainOutcome]:
+) -> tuple[SearchDomainOutcome, SearchDomainOutcome, SearchDomainOutcome | None]:
     """Execute each domain against its independently counted readiness fact."""
     vault = _indexed_domain_outcome(
-        PublicSourceType.VAULT,
+        _DomainSearch(
+            PublicSourceType.VAULT,
+            request.root_dir.resolve(),
+            lambda: searcher.search_vault(
+                request.query,
+                top_k=request.top_k,
+                doc_type=request.vault_filters.doc_type,
+                feature=request.vault_filters.feature,
+                date=request.vault_filters.date,
+                tag=request.vault_filters.tag,
+                intent=request.vault_filters.intent,
+            ),
+        ),
         counts,
         failures,
         facts,
-        lambda: searcher.search_vault(
-            request.query,
-            top_k=request.top_k,
-            doc_type=request.vault_filters.doc_type,
-            feature=request.vault_filters.feature,
-            date=request.vault_filters.date,
-            tag=request.vault_filters.tag,
-            intent=request.vault_filters.intent,
-        ),
     )
     code = _indexed_domain_outcome(
-        PublicSourceType.CODE,
+        _DomainSearch(
+            PublicSourceType.CODE,
+            request.root_dir.resolve(),
+            lambda: searcher.search_codebase(
+                request.query,
+                top_k=request.top_k,
+                language=request.code_filters.language,
+                path=request.code_filters.path,
+                node_type=request.code_filters.node_type,
+                function_name=request.code_filters.function_name,
+                class_name=request.code_filters.class_name,
+                include_paths=list(request.code_filters.include_paths) or None,
+                exclude_paths=list(request.code_filters.exclude_paths) or None,
+                dedup_locales=request.code_filters.dedup_locales,
+                prefer=request.code_filters.prefer,
+                exclude_domains=list(request.code_filters.exclude_domains) or None,
+                only_domains=list(request.code_filters.only_domains) or None,
+                include_domains=list(request.code_filters.include_domains) or None,
+            ),
+        ),
         counts,
         failures,
         facts,
-        lambda: searcher.search_codebase(
-            request.query,
-            top_k=request.top_k,
-            language=request.code_filters.language,
-            path=request.code_filters.path,
-            node_type=request.code_filters.node_type,
-            function_name=request.code_filters.function_name,
-            class_name=request.code_filters.class_name,
-            include_paths=list(request.code_filters.include_paths) or None,
-            exclude_paths=list(request.code_filters.exclude_paths) or None,
-            dedup_locales=request.code_filters.dedup_locales,
-            prefer=request.code_filters.prefer,
-            exclude_domains=list(request.code_filters.exclude_domains) or None,
-            only_domains=list(request.code_filters.only_domains) or None,
-            include_domains=list(request.code_filters.include_domains) or None,
-        ),
     )
+    if not request.include_documents:
+        return vault, code, None
     document = _indexed_domain_outcome(
-        PublicSourceType.DOCUMENT,
+        _DomainSearch(
+            PublicSourceType.DOCUMENT,
+            request.root_dir.resolve(),
+            lambda: searcher.search_document(
+                request.query,
+                top_k=request.top_k,
+                source_path=request.document_filters.source_path,
+                extractor_id=request.document_filters.extractor_id,
+                extractor_version=request.document_filters.extractor_version,
+                locator_kind=request.document_filters.locator_kind,
+            ),
+        ),
         counts,
         failures,
         facts,
-        lambda: searcher.search_document(
-            request.query,
-            top_k=request.top_k,
-            source_path=request.document_filters.source_path,
-            extractor_id=request.document_filters.extractor_id,
-            extractor_version=request.document_filters.extractor_version,
-            locator_kind=request.document_filters.locator_kind,
-        ),
     )
     return vault, code, document
 
@@ -440,15 +488,16 @@ def search_combined_timed(
     *,
     registry: ServiceRegistry | None = None,
 ) -> tuple[CombinedSearchOutcome, dict[str, float]]:
-    """Search all domains under one lease with explicit partial outcomes."""
+    """Search selected domains under one lease with explicit partial outcomes."""
     validate_search_filters(
         PublicSourceType.COMBINED,
         _combined_filter_options(request),
+        include_documents=request.include_documents,
     )
     root = pathlib.Path(request.root_dir).resolve()
     active_registry = registry if registry is not None else get_registry()
     counts, count_failures, source_facts, timings = _count_combined_domains(
-        root, active_registry
+        root, active_registry, include_documents=request.include_documents
     )
     if not any(counts.values()):
         return (
@@ -492,6 +541,6 @@ def search_combined_timed(
             timings["classification_fallback"] = 1.0
         if session is not None:
             timings.update(session.timings)
-    if vault is None or code is None or document is None:
+    if vault is None or code is None:
         raise RuntimeError("combined search lease ended without domain outcomes")
     return CombinedSearchOutcome(vault, code, document, request.top_k), timings

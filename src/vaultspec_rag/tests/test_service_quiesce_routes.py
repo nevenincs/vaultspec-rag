@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, NamedTuple, cast
 import pytest
 from starlette.testclient import TestClient
 
-from ..config._settings import reset_config as reset_rag_config
 from ..config._types import EnvVar
 from ..indexer._run_ledger_models import RunAuthority
 from ..job_manager.manager import JobManager
@@ -32,6 +31,7 @@ from ..service_quiesce import (
     QuiesceState,
     QuiesceTransition,
 )
+from ._config_fixtures import reset_config as reset_rag_config
 from ._job_roots import _TEST_PROJECT_ROOT
 from ._quiesce_helpers import (
     QUIESCE_THREAD_TIMEOUT,
@@ -173,7 +173,9 @@ def quiesce_routes() -> Generator[QuiesceRoutes]:
         ServerRouteRuntime(token=_TOKEN, registry=registry, port=8765),
         lifespan=None,
     )
-    with TestClient(app, raise_server_exceptions=False) as client:
+    with TestClient(
+        app, raise_server_exceptions=False, base_url="http://127.0.0.1"
+    ) as client:
         yield QuiesceRoutes(client, registry)
 
 

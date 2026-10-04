@@ -749,9 +749,12 @@ class _GeometryClient(_FakeClient):
     """Answers `get_collection` for every name it lists."""
 
     def __init__(self, names: list[str], *, target: int = 0) -> None:
+        from ..config._settings import get_config
+
         super().__init__(names)
         self._target = target
         self.inspected: list[str] = []
+        self.init_options = {"url": get_config().effective_qdrant_url}
 
     def get_collection(self, collection_name: str) -> object:
         self.inspected.append(collection_name)
@@ -764,6 +767,7 @@ class _GeometryClient(_FakeClient):
         )()
 
 
+@pytest.mark.usefixtures("isolated_status_dir")
 class TestGeometryScope:
     """Reconcile mutates only namespaces this project owns."""
 
@@ -778,8 +782,10 @@ class TestGeometryScope:
         """
         from ..storage_reconciliation import read_geometry
 
+        owned = f"{record_root(tmp_path, backend='server').prefix}vault_docs"
         client = _GeometryClient(
             [
+                owned,
                 "rfeedfacefeed_vault_docs",
                 "some_other_app_collection",
                 "not_a_namespace",
@@ -791,19 +797,19 @@ class TestGeometryScope:
             e.collection for e in read_geometry(cast("QdrantClient", client), tmp_path)
         ]
 
-        assert names == ["rfeedfacefeed_vault_docs"]
+        assert names == [owned]
         # The guard rejects before inspection, so a foreign collection is
         # never even queried, let alone reconciled.
-        assert client.inspected == ["rfeedfacefeed_vault_docs"]
+        assert client.inspected == [owned]
 
     def test_owned_collection_at_target_is_not_drifted(self, tmp_path: Path) -> None:
         from ..storage_reconciliation import read_geometry
 
-        client = _GeometryClient(
-            ["rfeedfacefeed_vault_docs"], target=SERVER_SEGMENT_NUMBER
-        )
+        owned = f"{record_root(tmp_path, backend='server').prefix}vault_docs"
+        client = _GeometryClient([owned], target=SERVER_SEGMENT_NUMBER)
 
         entries = read_geometry(cast("QdrantClient", client), tmp_path)
+        assert [entry.collection for entry in entries] == [owned]
         selected, remaining = plan_reconcile(entries, cap=10)
 
         assert selected == []

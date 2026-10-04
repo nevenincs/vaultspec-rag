@@ -64,20 +64,26 @@ Ask one question at a time. Split unrelated questions into separate searches.
 
 ## The filter surface
 
-`--type` picks the content domain first: `vault`, `code`, `document`, or
-`combined`. The filters below then split by what they narrow. A filter that does not
+When no search type is specified (no `--type`), search defaults to source code
+and architecture decision records (ADRs), ranked together. `--doc-type plan`
+(or inline `type:plan`) overrides the default ADR filter while retaining code results.
+
+An explicit `--type` picks the content domain: `vault`, `code`, `document`, or
+`combined`. `--type vault` searches all vault record types; `--type combined`
+searches all three indexes, including extracted documents. The filters below
+then split by what they narrow. A filter that does not
 apply to the chosen `--type` is rejected as a usage error, so a code filter with
 `--type vault` fails instead of being ignored. `--type combined` accepts them all.
 
 Code results:
 
-| Filter                              | Narrows to                               |
-| ----------------------------------- | ---------------------------------------- |
-| `--language`                        | one programming language                 |
-| `--path`                            | one exact project-relative path          |
-| `--include-path` / `--exclude-path` | paths matching or missing a pattern      |
-| `--function-name` / `--class-name`  | one function or class                    |
-| `--structure`                       | one source-code structure kind           |
+| Filter                              | Narrows to                          |
+| ----------------------------------- | ----------------------------------- |
+| `--language`                        | one programming language            |
+| `--path`                            | one exact project-relative path     |
+| `--include-path` / `--exclude-path` | paths matching or missing a pattern |
+| `--function-name` / `--class-name`  | one function or class               |
+| `--structure`                       | one source-code structure kind      |
 
 To favor production code, tests, or documentation without excluding other code results,
 use [`--prefer`](search-and-index.md#prefer-production-tests-or-documentation).
@@ -95,11 +101,11 @@ Vault results:
 
 Extracted-document results:
 
-| Filter                | Narrows to                                    |
-| --------------------- | --------------------------------------------- |
-| `--source-path`       | one originating file                          |
-| `--extractor-id`      | documents emitted by one extractor            |
-| `--extractor-version` | documents from one extractor version          |
+| Filter                | Narrows to                                     |
+| --------------------- | ---------------------------------------------- |
+| `--source-path`       | one originating file                           |
+| `--extractor-id`      | documents emitted by one extractor             |
+| `--extractor-version` | documents from one extractor version           |
 | `--locator-kind`      | one kind of locator, such as `page` or `sheet` |
 
 ### Query markers

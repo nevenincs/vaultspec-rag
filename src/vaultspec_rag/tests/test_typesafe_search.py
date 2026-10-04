@@ -464,6 +464,7 @@ def test_public_combined_fallback_restores_scores_and_preserves_domain_failure(
     prepare = _enroll(monkeypatch, session)
     outcome, timings = _public_search.search_combined_timed(request, registry=registry)
     assert outcome.partial
+    assert outcome.document is not None and baseline.document is not None
     assert outcome.document.detail == "document unavailable"
     assert outcome.document.error_kind == baseline.document.error_kind
     assert outcome.source_facts == baseline.source_facts

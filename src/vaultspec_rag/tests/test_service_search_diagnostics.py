@@ -505,7 +505,9 @@ def test_a_path_filter_note_survives_classification_into_the_empty_block(
             "requested_target_root": str(tmp_path),
             "target_matches": True,
             "status": "available",
-            "index_integrity": {"verdict": "consistent"},
+            # Absence is only provable when the integrity verdict was measured
+            # over the published generation; a real block always carries this.
+            "index_integrity": {"verdict": "consistent", "generation_id": "current"},
         },
         "path_filter": {
             "patterns": ["src/vaultspec_rag/indexr/**"],

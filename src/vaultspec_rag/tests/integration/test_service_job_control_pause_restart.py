@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -33,6 +34,7 @@ from ...progress import NullProgressReporter
 from ...server import _lifespan as server_lifespan
 from ...service_quiesce import ServiceQuiesceController
 from .._sqlite_state import assert_sqlite_unchanged, sqlite_contents
+from .._store_fixtures import get_all_ids
 from ._service_job_control_e2e_support import (
     E2E_POLL_SECONDS,
     E2E_TIMEOUT_SECONDS,
@@ -217,7 +219,7 @@ async def _cancel_large_job(
 ) -> None:
     """Cancel a writer-blocked job and assert its published state is absorbing."""
     _write_vault_corpus(root, start=384, count=192)
-    before_ids = slot.store.get_all_ids()
+    before_ids = get_all_ids(slot.store)
     metadata_path = index_run_ledger_path(workspace_volume_path(root.resolve()))
     before_metadata = sqlite_contents(metadata_path)
     cancelled_id: str | None = None
@@ -260,11 +262,11 @@ async def _cancel_large_job(
     assert cancelled is not None
     assert cancelled.state is JobState.CANCELLED
     assert_released(cancelled, slot)
-    after_ids = slot.store.get_all_ids()
+    after_ids = get_all_ids(slot.store)
     assert_sqlite_unchanged(metadata_path, before_metadata)
     await asyncio.sleep(0.25)
     assert after_ids == before_ids
-    assert slot.store.get_all_ids() == after_ids
+    assert get_all_ids(slot.store) == after_ids
     assert_sqlite_unchanged(metadata_path, before_metadata)
     replay = manager.set_desired_state(cancelled_id, DesiredJobState.CANCELLED)
     assert replay.code == "already_satisfied"
@@ -297,11 +299,13 @@ def _seed_restart_jobs(
         _vault_job_spec(queued_root),
         _integration_initiator(queued_root, "restart queued probe"),
     )
-    paused = manager.create(
+    admitted = manager.create(
         _vault_job_spec(paused_root),
         _integration_initiator(paused_root, "restart paused probe"),
-        start_paused=True,
     )
+    assert admitted.job is not None
+    paused = manager.set_desired_state(admitted.job.id, DesiredJobState.PAUSED)
+    assert paused.code == "job_paused"
     interrupted = manager.create(
         _vault_job_spec(interrupted_root),
         _integration_initiator(interrupted_root, "restart interrupted probe"),
@@ -563,7 +567,7 @@ async def test_paused_code_job_rediscovers_current_corpus_before_resume(
     tmp_path: Path,
     _e2e_runtime: tuple[ServiceRegistry, JobManager],
 ) -> None:
-    """A paused admission must not freeze its code-discovery authority."""
+    """A job paused before dispatch must not freeze its code-discovery authority."""
     registry, manager = _e2e_runtime
     root = tmp_path / "paused-code-refresh"
     source_dir = root / "src"
@@ -593,11 +597,14 @@ async def test_paused_code_job_rediscovers_current_corpus_before_resume(
             authority=RunAuthority.PUBLICATION,
         ),
         _integration_initiator(root, "paused code discovery refresh"),
-        start_paused=True,
     )
     assert created.job is not None
+    paused_admission = manager.set_desired_state(created.job.id, DesiredJobState.PAUSED)
+    assert paused_admission.code == "job_paused"
+    # Activation binds the admitted job as it now stands: paused before its
+    # first dispatch, so it stays inert until the resume below.
     activated = await jobs.activate_index_job(
-        created,
+        replace(created, job=paused_admission.job),
         code_preflight=preflight,
         registry=registry,
     )

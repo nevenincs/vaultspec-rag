@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Final, Literal, TypedDict, Unpack
 from urllib.parse import urlsplit
 
 from . import store_schema
+from ._job_errors import JobError, JobErrorKind
 from ._store_locks import (
     FileLock,
     ReentrantLock,
@@ -161,7 +162,7 @@ class IngestVerificationError(RuntimeError):
     """
 
 
-class StorageGeometryError(RuntimeError):
+class StorageGeometryError(JobError):
     """A collection's vector coordinates cannot carry this process's vectors.
 
     Raised when the width, distance, or dense vector name of an existing
@@ -174,6 +175,9 @@ class StorageGeometryError(RuntimeError):
     Sparse model incompatibility raises StorageModelError; a dense model
     disagreement at matching geometry retains its degraded behavior.
     """
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(JobErrorKind.FULL_REINDEX_REQUIRED, detail)
 
 
 class StorageModelError(StorageGeometryError):

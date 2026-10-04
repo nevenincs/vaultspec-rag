@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -55,60 +55,13 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 
-@dataclass(slots=True)
-class VirtualReadinessDeadlineScheduler:
-    """One manually advanced clock and wake authority for readiness tests."""
-
-    current: float = 0.0
-    wait_calls: int = 0
-    deadlines: list[float] = field(default_factory=list)
-    _clock_waiters: list[asyncio.Future[None]] = field(default_factory=list)
-
-    def now(self, loop: asyncio.AbstractEventLoop) -> float:
-        del loop
-        return self.current
-
-    async def wait(
-        self,
-        future: asyncio.Future[None],
-        *,
-        deadline: float,
-        loop: asyncio.AbstractEventLoop,
-    ) -> bool:
-        self.wait_calls += 1
-        self.deadlines.append(deadline)
-        clock_wake = loop.create_future()
-        self._clock_waiters.append(clock_wake)
-        try:
-            done, _ = await asyncio.wait(
-                (future, clock_wake),
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if future in done:
-                await future
-                return True
-            return self.current < deadline
-        finally:
-            self._clock_waiters.remove(clock_wake)
-            if not clock_wake.done():
-                clock_wake.cancel()
-
-    def wake(self) -> None:
-        """Deliver a clock/spurious wake without advancing time."""
-        for waiter in tuple(self._clock_waiters):
-            if not waiter.done():
-                waiter.set_result(None)
-
-    def advance(self, seconds: float) -> None:
-        """Advance virtual monotonic time and wake every deadline observer."""
-        self.current += seconds
-        self.wake()
+#: A deadline short enough to expire inside a test and long enough that a
+#: loaded machine still reaches the assertion before it does.
+_SHORT_DEADLINE_SECONDS = 0.05
 
 
-def _registry(
-    scheduler: VirtualReadinessDeadlineScheduler,
-) -> ReadinessRevisionRegistry:
-    registry = ReadinessRevisionRegistry(deadline_scheduler=scheduler)
+def _registry() -> ReadinessRevisionRegistry:
+    registry = ReadinessRevisionRegistry()
     registry.start()
     return registry
 
@@ -143,27 +96,37 @@ async def _wait_until_registered(
     *,
     count: int = 1,
 ) -> None:
-    for _ in range(10):
-        if len(registry._observers) == count:
-            return
-        await asyncio.sleep(0)
-    raise AssertionError(f"expected {count} registered readiness observer(s)")
+    # Admission can read a durable proof in a worker before registering its
+    # observer. Give that worker a bounded scheduling window.
+    try:
+        async with asyncio.timeout(1):
+            while len(registry._observers) != count:
+                await asyncio.sleep(0.001)
+    except TimeoutError as exc:
+        raise AssertionError(
+            f"expected {count} registered readiness observer(s)"
+        ) from exc
 
 
-async def _wait_until_calls(
-    scheduler: VirtualReadinessDeadlineScheduler,
-    expected: int,
+async def _wait_until_reregistered(
+    registry: ReadinessRevisionRegistry,
+    *,
+    registrations: int,
 ) -> None:
-    for _ in range(10):
-        if scheduler.wait_calls == expected:
-            return
-        await asyncio.sleep(0)
-    raise AssertionError(f"expected {expected} virtual scheduler wait call(s)")
+    """Wait until the waiter has rechecked and registered a fresh observer."""
+    try:
+        async with asyncio.timeout(1):
+            while registry._next_observer_id != registrations:
+                await asyncio.sleep(0.001)
+    except TimeoutError as exc:
+        raise AssertionError(
+            f"expected {registrations} readiness observer registration(s)"
+        ) from exc
+    await _wait_until_registered(registry)
 
 
 async def test_zero_timeout_bypasses_observer_registration(tmp_path: Path) -> None:
-    scheduler = VirtualReadinessDeadlineScheduler()
-    registry = _registry(scheduler)
+    registry = _registry()
 
     satisfied = await registry.published_at_least(
         (_target(tmp_path, "code", 1),),
@@ -171,7 +134,9 @@ async def test_zero_timeout_bypasses_observer_registration(tmp_path: Path) -> No
     )
 
     assert not satisfied
-    assert scheduler.wait_calls == 0
+    # The counter never resets, so zero here proves no observer was ever
+    # registered, which an emptied observer map after the wait would not.
+    assert registry._next_observer_id == 0
     assert registry._observers == {}
 
 
@@ -212,8 +177,7 @@ async def test_bounded_wait_releases_registry_lock_for_parallel_work(
     tmp_path: Path,
 ) -> None:
     """A pending freshness wait owns no lock that serializes unrelated work."""
-    scheduler = VirtualReadinessDeadlineScheduler()
-    registry = _registry(scheduler)
+    registry = _registry()
     target = _target(tmp_path, "code", 1, "published")
     waiting = asyncio.create_task(
         registry.published_at_least((target,), timeout_seconds=5)
@@ -285,8 +249,7 @@ async def test_bounded_admission_holds_neither_service_nor_gpu_lock(
 
 
 async def test_already_satisfied_target_returns_without_waiting(tmp_path: Path) -> None:
-    scheduler = VirtualReadinessDeadlineScheduler()
-    registry = _registry(scheduler)
+    registry = _registry()
     published = registry.publish_next(tmp_path, "code", generation="code-1")
 
     satisfied = await registry.published_at_least(
@@ -295,14 +258,13 @@ async def test_already_satisfied_target_returns_without_waiting(tmp_path: Path) 
     )
 
     assert satisfied
-    assert scheduler.wait_calls == 0
+    assert registry._next_observer_id == 0
 
 
 async def test_controller_notification_before_registration_does_not_satisfy(
     tmp_path: Path,
 ) -> None:
-    scheduler = VirtualReadinessDeadlineScheduler()
-    registry = _registry(scheduler)
+    registry = _registry()
     controller = registry.notify_controller(tmp_path, "code", generation="wanted")
     target = _target(tmp_path, "code", controller.controller_revision or 0, "wanted")
 
@@ -319,8 +281,7 @@ async def test_controller_notification_before_registration_does_not_satisfy(
 async def test_notification_after_registration_rechecks_and_satisfies(
     tmp_path: Path,
 ) -> None:
-    scheduler = VirtualReadinessDeadlineScheduler()
-    registry = _registry(scheduler)
+    registry = _registry()
     waiting = asyncio.create_task(
         registry.published_at_least(
             (_target(tmp_path, "document", 1, "docs-1"),),
@@ -335,9 +296,9 @@ async def test_notification_after_registration_rechecks_and_satisfies(
     assert registry._observers == {}
 
 
-async def test_spurious_and_controller_wakes_only_recheck(tmp_path: Path) -> None:
-    scheduler = VirtualReadinessDeadlineScheduler()
-    registry = _registry(scheduler)
+async def test_insufficient_and_controller_wakes_only_recheck(tmp_path: Path) -> None:
+    """A wake that does not satisfy the target rechecks and waits again."""
+    registry = _registry()
     waiting = asyncio.create_task(
         registry.published_at_least(
             (_target(tmp_path, "code", 2, "served"),), timeout_seconds=5
@@ -345,61 +306,58 @@ async def test_spurious_and_controller_wakes_only_recheck(tmp_path: Path) -> Non
     )
     await _wait_until_registered(registry)
 
-    scheduler.wake()
-    await _wait_until_calls(scheduler, 2)
-    await _wait_until_registered(registry)
+    # Revision 1 is below the target, so the woken waiter must re-register.
+    registry.publish_next(tmp_path, "code", generation="served")
+    await _wait_until_reregistered(registry, registrations=2)
     assert not waiting.done()
+    # A controller target is not a publication, so neither does this one.
     registry.notify_controller(tmp_path, "code", generation="served")
-    await _wait_until_calls(scheduler, 3)
-    await _wait_until_registered(registry)
+    await _wait_until_reregistered(registry, registrations=3)
     assert not waiting.done()
 
     registry.publish_next(tmp_path, "code", generation="served")
     assert await waiting
 
 
-async def test_virtual_deadline_expires_exactly_at_bound(tmp_path: Path) -> None:
-    scheduler = VirtualReadinessDeadlineScheduler(current=10)
-    registry = _registry(scheduler)
-    waiting = asyncio.create_task(
-        registry.published_at_least((_target(tmp_path, "code", 1),), timeout_seconds=3)
-    )
-    await _wait_until_registered(registry)
-    assert scheduler.deadlines == [13]
-
-    scheduler.advance(2.999)
-    await asyncio.sleep(0)
-    await _wait_until_registered(registry)
-    assert not waiting.done()
-    scheduler.advance(0.001)
-
-    assert not await waiting
-    assert registry._observers == {}
-
-
-async def test_publication_committed_at_deadline_wins_over_timeout(
-    tmp_path: Path,
-) -> None:
-    scheduler = VirtualReadinessDeadlineScheduler()
-    registry = _registry(scheduler)
+async def test_an_unpublished_target_expires_at_its_deadline(tmp_path: Path) -> None:
+    """The wait ends unsatisfied no earlier than the deadline it was given."""
+    loop = asyncio.get_running_loop()
+    registry = _registry()
+    started = loop.time()
     waiting = asyncio.create_task(
         registry.published_at_least(
-            (_target(tmp_path, "code", 1, "boundary"),), timeout_seconds=4
+            (_target(tmp_path, "code", 1),),
+            timeout_seconds=_SHORT_DEADLINE_SECONDS,
         )
     )
     await _wait_until_registered(registry)
 
-    scheduler.advance(4)
+    assert not await waiting
+    assert loop.time() - started >= _SHORT_DEADLINE_SECONDS
+    assert registry._observers == {}
+
+
+async def test_publication_already_committed_wins_over_an_expired_deadline(
+    tmp_path: Path,
+) -> None:
+    """Satisfaction is judged before expiry, so an expired wait can succeed.
+
+    A zero timeout means the deadline has already passed on entry: the call
+    can only return true because the satisfied check precedes the deadline
+    check. Mutation: swapping those two checks returns false here.
+    """
+    registry = _registry()
     registry.publish_next(tmp_path, "code", generation="boundary")
 
-    assert await waiting
+    assert await registry.published_at_least(
+        (_target(tmp_path, "code", 1, "boundary"),), timeout_seconds=0
+    )
 
 
 async def test_task_cancellation_promptly_unregisters_observer(tmp_path: Path) -> None:
     # Removing the shared finally-pop (also used by timeout) leaves observer 0
     # behind and makes the final empty-registry assertion fail.
-    scheduler = VirtualReadinessDeadlineScheduler()
-    registry = _registry(scheduler)
+    registry = _registry()
     waiting = asyncio.create_task(
         registry.published_at_least((_target(tmp_path, "code", 1),), timeout_seconds=5)
     )
@@ -413,8 +371,7 @@ async def test_task_cancellation_promptly_unregisters_observer(tmp_path: Path) -
 
 
 async def test_close_cleans_waiters_and_rejects_new_waits(tmp_path: Path) -> None:
-    scheduler = VirtualReadinessDeadlineScheduler()
-    registry = _registry(scheduler)
+    registry = _registry()
     target = _target(tmp_path, "code", 1)
     waiting = asyncio.create_task(
         registry.published_at_least((target,), timeout_seconds=5)
@@ -432,8 +389,7 @@ async def test_close_cleans_waiters_and_rejects_new_waits(tmp_path: Path) -> Non
 
 
 async def test_two_source_target_waits_for_both_publications(tmp_path: Path) -> None:
-    scheduler = VirtualReadinessDeadlineScheduler()
-    registry = _registry(scheduler)
+    registry = _registry()
     waiting = asyncio.create_task(
         registry.published_at_least(
             (
@@ -455,11 +411,11 @@ async def test_two_source_target_waits_for_both_publications(tmp_path: Path) -> 
 
 
 async def test_unrelated_root_and_source_never_satisfy_target(tmp_path: Path) -> None:
-    scheduler = VirtualReadinessDeadlineScheduler()
-    registry = _registry(scheduler)
+    registry = _registry()
     waiting = asyncio.create_task(
         registry.published_at_least(
-            (_target(tmp_path / "wanted", "code", 1),), timeout_seconds=2
+            (_target(tmp_path / "wanted", "code", 1),),
+            timeout_seconds=_SHORT_DEADLINE_SECONDS,
         )
     )
     await _wait_until_registered(registry)
@@ -468,7 +424,6 @@ async def test_unrelated_root_and_source_never_satisfy_target(tmp_path: Path) ->
     registry.publish_next(tmp_path / "wanted", "document", generation="other-source")
     await asyncio.sleep(0)
     assert not waiting.done()
-    scheduler.advance(2)
 
     assert not await waiting
 
@@ -476,8 +431,7 @@ async def test_unrelated_root_and_source_never_satisfy_target(tmp_path: Path) ->
 async def test_revision_is_monotonic_and_equal_revision_checks_generation(
     tmp_path: Path,
 ) -> None:
-    scheduler = VirtualReadinessDeadlineScheduler()
-    registry = _registry(scheduler)
+    registry = _registry()
     first = registry.publish_next(tmp_path, "code", generation="first")
     controller = registry.notify_controller(tmp_path, "code", generation="wanted")
     second = registry.publish_next(tmp_path, "code", generation="second")
@@ -496,8 +450,10 @@ async def test_revision_is_monotonic_and_equal_revision_checks_generation(
         (_target(tmp_path, "code", 2, "not-second"),), timeout_seconds=0
     )
 
-    assert not conflict
-    assert not older_conflict
+    assert not conflict, "explicit known generation mismatch must remain unsatisfied"
+    assert not older_conflict, (
+        "explicit known generation mismatch must remain unsatisfied"
+    )
     assert matching.publication_revision == 4
     assert older_matching
 
@@ -507,8 +463,7 @@ async def test_terminal_job_transition_cannot_satisfy_publication(
 ) -> None:
     # Allowing terminal callbacks and routing the service callback through
     # publish_next makes the exact unsatisfied-publication assertion fail.
-    scheduler = VirtualReadinessDeadlineScheduler()
-    registry = _registry(scheduler)
+    registry = _registry()
     target = _target(tmp_path, "code", 1)
     manager = JobManager(
         quiesce_controller=ServiceQuiesceController(),
@@ -647,7 +602,7 @@ async def test_code_ordinary_and_resumed_publication_notify_once_after_durable(
 ) -> None:
     del isolated_singleton_dirs
     events: list[tuple[str, Path, str]] = []
-    readiness = _registry(VirtualReadinessDeadlineScheduler())
+    readiness = _registry()
     store = VaultStore(tmp_path / "store", embedding_dim=8)
     checkpoint = None
 

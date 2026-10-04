@@ -29,10 +29,10 @@ from .._readiness import (
     _torch_readiness,
     compute_readiness,
 )
-from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..operator_state._compute import classify_torch
 from ..store_schema import STORAGE_SCHEMA_VERSION as _STORAGE_SCHEMA_VERSION
+from ._config_fixtures import reset_config
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

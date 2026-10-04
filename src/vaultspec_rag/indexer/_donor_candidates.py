@@ -32,9 +32,9 @@ from __future__ import annotations
 import enum
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypedDict, Unpack
+from typing import TYPE_CHECKING, TypedDict, Unpack
 
 from .. import store_schema
 from .._git_repository import git_common_dir
@@ -46,7 +46,7 @@ from ._index_schema import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Iterator, Mapping
 
     from ..storage_manifest import ManifestEntry
 
@@ -73,6 +73,7 @@ class _EligibilityRequest:
 
 __all__ = [
     "DONOR_CANDIDATE_CAP",
+    "DONOR_INSPECTION_CAP",
     "CollectionKind",
     "DonorCandidate",
     "DonorEligibility",
@@ -81,10 +82,9 @@ __all__ = [
     "ModelIdentity",
     "VectorSchema",
     "current_model_identity",
-    "discover_donor_candidates",
     "evaluate_donor_eligibility",
     "expected_vector_schema",
-    "index_meta_source",
+    "iter_donor_candidates",
     "read_donor_recorded_state",
 ]
 
@@ -93,6 +93,10 @@ __all__ = [
 #: every candidate adds read traffic against the shared server during
 #: indexing. A named constant so measurement can tune it in one place.
 DONOR_CANDIDATE_CAP = 3
+
+#: Bound publication-pointer and compatibility-proof inspections before
+#: selecting donors. One extra group replaces rejected ranked candidates.
+DONOR_INSPECTION_CAP = 2 * DONOR_CANDIDATE_CAP
 
 
 class CollectionKind(enum.Enum):
@@ -110,22 +114,6 @@ class CollectionKind(enum.Enum):
         if self is CollectionKind.CODE:
             return store_schema.CODE_COLLECTION
         return store_schema.DOCUMENT_COLLECTION
-
-
-def index_meta_source(
-    kind: Literal[CollectionKind.CODE, CollectionKind.VAULT],
-) -> Literal[PublicSourceType.CODE, PublicSourceType.VAULT]:
-    """Return the public source vocabulary member naming *kind*'s corpus.
-
-    Two vocabularies describe the same corpora: a collection kind names what a
-    namespace stores, a public source type names what a caller asked for. Any
-    holder of a kind that needs a reader keyed by source has to cross between
-    them. The type excludes documents because this helper is retained only by
-    the code and vault call sites.
-    """
-    return (
-        PublicSourceType.CODE if kind is CollectionKind.CODE else PublicSourceType.VAULT
-    )
 
 
 class IneligibilityReason(enum.Enum):
@@ -322,38 +310,17 @@ def _served_donor_collection(
         return None
     from .._store_models import read_served_code_collection
 
-    return read_served_code_collection(root)
+    return read_served_code_collection(root, derived)
 
 
-def discover_donor_candidates(
+def _rank_donor_candidates(
     root: Path | str,
     kind: CollectionKind,
     *,
     backend: str = "server",
     manifest: Mapping[str, ManifestEntry] | None = None,
-    cap: int = DONOR_CANDIDATE_CAP,
 ) -> list[DonorCandidate]:
-    """Discover ranked donor candidates for one indexing root and kind.
-
-    Reads the storage manifest (read-only), excludes the indexing root's own
-    prefix, keeps only entries on the requested backend whose recorded
-    collection set includes the kind's collection, ranks repository-family
-    siblings first (newest ``last_indexed`` first within a rank), and caps
-    the result.
-
-    Args:
-        root: The root being indexed (the reuse target, never a donor).
-        kind: The collection kind vectors would be reused for.
-        backend: Donor backend to match; server mode is the primary target,
-            and local-mode donors are only meaningful to a caller that
-            already holds their in-process store handles.
-        manifest: Optional pre-loaded manifest mapping; defaults to loading
-            the persisted one.
-        cap: Maximum candidates returned; non-positive returns none.
-
-    Returns:
-        At most ``cap`` candidates in consultation order.
-    """
+    """Rank manifest descriptors without reading any served pointer or proof."""
     from .._store_models import root_collection_prefix
     from ..storage_manifest import load_manifest
 
@@ -377,17 +344,9 @@ def discover_donor_candidates(
             if entry.backend == "server"
             else kind.collection_suffix
         )
-        # The manifest declares which kinds a namespace holds, and it declares
-        # them under the derived base names only - a published rebuild's
-        # ``<derived>_g<generation>`` never appears there. So membership is
-        # asked of the derived name, and only then is the donor's own pointer
-        # read to learn which collection that kind is actually served from.
-        # Asking membership of the served name instead rejects every donor
-        # that has ever published a rebuild.
+        # Kind membership uses the derived name. Served generation names
+        # are resolved only after ranking and bounding the inspection window.
         if derived not in entry.collections:
-            continue
-        collection = _served_donor_collection(entry.root, kind, derived)
-        if collection is None:
             continue
         candidates.append(
             DonorCandidate(
@@ -395,7 +354,7 @@ def discover_donor_candidates(
                 root=entry.root,
                 backend=entry.backend,
                 kind=kind,
-                collection=collection,
+                collection=derived,
                 last_indexed=entry.last_indexed,
                 storage_schema_version=entry.storage_schema_version,
                 family_rank=_family_rank(
@@ -408,9 +367,48 @@ def discover_donor_candidates(
     candidates.sort(key=lambda candidate: candidate.prefix)
     candidates.sort(key=lambda candidate: candidate.last_indexed, reverse=True)
     candidates.sort(key=lambda candidate: candidate.family_rank)
+    return candidates
+
+
+def _iter_served_donor_candidates(
+    candidates: list[DonorCandidate], kind: CollectionKind
+) -> Iterator[DonorCandidate]:
+    """Resolve each bounded descriptor only when its caller inspects it."""
+    for candidate in candidates:
+        try:
+            collection = _served_donor_collection(
+                candidate.root, kind, candidate.collection
+            )
+        except Exception:
+            logger.warning(
+                "Donor publication pointer unreadable for %s; skipping it",
+                candidate.root,
+                exc_info=True,
+            )
+            continue
+        if collection is not None:
+            yield replace(candidate, collection=collection)
+
+
+def iter_donor_candidates(
+    root: Path | str,
+    kind: CollectionKind,
+    *,
+    backend: str = "server",
+    manifest: Mapping[str, ManifestEntry] | None = None,
+    cap: int = DONOR_CANDIDATE_CAP,
+) -> Iterator[DonorCandidate]:
+    """Inspect at most *cap* ranked descriptors, resolving pointers lazily.
+
+    Own-root, backend and kind filtering and family/newest/prefix ranking
+    precede the inspection bound. Missing pointers consume an inspection;
+    callers never scan beyond the bounded window to replace them. Stopping
+    iteration stops pointer I/O as well.
+    """
     if cap <= 0:
-        return []
-    return candidates[:cap]
+        return iter(())
+    candidates = _rank_donor_candidates(root, kind, backend=backend, manifest=manifest)
+    return _iter_served_donor_candidates(candidates[:cap], kind)
 
 
 def evaluate_donor_eligibility(

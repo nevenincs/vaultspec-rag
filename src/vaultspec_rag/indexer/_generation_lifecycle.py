@@ -255,6 +255,39 @@ class CodeGenerationLifecycle:
         )
         return True
 
+    def recover_removed_shadow_paths(
+        self,
+        checkpoint: CodeRunCheckpoint,
+        *,
+        current_paths: set[str],
+    ) -> None:
+        """Complete interrupted own-path deletion before resume IDs are seeded.
+
+        A storage-first retirement can fail before its ledger transaction.
+        Absent sources are replayed through the same idempotent deletion
+        owner; current sources must retain the exact ingest barrier's
+        ability to detect missing acknowledged writes.
+        """
+        if checkpoint.receipt is not None or not checkpoint.generation.signature.clean:
+            return
+        from ._file_state import FileStateKind
+
+        absent = {
+            state.rel_path
+            for state in checkpoint.ledger.iter_file_states(checkpoint.generation_id)
+            if state.state is FileStateKind.INDEXED
+            and state.rel_path not in current_paths
+        }
+        # A confirmed prefix can outlive its source before a file-end marker
+        # creates INDEXED state. Its own upserts still require retirement.
+        absent.update(
+            unit.rel_path
+            for unit in checkpoint.ledger.iter_units(checkpoint.generation_id)
+            if unit.kind is CommitUnitKind.UPSERT and unit.rel_path not in current_paths
+        )
+        for rel in sorted(absent):
+            self.drift_owner.retire_retained_outcome(rel, remove_path=True)
+
     def build_collection(self, checkpoint: CodeRunCheckpoint) -> str | None:
         """Return the collection *checkpoint* populates, or ``None`` for in-place.
 
@@ -320,34 +353,39 @@ class CodeGenerationLifecycle:
             def _record_breadth() -> None:
                 checkpoint.publish_proof_transition()
 
+            already_committed = checkpoint.ledger.publication_already_committed(
+                checkpoint.generation_id
+            )
             if build_target is None:
-                if affected_paths is None:
-                    reconcile_generation_storage(
-                        self._store,
-                        checkpoint,
-                        policy,
-                        ContentKind.CODE,
-                    )
-                else:
-                    reconcile_scoped_routes(
-                        self._store,
-                        checkpoint,
-                        ContentKind.CODE,
-                        affected_paths,
-                    )
+                if not already_committed:
+                    if affected_paths is None:
+                        reconcile_generation_storage(
+                            self._store,
+                            checkpoint,
+                            policy,
+                            ContentKind.CODE,
+                        )
+                    else:
+                        reconcile_scoped_routes(
+                            self._store,
+                            checkpoint,
+                            ContentKind.CODE,
+                            affected_paths,
+                        )
                 _record_breadth()
             else:
                 # The complete replacement remains private until its own
                 # stale rows are gone and its breadth has been recorded. This
                 # explicit collection keeps that mutation out of the old
                 # served generation while making the published count exact.
-                purge_unpublished_rows(
-                    self._store,
-                    checkpoint,
-                    policy,
-                    ContentKind.CODE,
-                    options=RouteScanOptions(code_collection=build_target),
-                )
+                if not already_committed:
+                    purge_unpublished_rows(
+                        self._store,
+                        checkpoint,
+                        policy,
+                        ContentKind.CODE,
+                        options=RouteScanOptions(code_collection=build_target),
+                    )
                 # Breadth first, pointer second - a reader must never resolve a
                 # generation whose published figure is missing.
                 publish_generation_as_served(
@@ -450,6 +488,14 @@ class CodeGenerationLifecycle:
         """Return bounded deterministic point evidence grouped by path."""
         result: dict[str, set[str]] = {rel: set() for rel in rel_paths}
         if retained:
+            if checkpoint.receipt is None and checkpoint.generation.signature.clean:
+                for rel in sorted(rel_paths):
+                    result[rel].update(
+                        checkpoint.ledger.iter_retained_point_ids(
+                            checkpoint.generation_id, rel_path=rel
+                        )
+                    )
+                return result
             from ._run_ledger_publication_identity import compatibility_for_signature
 
             key = (

@@ -30,8 +30,8 @@ _ALLOWED: dict[str, str] = {
     "_stdio_lifetime.py": "holds waitable ancestor handles",
     # Windows Job Object management (CreateJobObjectW, SetInformationJobObject,
     # AssignProcessToJobObject); kernel32 here is about job assignment, not
-    # about inspecting a pid. `_supervise.py` and `_test_isolation.py` both
-    # call through this module's wrappers rather than declaring their own.
+    # about inspecting a pid. `_supervise.py` calls through this module's
+    # wrappers rather than declaring its own.
     "_win32.py": "manages a Job Object",
 }
 

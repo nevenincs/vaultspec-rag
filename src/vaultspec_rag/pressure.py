@@ -26,7 +26,6 @@ __all__ = [
     "MachinePressureSignals",
     "PressureEvaluator",
     "get_pressure_evaluator",
-    "reset_pressure_evaluator",
 ]
 
 logger = logging.getLogger(__name__)
@@ -349,10 +348,3 @@ def get_pressure_evaluator() -> PressureEvaluator:
                 evaluator = PressureEvaluator()
                 _evaluator = evaluator
     return evaluator
-
-
-def reset_pressure_evaluator() -> None:
-    """Drop the process evaluator so the next caller starts fresh (tests only)."""
-    global _evaluator
-    with _evaluator_lock:
-        _evaluator = None

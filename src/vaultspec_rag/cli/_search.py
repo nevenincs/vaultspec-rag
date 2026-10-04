@@ -62,7 +62,7 @@ from ._search_readiness_render import (
 
 if TYPE_CHECKING:
     import pathlib
-    from collections.abc import Callable, Generator, Iterator
+    from collections.abc import Generator, Iterator
     from typing import NoReturn
 
     from ..search import (
@@ -73,6 +73,11 @@ if TYPE_CHECKING:
     from ..search._outcomes import CombinedSearchOutcome
 
 __all__ = ["_suppress_hf_progress", "handle_search"]
+
+_FILTER_ADVISORY = (
+    "Filter with --type code --language python, --type vault --doc-type adr, "
+    "or --type document; verify source/doc_type in --json (all: --type combined)."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +192,7 @@ def _handle_service_success(
         data["query"] = request.query
         data["search_type"] = request.search_type
         data["via"] = "service"
+        data["advisory"] = _FILTER_ADVISORY
         _emit_json(True, "search", data=data)
         return
     if not results:
@@ -359,6 +365,7 @@ class _InProcessSearchRequest:
     locator_kind: str | None
     json_mode: bool
     envelope: dict[str, object] | None = None
+    include_documents: bool = True
 
 
 def _try_in_process_search(
@@ -463,7 +470,12 @@ def _try_in_process_search(
         counts = {
             PublicSourceType.VAULT: get_registry().vault_doc_count(target),
             PublicSourceType.CODE: get_registry().code_chunk_count(target),
-            PublicSourceType.DOCUMENT: get_registry().document_chunk_count(target),
+            PublicSourceType.DOCUMENT: (
+                get_registry().document_chunk_count(target)
+                if search_type is not PublicSourceType.COMBINED
+                or request.include_documents
+                else 0
+            ),
         }
     except VaultStoreLockedError as exc:
         search_render.handle_vaultstore_locked_error(exc, json_mode)
@@ -550,6 +562,7 @@ def _try_in_process_search(
             else:
                 results = vaultspec_rag.search_combined(
                     CombinedSearchRequest(
+                        include_documents=request.include_documents,
                         root_dir=target,
                         query=query,
                         top_k=max_results,
@@ -628,6 +641,7 @@ def _validate_and_handle_filters(request: _InProcessSearchRequest) -> None:
                 extractor_version=request.extractor_version,
                 locator_kind=request.locator_kind,
             ),
+            include_documents=request.include_documents,
         )
     except InvalidPreferValueError as exc:
         _fail_invalid_prefer(exc, request.json_mode)
@@ -814,6 +828,7 @@ def _render_in_process_results(request: _InProcessRenderRequest) -> None:
             "query": query,
             "search_type": search_type.value,
             "via": "in-process",
+            "advisory": _FILTER_ADVISORY,
             "results": items,
         }
         if domains is not None:
@@ -1016,14 +1031,12 @@ def _local_search_deadline(
     seconds: float | None,
     *,
     json_mode: bool,
-    on_timeout: Callable[[], object] | None = None,
 ) -> Generator[None]:
     """Bound a mandated local search by a wall-clock deadline.
 
-    A daemon timer fires ``on_timeout`` (default: write a timeout envelope and
-    force-exit) if the body has not finished within ``seconds``. The timer is
-    cancelled on normal completion. ``on_timeout`` is an injectable seam so the
-    timer mechanism is testable without the default's process exit.
+    A daemon timer writes a timeout envelope and force-exits the process if the
+    body has not finished within ``seconds``. The timer is cancelled on normal
+    completion.
     """
     import threading
 
@@ -1031,10 +1044,10 @@ def _local_search_deadline(
         yield
         return
 
-    def _default_timeout() -> None:
+    def _on_timeout() -> None:
         _abort_on_local_deadline(float(seconds), json_mode)
 
-    timer = threading.Timer(float(seconds), on_timeout or _default_timeout)
+    timer = threading.Timer(float(seconds), _on_timeout)
     timer.daemon = True
     timer.start()
     try:
@@ -1046,7 +1059,7 @@ def _local_search_deadline(
 @app.command(
     "search",
     help=(
-        "Search project documents or source code by meaning.\n"
+        "Search ADRs and source code by meaning by default.\n"
         "\n"
         "Uses the running service when available. Local search runs only "
         "with an explicit mandate (--allow-fallback or configured "
@@ -1092,11 +1105,12 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
             metavar="vault|code|document|combined",
             help=(
                 "Search area: vault documentation, source code, extracted documents, "
-                "or all three with combined. Aliases: docs, codebase, all."
+                "or all three with explicit combined. Without --type: ADRs and code. "
+                "Aliases: docs, codebase, all."
             ),
             show_default=True,
         ),
-    ] = "vault",
+    ] = "combined",
     max_results: Annotated[
         int,
         typer.Option(
@@ -1313,6 +1327,8 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
         json_mode=json_mode,
     )
     prefer = _search_prefer_filter(prefer, json_mode=json_mode)
+    parameter_source = ctx.get_parameter_source("search_type")
+    include_documents = parameter_source is None or parameter_source.name != "DEFAULT"
     search_type = _validate_search_type(search_type, json_mode=json_mode)
     local_request = _InProcessSearchRequest(
         target,
@@ -1337,8 +1353,11 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
         extractor_version,
         locator_kind,
         json_mode,
+        include_documents=include_documents,
     )
     _validate_and_handle_filters(local_request)
+    if not json_mode:
+        _muted_line(_FILTER_ADVISORY)
 
     # Search is service-first: local execution requires an explicit mandate
     # (--allow-fallback or configured local-only mode). Discovering a service
@@ -1375,6 +1394,7 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
             port,
             str(target),
             timeout=timeout,
+            include_documents=include_documents,
             freshness_policy=freshness_policy,
             freshness_wait_seconds=freshness_wait_seconds,
             language=language,

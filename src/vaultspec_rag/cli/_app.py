@@ -49,8 +49,6 @@ __all__ = [
     "JsonMode",
     "PortOption",
     "RepeatUpdateDelayOption",
-    "SkipOption",
-    "TargetOption",
     "UpdateDelayOption",
     "_global_target",
     "app",
@@ -137,25 +135,6 @@ RepeatUpdateDelayOption = Annotated[
         "--repeat-update-delay-s",
         help="Minimum wait before automatically updating a project again, in seconds.",
     ),
-]
-
-#: The install verbs' shared workspace and component selectors. ``install`` and
-#: ``uninstall`` must agree on what ``--target`` resolves and what ``--skip``
-#: names, or the pair stops being symmetric.
-TargetOption = Annotated[
-    Path | None,
-    typer.Option(
-        "--target",
-        "-t",
-        help="Workspace path (default: current working directory).",
-        dir_okay=True,
-        file_okay=False,
-        resolve_path=True,
-    ),
-]
-SkipOption = Annotated[
-    list[str] | None,
-    typer.Option("--skip", help="Skip a component (repeatable)."),
 ]
 
 

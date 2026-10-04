@@ -12,13 +12,13 @@ from __future__ import annotations
 import os
 import threading
 import time
+from contextlib import closing, contextmanager
 from typing import TYPE_CHECKING
 
 import pytest
 
 from ..._store_models import root_collection_prefix
 from ..._sync_vocabulary import ProvisionAction
-from ...config._settings import reset_config
 from ...qdrant_runtime._provision import provision
 from ...qdrant_runtime._resolve import resolve_binary
 from ...storage_manifest import record_root
@@ -29,6 +29,8 @@ from ...storage_survey_ops import (
     gather_survey,
     prune_orphaned,
 )
+from .._config_fixtures import reset_config
+from ..conftest import managed_env
 from ._helpers import serve_qdrant
 
 if TYPE_CHECKING:
@@ -99,7 +101,11 @@ def ops_qdrant(_ops_qdrant_server: QdrantSupervisor) -> Iterator[QdrantSuperviso
     """
     _drop_all_collections(_ops_qdrant_server.url)
     try:
-        yield _ops_qdrant_server
+        with managed_env(
+            VAULTSPEC_RAG_QDRANT_URL=_ops_qdrant_server.url,
+            VAULTSPEC_RAG_QDRANT_PORT=str(_ops_qdrant_server.http_port),
+        ):
+            yield _ops_qdrant_server
     finally:
         _drop_all_collections(_ops_qdrant_server.url)
 
@@ -245,10 +251,10 @@ def test_ensure_table_records_manifest_and_survey_shows_live(
     from qdrant_client import QdrantClient
 
     from ..._store_models import root_collection_prefix
-    from ...config._settings import reset_config
     from ...config._types import EnvVar
     from ...storage_manifest import load_manifest
     from ...store_runtime import VaultStore
+    from .._config_fixtures import reset_config
 
     root = tmp_path / "live-project"
     root.mkdir()
@@ -544,6 +550,7 @@ def _dense_probe(client: QdrantClient, name: str) -> list[list[int]]:
 @pytest.mark.usefixtures("isolated_status_dir")
 def test_reconcile_reclaims_bytes_and_preserves_data(
     ops_qdrant: QdrantSupervisor,
+    tmp_path: Path,
 ) -> None:
     """The whole value proposition, proven against the real optimizer."""
     from qdrant_client import QdrantClient
@@ -552,7 +559,8 @@ def test_reconcile_reclaims_bytes_and_preserves_data(
 
     client = QdrantClient(url=ops_qdrant.url, timeout=600)
     try:
-        name = "rfeedfacefeed_codebase_docs"
+        prefix = record_root(tmp_path, backend="server").prefix
+        name = f"{prefix}codebase_docs"
         _make_legacy_collection(client, name, segments=6, points=200)
         storage = ops_qdrant.storage_dir / "collections"
 
@@ -586,6 +594,7 @@ def test_reconcile_reclaims_bytes_and_preserves_data(
 @pytest.mark.usefixtures("isolated_status_dir")
 def test_reconcile_is_idempotent_on_a_converged_backend(
     ops_qdrant: QdrantSupervisor,
+    tmp_path: Path,
 ) -> None:
     """A converged backend selects nothing, so the cycle stops doing work."""
     from qdrant_client import QdrantClient
@@ -594,7 +603,8 @@ def test_reconcile_is_idempotent_on_a_converged_backend(
 
     client = QdrantClient(url=ops_qdrant.url, timeout=600)
     try:
-        name = "rfeedfacefeed_vault_docs"
+        prefix = record_root(tmp_path, backend="server").prefix
+        name = f"{prefix}vault_docs"
         _make_legacy_collection(client, name, segments=6, points=50)
         storage = ops_qdrant.storage_dir / "collections"
 
@@ -635,8 +645,10 @@ def _converged_at_target(
     )
 
 
+@pytest.mark.usefixtures("isolated_status_dir")
 def test_unwaited_reconcile_never_reports_a_reclaim_figure(
     ops_qdrant: QdrantSupervisor,
+    tmp_path: Path,
 ) -> None:
     """Mid-flight numbers are meaningless, so none are published.
 
@@ -655,7 +667,8 @@ def test_unwaited_reconcile_never_reports_a_reclaim_figure(
 
     client = QdrantClient(url=ops_qdrant.url, timeout=600)
     try:
-        name = "rfeedfacefeed_codebase_docs"
+        prefix = record_root(tmp_path, backend="server").prefix
+        name = f"{prefix}codebase_docs"
         _make_legacy_collection(client, name, segments=6, points=100)
         storage = ops_qdrant.storage_dir / "collections"
         before_bytes = directory_size_bytes(storage / name)
@@ -707,14 +720,18 @@ def test_unwaited_reconcile_never_reports_a_reclaim_figure(
 
 
 @pytest.mark.usefixtures("isolated_status_dir")
-def test_reconcile_dry_run_changes_nothing(ops_qdrant: QdrantSupervisor) -> None:
+def test_reconcile_dry_run_changes_nothing(
+    ops_qdrant: QdrantSupervisor,
+    tmp_path: Path,
+) -> None:
     from qdrant_client import QdrantClient
 
     from ...storage_reconciliation import read_geometry, reconcile_collections
 
     client = QdrantClient(url=ops_qdrant.url, timeout=600)
     try:
-        name = "rfeedfacefeed_vault_docs"
+        prefix = record_root(tmp_path, backend="server").prefix
+        name = f"{prefix}vault_docs"
         _make_legacy_collection(client, name, segments=6)
         storage = ops_qdrant.storage_dir / "collections"
 
@@ -734,6 +751,7 @@ def test_reconcile_dry_run_changes_nothing(ops_qdrant: QdrantSupervisor) -> None
 @pytest.mark.usefixtures("isolated_status_dir")
 def test_reconcile_cap_defers_remaining_collections(
     ops_qdrant: QdrantSupervisor,
+    tmp_path: Path,
 ) -> None:
     """The cap reconciles one drifted collection and defers the rest.
 
@@ -755,8 +773,9 @@ def test_reconcile_cap_defers_remaining_collections(
     client = QdrantClient(url=ops_qdrant.url, timeout=600)
     try:
         storage = ops_qdrant.storage_dir / "collections"
+        prefix = record_root(tmp_path, backend="server").prefix
         for suffix in ("vault_docs", "codebase_docs"):
-            _make_legacy_collection(client, f"rfeedfacefeed_{suffix}", segments=6)
+            _make_legacy_collection(client, f"{prefix}{suffix}", segments=6)
 
         batch = reconcile_collections(
             client,
@@ -776,6 +795,319 @@ def test_reconcile_cap_defers_remaining_collections(
         assert batch.results[0].status == "reconciled"
     finally:
         client.close()
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
+@pytest.mark.parametrize(
+    "invalid_attribution",
+    [
+        "unknown",
+        "local_backend",
+        "relative_root",
+        "wrong_root",
+        "invalid_root",
+        "malformed_record",
+        "malformed_prefix",
+    ],
+)
+def test_reconcile_requires_valid_manifest_attribution(
+    ops_qdrant: QdrantSupervisor,
+    tmp_path: Path,
+    invalid_attribution: str,
+) -> None:
+    """A canonical-looking foreign collection never gets an optimizer update.
+
+    Process-only mutation to prefix-only discovery failed the candidate-list
+    assertion for every invalid record. Restored attribution passed; the
+    attributed control still receives its update in the same pass.
+    """
+    import json
+
+    from qdrant_client import QdrantClient
+
+    from ...storage_manifest import manifest_path, remove_prefix
+    from ...storage_reconciliation import read_geometry, reconcile_collections
+    from ...store_schema import SERVER_SEGMENT_NUMBER
+
+    control_prefix = record_root(tmp_path, backend="server").prefix
+    foreign_root = tmp_path / "foreign"
+    foreign_root.mkdir()
+    foreign_prefix = record_root(foreign_root, backend="server").prefix
+    control = f"{control_prefix}vault_docs"
+    foreign = f"{foreign_prefix}vault_docs"
+    path = manifest_path()
+    if invalid_attribution == "unknown":
+        remove_prefix(foreign_prefix)
+    else:
+        document = json.loads(path.read_text(encoding="utf-8"))
+        record = document["roots"][foreign_prefix]
+        if invalid_attribution == "local_backend":
+            record["backend"] = "local"
+        elif invalid_attribution == "relative_root":
+            record["root"] = "foreign"
+        elif invalid_attribution == "wrong_root":
+            record["root"] = str(tmp_path)
+        elif invalid_attribution == "invalid_root":
+            record["root"] = "\x00"
+        elif invalid_attribution == "malformed_record":
+            del record["collections"]
+        else:
+            document["roots"]["rNOTHEX000000_"] = document["roots"].pop(foreign_prefix)
+        path.write_text(json.dumps(document), encoding="utf-8")
+
+    with closing(QdrantClient(url=ops_qdrant.url)) as client:
+        for name in (control, foreign):
+            _make_legacy_collection(client, name, segments=6, points=1)
+        assert [e.collection for e in read_geometry(client, None)] == [control]
+        batch = reconcile_collections(
+            client, storage_dir=None, cap=10, budget_s=1, wait=False
+        )
+        assert [r.collection for r in batch.results] == [control]
+        assert (
+            client.get_collection(
+                foreign
+            ).config.optimizer_config.default_segment_number
+            == 6
+        )
+        assert (
+            client.get_collection(
+                control
+            ).config.optimizer_config.default_segment_number
+            == SERVER_SEGMENT_NUMBER
+        )
+        assert client.count(foreign, exact=True).count == 1
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
+@pytest.mark.parametrize("root_status", ["live", "orphaned"])
+def test_reconcile_requires_exact_names_and_preserves_attributed_generations(
+    ops_qdrant: QdrantSupervisor,
+    tmp_path: Path,
+    root_status: str,
+) -> None:
+    """An unstamped suffix under an owned prefix carries no ownership evidence.
+
+    Prefix-only discovery admitted both unknown names and failed the exact
+    candidate-list assertion. Restored attribution passed for both root states.
+    """
+    from qdrant_client import QdrantClient
+
+    from ..._store_models import generation_code_collection
+    from ...storage_manifest import record_collection_identity
+    from ...storage_reconciliation import read_geometry, reconcile_collections
+    from ...store_schema import SERVER_SEGMENT_NUMBER, current_identity
+
+    root = tmp_path / "root"
+    root.mkdir()
+    prefix = record_root(root, backend="server").prefix
+    base = f"{prefix}codebase_docs"
+    generation = generation_code_collection(
+        generation_code_collection(base, "first"), "second"
+    )
+    unknown_names = (
+        f"{prefix}foreign_app",
+        generation_code_collection(base, "foreign"),
+    )
+    record_collection_identity(
+        root, backend="server", collection=generation, identity=current_identity()
+    )
+    if root_status == "orphaned":
+        root.rmdir()
+
+    with closing(QdrantClient(url=ops_qdrant.url)) as client:
+        for name in (base, generation, *unknown_names):
+            _make_legacy_collection(client, name, segments=6)
+        assert [e.collection for e in read_geometry(client, None)] == [base, generation]
+        batch = reconcile_collections(
+            client, storage_dir=None, cap=10, budget_s=1, wait=False
+        )
+        assert {r.collection for r in batch.results} == {base, generation}
+        for name in (base, generation):
+            assert (
+                client.get_collection(
+                    name
+                ).config.optimizer_config.default_segment_number
+                == SERVER_SEGMENT_NUMBER
+            )
+        for name in unknown_names:
+            assert (
+                client.get_collection(
+                    name
+                ).config.optimizer_config.default_segment_number
+                == 6
+            )
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
+@pytest.mark.parametrize("change", ["removed", "backend_changed", "corrupt_manifest"])
+def test_reconcile_revalidates_attribution_before_update(
+    ops_qdrant: QdrantSupervisor,
+    tmp_path: Path,
+    change: str,
+) -> None:
+    """Ownership must still hold when the selected collection reaches its update.
+
+    Removing only the final attribution check changed the guarded target from
+    six to two and failed the unchanged-target assertion. Restoring it passed
+    for removed, reclassified and corrupt manifest state.
+    """
+    from qdrant_client import QdrantClient
+
+    from ...storage_manifest import manifest_path, remove_prefix
+    from ...storage_reconciliation import read_geometry, reconcile_collections
+
+    prefix = record_root(tmp_path, backend="server").prefix
+    name = f"{prefix}vault_docs"
+
+    def invalidate(line: str) -> None:
+        if not line.startswith("Reconciling "):
+            return
+        if change == "removed":
+            remove_prefix(prefix)
+        elif change == "backend_changed":
+            record_root(tmp_path, backend="local")
+        else:
+            manifest_path().write_text("{", encoding="utf-8")
+
+    with closing(QdrantClient(url=ops_qdrant.url)) as client:
+        _make_legacy_collection(client, name, segments=6)
+        assert [e.collection for e in read_geometry(client, None)] == [name]
+        batch = reconcile_collections(
+            client,
+            storage_dir=None,
+            cap=10,
+            budget_s=1,
+            wait=False,
+            on_progress=invalidate,
+        )
+        assert (
+            client.get_collection(name).config.optimizer_config.default_segment_number
+            == 6
+        )
+        assert [r.status for r in batch.results] == ["skipped"]
+        assert batch.results[0].reason == "ownership_unverifiable"
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
+def test_direct_reconcile_rejects_unknown_collection(
+    ops_qdrant: QdrantSupervisor,
+) -> None:
+    """The single-collection entry point enforces ownership independently.
+
+    Removing its attribution check changed the target from six to two and
+    failed the unchanged-target assertion. Restored enforcement passed.
+    """
+    from qdrant_client import QdrantClient
+
+    from ...storage_reconciliation import GeometryEntry, reconcile_collection
+
+    name = f"{_UNKNOWN_PREFIX}vault_docs"
+    with closing(QdrantClient(url=ops_qdrant.url)) as client:
+        _make_legacy_collection(client, name, segments=6)
+        entry = GeometryEntry(name, segment_target=6, segments=6, footprint_bytes=None)
+        result = reconcile_collection(
+            client, entry, storage_dir=None, budget_s=1, wait=False
+        )
+        assert (
+            client.get_collection(name).config.optimizer_config.default_segment_number
+            == 6
+        )
+        assert result.status == "skipped"
+        assert result.reason == "ownership_unverifiable"
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
+def test_maintenance_reconcile_leaves_foreign_geometry_untouched(
+    ops_qdrant: QdrantSupervisor,
+    tmp_path: Path,
+) -> None:
+    """The scheduled cycle inherits ownership enforcement at the shared boundary."""
+    from datetime import UTC, datetime
+
+    from qdrant_client import QdrantClient
+
+    from ...storage_reclamation import (
+        MaintenanceCycleRequest,
+        ReclaimPolicy,
+        run_maintenance_cycle,
+    )
+    from ...store_schema import SERVER_SEGMENT_NUMBER
+
+    prefix = record_root(tmp_path, backend="server").prefix
+    owned = f"{prefix}vault_docs"
+    foreign = f"{_UNKNOWN_PREFIX}vault_docs"
+    with closing(QdrantClient(url=ops_qdrant.url)) as client:
+        for name in (owned, foreign):
+            _make_legacy_collection(client, name, segments=6)
+        result = run_maintenance_cycle(
+            MaintenanceCycleRequest(
+                client=client,
+                now=datetime.now(UTC),
+                policy=ReclaimPolicy(max_per_cycle=0, reconcile_budget_seconds=0),
+                storage_dir=None,
+                snapshots_dir=tmp_path / "snapshots",
+                archive_dir=tmp_path / "archive",
+            )
+        )
+        assert result.reconcile is not None
+        assert [r.collection for r in result.reconcile.results] == [owned]
+        assert (
+            client.get_collection(
+                foreign
+            ).config.optimizer_config.default_segment_number
+            == 6
+        )
+        assert (
+            client.get_collection(owned).config.optimizer_config.default_segment_number
+            == SERVER_SEGMENT_NUMBER
+        )
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
+def test_reconcile_refuses_manifest_from_another_backend(
+    ops_qdrant: QdrantSupervisor,
+    _qdrant_binary: Path,
+    tmp_path: Path,
+) -> None:
+    """A host manifest cannot attribute an identical name on another server.
+
+    Accepting every backend admitted the foreign server's name and failed its
+    empty-discovery assertion. Restored backend enforcement passed.
+    """
+    from qdrant_client import QdrantClient
+
+    from ...storage_reconciliation import (
+        read_geometry,
+        reconcile_collection,
+        reconcile_collections,
+    )
+
+    prefix = record_root(tmp_path, backend="server").prefix
+    name = f"{prefix}vault_docs"
+    with (
+        closing(QdrantClient(url=ops_qdrant.url)) as managed,
+        contextmanager(serve_qdrant)(_qdrant_binary, tmp_path / "external") as external,
+        closing(QdrantClient(url=external.url)) as foreign,
+    ):
+        for client in (managed, foreign):
+            _make_legacy_collection(client, name, segments=6)
+        entry = read_geometry(managed, None)[0]
+        # Reject a wrong client even while the configured backend is still local.
+        assert read_geometry(foreign, None) == []
+        with managed_env(VAULTSPEC_RAG_QDRANT_URL=external.url):
+            batch = reconcile_collections(
+                foreign, storage_dir=None, cap=10, budget_s=1, wait=False
+            )
+            direct = reconcile_collection(
+                foreign, entry, storage_dir=None, budget_s=1, wait=False
+            )
+        assert (
+            foreign.get_collection(name).config.optimizer_config.default_segment_number
+            == 6
+        )
+        assert batch.results == []
+        assert direct.status == "skipped"
+        assert direct.reason == "backend_unverifiable"
 
 
 @pytest.mark.usefixtures("isolated_status_dir")

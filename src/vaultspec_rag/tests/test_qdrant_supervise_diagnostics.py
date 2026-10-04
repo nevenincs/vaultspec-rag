@@ -72,8 +72,8 @@ class TestSupervisorOutputCapture:
         )
         _drain_process_output(sup, "".join(f"line {i}\n" for i in range(500)))
         # Only the most-recent lines are retained; the last line survives.
-        assert "line 499" in sup.recent_output_tail(max_lines=5)
-        assert "line 0\n" not in sup.recent_output_tail(max_lines=50)
+        assert "line 499" in sup.recent_output_tail()
+        assert "line 0\n" not in sup.recent_output_tail()
 
     def test_raw_output_rolls_before_write_and_retains_exact_count(
         self,
@@ -108,7 +108,7 @@ class TestSupervisorOutputCapture:
         assert b"".join(path.read_bytes() for path in generations) == b"".join(
             f"record-{index:02d}\n".encode() for index in range(7)
         )
-        assert "record-00" in sup.recent_output_tail(max_lines=50)
+        assert "record-00" in sup.recent_output_tail()
 
     def test_newline_free_output_cannot_bypass_log_or_memory_bounds(
         self,
@@ -134,8 +134,8 @@ class TestSupervisorOutputCapture:
             "qdrant.log.2",
         }
         assert all(path.stat().st_size <= 1024 for path in generations)
-        assert marker in sup.recent_output_tail(max_lines=50)
-        assert len(sup.recent_output_tail(max_lines=50)) <= 16 * 1024
+        assert marker in sup.recent_output_tail()
+        assert len(sup.recent_output_tail()) <= 16 * 1024
 
     def test_preexisting_oversized_active_rolls_before_fresh_output(
         self,
@@ -410,10 +410,12 @@ class TestChildRunsInManagedDirectory:
         monkeypatch.chdir(start_dir)
         try:
             sup.spawn()
-            deadline = time.monotonic() + 10.0
             marker = storage_dir.parent / "cwd-witness.txt"
-            while time.monotonic() < deadline and not marker.is_file():
-                time.sleep(0.05)
+            # File creation precedes the child's write. Join the real witness
+            # before stop can terminate it with an empty marker on Windows.
+            process = sup._proc
+            assert process is not None
+            assert process.wait(timeout=10.0) == 0
         finally:
             assert sup.stop()
 

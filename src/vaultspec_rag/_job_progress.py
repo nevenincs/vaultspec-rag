@@ -16,6 +16,7 @@ from statistics import median
 from typing import cast
 
 from ._job_registry_state import _lock, _persist_active_snapshot, _records, logger
+from ._job_values import measurement
 from .logging_config import log_event
 
 # Progress-rate sampling. The window rides on its own record, so it is
@@ -74,6 +75,7 @@ _PROGRESS_PERSIST_MIN_INTERVAL_SECONDS = 30.0
 # Last write times for the throttles above. Rides on the record like the
 # rate window, and is dropped from every copied projection the same way.
 PROGRESS_EMIT_KEY = "progress_emitted"
+CONFIRMED_CHUNK_SAMPLING_KEY = "confirmed_chunk_sampling"
 # Bounded backend-liveness probe for degradation evidence. The count runs on
 # its own daemon thread and the caller waits at most the timeout, so a dead or
 # wedged backend can never wedge the jobs surface that is reporting on it. The
@@ -220,6 +222,87 @@ def progress_rates(record_id: str) -> tuple[float | None, float | None]:
     return None, None
 
 
+def start_confirmed_chunk_phase(record_id: str, owner: object) -> None:
+    """Start a fresh, private chunk-work window for one accepted phase owner."""
+    with _lock:
+        for record in reversed(_records):
+            if record["id"] == record_id:
+                block: dict[str, object] = {
+                    "owner": owner,
+                    "completed": 0,
+                    "last_updated": None,
+                }
+                _sample_progress(
+                    block,
+                    step="confirmed_chunks",
+                    previous_step=None,
+                    completed=0,
+                    at=time.time(),
+                )
+                record[CONFIRMED_CHUNK_SAMPLING_KEY] = block
+                break
+
+
+def record_confirmed_chunks(record_id: str, owner: object, n: int) -> None:
+    """Sample acknowledged chunk operations without updating file progress.
+
+    The owner fences late acknowledgements from an earlier phase or reporter.
+    Sampling is advisory and private: publication rollback does not undo work
+    already acknowledged, while another phase or attempt starts a new window.
+    """
+    if n <= 0:
+        return
+    with _lock:
+        for record in reversed(_records):
+            raw = record.get(CONFIRMED_CHUNK_SAMPLING_KEY)
+            if record["id"] != record_id or not isinstance(raw, dict):
+                continue
+            block = cast("dict[str, object]", raw)
+            if record.get("phase") != "running" or block.get("owner") is not owner:
+                return
+            completed = cast("int", block["completed"]) + n
+            moment = time.time()
+            block.update(completed=completed, last_updated=moment)
+            _sample_progress(
+                block,
+                step="confirmed_chunks",
+                previous_step="confirmed_chunks",
+                completed=completed,
+                at=moment,
+            )
+            break
+
+
+def confirmed_chunk_progress(record_id: str) -> dict[str, object] | None:
+    """Read labelled chunk work, recency and both rates at one locked moment."""
+    with _lock:
+        for record in reversed(_records):
+            raw = record.get(CONFIRMED_CHUNK_SAMPLING_KEY)
+            if record["id"] == record_id and isinstance(raw, dict):
+                block = cast("dict[str, object]", raw)
+                return {
+                    "unit": "confirmed_chunks",
+                    "completed": block["completed"],
+                    "last_updated": block["last_updated"],
+                    "recent_per_second": _record_window_rate(block),
+                    "median_per_second": _record_baseline_rate(block),
+                }
+    return None
+
+
+def last_work_timestamp(
+    progress_at: float | None, confirmed_work: dict[str, object] | None
+) -> float | None:
+    """Newest actual file completion or acknowledged chunk-work timestamp."""
+    chunk_stamp = (
+        measurement(confirmed_work.get("last_updated"))
+        if confirmed_work is not None
+        else None
+    )
+    stamps = [stamp for stamp in (progress_at, chunk_stamp) if stamp is not None]
+    return max(stamps) if stamps else None
+
+
 def _progress_emit_stamps(record: dict[str, object]) -> dict[str, float]:
     """The write-throttle stamps *record* holds (caller holds the lock)."""
     stamps = record.get(PROGRESS_EMIT_KEY)
@@ -268,6 +351,8 @@ def _apply_progress_update(
         if isinstance(progress, dict)
         else None
     )
+    if previous_step != step:
+        record.pop(CONFIRMED_CHUNK_SAMPLING_KEY, None)
     record["progress"] = {
         "step": step,
         "completed": completed,

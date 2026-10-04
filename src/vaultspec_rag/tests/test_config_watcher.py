@@ -11,8 +11,9 @@ from __future__ import annotations
 import pytest
 from vaultspec_core.config import get_config as get_base_config
 
-from ..config._settings import VaultSpecConfigWrapper, get_config, reset_config
+from ..config._settings import VaultSpecConfigWrapper, get_config
 from ..config._types import EnvVar
+from ._config_fixtures import reset_config
 from ._scaffold import restore_env, set_env
 
 pytestmark = [pytest.mark.unit]

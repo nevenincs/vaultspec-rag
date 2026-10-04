@@ -1,7 +1,7 @@
 """Guard tests for the durable record of what produced a collection.
 
-Pure filesystem logic: no GPU, no Qdrant, no service. The managed service
-directory is isolated to a temp path through the real
+Filesystem and real local Qdrant logic without GPU or a resident service. The
+managed service directory is isolated to a temp path through the real
 ``VAULTSPEC_RAG_STATUS_DIR`` environment seam, as the sibling manifest tests do.
 
 Every test here is a guard or a negative assertion, so each has been observed
@@ -11,7 +11,12 @@ catches is named in its own comment so a later reader does not loosen it.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import threading
+import uuid
+from contextlib import contextmanager
+from functools import partial
 from typing import TYPE_CHECKING, TypedDict, Unpack
 
 import pytest
@@ -28,9 +33,11 @@ from ..storage_manifest import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Generator
     from pathlib import Path
 
+    from ..indexer import CodebaseIndexer
+    from ..indexer._run_checkpoint import CodeRunCheckpoint
     from ..store_runtime import VaultStore
 
 pytestmark = [pytest.mark.unit]
@@ -260,7 +267,7 @@ def test_unstamped_collection_is_unverifiable_not_conforming() -> None:
         None, expected=_identity(), live_dense_dim=1024
     )
     assert verdict.verdict == store_schema.UNVERIFIABLE
-    assert not verdict.is_conforming
+    assert verdict.verdict != store_schema.CONFORMING
 
 
 def test_same_width_model_swap_is_nonconforming_but_not_fatal() -> None:
@@ -310,6 +317,9 @@ class TestStoreVerifiesOnEnsure:
         Mutation it catches: not raising on ``geometry_fatal``. Without the
         raise the store proceeds and the disagreement resurfaces much later as
         a rejected upsert that burns the full retry budget labelled transient.
+
+        Mutation proof: weakening the production error to OTHER failed the
+        canonical rebuild-kind assertion; restoring FULL_REINDEX_REQUIRED passed.
         """
         from ..store_runtime import StorageGeometryError
 
@@ -321,8 +331,15 @@ class TestStoreVerifiesOnEnsure:
 
         reopened = self._open(tmp_path, dim=128)
         try:
-            with pytest.raises(StorageGeometryError, match="128"):
+            with pytest.raises(StorageGeometryError, match="128") as refusal:
                 reopened.ensure_table()
+            from .._job_errors import JobErrorKind, classify_error_text
+
+            assert refusal.value.error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+            assert (
+                classify_error_text(str(refusal.value))
+                is JobErrorKind.FULL_REINDEX_REQUIRED
+            )
         finally:
             reopened.close()
 
@@ -366,6 +383,9 @@ class TestStoreVerifiesOnEnsure:
         Mutation proof observed 2026-09-30: disabling the sparse_model_fatal
         raise in _verify_conformance failed with DID NOT RAISE StorageModelError.
         Restoring the refusal passed.
+
+        Mutation proof: weakening the production error to OTHER failed the
+        canonical rebuild-kind assertion; restoring FULL_REINDEX_REQUIRED passed.
         """
         from ..store_runtime import StorageModelError
 
@@ -383,8 +403,15 @@ class TestStoreVerifiesOnEnsure:
         path.write_text(json.dumps(raw), encoding="utf-8")
         reopened = self._open(tmp_path)
         try:
-            with pytest.raises(StorageModelError, match="rebuild"):
+            with pytest.raises(StorageModelError, match="rebuild") as refusal:
                 reopened.ensure_table()
+            from .._job_errors import JobErrorKind, classify_error_text
+
+            assert refusal.value.error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+            assert (
+                classify_error_text(str(refusal.value))
+                is JobErrorKind.FULL_REINDEX_REQUIRED
+            )
             verdict = reopened.conformance_verdicts()["vault_docs"]
             assert verdict.sparse_model_fatal
             assert not verdict.geometry_fatal
@@ -449,7 +476,10 @@ class TestStoreVerifiesOnEnsure:
             else:
                 pytest.fail("sparse incompatibility did not reach clean recovery")
             assert reopened.client.count(collection_name=collection).count == 0
-            assert reopened.conformance_verdicts()[collection].is_conforming
+            assert (
+                reopened.conformance_verdicts()[collection].verdict
+                == store_schema.CONFORMING
+            )
         finally:
             reopened.close()
 
@@ -493,3 +523,197 @@ def test_width_disagreement_is_fatal() -> None:
     )
     assert verdict.verdict == store_schema.NONCONFORMING
     assert verdict.geometry_fatal
+
+
+def _seed_nonconforming_namespaces(root: Path) -> None:
+    """Create real retained storage whose matching-width model is superseded."""
+    from .._store_models import CodeChunk
+    from ..config._settings import get_config
+    from ..store_runtime import VaultStore
+
+    get_config({"embedding_dimension": 2, "qdrant_url": None, "sparse_enabled": False})
+    (root / "module.py").write_text("def current():\n    return 1\n", encoding="utf-8")
+    with VaultStore(root, embedding_dim=2) as store:
+        store.ensure_table()
+        store.ensure_document_table()
+        store.upsert_code_chunks(
+            [
+                CodeChunk(
+                    str(uuid.uuid5(uuid.NAMESPACE_URL, "retained historical code")),
+                    "historical.py",
+                    "python",
+                    "def historical():\n    return 0\n",
+                    1,
+                    2,
+                    vector=[1.0, 0.0],
+                )
+            ],
+            write_policy=None,
+        )
+        identity_path = sidecar_path(store.db_path)
+    raw = json.loads(identity_path.read_text(encoding="utf-8"))
+    for identity in raw["collections"].values():
+        identity["dense_model"] = "superseded/dense"
+    identity_path.write_text(json.dumps(raw), encoding="utf-8")
+
+
+@contextmanager
+def _code_replacement(
+    store: VaultStore,
+) -> Generator[tuple[CodebaseIndexer, CodeRunCheckpoint, str]]:
+    """Populate a real shadow generation without loading or forwarding a model."""
+    from .._store_models import CodeChunk
+    from ..config._settings import get_config
+    from ..embeddings import EmbeddingModel
+    from ..indexer import CodebaseIndexer
+    from ..indexer._content_policy import RootContentPolicy, SourceProfileVersion
+    from ..indexer._generation_lifecycle import CodeGenerationOpenRequest
+    from ..indexer._resolved_policy import (
+        IndexPolicyResolutionOptions,
+        resolve_index_policy,
+    )
+    from ..indexer._run_checkpoint import CodeRunConfiguration
+    from ..indexer._run_ledger_models import RunAuthority, RunOperation
+    from ..indexer._streaming import execute_store_mutation
+    from ..indexer._streaming_types import CodeFileSegment
+    from ..job_control import RunControlToken
+
+    store.ensure_table()
+    store.ensure_code_table()
+    store.ensure_document_table()
+    model = EmbeddingModel.__new__(EmbeddingModel)
+    # No weights are loaded here, so there is no device to name.
+    model._device = "unloaded"
+    model._init_encode_state(get_config())
+    indexer = CodebaseIndexer(store.root_dir, model, store)
+    with indexer._writer_lock:
+        checkpoint = indexer._lifecycle.open_checkpoint(
+            CodeGenerationOpenRequest(
+                policy=resolve_index_policy(
+                    store.root_dir,
+                    IndexPolicyResolutionOptions(
+                        content_policy=RootContentPolicy(
+                            SourceProfileVersion.CONVENTIONAL_V1
+                        )
+                    ),
+                ),
+                operation=RunOperation.FULL,
+                clean=True,
+                configuration=CodeRunConfiguration(
+                    1, 4096, 2, 8192, 2, 8192, False, 1, 2, 1
+                ),
+                dense_dimensions=2,
+                sparse_enabled=False,
+                run_control=RunControlToken(),
+                authority=RunAuthority.REBUILD,
+            )
+        )
+        target = indexer._lifecycle.active_build_target
+        assert target is not None
+        source = store.root_dir / "module.py"
+        digest = hashlib.blake2b(source.read_bytes()).hexdigest()
+        chunk = CodeChunk(
+            str(uuid.uuid5(uuid.NAMESPACE_URL, str(source))),
+            source.name,
+            "python",
+            source.read_text(encoding="utf-8"),
+            1,
+            2,
+            vector=[0.0, 1.0],
+        )
+        segment = CodeFileSegment(source.name, 0, (chunk,), 256, True)
+        unit = checkpoint.unit_for(segment, digest)
+
+        def acknowledge() -> None:
+            checkpoint.record_confirmed_segments((segment,), {source.name: digest})
+
+        execute_store_mutation(
+            partial(
+                store.upsert_code_chunks,
+                [chunk],
+                collection=target,
+                write_policy=checkpoint.run_policy.store_write_policy,
+            ),
+            checkpoint.mutation_lifecycle_for_units((unit,)),
+            after_acknowledgement=acknowledge,
+        )
+        yield indexer, checkpoint, target
+
+
+def test_served_verdicts_switch_only_at_verified_publication(
+    tmp_path: Path, clean_config: None
+) -> None:
+    """Catch both all-cache projection and selecting an unserved build early."""
+    del clean_config
+    from .._publication_state import acquire_publication_snapshot
+    from .._source_types import PublicSourceType
+    from .._store_models import read_served_code_collection
+    from ..indexer._run_ledger_models import RunTerminalState
+    from ..progress import NullProgressReporter
+    from ..store_runtime import VaultStore
+
+    _seed_nonconforming_namespaces(tmp_path)
+    with (
+        VaultStore(tmp_path, embedding_dim=2) as store,
+        _code_replacement(store) as (
+            indexer,
+            checkpoint,
+            target,
+        ),
+    ):
+        old = store.CODE_TABLE_NAME
+        unchanged = {store.TABLE_NAME, store.DOCUMENT_TABLE_NAME}
+        before = store.conformance_verdicts()
+        assert set(before) == unchanged | {old}, "private build became served"
+        assert before[old].verdict == store_schema.NONCONFORMING
+        assert store._conformance[target].verdict == store_schema.CONFORMING
+        indexer._lifecycle.publish(
+            checkpoint,
+            build_target=target,
+            reporter=NullProgressReporter(),
+            phase_label="CPU verified replacement",
+        )
+        after = store.conformance_verdicts()
+        assert set(after) == unchanged | {target}, "superseded verdict still served"
+        assert after[target].verdict == store_schema.CONFORMING
+        assert all(after[name] == before[name] for name in unchanged)
+        assert store._conformance[old] == before[old], "retained evidence was erased"
+        assert store.client.count(collection_name=old).count == 1
+        assert store.client.count(collection_name=target).count == 1
+        assert read_served_code_collection(tmp_path) == target
+        assert (
+            checkpoint.ledger.generation(checkpoint.generation_id).terminal_state
+            is RunTerminalState.SUCCEEDED
+        )
+        snapshot = acquire_publication_snapshot(tmp_path, PublicSourceType.CODE)
+        assert snapshot.proof.generation_id == checkpoint.generation_id
+        assert snapshot.proof.aggregate.retained_points == 1
+        snapshot.validate()
+
+
+def test_served_verdict_projection_obeys_lifecycle_lock(
+    tmp_path: Path, clean_config: None
+) -> None:
+    """Removing the canonical lifecycle lock lets the projection escape early."""
+    del clean_config
+    from ..store_runtime import VaultStore
+
+    _seed_nonconforming_namespaces(tmp_path)
+    with VaultStore(tmp_path, embedding_dim=2) as store:
+        store.ensure_code_table()
+        entered = threading.Event()
+        finished = threading.Event()
+
+        def project() -> None:
+            entered.set()
+            store.conformance_verdicts()
+            finished.set()
+
+        with store._lifecycle_lock:
+            thread = threading.Thread(target=project)
+            thread.start()
+            assert entered.wait(5.0)
+            escaped = finished.wait(0.1)
+        thread.join(timeout=5.0)
+        assert not escaped, "verdict projection escaped the lifecycle lock"
+        assert finished.is_set() and not thread.is_alive()

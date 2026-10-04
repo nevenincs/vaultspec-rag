@@ -8,6 +8,10 @@ encoding and are durably upserted, and the consumer publishes the same
 forward-pass boundaries the vault path publishes, so a long forward on the
 code path is visible while it runs.
 
+Replay completion is also counted after raw stream validation and actual ledger
+confirmation. The real resume fixtures below retain local storage and durable
+identities across checkpoint reopen; only the model forward is deterministic.
+
 The encoder here is a deterministic implementation of the model's encode
 call surface and the store records its upserts; everything between them -
 the slice encode, the vector population, the accounting, the reporter, the
@@ -18,13 +22,17 @@ and encode-budget state those boundaries publish are covered without a GPU.
 
 from __future__ import annotations
 
+import hashlib
+import sys
+import threading
 from contextlib import nullcontext
+from dataclasses import replace
 from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from .._job_progress import telemetry_block
-from .._store_models import CodeChunk
+from .._job_progress import confirmed_chunk_progress, telemetry_block
+from .._store_models import CodeChunk, _code_chunk_payload
 from ..embeddings import EncodeBucketProgress
 from ..indexer._chunk_producer import WeightedCodeSegmentQueue
 from ..indexer._consumer_pipeline import (
@@ -33,21 +41,29 @@ from ..indexer._consumer_pipeline import (
     CodePipelineLimits,
     _WeightedConsumerRun,
 )
+from ..indexer._reuse import DonorReuseContext
 from ..indexer._streaming import EncodeBucketReporter
 from ..indexer._streaming_types import CodeFileSegment, WeightedCodeSlice
 from ..job_models import JobSource
 from ..jobs import JobProgressReporter, record_start, reset, snapshot
 from ..memory_probe import MemoryProbe
+from ..store_runtime import DonorPoint
+from .test_weighted_code_resume import resume_run
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
     from pathlib import Path
+    from types import FrameType
 
     from ..embeddings import EmbeddingModel
     from ..indexer._chunk_producer import CodeChunkProducer
+    from ..indexer._content_policy import AdmissionReason
     from ..indexer._generation_lifecycle import CodeGenerationLifecycle
     from ..memory_probe import MemoryBudgetSnapshot
     from ..store_runtime import VaultStore
+    from .test_weighted_code_resume import _ResumeRun
+
+__all__ = ["resume_run"]
 
 pytestmark = [pytest.mark.unit]
 
@@ -57,7 +73,7 @@ def own_status_dir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[None]:
-    from ..config._settings import reset_config
+    from ._config_fixtures import reset_config
 
     monkeypatch.setenv("VAULTSPEC_RAG_STATUS_DIR", str(tmp_path / "status"))
     # The dense-only encoder below exposes exactly the dense call surface.
@@ -86,6 +102,7 @@ class DeterministicEncoder:
     ) -> None:
         self.bucket_events = bucket_events
         self.on_event = on_event
+        self.texts: list[str] = []
 
     def encode_documents_on_device(
         self,
@@ -95,6 +112,7 @@ class DeterministicEncoder:
         on_bucket: Callable[[str, EncodeBucketProgress], None] | None = None,
     ) -> list[list[float]]:
         del batch_size, gpu_lock
+        self.texts.extend(texts)
         if on_bucket is not None:
             for phase, progress in self.bucket_events:
                 on_bucket(phase, progress)
@@ -110,6 +128,10 @@ class RecordingUpsertStore:
         self._job_id = job_id
         self.upserts: list[list[str]] = []
         self.completed_at_upsert: list[object] = []
+        self.chunk_work_at_upsert: list[object] = []
+        self.fail_write = False
+        self.donors: dict[str, DonorPoint] = {}
+        self.on_write_complete: Callable[[], None] | None = None
 
     def upsert_code_chunks(
         self,
@@ -122,7 +144,25 @@ class RecordingUpsertStore:
         record = next(e for e in snapshot() if e["id"] == self._job_id)
         progress = cast("dict[str, object]", record["progress"])
         self.completed_at_upsert.append(progress["completed"])
+        work = confirmed_chunk_progress(self._job_id)
+        self.chunk_work_at_upsert.append(
+            work["completed"] if work is not None else None
+        )
+        if self.fail_write:
+            raise RuntimeError("controlled upsert refused")
         self.upserts.append([chunk.id for chunk in chunks])
+        if self.on_write_complete is not None:
+            self.on_write_complete()
+
+    def retrieve_donor_points(
+        self, collection: str, chunk_ids: list[str]
+    ) -> dict[str, DonorPoint]:
+        del collection
+        return {
+            chunk_id: self.donors[chunk_id]
+            for chunk_id in chunk_ids
+            if chunk_id in self.donors
+        }
 
 
 def _chunk(path: str, ordinal: int) -> CodeChunk:
@@ -210,7 +250,7 @@ class TestConsumerAdvancesProgress:
     ) -> None:
         """One slice covering two finished files advances the counter by two.
 
-        Mutation check: removing the consumer's ``reporter.advance`` call in
+        Mutation check: removing the consumer's completion-accounting call in
         ``_consume_weighted_slice`` makes this fail on the
         ``completed == 2`` assertion below - not on an import - and
         restoring it returns the test to green.
@@ -268,9 +308,17 @@ class TestConsumerAdvancesProgress:
         # The count moved only after the store confirmed the write: at
         # upsert time the counter still read the phase-start zero.
         assert store.upserts == [[chunk_a0.id, chunk_a1.id, chunk_b0.id]]
-        assert store.completed_at_upsert == [0]
+        assert store.completed_at_upsert == [0], (
+            "file progress preceded confirmed store write"
+        )
         assert consumer_run.total[0] == 3
         assert consumer_run.new_ids == {chunk_a0.id, chunk_a1.id, chunk_b0.id}
+        work = confirmed_chunk_progress(job_id)
+        assert work is not None
+        assert work["completed"] == 3, "acknowledged chunks were not reported"
+        assert store.chunk_work_at_upsert == [0], (
+            "chunk work preceded store acknowledgement"
+        )
 
     def test_the_code_slice_publishes_forward_boundaries(
         self,
@@ -538,3 +586,536 @@ class TestConsumerAdvancesProgress:
         encode = telemetry_block(job_id, "encode")
         assert encode is not None
         assert encode["oom_count"] == 3
+
+
+def _chunk_work_run(
+    reporter: JobProgressReporter,
+    reuse: DonorReuseContext | None = None,
+) -> _WeightedConsumerRun:
+    from ..job_control import NO_RUN_CONTROL
+
+    return _WeightedConsumerRun(
+        segment_queue=WeightedCodeSegmentQueue(max_chunks=32, max_bytes=1 << 20),
+        consumer_exceptions=[],
+        limits=_limits(),
+        new_ids=set(),
+        total=[0],
+        metadata={},
+        checkpoint=None,
+        ingest_wait=False,
+        run_control=NO_RUN_CONTROL,
+        code_build_target=None,
+        donor_reuse=reuse,
+        reporter=reporter,
+    )
+
+
+@pytest.mark.parametrize("reused", [False, True], ids=["encoded", "donor-hits"])
+def test_acknowledged_chunk_operations_include_reuse_and_repeated_point_ids(
+    tmp_path: Path, reused: bool
+) -> None:
+    job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
+    reporter = JobProgressReporter(job_id)
+    reporter.phase_start("chunk + embed", 1)
+    chunks = tuple(_chunk("pkg/a.py", ordinal) for ordinal in range(3))
+    weighted = WeightedCodeSlice(
+        segments=(_segment("pkg/a.py", 0, chunks, is_file_end=False),),
+        chunks=chunks,
+        estimated_bytes=sum(len(chunk.content) for chunk in chunks),
+    )
+    store = RecordingUpsertStore(job_id)
+    reuse = None
+    if reused:
+        store.donors = {
+            chunk.id: DonorPoint(
+                [0.0, 1.0], None, None, dict(_code_chunk_payload(chunk))
+            )
+            for chunk in chunks
+        }
+        reuse = DonorReuseContext(cast("VaultStore", store), ("donor",))
+    encoder = DeterministicEncoder()
+    pipeline = _pipeline(tmp_path, store, encoder)
+    run = _chunk_work_run(reporter, reuse)
+    with MemoryProbe(name="acknowledged-chunk-operations") as probe:
+        # Two successful writes of the same points are six work operations,
+        # one segment each, three unique points, and zero completed files.
+        for ordinal in range(2):
+            pipeline._consume_weighted_slice(
+                weighted, slice_index=ordinal, consumer_run=run, probe=probe
+            )
+    work = confirmed_chunk_progress(job_id)
+    assert work is not None
+    assert work["completed"] == 6, (
+        "chunk work substituted encoded or unique point count"
+    )
+    assert store.chunk_work_at_upsert == [0, 3]
+    assert len(run.new_ids) == 3
+    assert _completed_files(job_id) == 0
+    assert len(encoder.texts) == (0 if reused else 6)
+    if reuse is not None:
+        assert reuse.stats.reuse_hits == 6
+
+
+@pytest.mark.parametrize("prior_ack", [False, True], ids=["no-ack", "partial-ack"])
+def test_failed_slice_counts_only_prior_successful_acknowledgements(
+    tmp_path: Path, prior_ack: bool
+) -> None:
+    job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
+    reporter = JobProgressReporter(job_id)
+    reporter.phase_start("chunk + embed", 1)
+    chunks = tuple(_chunk("pkg/a.py", ordinal) for ordinal in range(3))
+    weighted = WeightedCodeSlice(
+        segments=(_segment("pkg/a.py", 0, chunks, is_file_end=False),),
+        chunks=chunks,
+        estimated_bytes=sum(len(chunk.content) for chunk in chunks),
+    )
+    store = RecordingUpsertStore(job_id)
+    pipeline = _pipeline(tmp_path, store)
+    run = _chunk_work_run(reporter)
+    with MemoryProbe(name="failed-chunk-acknowledgement") as probe:
+        if prior_ack:
+            pipeline._consume_weighted_slice(
+                weighted, slice_index=0, consumer_run=run, probe=probe
+            )
+        store.fail_write = True
+        with pytest.raises(RuntimeError, match="controlled upsert refused"):
+            pipeline._consume_weighted_slice(
+                weighted, slice_index=1, consumer_run=run, probe=probe
+            )
+    work = confirmed_chunk_progress(job_id)
+    assert work is not None
+    assert work["completed"] == (3 if prior_ack else 0), (
+        "failed unacknowledged slice advanced chunk work"
+    )
+    assert (work["last_updated"] is None) is (not prior_ack)
+
+
+def test_acknowledged_work_survives_control_unwind_after_store_return(
+    tmp_path: Path,
+) -> None:
+    from ..job_control import PauseRequested, RunControlToken
+
+    job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
+    reporter = JobProgressReporter(job_id)
+    reporter.phase_start("chunk + embed", 1)
+    chunks = (_chunk("pkg/a.py", 0), _chunk("pkg/a.py", 1))
+    weighted = WeightedCodeSlice(
+        segments=(_segment("pkg/a.py", 0, chunks, is_file_end=False),),
+        chunks=chunks,
+        estimated_bytes=sum(len(chunk.content) for chunk in chunks),
+    )
+    store = RecordingUpsertStore(job_id)
+    pipeline = _pipeline(tmp_path, store)
+    run = _chunk_work_run(reporter)
+    control = RunControlToken()
+    run = replace(run, run_control=control)
+
+    def request_pause() -> None:
+        control.request_pause()
+
+    store.on_write_complete = request_pause
+    with (
+        MemoryProbe(name="acknowledgement-before-control") as probe,
+        pytest.raises(PauseRequested, match="run pause requested"),
+    ):
+        pipeline._consume_weighted_slice(
+            weighted, slice_index=0, consumer_run=run, probe=probe
+        )
+    work = confirmed_chunk_progress(job_id)
+    assert work is not None
+    assert work["completed"] == 2, "post-acknowledgement control lost confirmed work"
+    assert run.total == [0]
+
+
+def _completed_files(job_id: str) -> int:
+    record = next(entry for entry in snapshot() if entry["id"] == job_id)
+    progress = cast("dict[str, object]", record["progress"])
+    completed = progress["completed"]
+    assert isinstance(completed, int)
+    return completed
+
+
+def _consume_replay_progress(
+    replay: _ResumeRun,
+    *,
+    raw_segments: tuple[CodeFileSegment, ...] | None = None,
+    source_digests: dict[str, str] | None = None,
+    queue_max_bytes: int = 8192,
+    before_enqueue: Callable[[str], None] | None = None,
+) -> tuple[_WeightedConsumerRun, str, list[bool]]:
+    """Observe actual threaded consumer advancement against the real ledger."""
+    from ..job_control import NO_RUN_CONTROL
+
+    job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
+    reporter = JobProgressReporter(job_id)
+    reporter.phase_start("chunk + embed", len(replay.files))
+    metadata = dict(replay.digests if source_digests is None else source_digests)
+    consumer_run = _WeightedConsumerRun(
+        segment_queue=WeightedCodeSegmentQueue(max_chunks=2, max_bytes=queue_max_bytes),
+        consumer_exceptions=[],
+        limits=replay.limits,
+        new_ids=set(),
+        total=[0],
+        metadata=metadata,
+        checkpoint=replay.checkpoint,
+        ingest_wait=True,
+        run_control=NO_RUN_CONTROL,
+        code_build_target=replay.lifecycle.active_build_target,
+        donor_reuse=None,
+        reporter=reporter,
+    )
+    completed_at_advancement: list[bool] = []
+
+    def observe(frame: FrameType, event: str, _argument: object) -> None:
+        if event == "call" and frame.f_code is JobProgressReporter.advance.__code__:
+            completed_at_advancement.append(
+                bool(consumer_run.completed_file_paths)
+                and all(
+                    replay.checkpoint.ledger.file_complete(
+                        replay.checkpoint.generation_id, path
+                    )
+                    for path in consumer_run.completed_file_paths
+                )
+            )
+
+    prior_profile = threading.getprofile()
+    threading.setprofile(observe)
+    consumer = replay.pipeline._spawn_weighted_consumer(consumer_run)
+    try:
+        if raw_segments is None:
+            for result in replay.files:
+                if before_enqueue is not None:
+                    before_enqueue(result.rel_path)
+                assert replay.pipeline._enqueue_code_result(
+                    replace(
+                        result,
+                        content_hash=metadata[result.rel_path],
+                        chunks=list(result.chunks),
+                    ),
+                    consumer_run=consumer_run,
+                    consumer=consumer,
+                ), "real producer stream was rejected"
+        else:
+            for segment in raw_segments:
+                consumer_run.segment_queue.put(segment, timeout=5.0)
+    finally:
+        if consumer.is_alive():
+            consumer_run.segment_queue.put(None, timeout=5.0)
+        # Waits on the thread's actual completion rather than a wall-clock
+        # guess: a contended machine can legitimately take longer than any
+        # fixed number here to drain real encode and ledger writes, and the
+        # suite's own timeout bound still catches a genuine hang.
+        consumer.join()
+        threading.setprofile(prior_profile)
+    assert not consumer.is_alive(), "progress consumer did not terminate"
+    return consumer_run, job_id, completed_at_advancement
+
+
+@pytest.mark.parametrize(
+    "committed",
+    [(), (0,), (0, 1), (0, 1, 2, 3, 4, 5), (1, 3, 5, 7), (3, 7), tuple(range(8))],
+    ids=["fresh", "prefix", "long-prefix", "cross-file", "gaps", "ends-first", "all"],
+)
+def test_replayed_complete_files_count_once_after_confirmation(
+    resume_run: _ResumeRun, committed: tuple[int, ...]
+) -> None:
+    """Omitting replay advancement loses files; ignoring gaps counts too early."""
+    resume_run.confirm(tuple(resume_run.segments[index] for index in committed))
+    resume_run.restart()
+    consumer, job_id, confirmations = _consume_replay_progress(resume_run)
+    assert not consumer.consumer_exceptions
+    # Removing the skip-side accounting loses fully committed file ends.
+    assert _completed_files(job_id) == len(resume_run.files), (
+        "validated complete replayed files were omitted from progress"
+    )
+    # Removing file_complete advances a committed tail before its pending gap.
+    assert confirmations and all(confirmations), (
+        "file progress advanced before its ledger gaps were confirmed"
+    )
+    assert consumer.completed_file_paths == set(resume_run.digests)
+    assert resume_run.checkpoint.resumed_units == len(committed)
+    assert consumer.total == [8 - len(committed)]
+    assert len(resume_run.encoder.texts) == 8 - len(committed)
+    work = confirmed_chunk_progress(job_id)
+    assert work is not None
+    assert work["completed"] == 8 - len(committed), (
+        "committed replay was counted as new acknowledged chunk work"
+    )
+    assert (
+        resume_run.checkpoint.ledger.committed_unit_count(
+            resume_run.checkpoint.generation_id
+        )
+        == 8
+    )
+    assert not resume_run.checkpoint.ingestion_complete
+
+
+def test_replayed_final_marker_counts_each_path_only_once(
+    resume_run: _ResumeRun,
+) -> None:
+    """Removing the counted-path guard recounts a validated repeated file."""
+    resume_run.confirm(resume_run.segments)
+    resume_run.restart()
+    raw = resume_run.segments + resume_run.segments[:4]
+    consumer, job_id, confirmations = _consume_replay_progress(
+        resume_run, raw_segments=raw
+    )
+    assert not consumer.consumer_exceptions
+    assert _completed_files(job_id) == 2, "a replayed completed path was counted twice"
+    assert confirmations and all(confirmations)
+    assert consumer.total == [0] and not resume_run.encoder.texts
+
+
+def test_changed_digest_is_counted_after_new_confirmation(
+    resume_run: _ResumeRun,
+) -> None:
+    """Skipping a changed digest falsely credits old units instead of new writes."""
+    from ._run_ledger_test_support import ledger_test_digest
+
+    resume_run.confirm(resume_run.segments)
+    resume_run.restart()
+    digests = dict(resume_run.digests)
+    digests["first.py"] = ledger_test_digest("changed first source")
+    consumer, job_id, confirmations = _consume_replay_progress(
+        resume_run, source_digests=digests
+    )
+    assert not consumer.consumer_exceptions
+    assert _completed_files(job_id) == 2, "changed source lost confirmed progress"
+    assert confirmations and all(confirmations), "changed source was counted too early"
+    assert consumer.total == [4], "changed digest was credited without new writes"
+    assert len(resume_run.encoder.texts) == 4
+    assert resume_run.checkpoint.resumed_units == 4
+    assert (
+        resume_run.checkpoint.ledger.indexed_digests_for_paths(
+            resume_run.checkpoint.generation_id, tuple(digests)
+        )
+        == digests
+    )
+
+
+@pytest.mark.parametrize(
+    ("indices", "message"),
+    [
+        ((1,), "must begin at ordinal zero"),
+        ((0, 2), "same-file segments must be contiguous"),
+        ((0, 1, 2), "must finish at a file-end marker"),
+    ],
+    ids=["initial", "gap", "missing-final"],
+)
+def test_invalid_replay_stream_cannot_seed_file_progress(
+    resume_run: _ResumeRun, indices: tuple[int, ...], message: str
+) -> None:
+    """Ledger-only progress seeding credits files absent a validated final marker."""
+    resume_run.confirm(resume_run.segments)
+    resume_run.restart()
+    consumer, job_id, confirmations = _consume_replay_progress(
+        resume_run,
+        raw_segments=tuple(resume_run.segments[index] for index in indices),
+    )
+    assert len(consumer.consumer_exceptions) == 1
+    error = consumer.consumer_exceptions[0]
+    assert isinstance(error, ValueError) and message in str(error)
+    assert _completed_files(job_id) == 0, "unvalidated ledger files seeded progress"
+    assert not confirmations and not consumer.completed_file_paths
+
+
+def test_oversized_committed_final_cannot_advance_progress(
+    resume_run: _ResumeRun,
+) -> None:
+    """Raw weight validation must precede skipped final-marker accounting."""
+    resume_run.confirm(resume_run.segments)
+    resume_run.restart()
+    raw = (
+        *resume_run.segments[:3],
+        replace(
+            resume_run.segments[3],
+            estimated_bytes=resume_run.limits.slice_max_bytes + 1,
+        ),
+    )
+    consumer, job_id, confirmations = _consume_replay_progress(
+        resume_run,
+        raw_segments=raw,
+        # Admit the raw segment to the queue so the stricter slice boundary,
+        # rather than the queue's capacity boundary, is actually exercised.
+        queue_max_bytes=2 * resume_run.limits.slice_max_bytes,
+    )
+    assert len(consumer.consumer_exceptions) == 1
+    error = consumer.consumer_exceptions[0]
+    assert isinstance(error, ValueError) and "exceeds slice bounds" in str(error)
+    assert _completed_files(job_id) == 0, "oversized replayed file seeded progress"
+    assert not confirmations and not consumer.completed_file_paths
+
+
+@pytest.mark.parametrize("outcome", ["empty", "blank", "skipped", "vanished"])
+@pytest.mark.parametrize("retained", [False, True], ids=["fresh", "resumed"])
+def test_resolved_zero_chunk_files_count_after_durable_outcome(
+    resume_run: _ResumeRun, outcome: str, retained: bool
+) -> None:
+    """Removing zero-chunk advancement loses files; early credit precedes repair."""
+    from ..indexer._file_state import FileStateKind
+
+    if retained:
+        resume_run.confirm(resume_run.segments[:4])
+        resume_run.restart()
+    first = replace(
+        resume_run.files[0],
+        chunks=[],
+        blank=outcome == "blank",
+        content_hash=(
+            hashlib.blake2b(b"").hexdigest()
+            if outcome == "empty"
+            else resume_run.files[0].content_hash
+        ),
+        preprocess_status=outcome if outcome in {"skipped", "vanished"} else None,
+    )
+    resume_run.files = (first, resume_run.files[1])
+    resume_run.digests[first.rel_path] = first.content_hash
+    resolved_at_advancement: list[bool] = []
+
+    def observe(frame: FrameType, event: str, _argument: object) -> None:
+        if event != "call" or frame.f_code is not JobProgressReporter.advance.__code__:
+            return
+        checkpoint = resume_run.checkpoint
+        states = checkpoint.ledger.file_states_for_paths(
+            checkpoint.generation_id, (first.rel_path,)
+        )
+        state = states.get(first.rel_path)
+        resolved_at_advancement.append(
+            (
+                state is None
+                if outcome == "vanished"
+                else state is not None and state.state is FileStateKind.POLICY_REJECTED
+            )
+            and not any(
+                chunk.id
+                in resume_run.store.get_all_code_ids(
+                    resume_run.lifecycle.active_build_target
+                )
+                for segment in resume_run.segments[:4]
+                for chunk in segment.chunks
+            )
+        )
+
+    prior_profile = sys.getprofile()
+    sys.setprofile(observe)
+    try:
+        consumer, job_id, confirmations = _consume_replay_progress(resume_run)
+    finally:
+        sys.setprofile(prior_profile)
+    assert not consumer.consumer_exceptions
+    assert _completed_files(job_id) == 2, "resolved zero-chunk file lost progress"
+    assert resolved_at_advancement == [True], (
+        "zero-chunk file progress preceded durable source resolution"
+    )
+    assert confirmations and all(confirmations)
+    assert consumer.completed_file_paths == {"second.py"}
+    assert consumer.total == [4] and len(resume_run.encoder.texts) == 4
+
+
+@pytest.mark.parametrize("failure", ["extraction", "ledger"])
+def test_failed_zero_chunk_outcomes_do_not_advance_progress(
+    resume_run: _ResumeRun, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    """Crediting before result validation or its ledger write counts failed files."""
+    from .._job_errors import JobError
+    from ..indexer._run_checkpoint import CodeRunCheckpoint
+
+    first = replace(resume_run.files[0], chunks=[], preprocess_status="ok")
+    expected: type[Exception] = JobError
+    if failure == "ledger":
+        first = replace(first, blank=True)
+        expected = OSError
+
+        def fail_write(*_args: object, **_kwargs: object) -> None:
+            raise OSError("injected source-outcome ledger failure")
+
+        monkeypatch.setattr(CodeRunCheckpoint, "record_policy_rejection", fail_write)
+    resume_run.files = (first, resume_run.files[1])
+    with pytest.raises(expected):
+        _consume_replay_progress(resume_run)
+    records = snapshot()
+    assert len(records) == 1
+    job_id = records[0]["id"]
+    assert isinstance(job_id, str)
+    assert _completed_files(job_id) == 0, "failed zero-chunk outcome was counted"
+    assert not resume_run.encoder.texts
+
+
+def test_producer_and_consumer_publish_file_progress_in_order(
+    resume_run: _ResumeRun, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Removing the shared lock lets an older consumer publication overwrite 2."""
+    from ..indexer._run_checkpoint import CodeRunCheckpoint
+
+    resume_run.confirm(resume_run.segments[:4])
+    resume_run.restart()
+    resume_run.files = (
+        resume_run.files[0],
+        replace(resume_run.files[1], chunks=[], blank=True),
+    )
+    first_waiting = threading.Event()
+    zero_resolved = threading.Event()
+    release_first = threading.Event()
+    second_published = threading.Event()
+    publication_order: list[int] = []
+    coordination: list[bool] = []
+    publish = JobProgressReporter._publish
+    record_rejection = CodeRunCheckpoint.record_policy_rejection
+
+    def delayed_publish(
+        reporter: JobProgressReporter, step: str, *, completed: int, total: int | None
+    ) -> bool:
+        if completed == 1:
+            first_waiting.set()
+            assert release_first.wait(10), "progress publication was never released"
+        accepted = publish(reporter, step, completed=completed, total=total)
+        if completed:
+            publication_order.append(completed)
+        if completed == 2:
+            second_published.set()
+        return accepted
+
+    def record_zero_outcome(
+        checkpoint: CodeRunCheckpoint,
+        rel_path: str,
+        reason: AdmissionReason,
+        *,
+        content_hash: str | None = None,
+    ) -> None:
+        record_rejection(checkpoint, rel_path, reason, content_hash=content_hash)
+        zero_resolved.set()
+
+    def before_enqueue(rel_path: str) -> None:
+        if rel_path == "second.py":
+            assert first_waiting.wait(10), (
+                "real replay consumer did not reach publication"
+            )
+
+    def coordinate() -> None:
+        try:
+            coordination.append(zero_resolved.wait(10))
+            # Give the actual producer publication a window to overtake the
+            # blocked consumer. With the lock it waits until release instead.
+            coordination.append(not second_published.wait(0.2))
+        finally:
+            release_first.set()
+
+    monkeypatch.setattr(JobProgressReporter, "_publish", delayed_publish)
+    monkeypatch.setattr(
+        CodeRunCheckpoint, "record_policy_rejection", record_zero_outcome
+    )
+    coordinator = threading.Thread(target=coordinate)
+    coordinator.start()
+    try:
+        consumer, job_id, confirmations = _consume_replay_progress(
+            resume_run, before_enqueue=before_enqueue
+        )
+    finally:
+        release_first.set()
+        coordinator.join(timeout=15)
+    assert not coordinator.is_alive() and not consumer.consumer_exceptions
+    assert _completed_files(job_id) == 2, (
+        "older file progress overwrote newer completion"
+    )
+    assert publication_order == [1, 2] and coordination == [True, True]
+    assert confirmations and all(confirmations)

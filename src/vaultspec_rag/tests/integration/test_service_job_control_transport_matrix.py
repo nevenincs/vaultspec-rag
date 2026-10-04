@@ -22,18 +22,24 @@ from typer.testing import CliRunner
 
 from ... import jobs
 from ...cli import app
-from ...config._settings import reset_config
 from ...config._types import EnvVar
 from ...indexer._run_ledger_models import RunAuthority
-from ...job_models import DesiredJobState, JobSource
+from ...job_models import (
+    DesiredJobState,
+    JobInitiator,
+    JobMode,
+    JobOperation,
+    JobSource,
+    JobSpec,
+)
 from ...registry import get_registry
 from ...server import ServerRouteRuntime, create_http_app
 from ...serviceclient._transport import (
-    _try_http_create_job,
     _try_http_delete_job,
     _try_http_get_job,
     _try_http_set_job_desired_state,
 )
+from .._config_fixtures import reset_config
 from .._ports import free_loopback_port
 
 if TYPE_CHECKING:
@@ -124,21 +130,29 @@ def _invoke_job_json(*args: str) -> tuple[int, dict[str, object]]:
     return result.exit_code, cast("dict[str, object]", payload)
 
 
-def _create_operator_matrix_job(port: int, project_root: Path) -> tuple[str, int]:
-    """Create one paused job for the cross-surface operator matrix."""
-    created = _try_http_create_job(
-        JobSource.VAULT,
-        str(project_root),
-        port,
-        authority=RunAuthority.PUBLICATION,
-        start_paused=True,
-        idempotency_key="e2e-operator-matrix",
-        timeout=5.0,
+def _create_operator_matrix_job(project_root: Path) -> tuple[str, int]:
+    """Admit one job for the cross-surface matrix and pause it before dispatch."""
+    manager = jobs.get_job_manager()
+    created = manager.create(
+        JobSpec(
+            operation=JobOperation.INDEX,
+            source=JobSource.VAULT,
+            project_root=str(project_root),
+            mode=JobMode.INCREMENTAL,
+            authority=RunAuthority.PUBLICATION,
+        ),
+        JobInitiator(
+            kind="cli",
+            command="test_operator_matrix",
+            project_root=str(project_root),
+        ),
     )
-    assert created is not None
-    assert created["code"] == "job_created"
-    created_job = cast("dict[str, object]", created["job"])
-    return cast("str", created_job["id"]), cast("int", created_job["revision"])
+    assert created.code == "job_created"
+    assert created.job is not None
+    paused = manager.set_desired_state(created.job.id, DesiredJobState.PAUSED)
+    assert paused.code == "job_paused"
+    assert paused.job is not None
+    return paused.job.id, paused.job.revision
 
 
 def _assert_operator_matrix_lookup(port: int, job_id: str) -> None:
@@ -211,7 +225,7 @@ def test_http_transport_and_cli_outcome_matrix_uses_exact_job_ids(
     project_root = tmp_path / "operator-matrix"
     (project_root / ".vault").mkdir(parents=True)
     with _real_job_control_server(tmp_path) as port:
-        job_id, revision = _create_operator_matrix_job(port, project_root)
+        job_id, revision = _create_operator_matrix_job(project_root)
         _assert_operator_matrix_lookup(port, job_id)
         _assert_operator_matrix_conflicts(port, job_id, revision)
         _complete_operator_matrix(port, job_id)

@@ -521,16 +521,16 @@ def test_vault_resilience_projects_observed_peaks_without_ceilings(
     """The dispatcher projection carries peaks and claims no ceiling.
 
     The vault domain has no support-profile entry, so reporting a ceiling
-    here could only mean borrowing another domain's, and the vault run has
-    no checkpoint, so claiming one would be equally false. The projection
+    here could only mean borrowing another domain's, and this indexer has
+    not opened a checkpoint, so claiming one would be equally false. The projection
     must carry the three measured peaks and leave both groups absent.
 
-    Proven able to fail: routing ``_vault_resilience`` through
+    Proven able to fail: using vault admission facts from
     ``_admitted_resilience(JobSource.VAULT)`` populates ``cuda_ceiling_mib``
     and ``support_profile`` with the document domain's values, failing the
     ``is None`` assertions that name them.
     """
-    from ..job_dispatch import _vault_resilience
+    from ..job_dispatch import _indexer_resilience
     from ..memory_probe import MemoryBudget
 
     indexer = _vault_indexer_for_telemetry(tmp_path)
@@ -543,7 +543,7 @@ def test_vault_resilience_projects_observed_peaks_without_ceilings(
     )
     indexer._memory_budget = budget
 
-    resilience = _vault_resilience(indexer)
+    resilience = _indexer_resilience(indexer, None, IndexResilienceSnapshot())
 
     assert resilience.peak_rss_mib == 2_048.0
     assert resilience.peak_cuda_allocated_mib == 13_074.0
@@ -552,18 +552,21 @@ def test_vault_resilience_projects_observed_peaks_without_ceilings(
     assert resilience.rss_ceiling_mib is None
     assert resilience.cuda_ceiling_mib is None
     assert resilience.support_profile is None
-    # No checkpoint exists for a vault run, so none is claimed.
+    # No checkpoint has opened in this observation, so none is claimed.
     assert resilience.generation_id is None
     assert resilience.checkpoint_compatible is None
 
 
 def test_vault_resilience_is_empty_before_any_observation(tmp_path: Path) -> None:
     """A vault run that observed nothing must project an empty snapshot."""
-    from ..job_dispatch import _vault_resilience
+    from ..job_dispatch import _indexer_resilience
 
     indexer = _vault_indexer_for_telemetry(tmp_path)
 
-    assert _vault_resilience(indexer) == IndexResilienceSnapshot()
+    assert (
+        _indexer_resilience(indexer, None, IndexResilienceSnapshot())
+        == IndexResilienceSnapshot()
+    )
 
 
 def test_resilience_domain_maps_only_the_profiled_sources() -> None:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import copy
 import json
 import os
 from typing import TYPE_CHECKING
@@ -17,7 +16,6 @@ from ..._store_models import (
     DocumentMetadata,
     DocumentPayload,
 )
-from ...config._settings import reset_config
 from ...config._types import EnvVar
 from ...indexer._document_identity import document_point_id
 from ...server._routes_storage import _shape_survey_payload, _SurveyPayloadRequest
@@ -26,6 +24,8 @@ from ...storage_archive import (
 )
 from ...storage_survey_ops import gather_survey
 from ...store_runtime import VaultStore
+from .._config_fixtures import reset_config
+from .._store_fixtures import get_all_document_content_ids
 from ._helpers import provisioned_qdrant_binary, serve_qdrant
 
 if TYPE_CHECKING:
@@ -138,7 +138,7 @@ def _assert_document_round_trip(store: VaultStore) -> None:
     chunk = _chunk()
     store.upsert_document_content_chunks([chunk], write_policy=None)
     assert store.count_document() == 1
-    assert store.get_all_document_content_ids() == {chunk.id}
+    assert get_all_document_content_ids(store) == {chunk.id}
     rows, offset = store.scroll_document_content(limit=10)
     assert offset is None
     assert len(rows) == 1
@@ -149,9 +149,6 @@ def _assert_document_round_trip(store: VaultStore) -> None:
     assert payload["locator_value_int"] == 7
     assert payload["document_metadata"] == {"category": "reference"}
 
-    store.delete_document_sources({chunk.payload.source_path})
-    assert store.count_document() == 0
-    store.upsert_document_content_chunks([chunk], write_policy=None)
     store.delete_document_content_chunks([chunk.id])
     assert store.count_document() == 0
 
@@ -217,41 +214,6 @@ def test_document_schema_and_identity_contract() -> None:
         locator=DocumentLocator("page", 2),
     )
     assert first == second
-
-
-def test_document_descriptor_version_compatibility_contract() -> None:
-    """Direct consumers refuse missing document and unknown newer shapes."""
-    descriptor = store_schema.describe_storage_schema()
-    compatible = store_schema.assert_compatible(
-        descriptor,
-        known_version=store_schema.STORAGE_SCHEMA_VERSION,
-        expected_dense_dim=store_schema.effective_dense_dim(),
-        required_domains=("document",),
-    )
-    assert compatible == {"compatible": True, "reason": ""}
-
-    older = copy.deepcopy(descriptor)
-    older["version"] = store_schema.STORAGE_SCHEMA_VERSION - 1
-    del older["document"]
-    older_verdict = store_schema.assert_compatible(
-        older,
-        known_version=store_schema.STORAGE_SCHEMA_VERSION,
-        expected_dense_dim=store_schema.effective_dense_dim(),
-        required_domains=("document",),
-    )
-    assert older_verdict["compatible"] is False
-    assert "document" in older_verdict["reason"]
-
-    newer = copy.deepcopy(descriptor)
-    newer["version"] = store_schema.STORAGE_SCHEMA_VERSION + 1
-    newer_verdict = store_schema.assert_compatible(
-        newer,
-        known_version=store_schema.STORAGE_SCHEMA_VERSION,
-        expected_dense_dim=store_schema.effective_dense_dim(),
-        required_domains=("document",),
-    )
-    assert newer_verdict["compatible"] is False
-    assert "newer" in newer_verdict["reason"]
 
 
 def test_document_count_appears_in_real_storage_survey(

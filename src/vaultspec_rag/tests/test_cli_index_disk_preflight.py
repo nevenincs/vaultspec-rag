@@ -7,6 +7,7 @@ import typing
 
 import pytest
 
+from .._store_writes import BYTES_PER_POINT_ESTIMATE
 from ._cli_helpers import (
     _plain_lines,
     app,
@@ -21,8 +22,9 @@ if typing.TYPE_CHECKING:
 pytestmark = [pytest.mark.unit]
 
 
-# Exceeds the free space on any test volume so production refuses the preflight.
-_UNSATISFIABLE_FLOOR_BYTES = 1 << 60
+# Estimates more storage than any test volume has free, so production refuses
+# the preflight.
+_UNSATISFIABLE_NEW_POINTS = (1 << 60) // BYTES_PER_POINT_ESTIMATE
 
 
 def _index_refused_by_the_real_disk_preflight(
@@ -33,17 +35,17 @@ def _index_refused_by_the_real_disk_preflight(
     The in-process index cannot be driven to a genuine out-of-disk condition
     from a unit test: reaching the preflight means loading the models and
     filling the store volume first. So the refusal is raised by the store's
-    own ``ensure_disk_headroom`` against a floor no volume satisfies - the
-    exception class, the classification, and the operator wording are all
+    own ``ensure_disk_headroom`` against a point estimate no volume can hold -
+    the exception class, the classification, and the operator wording are all
     production's, and what the tests below bind is what the CLI does with
     them rather than anything written here.
     """
     from .._store_writes import ensure_disk_headroom
 
     def _index(*_args: object, **_kwargs: object) -> object:
-        ensure_disk_headroom(storage_path, floor_bytes=_UNSATISFIABLE_FLOOR_BYTES)
+        ensure_disk_headroom(storage_path, new_points=_UNSATISFIABLE_NEW_POINTS)
         raise AssertionError(
-            "the disk preflight accepted a floor no volume can satisfy"
+            "the disk preflight accepted an estimate no volume can satisfy"
         )
 
     return _index

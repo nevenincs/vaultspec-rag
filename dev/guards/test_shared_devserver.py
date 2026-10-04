@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from dev.ci_names import Workflow
 from dev.guards import _workflows as workflows
+from dev.guards._ci_names import Workflow
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
 
@@ -22,7 +22,7 @@ def test_shared_devserver_matches_adopted_source() -> None:
     script = Path(__file__).resolve().parents[1] / "devserver.py"
     source = script.read_bytes().replace(b"\r\n", b"\n")
     assert hashlib.sha256(source).hexdigest() == (
-        "7f62533a10a3becd8016f37b02338fc87ed0c26158cbb0f3159aa12c42e9761b"
+        "401d866c5ff2bc355066becb0c799815ab61b904f1c288e7b44cda155aff2355"
     ), "The lifecycle script differs from the adopted shared source."
 
 

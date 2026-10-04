@@ -19,9 +19,9 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 import pytest
 
 from .._units import bytes_to_mib, mib_to_bytes
-from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..index_profiles import SupportProfileLimits
+from ._config_fixtures import reset_config
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator

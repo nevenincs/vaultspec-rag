@@ -34,6 +34,19 @@ if typing.TYPE_CHECKING:
 pytestmark = [pytest.mark.unit]
 
 
+def _search_body(output: str) -> str:
+    lines = _plain_lines(output)
+    advisory = (
+        "Filter with --type code --language python, --type vault --doc-type adr, "
+        "or --type document; verify source/doc_type in --json (all: --type combined)."
+    )
+    assert lines[0] == advisory
+    # Duplicating guidance in a child-process renderer override failed this
+    # count assertion (exit 1); the unmodified renderer passed (exit 0).
+    assert lines.count(advisory) == 1
+    return "\n".join(lines[1:])
+
+
 class TestSearchSafetyContract:
     """Fail-hard fast path + path indicator + tqdm suppression."""
 
@@ -128,7 +141,7 @@ class TestSearchSafetyContract:
         expected = _expected_code_search_request(tmp_path, "service status")
         expected["freshness_policy"] = "immediate"
         assert requests == [expected]
-        records = search_records(result.output)
+        records = search_records(_search_body(result.output))
         assert [record["number"] for record in records] == [1, 2]
         _assert_record(
             records[0],
@@ -142,7 +155,7 @@ class TestSearchSafetyContract:
             location="docs/ops.md#service-status",
             text="Use server status for service readiness and current work.",
         )
-        lines = _plain_lines(result.output)
+        lines = _plain_lines(_search_body(result.output))
         assert lines[0] == "1. src/search_ui.py:12"
         assert lines[1] == "def render_search_results():"
         assert lines[2] == "return 'full service text'"
@@ -212,7 +225,7 @@ class TestSearchSafetyContract:
         expected = _expected_code_search_request(tmp_path, "service status")
         expected["freshness_policy"] = "immediate"
         assert requests == [expected]
-        records = search_records(result.output)
+        records = search_records(_search_body(result.output))
         _assert_record(
             records[0],
             number=1,
@@ -236,7 +249,7 @@ class TestSearchSafetyContract:
             thread.join(timeout=1)
 
         assert result.exit_code == 0, result.output
-        records = search_records(result.output)
+        records = search_records(_search_body(result.output))
         _assert_record(
             records[0],
             number=1,
@@ -276,7 +289,7 @@ class TestSearchSafetyContract:
         expected = _expected_code_search_request(tmp_path, "missing symbol")
         expected["freshness_policy"] = "immediate"
         assert requests == [expected]
-        lines = _plain_lines(result.output)
+        lines = _plain_lines(_search_body(result.output))
         assert lines[0].endswith("missing symbol")
         assert lines[1].startswith("Why:")
         assert "No indexed code items are available" in lines[1]

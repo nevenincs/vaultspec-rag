@@ -16,10 +16,9 @@
       5420,
       5439
     ],
-    "host": "0.0.0.0",
+    "host": "127.0.0.1",
     "allowedHosts": [
-      ".localhost",
-      "gw-workstation.taild36992.ts.net"
+      ".localhost"
     ],
     "services": {
       "preview": {

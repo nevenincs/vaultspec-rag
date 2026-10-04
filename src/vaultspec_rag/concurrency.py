@@ -25,7 +25,6 @@ __all__ = [
     "get_index_limiter",
     "get_search_limiter",
     "limiter_stats",
-    "reset_limiters",
 ]
 
 _lock = threading.Lock()
@@ -120,12 +119,3 @@ def limiter_stats() -> dict[str, dict[str, Any]]:
         "index": _stats(_index_limiter),
         "encode": _stats(_encode_limiter),
     }
-
-
-def reset_limiters() -> None:
-    """Drop every limiter so the next caller rebuilds them (tests only)."""
-    global _search_limiter, _index_limiter, _encode_limiter
-    with _lock:
-        _search_limiter = None
-        _index_limiter = None
-        _encode_limiter = None

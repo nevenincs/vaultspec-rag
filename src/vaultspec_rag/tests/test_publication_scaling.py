@@ -11,10 +11,12 @@ import pytest
 
 from .._source_types import PublicSourceType
 from ..indexer import (
+    _run_ledger_files,
     _run_ledger_models,
     _run_ledger_publication_proofs,
     _run_ledger_publication_reads,
 )
+from ..indexer._checkpoint_common import RunCheckpointBase
 from ..indexer._publication_proof import (
     PathDelta,
     PathOutcome,
@@ -25,15 +27,19 @@ from ..indexer._run_ledger_models import (
     CommitUnit,
     CommitUnitKind,
     FinalizationPhase,
+    PublicationMutationUnit,
+    PublicationPointCandidate,
     RunAuthority,
     RunOperation,
     RunSignature,
 )
 from ..indexer._run_ledger_runtime import RunLedger
+from ..indexer._run_policy import RunPolicy
+from ._run_ledger_test_support import ledger_test_digest
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Generator
+    from collections.abc import Generator, Iterator
     from pathlib import Path
 
 pytestmark = pytest.mark.unit
@@ -65,7 +71,7 @@ def _seed(root: Path, size: int) -> tuple[RunLedger, ProofCompatibilityKey]:
     evidence = tuple(
         ProofEvidence(
             f"src/file-{index:06d}.py",
-            f"content-{index}",
+            ledger_test_digest(f"content-{index}"),
             (f"point-{index}",),
         )
         for index in range(size)
@@ -119,6 +125,7 @@ def _install_traced_connection(
     """
     for module in (
         _run_ledger_publication_reads,
+        _run_ledger_files,
         _run_ledger_publication_proofs,
         _run_ledger_models,
     ):
@@ -172,6 +179,204 @@ def _measured(
         " ".join(statement.split())
         for statement in statements
         if statement.lstrip().upper().startswith("SELECT")
+    )
+
+
+def _seed_local_receipt(
+    root: Path, size: int, parent_size: int = 0
+) -> tuple[RunLedger, str, str]:
+    """Bulk-seed a valid journal, then seal through the production validator."""
+    ledger, key = _seed(root, parent_size)
+    generation = ledger.start_generation(
+        replace(_signature(root), operation=RunOperation.INCREMENTAL, clean=False)
+    )
+    receipt = ledger.reserve_publication_receipt(
+        key, generation.generation_id, expected_parent_revision=0
+    )
+    evidence = tuple(
+        ProofEvidence(
+            f"src/local-file-{index:06d}.py",
+            ledger_test_digest(f"local-content-{index}"),
+            (f"local-point-{index}",),
+        )
+        for index in range(size)
+    )
+    units = tuple(
+        CommitUnit(
+            rel_path=item.rel_path,
+            kind=CommitUnitKind.UPSERT,
+            source_digest=item.content_identity,
+            segment_ordinal=0,
+            is_file_end=True,
+            point_ids=item.point_ids,
+        )
+        for item in evidence
+    )
+    with _run_ledger_models.ledger_connection(ledger.path) as connection:
+        connection.executemany(
+            """
+            INSERT INTO publication_mutation_units (
+                receipt_id, mutation_ordinal, sealed_ordinal, unit_id, rel_path,
+                unit_kind, source_digest, segment_ordinal, is_file_end, state,
+                prepared_at, applied_at, confirmed_at
+            ) VALUES (?, ?, NULL, ?, ?, ?, ?, 0, 1, 'confirmed', ?, ?, ?)
+            """,
+            (
+                (
+                    receipt.receipt_id,
+                    index,
+                    unit.identity,
+                    unit.rel_path,
+                    unit.kind.value,
+                    unit.source_digest,
+                    receipt.reserved_at,
+                    receipt.reserved_at,
+                    receipt.reserved_at,
+                )
+                for index, unit in enumerate(units)
+            ),
+        )
+        connection.executemany(
+            """
+            INSERT INTO publication_mutation_points (
+                receipt_id, mutation_ordinal, point_ordinal, point_id
+            ) VALUES (?, ?, 0, ?)
+            """,
+            (
+                (receipt.receipt_id, index, unit.point_ids[0])
+                for index, unit in enumerate(units)
+            ),
+        )
+        connection.executemany(
+            """
+            INSERT INTO file_states (
+                generation_id, rel_path, state, content_kind, content_hash,
+                admission_reason, error_kind, detail, evidence_generation_id
+            ) VALUES (?, ?, 'indexed', 'code', ?, NULL, NULL, NULL, ?)
+            """,
+            (
+                (
+                    generation.generation_id,
+                    item.rel_path,
+                    item.content_identity,
+                    generation.generation_id,
+                )
+                for item in evidence
+            ),
+        )
+        connection.execute(
+            "UPDATE publication_receipts SET next_mutation_ordinal = ? "
+            "WHERE receipt_id = ?",
+            (size, receipt.receipt_id),
+        )
+        connection.commit()
+    ledger.seal_publication_receipt(
+        receipt.receipt_id,
+        tuple(
+            PathDelta(PathOutcome.ADD, receipt.parent_revision, item.rel_path, new=item)
+            for item in evidence
+        ),
+    )
+    return ledger, receipt.receipt_id, generation.generation_id
+
+
+@pytest.mark.parametrize("local", [True, False], ids=["receipt", "canonical"])
+def test_retained_candidate_work_is_bounded_by_the_page_not_the_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, local: bool
+) -> None:
+    """A full cleanup page must seek instead of scanning its receipt or parent.
+
+    Ordinary JOINs failed with 22,741 versus 2,058,183 retired instructions
+    for one retained point plus 255 stale points at 10 versus 1,000 receipt
+    paths. Restoring candidate-first point-index seeks passed the same guard.
+    Canonical membership likewise failed at 21,649 versus 2,055,110 and
+    passed after restoring the same bounded candidate ordering.
+    """
+    small, small_receipt, small_generation = _seed_local_receipt(
+        tmp_path / "small-local", 10 if local else 1, 0 if local else 10
+    )
+    large, large_receipt, large_generation = _seed_local_receipt(
+        tmp_path / "large-local", 1_000 if local else 1, 0 if local else 1_000
+    )
+    candidate = PublicationPointCandidate(
+        "src/local-file-000009.py" if local else "src/file-000009.py",
+        "local-point-9" if local else "point-9",
+    )
+    candidates = (
+        candidate,
+        *(
+            PublicationPointCandidate(candidate.rel_path, f"stale-{index}")
+            for index in range(255)
+        ),
+    )
+    with _measured(monkeypatch) as small_cost:
+        small_page = small.effective_file_state_page(
+            small_receipt,
+            small_generation,
+            rel_paths=(candidate.rel_path,),
+            candidates=candidates,
+        )
+    with _measured(monkeypatch) as large_cost:
+        large_page = large.effective_file_state_page(
+            large_receipt,
+            large_generation,
+            rel_paths=(candidate.rel_path,),
+            candidates=candidates,
+        )
+    assert (
+        small_page.retained_candidates
+        == large_page.retained_candidates
+        == frozenset({candidate})
+    )
+    assert small_cost.vm_steps > 0 and large_cost.vm_steps > 0
+    assert large_cost.vm_steps <= small_cost.vm_steps * 2, (
+        f"one retained candidate cost {small_cost.vm_steps} instructions with 10 paths "
+        f"and {large_cost.vm_steps} with 1,000; membership scanned the receipt"
+    )
+
+
+class _CountedMutations(tuple[PublicationMutationUnit, ...]):
+    """Observe traversal of real receipt input without replacing its behavior."""
+
+    examined: int
+
+    def __iter__(self) -> Iterator[PublicationMutationUnit]:
+        for mutation in super().__iter__():
+            self.examined += 1
+            yield mutation
+
+
+def test_publication_delta_derivation_traverses_mutations_once(
+    tmp_path: Path,
+) -> None:
+    """The old per-path filter fails the measured traversal-budget assertion.
+
+    Restoring grouped derivation passes against the same 1,000-unit receipt.
+    """
+    ledger, _receipt_id, generation_id = _seed_local_receipt(tmp_path, 1_000)
+    receipt = ledger.publication_receipt_for_generation(generation_id)
+    assert receipt is not None
+    counted = _CountedMutations(receipt.mutations)
+    counted.examined = 0
+    measured = replace(receipt, mutations=counted)
+    paths = tuple(delta.rel_path for delta in receipt.deltas)
+    checkpoint = RunCheckpointBase(
+        ledger,
+        ledger.generation(generation_id),
+        None,
+        RunPolicy(no_progress_timeout_seconds=30),
+        RunAuthority.PUBLICATION,
+        measured,
+    )
+    counted.examined = 0
+
+    deltas = checkpoint._publication_deltas(measured, paths, {})
+
+    assert tuple(deltas) == receipt.deltas
+    assert counted.examined > 0, "receipt mutation traversal was not measured"
+    assert counted.examined <= len(receipt.mutations) * 2, (
+        f"{len(paths)} paths examined {counted.examined} mutations; "
+        "delta derivation rescanned the receipt per path"
     )
 
 

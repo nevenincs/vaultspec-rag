@@ -228,8 +228,8 @@ def test_binary_names_are_unique() -> None:
 def test_every_windows_binary_is_stamped_before_its_checksum() -> None:
     """The published digest must bind every finalized executable byte.
 
-    Mutation proof: replacing the combined production call with ``stamp_icon``
-    fails the exact combined-stamp assertion before checksum ordering is checked.
+    Mutation proof: renaming the combined production call fails the exact
+    combined-stamp assertion before checksum ordering is checked.
     """
     tree = ast.parse(
         textwrap.dedent(

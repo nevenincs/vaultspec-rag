@@ -18,10 +18,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ... import jobs, server
-from ...concurrency import limiter_stats, reset_limiters
+from ...concurrency import limiter_stats
 from ...config._settings import get_config
 from ...job_models import DesiredJobState, JobOutcomeStatus
-from ...registry import get_registry, reset_registry
+from ...registry import get_registry
+from .._state_fixtures import reset_limiters, reset_registry
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator

@@ -449,6 +449,7 @@ def iter_weighted_code_slices(
     max_chunks: int | None = None,
     max_bytes: int | None = None,
     run_control: RunControl = NO_RUN_CONTROL,
+    skip_segment: Callable[[CodeFileSegment], bool] | None = None,
 ) -> Iterator[WeightedCodeSlice]:
     """Pack ordered file segments into bounded encode/upsert slices.
 
@@ -456,6 +457,9 @@ def iter_weighted_code_slices(
     record every file-local unit covered by one confirmed store mutation. Small
     files may share an encode slice, retaining batching throughput without
     losing their resumability boundaries.
+    Resume selection runs after raw framing and weight validation. A skipped
+    unit separates output slices so pending gaps keep their durable ordinals
+    without weakening the contiguous boundaries each slice must retain.
     """
     from ..config._settings import get_config
 
@@ -484,6 +488,8 @@ def iter_weighted_code_slices(
 
     for segment in segments:
         run_control.checkpoint()
+        if previous_segment is None and segment.ordinal != 0:
+            raise ValueError("a weighted code stream must begin at ordinal zero")
         if previous_segment is not None:
             validate_segment_transition(previous_segment, segment)
         previous_segment = segment
@@ -495,8 +501,10 @@ def iter_weighted_code_slices(
                 f"bytes={segment.estimated_bytes}/{byte_limit}"
             )
 
+        skipped = skip_segment is not None and skip_segment(segment)
         if slice_segments and (
-            len(slice_chunks) + segment_chunk_count > chunk_limit
+            skipped
+            or len(slice_chunks) + segment_chunk_count > chunk_limit
             or slice_bytes + segment.estimated_bytes > byte_limit
         ):
             yield WeightedCodeSlice(
@@ -509,11 +517,15 @@ def iter_weighted_code_slices(
             slice_chunks.clear()
             slice_bytes = 0
 
+        if skipped:
+            continue
         slice_segments.append(segment)
         slice_chunks.extend(segment.chunks)
         slice_bytes += segment.estimated_bytes
         run_control.checkpoint()
 
+    if previous_segment is not None and not previous_segment.is_file_end:
+        raise ValueError("a weighted code stream must finish at a file-end marker")
     if slice_segments:
         run_control.checkpoint()
         yield WeightedCodeSlice(
@@ -529,6 +541,18 @@ def _embed_text(context: list[str], content: str) -> str:
     return _EMBED_CONTEXT_SEPARATOR.join(context) + _EMBED_HEADER_SEPARATOR + content
 
 
+def code_embed_input(
+    path: str, class_name: str | None, function_name: str | None, content: str
+) -> str:
+    """Compose code embedding input from its stored context and body."""
+    parts = [path]
+    if class_name:
+        parts.append(class_name)
+    if function_name:
+        parts.append(function_name)
+    return _embed_text(parts, content)
+
+
 def code_embed_text(chunk: CodeChunk) -> str:
     """Build the embedding input for a code chunk.
 
@@ -538,12 +562,9 @@ def code_embed_text(chunk: CodeChunk) -> str:
     stored payload keeps the raw chunk content; only the embedding
     input carries the header.
     """
-    parts = [chunk.path]
-    if chunk.class_name:
-        parts.append(chunk.class_name)
-    if chunk.function_name:
-        parts.append(chunk.function_name)
-    return _embed_text(parts, chunk.content)
+    return code_embed_input(
+        chunk.path, chunk.class_name, chunk.function_name, chunk.content
+    )
 
 
 def document_embed_text(chunk: DocumentChunk) -> str:

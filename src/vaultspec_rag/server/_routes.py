@@ -17,14 +17,15 @@ runtime token. This is a pragmatic monitoring gate, not an
 auth boundary. ``/health`` stays ungated and is registered in
 :mod:`._main`, not here.
 
-This module owns the canonical ``/jobs`` CRUD and control routes - and the
+This module owns the canonical ``/jobs`` read and control routes - and the
 whole admission pipeline a job creation goes through - plus every route with
 no other natural home: logs, metrics, service state/readiness, and the
-code-file and vault-document readers. It assembles the ``ROUTES`` table every
-other route module's handlers are registered onto. The search, reindex/clean,
-storage-survey, quiesce, and project/watcher route groups live in their own
-sibling ``_routes_*`` modules and reach back into this one for the canonical
-job-admission pipeline they build on.
+code-file and vault-document readers. Jobs are created only through
+``/reindex``; there is no job-creation route. It assembles the ``ROUTES``
+table every other route module's handlers are registered onto. The search,
+reindex/clean, storage-survey, quiesce, and project/watcher route groups live
+in their own sibling ``_routes_*`` modules and reach back into this one for
+the canonical job-admission pipeline they build on.
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from anyio.to_thread import run_sync as _run_in_thread
 from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Route
+from vaultspec_core.env_values import BOOL_SHAPE, parse_bool
 
 import vaultspec_rag.server as _m
 
@@ -87,7 +89,6 @@ from ._search_activity import SearchActivityFilters
 from ._state import search_activity_ledger
 from ._utils import (
     _BAD_REQUEST_MISSING_ROOT,
-    _TRUTHY_QUERY_VALUES,
     ProjectRootRequiredError,
     _resolve_root,
 )
@@ -184,16 +185,6 @@ async def job_payload(
     return cast("dict[str, object]", raw)
 
 
-def _job_bool(payload: dict[str, object], key: str, *, default: bool) -> bool:
-    value = payload.get(key, default)
-    if type(value) is not bool:
-        raise InvalidJobRequestError(
-            "invalid_job_spec",
-            f"{key} must be a boolean when provided.",
-        )
-    return bool(value)
-
-
 def job_string(
     payload: dict[str, object],
     key: str,
@@ -247,40 +238,11 @@ def _validated_initiator(
     )
 
 
-def _validated_idempotency_key(
-    request: Request,
-    payload: dict[str, object],
-    *,
-    suffix: str | None = None,
-) -> str | None:
-    header_key = request.headers.get("Idempotency-Key")
-    body_key = payload.get("idempotency_key")
-    if body_key is not None and not isinstance(body_key, str):
-        raise InvalidJobRequestError(
-            "invalid_idempotency_key",
-            "idempotency_key must be a string when provided.",
-        )
-    if header_key is not None and body_key is not None and header_key != body_key:
-        raise InvalidJobRequestError(
-            "idempotency_key_conflict",
-            "The header and body idempotency keys must match.",
-        )
-    key = header_key if header_key is not None else body_key
-    if key is None or suffix is None:
-        return key
-    return f"{key}:{suffix}"
-
-
 async def validated_index_request(
-    request: Request,
     payload: dict[str, object],
-    *,
-    idempotency_suffix: str | None = None,
 ) -> tuple[
     JobSpec,
     JobInitiator,
-    bool,
-    str | None,
     CodeIndexPreflight | DocumentIndexPreflight | None,
 ]:
     from ..job_models import JobMode, JobOperation, JobSource, JobSpec
@@ -334,7 +296,6 @@ async def validated_index_request(
         root = _resolve_root(raw_root)
     except (ProjectRootRequiredError, ValueError) as exc:
         raise InvalidJobRequestError("invalid_job_spec", str(exc)) from exc
-    start_paused = _job_bool(payload, "start_paused", default=False)
     spec = JobSpec(
         operation=JobOperation.INDEX,
         source=JobSource(source),
@@ -348,13 +309,7 @@ async def validated_index_request(
         root=root,
         default_command="http_jobs_create",
     )
-    return (
-        spec,
-        initiator,
-        start_paused,
-        _validated_idempotency_key(request, payload, suffix=idempotency_suffix),
-        admission,
-    )
+    return spec, initiator, admission
 
 
 async def _validate_index_job_spec(
@@ -449,7 +404,6 @@ def job_outcome_status(code: str) -> int:
         "profile_requirements_not_met": 422,
         "disk_preflight_failed": 507,
         "active_job_exists": 409,
-        "idempotency_key_conflict": 409,
         "invalid_transition": 409,
         "job_id_conflict": 409,
         "job_not_retryable": 409,
@@ -530,18 +484,23 @@ async def activate_index_job(
     )
 
 
-def _normalise_controllable_filter(raw: str | None) -> bool | None:
+def _job_query_flag(raw: str | None, name: str) -> bool | None:
+    """Return the boolean a job-listing query parameter names, else ``None``.
+
+    An absent parameter is absent. A present one that names no recognised
+    word is refused rather than read as off, so a misspelled filter cannot
+    silently widen the listing it was meant to narrow.
+    """
     value = _normalise_filter_value(raw)
     if value is None:
         return None
-    if value in _TRUTHY_QUERY_VALUES:
-        return True
-    if value in {"0", "false", "no"}:
-        return False
-    raise InvalidJobRequestError(
-        "invalid_filter",
-        "controllable must be true or false when provided.",
-    )
+    flag = parse_bool(value)
+    if flag is None:
+        raise InvalidJobRequestError(
+            "invalid_filter",
+            f"{name} must be {BOOL_SHAPE} when provided.",
+        )
+    return flag
 
 
 async def jobs_route(request: Request) -> JSONResponse:
@@ -571,14 +530,11 @@ async def jobs_route(request: Request) -> JSONResponse:
     trigger = _normalise_filter_value(request.query_params.get("trigger"))
     query = _normalise_filter_value(request.query_params.get("query"))
     job_id = _normalise_filter_value(request.query_params.get("job_id"))
-    failed = (
-        _normalise_filter_value(request.query_params.get("failed"))
-        in _TRUTHY_QUERY_VALUES
-    )
     since_seconds = _parse_since_seconds(request.query_params.get("since"))
     try:
-        controllable = _normalise_controllable_filter(
-            request.query_params.get("controllable")
+        failed = _job_query_flag(request.query_params.get("failed"), "failed") or False
+        controllable = _job_query_flag(
+            request.query_params.get("controllable"), "controllable"
         )
     except InvalidJobRequestError as exc:
         return job_error("list", exc.code, str(exc))
@@ -696,47 +652,6 @@ async def search_activity_route(request: Request) -> JSONResponse:
                 order=request.query_params.get("order"),
             ),
         )
-    )
-
-
-async def create_job_route(request: Request) -> JSONResponse:
-    """Admit one validated canonical index job."""
-    denied = require_token(request)
-    if denied is not None:
-        return denied
-    try:
-        payload = await job_payload(request, required=True)
-        (
-            spec,
-            initiator,
-            start_paused,
-            idempotency_key,
-            admission,
-        ) = await validated_index_request(request, payload)
-    except InvalidJobRequestError as exc:
-        return job_error("create", exc.code, str(exc))
-
-    from ..jobs import get_job_manager
-
-    manager = get_job_manager()
-    outcome = await _run_in_thread(
-        partial(
-            manager.create,
-            spec,
-            initiator,
-            start_paused=start_paused,
-            idempotency_key=idempotency_key,
-        )
-    )
-    outcome = await activate_index_job(outcome, admission)
-    return _job_response(
-        outcome,
-        location=True,
-        extra=(
-            {"admission": index_admission_preflight(admission)}
-            if admission is not None
-            else None
-        ),
     )
 
 
@@ -1027,7 +942,8 @@ async def code_file_route(request: Request) -> JSONResponse:
                 return {"error": f"path '{path}' is outside the workspace"}
             from ._utils import _is_sensitive_path
 
-            if _is_sensitive_path(path):
+            canonical_path = full_path.relative_to(root_resolved).as_posix()
+            if _is_sensitive_path(path) or _is_sensitive_path(canonical_path):
                 return {"error": "access denied"}
             if not full_path.exists():
                 return {"error": f"File '{path}' not found"}
@@ -1037,37 +953,6 @@ async def code_file_route(request: Request) -> JSONResponse:
             return {"content": full_path.read_text(encoding="utf-8")}
         except Exception as e:
             return {"error": str(e)}
-
-    from anyio.to_thread import run_sync as _run_in_thread
-
-    res = await _run_in_thread(_run)
-    return JSONResponse(res)
-
-
-async def benchmark_route(request: Request) -> JSONResponse:
-    denied = require_token(request)
-    if denied is not None:
-        return denied
-    payload = await request.json()
-    project_root = payload.get("project_root")
-    n_queries = payload.get("n_queries", 20)
-    from ._utils import _resolve_root
-
-    try:
-        root = _resolve_root(project_root)
-    except ProjectRootRequiredError:
-        return _BAD_REQUEST_MISSING_ROOT
-
-    registry = get_request_runtime(request).registry
-
-    def _run():
-        import vaultspec_rag
-
-        return vaultspec_rag.run_benchmark(
-            root,
-            n_queries=n_queries,
-            registry=registry,
-        )
 
     from anyio.to_thread import run_sync as _run_in_thread
 
@@ -1158,7 +1043,6 @@ ROUTES: list[Route] = [
     Route("/logs", logs_route, methods=["GET"]),
     Route("/logs/json", logs_json_route, methods=["GET"]),
     Route("/jobs", jobs_route, methods=["GET"]),
-    Route("/jobs", create_job_route, methods=["POST"]),
     Route("/jobs/{job_id}", job_detail_route, methods=["GET"]),
     Route(
         "/jobs/{job_id}/desired-state",
@@ -1189,6 +1073,5 @@ ROUTES: list[Route] = [
     Route("/storage/survey", storage_survey_route, methods=["GET"]),
     Route("/code-file", code_file_route, methods=["POST"]),
     Route("/vault-document", vault_document_route, methods=["POST"]),
-    Route("/benchmark", benchmark_route, methods=["POST"]),
     Route("/quality", quality_route, methods=["POST"]),
 ]

@@ -96,16 +96,18 @@ class TestGraphCache:
 
 
 class TestQwen3NoDocumentPrompt:
-    """ADR: encode_documents must NOT pass prompt_name to the dense model."""
+    """ADR: document encoding must NOT pass prompt_name to the dense model."""
 
-    def test_encode_documents_no_prompt_name(self):
+    def test_dense_document_encode_has_no_prompt_name(self):
         import inspect
 
         from ..embeddings import EmbeddingModel
 
-        source = inspect.getsource(EmbeddingModel.encode_documents)
+        # The one site that calls the library's dense ``encode`` for
+        # documents; every document path reaches the forward through it.
+        source = inspect.getsource(EmbeddingModel._dense_encode_call)
         assert "prompt_name" not in source, (
-            "encode_documents should not pass prompt_name to the dense model"
+            "the dense document forward should not pass prompt_name"
         )
 
     def test_encode_query_uses_prompt_name(self):
@@ -300,7 +302,8 @@ class TestRerankerModelName:
     """ADR: gpu-only-rag-stack - reranker model must be bge-reranker-v2-m3."""
 
     def test_config_default_reranker_model(self):
-        from ..config._settings import get_config, reset_config
+        from ..config._settings import get_config
+        from ._config_fixtures import reset_config
 
         reset_config()
         cfg = get_config()
@@ -961,7 +964,7 @@ class TestEncodeRecoveryStaysBounded:
 
         from .. import embeddings
 
-        encode_paths = ("_encode_documents_output", "encode_documents_sparse")
+        encode_paths = ("encode_documents_on_device", "encode_documents_sparse")
         tree = ast.parse(inspect.getsource(embeddings))
         functions = {
             node.name: node
@@ -1144,7 +1147,8 @@ class TestAdaptiveWatcherArchitecture:
         # Mutation check: changing this identity comparison to never match fails
         # on the refusal predicate assertion, not merely module import.
         assert (
-            "terminal_scope_loss = ( state.last_error_kind is "
+            "terminal_scope_loss = ( state.scope_refusal is not None "
+            "or state.last_error_kind is "
             "JobErrorKind.FULL_REINDEX_REQUIRED )"
         ) in normalized
         assert "if not state.convergence_pending or terminal_scope_loss" in admission, (

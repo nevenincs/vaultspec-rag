@@ -157,6 +157,14 @@ class RunLedgerFileMethods:
                     error_kind = excluded.error_kind,
                     detail = excluded.detail,
                     evidence_generation_id = excluded.evidence_generation_id
+                WHERE file_states.state IS NOT excluded.state
+                   OR file_states.content_kind IS NOT excluded.content_kind
+                   OR file_states.content_hash IS NOT excluded.content_hash
+                   OR file_states.admission_reason IS NOT excluded.admission_reason
+                   OR file_states.error_kind IS NOT excluded.error_kind
+                   OR file_states.detail IS NOT excluded.detail
+                   OR file_states.evidence_generation_id
+                      IS NOT excluded.evidence_generation_id
                 """,
                 (
                     generation_id,
@@ -292,6 +300,10 @@ class RunLedgerFileMethods:
         already been written: a storage query returns the superseded points and
         the replacement points together, and dropping that union would delete
         the very content the re-record is about to claim.
+
+        Unit-first CROSS JOIN pins the requested path's indexed lookup before
+        point traversal; join reordering can otherwise scan every point in the
+        generation before applying the path predicate.
         """
         validate_rel_path(rel_path)
         with ledger_connection(self.path) as connection:
@@ -299,10 +311,10 @@ class RunLedgerFileMethods:
                 connection,
                 """
                 SELECT points.point_id
-                FROM commit_point_ids AS points
-                JOIN commit_units AS units
-                  ON units.generation_id = points.generation_id
-                 AND units.unit_id = points.unit_id
+                FROM commit_units AS units
+                CROSS JOIN commit_point_ids AS points
+                  ON points.generation_id = units.generation_id
+                 AND points.unit_id = units.unit_id
                 WHERE units.generation_id = ? AND units.rel_path = ?
                   AND units.unit_kind = ? AND units.source_digest = ?
                 ORDER BY units.segment_ordinal, points.point_ordinal,
@@ -520,7 +532,6 @@ class RunLedgerFileMethods:
         self,
         generation_id: str,
         *,
-        converged_only: bool = False,
         batch_size: int = FETCH_BATCH,
     ) -> Iterator[FileState]:
         """Yield explicit outcomes without materializing generation metadata."""
@@ -553,9 +564,7 @@ class RunLedgerFileMethods:
             if not rows:
                 return
             for row in rows:
-                state = file_state_from_row(row)
-                if not converged_only or state.converged:
-                    yield state
+                yield file_state_from_row(row)
             last_path = str(rows[-1]["rel_path"])
 
     def file_states_for_paths(

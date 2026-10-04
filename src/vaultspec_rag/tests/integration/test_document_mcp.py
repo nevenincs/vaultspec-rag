@@ -161,6 +161,7 @@ async def _assert_mcp_searches(
                 "query": phrase,
                 "project_root": str(root),
                 "source_path": source_path,
+                **({"include_documents": True} if name == "search_combined" else {}),
             },
         )
         payload = cast("dict[str, object]", result.structured_content)

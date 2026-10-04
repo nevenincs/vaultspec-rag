@@ -50,6 +50,13 @@ class CodeSupportBudget:
         """Return the admitted memory budget, or ``None`` before admission."""
         return self._memory_budget
 
+    def reset_memory_telemetry(self) -> None:
+        """Forget the preceding attempt before any new execution authority."""
+        self._memory_budget = None
+        self._support_measurement = SupportMeasurement(0, 0)
+        self._support_limits = None
+        self._support_profile_name = None
+
     def begin_memory_budget(self) -> None:
         """Freeze and sample one production memory budget before dispatch."""
         from ..memory_probe import MemoryBudget

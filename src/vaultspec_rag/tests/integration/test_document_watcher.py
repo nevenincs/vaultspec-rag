@@ -45,6 +45,7 @@ from ...watcher_retry_policy import (
     WatcherRetryPolicy,
 )
 from ...watcher_runtime import WatcherChangeRouting, WatcherConvergenceSlot
+from .._watcher_fixtures import dirty_paths
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -185,8 +186,8 @@ def _assert_deletion_routes_to_the_code_slot(root: Path, deleted: Path) -> None:
         assert [(change.source, change.path) for change in batch.changes] == [
             (WatcherSource.CODE, deleted)
         ]
-        assert code.dirty_paths() == frozenset()
-        assert document.dirty_paths() == frozenset()
+        assert dirty_paths(code) == frozenset()
+        assert dirty_paths(document) == frozenset()
     finally:
         registry.close_all()
 
@@ -241,8 +242,8 @@ def test_policy_control_event_schedules_code_and_document_independently(
             (WatcherSource.CODE, control),
             (WatcherSource.DOCUMENT, control),
         ]
-        assert code.dirty_paths() == frozenset()
-        assert document.dirty_paths() == frozenset()
+        assert dirty_paths(code) == frozenset()
+        assert dirty_paths(document) == frozenset()
         assert code.retry_policy.state.source is WatcherSource.CODE
         assert document.retry_policy.state.source is WatcherSource.DOCUMENT
     finally:

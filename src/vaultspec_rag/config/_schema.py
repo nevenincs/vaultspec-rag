@@ -50,7 +50,7 @@ class _NumericBound:
     def narrow(self, value: object) -> object:
         """Return *value* as this bound's declared type.
 
-        Only reached through ``_checked`` (config/_settings.py), which calls
+        Only reached through ``checked_setting``, which calls
         ``admits`` first; ``admits`` is what establishes ``value`` is an
         ``int`` (or ``int | float``) here, since this method has no isinstance
         check of its own.
@@ -81,7 +81,7 @@ class _ChoiceBound:
     def narrow(self, value: object) -> object:
         """Return the normalised choice name.
 
-        Only reached through ``_checked`` (config/_settings.py), which calls
+        Only reached through ``checked_setting``, which calls
         ``admits`` first; ``admits`` is what establishes ``value`` is a
         ``str`` here, since this method has no isinstance check of its own.
         """
@@ -148,12 +148,33 @@ def setting_rejection(
     return rejection(where, shape, value)
 
 
+def checked_setting(name: str, value: object, source: EnvVar | None) -> object:
+    """Return *value* narrowed to the key's declared range.
+
+    Args:
+        name: The settings key being resolved.
+        value: The resolved value, from any source.
+        source: The environment variable it came from, when it came from one.
+
+    Returns:
+        The value narrowed to the declared type, or unchanged when the key
+        declares no range.
+
+    Raises:
+        ValueError: If the key declares a range and *value* is outside it.
+    """
+    bound = SETTING_BOUNDS.get(name)
+    if bound is None:
+        return value
+    if not bound.admits(value):
+        raise setting_rejection(name, bound.shape, value, source)
+    return bound.narrow(value)
+
+
 # Mapping from _RAG_DEFAULTS key → EnvVar member for env override lookup.
 ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "data_dir": EnvVar.DATA_DIR,
     "qdrant_dir": EnvVar.QDRANT_DIR,
-    "index_metadata_file": EnvVar.INDEX_META,
-    "code_index_metadata_file": EnvVar.CODE_INDEX_META,
     "status_dir": EnvVar.STATUS_DIR,
     "log_file": EnvVar.LOG_FILE,
     "mcp_port": EnvVar.PORT,
@@ -170,6 +191,7 @@ ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "service_reindex_timeout_seconds": EnvVar.SERVICE_REINDEX_TIMEOUT,
     "service_pause_drain_timeout_seconds": EnvVar.SERVICE_PAUSE_DRAIN_TIMEOUT,
     "qdrant_ready_timeout_seconds": EnvVar.QDRANT_READY_TIMEOUT,
+    "qdrant_collection_load_concurrency": EnvVar.QDRANT_COLLECTION_LOAD_CONCURRENCY,
     "managed_log_max_bytes": EnvVar.MANAGED_LOG_MAX_BYTES,
     "managed_log_backup_count": EnvVar.MANAGED_LOG_BACKUP_COUNT,
     "job_max_nonterminal": EnvVar.JOB_MAX_NONTERMINAL,
@@ -316,6 +338,7 @@ SETTING_BOUNDS: dict[str, _SettingBound] = {
     "service_reindex_timeout_seconds": _POSITIVE_NUMBER,
     "service_pause_drain_timeout_seconds": _POSITIVE_NUMBER,
     "qdrant_ready_timeout_seconds": _POSITIVE_NUMBER,
+    "qdrant_collection_load_concurrency": _POSITIVE_INT,
     "graph_ttl_seconds": _NON_NEGATIVE_NUMBER,
     # Managed log retention. Zero backups is a bounded no-history mode; a zero
     # rollover threshold would make every source unbounded.

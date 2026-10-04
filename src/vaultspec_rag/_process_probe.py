@@ -29,7 +29,7 @@ import logging
 import os
 import sys
 import time
-from collections.abc import Collection, Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from functools import cache
@@ -53,16 +53,14 @@ __all__ = [
     "EnvironmentHolders",
     "HolderRelation",
     "LineageEntry",
-    "argv_contains",
     "argv_of",
     "bounded_call",
-    "close_process_handle",
     "environment_holders",
     "is_server_launch",
     "iter_process_info",
     "kill_process_descendants",
-    "open_process_handle",
     "pid_alive",
+    "pid_argv",
     "pid_cmdline",
     "pid_image_matches",
     "pid_image_path",
@@ -76,6 +74,7 @@ __all__ = [
     "reap_if_child",
     "send_signal",
     "server_console_scripts",
+    "server_launch_option",
     "server_launch_port",
     "wait_for_exit",
     "win_kernel32",
@@ -94,6 +93,8 @@ START_TIME_TOLERANCE_SECONDS = 1e-6
 
 _ERROR_ACCESS_DENIED = 5
 _STILL_ACTIVE = 259
+_SYNCHRONIZE = 0x00100000
+_WAIT_TIMEOUT = 0x102
 
 
 def win_kernel32() -> ctypes.WinDLL:
@@ -122,6 +123,8 @@ def win_kernel32() -> ctypes.WinDLL:
     kernel32.GetExitCodeProcess.restype = wintypes.BOOL
     kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
     kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
     kernel32.QueryFullProcessImageNameW.argtypes = (
         wintypes.HANDLE,
         wintypes.DWORD,
@@ -130,33 +133,6 @@ def win_kernel32() -> ctypes.WinDLL:
     )
     kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
     return kernel32
-
-
-def open_process_handle(pid: int, access: int) -> int | None:
-    """Open *pid* with *access*, or ``None`` when refused or absent.
-
-    Exists so a caller needing a HANDLE for something other than a probe - job
-    membership, a waitable object - does not redeclare ``OpenProcess`` to get
-    one. That redeclaration is the exact defect this module was built to end:
-    three copies existed and only one got the pointer-sized ``HANDLE`` restype
-    right, so the others truncated it and read a live process as dead.
-
-    The caller owns the returned handle and must pass it to
-    :func:`close_process_handle`. ``None`` collapses "refused" and "absent"
-    deliberately: a caller that needs to tell those apart is asking a liveness
-    question and should call :func:`pid_alive`, which separates them properly.
-    """
-    if pid <= 0 or sys.platform != "win32":
-        return None
-    handle = win_kernel32().OpenProcess(access, False, pid)
-    return int(handle) if handle else None
-
-
-def close_process_handle(handle: int) -> None:
-    """Release a handle from :func:`open_process_handle`."""
-    if sys.platform != "win32":
-        return
-    win_kernel32().CloseHandle(handle)
 
 
 def bounded_call[T](
@@ -215,10 +191,25 @@ def pid_alive(pid: int) -> bool:
 
 
 def _windows_pid_alive(pid: int) -> bool:
-    """Read Windows liveness while preserving access-denied as alive."""
+    """Read Windows liveness while preserving access-denied as alive.
+
+    A process is dead only once its process object is signalled. Termination
+    publishes the exit code first and closes the process's handles - the
+    locks and listening sockets it held - afterwards, so a process that has an
+    exit code but is not yet signalled still holds what it owned. Where the
+    wait right is refused, the exit code is the best evidence left.
+    """
     import ctypes
 
     kernel32 = win_kernel32()
+    handle = kernel32.OpenProcess(
+        _SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, False, pid
+    )
+    if handle:
+        try:
+            return int(kernel32.WaitForSingleObject(handle, 0)) == _WAIT_TIMEOUT
+        finally:
+            kernel32.CloseHandle(handle)
     handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
     if not handle:
         # A null handle carries two opposite facts, and the error code is
@@ -284,8 +275,8 @@ def pid_image_path(pid: int) -> str | None:
         kernel32.CloseHandle(handle)
 
 
-def pid_cmdline(pid: int) -> str | None:
-    """Return *pid*'s space-joined command line, or ``None`` when unreadable.
+def pid_argv(pid: int, *, timeout: float | None = None) -> list[str] | None:
+    """Return *pid*'s argument vector, or ``None`` when unreadable.
 
     Reads through psutil - the same mechanism the process-table scan already
     uses for argv - so every platform answers. A direct ``/proc`` read covers
@@ -293,19 +284,29 @@ def pid_cmdline(pid: int) -> str | None:
     pid there as unreadable, and a caller treating that as trustable identity
     adopted whatever process had recycled the pid. ``None`` means unknown,
     never "no match": the process is gone, or belongs to a user this process
-    cannot inspect. An empty string is a real answer (a zombie's argv), not
+    cannot inspect. An empty list is a real answer (a zombie's argv), not
     unknown.
     """
     if pid <= 0:
         return None
     import psutil
 
-    try:
-        arguments = psutil.Process(pid).cmdline()
-    except psutil.Error as exc:
-        logger.debug("cmdline unreadable for pid %d: %s", pid, exc)
-        return None
-    return " ".join(arguments)
+    def inspect() -> list[str] | None:
+        try:
+            return psutil.Process(pid).cmdline()
+        except psutil.Error as exc:
+            logger.debug("cmdline unreadable for pid %d: %s", pid, exc)
+            return None
+
+    return bounded_call(
+        inspect, timeout=timeout, fallback=None, label=f"pid-{pid}-argv"
+    )
+
+
+def pid_cmdline(pid: int) -> str | None:
+    """Return *pid*'s space-joined command line, or ``None`` when unreadable."""
+    arguments = pid_argv(pid)
+    return " ".join(arguments) if arguments is not None else None
 
 
 def pid_image_matches(pid: int, needle: str, *, timeout: float | None = None) -> bool:
@@ -720,16 +721,6 @@ def argv_of(cmdline: object) -> tuple[str, ...]:
     return ()
 
 
-def argv_contains(argv: Sequence[str], marker: Sequence[str]) -> bool:
-    """Whether *marker* appears as a contiguous run inside *argv*."""
-    if not marker or len(marker) > len(argv):
-        return False
-    return any(
-        list(argv[index : index + len(marker)]) == list(marker)
-        for index in range(len(argv) - len(marker) + 1)
-    )
-
-
 @cache
 def server_console_scripts() -> frozenset[str]:
     """The console-script names that start this product's server.
@@ -760,25 +751,52 @@ def server_console_scripts() -> frozenset[str]:
     )
 
 
-def _names_a_server_console_script(argv: Sequence[str]) -> bool:
-    """Whether *argv* starts one of those console scripts.
+def _is_server_console_script(path: str) -> bool:
+    """Recognize the console entry point itself or an interpreter trampoline."""
+    name = PurePath(path).name.casefold()
+    if name.endswith(".exe"):
+        name = name[: -len(".exe")]
+    return name in server_console_scripts()
 
-    A launcher is observed two ways: as itself, and as the interpreter the
-    trampoline re-executes with the launcher's path as its first argument -
-    ``python.exe <launcher>.exe`` on Windows, ``python <script>`` on POSIX.
-    Both are matched on the basename, with the Windows suffix stripped,
-    because the directory it sits in is uv's to choose.
-    """
-    scripts = server_console_scripts()
-    if not scripts:
-        return False
-    for part in argv[:2]:
-        name = PurePath(part).name.casefold()
-        if name.endswith(".exe"):
-            name = name[: -len(".exe")]
-        if name in scripts:
-            return True
-    return False
+
+def _python_application_index(argv: Sequence[str]) -> int | None:
+    """Locate Python's execution mode before inspecting application arguments."""
+    index = 1
+    while index < len(argv):
+        part = argv[index]
+        if part in {"-c", "-", "--help", "--version"}:
+            return None
+        if part in {"-W", "-X"}:
+            index += 2
+        elif part.startswith(("-W", "-X")) or (
+            part.startswith("-")
+            and part[1:]
+            and all(flag in "bBdEiIOPqsSuvx" for flag in part[1:])
+        ):
+            index += 1
+        elif part == "--":
+            return index + 1 if index + 1 < len(argv) else None
+        else:
+            return index
+    return None
+
+
+def _server_application_arguments(argv: Sequence[str]) -> tuple[str, ...] | None:
+    """Return only arguments belonging to an actual server module or entry point."""
+    if not argv:
+        return None
+    if _is_server_console_script(argv[0]):
+        return tuple(argv[1:])
+    if not PurePath(argv[0]).name.casefold().startswith("python"):
+        return None
+    index = _python_application_index(argv)
+    if index is not None:
+        if argv[index] == "-m" and argv[index - 1] != "--":
+            if index + 1 < len(argv) and argv[index + 1] == SERVER_LAUNCH_MARKER[1]:
+                return tuple(argv[index + 2 :])
+        elif _is_server_console_script(argv[index]):
+            return tuple(argv[index + 1 :])
+    return None
 
 
 def is_server_launch(argv: Sequence[str]) -> bool:
@@ -788,9 +806,25 @@ def is_server_launch(argv: Sequence[str]) -> bool:
     form is what an editor or agent session starts for a stdio adapter, and
     it was read as an unrelated process until it was asked for here.
     """
-    return argv_contains(argv, SERVER_LAUNCH_MARKER) or _names_a_server_console_script(
-        argv
-    )
+    return _server_application_arguments(argv) is not None
+
+
+def server_launch_option(argv: Sequence[str], option: str) -> str | None:
+    """Read one unambiguous application option, refusing duplicate identities."""
+    arguments = _server_application_arguments(argv)
+    if arguments is None:
+        return None
+    found: list[str] = []
+    for index, part in enumerate(arguments):
+        if part == "--":
+            break
+        if part == option:
+            if index + 1 >= len(arguments) or arguments[index + 1].startswith("--"):
+                return None
+            found.append(arguments[index + 1])
+        elif part.startswith(f"{option}="):
+            found.append(part.partition("=")[2])
+    return found[0] if len(found) == 1 and found[0] else None
 
 
 def server_launch_port(argv: Sequence[str]) -> int | None:
@@ -801,15 +835,14 @@ def server_launch_port(argv: Sequence[str]) -> int | None:
     standard input and is given none. Telling them apart is what lets a
     refusal name the process an operator has to deal with, and how.
     """
-    if not is_server_launch(argv):
+    value = server_launch_option(argv, "--port")
+    if value is None:
         return None
-    for index, part in enumerate(argv):
-        if part == "--port" and index + 1 < len(argv):
-            try:
-                return int(argv[index + 1])
-            except ValueError:
-                return None
-    return None
+    try:
+        port = int(value)
+    except ValueError:
+        return None
+    return port if 0 < port <= 65535 else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -959,7 +992,6 @@ def _holder_of(
     info: Mapping[str, object],
     resolved: Path,
     named: Path,
-    excluded: frozenset[int],
     resolved_paths: dict[str, Path | None],
 ) -> EnvironmentHolder | Literal["blind"] | None:
     """Classify one process: a holder, not a holder, or not inspectable.
@@ -971,7 +1003,7 @@ def _holder_of(
     twice, which costs a duplicate ``resolve`` and changes nothing.
     """
     pid = info["pid"]
-    if not isinstance(pid, int) or pid in excluded:
+    if not isinstance(pid, int):
         return None
     image = info["exe"]
     working_directory: object = None
@@ -1009,7 +1041,6 @@ def _holder_of(
 def _scan_environment_holders(
     resolved: Path,
     named: Path,
-    excluded: frozenset[int],
 ) -> tuple[tuple[EnvironmentHolder, ...], int] | None:
     from concurrent.futures import ThreadPoolExecutor
 
@@ -1020,7 +1051,7 @@ def _scan_environment_holders(
     def classify(
         info: Mapping[str, object],
     ) -> EnvironmentHolder | Literal["blind"] | None:
-        return _holder_of(info, resolved, named, excluded, resolved_paths)
+        return _holder_of(info, resolved, named, resolved_paths)
 
     try:
         # Drained inside the guard: enumerating the table is what raises, and
@@ -1076,7 +1107,6 @@ def _pair_launchers(
 def environment_holders(
     root: str | Path,
     *,
-    exclude_pids: Collection[int] = (),
     exclude_launch_chain: bool = False,
     timeout: float | None = 10.0,
 ) -> EnvironmentHolders:
@@ -1117,10 +1147,9 @@ def environment_holders(
         named = Path(root).absolute()
     except OSError:
         named = resolved
-    excluded = frozenset(exclude_pids)
 
     outcome = bounded_call(
-        lambda: _scan_environment_holders(resolved, named, excluded),
+        lambda: _scan_environment_holders(resolved, named),
         timeout=timeout,
         fallback=None,
         label="environment-holders",

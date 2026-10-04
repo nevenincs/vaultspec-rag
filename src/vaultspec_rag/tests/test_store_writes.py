@@ -31,8 +31,8 @@ from .._store_writes import (
     run_store_operation_with_retry,
     store_volume_path,
 )
-from ..config._settings import reset_config
 from ..config._types import EnvVar
+from ._config_fixtures import reset_config
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -599,7 +599,7 @@ class TestEnsureDiskHeadroom:
         ensure_disk_headroom(tmp_path / "does-not-exist", new_points=10**9)
 
     def test_ample_headroom_passes(self, tmp_path: Path) -> None:
-        ensure_disk_headroom(tmp_path, new_points=0, floor_bytes=0)
+        ensure_disk_headroom(tmp_path, new_points=0)
 
     def test_impossible_estimate_raises_with_disk_full_phrasing(
         self, tmp_path: Path
@@ -609,14 +609,15 @@ class TestEnsureDiskHeadroom:
         with pytest.raises(InsufficientDiskSpaceError, match="No space left on"):
             ensure_disk_headroom(tmp_path, new_points=impossible)
 
-    def test_floor_breach_raises(self, tmp_path: Path) -> None:
-        with pytest.raises(InsufficientDiskSpaceError):
-            ensure_disk_headroom(tmp_path, floor_bytes=2**60)
-
     def test_refusal_reports_units_not_raw_bytes(self, tmp_path: Path) -> None:
+        # A terabyte-scale estimate no test volume satisfies, so the refusal
+        # is the shipped floor plus the shipped per-point estimate.
+        points = (2**40) // BYTES_PER_POINT_ESTIMATE
         with pytest.raises(InsufficientDiskSpaceError) as raised:
-            ensure_disk_headroom(tmp_path, floor_bytes=2**40)
-        assert str(2**40) not in str(raised.value)
+            ensure_disk_headroom(tmp_path, new_points=points)
+        assert str(DISK_FLOOR_BYTES + points * BYTES_PER_POINT_ESTIMATE) not in str(
+            raised.value
+        )
         assert "1.0 TiB" in str(raised.value)
 
 

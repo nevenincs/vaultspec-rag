@@ -87,7 +87,7 @@ def test_hash_gate_overhead_breakdown_and_throughput(
     # persist (json + fsync + atomic replace) through the real writer.
     state_path = root / "state" / "jobs-state.json"
     state_path.parent.mkdir()
-    state = PersistedManagerState(jobs=(), bindings=())
+    state = PersistedManagerState(jobs=())
     save_persisted_state(state_path, state)
     advance_persist_ms = _per_call_ms(
         lambda: save_persisted_state(state_path, state), 100

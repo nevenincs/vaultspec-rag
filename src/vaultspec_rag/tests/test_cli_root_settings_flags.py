@@ -24,7 +24,8 @@ import pytest
 from typer.testing import CliRunner
 
 from ..cli import app
-from ..config._settings import get_config, reset_config
+from ..config._settings import get_config
+from ._config_fixtures import reset_config
 from ._scaffold import make_workspace
 
 if TYPE_CHECKING:

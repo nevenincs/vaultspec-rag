@@ -25,6 +25,7 @@ from .._search_state import (
 from ..indexer._run_ledger_models import RunAuthority
 from ..job_manager.manager import JobManager
 from ..job_models import (
+    DesiredJobState,
     JobInitiator,
     JobMode,
     JobOperation,
@@ -937,10 +938,11 @@ def test_nonempty_result_remains_available_during_matching_rebuild(
         ),
         JobInitiator("test", "search availability", str(root)),
         job_id="paused-rebuild",
-        start_paused=True,
     )
     assert created.job is not None
-    assert created.job.state is JobState.PAUSED
+    paused = manager.set_desired_state(created.job.id, DesiredJobState.PAUSED)
+    assert paused.job is not None
+    assert paused.job.state is JobState.PAUSED
     before_snapshot = [job.to_dict() for job in manager.list_jobs()]
     after_snapshot = [job.to_dict() for job in manager.list_jobs()]
     index_state: dict[str, object] = {
@@ -1115,9 +1117,11 @@ def test_qdrant_collection_disappearance_uses_matching_canonical_job_evidence(
         ),
         JobInitiator("test", "collection disappearance", str(root)),
         job_id="collection-rebuild",
-        start_paused=True,
     )
     assert created.job is not None
+    paused = manager.set_desired_state(created.job.id, DesiredJobState.PAUSED)
+    assert paused.job is not None
+    assert paused.job.state is JobState.PAUSED
     before_snapshot = [job.to_dict() for job in manager.list_jobs()]
     index_state: dict[str, object] = {
         "source": "vault",

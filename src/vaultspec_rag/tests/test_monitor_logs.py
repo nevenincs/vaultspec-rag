@@ -38,6 +38,11 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 
+#: Generous because the parallel lane starves the server and the app's first
+#: poll; a hang still fails within it.
+_SCREEN_WAIT_SECONDS = 20.0
+
+
 @pytest.fixture
 def monitor_http(isolated_status_dir: Path) -> Iterator[tuple[int, Path]]:
     """Serve the actual read routes without a daemon lifespan or inference."""
@@ -86,8 +91,19 @@ def monitor_http(isolated_status_dir: Path) -> Iterator[tuple[int, Path]]:
             raise TimeoutError("production test routes did not stop")
 
 
+async def _wait_for_selection(app: ServerWatchApp, job_id: str) -> None:
+    """Wait until a poll has listed and selected *job_id*."""
+    deadline = time.monotonic() + _SCREEN_WAIT_SECONDS
+    while app.selected_id != job_id:
+        if time.monotonic() >= deadline:
+            raise AssertionError(
+                f"the job list never selected {job_id!r}: {_screen_text(app)}"
+            )
+        await asyncio.sleep(0.01)
+
+
 async def _wait_for_log(app: ServerWatchApp, expected: str) -> str:
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + _SCREEN_WAIT_SECONDS
     while time.monotonic() < deadline:
         rendered = _screen_text(app)
         if expected in rendered:
@@ -122,7 +138,9 @@ async def test_selected_job_and_request_logs_update_without_reselection(
     app = ServerWatchApp(fetch=fetch_jobs, port=port, interval=1, watch_mode="server")
     try:
         async with app.run_test(size=size) as pilot:
-            await pilot.pause()
+            # Focusing the log before the first poll has listed the job
+            # selects nothing, so the press would open an empty pane.
+            await _wait_for_selection(app, job_id)
             await pilot.press("l")
             await _wait_for_log(app, "initial-job")
             with path.open("a", encoding="utf-8") as log:
@@ -193,6 +211,25 @@ async def test_focused_logs_report_the_actual_tail_and_server_truncation(
             assert log_view.scroll_offset.y == 0, (
                 "queued tail scroll overrode navigation"
             )
+
+            def repaint_twice() -> None:
+                log_view.toggle_expanded()
+                log_view.toggle_expanded()
+
+            # Each step scrolls to the tail while following. Deferring that
+            # scroll unchecked to the next frame failed exactly its own label
+            # (exit 1) - jump_end, scroll_followed_tail, or the per-line writes
+            # of a repaint - and scrolling at once passed (exit 0).
+            for label, follow in (
+                ("jump to end", lambda: None),
+                ("delivered tail scroll", log_view.scroll_followed_tail),
+                ("repaint", repaint_twice),
+            ):
+                log_view.jump_end()
+                follow()
+                log_view.jump_top()
+                await pilot.pause()
+                assert log_view.scroll_offset.y == 0, f"{label} overrode navigation"
             with path.open("a", encoding="utf-8") as log:
                 log.write(f"job_id={job_id} latest-while-reading\n")
             app.refresh_focused_logs()

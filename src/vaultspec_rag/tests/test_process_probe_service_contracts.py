@@ -314,103 +314,16 @@ class TestPyprojectWritesGoThroughOneWriter:
                 assert pyproject.read_bytes() == before, repr(text[:40])
 
 
-class TestPublishGateAndRefusalAreShared:
-    """The manifest admission gate and the feedback refusal each have one home.
+class TestTheFeedbackRefusalIsShared:
+    """The feedback refusal has one home.
 
-    Two publishers opened their write loop with the same five-statement gate -
-    refuse unconverged, refuse out-of-order, remember the path, skip
-    non-indexed, assert the survivor has a hash - and then did entirely
-    different things with the survivor. Only the gate was shared; the loops
-    stayed. It had already drifted where drift is cheapest: the ordering
-    refusal was two sentences for one violation, so the explanation an operator
-    got depended on which index was publishing.
-
-    The feedback refusal is the more interesting shape. The HTTP route and the
-    service client each carried the same source set, the same "did the caller
-    name any points" test, and the same three-key envelope. The client builds
-    it locally to refuse without a round trip - worth doing, and exactly what
-    makes the copy dangerous, because the two are a request apart and a
-    server-side change leaves the client refusing on the old terms with nothing
-    observing the disagreement.
+    The HTTP route and the service client each carried the same source set,
+    the same "did the caller name any points" test, and the same three-key
+    envelope. The client builds it locally to refuse without a round trip -
+    worth doing, and exactly what makes the copy dangerous, because the two
+    are a request apart and a server-side change leaves the client refusing on
+    the old terms with nothing observing the disagreement.
     """
-
-    def test_no_publisher_writes_its_own_admission_gate(self) -> None:
-        """A second gate is a second definition of publishable evidence."""
-        find_offenders: list[str] = []
-        for path in every_production_file():
-            if path.name == "_file_state.py":
-                continue
-            try:
-                tree = ast.parse(path.read_text(encoding="utf-8"))
-            except SyntaxError:  # pragma: no cover - parsed elsewhere
-                continue
-            find_offenders.extend(
-                f"{path.name}:{node.lineno}"
-                for node in ast.walk(tree)
-                if isinstance(node, ast.Constant)
-                and isinstance(node.value, str)
-                and (
-                    "cannot publish unresolved file state" in node.value
-                    or "ledger file states must be" in node.value
-                )
-            )
-        assert not find_offenders, (
-            f"a publisher states the admission rule itself at {find_offenders}; "
-            "iterate with iter_publishable_states, so one violation is not "
-            "explained two ways depending on which index published"
-        )
-
-    def test_the_gate_refuses_unconverged_and_unordered_evidence(self) -> None:
-        """Both refusals, and the skip that is not a refusal.
-
-        Proven able to fail: dropping the ``converged`` clause fails on the
-        unconverged case; dropping the ordering clause fails on the duplicate.
-        """
-        from .._job_errors import JobErrorKind
-        from ..indexer._content_policy import AdmissionReason, ContentKind
-        from ..indexer._file_state import (
-            FileState,
-            FileStateKind,
-            iter_publishable_states,
-        )
-
-        digest = "a" * 128
-
-        def indexed(rel_path: str) -> FileState:
-            return FileState(
-                rel_path=rel_path,
-                state=FileStateKind.INDEXED,
-                kind=ContentKind.CODE,
-                content_hash=digest,
-            )
-
-        def skipped(rel_path: str) -> FileState:
-            return FileState(
-                rel_path=rel_path,
-                state=FileStateKind.POLICY_REJECTED,
-                kind=None,
-                admission_reason=AdmissionReason.IGNORED,
-            )
-
-        assert [
-            rel
-            for rel, _ in iter_publishable_states([indexed("a.py"), skipped("b.py")])
-        ] == ["a.py"]
-        with pytest.raises(ValueError, match="unique and ordered"):
-            list(iter_publishable_states([indexed("a.py"), indexed("a.py")]))
-        with pytest.raises(ValueError, match="unique and ordered"):
-            list(iter_publishable_states([indexed("b.py"), indexed("a.py")]))
-
-        unconverged = FileState(
-            rel_path="pending.py",
-            state=FileStateKind.EXTRACT_RETRYABLE,
-            kind=ContentKind.CODE,
-            error_kind=JobErrorKind.EXTRACTION_RETRYABLE,
-            detail="transient",
-        )
-        assert not unconverged.converged
-        with pytest.raises(ValueError, match="cannot publish unresolved"):
-            list(iter_publishable_states([unconverged]))
 
     def test_no_surface_builds_the_feedback_refusal_itself(self) -> None:
         """The client and the route must refuse on identical terms."""

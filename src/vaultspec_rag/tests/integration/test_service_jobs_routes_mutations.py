@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 import pytest
-from starlette.requests import Request
 
 from ... import jobs as _jobs
 from ...indexer._run_ledger_models import RunAuthority
@@ -31,20 +30,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def _job_request() -> Request:
-    return Request(
-        cast(
-            "Any",
-            {
-                "type": "http",
-                "method": "POST",
-                "path": "/jobs",
-                "headers": [],
-            },
-        )
-    )
-
-
 @pytest.mark.unit
 @pytest.mark.parametrize(
     ("mode", "authority"),
@@ -61,8 +46,7 @@ async def test_generic_service_admission_preserves_closed_authority(
 ) -> None:
     """The generic HTTP adapter must retain the exact admitted enum member."""
     (tmp_path / ".vault").mkdir()
-    spec, _initiator, _paused, _key, _admission = await validated_index_request(
-        _job_request(),
+    spec, _initiator, _admission = await validated_index_request(
         {
             "operation": "index",
             "source": "vault",
@@ -107,7 +91,7 @@ async def test_generic_service_admission_rejects_invalid_authority(
         payload["authority"] = raw_authority
 
     with pytest.raises(InvalidJobRequestError) as raised:
-        await validated_index_request(_job_request(), payload)
+        await validated_index_request(payload)
 
     assert raised.value.code == "invalid_job_spec"
 
@@ -149,7 +133,6 @@ def _attempt_contract(
     registry = ServiceRegistry()
     dispatch = _AttemptDispatch(
         source=JobSource.DOCUMENT,
-        manager=manager,
         job_id=created.job.id,
         root=tmp_path,
         mode=mode,
@@ -307,17 +290,42 @@ async def _assert_mutation_overlaps_auth_probe(
     return response
 
 
+async def _assert_reindex_refuses_unauthorised_modes(
+    client: httpx.AsyncClient,
+    headers: dict[str, str],
+    root: Path,
+) -> None:
+    """Require missing and mismatched authority to fail before any admission."""
+    for clean, authority in (
+        (False, None),
+        (True, "publication"),
+        (False, "audit_verification"),
+    ):
+        payload: dict[str, object] = {
+            "type": "vault",
+            "clean": clean,
+            "project_root": str(root),
+        }
+        if authority is not None:
+            payload["authority"] = authority
+        refused = await client.post("/reindex", headers=headers, json=payload)
+        assert refused.status_code == 400, refused.text
+        assert refused.json()["code"] == "invalid_job_spec"
+
+
 @pytest.mark.unit
 async def test_job_mutations_keep_real_asgi_loop_responsive(
     tmp_path: Path,
 ) -> None:
-    """Real durable CRUD writes must overlap an immediate ASGI auth response."""
-    from ...config._settings import reset_config
+    """Real durable job writes must overlap an immediate ASGI auth response."""
     from ...config._types import EnvVar
     from ...jobs import get_job_manager, reset
+    from .._config_fixtures import reset_config
 
     prior_status_dir = os.environ.get(EnvVar.STATUS_DIR)
+    prior_watch_enabled = os.environ.get(EnvVar.WATCH_ENABLED)
     os.environ[EnvVar.STATUS_DIR] = str(tmp_path / "status")
+    os.environ[EnvVar.WATCH_ENABLED] = "false"
     reset_config()
     reset()
     _jobs.reset()
@@ -328,6 +336,9 @@ async def test_job_mutations_keep_real_asgi_loop_responsive(
     try:
         manager = get_job_manager()
         _seed_persistence_backpressure(manager, large_root)
+        # Admission still persists while dispatch is stopped, so the created
+        # job stays queued and no index attempt runs under this probe.
+        manager.begin_shutdown()
 
         app_under_test = create_http_app(
             ServerRouteRuntime(token=token, registry=ServiceRegistry(), port=8765),
@@ -336,58 +347,28 @@ async def test_job_mutations_keep_real_asgi_loop_responsive(
         transport = httpx.ASGITransport(app=app_under_test)
         async with httpx.AsyncClient(
             transport=transport,
-            base_url="http://testserver",
+            base_url="http://127.0.0.1",
         ) as client:
-            missing_authority = await client.post(
-                "/jobs",
-                headers=headers,
-                json={
-                    "operation": "index",
-                    "source": "vault",
-                    "project_root": str(target_root),
-                    "mode": "incremental",
-                    "start_paused": True,
-                },
+            await _assert_reindex_refuses_unauthorised_modes(
+                client, headers, target_root
             )
-            assert missing_authority.status_code == 400
-            assert missing_authority.json()["code"] == "invalid_job_spec"
-
-            for mode, authority in (
-                ("rebuild", "publication"),
-                ("incremental", "audit_verification"),
-            ):
-                unsupported_authority = await client.post(
-                    "/jobs",
-                    headers=headers,
-                    json={
-                        "operation": "index",
-                        "source": "vault",
-                        "project_root": str(target_root),
-                        "mode": mode,
-                        "authority": authority,
-                        "start_paused": True,
-                    },
-                )
-                assert unsupported_authority.status_code == 400
-                assert unsupported_authority.json()["code"] == "invalid_job_spec"
 
             created = await _assert_mutation_overlaps_auth_probe(
                 client,
                 client.post(
-                    "/jobs",
+                    "/reindex",
                     headers=headers,
                     json={
-                        "operation": "index",
-                        "source": "vault",
+                        "type": "vault",
+                        "clean": False,
                         "project_root": str(target_root),
-                        "mode": "incremental",
                         "authority": "publication",
-                        "start_paused": True,
                     },
                 ),
             )
-            assert created.status_code == 202, created.text
-            job = cast("dict[str, object]", created.json()["job"])
+            assert created.status_code == 200, created.text
+            outcome = cast("dict[str, object]", created.json()["outcome"])
+            job = cast("dict[str, object]", outcome["job"])
             spec = cast("dict[str, object]", job["spec"])
             assert spec["authority"] == "publication"
             job_id = str(job["id"])
@@ -405,7 +386,6 @@ async def test_job_mutations_keep_real_asgi_loop_responsive(
             )
             assert cancelled.status_code == 200, cancelled.text
 
-            manager.begin_shutdown()
             retried = await _assert_mutation_overlaps_auth_probe(
                 client, client.post(f"/jobs/{job_id}/retry", headers=headers)
             )
@@ -422,4 +402,8 @@ async def test_job_mutations_keep_real_asgi_loop_responsive(
             os.environ.pop(EnvVar.STATUS_DIR, None)
         else:
             os.environ[EnvVar.STATUS_DIR] = prior_status_dir
+        if prior_watch_enabled is None:
+            os.environ.pop(EnvVar.WATCH_ENABLED, None)
+        else:
+            os.environ[EnvVar.WATCH_ENABLED] = prior_watch_enabled
         reset_config()

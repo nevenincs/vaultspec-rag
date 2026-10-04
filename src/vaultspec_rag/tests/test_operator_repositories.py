@@ -37,7 +37,7 @@ def client(isolated_status_dir: Path) -> Iterator[TestClient]:
     with managed_env(**{EnvVar.WATCH_ENABLED.value: "false"}):
         registry = ServiceRegistry()
         app = create_http_app(ServerRouteRuntime(_TOKEN, registry, 8765), None)
-        with TestClient(app) as http:
+        with TestClient(app, base_url="http://127.0.0.1") as http:
             yield http
         registry.close_all()
 

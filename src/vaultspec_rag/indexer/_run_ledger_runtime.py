@@ -9,7 +9,7 @@ import time
 import uuid
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import Final
 
 from .._source_types import PublicSourceType
 from ..logging_config import log_event
@@ -52,9 +52,6 @@ from ._run_ledger_publication_identity import (
 from ._run_ledger_publication_proofs import RunLedgerPublicationProofMethods
 from ._run_ledger_publication_reads import RunLedgerPublicationReadMethods
 from ._run_ledger_publication_receipts import RunLedgerPublicationReceiptMethods
-
-if TYPE_CHECKING:
-    from ._content_policy import ContentKind
 
 __all__ = ["RunLedger", "set_aside_unsupported_ledger"]
 
@@ -317,31 +314,6 @@ class RunLedger(
         if row is None:
             raise KeyError(generation_id)
         return self._generation_from_row(row)
-
-    def latest_generation(
-        self,
-        source_type: ContentKind,
-        *,
-        collection_identity: str | None = None,
-    ) -> RunGeneration | None:
-        """Return the latest typed generation without loading its file rows."""
-        parameters: tuple[object, ...] = (source_type.value,)
-        collection_clause = ""
-        if collection_identity is not None:
-            collection_clause = " AND collection_identity = ?"
-            parameters = (*parameters, collection_identity)
-        with ledger_connection(self.path) as connection:
-            row: GenerationRow | None = fetch_one(
-                connection,
-                f"""
-                SELECT * FROM generations
-                WHERE source_type = ?{collection_clause}
-                ORDER BY updated_at DESC, created_at DESC
-                LIMIT 1
-                """,
-                parameters,
-            )
-        return self._generation_from_row(row) if row is not None else None
 
     def _require_current_or_empty_schema(
         self,
