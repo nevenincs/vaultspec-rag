@@ -1,9 +1,9 @@
 """Bearer/query-token gating shared by every monitoring and control route.
 
-The per-process ``service_token`` is a pragmatic monitoring gate, not an auth
-boundary - the real boundary is the loopback-only HTTP bind. Every route
-handler across the route modules calls :func:`require_token` first and
-returns its 401 response unchanged when gating fails.
+The per-process credential is discovered through protected local files.
+Host and Origin checks enforce the browser boundary before routing. Every
+protected route calls :func:`require_token` first and returns its 401 response
+unchanged when authentication fails.
 """
 
 from __future__ import annotations

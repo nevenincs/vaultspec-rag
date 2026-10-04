@@ -46,7 +46,7 @@ def fixture_route_client(tmp_path: Path) -> Iterator[tuple[TestClient, str, Path
         ),
         lifespan=None,
     )
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         yield client, "watcher-projection-token", root
     jobs.reset()
     _watcher._watcher_scheduler = prior_scheduler

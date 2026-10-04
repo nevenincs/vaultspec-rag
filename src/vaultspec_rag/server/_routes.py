@@ -942,7 +942,8 @@ async def code_file_route(request: Request) -> JSONResponse:
                 return {"error": f"path '{path}' is outside the workspace"}
             from ._utils import _is_sensitive_path
 
-            if _is_sensitive_path(path):
+            canonical_path = full_path.relative_to(root_resolved).as_posix()
+            if _is_sensitive_path(path) or _is_sensitive_path(canonical_path):
                 return {"error": "access denied"}
             if not full_path.exists():
                 return {"error": f"File '{path}' not found"}

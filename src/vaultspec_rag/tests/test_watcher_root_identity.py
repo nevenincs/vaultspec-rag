@@ -102,7 +102,7 @@ async def test_http_root_aliases_select_all_real_policy_controllers(
     )
     alias = _alias(root, spelling)
     async with AsyncClient(
-        transport=ASGITransport(app), base_url="http://test"
+        transport=ASGITransport(app), base_url="http://127.0.0.1"
     ) as client:
         response = await client.get(
             "/watcher",
@@ -206,7 +206,7 @@ async def test_invalid_root_query_is_an_actionable_bad_request(parameter: str) -
         else {parameter: "a\0b"}
     )
     async with AsyncClient(
-        transport=ASGITransport(app), base_url="http://test"
+        transport=ASGITransport(app), base_url="http://127.0.0.1"
     ) as client:
         response = await client.get(
             "/watcher",

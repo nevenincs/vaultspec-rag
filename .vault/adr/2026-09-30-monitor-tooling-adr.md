@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#monitor-tooling'
 date: '2026-09-30'
-modified: '2026-10-02'
+modified: '2026-10-04'
 body_schema: 'body-v2'
-body_hash: 'sha256:588b5f31fb0e2c1ce318eb9c27cdcc632607fb92dd8d8cf44c615c3b54afafea'
+body_hash: 'sha256:6f9b27b9f0b1ca1c8038c015da92e6b13190378fa6a5da337425baef41599145'
 related:
   - "[[2026-09-30-monitor-tooling-reference]]"
   - '[[2026-09-21-automatic-merge-gate-adr]]'
@@ -85,7 +85,7 @@ byte guard joins the existing accelerator-free test collection.
 interface. Reserving a frontend home does not replace it or authorize a second
 implementation of service behavior. The local automatic browser transport and bounded independent polling are now
 settled in `2026-09-30-monitor-browser-adr`; the service-domain contracts remain
-unchanged. The user's 2026-10-01 correction explicitly requires the monitor manifest to bind dev and preview to 0.0.0.0 and enable access for Tailscale nodes. Both strict-port services use that declared host. Local automatic service connection remains internal to the workstation; the browser's network reach follows the shared devservers reverse-proxy and tailnet configuration.
+unchanged. The user's historical 2026-10-01 wildcard/Tailscale correction is reversed by the authorized 2026-10-04 security fix in `2026-10-04-monitor-access-adr`. Both strict-port services now use the declared 127.0.0.1 host; the shared guard rejects remote peers and authorities even if a development launch overrides the listener. Local automatic credentials and local proxy aliases remain supported. Direct Tailnet and Tailscale Serve access are unsupported.
 
 The npm lockfile and Vite build remain canonical. For release delivery, monitor-delivery adds Bun solely for native server compilation and embedded asset packaging; the compiled command does not require npm, Node, Vite or the shared development harness at launch.
 
@@ -110,10 +110,7 @@ control and process ownership rather than another implementation.
 
 Frontend dependencies remain separate from Python packaging. The user's 2026-10-02 request authorizes a daemon-owned monitor for managed server start/stop under `2026-10-02-monitor-lifecycle-adr`. Its actual port starts at the backend port plus one and advances until free; the fixed manifest allocation and canonical harness continue to govern standalone development. The initial browser entry was blank; the user's subsequent feature request
 now authorizes the Carbon application after the passing TUI review.
-The registry can inspect this branch with `--worktree monitor`; ordinary
-main-only registry and tailnet generation pick it up after landing.
-Tailnet HTTPS uses the established port offset. Its feature-worktree mapping
-must be applied explicitly while the main checkout lacks the declaration.
+The registry can inspect this branch with `--worktree monitor`. The monitor's loopback-only declaration must not be exposed through an unauthenticated remote proxy.
 
 A stack upgrade must follow the shared standard rather than change one
 consumer independently.

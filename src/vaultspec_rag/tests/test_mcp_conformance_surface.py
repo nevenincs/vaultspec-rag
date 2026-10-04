@@ -311,6 +311,30 @@ class TestProjectRootWireContract:
         assert omitted == "environment root\n"
         assert explicit == "explicit root\n"
 
+    def test_sensitive_code_file_alias_is_denied(
+        self,
+        tmp_path: Path,
+        service_routes: int,
+    ) -> None:
+        """Removing canonical authorization failed with DID NOT RAISE;
+        restoring it passed the live MCP denial and ordinary-source control.
+        """
+        from ..mcp._tools import get_code_file
+        from ._cli_helpers import _running_service_record
+
+        root = _workspace(tmp_path / "project").resolve()
+        (root / ".env").write_text("protected fixture content\n", encoding="utf-8")
+        (root / "source.py").symlink_to(root / ".env")
+        content = "print('hello')\n"
+        (root / "main.py").write_text(content, encoding="utf-8")
+
+        with _running_service_record(tmp_path / "status", service_routes):
+            with pytest.raises(ValueError, match=r"^access denied$"):
+                asyncio.run(get_code_file("source.py", project_root=str(root)))
+            assert (
+                asyncio.run(get_code_file("main.py", project_root=str(root))) == content
+            )
+
 
 class _EmptyBody404Handler(QuietHandler):
     """A server that answers every request with a bodyless 404."""

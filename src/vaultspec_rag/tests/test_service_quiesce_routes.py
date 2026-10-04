@@ -173,7 +173,9 @@ def quiesce_routes() -> Generator[QuiesceRoutes]:
         ServerRouteRuntime(token=_TOKEN, registry=registry, port=8765),
         lifespan=None,
     )
-    with TestClient(app, raise_server_exceptions=False) as client:
+    with TestClient(
+        app, raise_server_exceptions=False, base_url="http://127.0.0.1"
+    ) as client:
         yield QuiesceRoutes(client, registry)
 
 

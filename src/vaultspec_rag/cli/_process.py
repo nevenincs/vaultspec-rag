@@ -182,6 +182,8 @@ def _is_our_service(
     if port is not None and expected_token:
         probe = _try_http_health(port)
         if probe is not None:
+            if probe.get("http_code") == 401:
+                return False
             response_token = probe.get("service_token")
             if isinstance(response_token, str) and response_token:
                 # Both sides reported a token - the comparison is

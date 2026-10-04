@@ -354,6 +354,9 @@ try:
     registered = {tool.name for tool in asyncio.run(mcp.list_tools())}
     assert registered == set(calls), sorted(registered ^ set(calls))
     for name, call in calls.items():
+        recorded = json.loads((status_dir / SERVICE_STATUS_FILENAME).read_text())
+        recorded['service_token'] = STATUS_TOKEN
+        (status_dir / SERVICE_STATUS_FILENAME).write_text(json.dumps(recorded))
         before = len(seen)
         result = asyncio.run(call())
         assert result is not None, name
@@ -385,35 +388,33 @@ def check(name, events):
 """
 
 #: The daemon rejects the recorded token once, publishes a different live one
-#: on its ungated health route, and accepts the retry that carries it. The
+#: in protected discovery, and accepts the retry that carries it. The
 #: recorded token must differ from the live one or the transport declines to
 #: retry at all, which would leave the branch unexecuted and the guard
 #: reporting on nothing.
 _REJECTS_THE_TOKEN_ONCE = """
 STATUS_TOKEN = 'stale-recorded-token'
-LIVE_TOKEN = 'live-health-token'
+LIVE_TOKEN = 'live-discovery-token'
 
 
 def respond(handler):
-    if handler.path == '/health':
-        seen.append((handler.path, 'health'))
-        answer(handler, 200, {'ok': True, 'service_token': LIVE_TOKEN})
-        return
     if presented_token(handler) == LIVE_TOKEN:
         seen.append((handler.path, 'answered'))
         answer(handler, 200, None)
         return
     seen.append((handler.path, 'rejected'))
+    recorded = json.loads((status_dir / SERVICE_STATUS_FILENAME).read_text())
+    recorded['service_token'] = LIVE_TOKEN
+    (status_dir / SERVICE_STATUS_FILENAME).write_text(json.dumps(recorded))
     answer(handler, 401, {'ok': False, 'error': 'unauthorized'})
 
 
 def check(name, events):
     assert [event for _path, event in events] == [
         'rejected',
-        'health',
         'answered',
     ], (name, events)
-    rejected, _health, answered = events
+    rejected, answered = events
     assert rejected[0] == answered[0], (name, events)
 """
 

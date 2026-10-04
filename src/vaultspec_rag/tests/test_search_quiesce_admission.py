@@ -135,7 +135,9 @@ def test_quiesced_search_returns_the_retryable_envelope_for_every_source(
         lifespan=None,
     )
     marker = f"quiesce-admission-{time_ns()}"
-    with TestClient(app, raise_server_exceptions=False) as client:
+    with TestClient(
+        app, raise_server_exceptions=False, base_url="http://127.0.0.1"
+    ) as client:
         responses = {
             source: client.post(
                 "/search",

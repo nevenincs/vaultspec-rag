@@ -126,7 +126,10 @@ class TestServerRouteRuntime:
             )
 
         app.add_route("/failing", failing)
-        client = cast("httpx.Client", TestClient(app, raise_server_exceptions=False))
+        client = cast(
+            "httpx.Client",
+            TestClient(app, raise_server_exceptions=False, base_url="http://127.0.0.1"),
+        )
 
         response = client.get("/failing")
 
@@ -956,7 +959,7 @@ class TestHealthHandler:
             assert DegradationReason.NONCONFORMING in {
                 degradation.reason for degradation in report.degradations
             }
-            assert report.service_token == "health-lock-test-token"
+            assert report.service_token is None
 
     def test_health_handler_returns_json(self):
         """health_handler returns a JSONResponse with expected keys."""
@@ -970,7 +973,9 @@ class TestHealthHandler:
             ),
             lifespan=None,
         )
-        client: httpx.Client = cast("httpx.Client", TestClient(app))
+        client: httpx.Client = cast(
+            "httpx.Client", TestClient(app, base_url="http://127.0.0.1")
+        )
         resp: httpx.Response = client.get("/health")
         assert resp.status_code == 200
         data: dict[str, object] = cast("dict[str, object]", resp.json())
@@ -1016,7 +1021,9 @@ class TestHealthHandler:
             ),
             lifespan=None,
         )
-        client: httpx.Client = cast("httpx.Client", TestClient(app))
+        client: httpx.Client = cast(
+            "httpx.Client", TestClient(app, base_url="http://127.0.0.1")
+        )
         # A fresh registry is not enough: the not-started verdict reads a
         # reassigned process global that lifespan startup stamps once and
         # never clears, so any earlier test that ran a lifespan leaves this
@@ -1050,7 +1057,9 @@ class TestHealthInfoReduction:
             ),
             lifespan=None,
         )
-        client: httpx.Client = cast("httpx.Client", TestClient(app))
+        client: httpx.Client = cast(
+            "httpx.Client", TestClient(app, base_url="http://127.0.0.1")
+        )
         raw = client.get("/health").json()
         data: dict[str, object] = cast("dict[str, object]", raw)
         assert "projects" not in data
@@ -1069,7 +1078,9 @@ class TestHealthInfoReduction:
             ),
             lifespan=None,
         )
-        client: httpx.Client = cast("httpx.Client", TestClient(app))
+        client: httpx.Client = cast(
+            "httpx.Client", TestClient(app, base_url="http://127.0.0.1")
+        )
         raw = client.get("/health").json()
         data: dict[str, object] = cast("dict[str, object]", raw)
         assert "gpu_name" not in data

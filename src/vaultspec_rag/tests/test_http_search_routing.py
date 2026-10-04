@@ -433,7 +433,10 @@ async def test_asgi_disconnect_cancels_without_response_and_cleans_waiter(
         "raw_path": b"/search",
         "query_string": b"",
         "root_path": "",
-        "headers": [(b"authorization", f"Bearer {token}".encode())],
+        "headers": [
+            (b"host", b"127.0.0.1:8765"),
+            (b"authorization", f"Bearer {token}".encode()),
+        ],
         "client": ("127.0.0.1", 50000),
         "server": ("127.0.0.1", 8765),
         "state": {},

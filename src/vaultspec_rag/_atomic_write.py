@@ -77,6 +77,7 @@ class JsonWriteOptions:
     sort_keys: bool = False
     compact: bool = False
     durable: bool = False
+    private: bool = False
 
 
 _DEFAULT_JSON_WRITE_OPTIONS = JsonWriteOptions()
@@ -232,7 +233,17 @@ def write_json_atomically(
         # newline="" so the bytes do not depend on the platform: with an
         # indent, the default translation would emit CRLF on Windows and LF
         # elsewhere for the same payload.
-        with temporary.open("w", encoding="utf-8", newline="") as handle:
+        if options.private and sys.platform == "win32":
+            from ._win32 import create_private_file
+
+            descriptor = create_private_file(str(temporary))
+        else:
+            descriptor = os.open(
+                temporary,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600 if options.private else 0o666,
+            )
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as handle:
             handle.write(encoded)
             if options.durable:
                 handle.flush()

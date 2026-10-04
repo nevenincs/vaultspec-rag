@@ -51,6 +51,11 @@ If a submission fails or a job shows `failed` or `cancelled`, follow the
 
 ## Step 3: Run your first search
 
+When no search type is specified (no `--type`), search defaults to source code
+and architecture decision records (ADRs), ranked together. Use `--type code`
+to search source code only, as in the example below. Use `--type vault` for all
+vault record types, or `--type combined` to include all three indexes.
+
 Choose a function you know exists in your indexed project. Replace the example
 query with its name and a brief description of its behavior:
 

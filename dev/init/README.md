@@ -27,17 +27,10 @@ entry. Ports and proxy names are declared in the root `package.json`.
 
 The shared proxy supplies `https://vaultspec-rag-monitor.localhost/`. Trust
 its local certificate authority with `portless trust` in an interactive
-terminal if your browser does not already trust it. The server also accepts
-the workstation's Tailscale hostname, declared under `devserver.allowedHosts`.
-For tailnet HTTPS, enable Tailscale Serve in the tailnet administration first.
-The devservers repository's `just tailnet apply` maps enrolled main checkouts
-with its fixed HTTPS port offset; a feature worktree needs an explicit mapping
-until it lands. Compute that mapping from the frontend declaration:
-
-```powershell
-$monitorPort = (Get-Content package.json -Raw | ConvertFrom-Json).portless.appPort
-tailscale serve --bg --yes --https=($monitorPort + 10000) "http://127.0.0.1:$monitorPort"
-```
+terminal if your browser does not already trust it. The monitor binds to
+`127.0.0.1` and admits only loopback clients at local hosts. Direct Tailnet and
+Tailscale Serve exposure are unsupported. Use an authenticated SSH tunnel for
+remote access, and keep the local proxy restricted to local clients.
 
 ## The contract
 

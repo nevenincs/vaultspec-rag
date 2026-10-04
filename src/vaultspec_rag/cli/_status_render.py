@@ -184,6 +184,8 @@ def _compute_token_match(
     if expected_token is None or not pid_alive:
         return None
     probe_for_token = _try_http_health(port) if port_listening else None
+    if probe_for_token is not None and probe_for_token.get("http_code") == 401:
+        return False
     if probe_for_token is not None and isinstance(
         probe_for_token.get("service_token"),
         str,
@@ -1085,6 +1087,8 @@ def _status_response_token_match(
     health: dict[str, object] | None,
 ) -> bool | None:
     response_token = health.get("service_token") if isinstance(health, dict) else None
+    if expected_token and health is not None and health.get("http_code") == 401:
+        return False
     if isinstance(response_token, str) and expected_token:
         return bool(response_token) and response_token == expected_token
     return None

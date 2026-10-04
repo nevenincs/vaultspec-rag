@@ -88,7 +88,9 @@ def _production_route_response(
     )
     with (
         _inject_classified_domain_outcome(scenario),
-        TestClient(app, raise_server_exceptions=False) as client,
+        TestClient(
+            app, raise_server_exceptions=False, base_url="http://127.0.0.1"
+        ) as client,
     ):
         response = client.post(
             "/search",
@@ -191,7 +193,9 @@ def test_matrix_capacity_without_reset_deadline_is_503_without_retry_after(
     )
     with (
         _inject_queue_full_activity(),
-        TestClient(app, raise_server_exceptions=False) as client,
+        TestClient(
+            app, raise_server_exceptions=False, base_url="http://127.0.0.1"
+        ) as client,
     ):
         response = client.post(
             "/search",

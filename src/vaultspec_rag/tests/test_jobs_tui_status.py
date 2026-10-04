@@ -7,13 +7,14 @@ never painted answers nothing.
 
 The service under test is a real loopback ``http.server`` gating its
 administrative routes on the bearer token exactly as the daemon does, so the
-transport's token-recovery path is exercised rather than assumed.
+transport reads its credential from protected local discovery.
 """
 
 from __future__ import annotations
 
 import http.server
 import json
+import os
 import threading
 import typing
 
@@ -28,9 +29,10 @@ from ..cli._jobs_tui_status import (
     render_status_header,
 )
 from ..operator_state._service import HealthVerdict
+from ..serviceclient._discovery import _replace_service_status
 from ._http_stubs import QuietHandler
 
-pytestmark = [pytest.mark.unit]
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("isolated_status_dir")]
 
 _SHUTDOWN_TIMEOUT = 5.0
 _TOKEN = "08a6716c4f7442f1b4beddb007d646bd"
@@ -161,8 +163,8 @@ def _status_answers(
 class _StatusService:
     """A real loopback service answering the header's four routes.
 
-    Routes other than ``/health`` are token-gated the way the daemon gates
-    them, so a test drives the transport's real 401-then-retry recovery.
+    Protected routes use the credential published in local discovery, and
+    public health omits it unless the caller is authenticated.
     """
 
     def __init__(
@@ -198,7 +200,10 @@ class _StatusService:
 
             def _health(self) -> None:
                 if isinstance(health, dict):
-                    self._json(health_status, typing.cast("dict[str, object]", health))
+                    payload = dict(typing.cast("dict[str, object]", health))
+                    if not self._authorised():
+                        payload.pop("service_token", None)
+                    self._json(health_status, payload)
                     return
                 self._json(health_status, {"ok": False})
 
@@ -233,6 +238,9 @@ class _StatusService:
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
+        _replace_service_status(
+            {"pid": os.getpid(), "port": self.port, "service_token": _TOKEN}
+        )
 
     @property
     def port(self) -> int:

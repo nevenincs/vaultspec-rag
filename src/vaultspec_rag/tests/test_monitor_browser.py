@@ -139,7 +139,7 @@ def test_local_bridge_connects_without_browser_credentials(
         assert logs["filters"] == {"job_id": job_id}
         assert "browser-correlated-record" in json.dumps(logs)
         _, upstream = _read(monitor_http[0], "/health", prefix="")
-        assert upstream["service_token"] == "monitor-test-token"
+        assert "service_token" not in upstream
         _, health = _read(port, "/health")
         # Removing token deletion failed this assertion; restored it passes.
         assert "service_token" not in health
@@ -147,6 +147,11 @@ def test_local_bridge_connects_without_browser_credentials(
         discovery = directory / "service.json"
         metadata = json.loads(discovery.read_text(encoding="utf-8"))
         metadata["service_token"] = "obsolete-test-token"
+        discovery.write_text(json.dumps(metadata), encoding="utf-8")
+        status, refreshed = _read(port, f"/jobs?limit=100&job_id={job_id}")
+        assert status == 401
+        assert refreshed["error"] == "unauthorized"
+        metadata["service_token"] = "monitor-test-token"
         discovery.write_text(json.dumps(metadata), encoding="utf-8")
         status, refreshed = _read(port, f"/jobs?limit=100&job_id={job_id}")
         assert status == 200
@@ -167,7 +172,7 @@ def test_local_bridge_refuses_foreign_origins_and_unrelated_routes(
     status, answer = _read(port, "/health", origin="http://example.invalid")
     assert status == 403
     assert answer["message"] == (
-        "The monitor accepts local and Tailscale clients at its declared host."
+        "The monitor accepts only loopback clients at a local host."
     )
     status, answer = _read(port, "/readiness")
     assert status == 404
@@ -342,7 +347,25 @@ def test_local_bridge_forwards_operator_inventory_and_controls(
         "[fd7a:115c:a1e0::2c01:feb6]:5420",
     ],
 )
-def test_bridge_accepts_tailnet_proxy_authorities(
+@pytest.mark.parametrize("send_origin", [True, False])
+def test_bridge_refuses_tailnet_proxy_authorities(
+    browser_bridge: tuple[int, Path], host: str, send_origin: bool
+) -> None:
+    port, _ = browser_bridge
+    # Restoring Tailnet Host admission fails this assertion; loopback-only passes.
+    status, answer = _read(
+        port, "/health", host=host, origin=f"https://{host}" if send_origin else None
+    )
+    assert status == 403
+    assert answer["message"] == (
+        "The monitor accepts only loopback clients at a local host."
+    )
+
+
+@pytest.mark.parametrize(
+    "host", ["localhost:5420", "vaultspec-rag-monitor.localhost", "[::1]:5420"]
+)
+def test_bridge_accepts_local_proxy_authorities(
     browser_bridge: tuple[int, Path], host: str
 ) -> None:
     port, _ = browser_bridge
@@ -350,11 +373,6 @@ def test_bridge_accepts_tailnet_proxy_authorities(
     assert status == 200
     assert "service_token" not in health
     assert "token" not in health
-    # Bypassing origin matching failed this assertion; restored it passed.
-    status, _ = _read(
-        port, "/health", host=host, origin="https://other.taild36992.ts.net"
-    )
-    assert status == 403
 
 
 @pytest.mark.parametrize("host", ["other.taild36992.ts.net", "100.128.0.1"])
@@ -367,7 +385,7 @@ def test_bridge_refuses_undeclared_proxy_authorities(
     assert status == 403
 
 
-def test_bridge_refuses_a_client_outside_local_and_tailnet_ranges(
+def test_bridge_refuses_a_client_outside_admitted_loopback_addresses(
     browser_bridge: tuple[int, Path],
 ) -> None:
     port, _ = browser_bridge
