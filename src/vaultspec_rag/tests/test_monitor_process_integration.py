@@ -107,6 +107,8 @@ def test_monitor_allocates_after_custom_backend_and_republishes_discovery(
                 )
                 envelope = json.loads(stdout.getvalue())
                 assert envelope["data"]["monitor_port"] == backend_port + 3
+            with pytest.raises(OSError):
+                bind_released_loopback_port(backend_port + 3)
             asyncio.run(
                 _shutdown_components([], None, publisher, publisher.runtime.registry)
             )
@@ -183,7 +185,7 @@ def test_forced_parent_death_closes_frontend_and_stop_clears_assignment(
             envelope = json.loads(result.stdout)
             assert envelope["ok"] is True
             assert not (isolated_singleton_dirs / "monitor.json").exists()
-            bind_released_loopback_port(fields["monitor_port"])
+            bind_released_loopback_port(cast("int", fields["monitor_port"]))
         finally:
             if parent.poll() is None:
                 parent.kill()

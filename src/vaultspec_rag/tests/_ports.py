@@ -7,8 +7,8 @@ one definition of what that means instead of one per module.
 
 from __future__ import annotations
 
-import os
 import socket
+import sys
 
 
 def free_loopback_port() -> int:
@@ -32,13 +32,16 @@ def bind_released_loopback_port(port: int) -> None:
     TIME_WAIT on its port, and POSIX refuses a plain bind to it for about a
     minute after the listener is gone. ``SO_REUSEADDR`` admits that case and
     still refuses a live listener. Windows' ``SO_REUSEADDR`` would admit a live
-    listener too, so it keeps the plain bind.
+    listener too, so it binds exclusively instead, which also refuses a
+    listener that itself opted into address sharing.
 
     A listener held on the port failed this bind on Linux (errno 98) and in the
     Windows monitor allocation test (WinError 10048); closing it passed, and on
     Linux a server-side TIME_WAIT left behind no longer failed it.
     """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        if os.name != "nt":
+        if sys.platform == "win32":
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        else:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind(("127.0.0.1", port))

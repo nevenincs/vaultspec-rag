@@ -617,12 +617,9 @@ class JobsLogView(RetainedLog[LogEntry]):
 
     # -- navigation ---------------------------------------------------------
 
-    # A deferred scroll_end is not rechecked when it lands, so it would undo
-    # any navigation made before the next frame. Tail scrolls here run at once.
-
     def jump_top(self) -> None:
         self.auto_scroll = False
-        self.scroll_home(animate=False)
+        self.scroll_home(animate=False, immediate=True)
 
     def jump_end(self) -> None:
         self.auto_scroll = True
@@ -639,7 +636,9 @@ class JobsLogView(RetainedLog[LogEntry]):
             return False
         self.auto_scroll = False
         self._error_cursor = (self._error_cursor + 1) % len(self._error_offsets)
-        self.scroll_to(y=self._error_offsets[self._error_cursor], animate=False)
+        self.scroll_to(
+            y=self._error_offsets[self._error_cursor], animate=False, immediate=True
+        )
         return True
 
     def jump_previous_error(self) -> bool:
@@ -648,7 +647,9 @@ class JobsLogView(RetainedLog[LogEntry]):
             return False
         self.auto_scroll = False
         self._error_cursor = (self._error_cursor - 1) % len(self._error_offsets)
-        self.scroll_to(y=self._error_offsets[self._error_cursor], animate=False)
+        self.scroll_to(
+            y=self._error_offsets[self._error_cursor], animate=False, immediate=True
+        )
         return True
 
     # -- rendering ----------------------------------------------------------
@@ -681,13 +682,6 @@ class JobsLogView(RetainedLog[LogEntry]):
         return semantic_tones(app.theme)
 
     def _paint(self) -> None:
-        self._render_held()
-        # RichLog's own per-write tail scroll lands after the next frame even
-        # when the reader navigated in between; this one rechecks follow state.
-        if self.auto_scroll:
-            self.call_after_refresh(self.scroll_followed_tail)
-
-    def _render_held(self) -> None:
         self.clear()
         self._error_offsets = []
         self._error_cursor = -1
@@ -695,6 +689,7 @@ class JobsLogView(RetainedLog[LogEntry]):
         self._rendered_width = width
         if self._message is not None:
             self.write(Text(self._message), scroll_end=False)
+            self.call_after_refresh(self.scroll_followed_tail)
             return
         tones = self._tones()
         hidden = 0
@@ -714,6 +709,7 @@ class JobsLogView(RetainedLog[LogEntry]):
             ):
                 self.write(line, scroll_end=False)
         self._flush_hidden(hidden)
+        self.call_after_refresh(self.scroll_followed_tail)
 
     def _flush_hidden(self, hidden: int) -> int:
         """Mark a collapsed run of polling lines where it sat. Returns 0."""

@@ -7,7 +7,6 @@ import os
 import socket
 import threading
 import time
-import urllib.request
 import uuid
 from typing import TYPE_CHECKING
 
@@ -29,7 +28,7 @@ from ..server._search_activity import SearchActivityCompletion, SearchActivitySt
 from ..server._state import search_activity_ledger
 from ..service import ServiceRegistry
 from ..serviceclient._discovery import _merge_service_status
-from ..serviceclient._transport import _try_http_admin
+from ..serviceclient._transport import _try_http_admin, _try_http_health
 from ._jobs_tui_harness import _screen_text, _settle
 
 if TYPE_CHECKING:
@@ -77,13 +76,12 @@ def monitor_http(isolated_status_dir: Path) -> Iterator[tuple[int, Path]]:
             if not worker.is_alive() or time.monotonic() >= deadline:
                 raise TimeoutError("production test routes did not start")
             time.sleep(0.005)
-        # A daemon has its accelerator stack loaded before it serves; this
-        # in-process server loads it on the first health reading instead, which
-        # outlasts the monitor's one-second health probe. Answer one first.
-        with urllib.request.urlopen(
-            f"http://127.0.0.1:{port}/health", timeout=_SCREEN_WAIT_SECONDS
-        ) as response:
-            assert response.status == 200
+        # A listening socket precedes the first health route's lazy imports.
+        # Log polling measures updates after the real routes can answer.
+        health = _try_http_health(port, timeout=20)
+        assert (
+            health is not None and health.get("service_token") == "monitor-test-token"
+        )
         yield port, isolated_status_dir
     finally:
         server.should_exit = True
