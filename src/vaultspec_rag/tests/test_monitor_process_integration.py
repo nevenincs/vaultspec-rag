@@ -7,9 +7,11 @@ import json
 import os
 import queue
 import shutil
+import socket
 import subprocess
 import sys
 import threading
+from http.client import HTTPConnection
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -142,6 +144,49 @@ def test_managed_monitor_connects_to_backend_and_canonical_lifecycle(
             assert json.load(response)["command"] == "service.status"
     finally:
         monitor.stop()
+
+
+@pytest.mark.usefixtures("isolated_singleton_dirs")
+def test_managed_monitor_confines_requests_and_listener_to_loopback() -> None:
+    """A compiled wildcard listener fails the destination refusal assertion;
+    restoring loopback passes. Removing admission fails the request assertion.
+    """
+    with _ports(1) as listeners:
+        monitor = MonitorProcess(listeners[0].getsockname()[1])
+        try:
+            monitor.start()
+            port = cast("int", monitor.discovery_fields()["monitor_port"])
+            with (
+                pytest.raises(ConnectionRefusedError),
+                socket.create_connection(("127.0.0.2", port), timeout=3),
+            ):
+                pass
+            for path in ("/", "/index.html", "/monitor.json"):
+                with LOOPBACK_OPENER.open(
+                    f"http://127.0.0.1:{port}{path}", timeout=8
+                ) as response:
+                    assert response.status == 200
+            for source, host in (
+                ("127.0.0.2", "127.0.0.1"),
+                ("127.0.0.1", "100.84.254.21"),
+            ):
+                for path in ("/", "/monitor.json", "/api/monitor/jobs"):
+                    connection = HTTPConnection(
+                        "127.0.0.1", port, timeout=8, source_address=(source, 0)
+                    )
+                    try:
+                        connection.request(
+                            "GET",
+                            path,
+                            headers={"Host": host, "Origin": f"http://{host}"},
+                        )
+                        response = connection.getresponse()
+                        assert response.status == 403
+                        response.read()
+                    finally:
+                        connection.close()
+        finally:
+            monitor.stop()
 
 
 def test_forced_parent_death_closes_frontend_and_stop_clears_assignment(

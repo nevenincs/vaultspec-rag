@@ -2,10 +2,9 @@ import { execFile } from "node:child_process";
 import { access, open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
-import { isIP } from "node:net";
 import { fileURLToPath } from "node:url";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import manifest from "../../../package.json" with { type: "json" };
+import type { Duplex } from "node:stream";
 
 const prefix = "/api/monitor";
 const maxResponseBytes = 32 * 1024 * 1024;
@@ -21,18 +20,6 @@ class InvalidRequestError extends Error {}
 
 type Connection = { port: number; token: string };
 
-function tailnetAddress(value: string): boolean {
-  const address = value
-    .toLowerCase()
-    .replace(/^::ffff:/, "")
-    .replace(/^\[|\]$/g, "");
-  if (isIP(address) === 4) {
-    const parts = address.split(".").map(Number);
-    return parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127;
-  }
-  return isIP(address) === 6 && address.startsWith("fd7a:115c:a1e0:");
-}
-
 function object(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -44,20 +31,13 @@ function localHost(host: string): boolean {
     host === "localhost" ||
     host.endsWith(".localhost") ||
     host === "127.0.0.1" ||
-    host === "[::1]" ||
-    tailnetAddress(host) ||
-    manifest.devserver.allowedHosts.some(
-      (allowed) => !allowed.startsWith(".") && allowed === host,
-    )
+    host === "[::1]"
   );
 }
 
 function localRequest(request: IncomingMessage): boolean {
   const address = request.socket.remoteAddress;
-  if (
-    !["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(address ?? "") &&
-    !tailnetAddress(address ?? "")
-  ) {
+  if (!["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(address ?? "")) {
     return false;
   }
   const host = request.headers.host;
@@ -395,14 +375,6 @@ async function forward(
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
-  if (!localRequest(request)) {
-    reply(response, 403, {
-      ok: false,
-      message:
-        "The monitor accepts local and Tailscale clients at its declared host.",
-    });
-    return;
-  }
   const route = new URL(request.url ?? "/", "http://127.0.0.1");
   route.pathname = route.pathname.slice(prefix.length);
   const method = request.method ?? "GET";
@@ -510,11 +482,22 @@ async function forward(
   }
 }
 
+export function monitorUpgrade(request: IncomingMessage, socket: Duplex): void {
+  if (!localRequest(request)) socket.destroy();
+}
+
 export function monitorMiddleware(
   request: IncomingMessage,
   response: ServerResponse,
   next: () => void,
 ): void {
+  if (!localRequest(request)) {
+    reply(response, 403, {
+      ok: false,
+      message: "The monitor accepts only loopback clients at a local host.",
+    });
+    return;
+  }
   if (request.url?.startsWith(`${prefix}/`)) {
     void forward(request, response);
   } else {

@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#monitor-lifecycle'
 date: '2026-10-02'
-modified: '2026-10-02'
+modified: '2026-10-04'
 body_schema: 'body-v2'
-body_hash: 'sha256:e8b09f4ac9e97dd014bae94aee9cb4bc4ba0ef7c87e9b266ab280285f94af385'
+body_hash: 'sha256:ee206e93399453e925f277ad7af7865de1b76a36f526bbb620ee276e5ee077d6'
 related:
   - "[[2026-10-02-monitor-lifecycle-reference]]"
   - "[[2026-09-30-monitor-browser-adr]]"
@@ -13,7 +13,6 @@ related:
   - "[[2026-07-21-machine-discovery-recovery-adr]]"
   - "[[2026-06-24-service-discovery-schema-adr]]"
 ---
-
 # `monitor-lifecycle` adr: `Couple the local monitor to managed server lifecycle` | (**status:** `accepted`)
 
 ## Problem Statement
@@ -41,7 +40,7 @@ Share the backend's loopback bind probe to scan upward before spawning. The comp
 
 Publish additive monitor port/PID/incarnation diagnostics in the canonical daemon snapshot and retain a user-scratch identity record for forced-stop recovery. Repeated server start reuses a live monitor. Process cleanup requires verified PID incarnation and must preserve a live successor's state. A broken parent pipe closes the frontend even when daemon teardown is bypassed.
 
-This is an explicit managed-runtime exception to fixed manifest ports and independent source-development lifecycle in monitor-tooling and monitor-browser. Their shared development harness, declared network/origin policy, server-only credentials, service behavior owners and standalone dev/preview commands continue to govern source development.
+This is an explicit managed-runtime exception to fixed manifest ports and independent source-development lifecycle in monitor-tooling and monitor-browser. Their shared development harness, server-only credentials, service behavior owners and standalone dev/preview commands continue to govern source development. The inherited wildcard/Tailnet network policy is reversed by the authorized scoped exception in `2026-10-04-monitor-access-adr`: all monitor modes use loopback binding and request admission; direct remote mode and Tailscale Serve exposure are unsupported.
 
 Installed release bundles supply the compiled command under monitor-delivery. The daemon uses that command through this same supervisor and readiness/parent-pipe contract; delivery introduces no second lifecycle owner. Standalone source dev/preview retain their existing fixed manifest ports and shared development harness.
 

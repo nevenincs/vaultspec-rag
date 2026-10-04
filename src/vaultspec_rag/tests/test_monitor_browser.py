@@ -167,7 +167,7 @@ def test_local_bridge_refuses_foreign_origins_and_unrelated_routes(
     status, answer = _read(port, "/health", origin="http://example.invalid")
     assert status == 403
     assert answer["message"] == (
-        "The monitor accepts local and Tailscale clients at its declared host."
+        "The monitor accepts only loopback clients at a local host."
     )
     status, answer = _read(port, "/readiness")
     assert status == 404
@@ -342,7 +342,25 @@ def test_local_bridge_forwards_operator_inventory_and_controls(
         "[fd7a:115c:a1e0::2c01:feb6]:5420",
     ],
 )
-def test_bridge_accepts_tailnet_proxy_authorities(
+@pytest.mark.parametrize("send_origin", [True, False])
+def test_bridge_refuses_tailnet_proxy_authorities(
+    browser_bridge: tuple[int, Path], host: str, send_origin: bool
+) -> None:
+    port, _ = browser_bridge
+    # Restoring Tailnet Host admission fails this assertion; loopback-only passes.
+    status, answer = _read(
+        port, "/health", host=host, origin=f"https://{host}" if send_origin else None
+    )
+    assert status == 403
+    assert answer["message"] == (
+        "The monitor accepts only loopback clients at a local host."
+    )
+
+
+@pytest.mark.parametrize(
+    "host", ["localhost:5420", "vaultspec-rag-monitor.localhost", "[::1]:5420"]
+)
+def test_bridge_accepts_local_proxy_authorities(
     browser_bridge: tuple[int, Path], host: str
 ) -> None:
     port, _ = browser_bridge
@@ -350,11 +368,6 @@ def test_bridge_accepts_tailnet_proxy_authorities(
     assert status == 200
     assert "service_token" not in health
     assert "token" not in health
-    # Bypassing origin matching failed this assertion; restored it passed.
-    status, _ = _read(
-        port, "/health", host=host, origin="https://other.taild36992.ts.net"
-    )
-    assert status == 403
 
 
 @pytest.mark.parametrize("host", ["other.taild36992.ts.net", "100.128.0.1"])
@@ -367,7 +380,7 @@ def test_bridge_refuses_undeclared_proxy_authorities(
     assert status == 403
 
 
-def test_bridge_refuses_a_client_outside_local_and_tailnet_ranges(
+def test_bridge_refuses_a_client_outside_admitted_loopback_addresses(
     browser_bridge: tuple[int, Path],
 ) -> None:
     port, _ = browser_bridge
