@@ -85,6 +85,7 @@ jobs:
         if: steps.release.outputs.pr
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
+          prune-cache: false
           enable-cache: false
 
       - name: Regenerate and push uv.lock

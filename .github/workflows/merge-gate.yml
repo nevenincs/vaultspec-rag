@@ -164,6 +164,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
+          prune-cache: false
           enable-cache: false
 
       - name: Set up just
@@ -177,6 +178,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
+          package-manager-cache: false
           node-version-file: .nvmrc
 
       - name: Restore frontend dependencies
@@ -219,6 +221,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
+          prune-cache: false
           enable-cache: false
 
       - name: Set up just
@@ -232,6 +235,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
+          package-manager-cache: false
           node-version-file: .nvmrc
 
       - name: Restore frontend dependencies
@@ -282,6 +286,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
+          prune-cache: false
           enable-cache: false
           # setup-python's Linux 3.13 build depends on LD_LIBRARY_PATH. The
           # product deliberately removes loader variables from untrusted hook
@@ -301,6 +306,7 @@ jobs:
       - name: Set up Node for local monitor route tests
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
+          package-manager-cache: false
           node-version-file: .nvmrc
 
       - name: Restore monitor dependencies for installed-browser checks
@@ -350,6 +356,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
+          prune-cache: false
           enable-cache: false
 
       - name: Set up just
@@ -374,6 +381,7 @@ jobs:
       - name: Set up Node for local monitor route tests
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
+          package-manager-cache: false
           node-version-file: .nvmrc
 
       - name: Restore monitor dependencies for installed-browser checks
@@ -426,6 +434,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
+          prune-cache: false
           enable-cache: false
 
       - name: Set up just
