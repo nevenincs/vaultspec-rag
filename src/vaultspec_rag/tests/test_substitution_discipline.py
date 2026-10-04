@@ -633,6 +633,18 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "route to that exception is a corrupted checkpoint state the test cannot "
         "assemble without first causing the very failure it exists to test around",
     ),
+    "test_watcher_publication_certification.py": (
+        5,
+        "two source-entry replacements return contradictory or missing current "
+        "checkpoint outcomes that corrected pipelines cannot produce on demand, "
+        "so the real dispatcher must reject them. Two admission replacements "
+        "retain actual policy validation while avoiding hardware admission for "
+        "deliberately unloaded CPU indexers. One supplies their CPU compute "
+        "lease instead of loading a model. Actual checkpoint observation, "
+        "SQLite ledger, proof publication, JobManager dispatch, typed failure "
+        "and completion remain real. Mutation proof: reducing five to four "
+        "fails the exact count-growth assertion; restoring five passes",
+    ),
     "test_watcher_rebuild_reconciliation.py": (
         5,
         "three sites wrap the real publication-snapshot read to observe which "

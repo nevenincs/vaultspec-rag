@@ -445,13 +445,15 @@ async def reconcile_restarted_slot(
     generation = state.attempt_generation
     job_id = state.attempt_job_id
     if generation is None or job_id is None:
-        if state.scope_refusal is not None:
-            await _reconcile_rebuilt_history(slot, manager, resolve_abandoned=False)
-        return
-    if await _reconcile_rebuilt_history(slot, manager, resolve_abandoned=True):
+        if state.scope_refusal is not None or generation is not None:
+            await _reconcile_rebuilt_history(slot, manager, resolve_abandoned=True)
         return
 
     snapshot = manager.get(job_id)
+    if snapshot is None and await _reconcile_rebuilt_history(
+        slot, manager, resolve_abandoned=True
+    ):
+        return
     if snapshot is None or not _is_exact_watcher_job(slot, snapshot):
         detail = (
             "the fenced watcher job is absent from bounded canonical history"
@@ -461,7 +463,7 @@ async def reconcile_restarted_slot(
         await _settle_recovered_attempt(
             slot,
             generation,
-            JobState.FAILED,
+            None,
             detail=detail,
             force_refusal=True,
         )
@@ -481,12 +483,33 @@ async def reconcile_restarted_slot(
             slot.observed_state = snapshot.state
         return
 
+    unpublished = _recovered_source_run_unpublished(snapshot)
     await _settle_recovered_attempt(
         slot,
         generation,
-        snapshot.state,
-        detail=snapshot.result or snapshot.error_kind or snapshot.state.value,
-        force_refusal=snapshot.error_kind == "full_reindex_required",
+        snapshot,
+        detail=(
+            "the fenced watcher job returned without publishing its source generation"
+            if unpublished
+            else snapshot.result or snapshot.error_kind or snapshot.state.value
+        ),
+        force_refusal=unpublished or snapshot.error_kind == "full_reindex_required",
+    )
+    await _reconcile_rebuilt_history(slot, manager, resolve_abandoned=False)
+
+
+def _recovered_source_run_unpublished(snapshot: JobSnapshot) -> bool:
+    """Refuse unproved success from source owners that always open a current run."""
+    from .indexer._run_ledger_models import RunTerminalState
+
+    return (
+        snapshot.state is JobState.SUCCEEDED
+        and snapshot.spec.source in {JobSource.DOCUMENT, JobSource.VAULT}
+        and (
+            snapshot.resilience is None
+            or snapshot.resilience.generation_id is None
+            or snapshot.resilience.terminal_outcome != RunTerminalState.SUCCEEDED.value
+        )
     )
 
 
@@ -573,7 +596,7 @@ def reconcile_completed_rebuild(snapshot: JobSnapshot) -> bool:
 async def _settle_recovered_attempt(
     slot: WatcherConvergenceSlot,
     generation: int,
-    state: JobState,
+    snapshot: JobSnapshot | None,
     *,
     detail: str,
     force_refusal: bool,
@@ -586,20 +609,28 @@ async def _settle_recovered_attempt(
         settle_watcher_attempt,
     )
 
-    if state is JobState.SUCCEEDED:
-        settlement = WatcherSettlement(WatcherAttemptOutcome.SUCCEEDED)
-    elif force_refusal:
+    state = snapshot.state if snapshot is not None else JobState.FAILED
+    outcome_at = snapshot.timestamps.finished_at if snapshot is not None else None
+    if force_refusal:
         settlement = WatcherSettlement(
             WatcherAttemptOutcome.FAILED,
             JobError(JobErrorKind.FULL_REINDEX_REQUIRED, detail),
+            outcome_at,
+        )
+    elif state is JobState.SUCCEEDED:
+        settlement = WatcherSettlement(
+            WatcherAttemptOutcome.SUCCEEDED, outcome_at=outcome_at
         )
     elif state is JobState.FAILED:
         settlement = WatcherSettlement(
             WatcherAttemptOutcome.FAILED,
             RuntimeError(detail),
+            outcome_at,
         )
     else:
-        settlement = WatcherSettlement(WatcherAttemptOutcome.INTERRUPTED)
+        settlement = WatcherSettlement(
+            WatcherAttemptOutcome.INTERRUPTED, outcome_at=outcome_at
+        )
     recovered = await settle_watcher_attempt(
         slot.retry_policy,
         generation,

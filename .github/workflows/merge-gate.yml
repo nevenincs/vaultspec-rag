@@ -346,6 +346,10 @@ jobs:
     runs-on: [self-hosted, Windows, X64]
     env:
       UV_PYTHON: "3.13"
+      # Native monitors, browsers and owner-witness children need scheduling
+      # headroom alongside pytest. Bound concurrency while retaining the full
+      # suite and its existing startup and response deadlines.
+      PYTEST_XDIST_AUTO_NUM_WORKERS: "4"
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

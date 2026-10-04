@@ -25,7 +25,7 @@ from ..indexer._run_ledger_models import (
 from ..indexer._run_ledger_runtime import RunLedger
 from ..job_manager.manager import JobManager
 from ..job_manager.models import JobAttemptContext, JobExecutionResult
-from ..job_models import JobMode, JobSource, JobState
+from ..job_models import IndexResilienceSnapshot, JobMode, JobSource, JobState
 from ..service import ServiceRegistry
 from ..service_quiesce import ServiceQuiesceController
 from ..store_runtime import configured_backend_identity
@@ -86,7 +86,9 @@ def _observe(policy: WatcherRetryPolicy, path: str) -> None:
     )
 
 
-def _refused_policy(root: Path, source: WatcherSource) -> WatcherRetryPolicy:
+def _refused_policy(
+    root: Path, source: WatcherSource = WatcherSource.CODE
+) -> WatcherRetryPolicy:
     policy = WatcherRetryPolicy.for_root(root, source)
     _observe(policy, "src/old.py")
     admitted = policy.admit()
@@ -100,7 +102,7 @@ def _refused_policy(root: Path, source: WatcherSource) -> WatcherRetryPolicy:
 
 def _published_rebuild(
     root: Path,
-    source: WatcherSource,
+    source: WatcherSource = WatcherSource.CODE,
     *,
     before_generation: Callable[[], None] | None = None,
     before_publication: Callable[[RunLedger, RunGeneration], None] | None = None,
@@ -150,6 +152,11 @@ def _published_rebuild(
             finished_at=finished,
             state_changed_at=finished,
         ),
+        result="verified full generation published",
+        resilience=IndexResilienceSnapshot(
+            generation_id=generation.generation_id,
+            terminal_outcome=RunTerminalState.SUCCEEDED.value,
+        ),
     )
 
 
@@ -172,7 +179,10 @@ def test_verified_explicit_rebuild_clears_refusal_and_keeps_later_exact_events(
     assert state.circuit_state is WatcherCircuitState.CLOSED
     assert state.consecutive_failures == 0
     assert state.convergence_generation == previous_generation + 1
-    assert [item.relative_path for item in state.pending_paths] == ["src/later.py"]
+    assert [item.relative_path for item in state.pending_paths] == [
+        "src/later.py",
+        "src/old.py",
+    ]
     assert _new_controller(restored).snapshot.state is ControllerState.COLLECTING
     assert not reconcile_completed_rebuild(snapshot)
     assert restored.admit().admitted
@@ -185,6 +195,10 @@ def test_verified_rebuild_converges_empty_scope_with_closed_circuit(
     # reports a successfully rebuilt empty controller as converged and open.
     root = tmp_path.resolve()
     policy = _refused_policy(root, WatcherSource.CODE)
+    write_state(
+        workspace_volume_path(root) / "watcher-retry" / "code.json",
+        replace(policy.state, pending_paths=()),
+    )
     controller = _new_controller(policy)
     assert controller.snapshot.circuit_state is WatcherCircuitState.OPEN
     snapshot = _published_rebuild(root, WatcherSource.CODE)
@@ -221,8 +235,10 @@ async def test_restart_recovers_a_completed_rebuild_before_its_watcher_callback(
     assert outcome.job is not None
     job_id = outcome.job.id
 
-    def publish(_context: JobAttemptContext) -> JobExecutionResult:
-        _published_rebuild(root, WatcherSource.CODE)
+    def publish(context: JobAttemptContext) -> JobExecutionResult:
+        rebuilt = _published_rebuild(root, WatcherSource.CODE)
+        assert rebuilt.resilience is not None
+        context.set_resilience(rebuilt.resilience)
         return JobExecutionResult(summary="verified rebuild completed")
 
     manager.bind_dispatch(job_id, publish)
@@ -240,7 +256,8 @@ async def test_restart_recovers_a_completed_rebuild_before_its_watcher_callback(
     assert restarted.state.scope_refusal is None
     assert restarted.state.circuit_state is WatcherCircuitState.CLOSED
     assert [item.relative_path for item in restarted.state.pending_paths] == [
-        "src/after-rebuild.py"
+        "src/after-rebuild.py",
+        "src/old.py",
     ]
     assert _new_controller(restarted).snapshot.state is ControllerState.COLLECTING
 
@@ -278,8 +295,10 @@ async def test_rebuild_callback_preserves_dead_fence_for_startup_recovery(
     assert outcome.job is not None
     job_id = outcome.job.id
 
-    def publish(_context: JobAttemptContext) -> JobExecutionResult:
-        _published_rebuild(root, WatcherSource.CODE)
+    def publish(context: JobAttemptContext) -> JobExecutionResult:
+        rebuilt = _published_rebuild(root, WatcherSource.CODE)
+        assert rebuilt.resilience is not None
+        context.set_resilience(rebuilt.resilience)
         return JobExecutionResult(summary="verified rebuild completed")
 
     manager.bind_dispatch(job_id, publish)
@@ -498,7 +517,7 @@ def test_rebuild_observation_must_start_after_scope_refusal(
             max_seconds=2.0,
             jitter_fraction=0.0,
             failure_threshold=3,
-            scope_max_paths=1,
+            scope_max_paths=2,
         ),
     )
     _observe(policy, "src/old.py")
@@ -555,7 +574,10 @@ def test_rebuild_observation_must_start_after_scope_refusal(
 
     assert not policy.reconcile_rebuild(snapshot)
     assert policy.refresh() == refused
-    assert [item.relative_path for item in refused.pending_paths] == ["src/dirty.py"]
+    assert [item.relative_path for item in refused.pending_paths] == [
+        "src/dirty.py",
+        "src/old.py",
+    ]
 
     fresh = _published_rebuild(root, WatcherSource.CODE)
     fresh_publication = acquire_publication_snapshot(root, PublicSourceType.CODE)

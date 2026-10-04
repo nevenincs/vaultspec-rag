@@ -56,6 +56,7 @@ class WatcherSettlement:
 
     outcome: WatcherAttemptOutcome
     error: BaseException | None = None
+    outcome_at: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -413,13 +414,19 @@ def _settlement_operation(
     settlement: WatcherSettlement,
 ) -> Callable[[], WatcherRetryState]:
     if settlement.outcome is WatcherAttemptOutcome.SUCCEEDED:
-        return lambda: policy.record_success(attempt_generation)
+        return lambda: policy.record_success(
+            attempt_generation, now=settlement.outcome_at
+        )
     if settlement.outcome is WatcherAttemptOutcome.INTERRUPTED:
-        return lambda: policy.record_interrupted(attempt_generation)
+        return lambda: policy.record_interrupted(
+            attempt_generation, now=settlement.outcome_at
+        )
     error = settlement.error
     if error is None:
         raise ValueError("failed watcher settlement requires an error")
-    return lambda: policy.record_failure(error, attempt_generation)
+    return lambda: policy.record_failure(
+        error, attempt_generation, now=settlement.outcome_at
+    )
 
 
 def raise_if_cancellation_requested(requested: bool) -> None:

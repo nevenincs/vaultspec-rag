@@ -28,6 +28,7 @@ from ..indexer._run_ledger_models import (
 from ..indexer._run_ledger_publication_identity import compatibility_for_signature
 from ..indexer._run_ledger_runtime import RunLedger
 from ._run_ledger_test_support import (
+    ledger_test_certify_generation,
     ledger_test_digest,
     ledger_test_duplicate_receipt_row,
     ledger_test_publish_and_compact,
@@ -52,6 +53,7 @@ def test_compaction_preserves_published_and_running_generations(tmp_path: Path) 
     second = ledger.start_generation(
         ledger_test_signature(tmp_path, content_epoch="second")
     )
+    ledger_test_certify_generation(ledger, second.generation_id)
     for phase in (
         FinalizationPhase.STALE_RECONCILED,
         FinalizationPhase.METADATA_PUBLISHED,
@@ -66,6 +68,7 @@ def test_compaction_preserves_published_and_running_generations(tmp_path: Path) 
         collection_identity="document-v1",
     )
     running = ledger.start_generation(document)
+    ledger_test_certify_generation(ledger, running.generation_id)
     for phase in (
         FinalizationPhase.STALE_RECONCILED,
         FinalizationPhase.METADATA_PUBLISHED,
@@ -111,6 +114,7 @@ def test_compact_tolerates_an_updated_at_tie_with_another_publication(
     ledger_test_publish_and_compact(ledger, older.generation_id)
 
     newest = ledger.start_generation(signature)
+    ledger_test_certify_generation(ledger, newest.generation_id)
     for phase in (
         FinalizationPhase.STALE_RECONCILED,
         FinalizationPhase.METADATA_PUBLISHED,
@@ -211,7 +215,7 @@ def test_compaction_preserves_every_canonical_publication_owner(
         expected_parent_revision=ledger.publication_proof(key).revision,
     )
     obsolete = ledger.start_generation(replace(base, content_epoch="obsolete"))
-    keep = ledger.start_generation(base)
+    keep = ledger.start_generation(replace(base, backend_identity="keep-backend"))
     ledger_test_publish_and_finish(ledger, keep.generation_id)
 
     assert ledger.compact(keep.generation_id) == 1
@@ -236,6 +240,9 @@ def test_compaction_bounds_closed_receipts_per_projection_without_pruning_open(
     that row copied forward, because a hundred-deep history is reachable only
     by replaying a hundred publications and the bound, not the replay, is
     what is under test.
+
+    Mutation evidence: reducing the retained-history bound by one failed the
+    exact retained-sequence assertion; restoring it passed the same test.
     """
     ledger = RunLedger(tmp_path / "runs.sqlite3")
     signature = replace(
@@ -247,12 +254,13 @@ def test_compaction_bounds_closed_receipts_per_projection_without_pruning_open(
     published = ledger.start_generation(signature)
     ledger_test_publish_generation_with_proof(ledger, published.generation_id)
     key = compatibility_for_signature(signature)
-    keep = ledger.start_generation(signature)
+    open_owner = ledger.start_generation(signature)
     still_open = ledger.reserve_publication_receipt(
         key,
-        keep.generation_id,
+        open_owner.generation_id,
         expected_parent_revision=ledger.publication_proof(key).revision,
     )
+    keep = ledger.start_generation(replace(signature, backend_identity="keep-backend"))
     ledger_test_publish_and_finish(ledger, keep.generation_id)
     stamp = still_open.reserved_at
     # The live reservation already holds one sequence on its projection, and

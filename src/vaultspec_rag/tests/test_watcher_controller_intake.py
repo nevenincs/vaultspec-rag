@@ -534,8 +534,8 @@ async def test_terminal_rebuild_failure_is_actionable_through_events_and_restart
     monkeypatch: pytest.MonkeyPatch,
     retain_exception: bool,
 ) -> None:
-    # Mutation: releasing a terminal refusal as cancelled work makes the empty
-    # controller scope appear converged and removes the rebuild remediation.
+    # Mutation: releasing a terminal refusal as cancelled work removes its
+    # rebuild remediation; discarding captured scope loses the original path.
     root = tmp_path.resolve()
     binding = _ready_binding(root)
     manager = _real_manager(monkeypatch)
@@ -579,7 +579,7 @@ async def test_terminal_rebuild_failure_is_actionable_through_events_and_restart
     assert refused.circuit_state is WatcherCircuitState.OPEN
     assert refused.remediation is not None
     assert refused.next_decision_at is None
-    assert refused.scope.pending == ()
+    assert [item.relative_path for item in refused.scope.pending] == ["src/example.py"]
     assert refused.scope.captured == ()
 
     await _persist_and_observe_batch(
@@ -597,7 +597,10 @@ async def test_terminal_rebuild_failure_is_actionable_through_events_and_restart
     )
     assert binding.controller.snapshot.state is ControllerState.REFUSED
     pending = binding.controller.snapshot.scope.pending
-    assert [item.relative_path for item in pending] == ["src/later.py"]
+    assert [item.relative_path for item in pending] == [
+        "src/example.py",
+        "src/later.py",
+    ]
     binding.controller.evaluate(
         ControllerMeasurement(generation=1, observed_at=time.monotonic()),
         circuit_state=state.circuit_state,
@@ -606,6 +609,11 @@ async def test_terminal_rebuild_failure_is_actionable_through_events_and_restart
     restarted = _new_controller(WatcherRetryPolicy.for_root(root, WatcherSource.CODE))
     assert restarted.snapshot.state is ControllerState.REFUSED
     assert restarted.snapshot.remediation == refused.remediation
+    assert [item.relative_path for item in restarted.snapshot.scope.pending] == [
+        "src/example.py",
+        "src/later.py",
+    ]
+    assert restarted.snapshot.scope.captured == ()
 
 
 async def test_noop_success_keeps_a_mid_attempt_recovery_refusal_actionable(

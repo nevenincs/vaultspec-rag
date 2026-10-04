@@ -234,13 +234,14 @@ def _run_vault_attempt(
                 reporter = JobProgressReporter(dispatch.job_id, context=context)
                 with _observe_index_resilience(
                     context, runtime.vault_indexer, IndexResilienceSnapshot()
-                ):
+                ) as publication:
                     result = _bind_index_attempt(
                         context,
                         dispatch,
                         indexer=runtime.vault_indexer,
                         reporter=reporter,
                     )()
+                    publication.require_published(dispatch.mode)
             finally:
                 context.set_resources(ResourceUpdate(writer_lock_held=False))
             dispatch.registry.peek_project(dispatch.root).graph_cache.invalidate()
@@ -330,7 +331,9 @@ def _run_indexing_attempt(
                 reporter = JobProgressReporter(dispatch.job_id, context=context)
                 if code_preflight is not None:
                     code_indexer = runtime.code_indexer
-                    with _observe_index_resilience(context, code_indexer, admitted):
+                    with _observe_index_resilience(
+                        context, code_indexer, admitted
+                    ) as publication:
                         result = _bind_index_attempt(
                             context,
                             dispatch,
@@ -338,9 +341,12 @@ def _run_indexing_attempt(
                             reporter=reporter,
                             preflight=code_preflight,
                         )()
+                        publication.require_published(dispatch.mode)
                 else:
                     document_indexer = runtime.document_indexer
-                    with _observe_index_resilience(context, document_indexer, admitted):
+                    with _observe_index_resilience(
+                        context, document_indexer, admitted
+                    ) as publication:
                         result = _bind_index_attempt(
                             context,
                             dispatch,
@@ -348,6 +354,7 @@ def _run_indexing_attempt(
                             reporter=reporter,
                             preflight=document_preflight,
                         )()
+                        publication.require_published(dispatch.mode)
             finally:
                 context.set_resources(
                     ResourceUpdate(writer_lock_held=False, pipeline_active=False)
@@ -550,6 +557,40 @@ class _LiveResiliencePublication:
                 lambda: _indexer_resilience(self._indexer, checkpoint, self._admitted),
             )
 
+    def require_published(self, mode: JobMode) -> None:
+        """Refuse a returned result unless this attempt published its actual owner."""
+        from ._job_errors import JobError, JobErrorKind
+        from .indexer import CodebaseIndexer
+        from .indexer._run_ledger_models import FinalizationPhase, RunTerminalState
+
+        with self._lock:
+            checkpoint = self._checkpoint
+            if checkpoint is None:
+                if mode is JobMode.INCREMENTAL and isinstance(
+                    self._indexer, CodebaseIndexer
+                ):
+                    # Valid unchanged code may return without opening a run.
+                    return
+                raise JobError(
+                    JobErrorKind.FULL_REINDEX_REQUIRED,
+                    "indexing returned without this attempt's publication checkpoint",
+                )
+            generation = checkpoint.ledger.generation(checkpoint.generation_id)
+            if (
+                generation.terminal_state is not RunTerminalState.SUCCEEDED
+                or generation.finalization_phase
+                not in {
+                    FinalizationPhase.GENERATION_PUBLISHED,
+                    FinalizationPhase.COMPACTED,
+                }
+            ):
+                raise JobError(
+                    JobErrorKind.FULL_REINDEX_REQUIRED,
+                    "indexing did not publish its generation "
+                    f"{generation.generation_id}: "
+                    f"{generation.terminal_detail or generation.terminal_state.value}",
+                )
+
     def finish(self) -> None:
         """Retain final projection and detach observation when execution exits."""
         with self._lock:
@@ -572,7 +613,7 @@ def _observe_index_resilience(
     context: JobAttemptContext,
     indexer: CodebaseIndexer | DocumentIndexer | VaultIndexer,
     admitted: IndexResilienceSnapshot,
-) -> Generator[None]:
+) -> Generator[_LiveResiliencePublication]:
     """Bind real checkpoint notifications and final facts to this attempt."""
     from .indexer import CodebaseIndexer, DocumentIndexer
     from .indexer._checkpoint_common import observe_checkpoint_progress
@@ -582,7 +623,7 @@ def _observe_index_resilience(
     publication = _LiveResiliencePublication(context, indexer, admitted)
     with observe_checkpoint_progress(publication):
         try:
-            yield
+            yield publication
         finally:
             publication.finish()
 

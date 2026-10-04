@@ -157,7 +157,7 @@ def test_route_scan_reuses_exact_paths_across_pages(
     )
     kwargs = {"collection": None} if stored_kind is ContentKind.CODE else {}
     assert scroll.call_args_list == [
-        call(limit=256, offset=offset, **kwargs)
+        call(limit=256, offset=offset, source_paths=None, **kwargs)
         for offset in (None, "offset-1", "offset-2")
     ]
     assert checkpoint_labels == [

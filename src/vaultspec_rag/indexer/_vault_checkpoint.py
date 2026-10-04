@@ -88,8 +88,14 @@ class VaultRunCheckpoint(RunCheckpointBase):
             backend_identity=backend_identity,
         )
         ledger = RunLedger(index_run_ledger_path(workspace_volume_path(root.resolve())))
+        run_policy = RunPolicy.from_config(run_control=run_control)
         try:
-            generation = cls.start_compatible_generation(ledger, signature)
+            generation = cls.start_compatible_generation(
+                ledger,
+                signature,
+                authority,
+                run_policy,
+            )
             receipt = cls.open_publication_receipt(ledger, generation, authority)
         except RunLedgerCompatibilityError as exc:
             # An index written under an older chunk or point shape cannot be
@@ -105,7 +111,7 @@ class VaultRunCheckpoint(RunCheckpointBase):
             ledger=ledger,
             generation=generation,
             policy=None,
-            run_policy=RunPolicy.from_config(run_control=run_control),
+            run_policy=run_policy,
             authority=authority,
             receipt=receipt,
         )

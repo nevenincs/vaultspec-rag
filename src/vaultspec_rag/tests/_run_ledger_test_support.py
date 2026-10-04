@@ -15,12 +15,13 @@ import pytest
 
 from .._source_types import PublicSourceType
 from ..indexer._content_policy import ContentKind
-from ..indexer._file_state import FileState
+from ..indexer._file_state import FileState, FileStateKind
 from ..indexer._publication_proof import (
     PathDelta,
     PathOutcome,
     ProofCompatibilityKey,
     ProofEvidence,
+    ProofMissingError,
 )
 from ..indexer._run_ledger_models import (
     PUBLICATION_PROOF_SCHEMA,
@@ -488,7 +489,44 @@ def ledger_test_indexed_path_ledger(
     return ledger, generation.generation_id
 
 
+def ledger_test_certify_generation(ledger: RunLedger, generation_id: str) -> None:
+    """Establish full-generation proof before a fixture publishes its phases."""
+    generation = ledger.generation(generation_id)
+    receipt = ledger.publication_receipt_for_generation(generation_id)
+    if receipt is not None and ledger.publication_noop_completed(
+        generation_id, receipt.receipt_id
+    ):
+        return
+    key = compatibility_for_signature(generation.signature)
+    try:
+        proof = ledger.publication_proof(key)
+    except ProofMissingError:
+        proof = None
+    if generation.signature.operation is RunOperation.FULL and (
+        proof is None or proof.generation_id != generation_id
+    ):
+        evidence = tuple(
+            ProofEvidence(
+                state.rel_path,
+                state.content_hash,
+                tuple(
+                    sorted(
+                        ledger.iter_retained_point_ids(
+                            generation_id, rel_path=state.rel_path
+                        )
+                    )
+                ),
+            )
+            for state in ledger.iter_file_states(generation_id)
+            if state.state is FileStateKind.INDEXED and state.content_hash is not None
+        )
+        ledger.establish_verified_publication(
+            generation_id, RunAuthority.REBUILD, evidence
+        )
+
+
 def ledger_test_publish_and_finish(ledger: RunLedger, generation_id: str) -> None:
+    ledger_test_certify_generation(ledger, generation_id)
     for phase in (
         FinalizationPhase.STALE_RECONCILED,
         FinalizationPhase.METADATA_PUBLISHED,

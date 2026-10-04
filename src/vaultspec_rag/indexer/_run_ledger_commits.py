@@ -45,7 +45,12 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-    from ._run_ledger_models import GenerationRow, PublicationProof, RunGeneration
+    from ._run_ledger_models import (
+        GenerationRow,
+        PublicationProof,
+        RunGeneration,
+        RunSignature,
+    )
 
 
 class _CommitUnitRow(TypedDict):
@@ -154,6 +159,8 @@ def effective_retained_candidates(
         query.compatibility_key.collection_identity,
     )
     if canonical:
+        # Keep the bounded VALUES page first and seek the point index. SQLite
+        # otherwise reorders a full page into a scan of every canonical owner.
         values = ", ".join("(?, ?)" for _candidate in canonical)
         rows: list[sqlite3.Row] = fetch_all(
             connection,
@@ -161,7 +168,8 @@ def effective_retained_candidates(
             WITH candidates(rel_path, point_id) AS (VALUES {values})
             SELECT candidates.rel_path, candidates.point_id
             FROM candidates
-            JOIN publication_points AS points
+            CROSS JOIN publication_points AS points
+              INDEXED BY publication_points_point
               ON points.rel_path = candidates.rel_path
              AND points.point_id = candidates.point_id
             WHERE points.source_type = ? AND points.root_identity = ?
@@ -185,6 +193,8 @@ def effective_retained_candidates(
             for row in rows
         )
     if local:
+        # The receipt-keyed primary index is not a point seek. Candidate-first
+        # CROSS JOIN plus the point index prevents receipt-size work per row.
         values = ", ".join("(?, ?)" for _candidate in local)
         rows = fetch_all(
             connection,
@@ -192,14 +202,15 @@ def effective_retained_candidates(
             WITH candidates(rel_path, point_id) AS (VALUES {values})
             SELECT candidates.rel_path, candidates.point_id
             FROM candidates
-            JOIN publication_mutation_points AS points
+            CROSS JOIN publication_mutation_points AS points
+              INDEXED BY publication_mutation_points_point
               ON points.receipt_id = ?
              AND points.point_id = candidates.point_id
-            JOIN publication_mutation_units AS units
+            CROSS JOIN publication_mutation_units AS units
               ON units.receipt_id = points.receipt_id
              AND units.mutation_ordinal = points.mutation_ordinal
              AND units.rel_path = candidates.rel_path
-            JOIN file_states AS states
+            CROSS JOIN file_states AS states
               ON states.generation_id = ?
              AND states.evidence_generation_id = ?
              AND states.rel_path = units.rel_path
@@ -549,6 +560,8 @@ class RunLedgerCommitMethods:
             generation_id: str,
             key: ProofCompatibilityKey,
             proof: PublicationProof,
+            *,
+            rebuild_signature: RunSignature | None = None,
         ) -> RunGeneration: ...
 
     def prepare_publication_mutation(

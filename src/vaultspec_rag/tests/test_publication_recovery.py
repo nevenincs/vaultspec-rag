@@ -227,12 +227,16 @@ def test_source_entry_recovers_an_abandoned_empty_reservation(
 
 
 @pytest.mark.parametrize("state", list(ProofMutationState))
-def test_incomplete_receipt_requires_rebuild_and_preserves_reader_fence(
+def test_incomplete_receipt_preserves_fence_through_incremental_and_rebuild_refusal(
     published_indexer: CodebaseIndexer | DocumentIndexer | VaultIndexer,
     publication_source: PublicSourceType,
     state: ProofMutationState,
 ) -> None:
-    """Mutation proved: bypassing delta refusal failed; restoration passed."""
+    """Mutation proved: bypassing either admission guard failed; restoration passed.
+
+    Removing the rebuild guard reached a later receipt error and failed the exact
+    recovery matcher. Restoring it passed with the proof, receipt and store intact.
+    """
     ledger, receipt = _reserve(published_indexer, publication_source)
     unit = CommitUnit(
         rel_path="lost.txt",
@@ -257,19 +261,26 @@ def test_incomplete_receipt_requires_rebuild_and_preserves_reader_fence(
     with pytest.raises(ProofReadConflictError):
         acquire_publication_snapshot(published_indexer.root_dir, publication_source)
 
-    if isinstance(published_indexer, CodebaseIndexer):
-        published_indexer.full_index(
-            reporter=NullProgressReporter(),
-            preflight=published_indexer.preflight_content(),
-        )
-    else:
-        published_indexer.full_index(reporter=NullProgressReporter())
-    replacement = acquire_publication_snapshot(
-        published_indexer.root_dir, publication_source
-    )
-    assert replacement.proof.aggregate.retained_points == 0
-    assert ledger.active_publication_receipt(receipt.compatibility_key) is None
-    assert replacement.proof.revision > receipt.parent_revision
+    proof = ledger.publication_proof(receipt.compatibility_key)
+    pending = ledger.active_publication_receipt(receipt.compatibility_key)
+    durable = sqlite_contents(ledger.path)
+    store = published_indexer.store
+    counts = (store.count(), store.count_code(), store.count_document())
+    with pytest.raises(RunLedgerStateError, match="exact recorded-unit recovery"):
+        if isinstance(published_indexer, CodebaseIndexer):
+            published_indexer.full_index(
+                reporter=NullProgressReporter(),
+                preflight=published_indexer.preflight_content(),
+            )
+        else:
+            published_indexer.full_index(reporter=NullProgressReporter())
+
+    assert ledger.publication_proof(receipt.compatibility_key) == proof
+    assert ledger.active_publication_receipt(receipt.compatibility_key) == pending
+    assert (store.count(), store.count_code(), store.count_document()) == counts
+    assert_sqlite_unchanged(ledger.path, durable)
+    with pytest.raises(ProofReadConflictError):
+        acquire_publication_snapshot(published_indexer.root_dir, publication_source)
 
 
 @pytest.mark.parametrize(
@@ -379,14 +390,8 @@ def test_receipt_recovery_refuses_incompatible_or_corrupt_ancestry_without_mutat
     assert_sqlite_unchanged(ledger.path, before)
 
 
-@pytest.mark.parametrize(
-    "phase",
-    [FinalizationPhase.METADATA_PUBLISHED, FinalizationPhase.GENERATION_PUBLISHED],
-)
-def test_checkpoint_publication_requires_its_committed_proof(
-    tmp_path: Path, phase: FinalizationPhase
-) -> None:
-    """Mutation proved: omitting the proof guard failed; restoration passed."""
+@pytest.fixture
+def unpublished_checkpoint(tmp_path: Path) -> VaultRunCheckpoint:
     checkpoint = VaultRunCheckpoint.open(
         tmp_path,
         backend_identity="backend-v1",
@@ -400,14 +405,59 @@ def test_checkpoint_publication_requires_its_committed_proof(
     checkpoint.generation = checkpoint.ledger.advance_finalization(
         checkpoint.generation_id, FinalizationPhase.METADATA_PUBLISHED
     )
-    if phase is FinalizationPhase.GENERATION_PUBLISHED:
-        checkpoint.generation = checkpoint.ledger.advance_finalization(
-            checkpoint.generation_id, phase
+    return checkpoint
+
+
+def test_checkpoint_publication_requires_its_committed_proof(
+    tmp_path: Path,
+) -> None:
+    """A completed phase cannot certify a proof lost before terminal publication.
+
+    Removing the checkpoint proof guard failed with DID NOT RAISE; restoring it
+    passed. The completed phase prevents the ledger transition from masking it.
+    """
+    checkpoint = VaultRunCheckpoint.open(
+        tmp_path,
+        backend_identity="backend-v1",
+        authority=RunAuthority.REBUILD,
+        operation=RunOperation.FULL,
+        run_control=NO_RUN_CONTROL,
+    )
+    checkpoint.publish_proof_transition()
+    checkpoint.generation = checkpoint.ledger.advance_finalization(
+        checkpoint.generation_id, FinalizationPhase.GENERATION_PUBLISHED
+    )
+    # The phase was valid when committed; a later damaged proof must still be
+    # detected by terminal publication without another phase transition.
+    with closing(sqlite3.connect(checkpoint.ledger.path)) as connection, connection:
+        connection.execute(
+            "DELETE FROM publication_proofs WHERE generation_id = ?",
+            (checkpoint.generation_id,),
         )
+    before = sqlite_contents(checkpoint.ledger.path)
     with pytest.raises(RunLedgerStateError, match="proof must commit"):
         checkpoint.publish_generation()
     generation = checkpoint.ledger.generation(checkpoint.generation_id)
-    assert generation.finalization_phase is phase
+    assert generation.finalization_phase is FinalizationPhase.GENERATION_PUBLISHED
+    assert_sqlite_unchanged(checkpoint.ledger.path, before)
+
+
+def test_ledger_publication_phase_requires_its_committed_proof(
+    unpublished_checkpoint: VaultRunCheckpoint,
+) -> None:
+    """The ledger independently refuses an uncertified publication phase.
+
+    Removing the ledger proof guard failed with DID NOT RAISE; restoring it passed.
+    """
+    checkpoint = unpublished_checkpoint
+    before = sqlite_contents(checkpoint.ledger.path)
+    with pytest.raises(RunLedgerStateError, match="proof must commit"):
+        checkpoint.ledger.advance_finalization(
+            checkpoint.generation_id, FinalizationPhase.GENERATION_PUBLISHED
+        )
+    generation = checkpoint.ledger.generation(checkpoint.generation_id)
+    assert generation.finalization_phase is FinalizationPhase.METADATA_PUBLISHED
+    assert_sqlite_unchanged(checkpoint.ledger.path, before)
 
 
 def test_noop_checkpoint_does_not_certify_unreceipted_storage_units(

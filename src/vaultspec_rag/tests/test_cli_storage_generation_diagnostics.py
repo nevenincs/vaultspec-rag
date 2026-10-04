@@ -236,8 +236,10 @@ def test_malformed_published_model_map_remains_unknown(
 def test_temp_rooted_uses_the_published_fact_before_client_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, published: bool | str | None
 ) -> None:
-    root = tmp_path / "project"
-    root.mkdir()
+    # A synthetic root outside /tmp lets the two environments disagree on
+    # every platform. This adapter test only reads the manifest identity.
+    # Dropping the published flag failed the CLI fact assertion; restoration passed.
+    root = tmp_path.parents[-1] / "vaultspec-survey-fixture" / "project"
     prefix = root_collection_prefix(root)
     server_is_temp = published is True
     server_temp = root.parent if server_is_temp else tmp_path / "elsewhere"

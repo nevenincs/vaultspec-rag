@@ -353,34 +353,39 @@ class CodeGenerationLifecycle:
             def _record_breadth() -> None:
                 checkpoint.publish_proof_transition()
 
+            already_committed = checkpoint.ledger.publication_already_committed(
+                checkpoint.generation_id
+            )
             if build_target is None:
-                if affected_paths is None:
-                    reconcile_generation_storage(
-                        self._store,
-                        checkpoint,
-                        policy,
-                        ContentKind.CODE,
-                    )
-                else:
-                    reconcile_scoped_routes(
-                        self._store,
-                        checkpoint,
-                        ContentKind.CODE,
-                        affected_paths,
-                    )
+                if not already_committed:
+                    if affected_paths is None:
+                        reconcile_generation_storage(
+                            self._store,
+                            checkpoint,
+                            policy,
+                            ContentKind.CODE,
+                        )
+                    else:
+                        reconcile_scoped_routes(
+                            self._store,
+                            checkpoint,
+                            ContentKind.CODE,
+                            affected_paths,
+                        )
                 _record_breadth()
             else:
                 # The complete replacement remains private until its own
                 # stale rows are gone and its breadth has been recorded. This
                 # explicit collection keeps that mutation out of the old
                 # served generation while making the published count exact.
-                purge_unpublished_rows(
-                    self._store,
-                    checkpoint,
-                    policy,
-                    ContentKind.CODE,
-                    options=RouteScanOptions(code_collection=build_target),
-                )
+                if not already_committed:
+                    purge_unpublished_rows(
+                        self._store,
+                        checkpoint,
+                        policy,
+                        ContentKind.CODE,
+                        options=RouteScanOptions(code_collection=build_target),
+                    )
                 # Breadth first, pointer second - a reader must never resolve a
                 # generation whose published figure is missing.
                 publish_generation_as_served(

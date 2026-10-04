@@ -24,6 +24,7 @@ from ..indexer._run_ledger_models import (
 from ..indexer._run_ledger_runtime import RunLedger
 from ._ledger_fixtures import latest_generation
 from ._run_ledger_test_support import (
+    ledger_test_certify_generation,
     ledger_test_digest,
     ledger_test_signature,
     ledger_test_unit,
@@ -192,6 +193,7 @@ def test_file_outcomes_and_finalization_are_immutable(tmp_path: Path) -> None:
             generation.generation_id,
             FinalizationPhase.METADATA_PUBLISHED,
         )
+    ledger_test_certify_generation(ledger, generation.generation_id)
     for phase in (
         FinalizationPhase.STALE_RECONCILED,
         FinalizationPhase.METADATA_PUBLISHED,
@@ -276,6 +278,7 @@ def test_a_succeeding_generation_never_accrues_resume_failures(
     """Only unsuccessful outcomes advance the bound."""
     ledger = RunLedger(tmp_path / "runs.sqlite3")
     generation = ledger.start_generation(ledger_test_signature(tmp_path))
+    ledger_test_certify_generation(ledger, generation.generation_id)
     for phase in (
         FinalizationPhase.STALE_RECONCILED,
         FinalizationPhase.METADATA_PUBLISHED,

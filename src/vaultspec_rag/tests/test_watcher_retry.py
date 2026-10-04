@@ -404,7 +404,7 @@ def test_third_failure_opens_the_circuit(tmp_path: Path) -> None:
     assert not policy.admit(now=59.9).admitted
 
 
-def test_full_reindex_required_is_terminal_and_clears_pending_intent(
+def test_full_reindex_required_is_terminal_and_retains_pending_scope(
     tmp_path: Path,
 ) -> None:
     policy = _policy(tmp_path / "code.json", tmp_path)
@@ -419,7 +419,9 @@ def test_full_reindex_required_is_terminal_and_clears_pending_intent(
 
     assert state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
     assert state.circuit_state is WatcherCircuitState.OPEN
-    assert not state.convergence_pending
+    # Mutation: discarding exact scope on refusal loses work before publication.
+    assert state.convergence_pending
+    assert [item.relative_path for item in state.pending_paths] == ["src/a.py"]
     assert not policy.admit(now=1000.0).admitted
 
     renewed = _mark_scope(policy, now=1001.0, path="src/b.py")
@@ -456,7 +458,10 @@ def test_exact_events_preserve_terminal_rebuild_refusal(
     assert observed.consecutive_failures == failed.consecutive_failures
     assert observed.circuit_state is WatcherCircuitState.OPEN
     assert observed.next_retry_at == 0.0
-    assert [item.relative_path for item in observed.pending_paths] == ["src/b.py"]
+    assert [item.relative_path for item in observed.pending_paths] == [
+        "src/a.py",
+        "src/b.py",
+    ]
     assert not policy.admit(now=1000.0).admitted
 
 
@@ -522,8 +527,8 @@ def test_missing_publication_proof_is_a_terminal_rebuild_refusal(
 
     assert state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
     assert state.scope_refusal is WatcherScopeRefusal.FULL_REINDEX_REQUIRED
-    assert not state.convergence_pending
-    assert state.pending_paths == ()
+    assert state.convergence_pending
+    assert [item.relative_path for item in state.pending_paths] == ["src/a.py"]
 
 
 def test_half_open_probe_is_single_flight(tmp_path: Path) -> None:
@@ -716,7 +721,7 @@ def test_prestart_handoff_cancels_reserved_admission(tmp_path: Path) -> None:
     assert not marker.exists()
     assert replacement.state.attempt_generation is None
     assert replacement.state.convergence_pending
-    assert not replacement.state.unscoped_required
+    assert replacement.state.unscoped_required
     assert replacement.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
     next_attempt = replacement.admit(now=2.0)
     assert not next_attempt.admitted
@@ -768,7 +773,7 @@ async def test_cancellation_handoff_has_reserved_worker_capacity(
 
     replacement = _policy(tmp_path / "code.json", tmp_path)
     assert replacement.state.convergence_pending
-    assert not replacement.state.unscoped_required
+    assert replacement.state.unscoped_required
     assert replacement.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
 
 
@@ -914,7 +919,10 @@ def test_recovery_marker_clears_claim_and_requires_explicit_rebuild(
 
     assert recovered.state.attempt_generation is None
     assert recovered.state.convergence_pending
-    assert not recovered.state.unscoped_required
+    assert recovered.state.unscoped_required
+    assert [item.relative_path for item in recovered.state.pending_paths] == [
+        "src/a.py"
+    ]
     assert recovered.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
     assert not marker.exists()
     next_attempt = recovered.admit(now=1.0)
@@ -940,7 +948,7 @@ def test_late_recovery_marker_preserves_newer_live_claim(tmp_path: Path) -> None
     # The marker fences the retired attempt, not the live one that replaced it.
     assert settled.attempt_generation == replacement_attempt.attempt_generation
     assert settled.convergence_pending
-    assert not settled.unscoped_required
+    assert settled.unscoped_required
     assert settled.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
     assert settled.convergence_generation > retiring_attempt.attempt_generation
 
@@ -962,7 +970,7 @@ def test_inactive_same_process_fence_is_consumed(tmp_path: Path) -> None:
     assert not marker.exists()
     assert replacement.state.attempt_generation is None
     assert replacement.state.convergence_pending
-    assert not replacement.state.unscoped_required
+    assert replacement.state.unscoped_required
     assert replacement.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
 
 
@@ -1037,5 +1045,5 @@ async def test_cancellation_hands_off_after_indefinite_lock_contention(
 
     recovered = _policy(state_path, tmp_path)
     assert recovered.state.convergence_pending
-    assert not recovered.state.unscoped_required
+    assert recovered.state.unscoped_required
     assert recovered.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED

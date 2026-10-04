@@ -410,10 +410,12 @@ class TestChildRunsInManagedDirectory:
         monkeypatch.chdir(start_dir)
         try:
             sup.spawn()
-            deadline = time.monotonic() + 10.0
             marker = storage_dir.parent / "cwd-witness.txt"
-            while time.monotonic() < deadline and not marker.is_file():
-                time.sleep(0.05)
+            # File creation precedes the child's write. Join the real witness
+            # before stop can terminate it with an empty marker on Windows.
+            process = sup._proc
+            assert process is not None
+            assert process.wait(timeout=10.0) == 0
         finally:
             assert sup.stop()
 
