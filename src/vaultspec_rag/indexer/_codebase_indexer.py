@@ -8,6 +8,7 @@ chunks, tracking content hashes for incremental re-indexing.
 from __future__ import annotations
 
 import contextlib
+import functools
 import logging
 import pathlib
 import time
@@ -66,6 +67,7 @@ from ._run_ledger_models import (
     RunLedgerCompatibilityError,
     RunOperation,
 )
+from ._source_file import source_file_stat
 from ._support_budget import CodeSupportBudget
 from ._vault_prep import IndexResult
 
@@ -144,7 +146,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                 versioned conventional source profile is used when omitted.
         """
         options = options or self.Options()
-        self.root_dir = root_dir
+        self.root_dir = root_dir.resolve()
         self.model = model
         self.store = store
         self._gpu_lock = options.gpu_lock
@@ -174,7 +176,10 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         # Resident between runs; every acquire/retain pair runs under
         # ``self._writer_lock``, which is the serialization the cache's
         # single-threaded contract relies on.
-        self._stat_gate_cache = _stat_gate.StatEvidenceStore(self._stat_gate_path)
+        self._stat_gate_cache = _stat_gate.StatEvidenceStore(
+            self._stat_gate_path,
+            digest=functools.partial(_stat_gate.file_digest, root_dir=self.root_dir),
+        )
         # Per-run document-preprocessing state (#185). Both are reset at the
         # start of each full/incremental run; the writer lock serialises runs
         # so instance-scoped state is safe. ``_prep_ctx`` is the context handed
@@ -1187,6 +1192,12 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         files that no longer exist.
         """
         run_control.checkpoint()
+        for rel, path in list(to_hash.items()):
+            try:
+                source_file_stat(path, self.root_dir)
+            except OSError:
+                logger.warning("Cannot hash file, skipping: %s", rel)
+                del to_hash[rel]
         with self._stat_gate_cache.acquire() as gate:
             reporter.phase_start("hash files", len(to_hash))
             try:

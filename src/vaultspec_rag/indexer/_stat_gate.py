@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final, Self
 
 from ..job_control import NO_RUN_CONTROL
+from ._source_file import open_source_file
 
 if TYPE_CHECKING:
     import pathlib
@@ -105,13 +106,14 @@ class _StatEvidence:
     hashed_at_ns: int
 
 
-def file_digest(path: pathlib.Path) -> str:
+def file_digest(path: pathlib.Path, *, root_dir: pathlib.Path | None = None) -> str:
     """Digest a file's raw bytes - the default a domain gets without asking.
 
     Raises:
         OSError: The file could not be opened or read.
     """
-    with open(path, "rb") as stream:
+    source = path.open("rb") if root_dir is None else open_source_file(path, root_dir)
+    with source as stream:
         return hashlib.file_digest(stream, "blake2b").hexdigest()
 
 

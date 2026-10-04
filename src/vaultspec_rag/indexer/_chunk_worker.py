@@ -42,6 +42,7 @@ from ._preprocess_cache import (
     write_cached_output,
 )
 from ._preprocess_runner import run_preprocessor, run_preprocessor_batch
+from ._source_file import SourceIdentityError, open_source_file
 
 if TYPE_CHECKING:
     import pathlib
@@ -113,6 +114,7 @@ def _effective_source_limit(
 def _stream_source(
     path: pathlib.Path,
     *,
+    root_dir: pathlib.Path | None = None,
     max_source_bytes: int | None,
     retain_bytes: bool,
     run_control: RunControl = NO_RUN_CONTROL,
@@ -122,7 +124,10 @@ def _stream_source(
     retained = bytearray() if retain_bytes else None
     total = 0
     try:
-        with path.open("rb") as stream:
+        source = (
+            path.open("rb") if root_dir is None else open_source_file(path, root_dir)
+        )
+        with source as stream:
             while block := stream.read(_SOURCE_READ_BLOCK_BYTES):
                 run_control.checkpoint()
                 total += len(block)
@@ -142,6 +147,8 @@ def _stream_source(
         raise _SourceVanishedError(
             f"source vanished before it was read: {path}"
         ) from exc
+    except SourceIdentityError as exc:
+        raise _SourceUnavailableError(str(exc)) from exc
     except OSError as exc:
         logger.warning("Cannot read %s: %s", path, exc)
         raise
@@ -951,12 +958,14 @@ def chunk_and_hash_file(
         if rule is not None:
             content_hash, _raw = _stream_source(
                 path,
+                root_dir=root_dir,
                 max_source_bytes=source_limit,
                 retain_bytes=False,
             )
         else:
             content_hash, raw = _stream_source(
                 path,
+                root_dir=root_dir,
                 max_source_bytes=source_limit,
                 retain_bytes=True,
             )
@@ -990,6 +999,7 @@ def chunk_and_hash_file(
         try:
             _passthrough_hash, raw = _stream_source(
                 path,
+                root_dir=root_dir,
                 max_source_bytes=source_limit,
                 retain_bytes=True,
             )
@@ -1065,6 +1075,7 @@ def _prepare_batch_member(
     try:
         content_hash, _raw = _stream_source(
             path,
+            root_dir=root_dir,
             max_source_bytes=source_limit,
             retain_bytes=False,
         )
@@ -1236,6 +1247,7 @@ def _passthrough_batch_member(
     try:
         content_hash, raw = _stream_source(
             member.path,
+            root_dir=root_dir,
             max_source_bytes=member.source_limit,
             retain_bytes=True,
         )

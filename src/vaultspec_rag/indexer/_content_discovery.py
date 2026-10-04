@@ -34,6 +34,7 @@ from ._content_policy import (
 )
 from ._preprocess_config import hook_state
 from ._scan_cache import MembershipScanCache
+from ._source_file import open_source_file, source_file_stat
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -182,7 +183,7 @@ class CodeContentDiscovery:
                 (e.g. from CLI ``--exclude``). Merged into the
                 ``.vaultragignore`` spec.
         """
-        self.root_dir = root_dir
+        self.root_dir = root_dir.resolve()
         self.content_policy = content_policy or RootContentPolicy(
             SourceProfileVersion.CONVENTIONAL_V1
         )
@@ -282,6 +283,8 @@ class CodeContentDiscovery:
         ):
             raise ValueError("code index preflight contains a path outside its root")
         for path in preflight.scan.files:
+            if path.resolve() != path:
+                raise ValueError("code index preflight contains a non-canonical source")
             rel = path.relative_to(root).as_posix()
             disposition = preflight.policy.classify(rel).disposition
             if not (disposition.admitted and disposition.kind is ContentKind.CODE):
@@ -388,18 +391,19 @@ class CodeContentDiscovery:
         # still measured, because it is still admitted.
         transformed = self.has_transform(policy, rel_path)
         try:
-            source_bytes = path.stat().st_size
+            source_bytes = source_file_stat(path, self.root_dir).st_size
             if not transformed:
                 if source_bytes > _MAX_FILE_SIZE:
                     return InspectedSource(
                         _rejected_code(AdmissionReason.SOURCE_TOO_LARGE),
                         0,
                     )
-                if _is_binary(path):
-                    return InspectedSource(
-                        _rejected_code(AdmissionReason.SOURCE_BINARY),
-                        0,
-                    )
+                with open_source_file(path, self.root_dir) as stream:
+                    if _is_binary(stream):
+                        return InspectedSource(
+                            _rejected_code(AdmissionReason.SOURCE_BINARY),
+                            0,
+                        )
         except OSError:
             return InspectedSource(
                 _rejected_code(AdmissionReason.SOURCE_PROBE_FAILED),

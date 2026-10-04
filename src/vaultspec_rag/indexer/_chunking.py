@@ -12,7 +12,7 @@ import logging
 from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
-    import pathlib
+    from typing import BinaryIO
 
 logger = logging.getLogger(__name__)
 
@@ -388,12 +388,6 @@ _CONTAINER_NODES: set[str] = {
 }
 
 
-def _is_binary(path: pathlib.Path, sample_size: int = 8192) -> bool:
+def _is_binary(stream: BinaryIO, sample_size: int = 8192) -> bool:
     """Return True if the file appears to be binary (contains null bytes)."""
-    try:
-        with path.open("rb") as stream:
-            chunk = stream.read(sample_size)
-    except OSError as exc:
-        logger.debug("binary probe read failed for %s: %s", path, exc)
-        return True
-    return b"\x00" in chunk
+    return b"\x00" in stream.read(sample_size)

@@ -172,17 +172,20 @@ class TestBinaryDetection:
     def test_text_file_not_binary(self, tmp_path: Path):
         f = tmp_path / "hello.py"
         f.write_text("print('hello')")
-        assert _is_binary(f) is False
+        with f.open("rb") as stream:
+            assert _is_binary(stream) is False
 
     def test_binary_file_detected(self, tmp_path: Path):
         f = tmp_path / "data.bin"
         f.write_bytes(b"some\x00binary\x00data")
-        assert _is_binary(f) is True
+        with f.open("rb") as stream:
+            assert _is_binary(stream) is True
 
     def test_empty_file_not_binary(self, tmp_path: Path):
         f = tmp_path / "empty"
         f.write_bytes(b"")
-        assert _is_binary(f) is False
+        with f.open("rb") as stream:
+            assert _is_binary(stream) is False
 
     def test_large_file_probe_has_bounded_python_memory(self, tmp_path: Path):
         f = tmp_path / "large.py"
@@ -190,7 +193,8 @@ class TestBinaryDetection:
 
         tracemalloc.start()
         try:
-            assert _is_binary(f) is False
+            with f.open("rb") as stream:
+                assert _is_binary(stream) is False
             _current, peak = tracemalloc.get_traced_memory()
         finally:
             tracemalloc.stop()
