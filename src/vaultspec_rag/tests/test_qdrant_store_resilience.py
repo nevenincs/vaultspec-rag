@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import os
 import socket
-import sys
 from typing import TYPE_CHECKING
 
 import pytest
@@ -29,6 +28,7 @@ from ..qdrant_runtime._supervise import (
     _quarantine_collection,
 )
 from ._config_fixtures import reset_config
+from ._fake_qdrant_binary import fake_qdrant_binary
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -198,22 +198,6 @@ def _free_loopback_ports() -> tuple[int, int]:
         return int(http_sock.getsockname()[1]), int(grpc_sock.getsockname()[1])
 
 
-def _fake_binary(tmp_path: Path, source: str, name: str = "fake_qdrant") -> Path:
-    """Write a fake qdrant 'binary' the supervisor can exec as ``[binary]``."""
-    script = tmp_path / f"{name}.py"
-    script.write_text(source, encoding="utf-8")
-    if sys.platform == "win32":
-        launcher = tmp_path / f"{name}.bat"
-        launcher.write_text(f'@"{sys.executable}" "{script}"\r\n', encoding="utf-8")
-        return launcher
-    launcher = tmp_path / f"{name}.sh"
-    launcher.write_text(
-        f'#!/bin/sh\nexec "{sys.executable}" "{script}"\n', encoding="utf-8"
-    )
-    launcher.chmod(0o755)
-    return launcher
-
-
 class TestBoundedRetry:
     """The supervised start quarantines under its bound, then fails loudly."""
 
@@ -226,7 +210,7 @@ class TestBoundedRetry:
         for i in range(_MAX_QUARANTINES_PER_START + 2):
             _make_collection(storage, f"r{i:04d}_vault_docs")
 
-        binary = _fake_binary(tmp_path, _FAKE_CORRUPT_NAMED)
+        binary = fake_qdrant_binary(tmp_path, _FAKE_CORRUPT_NAMED)
         sup = QdrantSupervisor(
             binary,
             http_port=8990,
@@ -252,7 +236,7 @@ class TestBoundedRetry:
         """A global panic naming no on-disk collection quarantines nothing."""
         storage = tmp_path / "qdrant-server" / "storage"
         _make_collection(storage, "r0000_vault_docs")
-        binary = _fake_binary(tmp_path, _FAKE_CORRUPT_UNNAMED, name="unnamed")
+        binary = fake_qdrant_binary(tmp_path, _FAKE_CORRUPT_UNNAMED, name="unnamed")
         sup = QdrantSupervisor(
             binary,
             http_port=8992,
@@ -286,7 +270,7 @@ class TestBoundedRetry:
             f"{cause}', flush=True)\n"
             "sys.exit(1)\n"
         )
-        binary = _fake_binary(tmp_path, source, name="sharing")
+        binary = fake_qdrant_binary(tmp_path, source, name="sharing")
         sup = QdrantSupervisor(
             binary,
             http_port=8993,
@@ -339,7 +323,7 @@ class TestBoundedRetry:
     ) -> None:
         storage = tmp_path / "qdrant-server" / "storage"
         _make_collection(storage, "r0000_vault_docs")
-        binary = _fake_binary(tmp_path, _FAKE_CORRUPT_NAMED)
+        binary = fake_qdrant_binary(tmp_path, _FAKE_CORRUPT_NAMED)
         sup = QdrantSupervisor(
             binary,
             http_port=8991,

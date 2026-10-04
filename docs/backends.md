@@ -19,6 +19,14 @@ Managed storage separates projects by namespaces based on each project's resolve
 
 Both backends need the [GPU runtime and models](installation.md). Local-only storage avoids the Qdrant binary download; packages and models still need downloading if they are not cached.
 
+### Access to the managed server
+
+The managed server listens on loopback, which every account on the machine can reach, so it requires an API key on both its HTTP and gRPC ports. The service generates a new key each time it starts the server and writes it to `credential.json` beside the storage directory (`~/.vaultspec-rag/qdrant-server/credential.json` by default), readable only by your account. vaultspec-rag reads it from there; nothing needs configuring.
+
+To query the managed server yourself, send that key in the `api-key` header. Liveness and version routes answer without it; everything that reads or changes collections is refused. If you set `VAULTSPEC_RAG_QDRANT_API_KEY`, the managed server uses your key instead of generating one.
+
+A service upgraded in place does not attach to a managed server that an older version started without a key. Run `vaultspec-rag server stop`, then start the service again.
+
 ## Change the backend
 
 Switching backends does not transfer indexes. To keep an existing index, follow [index migration](storage-maintenance.md#migrate-a-root-between-backends). Otherwise, build an index after switching.

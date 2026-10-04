@@ -17,7 +17,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ... import store_schema
+from ..._qdrant_server_client import open_server_client
+from ...config._types import EnvVar
+from ...qdrant_runtime._credential import read_managed_api_key
 from ...qdrant_runtime._supervise import QdrantSupervisor
+from ..conftest import managed_env
 from ._helpers import _get_ephemeral_qdrant_port, _resolve_host_provisioned_qdrant
 
 if TYPE_CHECKING:
@@ -27,7 +31,7 @@ pytestmark = [pytest.mark.integration]
 
 
 def test_collection_create_succeeds_on_a_long_storage_path(tmp_path: Path) -> None:
-    from qdrant_client import QdrantClient, models
+    from qdrant_client import models
 
     host_qdrant = _resolve_host_provisioned_qdrant()
     assert host_qdrant is not None, (
@@ -51,9 +55,12 @@ def test_collection_create_succeeds_on_a_long_storage_path(tmp_path: Path) -> No
     supervisor.spawn()
     try:
         assert supervisor.wait_ready(timeout=60.0), "qdrant did not become ready"
-        client = QdrantClient(
-            url=f"http://127.0.0.1:{supervisor.http_port}", timeout=60
-        )
+        # The child is addressed by URL on an ephemeral port, so the key it
+        # published reaches the client as the configured key.
+        with managed_env(
+            **{EnvVar.QDRANT_API_KEY.value: read_managed_api_key(storage)}
+        ):
+            client = open_server_client(supervisor.url, timeout=60)
         try:
             client.create_collection(
                 collection_name="r0123456789ab_vault_docs",

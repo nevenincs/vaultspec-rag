@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 import pytest
 from qdrant_client import QdrantClient, models
 
+from ..._qdrant_server_client import open_server_client
 from ...config._types import EnvVar
 from .._cli_helpers import app, runner
 from .._config_fixtures import reset_config
@@ -93,7 +94,7 @@ class TestDeleteRootAddressing:
         than about a client the test handed in.
         """
         del isolated_status_dir
-        client = QdrantClient(url=server_mode.url)
+        client = open_server_client(server_mode.url)
         try:
             yield client
         finally:

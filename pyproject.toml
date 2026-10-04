@@ -123,6 +123,11 @@ dev = [
   # they did, which is a dependency that can vanish under an unrelated
   # upgrade; declared here it is the direct dependency it has become.
   "pyyaml>=6.0",
+  # The managed qdrant server listens on gRPC as well as REST, and the test
+  # that an anonymous caller is refused on it opens a raw channel so nothing of
+  # ours stands between the test and the listener. It arrives with the qdrant
+  # client today; declared here so that test does not depend on that.
+  "grpcio>=1.60",
   # Module length and the class-shape design limits ruff has no rule for
   # (C0302, R0902, R0904, R0916). Everything else pylint would report is
   # already covered by ruff and stays disabled.

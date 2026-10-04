@@ -681,8 +681,7 @@ def _storage_maintenance_tick_sync() -> None:
     """
     from datetime import UTC, datetime
 
-    from qdrant_client import QdrantClient
-
+    from .._qdrant_server_client import open_server_client
     from ..config._settings import get_config
     from ..storage_reclamation import MaintenanceCycleRequest, run_maintenance_cycle
 
@@ -708,8 +707,8 @@ def _storage_maintenance_tick_sync() -> None:
     # under one guard. A failure outside it leaves the record running forever
     # with no thread behind it, and the next hourly cycle adds another.
     try:
-        client = QdrantClient(
-            url=cfg.effective_qdrant_url, timeout=_QDRANT_CLIENT_OP_TIMEOUT_SECONDS
+        client = open_server_client(
+            cfg.effective_qdrant_url, timeout=_QDRANT_CLIENT_OP_TIMEOUT_SECONDS
         )
         now = datetime.now(UTC)
         try:
@@ -781,8 +780,7 @@ def _storage_survey_warm_sync() -> None:
     stamps advance, nothing is reclaimed, the GPU is never touched. Skips
     silently outside server mode.
     """
-    from qdrant_client import QdrantClient
-
+    from .._qdrant_server_client import open_server_client
     from ..config._settings import get_config
     from ..storage_survey_ops import gather_survey, server_storage_collections_dir
 
@@ -790,7 +788,7 @@ def _storage_survey_warm_sync() -> None:
     if not cfg.effective_server_mode():
         return
     url = cfg.effective_qdrant_url
-    client = QdrantClient(url=url, timeout=_QDRANT_CLIENT_OP_TIMEOUT_SECONDS)
+    client = open_server_client(url, timeout=_QDRANT_CLIENT_OP_TIMEOUT_SECONDS)
     try:
         surveys = gather_survey(client, server_storage_collections_dir())
     finally:

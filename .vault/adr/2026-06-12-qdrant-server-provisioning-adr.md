@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#qdrant-server-provisioning'
 date: '2026-06-12'
-modified: '2026-09-30'
-body_hash: 'sha256:1945e6c7ca834b4a5d8ca5a6a84a076ac7cf147b5d49c60a5e6b512aaa25d6a9'
+modified: '2026-10-04'
+body_hash: 'sha256:51d7bf1c28db0364673d0eab438f1377f5e4d52ca171e99e82570170f76af680'
 related:
   - "[[2026-06-12-qdrant-server-provisioning-research]]"
   - "[[2026-06-12-serving-runtime-research]]"
@@ -65,6 +65,13 @@ default.
 - Tests are real-binary/real-GPU/real-server; no mocks, skips, or fakes.
 - On Windows, breakaway flags alone cannot guarantee child reaping; a Job Object
   with kill-on-close is required so a hard daemon death can never orphan a server.
+
+2026-10-04 authorized security refinement: managed-qdrant-auth governs access to the
+supervised child and overrides the assumption above that API-key plumbing serves only
+the remote-server escape hatch. Loopback binding alone does not separate local
+accounts, so the managed child requires a per-instance key on both protocols and
+every internal client presents it. Loopback binding, the curated child environment,
+pinned-binary verification and supervision remain in force.
 
 ## Implementation
 

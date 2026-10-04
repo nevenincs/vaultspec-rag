@@ -192,11 +192,11 @@ def _reconcile_storage_manifest(
     from ..storage_manifest import reconcile_manifest
 
     try:
-        from qdrant_client import QdrantClient
+        from .._qdrant_server_client import open_server_client
 
         cfg = get_config()
         url = cfg.effective_qdrant_url
-        client = QdrantClient(url=url, timeout=timeout)
+        client = open_server_client(url, timeout=timeout)
         try:
             names = [c.name for c in client.get_collections().collections]
         finally:

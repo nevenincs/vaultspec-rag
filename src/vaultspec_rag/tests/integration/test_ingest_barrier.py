@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ..._publication_state import acquire_publication_snapshot
+from ..._qdrant_server_client import open_server_client
 from ..._source_types import PublicSourceType
 from ...config._settings import get_config
 from ...config._types import EnvVar
@@ -132,7 +133,7 @@ class TestIngestBarrierStoreContract:
         shortfall, and the assertion below is the one a removed or
         weakened barrier turns vacuous.
         """
-        from qdrant_client import QdrantClient, models
+        from qdrant_client import models
 
         store = VaultStore(tmp_path)
         try:
@@ -141,7 +142,7 @@ class TestIngestBarrierStoreContract:
             chunks = _make_code_chunks(6, dimension)
             store.upsert_code_chunks(chunks, write_policy=None, wait=False)
 
-            raw = QdrantClient(url=server_mode.url)
+            raw = open_server_client(server_mode.url)
             try:
                 raw.upsert(
                     collection_name=store.CODE_TABLE_NAME,
@@ -294,12 +295,10 @@ class TestBarrierComposesWithSliceWriter:
         """
         import threading
 
-        from qdrant_client import QdrantClient
-
         from ...indexer import VaultIndexer
 
         build_synthetic_vault(tmp_path, n_docs=4, seed=7)
-        raw = QdrantClient(url=server_mode.url)
+        raw = open_server_client(server_mode.url)
         store = _PoisonedThroughWriterStore(tmp_path, raw)
         indexer = VaultIndexer(
             tmp_path,
@@ -341,12 +340,11 @@ class TestTerminalStateNeverPrecedesAppliedPoints:
         rebuild "succeed" over an empty collection, turning both
         assertions red.
         """
-        from qdrant_client import QdrantClient
 
         from ...indexer import VaultIndexer
 
         build_synthetic_vault(tmp_path, n_docs=4, seed=7)
-        raw = QdrantClient(url=server_mode.url)
+        raw = open_server_client(server_mode.url)
         # The real store with one injected backend loss: every chunk
         # upsert completes for real, then the acknowledged points are
         # deleted server-side so the collection genuinely lacks them.

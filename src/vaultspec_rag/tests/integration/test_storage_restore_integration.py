@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..._qdrant_server_client import open_server_client
 from ..._store_models import root_collection_prefix
 from ...qdrant_runtime._constants import (
     WINDOWS_SERVER_ARCHIVE_RESTORE_UNSUPPORTED_REASON,
@@ -99,9 +100,8 @@ def test_restore_preview_and_recovery_carry_archived_identity(
     tmp_path: Path,
 ) -> None:
     """A real snapshot restores only after preview and keeps its provenance."""
-    from qdrant_client import QdrantClient
 
-    client = QdrantClient(url=restore_qdrant.url, timeout=60)
+    client = open_server_client(restore_qdrant.url, timeout=60)
     try:
         source_root = tmp_path / "source"
         source_root.mkdir()
@@ -180,9 +180,8 @@ def test_restore_refuses_local_mode_and_a_populated_destination(
     tmp_path: Path,
 ) -> None:
     """Refusals leave the real target collection untouched."""
-    from qdrant_client import QdrantClient
 
-    client = QdrantClient(url=restore_qdrant.url, timeout=60)
+    client = open_server_client(restore_qdrant.url, timeout=60)
     try:
         source_root = tmp_path / "source"
         source_root.mkdir()
@@ -233,9 +232,8 @@ def test_restore_rolls_back_after_a_real_corrupt_snapshot_failure(
     tmp_path: Path,
 ) -> None:
     """A later Qdrant recovery error removes an earlier recovered collection."""
-    from qdrant_client import QdrantClient
 
-    client = QdrantClient(url=restore_qdrant.url, timeout=60)
+    client = open_server_client(restore_qdrant.url, timeout=60)
     try:
         source_root = tmp_path / "source"
         source_root.mkdir()
@@ -296,9 +294,8 @@ def test_restore_rejects_links_replaced_after_validation(
     checked opener restored. The external bytes are a valid snapshot, so
     Qdrant's parser cannot stand in for the archive boundary.
     """
-    from qdrant_client import QdrantClient
 
-    client = QdrantClient(url=restore_qdrant.url, timeout=60)
+    client = open_server_client(restore_qdrant.url, timeout=60)
     try:
         source_root = tmp_path / "source"
         source_root.mkdir()
@@ -401,9 +398,8 @@ def test_restored_namespace_answers_the_search_the_original_answered(
     collection answers the *same* query with the *same* ranked bodies the source
     gave before it was archived and destroyed.
     """
-    from qdrant_client import QdrantClient
 
-    client = QdrantClient(url=restore_qdrant.url, timeout=60)
+    client = open_server_client(restore_qdrant.url, timeout=60)
     try:
         source_root = tmp_path / "source"
         source_root.mkdir()

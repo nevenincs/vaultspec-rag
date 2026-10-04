@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from ..._qdrant_server_client import open_server_client
 from ..._store_models import root_collection_prefix
 from ...serviceclient._transport import _do_http_call
 from ...storage_manifest import load_manifest, record_root, update_orphan_stamps
@@ -32,9 +33,9 @@ _INTERVAL_MINUTES = "0.05"
 
 def _make_namespace(qdrant_port: int, prefix: str) -> None:
     """Create a minimal real collection under *prefix* on the managed server."""
-    from qdrant_client import QdrantClient, models
+    from qdrant_client import models
 
-    client = QdrantClient(url=f"http://127.0.0.1:{qdrant_port}")
+    client = open_server_client(f"http://127.0.0.1:{qdrant_port}")
     try:
         client.create_collection(
             collection_name=f"{prefix}vault_docs",
@@ -47,9 +48,8 @@ def _make_namespace(qdrant_port: int, prefix: str) -> None:
 
 
 def _collection_names(qdrant_port: int) -> set[str]:
-    from qdrant_client import QdrantClient
 
-    client = QdrantClient(url=f"http://127.0.0.1:{qdrant_port}")
+    client = open_server_client(f"http://127.0.0.1:{qdrant_port}")
     try:
         return {c.name for c in client.get_collections().collections}
     finally:

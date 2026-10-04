@@ -50,6 +50,12 @@ from ._constants import (
     QDRANT_SERVER_VERSION,
     QdrantRuntimeState,
 )
+from ._credential import (
+    data_plane_auth_fault,
+    generate_api_key,
+    server_api_key,
+    write_managed_api_key,
+)
 from ._store_format import (
     QUARANTINE_DIRNAME,
     judge_store_format,
@@ -108,6 +114,7 @@ class _SupervisorOptions(TypedDict, total=False):
     log_max_bytes: int
     log_backup_count: int
     migrated_from: str
+    api_key: str
 
 
 @dataclass(frozen=True)
@@ -119,6 +126,7 @@ class _SupervisorConfig:
     log_max_bytes: int = _MANAGED_LOG_MAX_BYTES_DEFAULT
     log_backup_count: int = _MANAGED_LOG_BACKUP_COUNT_DEFAULT
     migrated_from: str = ""
+    api_key: str = ""
 
 
 # Recovery bound: how many collections may be quarantined within one supervised
@@ -387,6 +395,10 @@ class QdrantSupervisor:
         # that it was carried across a change. The pre-spawn judgement is the
         # only witness, and it is needed for as long as this daemon runs.
         self.migrated_from = config.migrated_from
+        # One key for this supervisor's whole lifetime, restarts included:
+        # stores hold long-lived clients, and a key that changed on restart
+        # would strand every one of them.
+        self._api_key = config.api_key or generate_api_key()
         if self.log_max_bytes <= 0:
             raise ValueError("log_max_bytes must be positive")
         if self.log_backup_count < 0:
@@ -430,7 +442,9 @@ class QdrantSupervisor:
 
         # Least privilege: pass only OS-operation variables plus the QDRANT__*
         # knobs, never the daemon's full environment, so any secrets the daemon
-        # holds (cloud creds, tokens) are not exposed to the qdrant child.
+        # holds (cloud creds, tokens) are not exposed to the qdrant child. The
+        # one secret it does get is its own: the key it must demand of every
+        # caller, on REST and gRPC alike.
         env = {
             key: value
             for key, value in os.environ.items()
@@ -441,6 +455,7 @@ class QdrantSupervisor:
                 "QDRANT__SERVICE__HOST": "127.0.0.1",
                 "QDRANT__SERVICE__HTTP_PORT": str(self.http_port),
                 "QDRANT__SERVICE__GRPC_PORT": str(self.grpc_port),
+                "QDRANT__SERVICE__API_KEY": self._api_key,
                 "QDRANT__STORAGE__STORAGE_PATH": _qdrant_child_path(self.storage_dir),
                 "QDRANT__STORAGE__SNAPSHOTS_PATH": _qdrant_child_path(
                     self.storage_dir.parent / "snapshots"
@@ -472,6 +487,9 @@ class QdrantSupervisor:
         child_env = self._child_env()
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         (self.storage_dir.parent / "snapshots").mkdir(parents=True, exist_ok=True)
+        # Published before the child exists, so there is never a listening
+        # server whose key its own clients cannot find.
+        write_managed_api_key(self.storage_dir, self._api_key)
         if self.log_path is not None:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
         self._recent_output.clear()
@@ -767,7 +785,8 @@ class QdrantSupervisor:
 
         Raises:
             RuntimeError: If the server does not become ready and no corrupt
-                collection can be recovered (the child is terminated first).
+                collection can be recovered, or becomes ready without
+                demanding its key (the child is terminated first).
         """
         if timeout is None:
             timeout = ready_timeout_seconds()
@@ -775,6 +794,13 @@ class QdrantSupervisor:
         while True:
             self.spawn()
             if self.wait_ready(timeout):
+                fault = self._refuse_unprotected_data_plane()
+                if fault is not None:
+                    raise RuntimeError(
+                        f"qdrant server on port {self.http_port} became ready "
+                        f"but {fault}; refusing to serve the store through it. "
+                        f"See {self.log_path}."
+                    )
                 return
             # Distinguish a dead child (a real load abort) from a still-alive one
             # (a readiness timeout on a healthy-but-slow store). Only a dead child
@@ -856,6 +882,8 @@ class QdrantSupervisor:
             logger.exception("qdrant restart spawn failed")
             return False
         ready = self.wait_ready(timeout)
+        if ready and self._refuse_unprotected_data_plane() is not None:
+            return False
         if ready:
             from ._constants import QDRANT_SERVER_VERSION
             from ._resolve import write_qdrant_identity
@@ -877,6 +905,27 @@ class QdrantSupervisor:
                     )
                 return False
         return ready
+
+    def _refuse_unprotected_data_plane(self) -> str | None:
+        """Stop a ready child whose data plane is not behind this key.
+
+        Readiness says the server answers; it does not say the server is
+        asking for the key. A binary that ignores the setting would otherwise
+        serve every local account while each health signal read normal.
+
+        Returns:
+            The fault, after the child has been stopped; ``None`` when an
+            anonymous data request is refused and the key is accepted.
+        """
+        fault = data_plane_auth_fault(self.url, self._api_key)
+        if fault is None:
+            return None
+        logger.error(
+            "qdrant child pid=%s is ready but %s; stopping it", self.pid, fault
+        )
+        if not self.stop():
+            logger.error("qdrant child with an unprotected data plane did not stop")
+        return fault
 
     def mark_attached(self) -> None:
         """Mark this supervisor as attached to an externally-owned managed server.
@@ -1166,6 +1215,37 @@ def _reap_orphan_before_spawn(
     logger.info("Reaped qdrant orphan pid %d; proceeding to spawn", target)
 
 
+def _attach_to_running(**options: Unpack[_SupervisorOptions]) -> QdrantSupervisor:
+    """Adopt the running managed server, once this process can authenticate to it.
+
+    The owner published the key this process will present. A running server
+    that asks for none, or for a different one, is not attached to: every
+    store opened against it would be open to the whole host or refused on its
+    first request.
+
+    Raises:
+        RuntimeError: When no credential is published for the server, an
+            anonymous data request succeeds, or the credential is rejected.
+    """
+    supervisor = QdrantSupervisor(Path("attached-qdrant"), **options)
+    api_key = server_api_key(supervisor.url)
+    fault = (
+        "its owner published no credential"
+        if api_key is None
+        else data_plane_auth_fault(supervisor.url, api_key)
+    )
+    if fault is not None:
+        raise RuntimeError(
+            "refusing to attach to the managed qdrant on port "
+            f"{supervisor.http_port}: {fault}. Restart the service that owns "
+            "it so it starts with a credential, then retry; or run "
+            f"local-only: {server_start_command(local_only=True)}"
+        )
+    supervisor.mark_attached()
+    set_active_supervisor(supervisor)
+    return supervisor
+
+
 def start_supervised_from_config() -> QdrantSupervisor:
     """Resolve, verify, spawn, and ready-wait the qdrant child per config.
 
@@ -1219,17 +1299,13 @@ def start_supervised_from_config() -> QdrantSupervisor:
         logger.info(
             "Attaching to the running managed qdrant on port %d: %s", qport, reason
         )
-        supervisor = QdrantSupervisor(
-            Path("attached-qdrant"),
+        return _attach_to_running(
             http_port=qport,
             storage_dir=storage_dir,
             log_path=log_path,
             log_max_bytes=log_max_bytes,
             log_backup_count=log_backup_count,
         )
-        supervisor.mark_attached()
-        set_active_supervisor(supervisor)
-        return supervisor
     if action == "refuse":
         raise RuntimeError(
             f"refusing to start qdrant on port {qport}: {reason}. Stop or fix "
@@ -1319,6 +1395,9 @@ def start_supervised_from_config() -> QdrantSupervisor:
         migrated_from=(
             store_format.stored_version if store_format.migrates_store else ""
         ),
+        # An operator-configured key is adopted so the one value they set is
+        # the one the child demands; unset, the supervisor generates its own.
+        api_key=cfg.qdrant_api_key or "",
     )
     logger.info("Starting qdrant server (%s binary %s)", resolved.source, resolved.path)
     try:
