@@ -25,6 +25,7 @@ from ..server._search_availability import (
     SearchResponseClassification,
     classify_search_response,
 )
+from ..server._search_readiness import ReadinessRevisionSnapshot, ReadinessSourceKey
 from ..server._search_route_availability import (
     SearchAvailabilityRequestFacts,
     SearchIndexStateInput,
@@ -190,23 +191,25 @@ def test_verified_empty_publication_is_authoritative(tmp_path: Path) -> None:
             integrity=snapshot.finish(0),
         )
     )
+    # Absence is only provable when the integrity verdict was measured over
+    # the published generation, so the readiness snapshot naming that
+    # generation has to be in hand before the context is built, not patched
+    # onto it afterwards.
+    readiness_snapshot = ReadinessRevisionSnapshot(
+        key=ReadinessSourceKey.from_root(tmp_path, "vault"),
+        published_generation=proof.generation_id,
+        publication_revision=proof.revision,
+        desired_generation=proof.generation_id,
+        controller_revision=proof.revision,
+    )
     context = SearchAvailabilityRequestFacts(
         job_snapshot_before=[],
         root=tmp_path,
         source="vault",
         request_id="empty-publication",
         port=8766,
+        readiness_snapshot=readiness_snapshot,
     ).to_context(after_snapshot=[], index_state=state)
-    context = replace(
-        context,
-        canonical_evidence=replace(
-            context.canonical_evidence,
-            served_generation=proof.generation_id,
-            desired_generation=proof.generation_id,
-            publication_revision=proof.revision,
-            desired_revision=proof.revision,
-        ),
-    )
     classification = _classify(context)
 
     assert classification.status_code == 200

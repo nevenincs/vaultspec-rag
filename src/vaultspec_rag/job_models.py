@@ -861,8 +861,10 @@ def active_work_identity(
     return spec.operation, spec.source, spec.mode, spec.authority, normalized_root
 
 
-def capabilities_for_state(spec: JobSpec, state: JobState) -> JobCapabilities:
-    """Derive truthful operations supported by a specification and state."""
+def capabilities_for_state(
+    spec: JobSpec, state: JobState, *, desired_state: DesiredJobState
+) -> JobCapabilities:
+    """Derive supported operations from specification, state, and operator intent."""
     if spec.operation is not JobOperation.INDEX or spec.source is JobSource.MAINTENANCE:
         return JobCapabilities(
             pausable=False,
@@ -872,7 +874,11 @@ def capabilities_for_state(spec: JobSpec, state: JobState) -> JobCapabilities:
             deletable=False,
         )
     return JobCapabilities(
-        pausable=state in {JobState.QUEUED, JobState.RUNNING},
+        pausable=(
+            state
+            in {JobState.QUEUED, JobState.RUNNING, JobState.PAUSING, JobState.PAUSED}
+            and desired_state is DesiredJobState.RUNNING
+        ),
         resumable=state in {JobState.PAUSING, JobState.PAUSED},
         cancellable=not state.is_terminal,
         retryable=state.is_retryable,

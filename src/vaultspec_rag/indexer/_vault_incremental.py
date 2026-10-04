@@ -222,6 +222,8 @@ class VaultIncrementalMixin:
             self,
         ) -> tuple[ReuseStats | None, DonorReuseContext | None]: ...
 
+        def _publish_generation(self, checkpoint: VaultRunCheckpoint) -> None: ...
+
         def _purge_shrunk_chunk_tails(
             self,
             existing_counts: dict[str, int],
@@ -430,12 +432,13 @@ class VaultIncrementalMixin:
         from ..config._settings import get_config
 
         stored_ordinals = self.store.get_stored_chunk_ordinals(doc_ids)
-        docs = self._prepare_documents_bounded(
-            [id_to_path[doc_id] for doc_id in sorted(doc_ids)],
-            reporter,
-            run_control=run_control,
-            skip_errors=False,
-        )
+        with controlled_phase(reporter, run_control, "prepare payloads", len(doc_ids)):
+            docs = self._prepare_documents_bounded(
+                [id_to_path[doc_id] for doc_id in sorted(doc_ids)],
+                reporter,
+                run_control=run_control,
+                skip_errors=False,
+            )
         prepared = {doc.id for doc in docs}
         deferred = doc_ids - prepared
         chunks: list[VaultChunk] = []
@@ -469,7 +472,7 @@ class VaultIncrementalMixin:
                 def write_payloads(current: list[VaultChunk] = doc_chunks) -> None:
                     self.store.overwrite_vault_chunk_payloads(
                         current,
-                        write_policy=None,
+                        write_policy=work.checkpoint.run_policy.store_write_policy,
                     )
 
                 execute_store_mutation(
@@ -661,6 +664,7 @@ class VaultIncrementalMixin:
             operation=RunOperation.SCOPED_INCREMENTAL,
             run_control=run_control,
         )
+        run_control = checkpoint.run_policy
         if checkpoint.receipt is None:
             raise RuntimeError("vault incremental opened without a publication receipt")
 
@@ -721,8 +725,7 @@ class VaultIncrementalMixin:
         # the changed hashes, and drop the deleted ids. Never recompute the
         # whole map (that is what the full scan is for).
         with controlled_phase(reporter, run_control, "write metadata", 1):
-            checkpoint.publish_proof_transition()
-            checkpoint.publish_generation()
+            self._publish_generation(checkpoint)
             total = checkpoint.ledger.publication_proof(
                 checkpoint.receipt.compatibility_key
             ).aggregate.indexed_identities
@@ -743,19 +746,3 @@ class VaultIncrementalMixin:
             else 0,  # Approximate
             reuse=outcome.reuse.snapshot() if outcome.reuse is not None else None,
         )
-
-    def _process_changed_vault_path(
-        self,
-        path: pathlib.Path,
-        docs_dir: pathlib.Path,
-        prev_meta: dict[str, str],
-        to_hash: dict[str, pathlib.Path],
-        delete_ids: set[str],
-    ) -> None:
-        doc_id = self._vault_doc_id(path, docs_dir)
-        if doc_id is None:
-            return
-        if path.is_file() and get_doc_type(path, self.root_dir) is not None:
-            to_hash[doc_id] = path
-        elif doc_id in prev_meta:
-            delete_ids.add(doc_id)

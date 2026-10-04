@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..operator_state._features import PreprocessHookState
-from ._preprocess_cache import clear_preprocess_cache, preprocess_cache_dir
+from ._preprocess_cache import preprocess_cache_dir
 from ._preprocess_config import (
     PreprocessConfig,
     PreprocessContext,
@@ -22,40 +22,8 @@ from ._preprocess_config import (
 if TYPE_CHECKING:
     import pathlib
 
-    from . import _chunk_worker
     from ._chunk_worker import FileChunkResult
     from ._resolved_policy import ResolvedIndexPolicy
-
-
-def clear_preprocess_cache_for(data_root: pathlib.Path) -> None:
-    """Remove the preprocess output cache subtree for a clean rebuild."""
-    clear_preprocess_cache(preprocess_cache_dir(data_root))
-
-
-def resolve_preprocess_context(
-    root_dir: pathlib.Path,
-    data_root: pathlib.Path,
-    config: PreprocessConfig,
-) -> PreprocessContext | None:
-    """Build the per-run preprocess context, or ``None`` when no rules apply.
-
-    Returning ``None`` for a project with no ``.vaultragpreprocess.toml``
-    rules keeps the worker path byte-identical to the pre-feature behaviour
-    (the workers receive ``prep=None``), so there is zero overhead when the
-    hook is unused.
-    """
-    from ..config._settings import get_config
-
-    cfg = get_config()
-    rule_count = len(config.rules) if config else 0
-    if hook_state(rule_count, cfg.preprocess_mode) is not PreprocessHookState.ACTIVE:
-        return None
-    return PreprocessContext(
-        config=config,
-        cache_root=preprocess_cache_dir(data_root),
-        max_emitted_bytes=int(cfg.preprocess_max_emitted_bytes),
-        project_root=root_dir,
-    )
 
 
 def resolve_policy_preprocess_context(
@@ -107,28 +75,4 @@ def record_preprocess_result(
     if res.preprocess_status == "skipped":
         reason = res.preprocess_reason or "preprocessor skipped the file"
         prep_skips.append(f"{res.rel_path}: {reason}")
-    return 0
-
-
-def record_scoped_preprocess(
-    root_dir: pathlib.Path,
-    path: pathlib.Path,
-    result: _chunk_worker.ScopedChunkResult,
-    prep_skips: list[str],
-) -> int:
-    """Score a scoped-path preprocess disposition.
-
-    Mirrors :func:`record_preprocess_result` for the scoped/incremental path
-    (used by the watcher) so coverage gaps and rule-fed successes are
-    surfaced on every path, not just the full index (review VIS-001).
-    """
-    if result.preprocess_status == "ok":
-        return 1
-    if result.preprocess_status == "skipped":
-        try:
-            rel = str(path.relative_to(root_dir)).replace("\\", "/")
-        except ValueError:
-            rel = str(path)
-        reason = result.preprocess_reason or "preprocessor skipped the file"
-        prep_skips.append(f"{rel}: {reason}")
     return 0

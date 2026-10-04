@@ -55,7 +55,6 @@ from ._lifespan import health_handler, service_lifespan
 # 4. Entry point.
 from ._main import create_http_app, main
 from ._models import (
-    SearchResponse,
     SearchResultItem,
 )
 from ._runtime import ServerRouteRuntime, get_request_runtime
@@ -78,7 +77,6 @@ from ._state import (
     observe,
     publish_survey_snapshot,
     render_prometheus,
-    reset_metrics,
     survey_snapshot,
 )
 from ._utils import (
@@ -97,7 +95,6 @@ from ._watcher import (
 
 __all__ = [
     "ProjectRootRequiredError",
-    "SearchResponse",
     "SearchResultItem",
     "ServerRouteRuntime",
     "WatcherStartOutcome",
@@ -139,7 +136,6 @@ __all__ = [
     "observe",
     "publish_survey_snapshot",
     "render_prometheus",
-    "reset_metrics",
     "service_lifespan",
     "survey_snapshot",
 ]

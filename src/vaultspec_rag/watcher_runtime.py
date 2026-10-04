@@ -7,9 +7,8 @@ re-indexing when changes are detected.
 
 from __future__ import annotations
 
-import asyncio  # noqa: TC003
+import asyncio
 import logging
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import RLock
@@ -17,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from . import jobs as _jobs
 from ._backoff import capped_exponential
+from ._root_identity import canonical_root_key
 from .job_manager.models import JobExecutionResult  # noqa: TC001
 from .job_models import (
     JobMode,
@@ -47,15 +47,6 @@ _WATCH_REPLACEMENT_BACKOFF_MAX_SECONDS = 30.0
 
 
 @dataclass(frozen=True, slots=True)
-class ObservedSource:
-    """One watcher domain's observed-event persistence request."""
-
-    observed: bool
-    source: WatcherSource
-    retry_policy: WatcherRetryPolicy
-
-
-@dataclass(frozen=True, slots=True)
 class WatcherChangeRouting:
     """Immutable routing dependencies for one watcher intake batch."""
 
@@ -65,15 +56,6 @@ class WatcherChangeRouting:
     vault_slot: WatcherConvergenceSlot
     code_slot: WatcherConvergenceSlot
     document_slot: WatcherConvergenceSlot | None
-
-
-@dataclass(frozen=True, slots=True)
-class WatcherReconciliation:
-    """Timing and cache dependencies shared by one convergence pass."""
-
-    cooldown: float
-    now: float
-    graph_cache: GraphCache
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,10 +146,6 @@ class WatcherConvergenceSlot:
         with self.lock:
             self.pending_paths.add(path)
 
-    def has_work(self) -> bool:
-        with self.lock:
-            return bool(self.held_paths or self.pending_paths)
-
     def pending_count(self) -> int:
         with self.lock:
             return len(self.held_paths | self.pending_paths)
@@ -189,11 +167,6 @@ class WatcherConvergenceSlot:
             )
             self.replacement_not_before = now + delay
             return delay
-
-    def dirty_paths(self) -> frozenset[Path]:
-        """Snapshot the exact paths eligible for the next watcher attempt."""
-        with self.lock:
-            return frozenset(self.held_paths | self.pending_paths)
 
     def capture_prevalidated_attempt(
         self,
@@ -459,36 +432,6 @@ def _log_managed_transition(
         )
 
 
-def release_missing_job(
-    slot: WatcherConvergenceSlot,
-    job_id: str,
-    *,
-    now: float,
-) -> None:
-    """Recover conservatively when bounded terminal history lost an exact ID."""
-    with slot.lock:
-        if slot.job_id != job_id:
-            return
-        slot.pending_paths.update(slot.held_paths)
-        slot.held_paths.clear()
-        slot.job_id = None
-        slot.watcher_owned = False
-        slot.observed_state = None
-        delay = slot.defer_replacement(now)
-        pending_count = len(slot.pending_paths)
-    log_event(
-        logger,
-        "service.watcher",
-        "replacement_scheduled",
-        severity=logging.WARNING,
-        source=slot.source.value,
-        job_id=job_id,
-        reason="job_snapshot_missing",
-        replacement_backoff_seconds=f"{delay:.0f}",
-        pending_paths=pending_count,
-    )
-
-
 async def reconcile_restarted_slot(
     slot: WatcherConvergenceSlot,
     manager: _jobs.JobManager,
@@ -502,6 +445,10 @@ async def reconcile_restarted_slot(
     generation = state.attempt_generation
     job_id = state.attempt_job_id
     if generation is None or job_id is None:
+        if state.scope_refusal is not None:
+            await _reconcile_rebuilt_history(slot, manager, resolve_abandoned=False)
+        return
+    if await _reconcile_rebuilt_history(slot, manager, resolve_abandoned=True):
         return
 
     snapshot = manager.get(job_id)
@@ -543,22 +490,84 @@ async def reconcile_restarted_slot(
     )
 
 
+async def _reconcile_rebuilt_history(
+    slot: WatcherConvergenceSlot,
+    manager: _jobs.JobManager,
+    *,
+    resolve_abandoned: bool,
+) -> bool:
+    """Check terminal rebuild evidence without holding the slot's state lock."""
+    for completed in manager.terminal():
+        if await asyncio.to_thread(
+            slot.retry_policy.reconcile_rebuild,
+            completed,
+            resolve_abandoned_attempt=resolve_abandoned,
+        ):
+            if resolve_abandoned:
+                with slot.lock:
+                    slot.pending_paths.update(
+                        slot.root / item.relative_path
+                        for item in slot.retry_policy.state.pending_paths
+                    )
+            return True
+    return False
+
+
 def _is_exact_watcher_job(slot: WatcherConvergenceSlot, snapshot: JobSnapshot) -> bool:
     """Verify a history record names this exact incremental watcher authority."""
-    canonical_root = os.path.normcase(str(slot.root.resolve()))
+    canonical_root = canonical_root_key(slot.root)
     return (
         snapshot.spec.operation is JobOperation.INDEX
         and snapshot.spec.mode is JobMode.INCREMENTAL
         and snapshot.spec.source is slot.source
         and snapshot.spec.project_root is not None
-        and os.path.normcase(str(Path(snapshot.spec.project_root).resolve()))
-        == canonical_root
+        and canonical_root_key(snapshot.spec.project_root) == canonical_root
         and snapshot.initiator.kind == "watcher"
         and snapshot.initiator.command == slot.command
         and snapshot.initiator.project_root is not None
-        and os.path.normcase(str(Path(snapshot.initiator.project_root).resolve()))
-        == canonical_root
+        and canonical_root_key(snapshot.initiator.project_root) == canonical_root
     )
+
+
+def reconcile_completed_rebuild(snapshot: JobSnapshot) -> bool:
+    """Durably reconcile an operator rebuild without creating absent watcher state.
+
+    Call on a worker thread after canonical job success is persisted. The
+    publication and retry ledgers are read and written here; inference and
+    corpus discovery are never needed.
+    """
+    from .config._settings import get_config
+    from .indexer._run_ledger_models import RunAuthority
+    from .watcher_retry import STATE_DIRECTORY
+    from .watcher_retry_policy import WatcherRetryPolicy
+
+    if (
+        snapshot.state is not JobState.SUCCEEDED
+        or snapshot.spec.operation is not JobOperation.INDEX
+        or snapshot.spec.mode is not JobMode.REBUILD
+        or snapshot.spec.authority is not RunAuthority.REBUILD
+        or not snapshot.spec.source.is_corpus
+        or snapshot.spec.project_root is None
+    ):
+        return False
+    root = Path(snapshot.spec.project_root).resolve()
+    source = WatcherSource(snapshot.spec.source.value)
+    state_path = root / get_config().data_dir / STATE_DIRECTORY / f"{source.value}.json"
+    if not state_path.is_file():
+        return False
+    policy = WatcherRetryPolicy.for_root(root, source, recover_abandoned_attempt=False)
+    if not policy.reconcile_rebuild(snapshot):
+        return False
+    log_event(
+        logger,
+        "service.watcher",
+        "rebuild_reconciled",
+        root=root,
+        source=source.value,
+        job_id=snapshot.id,
+        pending_paths=len(policy.state.pending_paths),
+    )
+    return True
 
 
 async def _settle_recovered_attempt(

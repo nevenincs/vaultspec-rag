@@ -11,7 +11,6 @@ import pytest
 from starlette.requests import Request
 
 from .._search_state import FreshnessWaitPolicy
-from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..server._main import create_http_app
 from ..server._routes_search import (
@@ -26,6 +25,7 @@ from ..server._routes_search import (
 from ..server._runtime import ServerRouteRuntime
 from ..service import ServiceRegistry
 from ..serviceclient._transport import _logs_route_path
+from ._config_fixtures import reset_config
 
 if TYPE_CHECKING:
     from pathlib import Path

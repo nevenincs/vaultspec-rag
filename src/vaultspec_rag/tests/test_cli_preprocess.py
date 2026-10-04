@@ -23,8 +23,9 @@ from typer.testing import CliRunner
 from ..cli import app
 from ..cli._index import _apply_preprocess_off_env
 from ..cli._process import _build_service_child_env, _ServiceChildEnvRequest
-from ..config._settings import get_config, reset_config
+from ..config._settings import get_config
 from ..config._types import EnvVar
+from ._config_fixtures import reset_config
 from ._scaffold import make_workspace
 
 if TYPE_CHECKING:

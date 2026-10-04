@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -11,6 +10,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from qdrant_client.http.exceptions import UnexpectedResponse
 
+from .._root_identity import canonical_root_key
 from .._search_state import (
     MAX_SEARCH_EVIDENCE_ITEMS,
     AbsenceAuthority,
@@ -30,11 +30,19 @@ if TYPE_CHECKING:
 __all__ = [
     "CanonicalSearchEvidence",
     "SearchResponseClassification",
+    "SearchStatusCode",
     "classify_qdrant_collection_disappearance",
     "classify_search_response",
+    "storage_conformance_refusal_fact",
 ]
 
 # One declaration of the convergence-mode vocabulary; the transport owns it.
+
+#: The stable HTTP statuses a classified search answers with. Declared beside
+#: the classification that carries one so the transport's own mapping function
+#: and this field cannot drift to different sets. The classifier cannot import
+#: the transport - the transport imports it - so the alias lives on this side.
+type SearchStatusCode = Literal[200, 409, 503]
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,7 +63,7 @@ class SearchResponseClassification:
     """One response decision and its bounded, causally merged job evidence."""
 
     response: dict[str, object]
-    status_code: Literal[200, 503]
+    status_code: SearchStatusCode
     matching_jobs: tuple[MatchingIndexJobReference, ...]
     matching_jobs_truncated: bool
     rebuilding: bool
@@ -125,6 +133,35 @@ class SearchAvailabilityContext:
     canonical_evidence: CanonicalSearchEvidence = CanonicalSearchEvidence()
 
 
+def storage_conformance_refusal_fact(
+    exc: Exception,
+    source_fact: SearchSourceFact,
+    *,
+    root: Path,
+    port: int | None = None,
+) -> SearchSourceFact | None:
+    """Replace preflight readiness only for a typed compatibility refusal.
+
+    Storage compatibility refusals require an explicit rebuild. Other failures
+    remain under their existing error policy rather than gaining rebuild authority.
+    Captured publication identities and bounded evidence remain diagnostic facts.
+    """
+    from ..store_runtime import StorageGeometryError
+
+    if not isinstance(exc, StorageGeometryError):
+        return None
+    reason = SearchReasonCode.REBUILD_REQUIRED
+    return replace(
+        source_fact,
+        availability=SearchAvailability.UNAVAILABLE,
+        freshness=SearchFreshness.REBUILD_REQUIRED,
+        absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
+        reason_code=reason,
+        retryable=False,
+        remediation=reason.remediation(source_fact.source, port=port, target=str(root)),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class _MatchingJob:
     """Normalized evidence from one matching convergence job."""
@@ -144,10 +181,9 @@ def _normalized_root(value: object) -> str | None:
     if isinstance(value, str) and not value.strip():
         return None
     try:
-        resolved = Path(value).expanduser().resolve(strict=False)
+        return canonical_root_key(Path(value).expanduser())
     except (OSError, RuntimeError, ValueError):
         return None
-    return os.path.normcase(str(resolved))
 
 
 def _normalized_mode(value: object) -> JobMode | None:

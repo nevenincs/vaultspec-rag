@@ -473,13 +473,19 @@ class _VaultCollectionMixin:
             )
 
     def conformance_verdicts(self) -> dict[str, store_schema.ConformanceVerdict]:
-        """Return the verdict recorded for every collection ensured so far.
+        """Return cached verdicts for this store's currently served collections.
 
-        Read by the health surface, which must report a nonconforming namespace
-        without re-probing the backend on every health poll.
+        A private build or retained superseded code generation does not describe
+        current service conformance. Its cached verdict remains available to the
+        collection's ensure path. Health never re-probes the backend here.
         """
         with self._lifecycle_lock:
-            return dict(self._conformance)
+            served = (self.TABLE_NAME, self.CODE_TABLE_NAME, self.DOCUMENT_TABLE_NAME)
+            return {
+                collection: self._conformance[collection]
+                for collection in served
+                if collection in self._conformance
+            }
 
     def ensure_table(self) -> None:
         """Create the vault_docs collection and its declared payload indexes.

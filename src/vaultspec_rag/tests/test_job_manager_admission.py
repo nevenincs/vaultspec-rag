@@ -20,7 +20,6 @@ from ..job_models import (
 from ..service_quiesce import ServiceQuiesceController
 from ._job_roots import (
     _TEST_PROJECT_ROOT,
-    _TEST_PROJECT_ROOT_DIFFERENT,
     _TEST_PROJECT_ROOT_OTHER,
 )
 
@@ -76,41 +75,6 @@ class TestManagedJobAdmission:
         )
         assert capacity.code == "job_capacity_exceeded"
 
-    def test_idempotency_replays_only_the_original_request(self) -> None:
-        manager = JobManager(
-            quiesce_controller=ServiceQuiesceController(),
-            max_nonterminal=2,
-            state_path=None,
-        )
-        spec = JobSpec(
-            JobOperation.INDEX,
-            JobSource.CODE,
-            _TEST_PROJECT_ROOT,
-            JobMode.REBUILD,
-            RunAuthority.REBUILD,
-        )
-        initiator = JobInitiator("http", "POST /jobs", _TEST_PROJECT_ROOT)
-
-        original = manager.create(spec, initiator, idempotency_key="request-7")
-        replay = manager.create(spec, initiator, idempotency_key="request-7")
-        conflict = manager.create(
-            JobSpec(
-                JobOperation.INDEX,
-                JobSource.CODE,
-                _TEST_PROJECT_ROOT_DIFFERENT,
-                JobMode.REBUILD,
-                RunAuthority.REBUILD,
-            ),
-            initiator,
-            idempotency_key="request-7",
-        )
-
-        assert original.code == "job_created"
-        assert replay.code == "idempotency_replayed"
-        assert replay.job == original.job
-        assert conflict.code == "idempotency_key_conflict"
-        assert conflict.job == original.job
-
     def test_default_storage_is_managed_and_memory_only_is_explicit(self) -> None:
         from pathlib import Path
 
@@ -144,8 +108,8 @@ class TestManagedJobAdmission:
         """
         from pathlib import Path
 
-        from ..config._settings import reset_config
         from ..config._types import EnvVar
+        from ._config_fixtures import reset_config
 
         monkeypatch.setenv(EnvVar.STATUS_DIR.value, "~/.vaultspec-rag-jobs-guard")
         reset_config()
@@ -161,38 +125,6 @@ class TestManagedJobAdmission:
         finally:
             monkeypatch.undo()
             reset_config()
-
-    def test_idempotency_aliases_and_key_length_are_bounded(self) -> None:
-        manager = JobManager(
-            quiesce_controller=ServiceQuiesceController(),
-            max_nonterminal=1,
-            max_terminal_history=1,
-            state_path=None,
-        )
-        spec = JobSpec(
-            JobOperation.INDEX,
-            JobSource.VAULT,
-            _TEST_PROJECT_ROOT,
-            JobMode.INCREMENTAL,
-            RunAuthority.PUBLICATION,
-        )
-        initiator = JobInitiator("http", "POST /jobs", _TEST_PROJECT_ROOT)
-
-        assert manager.create(spec, initiator, idempotency_key="key-0").code == (
-            "job_created"
-        )
-        assert manager.create(spec, initiator, idempotency_key="key-1").code == (
-            "active_job_exists"
-        )
-        assert manager.create(spec, initiator, idempotency_key="key-2").code == (
-            "active_job_exists"
-        )
-        assert manager.create(spec, initiator, idempotency_key="key-0").code == (
-            "active_job_exists"
-        )
-        assert manager.create(spec, initiator, idempotency_key="x" * 257).code == (
-            "invalid_idempotency_key"
-        )
 
     def test_invalid_job_kinds_are_not_admitted(self) -> None:
         manager = JobManager(
@@ -228,7 +160,7 @@ class TestManagedJobAdmission:
                 JobMode.INCREMENTAL,
                 RunAuthority.PUBLICATION,
             ),
-            JobInitiator("http", "POST /jobs", None),
+            JobInitiator("http", "http_jobs_create", None),
         )
         relative_root = manager.create(
             JobSpec(

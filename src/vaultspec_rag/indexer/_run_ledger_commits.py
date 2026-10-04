@@ -1282,21 +1282,30 @@ class RunLedgerCommitMethods:
         generation_id: str,
         *,
         batch_size: int = FETCH_BATCH,
+        unit_kind: CommitUnitKind | None = None,
     ) -> Iterator[str]:
-        """Yield deterministic committed point identities row by row."""
+        """Yield committed identities, optionally selecting one operation kind.
+
+        Upsert selection includes unfinished files; deletion units are durable
+        operation evidence and do not claim points still present in storage.
+        """
         if batch_size <= 0:
             raise ValueError("batch_size must be positive")
         last_key: tuple[str, str, int, int, str] | None = None
         while True:
             condition = ""
             parameters: tuple[object, ...] = (generation_id,)
+            kind_condition = ""
+            if unit_kind is not None:
+                kind_condition = "AND units.unit_kind = ?"
+                parameters = (*parameters, unit_kind.value)
             if last_key is not None:
                 condition = """
                   AND (units.rel_path, units.unit_kind,
                        units.segment_ordinal, points.point_ordinal,
                        points.point_id) > (?, ?, ?, ?, ?)
                 """
-                parameters = (generation_id, *last_key)
+                parameters = (*parameters, *last_key)
             with ledger_connection(self.path) as connection:
                 rows: list[_PointIdJoinRow] = fetch_all(
                     connection,
@@ -1309,6 +1318,7 @@ class RunLedgerCommitMethods:
                       ON units.generation_id = points.generation_id
                      AND units.unit_id = points.unit_id
                     WHERE points.generation_id = ?
+                    {kind_condition}
                     {condition}
                     ORDER BY units.rel_path, units.unit_kind,
                              units.segment_ordinal, points.point_ordinal,

@@ -55,7 +55,7 @@ def test_runtime_route_observes_real_ram_disk_models_and_tcp_peer() -> None:
             )
             with TestClient(app) as client:
                 result = client.get(
-                    "/runtime-observations?client_limit=1",
+                    "/runtime-observations",
                     headers={"Authorization": "Bearer resource-test"},
                 )
                 assert result.status_code == 200
@@ -78,13 +78,6 @@ def test_runtime_route_observes_real_ram_disk_models_and_tcp_peer() -> None:
                 assert isinstance(observed["pools"], dict)
                 assert "system_utilization_percent" in observed["cpu"]
                 assert client.get("/runtime-observations").status_code == 401
-                assert (
-                    client.get(
-                        "/runtime-observations?client_limit=bad",
-                        headers={"Authorization": "Bearer resource-test"},
-                    ).status_code
-                    == 400
-                )
 
 
 def test_runtime_missing_measurements_remain_null() -> None:

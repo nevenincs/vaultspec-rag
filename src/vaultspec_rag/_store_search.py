@@ -14,7 +14,7 @@ the rest of the local-mode store layer.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -319,6 +319,18 @@ class _VaultSearchMixin:
             return []
 
         with self._point_lock(collection_name):
+            dense_query = self._live_feedback_query(collection_name, query.dense_query)
+            if dense_query is not query.dense_query:
+                query = replace(
+                    query,
+                    dense_query=dense_query,
+                    prefetch=[
+                        item.model_copy(update={"query": dense_query})
+                        if item.using == "dense"
+                        else item
+                        for item in query.prefetch
+                    ],
+                )
             if len(query.prefetch) < 2:
                 results = self.client.query_points(
                     collection_name=collection_name,
@@ -354,6 +366,60 @@ class _VaultSearchMixin:
                     query_filter=query.query_filter,
                 )
                 return fallback.points
+
+    def _live_feedback_query(
+        self, collection_name: str, query: list[float] | RecommendQuery
+    ) -> list[float] | RecommendQuery:
+        """Drop removed feedback anchors before either query execution path.
+
+        A prior result can disappear when its source is changed or rebuilt.
+        Both hybrid and dense fallback use the same recommendation, so retrying
+        it unchanged cannot recover a missing point. The caller holds the point
+        lock while resolving the exact requested IDs and executing the query.
+        """
+        from qdrant_client import models
+
+        if not isinstance(query, models.RecommendQuery):
+            return query
+        feedback = query.recommend
+        positive = feedback.positive or []
+        negative = feedback.negative or []
+        ids = list(
+            dict.fromkeys(
+                item for item in [*positive, *negative] if isinstance(item, (str, int))
+            )
+        )
+        if not ids:
+            return query
+        records = self.client.retrieve(
+            collection_name=collection_name,
+            ids=ids,
+            with_payload=False,
+            with_vectors=False,
+        )
+        existing = {record.id for record in records}
+        missing = set(ids) - existing
+        if not missing:
+            return query
+        logger.warning(
+            "Ignoring %s removed feedback anchors in %s", len(missing), collection_name
+        )
+        return models.RecommendQuery(
+            recommend=feedback.model_copy(
+                update={
+                    "positive": [
+                        item
+                        for item in positive
+                        if not isinstance(item, (str, int)) or item in existing
+                    ],
+                    "negative": [
+                        item
+                        for item in negative
+                        if not isinstance(item, (str, int)) or item in existing
+                    ],
+                }
+            )
+        )
 
     @staticmethod
     def _points_to_dicts(

@@ -33,6 +33,7 @@ __all__ = [
 
 import vaultspec_rag.server as _m
 
+from .._root_identity import canonical_root_key
 from .._workspace_layout import (
     VAULT_DIR,
 )
@@ -155,8 +156,6 @@ class _WatcherScheduler:
         *,
         reevaluation_seconds: float,
         monotonic: Callable[[], float],
-        wait_for_wakeup: Callable[[asyncio.Event, float], Awaitable[bool]]
-        | None = None,
     ) -> None:
         if reevaluation_seconds <= 0:
             raise ValueError("reevaluation_seconds must be positive")
@@ -164,7 +163,6 @@ class _WatcherScheduler:
 
         self._reevaluation_seconds = reevaluation_seconds
         self._monotonic = monotonic
-        self._wait_for_wakeup = wait_for_wakeup or _wait_for_scheduler_wakeup
         self._arbiter = WatcherAdmissionArbiter()
         self._registrations: dict[ControllerKey, _ControllerRegistration] = {}
         self._active: set[ControllerKey] = set()
@@ -212,7 +210,7 @@ class _WatcherScheduler:
 
     def unregister_root(self, root: Path) -> None:
         """Remove every source controller belonging to one canonical root."""
-        canonical_root = str(root.resolve())
+        canonical_root = canonical_root_key(root)
         self._registrations = {
             key: registration
             for key, registration in self._registrations.items()
@@ -229,7 +227,7 @@ class _WatcherScheduler:
 
     async def wait_root_released(self, root: Path, deadline: float) -> bool:
         """Boundedly join callbacks that already claimed one root."""
-        canonical_root = str(root.resolve())
+        canonical_root = canonical_root_key(root)
         while any(key[0] == canonical_root for key in self._active):
             remaining = deadline - self._monotonic()
             if remaining <= 0:
@@ -246,7 +244,7 @@ class _WatcherScheduler:
         try:
             while not self._stopping:
                 timeout = self._next_timeout()
-                await self._wait_for_wakeup(self._wakeup, timeout)
+                await _wait_for_scheduler_wakeup(self._wakeup, timeout)
                 self._wakeup.clear()
                 if not self._stopping:
                     await self._run_cycle()
@@ -369,12 +367,12 @@ class _WatcherScheduler:
             self._released.set()
 
 
-async def _wait_for_scheduler_wakeup(event: asyncio.Event, timeout: float) -> bool:
+async def _wait_for_scheduler_wakeup(event: asyncio.Event, timeout: float) -> None:
+    """Return on the next wake event, or when *timeout* elapses."""
     try:
         await asyncio.wait_for(event.wait(), timeout=timeout)
     except TimeoutError:
-        return False
-    return True
+        return
 
 
 _watcher_scheduler: _WatcherScheduler | None = None

@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING
 import pytest
 from pytest import MonkeyPatch
 
-from .._test_isolation import ManagedSingletonIsolationError
 from ..commands import _tool_torch
 from ..operator_state import _environment_probe, _provisioning
 from ..operator_state._compute import ProbeDepth
@@ -173,38 +172,6 @@ def test_no_path_here_replaces_an_environment_wholesale() -> None:
     assert "--force" not in source
     for step in _provisioning.tool_repair_steps("/opt/env/bin/python"):
         assert "--force" not in " ".join(step)
-
-
-def test_a_repair_outside_the_pytest_root_never_reaches_uv(
-    monkeypatch: MonkeyPatch,
-) -> None:
-    """Guard assertion: this is the one call that mutates a real environment.
-
-    A test that substitutes the environment classifier can point the repair
-    at the machine's own tool installation, and uv answers a request it
-    cannot apply in place by rebuilding the environment - which removes its
-    contents first and then fails on the files a running service holds. That
-    happened: a unit test deleted the live installation's `Lib`. Consent and
-    substitution are the test author's to give, so the refusal lives in the
-    launcher itself, where nothing a test does can reach around it.
-
-    Mutation check: deleting the containment call from `_run_repair` makes
-    this fail at `pytest.raises`, with the subprocess double proving no uv
-    would have started either way.
-    """
-
-    class _NoSubprocess:
-        """Stands in for the subprocess module: nothing may be launched."""
-
-        @staticmethod
-        def run(*_args: object, **_kwargs: object) -> object:
-            raise AssertionError("the repair must be refused before uv starts")
-
-    monkeypatch.setattr(_tool_torch, "subprocess", _NoSubprocess)
-    outside = Path.home() / "not-a-real-tool-env" / "Scripts" / "python.exe"
-
-    with pytest.raises(ManagedSingletonIsolationError):
-        _tool_torch._run_repair(str(outside), stream=False)
 
 
 def test_a_repair_aimed_at_another_environment_is_refused(

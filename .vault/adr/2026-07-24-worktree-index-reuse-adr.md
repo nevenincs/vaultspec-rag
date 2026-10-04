@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#worktree-index-reuse'
 date: '2026-07-24'
-modified: '2026-07-24'
-body_hash: 'sha256:4983c63647cfe28e145bc7d20223be7cc3da697e18c2d1f1e57db2d9d46eec41'
+modified: '2026-10-03'
+body_hash: 'sha256:6e288e0be13c3079f15ead9cdfec39b729d913e3dc45c6d501add4301c0987fa'
 related:
   - "[[2026-07-24-worktree-index-reuse-research]]"
 ---
@@ -69,3 +69,13 @@ Reuse-by-point-id is the only option that is exact AND verified with zero new st
 - The per-root storage duplication remains (mitigated separately by segment-geometry bounding); storage dedup stays a separate future decision (C-prime), and the durable KV cache (B) stays a telemetry-gated stage 2.
 - New failure surface is confined to the eligibility gates; the content verify bounds the blast radius of any future key drift to a per-point compare, and the off-switch restores baseline behavior in one flip.
 - Donor lookups add bounded read traffic to the shared Qdrant server during indexing; measured throughput makes this negligible against encode time, but the prototype confirms it end-to-end.
+
+## 2026-10-03 clarification: bounded admission and complete embedding evidence
+
+The resident recovery investigation reproduced two implementation defects: truncating the first three manifest candidates before compatibility can exclude an eligible fourth donor, and raw CODE body comparison can accept an unchanged method chunk ID after its enclosing class changes even though the canonical embedding input changes. These are source-proven counterexamples, not evidence of wrong historical vectors or the current live run's donor selection.
+
+The final vector-donor limit remains N=3. Admission considers at most 2N=6 ranked candidates, exactly one additional group of N to replace rejected candidates. Own-root/backend/kind filtering and existing same-family/newest/prefix ordering precede truncation to this inspection bound. Only these candidates may resolve a served pointer or acquire/validate their recorded proof, at most six each. Existing canonical eligibility and store-capability gates remain authoritative, with capability read once and selected donors frozen for the run. Selection stops at three eligible donors. Vector retrieval consults at most those three. Candidates outside the six are uninspected and can reduce availability, so the contract promises bounded best-effort reuse rather than discovering every possible donor. Rejections, missing or unreadable evidence remain misses and encode under the existing policy.
+
+Per-point verification means equality of the complete canonical embedding input. For CODE this includes project-relative path, optional class and function names, and body through the same assembler used by encoding. The canonical CODE payload always contains all four fields, with explicit null permitted for absent class/function context. Missing or malformed fields are unknown and refuse reuse. VAULT retains title-plus-body verification. DOCUMENT remains under its existing contract. Matching point IDs or raw body alone do not establish identical CODE input.
+
+This clarification changes donor admission, not the encoder recipe, point identities, collection/content epoch, sparse precision, layouts, storage schemas, publication authority or retention. Vectors alone are adopted and target payloads are rebuilt locally. Guard evidence must prove the incompatible-three/compatible-fourth case, exact six pointer/proof inspections and three selected vector donors, and an actual same-ID method chunk under changed enclosing class refusing adoption while identical complete input still reuses. Historical adoption cannot be inferred or repaired from locally rebuilt payloads without concrete evidence, so this source correction authorizes no blanket historical reindex or destructive repair.

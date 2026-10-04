@@ -22,7 +22,6 @@ from .._process_probe import (
     EnvironmentHolders,
     environment_holders,
 )
-from .._test_isolation import enforce_pytest_singleton_containment
 from ..operator_state._holders import holder_summary, holder_wire
 from ..operator_state._installation import ComputeCapability
 from ..operator_state._provisioning import (
@@ -364,15 +363,6 @@ def _run_repair(interpreter: str, *, stream: bool) -> tuple[bool, str]:
     output is captured instead, so the one envelope stays the only thing on
     stdout.
     """
-    # The one mutation this product performs on an environment it did not
-    # create. Under pytest it must stay inside the session's own temporary
-    # tree: a test that substitutes a classifier can otherwise point this at
-    # the machine's real tool installation, and uv rebuilding that
-    # environment removes its contents before it fails on the held files.
-    # Inert outside pytest, where an operator's own environment is the point.
-    enforce_pytest_singleton_containment(
-        environment_root(interpreter), operation="repair a tool environment"
-    )
     uv = shutil.which("uv")
     if uv is None:
         return False, "uv is not on PATH, so the repair could not be run here"

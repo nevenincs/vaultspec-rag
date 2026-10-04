@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
 
 from vaultspec_core.env_values import parse_bool
-
-from .._content_route_syntax import validate_content_route_pattern
 
 PreprocessMode = Literal["default", "off"]
 
@@ -19,36 +16,6 @@ VALID_INDEX_SUPPORT_PROFILES: frozenset[str] = frozenset(
 )
 
 
-@dataclass(frozen=True, slots=True)
-class ContentRouteConfig:
-    """One caller-authored project-relative pattern and raw target token.
-
-    Unknown targets remain representable at this boundary so policy
-    compilation can reject them as structured configuration errors instead of
-    silently dropping a route. Rule priority is the enclosing tuple's order.
-    """
-
-    pattern: str
-    target: str
-
-    def __post_init__(self) -> None:
-        validate_content_route_pattern(self.pattern)
-        if not self.target.strip():
-            raise ValueError("content route target must not be empty")
-
-
-@dataclass(frozen=True, slots=True)
-class RootContentPolicyConfig:
-    """Raw root policy whose route tuple preserves caller precedence."""
-
-    source_profile: str
-    routes: tuple[ContentRouteConfig, ...] = ()
-
-    def __post_init__(self) -> None:
-        if not self.source_profile.strip():
-            raise ValueError("source profile must not be empty")
-
-
 class EnvVar(StrEnum):
     """Recognized environment variables for vaultspec-rag.
 
@@ -56,21 +23,17 @@ class EnvVar(StrEnum):
     single source of truth - no other module should use bare string
     literals when reading or writing env vars for RAG configuration.
 
-    Two admission rules apply, and they are not the same rule. A
-    ``VAULTSPEC_RAG_*`` name is this project's own, so it earns a member by
-    being *read* somewhere in production: a first-party name nobody reads
-    configures nothing, and declaring one advertises a knob that does not
-    exist. A third-party name is owned by the library that honours it, so it
-    earns a member by being *named* anywhere in this codebase, production or
-    harness - the member exists to keep that literal in one place, and the
-    behaviour behind it is the owning library's whether we read it or not.
+    One admission rule applies: a name earns a member by being read or set
+    by this codebase outside its tests. A name nobody here touches
+    configures nothing this project can vouch for, and declaring one
+    advertises a knob that does not exist - whether the name is this
+    project's own or belongs to a library it depends on. A third-party
+    variable the code never touches is the library's to document.
     """
 
     RAG_ROOT = "VAULTSPEC_RAG_ROOT"
     DATA_DIR = "VAULTSPEC_RAG_DATA_DIR"
     QDRANT_DIR = "VAULTSPEC_RAG_QDRANT_DIR"
-    INDEX_META = "VAULTSPEC_RAG_INDEX_META"
-    CODE_INDEX_META = "VAULTSPEC_RAG_CODE_INDEX_META"
     STATUS_DIR = "VAULTSPEC_RAG_STATUS_DIR"
     LOG_FILE = "VAULTSPEC_RAG_LOG_FILE"
     PORT = "VAULTSPEC_RAG_PORT"
@@ -94,6 +57,9 @@ class EnvVar(StrEnum):
     SERVICE_PAUSE_DRAIN_TIMEOUT = "VAULTSPEC_RAG_PAUSE_DRAIN_TIMEOUT"
     # Managed qdrant readiness bound, operator-tunable for very large stores.
     QDRANT_READY_TIMEOUT = "VAULTSPEC_RAG_QDRANT_READY_TIMEOUT"
+    QDRANT_COLLECTION_LOAD_CONCURRENCY = (
+        "VAULTSPEC_RAG_QDRANT_COLLECTION_LOAD_CONCURRENCY"
+    )
     # Diagnostic memory probe on/off switch. Named here so this enum stays the
     # authoritative list, but deliberately absent from the defaults map: the
     # probe module is reachable from spawn workers and must not pull this
@@ -272,9 +238,8 @@ class EnvVar(StrEnum):
     # project does not get to rename out from under.
     PREPROCESS_INVOCATION = "VAULTSPEC_PREPROCESS_INVOCATION"
 
-    # Third-party env vars referenced in the codebase - defined here so
+    # Third-party env vars this codebase reads or sets - defined here so
     # the string literal lives in exactly one place.
-    HF_ENDPOINT = "HF_ENDPOINT"
     HF_HOME = "HF_HOME"
     HF_HUB_OFFLINE = "HF_HUB_OFFLINE"
     HF_HUB_DOWNLOAD_TIMEOUT = "HF_HUB_DOWNLOAD_TIMEOUT"

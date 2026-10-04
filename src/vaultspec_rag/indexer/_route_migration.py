@@ -9,6 +9,7 @@ import logging
 import time
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
@@ -26,11 +27,12 @@ from ._run_policy import DurableProgressKind
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from qdrant_client.conversions.common_types import PointId
 
     from ..store_runtime import VaultStore
+    from ._content_policy import ClassifiedContent
     from ._file_state import FileState
     from ._resolved_policy import ResolvedIndexPolicy
     from ._run_ledger_models import PublicationReceipt
@@ -277,6 +279,7 @@ class RouteScanOptions:
 
     page_size: int = _DEFAULT_PAGE_SIZE
     code_collection: str | None = None
+    origin_metadata_only: bool = False
 
 
 _DEFAULT_ROUTE_SCAN_OPTIONS = RouteScanOptions()
@@ -286,11 +289,28 @@ def _scroll_stored_route_page(
     store: VaultStore,
     stored_kind: ContentKind,
     *,
-    page_size: int,
     offset: PointId | None,
-    code_collection: str | None = None,
+    options: RouteScanOptions,
 ) -> tuple[list[dict[str, Any]], PointId | None, str, str]:
     """Read one bounded collection page with its payload field names."""
+    page_size, code_collection = options.page_size, options.code_collection
+    if options.origin_metadata_only:
+        if code_collection is not None:
+            raise ValueError("origin metadata must name the active content projection")
+        collection = (
+            store.CODE_TABLE_NAME
+            if stored_kind is ContentKind.CODE
+            else store.DOCUMENT_TABLE_NAME
+        )
+        rows, next_offset = store.scroll_index_audit_content(
+            collection, limit=page_size, offset=offset
+        )
+        path_key, id_key = (
+            ("path", "chunk_id")
+            if stored_kind is ContentKind.CODE
+            else ("source_path", "document_id")
+        )
+        return rows, next_offset, path_key, id_key
     if stored_kind is ContentKind.CODE:
         rows, next_offset = store.scroll_code_content(
             collection=code_collection,
@@ -307,7 +327,7 @@ def _scroll_stored_route_page(
 
 def _classify_stored_route_rows(
     rows: list[dict[str, object]],
-    policy: ResolvedIndexPolicy,
+    classify: Callable[[str], ClassifiedContent],
     stored_kind: ContentKind,
     *,
     path_key: str,
@@ -323,7 +343,7 @@ def _classify_stored_route_rows(
         raw_path = payload.get(path_key)
         if not isinstance(raw_path, str) or not raw_path:
             continue
-        disposition = policy.classify(raw_path).disposition
+        disposition = classify(raw_path).disposition
         page.append(
             StoredRouteRow(
                 point_id=str(payload.get(id_key) or row["id"]),
@@ -351,6 +371,9 @@ def iter_stored_route_pages(
         raise ValueError("route migration page size must be between 1 and 1000")
     if code_collection is not None and stored_kind is not ContentKind.CODE:
         raise ValueError("only code route scans accept an explicit collection")
+    # Classification depends only on the exact path and this immutable snapshot.
+    # Keep reuse bounded and local so every new scan starts with fresh policy.
+    classify = lru_cache(maxsize=4096)(policy.classify)
     offset: PointId | None = None
     while True:
         if run_policy is not None:
@@ -358,13 +381,12 @@ def iter_stored_route_pages(
         rows, next_offset, path_key, id_key = _scroll_stored_route_page(
             store,
             stored_kind,
-            page_size=page_size,
             offset=offset,
-            code_collection=code_collection,
+            options=options,
         )
         page = _classify_stored_route_rows(
             rows,
-            policy,
+            classify,
             stored_kind,
             path_key=path_key,
             id_key=id_key,
@@ -392,16 +414,14 @@ def origin_point_ids(
     # payload content is genuinely dynamic, but the rows collection
     # itself is not, so narrow it once here instead of at every access.
     rows: list[dict[str, object]]
-    if origin_kind is ContentKind.CODE:
-        rows, _next_offset = store.scroll_code_content(
-            limit=page_size,
-            source_paths={rel_path},
-        )
-    else:
-        rows, _next_offset = store.scroll_document_content(
-            limit=page_size,
-            source_paths={rel_path},
-        )
+    collection = (
+        store.CODE_TABLE_NAME
+        if origin_kind is ContentKind.CODE
+        else store.DOCUMENT_TABLE_NAME
+    )
+    rows, _next_offset = store.scroll_index_audit_content(
+        collection, limit=page_size, offset=None, source_paths={rel_path}
+    )
     id_key = "chunk_id" if origin_kind is ContentKind.CODE else "document_id"
     ids: list[str] = []
     for row in rows:
@@ -519,7 +539,7 @@ def reconcile_checkpoint_routes(
         policy,
         origin_kind,
         run_policy=checkpoint.run_policy,
-        options=RouteScanOptions(page_size=page_size),
+        options=RouteScanOptions(page_size=page_size, origin_metadata_only=True),
     ):
         states = _file_states_for_rows(checkpoint, page)
         point_ids_by_path: dict[str, list[str]] = {}
@@ -817,7 +837,12 @@ def _retained_ids_for_rows(
 
 
 def _delete_origin_points(store: VaultStore, migration: RouteMigration) -> None:
-    _delete_kind_points(store, migration.origin_kind, list(migration.point_ids))
+    collection = (
+        store.CODE_TABLE_NAME
+        if migration.origin_kind is ContentKind.CODE
+        else store.DOCUMENT_TABLE_NAME
+    )
+    store.delete_migration_origin_points(collection, migration.point_ids)
 
 
 def _delete_kind_points(
@@ -918,16 +943,27 @@ def _destination_evidence_is_current(
         request.destination_generation_id,
         rel_path=request.rel_path,
     )
+    if request.destination_kind is ContentKind.CODE:
+        ids_exist, ensure = store.code_content_ids_exist, store.ensure_code_table
+    else:
+        ids_exist, ensure = (
+            store.document_content_ids_exist,
+            store.ensure_document_table,
+        )
     found_any = False
     while batch := tuple(itertools.islice(point_ids, _DEFAULT_PAGE_SIZE)):
-        found_any = True
         if request.run_policy is not None:
             request.run_policy.checkpoint("route destination evidence before retrieve")
-        if request.destination_kind is ContentKind.CODE:
-            if not store.code_content_ids_exist(batch):
-                return False
-        elif not store.document_content_ids_exist(batch):
+        if not ids_exist(batch):
             return False
+        if not found_any:
+            from ..store_runtime import StorageGeometryError
+
+            try:
+                ensure()
+            except StorageGeometryError:
+                return False
+        found_any = True
         if request.run_policy is not None:
             request.run_policy.checkpoint("route destination evidence after retrieve")
     return found_any

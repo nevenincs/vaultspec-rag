@@ -1,6 +1,6 @@
 name: RAG Acquisition
 
-run-name: RAG Acquisition ${{ inputs.tag || 'latest' }} @ ${{ inputs.target_sha || 'scheduled' }}
+run-name: RAG Acquisition ${{ inputs.mode || 'public' }} ${{ inputs.tag || 'latest' }} @ ${{ github.sha }}
 
 # Committed main supplies the catalog and driver. Only downloaded monitor
 # bytes run with an empty PATH/home and no checkout or backend sibling.
@@ -10,12 +10,18 @@ on:
     - cron: "41 6 * * 1"
   workflow_dispatch:
     inputs:
+      mode:
+        description: "Public acquisition or private native candidate verification"
+        required: true
+        default: public
+        type: choice
+        options: [public, candidate]
       tag:
         description: "Release tag (defaults to the public latest release)"
         required: false
         type: string
       target_sha:
-        description: "Expected immutable producer commit"
+        description: "Expected public release producer commit (public mode only)"
         required: false
         type: string
 
@@ -27,7 +33,58 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  frontend:
+    if: inputs.mode == 'candidate'
+    name: "Build: Candidate monitor frontend (Linux)"
+    runs-on: [self-hosted, Linux, X64, build]
+    timeout-minutes: 140
+    env:
+      CI_EXEC_BUDGET_MINUTES: 20
+    outputs:
+      digest: ${{ steps.identity.outputs.digest }}
+    steps:
+      - name: Checkout the exact candidate producer
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          prune-cache: false
+          enable-cache: false
+      - name: Build the common frontend from the clean candidate
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+          PRODUCER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          npm ci
+          uv run --no-project --python 3.13 -- python -m tools.monitor.build frontend \
+            --tag "$TAG" --source-revision "$PRODUCER" --outdir dist-monitor-frontend
+      - name: Record the common frontend digest
+        id: identity
+        shell: bash
+        run: |
+          digest=$(uv run --no-project --python 3.13 -- python -c 'import hashlib; from pathlib import Path; print(hashlib.sha256(Path("dist-monitor-frontend/frontend.json").read_bytes()).hexdigest())')
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Upload the common frontend
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: candidate-frontend-${{ github.sha }}
+          path: dist-monitor-frontend/
+          if-no-files-found: error
+          retention-days: 5
+
   acquire:
+    needs: frontend
+    if: ${{ always() && (needs.frontend.result == 'success' || (needs.frontend.result == 'skipped' && inputs.mode != 'candidate')) }}
     name: "Test: Monitor acquisition (${{ matrix.name }})"
     strategy:
       fail-fast: false
@@ -36,34 +93,87 @@ jobs:
           - name: linux-x86_64
             runner: [self-hosted, Linux, X64, build]
             target: x86_64-unknown-linux-gnu
+            browser_image: ""
           - name: linux-aarch64
-            runner: [self-hosted, Linux, ARM64]
+            runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
+            browser_image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
           - name: windows-x86_64
-            runner: [self-hosted, Windows, X64]
+            runner: windows-2025
             target: x86_64-pc-windows-msvc
+            browser_image: ""
           - name: macos-arm64
             runner: [self-hosted, macOS, ARM64]
             target: aarch64-apple-darwin
+            browser_image: ""
     timeout-minutes: 150
     runs-on: ${{ matrix.runner }}
+    # Ubuntu 24.04 denies user namespaces to unconfined processes, which leaves
+    # Chromium no sandbox. The host's own unconfined-mode `chrome` profile grants
+    # exactly that permission, so the browser keeps its sandbox.
+    container:
+      image: ${{ matrix.browser_image }}
+      options: --user 1001 --cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=chrome
     env:
       CI_EXEC_BUDGET_MINUTES: 30
     steps:
       - name: Checkout the reviewed catalog and acquisition driver
+        if: inputs.mode != 'candidate'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
           ref: main
+      - name: Checkout the exact candidate producer
+        if: inputs.mode == 'candidate'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
+          prune-cache: false
           enable-cache: false
       - name: Set up Node for installed-browser verification
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Record native isolation capabilities
+        shell: bash
+        run: |
+          uv run --no-project --python 3.13 -- python -c "import os, platform, shutil; print(platform.platform()); print('uid', getattr(os, 'getuid', lambda: None)()); print({tool: shutil.which(tool) for tool in ('sudo', 'unshare', 'ip', 'sandbox-exec', 'pwsh')})"
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo -n true && echo 'noninteractive sudo available' || echo 'noninteractive sudo unavailable'
+            unshare --user --map-root-user --net true && echo 'user/network namespaces available' || echo 'user/network namespaces unavailable'
+          elif [ "$RUNNER_OS" = Windows ]; then
+            pwsh -NoProfile -Command '[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator); Get-NetFirewallProfile | Select-Object Name,Enabled'
+          fi
+      - name: Download the common candidate frontend
+        if: inputs.mode == 'candidate'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: candidate-frontend-${{ github.sha }}
+          path: dist-monitor-frontend/
+      - name: Compile and probe finalized native candidate bytes
+        if: inputs.mode == 'candidate'
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+          PRODUCER: ${{ github.sha }}
+          TARGET: ${{ matrix.target }}
+          FRONTEND_SHA256: ${{ needs.frontend.outputs.digest }}
+        run: |
+          set -euo pipefail
+          uv run --no-project --python 3.13 -- python -m tools.monitor.build compile \
+            --tag "$TAG" --source-revision "$PRODUCER" --frontend dist-monitor-frontend \
+            --frontend-sha256 "$FRONTEND_SHA256" --outdir dist-bin
+          uv run --no-project --python 3.13 -- python -m tools.monitor.release native-smoke \
+            --tag "$TAG" --source-revision "$PRODUCER" --target "$TARGET" --directory dist-bin
+          uv run --no-project --python 3.13 -- python -m tools.monitor.release native-smoke \
+            --tag "$TAG" --source-revision "$PRODUCER" --target "$TARGET" --directory dist-bin --os-offline
       - name: Verify public delivery against committed pins and render native bytes
+        if: inputs.mode != 'candidate'
         shell: bash
         env:
           TAG: ${{ inputs.tag }}
@@ -73,11 +183,15 @@ jobs:
           set -euo pipefail
           uv run --no-project --python 3.13 -- python -m tools.monitor.acquire \
             --tag "$TAG" --source-revision "$TARGET_SHA" --target "$TARGET" \
-            --report "dist-release-evidence/acquisition-$TARGET.json"
+            --report "dist-release-evidence/acquisition-$TARGET.json" --os-offline
       - name: Upload native acquisition evidence
+        if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: monitor-acquisition-${{ matrix.target }}-${{ github.run_id }}
-          path: dist-release-evidence/acquisition-*.json
+          path: |
+            dist-release-evidence/acquisition-*.json
+            dist-bin/monitor-smoke.json
+            dist-bin/vaultspec-rag-monitor-*
           if-no-files-found: error
           retention-days: 30

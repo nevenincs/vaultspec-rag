@@ -33,12 +33,14 @@ from ..._job_values import count, measurement
 from ..._machine_lock import (
     machine_lock_path,
     probe_machine_lock,
-    release_machine_lock,
 )
-from ...config._settings import get_config, reset_config
+from ...config._settings import get_config
 from ...config._types import EnvVar
 from ...progress import NullProgressReporter
+from .._config_fixtures import reset_config
+from .._machine_lock_fixtures import release_machine_lock
 from .._model_setup import (
+    HF_ENDPOINT_ENV,
     configured_service_model_ids,
     ensure_model_snapshots,
     model_setup_timeout_seconds,
@@ -244,9 +246,9 @@ def _verify_offline_service_startup(log_path: Path, stages: list[str]) -> str:
     if bool(get_config().reranker_enabled):
         expected_markers.append("(cache-only=True)")
     missing_markers = [marker for marker in expected_markers if marker not in output]
-    hf_endpoint = (
-        os.environ.get(EnvVar.HF_ENDPOINT.value) or "https://huggingface.co"
-    ).rstrip("/")
+    hf_endpoint = (os.environ.get(HF_ENDPOINT_ENV) or "https://huggingface.co").rstrip(
+        "/"
+    )
     if missing_markers or hf_endpoint in output:
         raise AssertionError(
             "Service did not prove cache-only startup without Hugging Face "
@@ -595,9 +597,9 @@ def _live_service_context(
     daemon was started under, so a caller outliving a single test can re-point
     each test's client at this exact daemon.
     """
-    from ...cli._process import _spawn_service
     from ...cli._service_status import _write_service_status
     from .._ports import free_loopback_port
+    from .._session_job_anchor import spawn_anchored_service
     from ._helpers import (
         _poll_health,
         _service_env,
@@ -634,7 +636,7 @@ def _live_service_context(
             port = free_loopback_port()
             startup.current_stage = "service spawn"
             stage_started = time.monotonic()
-            pid = _spawn_service(
+            pid = spawn_anchored_service(
                 port,
                 startup.log_path,
                 watch=watch,

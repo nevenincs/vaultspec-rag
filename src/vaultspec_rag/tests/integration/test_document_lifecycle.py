@@ -17,6 +17,7 @@ from ...indexer._run_ledger_models import RunAuthority
 from ...progress import NullProgressReporter
 from ...registry import get_registry
 from ...store_runtime import VaultStore
+from .._store_fixtures import get_all_document_content_ids
 
 if TYPE_CHECKING:
     from ...embeddings import EmbeddingModel
@@ -94,7 +95,7 @@ def test_code_job_and_cleanup_preserve_document_state(
     store = VaultStore(tmp_path, embedding_dim=embedding_model.dimension)
     try:
         store.upsert_document_content_chunks([chunk], write_policy=None)
-        ids_before = store.get_all_document_content_ids()
+        ids_before = get_all_document_content_ids(store)
         indexer = CodebaseIndexer(tmp_path, embedding_model, store)
         result = indexer.full_index(
             reporter=NullProgressReporter(),
@@ -104,7 +105,7 @@ def test_code_job_and_cleanup_preserve_document_state(
         assert result.files == 1
         assert result.total > 0
         assert not sentinel.exists()
-        assert store.get_all_document_content_ids() == ids_before
+        assert get_all_document_content_ids(store) == ids_before
         assert cache_sentinel.read_bytes() == cache_before
     finally:
         store.close()
@@ -112,7 +113,7 @@ def test_code_job_and_cleanup_preserve_document_state(
     assert clean(tmp_path, clean_type="code", registry=get_registry()) == ["code"]
     reopened = VaultStore(tmp_path, embedding_dim=embedding_model.dimension)
     try:
-        assert reopened.get_all_document_content_ids() == ids_before
+        assert get_all_document_content_ids(reopened) == ids_before
         assert cache_sentinel.read_bytes() == cache_before
         assert not sentinel.exists()
     finally:

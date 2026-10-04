@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, ClassVar, TypedDict
 import pytest
 
 from ...progress import NullProgressReporter
+from .._store_fixtures import get_all_ids
 from ..corpus import build_synthetic_vault
 
 if TYPE_CHECKING:
@@ -105,7 +106,7 @@ class TestChunkedVaultLayout:
         self, chunked_corpus: _ChunkedCorpus
     ) -> None:
         store = chunked_corpus["store"]
-        doc_ids = store.get_all_ids()
+        doc_ids = get_all_ids(store)
         assert chunked_corpus["long_doc_id"] in doc_ids
         assert store.count() > len(doc_ids)
 
@@ -166,7 +167,7 @@ class TestChunkedVaultLayout:
         docs = store.list_all_documents()
         ids = [d["id"] for d in docs]
         assert len(ids) == len(set(ids))
-        assert set(ids) == store.get_all_ids()
+        assert set(ids) == get_all_ids(store)
         long_doc = next(d for d in docs if d["id"] == chunked_corpus["long_doc_id"])
         assert _TAIL_NEEDLE in str(long_doc["content"])
 
@@ -183,7 +184,7 @@ class TestChunkedVaultLifecycle:
             (tmp_path / ".vault" / f"{long_doc_id}.md").unlink()
             result = indexer.incremental_index(reporter=NullProgressReporter())
             assert result.removed == 1
-            assert long_doc_id not in store.get_all_ids()
+            assert long_doc_id not in get_all_ids(store)
             # Every chunk of the long doc is gone, not just its head.
             assert store.count() < count_before - 1
         finally:

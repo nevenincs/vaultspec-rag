@@ -181,15 +181,20 @@ These variables choose between the supervised Qdrant server (the default) and th
 | `VAULTSPEC_RAG_QDRANT_STORAGE_DIR`   | string  | `~/.vaultspec-rag/qdrant-server/storage` | Shared multi-root server storage                                                | -                          |
 | `VAULTSPEC_RAG_QDRANT_QUANTIZATION`  | string  | none                                     | Vector quantization (`scalar`, `turbo`, or `product`)                           | -                          |
 | `VAULTSPEC_RAG_QDRANT_READY_TIMEOUT` | float   | `300`                                    | Seconds of no startup progress the supervisor tolerates (total wait is 4x this) | -                          |
+| `VAULTSPEC_RAG_QDRANT_COLLECTION_LOAD_CONCURRENCY` | integer | `2` | Maximum collections loading concurrently during managed server startup; positive integer | - |
+
+Collection load concurrency takes effect on the next managed Qdrant start. Set it
+to `1` for serial loading; higher values can increase CPU and storage pressure.
+The managed child translates this setting to Qdrant's
+`storage.performance.max_concurrent_collection_loads` and logs the applied value.
+It does not configure remote servers or alter shard and segment load concurrency.
 
 ### Project and data locations
 
-| Variable                        | Type | Default                   | Controls                                                                  | CLI flag        |
-| ------------------------------- | ---- | ------------------------- | ------------------------------------------------------------------------- | --------------- |
-| `VAULTSPEC_RAG_DATA_DIR`        | path | `.vault/data/search-data` | Directory holding the on-disk store and index metadata                    | `--data-dir`    |
-| `VAULTSPEC_RAG_QDRANT_DIR`      | path | `qdrant`                  | On-disk store subdirectory inside the data dir                            | `--storage-dir` |
-| `VAULTSPEC_RAG_INDEX_META`      | path | `index_meta.json`         | Declared setting with no reading consumer today; setting it has no effect | -               |
-| `VAULTSPEC_RAG_CODE_INDEX_META` | path | `code_index_meta.json`    | Declared setting with no reading consumer today; setting it has no effect | -               |
+| Variable                   | Type | Default                   | Controls                                               | CLI flag        |
+| -------------------------- | ---- | ------------------------- | ------------------------------------------------------ | --------------- |
+| `VAULTSPEC_RAG_DATA_DIR`   | path | `.vault/data/search-data` | Directory holding the on-disk store and index metadata | `--data-dir`    |
+| `VAULTSPEC_RAG_QDRANT_DIR` | path | `qdrant`                  | On-disk store subdirectory inside the data dir         | `--storage-dir` |
 
 ### Service runtime and logging
 
@@ -403,7 +408,6 @@ vaultspec-rag downloads its dense, sparse, and reranker model files through the 
 | Variable                         | Type    | Controls                                                                                          |
 | -------------------------------- | ------- | ------------------------------------------------------------------------------------------------- |
 | `HF_HOME`                        | path    | Hub cache root. Read directly when reporting cache location; falls back to `~/.cache/huggingface` |
-| `HF_ENDPOINT`                    | string  | Hub mirror base URL                                                                               |
 | `HF_HUB_DOWNLOAD_TIMEOUT`        | integer | Per-file download timeout. The service defaults it to `300` when unset                            |
 | `HF_HUB_OFFLINE`                 | boolean | Cache-only mode; no network access to the Hub                                                     |
 | `TRANSFORMERS_OFFLINE`           | boolean | Cache-only model loading for Transformers                                                         |

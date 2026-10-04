@@ -14,13 +14,13 @@ from vaultspec_core.config import (
 )
 
 from .. import IndexResult, prepare_document
-from ..config._settings import reset_config as reset_rag_config
 from ..indexer import ASTChunker
 from ..indexer._chunking import (
     _MAX_FILE_SIZE,
     _is_binary,
 )
 from ..indexer._vault_prep import _extract_feature, _extract_title
+from ._config_fixtures import reset_config as reset_rag_config
 from ._sqlite_state import assert_sqlite_unchanged, sqlite_contents
 
 if TYPE_CHECKING:

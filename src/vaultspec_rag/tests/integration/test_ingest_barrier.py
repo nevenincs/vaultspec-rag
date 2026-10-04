@@ -8,23 +8,24 @@ missing points, so these tests exercise it against the real Rust engine:
 a poisoned batch the server acknowledges and silently drops, and a full
 vault rebuild whose points vanish between acknowledgement and barrier.
 
-No GPU: embeddings come from a deterministic CPU-only fake model; the
-subject under test is the store's wait policy and barrier placement.
+Embeddings come from the session's real GPU model; the subject under
+test is the store's wait policy and barrier placement.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING
 
 import pytest
 
 from ..._publication_state import acquire_publication_snapshot
 from ..._source_types import PublicSourceType
-from ...config._settings import get_config, reset_config
+from ...config._settings import get_config
 from ...config._types import EnvVar
 from ...indexer._publication_proof import ProofMissingError
 from ...progress import NullProgressReporter
 from ...store_runtime import IngestVerificationError, VaultStore
+from .._config_fixtures import reset_config
 from ..corpus import build_synthetic_vault
 from ._helpers import provisioned_qdrant_binary, serve_qdrant
 
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
 
     from ..._store_models import CodeChunk, VaultChunk
     from ..._store_writes import StoreWritePolicy
+    from ...embeddings import EmbeddingModel
     from ...qdrant_runtime._supervise import QdrantSupervisor
 
 pytestmark = [pytest.mark.integration]
@@ -72,41 +74,6 @@ def server_mode(
     finally:
         monkeypatch.delenv(EnvVar.QDRANT_URL.value, raising=False)
         reset_config()
-
-
-class _DeterministicCpuModel:
-    """CPU-only stand-in emitting stable dense rows and no sparse rows."""
-
-    device = "cpu"
-
-    def __init__(self) -> None:
-        self._dimension = int(get_config().embedding_dimension)
-
-    def _row(self, text: str) -> list[float]:
-        seed = (hash(text) % 997) + 1
-        row = [0.0] * self._dimension
-        row[seed % self._dimension] = 1.0
-        return row
-
-    def encode_documents_on_device(
-        self,
-        texts: list[str],
-        batch_size: int | None = None,
-        gpu_lock: object | None = None,
-        on_bucket: object | None = None,
-    ) -> list[list[float]]:
-        del batch_size, gpu_lock, on_bucket
-        return [self._row(text) for text in texts]
-
-    def encode_documents_sparse(
-        self,
-        texts: list[str],
-        batch_size: int | None = None,
-        gpu_lock: object | None = None,
-        on_bucket: object | None = None,
-    ) -> list[None]:
-        del batch_size, gpu_lock, on_bucket
-        return [None] * len(texts)
 
 
 def _make_code_chunks(count: int, dimension: int) -> list[CodeChunk]:
@@ -310,6 +277,7 @@ class TestBarrierComposesWithSliceWriter:
     def test_rebuild_fails_at_barrier_when_writer_carried_a_silent_drop(
         self,
         server_mode: QdrantSupervisor,
+        embedding_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
         """A writer-carried acknowledged-never-applied point fails the run.
@@ -335,7 +303,7 @@ class TestBarrierComposesWithSliceWriter:
         store = _PoisonedThroughWriterStore(tmp_path, raw)
         indexer = VaultIndexer(
             tmp_path,
-            cast("Any", _DeterministicCpuModel()),
+            embedding_model,
             store,
         )
         caller = threading.get_ident()
@@ -360,6 +328,7 @@ class TestTerminalStateNeverPrecedesAppliedPoints:
     def test_vault_rebuild_fails_before_metadata_when_points_vanish(
         self,
         server_mode: QdrantSupervisor,
+        embedding_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
         """Points deleted between acknowledgement and barrier fail the run.
@@ -384,7 +353,7 @@ class TestTerminalStateNeverPrecedesAppliedPoints:
         store = _VanishingChunkStore(tmp_path, raw)
         indexer = VaultIndexer(
             tmp_path,
-            cast("Any", _DeterministicCpuModel()),
+            embedding_model,
             store,
         )
         try:
@@ -399,6 +368,7 @@ class TestTerminalStateNeverPrecedesAppliedPoints:
     def test_vault_rebuild_publishes_metadata_when_points_apply(
         self,
         server_mode: QdrantSupervisor,  # noqa: ARG002  # activates the URL env seam
+        embedding_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
         """The happy rebuild passes the barrier and publishes terminally."""
@@ -408,7 +378,7 @@ class TestTerminalStateNeverPrecedesAppliedPoints:
         store = VaultStore(tmp_path)
         indexer = VaultIndexer(
             tmp_path,
-            cast("Any", _DeterministicCpuModel()),
+            embedding_model,
             store,
         )
         try:

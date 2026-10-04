@@ -222,16 +222,27 @@ class ServiceRegistry(
         root: Path,
         generation: str,
     ) -> ReadinessRevisionSnapshot | None:
-        """Publish one code generation when a service lifetime owns readiness."""
+        """Notify the committed proof identity after successful publication."""
+        from ._publication_state import (
+            UNREADABLE_PUBLICATION_ERRORS,
+            acquire_publication_snapshot,
+        )
+        from ._source_types import PublicSourceType
         from .server._search_readiness import ReadinessRegistryClosedError
 
+        # An unchanged run can complete without replacing the served proof.
+        del generation
         try:
+            publication = acquire_publication_snapshot(
+                root, PublicSourceType(source.value)
+            )
+            publication.validate()
             return readiness.publish_next(
                 root,
                 cast("IndexSource", source.value),
-                generation=generation,
+                generation=publication.proof.generation_id,
             )
-        except ReadinessRegistryClosedError:
+        except (ReadinessRegistryClosedError, *UNREADABLE_PUBLICATION_ERRORS):
             return None
 
     @staticmethod
@@ -239,22 +250,19 @@ class ServiceRegistry(
         readiness: ReadinessRevisionRegistry,
         snapshot: JobSnapshot,
     ) -> ReadinessRevisionSnapshot | None:
-        """Project one persisted corpus target into its exact service generation."""
+        """Project persisted corpus intent without claiming a future proof identity."""
         from .server._search_readiness import ReadinessRegistryClosedError
 
         root = snapshot.spec.project_root
         if root is None or not snapshot.spec.source.is_corpus:
             return None
-        generation = (
-            snapshot.resilience.generation_id
-            if snapshot.resilience is not None
-            else None
-        )
         try:
             return readiness.notify_controller(
                 Path(root),
                 cast("IndexSource", snapshot.spec.source.value),
-                generation=generation,
+                # Resilience names the attempt: a no-op may keep the parent
+                # proof. Only the actual publication knows its served identity.
+                generation=None,
             )
         except ReadinessRegistryClosedError:
             return None
@@ -377,7 +385,7 @@ class ServiceRegistry(
                 )
             logger.info(
                 "Shared CrossEncoder loaded on %s: %s (cache-only=%s)",
-                self._reranker.device,
+                str(getattr(self._reranker, "device", "unknown")),
                 cfg.reranker_model,
                 local_files_only,
             )
@@ -1092,6 +1100,11 @@ class ServiceRegistry(
             if readiness is not None
             else None
         )
+        publish_vault_readiness = (
+            partial(self._publish_readiness, readiness, JobSource.VAULT)
+            if readiness is not None
+            else None
+        )
         searcher = VaultSearcher(
             root,
             model,
@@ -1105,6 +1118,7 @@ class ServiceRegistry(
             model,
             slot.store,
             gpu_lock=self._gpu_lock,
+            publish_readiness=publish_vault_readiness,
         )
         code_indexer = CodebaseIndexer(
             root,

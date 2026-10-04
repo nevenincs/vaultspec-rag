@@ -42,7 +42,6 @@ from vaultspec_core.logging_config import (
 
 from ._managed_log_sink import RawRotatingLogSink
 from ._operator_lists import list_offset, list_order
-from ._test_isolation import enforce_pytest_singleton_containment
 from .config._registry import entry
 from .config._settings import managed_status_dir
 from .config._types import EnvVar
@@ -898,19 +897,9 @@ def configure_logging(
 
 
 def _canonical_daemon_log_path(path: str | os.PathLike[str]) -> Path:
-    """Return one comparison spelling for a guarded daemon log path."""
+    """Return one comparison spelling for a daemon log path."""
     resolved = Path(path).expanduser().resolve(strict=False)
     return Path(os.path.normcase(os.path.normpath(str(resolved))))
-
-
-def _contained_daemon_log_path(
-    path: str | os.PathLike[str],
-    *,
-    operation: str,
-) -> Path:
-    """Validate a daemon-log path and return its canonical spelling."""
-    enforce_pytest_singleton_containment(path, operation=operation)
-    return _canonical_daemon_log_path(path)
 
 
 def _close_detached_handler(
@@ -1302,10 +1291,7 @@ def install_daemon_log_capture(
     global _active_daemon_capture
 
     _validate_daemon_capture_settings(max_bytes, backup_count)
-    requested_log_path = _contained_daemon_log_path(
-        log_path,
-        operation="install daemon log capture",
-    )
+    requested_log_path = _canonical_daemon_log_path(log_path)
     formatter = logging.Formatter(
         "%(asctime)s %(levelname)-8s %(name)s: %(message)s",
     )

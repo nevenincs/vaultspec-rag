@@ -19,7 +19,8 @@ from ..job_control import NO_RUN_CONTROL
 from ..store_runtime import StorageGeometryError
 from . import _chunk_worker, _preprocess_glue, _stat_gate
 from ._checkpoint_common import PublicationExecution
-from ._content_policy import ContentKind, RootContentPolicy, SourceProfileVersion
+from ._content_discovery import CodeContentDiscovery
+from ._content_policy import ContentKind, RootContentPolicy
 from ._document_checkpoint import (
     DocumentRunCheckpoint,
     DocumentRunConfiguration,
@@ -189,34 +190,6 @@ class _DocumentResourceBudget:
         self.rss_bytes = max(self.rss_bytes, rss_bytes)
         self.cuda_bytes = max(self.cuda_bytes, cuda_bytes)
 
-    def record_runtime_resources(
-        self,
-        *,
-        rss_bytes: int,
-        cuda_bytes: int,
-        cuda_allocated_bytes: int | None = None,
-        label: str = "document supplied resource observation",
-    ) -> None:
-        """Record measured peaks and enforce both independent ceilings."""
-        from .._units import bytes_to_mib
-
-        allocated_bytes = (
-            cuda_bytes if cuda_allocated_bytes is None else cuda_allocated_bytes
-        )
-        try:
-            snapshot = self.memory_budget.observe(
-                label=label,
-                rss_mib=bytes_to_mib(rss_bytes),
-                cuda_allocated_mib=bytes_to_mib(allocated_bytes),
-                cuda_reserved_mib=bytes_to_mib(cuda_bytes),
-            )
-        except JobError:
-            snapshot = self.memory_budget.snapshot
-            if snapshot is not None:
-                self._retain_snapshot(snapshot)
-            raise
-        self._retain_snapshot(snapshot)
-
     def fail_cuda_oom(self, label: str, exc: BaseException) -> None:
         """Translate allocator exhaustion into the admitted typed outcome."""
         self.memory_budget.fail_cuda_oom(label=label, detail=str(exc))
@@ -316,9 +289,10 @@ class DocumentIndexer:
         self.model = model
         self.store = store
         self._gpu_lock = config.gpu_lock
-        self._extra_excludes = tuple(config.extra_excludes or ())
-        self._content_policy = config.content_policy or RootContentPolicy(
-            SourceProfileVersion.CONVENTIONAL_V1
+        self._discovery = CodeContentDiscovery(
+            self.root_dir,
+            content_policy=config.content_policy,
+            extra_excludes=config.extra_excludes or (),
         )
         self._publish_readiness = config.publish_readiness
         self._writer_lock = threading.RLock()
@@ -406,17 +380,13 @@ class DocumentIndexer:
 
         return held_budget_snapshot(self._memory_budget)
 
+    def reset_memory_telemetry(self) -> None:
+        """Clear prior attempt observations under managed worker ownership."""
+        self._memory_budget = None
+
     def resolve_policy_snapshot(self) -> ResolvedIndexPolicy:
         """Resolve the immutable admission and extraction policy for one run."""
-        from ._resolved_policy import IndexPolicyResolutionOptions, resolve_index_policy
-
-        return resolve_index_policy(
-            self.root_dir,
-            IndexPolicyResolutionOptions(
-                content_policy=self._content_policy,
-                extra_excludes=self._extra_excludes,
-            ),
-        )
+        return self._discovery.resolve_policy()
 
     @staticmethod
     def _ignored_directory(policy: ResolvedIndexPolicy, rel_path: str) -> bool:
@@ -1134,16 +1104,16 @@ class DocumentIndexer:
             for path in paths
         )
         effective_clean = clean and not preprocessing_disabled
-        checkpoint = self._open_checkpoint(
-            policy=policy,
-            operation=RunOperation.FULL,
-            clean=authority is RunAuthority.REBUILD,
-            limits=limits,
-            execution=PublicationExecution(authority, run_control),
-        )
-        with checkpoint.preserve_incomplete_generation():
-            budget = self._begin_resource_budget(limits)
         with self._writer_lock:
+            checkpoint = self._open_checkpoint(
+                policy=policy,
+                operation=RunOperation.FULL,
+                clean=authority is RunAuthority.REBUILD,
+                limits=limits,
+                execution=PublicationExecution(authority, run_control),
+            )
+            with checkpoint.preserve_incomplete_generation():
+                budget = self._begin_resource_budget(limits)
             return run_index_lifecycle(
                 lambda: self._full_index_locked(
                     paths,
@@ -1193,14 +1163,18 @@ class DocumentIndexer:
             acquire_publication_snapshot,
             read_all_publication_evidence,
         )
-        from ._publication_proof import ProofIncompatibleError, ProofMissingError
+        from ._publication_proof import (
+            ProofIncompatibleError,
+            ProofMissingError,
+            ProofReadConflictError,
+        )
 
         try:
             previous_snapshot = acquire_publication_snapshot(
                 self.root_dir,
                 PublicSourceType.DOCUMENT,
             )
-        except (ProofIncompatibleError, ProofMissingError):
+        except (ProofIncompatibleError, ProofMissingError, ProofReadConflictError):
             previous_files = {}
         else:
             previous_files = {
@@ -1323,6 +1297,12 @@ class DocumentIndexer:
         prep = self._preprocess_context(policy, limits)
         previous_files: dict[str, DocumentFileMetadata]
         with self._writer_lock:
+            DocumentRunCheckpoint.recover_pending_publication(
+                self.root_dir,
+                PublicSourceType.DOCUMENT,
+                backend_identity=self.store.backend_identity,
+                run_control=run_control,
+            )
             from .._publication_state import (
                 acquire_publication_snapshot,
                 read_all_publication_evidence,
@@ -1372,30 +1352,30 @@ class DocumentIndexer:
                     "document storage is shorter than its canonical proof; request "
                     "an explicit full document reindex",
                 )
-        operation = (
-            RunOperation.SCOPED_INCREMENTAL
-            if changed_paths is not None
-            else RunOperation.INCREMENTAL
-        )
-        try:
-            checkpoint = self._open_checkpoint(
-                policy=policy,
-                operation=operation,
-                clean=False,
-                limits=limits,
-                execution=PublicationExecution(authority, run_control),
+            operation = (
+                RunOperation.SCOPED_INCREMENTAL
+                if changed_paths is not None
+                else RunOperation.INCREMENTAL
             )
-        except RunLedgerCompatibilityError as exc:
-            logger.warning("document incremental ledger is incompatible: %s", exc)
-            raise JobError(
-                JobErrorKind.FULL_REINDEX_REQUIRED,
-                f"no compatible committed document proof ({exc}); request "
-                "an explicit full document reindex",
-            ) from exc
+            try:
+                checkpoint = self._open_checkpoint(
+                    policy=policy,
+                    operation=operation,
+                    clean=False,
+                    limits=limits,
+                    execution=PublicationExecution(authority, run_control),
+                )
+            except RunLedgerCompatibilityError as exc:
+                logger.warning("document incremental ledger is incompatible: %s", exc)
+                raise JobError(
+                    JobErrorKind.FULL_REINDEX_REQUIRED,
+                    f"no compatible committed document proof ({exc}); request "
+                    "an explicit full document reindex",
+                ) from exc
 
-        with checkpoint.preserve_incomplete_generation():
-            budget = self._begin_resource_budget(limits)
-        with self._writer_lock:
+            with checkpoint.preserve_incomplete_generation():
+                run_control.checkpoint()
+                budget = self._begin_resource_budget(limits)
             return run_index_lifecycle(
                 lambda: self._incremental_index_locked(
                     authorized_paths,
@@ -1465,7 +1445,7 @@ class DocumentIndexer:
                         ContentKind.DOCUMENT,
                         selected,
                     )
-                else:
+                elif selected:
                     reconcile_generation_storage(
                         self.store,
                         checkpoint,

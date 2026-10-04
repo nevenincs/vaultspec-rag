@@ -167,7 +167,8 @@ def _require_yes_for_json(command: str, json_mode: bool, yes: bool) -> None:
 def _emit_survey_json(
     surveys: list[NamespaceSurvey], queried_root: dict[str, str] | None = None
 ) -> None:
-    from ..storage_survey import is_temp_rooted
+    from ..generation_survey import generation_fields
+    from ..storage_survey import namespace_temp_rooted
 
     data: dict[str, object] = {
         "namespaces": [
@@ -177,10 +178,14 @@ def _emit_survey_json(
                 "status": s.status,
                 "collections": s.collections,
                 "points": s.points,
+                "vault_points": s.vault_points,
+                "code_points": s.code_points,
+                "document_points": s.document_points,
                 "points_verified": s.points_verified,
                 "footprint_bytes": s.footprint_bytes,
                 "models": s.models,
-                "temp_rooted": is_temp_rooted(s.root),
+                "temp_rooted": namespace_temp_rooted(s),
+                **generation_fields(s.generations),
             }
             for s in surveys
         ],
@@ -215,7 +220,7 @@ class _SurveyTallies:
 
 def _survey_tallies(surveys: list[NamespaceSurvey]) -> _SurveyTallies:
     """Count one survey listing across every dimension it reports."""
-    from ..storage_survey import is_temp_rooted
+    from ..storage_survey import namespace_temp_rooted
 
     return _SurveyTallies(
         namespaces=len(surveys),
@@ -223,7 +228,7 @@ def _survey_tallies(surveys: list[NamespaceSurvey]) -> _SurveyTallies:
             status: sum(1 for s in surveys if s.status == status)
             for status in _SURVEY_STATUSES
         },
-        temp_rooted=sum(1 for s in surveys if is_temp_rooted(s.root)),
+        temp_rooted=sum(1 for s in surveys if namespace_temp_rooted(s)),
         points_unverified=sum(1 for s in surveys if not s.points_verified),
         unstamped=sum(1 for s in surveys if not s.models),
         footprint_bytes=sum(s.footprint_bytes for s in surveys),
@@ -247,10 +252,10 @@ def _survey_summary_line(tallies: _SurveyTallies) -> str:
 
 def _survey_namespace_lines(survey: NamespaceSurvey) -> list[str]:
     """Render one namespace as the line, plus any line its state has earned."""
-    from ..storage_survey import is_temp_rooted
+    from ..storage_survey import namespace_temp_rooted
 
     root = survey.root if survey.root is not None else "(unattributable)"
-    marker = "  [temp]" if is_temp_rooted(survey.root) else ""
+    marker = "  [temp]" if namespace_temp_rooted(survey) else ""
     # Distinguishes a real zero from a count that could not be taken -
     # the same fact an uncounted collection would otherwise silently
     # report as a verified zero.
@@ -300,6 +305,19 @@ def _print_survey(surveys: list[NamespaceSurvey]) -> None:
         typer.echo(footnote)
 
 
+def _published_model_map(value: object) -> dict[str, str]:
+    """Validate the carried model map without filling or relabelling any stamp."""
+    if not isinstance(value, dict):
+        return {}
+    entries = cast("dict[object, object]", value)
+    if not all(
+        isinstance(name, str) and isinstance(model, str)
+        for name, model in entries.items()
+    ):
+        return {}
+    return cast("dict[str, str]", entries).copy()
+
+
 def _survey_from_service(
     root: str | None = None, fresh: bool = False
 ) -> tuple[list[NamespaceSurvey], dict[str, str] | None] | None:
@@ -314,6 +332,7 @@ def _survey_from_service(
     With ``root``, the route narrows to that root's namespace and its
     ``queried_root`` (the service-computed prefix) is returned alongside.
     """
+    from ..generation_survey import decode_generation_fields
     from ..serviceclient._discovery import _default_service_port
     from ..serviceclient._transport import _try_http_admin
     from ..storage_survey import NamespaceSurvey
@@ -333,6 +352,7 @@ def _survey_from_service(
             continue
         entry = cast("dict[str, object]", item)
         entry_root = entry.get("root")
+        namespace_root = entry_root if isinstance(entry_root, str) else None
         collections = entry.get("collections")
         names = (
             [str(c) for c in cast("list[object]", collections)]
@@ -348,17 +368,23 @@ def _survey_from_service(
         surveys.append(
             NamespaceSurvey(
                 prefix=str(entry.get("prefix", "")),
-                root=entry_root if isinstance(entry_root, str) else None,
+                root=namespace_root,
                 status=str(entry.get("status", "")),
                 collections=names,
                 # A version-skewed daemon can publish a point/byte field the
                 # client does not recognise as a number; count() reads it as
                 # "not measured" (0) rather than raising on a malformed value.
                 points=count(entry.get("points")) or 0,
+                vault_points=count(entry.get("vault_points")) or 0,
+                code_points=count(entry.get("code_points")) or 0,
+                document_points=count(entry.get("document_points")) or 0,
                 footprint_bytes=count(entry.get("footprint_bytes")) or 0,
                 points_verified=(
                     True if published_verified is None else published_verified
                 ),
+                generations=decode_generation_fields(namespace_root, entry),
+                models=_published_model_map(entry.get("models")),
+                temp_rooted=flag(entry.get("temp_rooted")),
             )
         )
     raw_queried = result.get("queried_root")

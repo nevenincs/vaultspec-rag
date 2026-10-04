@@ -199,22 +199,6 @@ def test_a_released_environment_reports_no_holders(
     pytest.fail("a terminated holder was still reported")
 
 
-def test_an_excluded_pid_is_not_reported_as_a_holder(
-    environment_root: Path, holders: list[subprocess.Popen[bytes]]
-) -> None:
-    """A caller that knows a pid is not an obstacle can say so."""
-    child = subprocess.Popen([str(_interpreter(environment_root)), "-c", _IDLE])
-    holders.append(child)
-    _await_holder(environment_root, child.pid)
-
-    family = _family(child.pid)
-    result = environment_holders(
-        environment_root, exclude_pids=sorted(family), timeout=_SCAN_TIMEOUT
-    )
-
-    assert all(holder.pid not in family for holder in result.holders)
-
-
 def _table(*rows: Mapping[str, object]) -> Any:
     """Return an ``iter_process_info`` stand-in yielding *rows*."""
 
@@ -328,7 +312,7 @@ def test_only_a_matched_holder_requests_its_parent(
     The injected lazy rows record attribute access: the OS returns parent
     values but cannot expose whether this query requested an unused one,
     and elapsed time cannot establish that on a variably loaded runner.
-    Classification, exclusions and parent pairing use production code.
+    Classification and parent pairing use production code.
 
     Restoring the eager read failed parent_reads == [matching] (exit 1);
     deferring it again passed this test (exit 0).
@@ -345,12 +329,11 @@ def test_only_a_matched_holder_requests_its_parent(
     rows = (
         ReadWitness(_row(4320, exe=str(tmp_path.parent / "unrelated.exe"))),
         ReadWitness(_row(4322)),
-        ReadWitness(_row(4323, exe=str(tmp_path / "excluded.exe"))),
         ReadWitness(_row(matching, exe=str(tmp_path / "python.exe"), ppid=1234)),
     )
     monkeypatch.setattr("vaultspec_rag._process_probe.iter_process_info", _table(*rows))
 
-    result = environment_holders(tmp_path, exclude_pids=(4323,))
+    result = environment_holders(tmp_path)
 
     assert parent_reads == [matching]
     assert [holder.pid for holder in result.holders] == [matching]

@@ -14,13 +14,12 @@ from ...service import ServiceRegistry
 
 __all__ = [
     "_assert_route_control_conflicts",
-    "_assert_route_creation_contract",
     "_assert_route_exact_id_contract",
     "_assert_route_paused_filter",
     "_cancel_route_job",
-    "_create_route_job",
     "_retry_delete_route_job",
     "_routes_app",
+    "_seed_paused_route_job",
 ]
 
 if TYPE_CHECKING:
@@ -28,6 +27,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     import httpx
+
+    from ...job_models import JobSnapshot
 
 
 @pytest.fixture(name="_routes_app")
@@ -43,8 +44,8 @@ def _routes_app(
     """
     import os
 
-    from ...config._settings import reset_config
     from ...config._types import EnvVar
+    from .._config_fixtures import reset_config
 
     prior_status_dir = os.environ.get(EnvVar.STATUS_DIR)
     os.environ[EnvVar.STATUS_DIR] = str(tmp_path / "route-status")
@@ -73,89 +74,39 @@ def _routes_app(
         reset_config()
 
 
-def _create_route_job(
-    client: TestClient,
-    headers: dict[str, str],
-    project_root: Path,
-    *,
-    idempotency_key: str | None = None,
-    include_initiator: bool = False,
-) -> httpx.Response:
-    """Create one paused route job through the real ASGI client."""
-    request_headers = dict(headers)
-    if idempotency_key is not None:
-        request_headers["Idempotency-Key"] = idempotency_key
-    payload: dict[str, object] = {
-        "operation": "index",
-        "source": "vault",
-        "project_root": str(project_root),
-        "mode": "incremental",
-        "authority": "publication",
-        "start_paused": True,
-    }
-    if include_initiator:
-        payload["initiator"] = {"kind": "cli", "command": "test_create"}
-    return cast(
-        "httpx.Response",
-        client.post(
-            "/jobs",
-            headers=request_headers,
-            json=payload,
+def _seed_paused_route_job(project_root: Path) -> JobSnapshot:
+    """Admit one job and pause it before dispatch, as the routes then see it.
+
+    Jobs are created only through ``/reindex``, which dispatches at once; the
+    control routes under test need work that holds still, so the job is
+    admitted through the manager the route uses and paused before it runs.
+    """
+    from ...indexer._run_ledger_models import RunAuthority
+    from ...job_models import (
+        DesiredJobState,
+        JobInitiator,
+        JobMode,
+        JobOperation,
+        JobSpec,
+    )
+
+    manager = _jobs.get_job_manager()
+    created = manager.create(
+        JobSpec(
+            operation=JobOperation.INDEX,
+            source=JobSource.VAULT,
+            project_root=str(project_root),
+            mode=JobMode.INCREMENTAL,
+            authority=RunAuthority.PUBLICATION,
         ),
+        JobInitiator("cli", "test_create", str(project_root)),
     )
-
-
-def _assert_route_creation_contract(
-    client: TestClient,
-    headers: dict[str, str],
-    project_root: Path,
-) -> str:
-    """Assert create, idempotent replay, key conflict, and active deduplication."""
-    created = _create_route_job(
-        client,
-        headers,
-        project_root,
-        idempotency_key="route-lifecycle",
-        include_initiator=True,
-    )
-    assert created.status_code == 202, created.text
-    created_payload: dict[str, object] = created.json()
-    job = cast("dict[str, object]", created_payload["job"])
-    job_id = str(job["id"])
-    assert created.headers["location"] == f"/jobs/{job_id}"
-    assert job["state"] == "paused"
-    assert job["desired_state"] == "paused"
-    replay = _create_route_job(
-        client,
-        headers,
-        project_root,
-        idempotency_key="route-lifecycle",
-        include_initiator=True,
-    )
-    assert replay.status_code == 200
-    assert replay.json()["code"] == "idempotency_replayed"
-    assert replay.json()["job"]["id"] == job_id
-    assert replay.headers["location"] == f"/jobs/{job_id}"
-    other_root = project_root / "other"
-    (other_root / ".vault").mkdir(parents=True)
-    key_conflict = _create_route_job(
-        client,
-        headers,
-        other_root,
-        idempotency_key="route-lifecycle",
-    )
-    assert key_conflict.status_code == 409
-    assert key_conflict.json()["code"] == "idempotency_key_conflict"
-    deduplicated = _create_route_job(
-        client,
-        headers,
-        project_root,
-        include_initiator=True,
-    )
-    assert deduplicated.status_code == 200
-    assert deduplicated.json()["code"] == "active_job_exists"
-    assert deduplicated.json()["job"]["id"] == job_id
-    return job_id
+    assert created.code == "job_created", created
+    assert created.job is not None
+    paused = manager.set_desired_state(created.job.id, DesiredJobState.PAUSED)
+    assert paused.code == "job_paused", paused
+    assert paused.job is not None
+    return paused.job
 
 
 def _assert_route_exact_id_contract(

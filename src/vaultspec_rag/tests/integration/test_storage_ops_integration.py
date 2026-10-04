@@ -18,7 +18,6 @@ import pytest
 
 from ..._store_models import root_collection_prefix
 from ..._sync_vocabulary import ProvisionAction
-from ...config._settings import reset_config
 from ...qdrant_runtime._provision import provision
 from ...qdrant_runtime._resolve import resolve_binary
 from ...storage_manifest import record_root
@@ -29,6 +28,7 @@ from ...storage_survey_ops import (
     gather_survey,
     prune_orphaned,
 )
+from .._config_fixtures import reset_config
 from ._helpers import serve_qdrant
 
 if TYPE_CHECKING:
@@ -245,10 +245,10 @@ def test_ensure_table_records_manifest_and_survey_shows_live(
     from qdrant_client import QdrantClient
 
     from ..._store_models import root_collection_prefix
-    from ...config._settings import reset_config
     from ...config._types import EnvVar
     from ...storage_manifest import load_manifest
     from ...store_runtime import VaultStore
+    from .._config_fixtures import reset_config
 
     root = tmp_path / "live-project"
     root.mkdir()

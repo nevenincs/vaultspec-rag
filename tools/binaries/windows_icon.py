@@ -126,12 +126,10 @@ def _resource_id(value: int) -> ctypes.c_void_p:
     return ctypes.c_void_p(value)
 
 
-def _kernel32(
-    error_type: type[RuntimeError] = IconResourceError,
-) -> Any:
+def _kernel32() -> Any:
     """Load kernel32 with pointer-safe signatures, or reject a non-Windows host."""
     if sys.platform != "win32":
-        raise error_type("Windows PE resources can only be updated on Windows")
+        raise IconResourceError("Windows PE resources can only be updated on Windows")
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
     void_pointer = ctypes.c_void_p
     kernel32.BeginUpdateResourceW.argtypes = [ctypes.c_wchar_p, ctypes.c_int]
@@ -329,10 +327,9 @@ def _update_resource(
 def _commit_resources(
     executable: Path,
     resources: tuple[tuple[tuple[int, int], bytes], ...],
-    error_type: type[RuntimeError] = IconResourceError,
 ) -> None:
     """Commit all *resources* through one Win32 update transaction."""
-    kernel32 = _kernel32(error_type)
+    kernel32 = _kernel32()
     handle = kernel32.BeginUpdateResourceW(os.fspath(executable), False)
     if not handle:
         _raise_win32("opening resources in", executable)
@@ -346,35 +343,6 @@ def _commit_resources(
     finally:
         if not committed:
             kernel32.EndUpdateResourceW(handle, True)
-
-
-def stamp_icon(executable: Path, icon: Path) -> None:
-    """Replace the primary PE icon with *icon* and verify the committed bytes."""
-    if not executable.is_file():
-        raise IconResourceError(f"Windows executable does not exist: {executable}")
-    images = parse_ico(icon)
-    resources = (
-        *(
-            ((RT_ICON, resource_id), image.payload)
-            for resource_id, image in enumerate(images, start=1)
-        ),
-        ((RT_GROUP_ICON, PRIMARY_ICON_GROUP), _group_data(images)),
-    )
-    _commit_resources(executable, resources)
-    verify_icon(executable, icon)
-
-
-def stamp_version_info(executable: Path, info: VersionInfo) -> None:
-    """Replace the primary PE version resource with *info* and verify it."""
-    if not executable.is_file():
-        raise VersionResourceError(f"Windows executable does not exist: {executable}")
-    payload = version_resource(info)
-    _commit_resources(
-        executable,
-        (((RT_VERSION, VERSION_RESOURCE_ID), payload),),
-        VersionResourceError,
-    )
-    verify_version_info(executable, info)
 
 
 def stamp_icon_and_version(executable: Path, icon: Path, info: VersionInfo) -> None:

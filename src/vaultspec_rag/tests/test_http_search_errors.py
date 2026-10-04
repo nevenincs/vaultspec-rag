@@ -17,9 +17,9 @@ from starlette.testclient import TestClient
 from .._search_state import MAX_SEARCH_EVIDENCE_ITEMS
 from .._source_types import INDEX_SOURCES, PublicSourceType
 from .._store_locks import VaultStoreLockedError
-from ..config._settings import get_config, reset_config
+from ..config._settings import get_config
 from ..mcp._tools import _validated_search_result
-from ..registry import get_registry, reset_registry
+from ..registry import get_registry
 from ..search._models import SearchResult
 from ..server import (
     ServerRouteRuntime,
@@ -47,10 +47,12 @@ from ..serviceclient._search_transport import (
     _search_response_envelope,
     try_http_search,
 )
+from ._config_fixtures import reset_config
 from ._search_readiness_scenarios import (
     SEARCH_READINESS_SCENARIOS,
     canonical_service_envelope,
 )
+from ._state_fixtures import reset_registry
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -324,11 +326,6 @@ def test_mutating_routes_reject_a_closed_runtime_before_global_or_gpu_work(
                 headers=headers,
                 json={"project_root": str(root), "type": "vault"},
             )
-            benchmark = client.post(
-                "/benchmark",
-                headers=headers,
-                json={"project_root": str(root), "n_queries": 1},
-            )
             quality = client.post("/quality", headers=headers)
 
         assert global_registry is not runtime_registry
@@ -338,7 +335,6 @@ def test_mutating_routes_reject_a_closed_runtime_before_global_or_gpu_work(
         clean_domains = clean.json()["domains"]
         assert clean_domains["vault"]["error_kind"] == "RuntimeError"
         assert clean_domains["vault"]["detail"] == "ServiceRegistry is shutting down"
-        assert benchmark.status_code == 500, benchmark.text
         assert quality.status_code == 500, quality.text
     finally:
         runtime_registry.close_all()
@@ -417,6 +413,14 @@ class TestSearchResponseStatus:
         assert actual != 429
 
 
+#: The generation the fixture daemon has published and is serving. The
+#: integrity block below names the same one: a consistent verdict proves
+#: nothing about the published generation unless it was measured over it, so
+#: the two values are one value here for the same reason production compares
+#: them.
+_PUBLISHED_GENERATION = "served"
+
+
 def _canonical_classification_facts(
     root: Path,
     *,
@@ -447,9 +451,9 @@ def _canonical_classification_facts(
         port=8766,
         readiness_snapshot=ReadinessRevisionSnapshot(
             key=key,
-            published_generation="served",
+            published_generation=_PUBLISHED_GENERATION,
             publication_revision=1,
-            desired_generation="served" if current else "desired",
+            desired_generation=_PUBLISHED_GENERATION if current else "desired",
             controller_revision=1 if current else 2,
         ),
     )
@@ -466,7 +470,10 @@ def _canonical_searched(results: list[dict[str, object]]) -> dict[str, object]:
             "requested_target_root": "project",
             "target_matches": True,
             "status": "available",
-            "index_integrity": {"verdict": "consistent"},
+            "index_integrity": {
+                "verdict": "consistent",
+                "generation_id": _PUBLISHED_GENERATION,
+            },
         },
     }
 

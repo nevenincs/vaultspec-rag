@@ -66,8 +66,9 @@ def test_configured_model_stack_runs_together_on_mps(
     monkeypatch.setenv("VAULTSPEC_RAG_RERANKER_ENABLED", "1")
 
     from ..._gpu import load_accelerator
-    from ...config._settings import get_config, reset_config
+    from ...config._settings import get_config
     from ...service import ServiceRegistry
+    from .._config_fixtures import reset_config
 
     reset_config()
     accelerator = load_accelerator()

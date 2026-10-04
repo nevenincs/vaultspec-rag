@@ -270,7 +270,7 @@ class TestSliceWriterContract:
     """Direct coverage of the writer thread's ordering and shutdown bounds."""
 
     def test_tasks_run_in_submission_order_on_one_thread(self) -> None:
-        writer = _SliceWriter(name="order-writer", max_pending=2)
+        writer = _SliceWriter(name="order-writer")
         executed: list[int] = []
         threads: list[int] = []
 
@@ -521,7 +521,7 @@ class TestSliceWriterContract:
             writer.close()
 
     def test_failure_releases_later_tasks_without_writing_them(self) -> None:
-        writer = _SliceWriter(name="failing-writer", max_pending=4)
+        writer = _SliceWriter(name="failing-writer")
         written: list[int] = []
         released: list[int] = []
 

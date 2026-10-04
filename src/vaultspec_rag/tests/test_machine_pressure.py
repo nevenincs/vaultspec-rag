@@ -16,12 +16,8 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from ..pressure import (
-    PRESSURE_TIERS,
-    MachinePressureSignals,
-    PressureEvaluator,
-    reset_pressure_evaluator,
-)
+from ..pressure import PRESSURE_TIERS, MachinePressureSignals, PressureEvaluator
+from ._state_fixtures import reset_pressure_evaluator
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -459,8 +455,8 @@ def own_status_dir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[None]:
-    from ..config._settings import reset_config
     from ..jobs import reset
+    from ._config_fixtures import reset_config
 
     monkeypatch.setenv("VAULTSPEC_RAG_STATUS_DIR", str(tmp_path / "status"))
     reset_config()

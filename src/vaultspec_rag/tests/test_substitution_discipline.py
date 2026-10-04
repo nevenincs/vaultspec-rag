@@ -42,6 +42,70 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "ordering and HTTP diagnostics remain real. The parent releases the "
         "barrier on failure and the wrapper restores itself on every exit",
     ),
+    "test_attempt_memory_telemetry.py": (
+        2,
+        "the embedding model is deliberately constructed unloaded, so its "
+        "forward call is replaced to record a chosen, exact CUDA peak across "
+        "two attempts and prove a new checkpoint never inherits the prior "
+        "one's memory facts; a real forward on this CPU-only runner cannot "
+        "report a chosen exact peak at all, let alone two distinct ones on "
+        "demand. The manager's resilience publication is wrapped to call "
+        "through to the real update and only record the accepted snapshots, "
+        "because the manager keeps the latest publication only and an "
+        "attempt's opening fact is otherwise overwritten before a test can "
+        "read it",
+    ),
+    "test_route_scan_classification_cache.py": (
+        2,
+        "wraps ResolvedIndexPolicy.classify and RunPolicy.checkpoint to record "
+        "each call before delegating to the real implementation, because the "
+        "route scan wraps the production classify method directly in an "
+        "lru_cache and its deduplication is observable only by counting how "
+        "many times the underlying method actually runs; the real "
+        "classification and checkpoint logic execute unchanged on every call",
+    ),
+    "test_search_conformance_refusal.py": (
+        1,
+        "the model-free count path a registry exposes never checks storage "
+        "identity, by design - counting must not require a GPU - so a real "
+        "mismatched collection cannot make it raise the typed conformance "
+        "error the combined count's exception handling must classify. The "
+        "substitute routes the count through the same real, already-mismatched "
+        "store's real search instead, which does carry the conformance check; "
+        "every store, identity and search call involved is real",
+    ),
+    "test_search_readiness_responsiveness.py": (
+        2,
+        "wraps the real publication-snapshot read to hold it open until the "
+        "event loop's own heartbeat is observed running, because a live disk "
+        "read cannot be made to take long enough to prove responsiveness on "
+        "demand, and it still returns the real snapshot. The job snapshot is "
+        "redirected to a fixed empty list because it is read from a live "
+        "process-wide job-manager singleton shared by the whole test session "
+        "and never reset between tests; a leftover job from an unrelated test "
+        "would make this responsiveness assertion flake on content it did not "
+        "create",
+    ),
+    "test_search_readiness_restore.py": (
+        6,
+        "three sites redirect the canonical job snapshot away from that same "
+        "live, session-wide job-manager singleton to a deterministic empty or "
+        "fixed input, for the reason above. The other three wrap the real "
+        "publication-snapshot read, or the real proof-token validate, to run a "
+        "genuine concurrent mutation - a real ledger reservation, or a real "
+        "publish on a separate thread - at the one instant between a read and "
+        "its later validation; a live race cannot be scheduled to land there, "
+        "and every object returned and every ledger operation run is real",
+    ),
+    "test_service_cleanup_callers.py": (
+        1,
+        "stages an already-read, stale service-status snapshot ahead of a real "
+        "successor already published to disk, because the only way a caller "
+        "legitimately holds a stale snapshot is a prior read racing a "
+        "concurrent republish, which cannot be scheduled to land on demand; "
+        "every subsequent process probe and the locked deletion use the actual "
+        "dead child and the real on-disk record",
+    ),
     "test_service_launcher_lifetime.py": (
         1,
         "fresh CPU child refuses only the named launcher-waiter thread start; "
@@ -51,6 +115,31 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "its context, and both successful and failed handoffs retain strict "
         "ResourceWarning checks. Missing declaration fails; a second site "
         "exceeds this exact bound",
+    ),
+    "test_service_stop_cleanup.py": (
+        2,
+        "one wraps the real termination-and-confirm call to publish a real "
+        "successor status immediately after it returns, modelling a successor "
+        "process winning the race to publish between an old stop's termination "
+        "and its cleanup write - a window a live schedule cannot be timed to "
+        "hit. The other sets a signal the instant a real deletion reaches the "
+        "real shared write lock, which a separate real process is holding, so "
+        "the test can prove the deletion blocks on that lock rather than on a "
+        "fixed sleep; both wrappers delegate every lock and write to the real "
+        "implementation",
+    ),
+    "test_service_stop_port.py": (
+        5,
+        "forces four OS-query failures that a real, currently-running child "
+        "process this test owns cannot be made to produce on demand: an "
+        "unreadable process-start time, the same call reporting a different "
+        "birth on a second read to model a PID reused by another image mid- "
+        "inspection (patched at both of its two import sites), a held machine "
+        "lock reported with an unidentifiable holder pid, and an unreadable "
+        "process argv. Every surrounding identity check, termination and "
+        "discovery read or write stays real; only the fact the OS reports back "
+        "is substituted, because reproducing any of these four states for real "
+        "means racing or defeating the kernel's own process table",
     ),
     "integration/_served_drift_control.py": (
         2,
@@ -64,25 +153,6 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "Mutation proof: reducing two to one fails the count-growth assertion; "
         "restoring two passes",
     ),
-    "test_gpu_profile_harness.py": (
-        17,
-        "CPU unit seams: one native-process tripwire rejects any unverified "
-        "profiler launch; six accelerator-load, work and memory observations "
-        "force teardown ordering and failure without allocating CUDA; one "
-        "integration-boundary tripwire proves insufficient power samples never "
-        "reach arithmetic; four clock, encode, memory and ceiling observations "
-        "stage sustained-arm ordering and actual bucket/OOM telemetry; one argv "
-        "substitution supplies parser bounds; two encode/window boundaries "
-        "exercise paired budget planning with real adaptive ceilings; and two "
-        "parity/window boundaries prove failed output parity prevents timing. "
-        "Untrusted native execution, device exhaustion and exact scheduling "
-        "cannot be safely or repeatably induced in CPU unit tests. The real "
-        "guard, planner, artifact writes and cleanup execute; separate admitted "
-        "CUDA/energy measurements and verified-profiler runs exercise the live "
-        "workload. The allowance is exactly these seventeen sites. Mutation "
-        "proof: reducing it to sixteen failed the count-growth assertion; "
-        "restoring seventeen passed",
-    ),
     "test_cli_styled_output.py": (
         1,
         "styling reaches only a colour terminal, and the CLI builds its one "
@@ -91,6 +161,44 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "console; the substitute is the output sink, not any behaviour. "
         "Mutation proof: setting this allowance to zero failed the count-growth "
         "assertion; restoring one passed",
+    ),
+    "test_code_consumer_progress.py": (
+        3,
+        "a replayed zero-chunk ledger write is replaced with one that raises "
+        "after its real validation so the policy-rejection failure branch is "
+        "reached without actually corrupting the on-disk ledger, which would "
+        "need a real disk or permission fault of the exact kind no runner can "
+        "stage on demand. The producer/consumer publication-order test wraps "
+        "the reporter's publish and the checkpoint's zero-chunk record with "
+        "call-through instrumentation that holds one real thread at the exact "
+        "instant the other's durable outcome resolves, which a live schedule "
+        "cannot be timed to hit; both wrappers run the real body before or "
+        "after the held point and change nothing it computes",
+    ),
+    "test_code_pipeline_retained_ids.py": (
+        1,
+        "the cheap in-memory drift observation can miss a race by design; "
+        "forcing that miss is the only way to reach the real ledger's own "
+        "indexed-path collision detection, which a live race cannot be "
+        "scheduled to trigger on demand. Storage, chunking and retirement "
+        "stay real throughout",
+    ),
+    "test_confirmed_chunk_progress.py": (
+        1,
+        "the chunk and file progress classification is pure arithmetic over "
+        "timestamps replayed across hundreds of simulated seconds; a "
+        "controllable clock is substituted for the module's time source so "
+        "the cadence is deterministic, because driving the same assertions "
+        "with real sleeps would make the suite minutes slower and flaky "
+        "against scheduling jitter. Nothing else about progress, rate or "
+        "degradation computation is replaced",
+    ),
+    "test_content_route_migration.py": (
+        1,
+        "wraps the real local-store scroll with a recording proxy that still "
+        "executes it, because the arguments a migration scan passes at that "
+        "boundary - with_vectors false, with_payload true - are not otherwise "
+        "observable from any value the scan returns",
     ),
     "test_typesafe_search.py": (
         26,
@@ -152,6 +260,19 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "site, not two: both seams are patched from a single helper, because "
         "patching either alone leaves the other untraced",
     ),
+    "test_quiesce_abort_recovery.py": (
+        4,
+        "wraps the quiesce controller's abort_pause, and the atomic-write "
+        "durability call, to land an injected fault or assertion at one exact "
+        "point in the resume/recovery sequence - mid-abort, between a "
+        "protected acknowledgement and reopening admissions, or between a "
+        "durable rename and its following sync fault. A live resume races "
+        "background job threads and the operating system, so none of these "
+        "points can be scheduled against real timing; every wrapper calls "
+        "through to the real implementation for the rest of its work, and the "
+        "quiesce state machine, job manager and persisted state stay real "
+        "throughout",
+    ),
     "test_server_routes.py": (
         2,
         "one is a tripwire that only ever raises, so it cannot make a "
@@ -174,6 +295,13 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "the GPU development runtime from the shared test interpreter; the "
         "central torch gate and importlib lookup are substituted only to "
         "produce those otherwise destructive dependency states",
+    ),
+    "test_encode_bucket_planner.py": (
+        1,
+        "proves the lockless sparse forward now enters the peak-capture "
+        "bracket the locked branch already used, but a real capture is "
+        "indistinguishable from a no-op without a CUDA device; the bracket is "
+        "substituted only to count entries, and the forward itself stays real",
     ),
     "gpu_admission/test_floor_and_window.py": (
         1,
@@ -200,6 +328,26 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "and the shared temporary directory, nor make the Windows known-folder "
         "API fail",
     ),
+    "test_incremental_failure_classification.py": (
+        2,
+        "the embedding model is deliberately constructed unloaded, so its "
+        "forward call is replaced with a fixed-vector stand-in; a real forward "
+        "on this CPU-only runner is not available. The store's model-free "
+        "count is wrapped to call through to the real count and raise only "
+        "once a specific generation has actually transitioned to SUCCEEDED in "
+        "the real ledger, modelling an exception raised by the caller after a "
+        "real durable publication commits but before the call returns - a "
+        "window a live schedule cannot be timed to hit",
+    ),
+    "test_index_cuda_reservation_credit.py": (
+        1,
+        "forces an exact CUDA device memory reading so the reservation-credit "
+        "ceiling math can be checked against known allocated and reserved "
+        "figures; no real device reports a chosen exact pair of megabyte "
+        "readings on demand, and this runner has none besides. Torch itself "
+        "is never imported and the ceiling and credit computation under test "
+        "run unchanged",
+    ),
     "test_env_holders.py": (
         7,
         "drives the fail-closed branches of the holder query and the shapes a "
@@ -218,6 +366,16 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "whether this query requested an unused one, and elapsed time cannot "
         "establish that on a variably loaded runner. Holder classification, "
         "exclusions and parent pairing remain production behaviour",
+    ),
+    "test_generation_survey.py": (
+        1,
+        "root-scoped scheduling instrumentation: the wrapper calls through to "
+        "the real publication-snapshot acquisition and then, only on its "
+        "first hit for the root under test, reserves a real conflicting "
+        "receipt - and for one phase rolls it back - in the gap between "
+        "acquisition and validation. Live survey and publication traffic "
+        "cannot be scheduled to land a conflicting write in that exact gap on "
+        "demand; every proof, ledger and survey operation involved is real",
     ),
     "test_job_progress_durability.py": (
         1,
@@ -263,6 +421,21 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "developer's own daemon interpreter happens to be would assert "
         "nothing",
     ),
+    "test_cli_storage_generation_diagnostics.py": (
+        3,
+        "a unit-level CLI JSON round-trip needs specific generation facts - "
+        "unattributed, unreadable, empty and debt namespaces, and malformed "
+        "model maps - behind the service transport, so the admin fetch is "
+        "replaced with a canned survey payload; reaching the same conditions "
+        "through a live server needs a populated GPU-backed backend the unit "
+        "tier does not have, and the separate subprocess survey test drives "
+        "the real route. Pytest's own tmp_path lives under the real OS temp "
+        "directory, so the uncached tempfile answer would make every root "
+        "temp-rooted regardless of the published fact; tempfile.tempdir is "
+        "substituted only so the server and client temp roots can be varied "
+        "independently of that shared ancestor, and is_temp_rooted's own "
+        "environment-variable reading runs unchanged",
+    ),
     "test_readiness_holders.py": (
         1,
         "widens the scan budget, which production sizes for an HTTP route: a "
@@ -289,6 +462,22 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "verb, including the whole render and envelope path the assertions "
         "read",
     ),
+    "test_donor_admission.py": (
+        12,
+        "isolates the real admission ranking and gate logic from the "
+        "manifest, git, store-transport and settings boundaries it reads, "
+        "because the bounded-inspection-window and family/newest/prefix "
+        "ordering are proved against a hundred synthetic donor candidates "
+        "with controlled per-candidate failures - an absent or unreadable "
+        "pointer, an absent or unreadable proof, a capability refusal, an "
+        "unsupported collection. Building a hundred real donor projects and "
+        "git repositories, and forcing each one's publication reads to fail "
+        "on demand, is not something a unit test can construct. Only the "
+        "manifest load, prefix derivation, pointer and proof readers, git "
+        "lookup, model identity, vector schema and config accessors are "
+        "replaced; the ranking, gating, inspection-bounding and vector "
+        "adoption logic under test run unchanged",
+    ),
     "test_install_torch_config.py": (
         1,
         "drives a real install under a symlinked system temp root - the shape "
@@ -300,7 +489,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "replaced",
     ),
     "test_uv_sync.py": (
-        2,
+        1,
         "stands in for the uv the project sync launches: a uv that never "
         "returns cannot be staged with a real one, and the "
         "workspace-containment refusal must be observed without any uv "
@@ -313,6 +502,25 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "requires forcing a controlled reading (and counting how often it is "
         "taken) - neither reachable through a real device on a CPU-only "
         "runner",
+    ),
+    "test_lifespan_storage_tasks.py": (
+        1,
+        "component startup must not perform a real GPU model load in a "
+        "CPU-only unit test; only ServiceRegistry.load_model is replaced "
+        "with a no-op, and the real discovery publisher, maintenance "
+        "scheduler, heartbeat, borrower lease recovery and survey warmup "
+        "tasks it starts all run unchanged on top of it",
+    ),
+    "test_machine_lock_presence.py": (
+        2,
+        "wraps the real Path.stat and the real anchor-open call so that, only "
+        "for the exact machine-lock anchor path under test, they raise a "
+        "permission, I/O or not-a-directory fault instead of running; every "
+        "other path still goes through the genuine call. The resolver must "
+        "treat that fault as degraded rather than absent, and neither fault "
+        "can be staged by changing real filesystem permissions across the "
+        "platforms this suite also runs on. The holder process, the real "
+        "anchor file and the lock-claim machinery stay real",
     ),
     "test_cli_install.py": (
         10,
@@ -347,17 +555,23 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "claiming, lending and refusing run unchanged",
     ),
     "test_server.py": (
-        3,
+        5,
         "asserts the stdio runner wires watcher cleanup and loads no model - "
         "both observable only at the instant the MCP transport is entered, "
         "and mcp.run(transport='stdio') blocks on real stdin forever, so the "
         "transport, the lifetime watchdog it arms, and the model load it must "
         "not perform are the three boundaries substituted; the source scans "
         "these replaced read main(), a two-line dispatcher containing neither "
-        "contract, and passed against a real load added one frame down",
+        "contract, and passed against a real load added one frame down. The "
+        "health lock-wait test calls the real handler over a real registry, "
+        "store and held lock, and substitutes two facts the handler reads "
+        "from outside that path: the device load reading, which needs an "
+        "accelerator a unit run does not have, and the process start stamp, "
+        "which only the server entry point sets and this handler-level test "
+        "never runs",
     ),
     "test_tool_torch_repair.py": (
-        29,
+        28,
         "the persistent uv tool interpreter and machine singleton cannot be "
         "safely forced through a CUDA repair during a test: that would install "
         "packages into the developer's own tool environment, which is how a "
@@ -371,7 +585,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "guard stages the same boundaries again for the one branch it proves",
     ),
     "test_watcher_controller_intake.py": (
-        11,
+        14,
         "the intake durability tests intercept the persistence boundary to prove "
         "commit-before-ack and cancellation ordering; the scheduler wiring test "
         "captures registration and supplies an otherwise host-dependent storage "
@@ -383,7 +597,53 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "lease; they wrap the real create to land an intake observation at the "
         "instant the job exists, which no real event can be timed to hit; and "
         "they replace dispatch, which would run a real GPU index attempt, with "
-        "one that records, fails, or really binds and dispatches before failing",
+        "one that records, fails, or really binds and dispatches before failing. "
+        "The typed-refusal test raises the full-reindex refusal from that same "
+        "preflight boundary, since a real one needs a publication made "
+        "incompatible under a held compute lease; and the two terminal-outcome "
+        "tests hold dispatch so the created job stays put while the real "
+        "manager and the real durable policy settle it",
+    ),
+    "test_watcher_filter_offload.py": (
+        10,
+        "the intake loop is driven by the operating system's change "
+        "notifications, which cannot be made to deliver an exact batch - a "
+        "control file together with an ignored path, a deletion and a path "
+        "outside the root - in a chosen order and then stop, so the native "
+        "notifier is replaced with a queue that hands over those batches and "
+        "ends the watch. Three further sites keep the loop standalone: the "
+        "bindings are built from real retry policies, slots and controllers "
+        "but supplied directly, because the real initialiser needs a served "
+        "root, and controller unregistration and the scheduler wake-up are "
+        "silenced because no scheduler runs here. Four sites wrap the real "
+        "filter, the real classifier, the real policy-file read and the real "
+        "persist step and call straight through: three hold a worker at a "
+        "barrier so the test can observe the event loop still turning, which "
+        "a real disk read is too fast to show, and one records which paths "
+        "were accepted. The remaining two replace the stored-ownership read "
+        "with a recorder, because real stored owners need an index "
+        "publication this intake-only test never makes; what is asserted is "
+        "that the read is not reached for a rejected path",
+    ),
+    "test_watcher_index_resilience.py": (
+        2,
+        "substitutes the external encoder forward with a fixed-vector stand-in so "
+        "model loading, lifecycle and watcher wiring stay real without a GPU; and "
+        "forces the resilience-snapshot projector to raise, because the only real "
+        "route to that exception is a corrupted checkpoint state the test cannot "
+        "assemble without first causing the very failure it exists to test around",
+    ),
+    "test_watcher_rebuild_reconciliation.py": (
+        5,
+        "three sites wrap the real publication-snapshot read to observe which "
+        "source it was asked for, or to hold it open across a real second thread "
+        "so a concurrent retry-state refresh is proven not to block on it; a live "
+        "schedule cannot be timed to land in that exact window, and every wrapper "
+        "still returns the real snapshot it reads. Two force the recorded attempt "
+        "owner to read as dead, because the owner recorded by a real admission is "
+        "this test process itself, which is genuinely alive, and killing this "
+        "process to produce a dead owner is not an option; every durable scope, "
+        "ledger and job-history transition the reconciliation reads stays real",
     ),
     "test_watcher_recovery.py": (
         1,
@@ -391,6 +651,15 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "provably dead; substituting the process-liveness observation avoids killing "
         "a real owner while every durable scope and job-history transition remains "
         "real",
+    ),
+    "test_watcher_root_identity.py": (
+        2,
+        "points the module-level watcher scheduler and the resident-task registry "
+        "at test-scoped values, because production reads both from process "
+        "globals with no constructor override; only their location is "
+        "substituted, since the scheduler instance registered in their place and "
+        "the task it maps are themselves real, driving real controllers through "
+        "the real HTTP route",
     ),
     "_run_ledger_test_support.py": (
         1,
@@ -405,6 +674,43 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "older build; lowering the schema constant for the one rebuild that writes "
         "it lets the real ledger record and then refuse that proof, with every "
         "ledger, signature and publication step left real",
+    ),
+    "test_vault_payload_batching.py": (
+        7,
+        "wraps the real local QdrantLocal batch_update_points with a recording "
+        "proxy that delegates every call to the captured original, because the "
+        "RPC-level request shape under test - the exact chunk bound per batch, "
+        "which requests wait for applied changes, and the timeout each one "
+        "carries - is only observable at that boundary, not from any return "
+        "value the store exposes. Several sites also inject a config flip, a "
+        "short result or a transport failure from inside that same proxy at a "
+        "precise point between two particular batches, which a live retry or a "
+        "live config change cannot be scheduled to land on demand; every write "
+        "that is not the injected failure still reaches the real local store",
+    ),
+    "test_vault_progress_phases.py": (
+        5,
+        "replaces the prior-generation publication read, the parent-checkpoint "
+        "construction and its recovery check, the donor-reuse resolution, and "
+        "the encode-and-upsert worker, so this test exercises only the public "
+        "scoped entry, hashing, classification and the phase-reporting machinery "
+        "under test. Standing up a full embedding model and a prior real Qdrant "
+        "generation to produce the same fixed evidence would trade a GPU-bound "
+        "production path for a GPU-free workaround without changing what the "
+        "test proves; hashing, classification, scoped payload preparation and "
+        "the phase machinery stay production",
+    ),
+    "test_vault_readiness_publication.py": (
+        6,
+        "two sites disable the donor-reuse optimisation and two replace the "
+        "encode-and-upsert worker, because this test is about durable "
+        "publication and readiness notification, not reuse or GPU encoding, and "
+        "both require a populated backend or a loaded model the unit tier does "
+        "not have. One substitutes GPU model loading with a fixed object for "
+        "the same reason. One forces a disk or ledger failure at the exact "
+        "durable-publish boundary, which cannot be induced on a real filesystem "
+        "on demand; the actual publication, checkpoint and readiness-wake code "
+        "under test runs unchanged in every case",
     ),
     "test_process_termination.py": (
         19,

@@ -91,7 +91,10 @@ class TestStoreCodebase:
         """upsert_code_chunks should add and retrieve chunks."""
         model = rag_components["model"]
         text = "print('hello')"
-        vector = cast("list[float]", model.encode_documents([text]).tolist()[0])
+        vector = cast(
+            "list[float]",
+            model.encode_documents_on_device([text])[0].cpu().numpy().tolist(),
+        )
         sparse = model.encode_documents_sparse([text])[0]
         chunks = [
             CodeChunk(
@@ -201,7 +204,10 @@ class TestStoreCodebase:
         """delete_code_chunks should remove code chunks by ID."""
         model = rag_components["model"]
         text = "test"
-        vector = cast("list[float]", model.encode_documents([text]).tolist()[0])
+        vector = cast(
+            "list[float]",
+            model.encode_documents_on_device([text])[0].cpu().numpy().tolist(),
+        )
         sparse = model.encode_documents_sparse([text])[0]
         chunks = [
             CodeChunk(

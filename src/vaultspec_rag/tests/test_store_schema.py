@@ -14,10 +14,8 @@ from vaultspec_rag import store_schema as ss
 from .._store_models import (
     CodeChunk,
     VaultChunk,
-    VaultDocument,
     _code_chunk_payload,
     _vault_chunk_payload,
-    _vault_doc_payload,
 )
 from ._import_probe import assert_fresh_import_excludes, import_probe_source
 
@@ -70,8 +68,14 @@ class TestDescriptor:
         cosmetic reorder while proving nothing extra.
         """
         desc = ss.describe_storage_schema()
-        doc = VaultDocument(
-            id="adr/overview",
+        # Ordinal 0 carrying a doc_content is the only chunk shape that writes
+        # the NotRequired ``doc_content``, so it is the one shape that
+        # exercises the whole advertised chunk field set.
+        chunk = VaultChunk(
+            doc_id="adr/overview",
+            ordinal=0,
+            chunk_count=1,
+            text="chunk text",
             path="adr/overview.md",
             doc_type="adr",
             feature="demo",
@@ -79,26 +83,8 @@ class TestDescriptor:
             tags=["#adr"],
             related=["[[x]]"],
             title="Overview",
-            content="body",
             status="accepted",
-        )
-        # Ordinal 0 carrying a doc_content is the only chunk shape that writes
-        # the NotRequired ``doc_content``, so it is the one shape that
-        # exercises the whole advertised chunk field set.
-        chunk = VaultChunk(
-            doc_id=doc.id,
-            ordinal=0,
-            chunk_count=1,
-            text="chunk text",
-            path=doc.path,
-            doc_type=doc.doc_type,
-            feature=doc.feature,
-            date=doc.date,
-            tags=doc.tags,
-            related=doc.related,
-            title=doc.title,
-            status=doc.status,
-            doc_content=doc.content,
+            doc_content="body",
         )
         code = CodeChunk(
             id="src/main.py:1-2",
@@ -108,15 +94,41 @@ class TestDescriptor:
             line_start=1,
             line_end=2,
         )
-        assert sorted(desc["vault"]["payload_fields"]["document"]) == sorted(
-            _vault_doc_payload(doc)
-        )
         assert sorted(desc["vault"]["payload_fields"]["chunk"]) == sorted(
             _vault_chunk_payload(chunk)
         )
         assert sorted(desc["code"]["payload_fields"]["chunk"]) == sorted(
             _code_chunk_payload(code)
         )
+
+    def test_descriptor_advertises_the_pinned_prechunk_document_fields(self) -> None:
+        """The document field list is pinned to literals, not to a builder.
+
+        No writer produces a document-level point: vault content is written as
+        chunks. The advertised shape describes the one-point-per-document
+        layout older releases wrote, which stores on disk still hold and which
+        the store still reads back and purges. There is therefore no builder to
+        compare against, and comparing the descriptor to the TypedDict it is
+        derived from would restate one source against itself. The literals are
+        the independent statement: the legacy shape is frozen, so any change
+        here has to be deliberate.
+        """
+        desc = ss.describe_storage_schema()
+        assert sorted(desc["vault"]["payload_fields"]["document"]) == sorted(
+            [
+                "doc_id",
+                "path",
+                "doc_type",
+                "feature",
+                "date",
+                "tags",
+                "related",
+                "title",
+                "status",
+                "content",
+            ]
+        )
+        assert desc["vault"]["id_scheme"]["document"] == "doc_id"
 
     def test_descriptor_advertises_the_pinned_index_sets(self) -> None:
         """The advertised index sets are pinned to explicit literals.

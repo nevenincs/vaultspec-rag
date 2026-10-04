@@ -12,7 +12,7 @@ import threading
 
 from .service import ServiceRegistry
 
-__all__ = ["discard_job_manager", "get_registry", "reset_registry"]
+__all__ = ["discard_job_manager", "get_registry"]
 
 _registry: ServiceRegistry | None = None
 _REGISTRY_LOCK = threading.Lock()
@@ -67,23 +67,3 @@ def discard_job_manager() -> None:
     with _REGISTRY_LOCK:
         if _registry is not None:
             _registry.discard_job_manager()
-
-
-def reset_registry() -> None:
-    """Tear down the singleton (test-only).
-
-    Closes all slots on the current registry via ``close_all`` and
-    drops the reference so the next ``get_registry()`` call builds a
-    fresh instance.  Safe to call when no registry exists.
-
-    Between this call and that next ``get_registry()`` there is no singleton,
-    so ``server._registry`` still names the instance just closed.  Reach the
-    registry through ``get_registry()``, which rebinds that alias as it
-    rebuilds; reading ``server._registry`` directly in the gap hands back a
-    closed instance that ``prepare_startup()`` will silently reopen.
-    """
-    global _registry
-    with _REGISTRY_LOCK:
-        if _registry is not None:
-            _registry.close_all()
-            _registry = None

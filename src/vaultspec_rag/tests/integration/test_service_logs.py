@@ -20,7 +20,6 @@ from starlette.testclient import TestClient
 from typer.testing import CliRunner
 
 from ...cli import app
-from ...config._settings import reset_config
 from ...config._types import EnvVar
 from ...logging_config import (
     MANAGED_LOG_TRUNCATION_MARKER,
@@ -39,6 +38,7 @@ from .._child_signal import (
     ChildStderr,
     child_stderr,
 )
+from .._config_fixtures import reset_config
 from .._ports import free_loopback_port
 
 if TYPE_CHECKING:

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from .._root_identity import canonical_root_key
 from ..server._watcher import _WatcherScheduler
 from ..watcher_controller import (
     ControllerMeasurement,
@@ -45,7 +46,7 @@ def _controller(
 ) -> WatcherController:
     return WatcherController(
         ControllerSnapshot(
-            canonical_root=str(root.resolve()),
+            canonical_root=canonical_root_key(root),
             source=WatcherSource.CODE,
             state=state,
             reason=ControllerReason.QUIET_TREE_DEADLINE,
@@ -92,18 +93,8 @@ async def test_event_wakeup_reevaluates_without_waiting_for_deadline(
     tmp_path: Path,
 ) -> None:
     clock = _Clock(10.0)
-    waited: list[float] = []
     reevaluated = asyncio.Event()
-
-    async def wait_for_wakeup(_event: asyncio.Event, timeout: float) -> bool:
-        waited.append(timeout)
-        return True
-
-    scheduler = _WatcherScheduler(
-        reevaluation_seconds=5.0,
-        monotonic=clock,
-        wait_for_wakeup=wait_for_wakeup,
-    )
+    scheduler = _WatcherScheduler(reevaluation_seconds=5.0, monotonic=clock)
 
     def reevaluate() -> None:
         reevaluated.set()
@@ -115,10 +106,15 @@ async def test_event_wakeup_reevaluates_without_waiting_for_deadline(
         admit=lambda _selection: None,
     )
 
+    # The wait is capped at the reevaluation interval, never the far deadline.
+    assert scheduler._next_timeout() == 5.0
+    loop = asyncio.get_running_loop()
+    started = loop.time()
     await scheduler.run()
+    elapsed = loop.time() - started
 
     assert reevaluated.is_set()
-    assert waited == [5.0]
+    assert elapsed < 1.0, "the registration wake-up did not short-circuit the wait"
 
 
 async def test_overdue_recovery_uses_stable_bounded_jitter(tmp_path: Path) -> None:
@@ -149,36 +145,40 @@ async def test_overdue_recovery_uses_stable_bounded_jitter(tmp_path: Path) -> No
 
 
 async def test_scheduler_loop_honours_recovery_jitter_timeout(tmp_path: Path) -> None:
-    clock = _Clock(10.0)
-    waits: list[float] = []
+    """An overdue recovery is admitted only once its jitter delay has elapsed.
+
+    The loop runs on the event loop's own clock, as the service does, so the
+    jitter delay is waited out for real. Mutation: admitting without the
+    not-before comparison admits on the first cycle and fails the elapsed
+    assertion below.
+    """
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    clock = _Clock(started)
+    admitted: list[float] = []
     scheduler: _WatcherScheduler
 
-    async def wait_for_wakeup(_event: asyncio.Event, timeout: float) -> bool:
-        waits.append(timeout)
-        if len(waits) == 1:
-            return True
-        clock.now += timeout
-        return False
-
     def admit(_selection: AdmissionSelection) -> None:
+        admitted.append(loop.time())
         scheduler.unregister_root(tmp_path)
 
-    scheduler = _WatcherScheduler(
-        reevaluation_seconds=5.0,
-        monotonic=clock,
-        wait_for_wakeup=wait_for_wakeup,
-    )
+    scheduler = _WatcherScheduler(reevaluation_seconds=5.0, monotonic=loop.time)
     scheduler.register(
-        _controller(tmp_path, clock, state=ControllerState.READY, deadline=9.0),
+        _controller(
+            tmp_path, clock, state=ControllerState.READY, deadline=started - 1.0
+        ),
         reevaluate=lambda: None,
         admit=admit,
     )
     not_before = next(iter(scheduler._registrations.values())).recovery_not_before
     assert not_before is not None
+    assert started <= not_before <= started + 1.0
 
-    await scheduler.run()
+    async with asyncio.timeout(10):
+        await scheduler.run()
 
-    assert waits == [not_before - 10.0, not_before - 10.0]
+    assert len(admitted) == 1
+    assert admitted[0] >= not_before
 
 
 async def test_callback_failure_does_not_terminate_scheduler(tmp_path: Path) -> None:

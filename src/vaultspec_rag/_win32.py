@@ -20,11 +20,9 @@ daemon's Job Object because that membership is the no-orphan guarantee.
 The kill-on-close job itself lives here for the same reason the flags do. It is
 the only no-orphan guarantee Windows enforces without a live supervisor: the
 kernel destroys every member the moment the last job handle closes, so it holds
-through a hard kill of the owning process, where an atexit hook, a fixture
-teardown, or a watchdog thread all lose. Two owners need exactly that - the
-daemon over its Qdrant child, and a pytest run over the daemons it spawns - and
-a second transcription of these structures is the same wrong-hex-digit risk the
-flags were consolidated to remove.
+through a hard kill of the owning process, where an atexit hook or a watchdog
+thread would lose. A second transcription of these structures is the same
+wrong-hex-digit risk the flags were consolidated to remove.
 """
 
 from __future__ import annotations

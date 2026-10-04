@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:2bd70f87345699689990e7a6305f35a52dee2effde73f85611af2a2fddccc401'
+body_hash: 'sha256:3aabd079f01343e22ead9203f4d9265f8503baff6fedcf6eda1612f58d128081'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -200,6 +200,61 @@ related:
 - `S04` `verify:` `real remote resolver matching tag and all three mismatch cases` -> `pass`
 - `S04` `verify:` `RELEASING Markdown and documentation conventions` -> `pass`
 - `S04` `verify:` `PR570 CodeQL at c76433d2` -> `fail`
+- `S06` `M` `.github/workflows/acquisition.yml`
+- `S06` `M` `.github/workflows/merge-gate.yml`
+- `S06` `M` `dev/guards/test_ci_lanes.py`
+- `S06` `verify:` `CI admission mutation` -> `pass`
+- `S06` `verify:` `pytest dev/guards/test_ci_lanes.py` -> `pass`
+- `S06` `verify:` `actionlint acquisition/merge-gate` -> `pass`
+- `S06` `verify:` `ruff package and affected tooling` -> `pass`
+- `S06` `verify:` `ty affected guards` -> `pass`
+- `S06` `M` `.github/workflows/binaries.yml`
+- `S06` `A` `tools/monitor/offline.py`
+- `S06` `A` `tools/monitor/linux_exec.py`
+- `S06` `A` `tools/monitor/tests/test_offline.py`
+- `S06` `M` `tools/monitor/smoke.py`
+- `S06` `M` `tools/monitor/release.py`
+- `S06` `M` `tools/monitor/acquire.py`
+- `S06` `M` `tools/packaging/bundles.py`
+- `S06` `M` `tools/packaging/tests/test_bundles.py`
+- `S06` `M` `tools/binaries/tests/test_release_workflow.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_search_quiesce_admission.py`
+- `S06` `M` `RELEASING.md`
+- `S06` `verify:` `72 affected release/OS/archive/HTTP checks` -> `pass`
+- `S06` `verify:` `three offline/public admission mutation proofs` -> `pass`
+- `S06` `verify:` `Linux installed kernel TCP/UDP denial and loopback replies` -> `pass`
+- `S06` `verify:` `pinned native Bun exact-launcher positive/negative control` -> `pass`
+- `S06` `verify:` `public latest acquisition` -> `fail`
+- `S06` `verify:` `broad unchanged tools advisory complexity` -> `fail`
+- `S06` `verify:` `new OS owners complexity` -> `pass`
+- `S06` `verify:` `candidate/public workflow admission guard` -> `pass`
+- `S06` `verify:` `actionlint acquisition` -> `pass`
+- `S06` `verify:` `prettier acquisition` -> `pass`
+- `S06` `M` `src/monitor/server/standalone.ts`
+- `S06` `verify:` `npm lint,typecheck,build=pass; Prettier=pass; Ruff lint,format=pass; ty=pass; affected tooling/compiled owner tests 22=pass; rebuilt Windows native shared smoke 94 assets=pass; native candidate 37010060614=fail; uv unused-cache prune` -> `fail`
+- `S06` `M` `tools/monitor/offline.py`
+- `S06` `verify:` `Linux x64 clean finalized native and OS-offline smoke=pass; macOS native smoke 110857268226=pass; macOS harness-wide OS smoke=fail; affected tests 33=pass; Ruff lint,format=pass; ty=pass; offline/admission mutation fail-restore-pass` -> `pass`
+- `S06` `verify:` `macOS ARM64 native/browser/offline CI=pass; Linux x64 native/browser/offline CI=pass; clean Windows native/browser/offline actual firewall and cleanup=pass; affected tests 33 and workflow checks 47=pass; Ruff/type/format/docs/workflow` -> `pass`
+- `S06` `verify:` `private common frontend 37016154365 attempts 1,2=fail; workflow actionlint,Prettier and affected guards` -> `pass`
+- `S06` `verify:` `affected tooling/workflow/archive tests 93=pass; Windows corrected actual OS smoke and cleanup=pass; initial Windows negative-control bound=fail; Ruff/type/format/workflow=pass; full Windows 37014474575` -> `fail`
+- `S06` `M` `src/vaultspec_rag/tests/test_gpu_borrow_captured_target.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_monitor_browser.py`
+- `S06` `verify:` `pytest Windows full-run failures (8) on local Windows` -> `pass`
+- `S06` `verify:` `ruff check src tools dev` -> `pass`
+- `S06` `verify:` `ruff format --check and ty check on changed files` -> `pass`
+- `S06` `verify:` `dev lint workflow (actionlint)` -> `pass`
+- `S06` `verify:` `prettier --check acquisition.yml` -> `pass`
+- `S06` `verify:` `pytest workflow guards (51)` -> `pass`
+- `S06` `M` `src/vaultspec_rag/cli/_jobs_tui_log.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_monitor_logs.py`
+- `S06` `verify:` `tail-scroll guard mutations jump_end/scroll_followed_tail/per-line write each fail own label then pass` -> `pass`
+- `S06` `verify:` `pytest jobs TUI and monitor log suites (140)` -> `pass`
+- `S06` `verify:` `ruff check/format, ty, complexity, nesting, size` -> `pass`
+- `S06` `M` `src/vaultspec_rag/tests/_ports.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_monitor_process_integration.py`
+- `S06` `verify:` `linux container: held listener raises errno 98, server-side TIME_WAIT binds` -> `pass`
+- `S06` `verify:` `windows monitor allocation test: held port fails at helper, restored passes` -> `pass`
+- `S06` `verify:` `ruff check/format, ty, monitor process and port helper users (98)` -> `pass`
 
 ## Notes
 
@@ -221,3 +276,11 @@ related:
 - `S04` Explicit cache opt-out retained; existing validated remote tag SHA now crosses the job boundary through resolver output, all build and evidence consumers bind to it, and always-running draft verification requires validation success. One stale exact dependency guard corrected to the intended shape; final 152 tests pass. Native smoke socket restricted to loopback; unchanged verified test binary passes complete probe. Corrective local review PASS, fresh CodeQL still required before merge. Lifecycle socket helper medium finding assigned to S09.
 - `S09` Reopened S09 to resolve CodeQL medium wildcard-listener annotation. Test reservations now bind loopback only, preserving exclusive Windows socket admission and avoiding the ephemeral range. Real compiled allocation, backend HTTP and cleanup checks pass. Corrective review PASS; fresh remote checks still required before authorized merge. S06 remains pending release evidence.
 - `S04` Bind binary workflow dispatch to the existing release tag contract. Existing resolver additionally refuses a different workflow ref or SHA, checkouts use its fixed GitHub commit and all provenance uses the equal proven SHA. Update the publication caller and manual repair command together. Query source reviewed to establish why dynamic outputs remained flagged; no dismissal or suppression. Local corrective review PASS, fresh remote CodeQL required before merge. Existing native smoke and lifecycle evidence remains applicable; S06 release evidence pending.
+- `S06` Native/OS/public proof remains open; user authorized private verification dispatch. CI setup correction avoids operator process stop.
+- `S06` Public latest 0.5.3 has no committed monitor pins; fail-closed before extraction. All four native offline results pending. No publication performed.
+- `S06` Shared system disk below 40 GiB reserve blocks Windows/Linux x64; private frontend moves to macOS to obtain remaining independent native proof. No reserve changes or unrelated cache deletion.
+- `S06` BSD loopback conflict exposed by actual macOS smoke; corrected client-address reservation awaiting native rerun. ARM64 browser absent; Windows/Linux x64 fleet admission capacity unavailable. Cache cleanup respected in-use lock and removed nothing. Public release/catalog prerequisite absent; S06 remains open.
+- `S06` macOS target and network control now use Seatbelt launch prefix; browser harness remains outside policy, matching Linux scope. All gates retained. Corrected native rerun pending.
+- `S06` Immutable native ARM64 browser container and disposable Windows acquisition host address external fleet prerequisites. Same three-platform common frontend proof retained. ARM64 host execution, canonical release host prerequisites and first pinned public acquisition still pending.
+- `S06` Pinned npm subprocess aborts before Vite on shared macOS; fresh native Linux common producer preserves one exact handoff. No native verification or publication gate changed.
+- `S06` Keep all bounds and denial checks. Native hosted path and ARM64 namespace reruns pending. Full Windows monitor/fixture failures require focused investigation before merge.

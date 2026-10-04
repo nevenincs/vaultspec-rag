@@ -535,7 +535,7 @@ None.
 
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `--port` | int | no | - | Stop the service answering on this port, resolving its identity from /health rather than the status file. Use when the service runs on a non-default port or the status file diverges from the running instance. |
+| `--port` | int | no | - | Stop the service answering on this port, resolving its identity from /health, or from a matching launch identity in the status file before its listener opens. Use when the service runs on a non-default port or the status file diverges from the running instance. |
 | `--json` | boolean | no | off | Emit one structured JSON outcome. An already-stopped service is the success `already_stopped` (exit 0); a stop that leaves the service running (unconfirmed identity) is `identity_unconfirmed` (exit 1) in both output modes. |
 | `--orphans` | boolean | no | off | Reap surplus vaultspec-rag daemons that lost the machine-singleton race and linger holding no port, lock, or discovery pointer, invisible to a normal stop. Confirm-then-reap, scoped to this singleton's port; the live singleton, isolated-config, and foreign-worktree daemons are always spared. |
 

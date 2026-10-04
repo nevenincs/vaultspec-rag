@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Never, cast
 import pytest
 from mcp.server.mcpserver.exceptions import MCPServerError
 
-from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..server import (
     ProjectRootRequiredError,
@@ -25,6 +24,7 @@ from ..server._utils import (
     _resolve_root,
 )
 from ..service import ServiceRegistry
+from ._config_fixtures import reset_config
 from .test_server import (
     _run,
 )
@@ -334,31 +334,6 @@ finally:
         assert terminal[0]["query"] == "wait for activity capacity before validation"
         assert terminal[0]["outcome"] == "validation_rejected"
         assert terminal[0]["status_code"] == 400
-
-    def test_benchmark_route_returns_400_without_project_root(self):
-        from starlette.testclient import TestClient
-
-        import vaultspec_rag.server as mod
-
-        app = self._make_app()
-        orig_mode = mod._http_mode
-        mod._http_mode = True
-        try:
-            client: httpx.Client = cast(
-                "httpx.Client", TestClient(app, raise_server_exceptions=False)
-            )
-            resp: httpx.Response = client.post(
-                "/benchmark",
-                json={},
-                headers=self._auth_headers(),
-            )
-            assert resp.status_code == 400
-            data: dict[str, object] = cast("dict[str, object]", resp.json())
-            assert data["ok"] is False
-            assert data["error"] == "bad_request"
-            assert "project_root" in cast("str", data["message"])
-        finally:
-            mod._http_mode = orig_mode
 
     def test_reindex_route_returns_400_without_project_root(self):
         from starlette.testclient import TestClient

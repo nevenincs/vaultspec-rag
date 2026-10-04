@@ -1,4 +1,5 @@
-import { createServer, type Server } from "node:http";
+import { createServer } from "node:http";
+import { createServer as createPortProbe, type Server } from "node:net";
 import { monitorMiddleware } from "./local-service.ts";
 import manifest from "../../../package.json" with { type: "json" };
 
@@ -51,7 +52,7 @@ function options(args: string[]): Options {
   return result;
 }
 
-function listen(server: Server, port: number): Promise<void> {
+function listen(server: Server, port: number, host: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const ready = () => {
       server.removeListener("error", error);
@@ -62,14 +63,25 @@ function listen(server: Server, port: number): Promise<void> {
       reject(reason);
     };
     server.once("error", error);
-    server.listen(port, manifest.devserver.host, ready);
+    server.listen(port, host, ready);
+  });
+}
+
+async function requireLoopbackPort(port: number): Promise<void> {
+  // BSD can bind a wildcard listener beside an existing specific-address listener.
+  // Reserve the client address first so readiness cannot point at another process.
+  const probe = createPortProbe((socket) => socket.destroy());
+  await listen(probe, port, "127.0.0.1");
+  await new Promise<void>((resolve, reject) => {
+    probe.close((error) => (error ? reject(error) : resolve()));
   });
 }
 
 async function bind(server: Server, selected: Options): Promise<number> {
   for (let port = selected.port; port <= 65535; port++) {
     try {
-      await listen(server, port);
+      await requireLoopbackPort(port);
+      await listen(server, port, manifest.devserver.host);
       return port;
     } catch (error) {
       if (

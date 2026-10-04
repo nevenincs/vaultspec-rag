@@ -126,11 +126,6 @@ class HealthVerdict(StrEnum):
             HealthVerdict.ERROR: "not able to serve",
         }[self]
 
-    @property
-    def is_serving(self) -> bool:
-        """Whether searches are answered, possibly with reduced quality."""
-        return self in {HealthVerdict.READY, HealthVerdict.DEGRADED}
-
 
 class DegradationReason(StrEnum):
     """Why a live service is not fully healthy.

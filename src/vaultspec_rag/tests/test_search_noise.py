@@ -6,7 +6,7 @@ from typing import ClassVar
 
 import pytest
 
-from ..config._settings import get_config, reset_config
+from ..config._settings import get_config
 from ..search._models import SearchResult
 from ..search._noise import (
     NoisePolicy,
@@ -14,6 +14,7 @@ from ..search._noise import (
     partition_hard_domains,
     resolve_noise_policy,
 )
+from ._config_fixtures import reset_config
 
 
 def _mk(path: str, score: float) -> SearchResult:

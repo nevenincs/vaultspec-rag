@@ -12,6 +12,7 @@ from typing import cast
 
 from tools.binaries.build_pyapp import check_platform_floor
 from tools.binaries.native import host_target_triple
+from tools.monitor.offline import probe_offline
 from tools.monitor.pins import (
     ROOT,
     PinError,
@@ -90,7 +91,9 @@ def latest_tag(directory: Path) -> str:
     return tag
 
 
-def acquire(tag: str | None, producer: str | None, target: str) -> dict[str, object]:
+def acquire(
+    tag: str | None, producer: str | None, target: str, *, os_offline: bool = False
+) -> dict[str, object]:
     if target != host_target_triple():
         raise PinError("Public acquisition requires the native declared target")
     authority, catalog = catalog_at_commit(ROOT)
@@ -121,7 +124,8 @@ def acquire(tag: str | None, producer: str | None, target: str) -> dict[str, obj
         name = VAULTSPEC_RAG.executable_name(MONITOR_EXECUTABLE, target)
         binary = shell / name
         shutil.copy2(extracted / name, binary)
-        report = probe(
+        smoke = probe_offline if os_offline else probe
+        report = smoke(
             binary,
             pins.targets[target].monitor_sha256,
             {
@@ -147,9 +151,15 @@ def main() -> None:
     parser.add_argument("--tag")
     parser.add_argument("--source-revision")
     parser.add_argument("--target", required=True)
+    parser.add_argument("--os-offline", action="store_true")
     parser.add_argument("--report", type=Path, required=True)
     args = parser.parse_args()
-    report = acquire(args.tag or None, args.source_revision or None, args.target)
+    report = acquire(
+        args.tag or None,
+        args.source_revision or None,
+        args.target,
+        os_offline=args.os_offline,
+    )
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(
         json.dumps(report, indent=2) + "\n", encoding="utf-8", newline="\n"

@@ -555,6 +555,80 @@ def test_success_with_later_work_cools_and_freshness_caps_delay(
     )
 
 
+@pytest.mark.parametrize("running", [False, True])
+def test_new_events_and_measurements_keep_active_job_identity(
+    tmp_path: Path, running: bool
+) -> None:
+    # Mutation: returning every observation to collecting erases job identity
+    # and lets scheduler evaluation call running work ready for admission.
+    clock = _Clock(12.0)
+    controller = _controller(
+        clock, limits=ControllerLimits(batch_path_limit=1), tmp_path=tmp_path
+    )
+    controller.observe(ControllerScope(generation=3, pending=(_observation(),)))
+    controller.evaluate(_measurement(clock))
+    controller.admit("job-1")
+    if running:
+        controller.advance(ControllerReason.JOB_STARTED)
+    expected = ControllerState.RUNNING if running else ControllerState.ADMITTED
+    scope = ControllerScope(
+        generation=4,
+        pending=(_observation("src/later.py"),),
+        captured_generation=3,
+        captured=(_observation(),),
+    )
+
+    observed = controller.observe(scope)
+    assert observed.state is expected
+    assert observed.job_id == "job-1"
+    assert observed.scope == scope
+    clock.now = 1000.0
+    evaluated = controller.evaluate(
+        _measurement(clock),
+        circuit_state=WatcherCircuitState.HALF_OPEN,
+        retry_at=12.0,
+    )
+    assert evaluated.state is expected
+    assert evaluated.job_id == "job-1"
+    assert evaluated.next_decision_at is None
+    assert evaluated.circuit_state is WatcherCircuitState.HALF_OPEN
+    assert evaluated.retry_at == 12.0
+
+
+@pytest.mark.parametrize("later_work", [False, True])
+def test_success_clears_retry_metadata_from_a_half_open_attempt(
+    tmp_path: Path, later_work: bool
+) -> None:
+    # Mutation: omitting the successful circuit/retry reset exposes a closed
+    # durable policy as half-open with its expired probe deadline.
+    clock = _Clock(12.0)
+    controller = _controller(
+        clock, limits=ControllerLimits(batch_path_limit=1), tmp_path=tmp_path
+    )
+    scope = ControllerScope(generation=3, pending=(_observation(),))
+    controller.observe(scope)
+    controller.evaluate(
+        _measurement(clock), circuit_state=WatcherCircuitState.OPEN, retry_at=20.0
+    )
+    clock.now = 20.0
+    controller.evaluate(
+        _measurement(clock), circuit_state=WatcherCircuitState.OPEN, retry_at=20.0
+    )
+    controller.admit("job-1")
+    controller.evaluate(
+        _measurement(clock), circuit_state=WatcherCircuitState.HALF_OPEN, retry_at=20.0
+    )
+    controller.advance(ControllerReason.JOB_STARTED)
+    assert controller.snapshot.circuit_state is WatcherCircuitState.HALF_OPEN
+    settled = controller.complete(
+        scope if later_work else ControllerScope(generation=3),
+        run_duration=10.0,
+        publication_duration=0.0,
+    )
+    assert settled.circuit_state is WatcherCircuitState.CLOSED
+    assert settled.retry_at is None
+
+
 @pytest.mark.parametrize("superseded", [False, True])
 def test_release_restores_exact_scope(tmp_path: Path, superseded: bool) -> None:
     clock = _Clock(12.0)

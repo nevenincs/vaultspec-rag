@@ -329,7 +329,7 @@ def _evaluate_service_signals(
     if state is ServiceLifecycle.CRASHED_PID_DEAD and _should_unlink_discovery_file(
         pid_alive
     ):
-        _delete_service_status()
+        _delete_service_status(expected_pid=pid, expected_port=port)
 
     return _StatusSignals(
         pid,

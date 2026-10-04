@@ -34,8 +34,6 @@ from .watcher_retry_policy import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from .watcher_runtime import ObservedSource
-
 
 logger = logging.getLogger(__name__)
 _CANCELLATION_DURABILITY_SECONDS = 3.0
@@ -334,23 +332,6 @@ async def _run_cancellation_fallback(operation: Callable[[], object]) -> bool:
         delay = min(0.25, delay * 2.0)
 
 
-async def _persist_convergence_pending(
-    policy: WatcherRetryPolicy,
-    *,
-    source: WatcherSource,
-    root_dir: Path,
-) -> bool:
-    """Persist one accepted event batch even when shutdown races it."""
-    _state, cancellation_requested = await run_durable_retry_transaction(
-        policy.mark_convergence_pending,
-        source=source,
-        root_dir=root_dir,
-        action="mark_convergence_pending",
-        cancellation_fallback=policy.write_recovery_marker,
-    )
-    return cancellation_requested
-
-
 async def persist_watcher_observations(
     policy: WatcherRetryPolicy,
     observations: tuple[WatcherPathObservation, ...],
@@ -367,104 +348,6 @@ async def persist_watcher_observations(
         cancellation_fallback=policy.write_recovery_marker,
     )
     return cancellation_requested
-
-
-async def _await_shielded_persist_outcomes(
-    tasks: list[asyncio.Task[bool]],
-) -> tuple[list[bool | BaseException], bool]:
-    """Await every persist task under shield, absorbing outer cancellation.
-
-    Cancelling the awaiting coroutine must not cancel the shielded gather: it
-    cancels the still-unsettled member tasks instead, then re-awaits until
-    every task actually settles, so no accepted event batch is left
-    un-persisted by a cancellation that raced its commit.
-    """
-    cancellation_requested = False
-    grouped = asyncio.gather(*tasks, return_exceptions=True)
-    while True:
-        try:
-            outcomes = await asyncio.shield(grouped)
-        except asyncio.CancelledError:
-            cancellation_requested = True
-            for unsettled in tasks:
-                if not unsettled.done():
-                    unsettled.cancel()
-        else:
-            return outcomes, cancellation_requested
-
-
-def _collect_persist_outcomes(
-    outcomes: list[bool | BaseException],
-) -> tuple[bool, list[Exception]]:
-    """Fold gathered per-source outcomes into a cancellation flag and errors."""
-    cancellation_requested = False
-    errors: list[Exception] = []
-    for outcome in outcomes:
-        if isinstance(outcome, asyncio.CancelledError):
-            cancellation_requested = True
-        elif isinstance(outcome, Exception):
-            errors.append(outcome)
-        elif isinstance(outcome, bool):
-            cancellation_requested |= outcome
-        else:
-            raise outcome
-    return cancellation_requested, errors
-
-
-async def persist_observed_sources(
-    observed_sources: tuple[ObservedSource, ...],
-    *,
-    root_dir: Path,
-) -> bool:
-    """Settle every source in one accepted batch before delivering cancellation."""
-    tasks = [
-        asyncio.create_task(
-            _persist_convergence_pending(
-                observed.retry_policy,
-                source=observed.source,
-                root_dir=root_dir,
-            )
-        )
-        for observed in observed_sources
-        if observed.observed
-    ]
-    outcomes, shield_cancellation = await _await_shielded_persist_outcomes(tasks)
-    collected_cancellation, errors = _collect_persist_outcomes(outcomes)
-    cancellation_requested = shield_cancellation or collected_cancellation
-    if len(errors) == 1:
-        raise errors[0]
-    if errors:
-        raise ExceptionGroup("watcher intent persistence failed", errors)
-    return cancellation_requested
-
-
-async def admit_watcher_attempt(
-    policy: WatcherRetryPolicy,
-    *,
-    source: WatcherSource,
-    root_dir: Path,
-) -> WatcherRetryDecision:
-    """Admit atomically, settling a claim if cancellation raced its commit."""
-    attempt_token = policy.reserve_admission()
-    decision, cancellation_requested = await run_durable_retry_transaction(
-        lambda: policy.admit_reserved(attempt_token, now=time.time()),
-        source=source,
-        root_dir=root_dir,
-        action="admit",
-        cancellation_fallback=policy.write_recovery_marker,
-    )
-    if not cancellation_requested:
-        return decision
-    attempt_generation = decision.attempt_generation
-    if decision.admitted and attempt_generation is not None:
-        await run_durable_retry_transaction(
-            lambda: policy.record_interrupted(attempt_generation),
-            source=source,
-            root_dir=root_dir,
-            action="interrupt_cancelled_admission",
-            cancellation_fallback=policy.write_recovery_marker,
-        )
-    raise asyncio.CancelledError
 
 
 async def admit_scoped_watcher_attempt(

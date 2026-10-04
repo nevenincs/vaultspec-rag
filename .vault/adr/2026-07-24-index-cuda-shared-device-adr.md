@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#index-cuda-shared-device'
 date: '2026-07-24'
-modified: '2026-07-24'
-body_hash: 'sha256:49710cae746a8dad0952d460bca4e6699c4a16c7ddc63159eba83f5922ed0e88'
+modified: '2026-10-03'
+body_hash: 'sha256:d95123e9ecb9adf18fe7f680ca2c48b6660015ea2ce1bce1ba81e690a1f25daf'
 related:
   - "[[2026-07-24-index-cuda-shared-device-research]]"
   - "[[2026-07-24-index-cuda-ceiling-adr]]"
@@ -158,3 +158,17 @@ pre-emptively at corpus admission; that is the correct owner, but it moves the
 detection point later. The multi-tenant case - several roots' jobs competing for
 one device's free memory - is explicitly not addressed here and remains the
 province of the sibling quiesce work.
+
+## 2026-10-03 clarification — Credit existing allocator reservations
+
+This dated clarification refines the original auto-derivation formula. The remaining ruling, original rationale and historical evidence remain in force. Grounding is `2026-10-02-resident-service-recovery-audit` and its controlled live reproduction artifact perf-profiling/s35-memory-refusal-reproduction.json.
+
+The original resident-baseline-plus-free formula assumed the admission cache flush released every unused allocator reservation. Installed Torch 2.14 source documents that reserved segments remain reusable and empty_cache releases only entirely inactive segments. Unused blocks within segments containing live allocations can remain reserved. Canonical resident load admission already credits the process's own reservation.
+
+Controlled INGEST retry fb283029-cd09-46b9-b78e-a66e73ed47d5 completes its 32-item encoding without allocator OOM, then fails the 11,407.4 MiB ceiling at an 11,853.1 MiB job-local allocated peak. Its admission and finish readings are 2,990.9 MiB allocated and 4,480 MiB reserved against a 2,958.4 MiB resident baseline. It confirms zero units and releases all resources. The separate NVML samples miss the exact forward peak and establish no physical-headroom claim at that instant.
+
+For automatic derivation, use free, total and this process's own_reserved from one guarded device observation. The absolute ceiling is max(0, min(free + own_reserved - headroom, total - headroom)). If own_reserved is unreadable, credit only the already known resident baseline, preserving the existing conservative fallback. Missing free or total retains the existing total/profile fallback. Do not add own_reserved and baseline together: the reservation already includes resident allocations. Measurements remain GPU-compute-path guarded and do not import Torch into readers or CPU workers.
+
+This credits capacity already held by this process while preserving foreign pressure and configured headroom. It does not guarantee that fragmented blocks satisfy a particular allocation. Positive operator overrides remain authoritative. Post-flush admission, baseline-net job-local allocated-peak enforcement, allocator OOM backoff, CUDA floor, encode admission and strict publication/receipt recovery remain in force. Free memory remains a point-in-time observation; future foreign pressure and fragmentation retain the existing guard and OOM handling.
+
+CPU guards must exercise the actual shared resolver through MemoryBudget: the recorded forward with reservation credit passes, genuine excess still fails, and overrides, total clamp, unavailable-reading fallback and baseline-net equality survive. Omitting production reservation credit must fail the named admitted-forward assertion, restore in finally and pass in a fresh normal interpreter. Code and document callers retain the same canonical derivation. Implementation evidence must bind final source and dependency hashes before rollout.

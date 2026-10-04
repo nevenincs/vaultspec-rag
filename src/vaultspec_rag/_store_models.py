@@ -31,7 +31,6 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ROOT_COLLECTION_PREFIX_RE",
-    "VAULT_BODY_PAYLOAD_KEYS",
     "VAULT_CHUNK_ONLY_PAYLOAD_KEYS",
     "VAULT_STRUCTURAL_PAYLOAD_KEYS",
     "CodeChunk",
@@ -43,7 +42,6 @@ __all__ = [
     "VaultDocument",
     "_code_chunk_payload",
     "_vault_chunk_payload",
-    "_vault_doc_payload",
     "root_collection_prefix",
     "vault_indexed_metadata",
     "vault_metadata_digest",
@@ -374,11 +372,6 @@ class CodeChunk:
     locator_end_str: str | None = None
 
 
-#: Vault payload keys carrying the document body verbatim. A change to any of
-#: them is a body change by definition, so they are covered by the body digest
-#: rather than the metadata digest and must never enter the subset below.
-VAULT_BODY_PAYLOAD_KEYS: Final = frozenset({"content", "doc_content"})
-
 #: Vault payload keys that address a point rather than describe its document.
 #: They are derived from the document's identity, its body and its chunk
 #: partition, all decided by the body digest and the chunk boundary, plus the
@@ -472,27 +465,6 @@ def vault_metadata_digest(doc: VaultDocument) -> str:
         _canonical_metadata(doc).encode("utf-8"),
         digest_size=_METADATA_DIGEST_BYTES,
     ).hexdigest()
-
-
-def _vault_doc_payload(doc: VaultDocument) -> store_schema.VaultDocPayload:
-    """Build a ``vault_docs`` document point payload from a document.
-
-    The one place the document-level payload shape is constructed; the typed
-    return binds it to the schema contract so a field drift is a type error
-    and the parity test can assert the produced dict directly.
-    """
-    return {
-        "doc_id": doc.id,
-        "path": doc.path,
-        "doc_type": doc.doc_type,
-        "feature": doc.feature,
-        "date": doc.date,
-        "tags": doc.tags,
-        "related": doc.related,
-        "title": doc.title,
-        "status": doc.status,
-        "content": doc.content,
-    }
 
 
 def _vault_chunk_payload(chunk: VaultChunk) -> store_schema.VaultChunkPayload:

@@ -218,17 +218,6 @@ class FileChunkResult:
 
 
 @dataclass(slots=True)
-class DocumentFileChunkResult:
-    """One document source's independently typed chunks and source hash."""
-
-    rel_path: str
-    content_hash: str
-    chunks: list[DocumentChunk]
-    preprocess_status: str | None = None
-    preprocess_reason: str | None = None
-
-
-@dataclass(slots=True)
 class DocumentFileChunkStreamResult:
     """One document source whose chunks may be consumed incrementally."""
 
@@ -903,26 +892,6 @@ def stream_document_and_hash_file(
     )
 
 
-def chunk_document_and_hash_file(
-    path: pathlib.Path,
-    root_dir: pathlib.Path,
-    options: DocumentChunkingOptions = _DEFAULT_DOCUMENT_CHUNKING_OPTIONS,
-) -> DocumentFileChunkResult:
-    """Materialize the document stream for compatibility callers."""
-    result = stream_document_and_hash_file(
-        path,
-        root_dir,
-        options,
-    )
-    return DocumentFileChunkResult(
-        result.rel_path,
-        result.content_hash,
-        list(result.chunks),
-        result.preprocess_status,
-        result.preprocess_reason,
-    )
-
-
 def _chunk_decoded(
     content: str,
     path: pathlib.Path,
@@ -948,109 +917,6 @@ def _chunk_decoded(
 
         content = html_to_text(content)
     return chunk_with_splitter(content, rel_path, language)
-
-
-@dataclass(slots=True)
-class ScopedChunkResult:
-    """A scoped-path file's chunks plus its preprocess disposition.
-
-    The scoped path hashes separately, so (unlike the shared weighted
-    ``FileChunkResult``) this carries no content hash - only the chunks and the
-    preprocess status/reason, so the orchestrator can surface skip counts on the
-    incremental and watcher paths too (#185).
-    """
-
-    chunks: list[CodeChunk]
-    preprocess_status: str | None = None
-    preprocess_reason: str | None = None
-
-
-def chunk_file_with_status(
-    path: pathlib.Path,
-    root_dir: pathlib.Path,
-    prep: PreprocessContext | None = None,
-    execution_policy: ChunkExecutionPolicy = _DEFAULT_EXECUTION_POLICY,
-) -> ScopedChunkResult:
-    """Chunk one file (scoped path), carrying back the preprocess disposition.
-
-    This is the picklable process-pool entry point for the incremental and
-    scoped paths (which hash separately). It performs only CPU work: a single
-    file read, optional preprocessing, tree-sitter parsing (or text-splitter
-    fallback), and chunk construction with empty vectors for the consumer to
-    embed.
-
-    When ``prep`` is supplied and a preprocess rule matches, the matched
-    preprocessor runs first: on success its chunks are returned; on a skip
-    the file yields no chunks but the status/reason are reported; on
-    passthrough/no-match the raw file is chunked normally.
-
-    Args:
-        path: Absolute path to the source file.
-        root_dir: Project root used to compute the chunk's relative path.
-        prep: Optional preprocess context (rules + cache + cap).
-
-    Returns:
-        A :class:`ScopedChunkResult` with the chunks and the preprocess status.
-    """
-    rel_path = path.relative_to(root_dir).as_posix()
-    rule = prep.config.match(rel_path) if prep is not None else None
-    _require_rule_target(rule, ContentKind.CODE)
-    source_limit = _effective_source_limit(prep, rule)
-    try:
-        if rule is not None:
-            content_hash, _raw = _stream_source(
-                path,
-                max_source_bytes=source_limit,
-                retain_bytes=False,
-            )
-        else:
-            content_hash, raw = _stream_source(
-                path,
-                max_source_bytes=source_limit,
-                retain_bytes=True,
-            )
-            assert raw is not None
-    except _SourceUnavailableError as exc:
-        return ScopedChunkResult([], _unavailable_disposition(rule, exc), str(exc))
-    if prep is not None and rule is not None:
-        outcome = preprocess_file(content_hash, path, root_dir, prep)
-        if outcome.status == "ok":
-            return ScopedChunkResult(outcome.chunks, "ok")
-        if outcome.status == "skipped":
-            return ScopedChunkResult([], "skipped", outcome.reason)
-        # "passthrough" / "none" fall through to ordinary chunking below.
-        try:
-            _passthrough_hash, raw = _stream_source(
-                path,
-                max_source_bytes=source_limit,
-                retain_bytes=True,
-            )
-        except _SourceUnavailableError as exc:
-            return ScopedChunkResult([], "skipped", str(exc))
-        assert raw is not None
-    # ``raw`` is bound on every reaching path: ``rule is not None`` implies
-    # ``prep is not None`` (a rule only matches when prep exists), so that path
-    # always enters the block above that binds ``raw``; the ``rule is None`` path
-    # binds it in the else. basedpyright cannot track that rule/prep coupling.
-    content = _decode_source(raw, path, execution_policy)  # pyright: ignore[reportPossiblyUnboundVariable]  # rule-not-None implies prep-not-None, so raw is always bound here
-    if content is None:
-        return ScopedChunkResult([])
-    chunks = _chunk_decoded(content, path, root_dir, execution_policy.html_strip)
-    return ScopedChunkResult(chunks)
-
-
-def chunk_file(
-    path: pathlib.Path,
-    root_dir: pathlib.Path,
-    prep: PreprocessContext | None = None,
-    execution_policy: ChunkExecutionPolicy = _DEFAULT_EXECUTION_POLICY,
-) -> list[CodeChunk]:
-    """Chunk one file and return just its chunks (thin wrapper over status form).
-
-    Retained for callers and tests that only need the chunk list; the
-    chunk-identity logic lives in :func:`chunk_file_with_status`.
-    """
-    return chunk_file_with_status(path, root_dir, prep, execution_policy).chunks
 
 
 def chunk_and_hash_file(
@@ -1136,8 +1002,10 @@ def chunk_and_hash_file(
                 preprocess_reason=str(exc),
             )
         assert raw is not None
-    # ``raw`` is bound on every reaching path for the same rule/prep coupling as
-    # in ``chunk_file_with_status`` above; basedpyright cannot track it.
+    # ``raw`` is bound on every reaching path: ``rule is not None`` implies
+    # ``prep is not None`` (a rule only matches when prep exists), so that path
+    # always enters the block above that binds ``raw``; the ``rule is None``
+    # path binds it in the else. basedpyright cannot track that coupling.
     return _raw_file_result(
         _RawCodeFile(
             path=path,

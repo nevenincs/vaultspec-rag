@@ -19,8 +19,8 @@ from pathlib import Path
 
 import pytest
 
-from .._test_isolation import reclaim_singleton_paths, singleton_child_names
 from ._child_signal import CHILD_PROCESS_TIMEOUT_SECONDS
+from ._singleton_root_fixtures import reclaim_singleton_paths, singleton_child_names
 
 
 def _populate(root: Path, worker: str | None = None) -> tuple[Path, Path]:

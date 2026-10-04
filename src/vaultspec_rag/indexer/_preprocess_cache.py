@@ -51,7 +51,6 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "PREPROCESS_CACHE_DIRNAME",
     "PreprocessCacheIdentity",
-    "clear_preprocess_cache",
     "preprocess_cache_dir",
     "read_cached_output",
     "write_cached_output",
@@ -218,15 +217,3 @@ def write_cached_output(
         write_json_atomically(path, entry)
     except OSError as exc:
         logger.debug("could not write preprocess cache %s: %s", path, exc)
-
-
-def clear_preprocess_cache(cache_root: pathlib.Path) -> None:
-    """Remove the entire preprocess cache subtree (for a clean rebuild).
-
-    Args:
-        cache_root: The preprocess cache root.
-    """
-    import shutil
-
-    if cache_root.exists():
-        shutil.rmtree(cache_root, ignore_errors=True)

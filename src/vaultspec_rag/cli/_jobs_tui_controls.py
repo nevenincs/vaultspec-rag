@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from textual import work
 
+from .._job_values import count
 from ..serviceclient._transport import (
     _try_http_delete_job,
     _try_http_retry_job,
@@ -20,7 +21,6 @@ from ..serviceclient._transport import (
 from ._jobs_tui_cells import Pending, capability_flag, job_id_of
 from ._jobs_tui_constants import CONTROL_GROUP, STATE_ACTIONS
 from ._jobs_tui_payload import action_capability, is_gone
-from ._service_jobs_query import job_revision
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -69,7 +69,7 @@ class JobControlMixin(_MixinBase):
         job = self._actionable(action)
         if job is None:
             return
-        revision = job_revision(job)
+        revision = count(job.get("revision"), minimum=1)
         if revision is None:
             self.notify("The service reported no revision for this job.")
             return

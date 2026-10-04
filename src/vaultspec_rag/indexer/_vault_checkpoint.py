@@ -25,7 +25,7 @@ from ._run_ledger_models import (
     index_run_ledger_path,
 )
 from ._run_ledger_runtime import RunLedger
-from ._run_policy import RunPolicy
+from ._run_policy import DurableProgressKind, RunPolicy
 from ._vault_fingerprint import SCHEME
 
 if TYPE_CHECKING:
@@ -142,7 +142,12 @@ class VaultRunCheckpoint(RunCheckpointBase):
         content_identities: dict[str, str],
     ) -> None:
         units = self.units_for_chunks(chunks, content_identities)
-        self.ledger.record_storage_confirmed_units(self.generation_id, units)
+        inserted = self.ledger.record_storage_confirmed_units(self.generation_id, units)
+        if inserted:
+            self.run_policy.record_durable_progress(
+                kind=DurableProgressKind.LEDGER_UNIT_COMMITTED,
+                label=f"vault store mutation with {inserted} new ledger unit(s)",
+            )
 
     def _verified_evidence(self) -> list[ProofEvidence]:
         """Build full vault proof evidence from confirmed chunk units."""

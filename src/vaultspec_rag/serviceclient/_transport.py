@@ -66,11 +66,9 @@ from ..config._settings import get_config, rag_default
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    # The job-source vocabulary has one declaration, the canonical enum.
     # Annotation-only, so the client does not import the domain at runtime.
     from ..indexer._run_ledger_models import RunAuthority
-    from ..job_models import DesiredJobState, JobMode, JobSource
-    from ._discovery import MachineResolution
+    from ..job_models import DesiredJobState
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +77,6 @@ __all__ = [
     "DEFAULT_REINDEX_TIMEOUT_SECONDS",
     "DEFAULT_SEARCH_TIMEOUT_SECONDS",
     "MAX_SERVICE_RESPONSE_BYTES",
-    "ServiceUnavailableError",
     "_do_http_call",
     "_get_admin_timeout",
     "_is_connection_refused",
@@ -88,7 +85,6 @@ __all__ = [
     "_try_http_admin",
     "_try_http_clean",
     "_try_http_code_file",
-    "_try_http_create_job",
     "_try_http_delete_job",
     "_try_http_get_job",
     "_try_http_health",
@@ -99,7 +95,6 @@ __all__ = [
     "_try_http_vault_document",
     "health_answered",
     "health_probe_timed_out",
-    "resolve_service_port",
 ]
 
 
@@ -193,33 +188,6 @@ class _JobCallRequest:
     timeout: float | None = None
 
 
-class CreateJobOptions(TypedDict, total=False):
-    """Optional fields for a create-job request."""
-
-    mode: JobMode | None
-    start_paused: bool
-    initiator_kind: str
-    command: str
-    idempotency_key: str | None
-    timeout: float | None
-
-
-@dataclass(frozen=True)
-class _CreateJobRequest:
-    """A create-job request before it is serialized to the jobs endpoint."""
-
-    source: JobSource
-    project_root: str
-    port: int | None
-    authority: RunAuthority
-    mode: JobMode | None = None
-    start_paused: bool = False
-    initiator_kind: str = "cli"
-    command: str = "server_job_create"
-    idempotency_key: str | None = None
-    timeout: float | None = None
-
-
 class DesiredStateOptions(TypedDict, total=False):
     """Optional concurrency and termination controls for a job transition."""
 
@@ -295,52 +263,6 @@ class SearchCallRequest:
     like_ids: list[str | int] | None = None
     unlike_ids: list[str | int] | None = None
     document_filters: DocumentSearchFilters | None = None
-
-
-class ServiceUnavailableError(RuntimeError):
-    """No usable service address, carrying the discovery evidence behind it.
-
-    Raised instead of returning a bare "service down": a live singleton holder
-    whose published address cannot be trusted is a different operator problem
-    from a machine with nothing running, and the caller cannot tell them apart
-    from an absent port alone.
-    """
-
-    def __init__(self, resolution: MachineResolution) -> None:
-        self.resolution = resolution
-        super().__init__(resolution.evidence())
-
-    @property
-    def is_degraded(self) -> bool:
-        """Whether a live holder exists whose publication was refused."""
-        return self.resolution.is_degraded
-
-    @property
-    def reason(self) -> str | None:
-        """The named refusal reason, when the resolution was degraded."""
-        return self.resolution.reason
-
-    @property
-    def holder_pid(self) -> int:
-        """The live singleton holder, or zero when none is held."""
-        return self.resolution.holder_pid
-
-
-def resolve_service_port() -> int:
-    """Return the live service port, or raise with the discovery evidence.
-
-    There is deliberately no compatibility fallback here: when a holder owns
-    the singleton but its pointer is untrustworthy, guessing an address would
-    send the caller to a service the owner never advertised. Failing fast with
-    the holder and pointer evidence is what lets a caller report the actual
-    condition instead of an opaque connection failure.
-    """
-    from ._discovery import resolve_machine_service
-
-    resolution = resolve_machine_service()
-    if resolution.is_ready and resolution.port is not None:
-        return resolution.port
-    raise ServiceUnavailableError(resolution)
 
 
 class ServiceResponseTooLargeError(ValueError):
@@ -1046,48 +968,6 @@ def _try_http_job_call(
             "error": "http_call_failed",
             "message": f"HTTP job call on port {request.port} failed: {cls}: {exc}",
         }
-
-
-def _default_job_mode() -> str:
-    """Return the convergence mode a job takes when the caller names none."""
-    from ..job_models import JobMode
-
-    return JobMode.INCREMENTAL.value
-
-
-def _try_http_create_job(
-    source: JobSource,
-    project_root: str,
-    port: int | None,
-    *,
-    authority: RunAuthority,
-    **options: Unpack[CreateJobOptions],
-) -> dict[str, object] | None:
-    request = _CreateJobRequest(source, project_root, port, authority, **options)
-    payload: dict[str, object] = {
-        "operation": "index",
-        "source": request.source,
-        "project_root": request.project_root,
-        "authority": request.authority.value,
-        # Resolved here, not in the signature: the enum is annotation-only in
-        # this module so the client keeps the domain out of its import graph.
-        "mode": request.mode if request.mode is not None else _default_job_mode(),
-        "start_paused": request.start_paused,
-        "initiator": {"kind": request.initiator_kind, "command": request.command},
-    }
-    headers = (
-        {"Idempotency-Key": request.idempotency_key}
-        if request.idempotency_key is not None
-        else None
-    )
-    return _try_http_job_call(
-        request.port,
-        "/jobs",
-        "POST",
-        payload=payload,
-        headers=headers,
-        timeout=request.timeout,
-    )
 
 
 def _try_http_get_job(

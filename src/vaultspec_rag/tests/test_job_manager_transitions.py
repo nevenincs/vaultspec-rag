@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
 from ..indexer._run_ledger_models import RunAuthority
-from ..job_control import RunControlToken
+from ..job_control import PauseRequested, RunControlToken
 from ..job_manager._control import AttemptTerminal
 from ..job_manager.manager import JobManager
 from ..job_manager.models import (
     ProgressUpdate,
+    ResourceUpdate,
 )
 from ..job_models import (
     DesiredJobState,
@@ -24,6 +25,7 @@ from ..job_models import (
     JobSpec,
     JobState,
 )
+from ..job_persistence import load_persisted_state
 from ..service_quiesce import ServiceQuiesceController
 from ._job_manager_transition_helpers import (
     assert_delivered_pause_requeues_resume,
@@ -33,11 +35,177 @@ from ._job_manager_transition_helpers import (
 )
 from ._job_roots import _TEST_PROJECT_ROOT
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 pytestmark = [pytest.mark.unit]
 
 
 class TestManagedJobTransitions:
     """Revision and attempt identity make lifecycle races deterministic."""
+
+    @pytest.mark.asyncio
+    async def test_new_resumed_attempt_clears_resource_boundaries(
+        self, tmp_path: Path
+    ) -> None:
+        """Omitting the canonical reset carries the paused attempt's readings."""
+        controller = ServiceQuiesceController()
+        path = tmp_path / "jobs.json"
+        manager = JobManager(
+            quiesce_controller=controller, max_nonterminal=1, state_path=path
+        )
+        created = manager.create(
+            JobSpec(
+                JobOperation.INDEX,
+                JobSource.VAULT,
+                _TEST_PROJECT_ROOT,
+                JobMode.REBUILD,
+                RunAuthority.REBUILD,
+            ),
+            JobInitiator("test", "resource-resume", _TEST_PROJECT_ROOT),
+        )
+        assert created.job is not None
+        job_id = created.job.id
+        tasks = [asyncio.create_task(pending_attempt()) for _ in range(2)]
+        control = RunControlToken()
+        try:
+            assert manager.start_attempt(
+                job_id, task=tasks[0], control=control
+            ).code == ("attempt_started")
+            assert manager.update_execution_resources(
+                job_id,
+                task=tasks[0],
+                update=ResourceUpdate(started=manager._process_resource_snapshot()),
+            )
+            manager.set_desired_state(job_id, DesiredJobState.PAUSED)
+            with pytest.raises(PauseRequested):
+                control.checkpoint()
+            assert manager.release_execution_resources(
+                job_id, task=tasks[0], finished=manager._process_resource_snapshot()
+            )
+            paused = manager.acknowledge_control(job_id, attempt=1, task=tasks[0])
+            assert paused.job is not None and paused.job.state is JobState.PAUSED
+            assert paused.job.resources.started is not None
+            assert paused.job.resources.finished is not None
+            assert not paused.job.resources.holds_anything
+            assert controller.snapshot().active_compute_tickets == 0
+
+            resumed = manager.set_desired_state(job_id, DesiredJobState.RUNNING)
+            assert resumed.job is not None and resumed.job.state is JobState.QUEUED
+            assert resumed.job.attempt.number == 2
+            assert resumed.job.resources.started is None, (
+                "new resumed attempt retained prior started resource reading"
+            )
+            assert resumed.job.resources.finished is None, (
+                "new resumed attempt retained prior finished resource reading"
+            )
+            assert not resumed.job.resources.holds_anything
+            durable = load_persisted_state(path).jobs[0]
+            assert durable.resources == resumed.job.resources
+            assert durable.attempt == resumed.job.attempt
+            assert (
+                manager.start_attempt(
+                    job_id, task=tasks[1], control=RunControlToken()
+                ).code
+                == "attempt_started"
+            )
+            assert manager.update_execution_resources(
+                job_id,
+                task=tasks[1],
+                update=ResourceUpdate(started=manager._process_resource_snapshot()),
+            )
+            running = manager.get(job_id)
+            assert running is not None and running.resources.started is not None
+            assert running.resources.finished is None
+            assert manager.release_execution_resources(
+                job_id, task=tasks[1], finished=manager._process_resource_snapshot()
+            )
+            assert (
+                manager.finish_attempt(
+                    job_id,
+                    AttemptTerminal(
+                        attempt=2,
+                        task=tasks[1],
+                        state=JobState.SUCCEEDED,
+                        result="complete",
+                    ),
+                ).code
+                == "job_finished"
+            )
+            assert controller.snapshot().active_compute_tickets == 0
+        finally:
+            for task in tasks:
+                task.cancel()
+            for task in tasks:
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+
+    @pytest.mark.asyncio
+    async def test_pause_withdrawal_preserves_boundaries_and_terminal_history(
+        self,
+    ) -> None:
+        """A same-attempt withdrawal must not run the new-attempt reset."""
+        controller = ServiceQuiesceController()
+        manager = JobManager(
+            quiesce_controller=controller, max_nonterminal=2, state_path=None
+        )
+        created = manager.create(
+            JobSpec(
+                JobOperation.INDEX,
+                JobSource.VAULT,
+                _TEST_PROJECT_ROOT,
+                JobMode.REBUILD,
+                RunAuthority.REBUILD,
+            ),
+            JobInitiator("test", "resource-withdrawal", _TEST_PROJECT_ROOT),
+        )
+        assert created.job is not None
+        job_id = created.job.id
+        task = asyncio.create_task(pending_attempt())
+        control = RunControlToken()
+        try:
+            manager.start_attempt(job_id, task=task, control=control)
+            assert manager.update_execution_resources(
+                job_id,
+                task=task,
+                update=ResourceUpdate(started=manager._process_resource_snapshot()),
+            )
+            running = manager.get(job_id)
+            assert running is not None
+            manager.set_desired_state(job_id, DesiredJobState.PAUSED)
+            withdrawn = manager.set_desired_state(job_id, DesiredJobState.RUNNING)
+            assert withdrawn.code == "pause_withdrawn"
+            assert withdrawn.job is not None
+            assert withdrawn.job.attempt.number == 1
+            assert withdrawn.job.resources == running.resources, (
+                "same attempt withdrawal cleared resource boundaries"
+            )
+            assert controller.snapshot().active_compute_tickets == 1
+            assert manager.release_execution_resources(
+                job_id, task=task, finished=manager._process_resource_snapshot()
+            )
+            failed = manager.finish_attempt(
+                job_id,
+                AttemptTerminal(
+                    attempt=1,
+                    task=task,
+                    state=JobState.FAILED,
+                    result="failed after release",
+                    error_kind="other",
+                ),
+            )
+            assert failed.job is not None
+            assert failed.job.resources.started is not None
+            assert failed.job.resources.finished is not None
+            retried = manager.retry(job_id)
+            assert retried.job is not None
+            assert retried.job.resources == JobResourceSnapshot(None, None)
+            assert manager.get(job_id) == failed.job
+            assert controller.snapshot().active_compute_tickets == 0
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
 
     @pytest.mark.asyncio
     async def test_shutdown_closes_the_attempt_claim_boundary(self) -> None:
@@ -233,14 +401,10 @@ class TestManagedJobTransitions:
                 task=task,
                 active=True,
             )
-            assert running_manager.set_execution_resources(
+            assert running_manager.update_execution_resources(
                 running.job.id,
                 task=task,
-                resources=JobResourceSnapshot(
-                    started=None,
-                    finished=None,
-                    pipeline_active=True,
-                ),
+                update=ResourceUpdate(pipeline_active=True),
             )
             running_manager.set_desired_state(
                 running.job.id,
@@ -268,10 +432,10 @@ class TestManagedJobTransitions:
                 task=task,
                 active=False,
             )
-            assert running_manager.set_execution_resources(
+            assert running_manager.update_execution_resources(
                 running.job.id,
                 task=task,
-                resources=JobResourceSnapshot(started=None, finished=None),
+                update=ResourceUpdate(pipeline_active=False),
             )
             acknowledged = running_manager.acknowledge_control(
                 running.job.id,

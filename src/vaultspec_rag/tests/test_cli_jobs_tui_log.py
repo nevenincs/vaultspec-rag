@@ -478,6 +478,45 @@ class TestLogNavigation:
         return [*filler, _APP_ERROR_LINE, *(f"tail line {i}" for i in range(30))]
 
     @pytest.mark.asyncio
+    async def test_repaint_queued_before_navigation_keeps_the_requested_top(
+        self, control_service: _JobService
+    ) -> None:
+        """A repaint must not let its pending tail scroll undo navigation."""
+        control_service.log_lines = self._long_window()
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            await _await_painted(pilot, app, "tail line 29")
+            await _settle(pilot)
+            log = app._log_view()
+            assert log is not None and log.max_scroll_y > 0
+            log.auto_scroll = True
+            log.show_lines(self._long_window())
+            log.jump_top()
+            await _settle(pilot)
+            assert log.scroll_offset.y == 0, "repaint overrode manual navigation"
+
+    @pytest.mark.asyncio
+    async def test_started_tail_callback_cannot_defer_past_navigation(
+        self, control_service: _JobService
+    ) -> None:
+        """Deferring the guarded scroll again failed the final top assertion."""
+        control_service.log_lines = self._long_window()
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            await _await_painted(pilot, app, "tail line 29")
+            await _settle(pilot)
+            log = app._log_view()
+            assert log is not None and log.max_scroll_y > 0
+            log.jump_end()
+            log.scroll_followed_tail()
+            log.jump_top()
+            assert log.scroll_offset.y == 0, "navigation was deferred"
+            await _settle(pilot)
+            assert log.scroll_offset.y == 0, "started callback overrode navigation"
+
+    @pytest.mark.asyncio
     async def test_top_bottom_and_error_jumps_move_the_pane(
         self, control_service: _JobService
     ) -> None:

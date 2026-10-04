@@ -8,10 +8,11 @@ import threading
 from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
+from types import MappingProxyType
+from typing import TYPE_CHECKING
 
 import pytest
 
-from .. import store_schema
 from .._source_types import PublicSourceType
 from ..indexer._content_policy import ContentKind
 from ..indexer._file_state import FileState
@@ -20,25 +21,28 @@ from ..indexer._publication_proof import (
     PathOutcome,
     ProofCompatibilityKey,
     ProofEvidence,
-    ProofProvenance,
 )
 from ..indexer._run_ledger_models import (
     PUBLICATION_PROOF_SCHEMA,
     REQUIRED_INDEX_PREDICATES,
     REQUIRED_INDEXES,
-    SCHEMA_VERSION,
     CommitUnit,
     CommitUnitKind,
     FinalizationPhase,
     PublicationReceipt,
+    RunAuthority,
     RunLedgerRebuildRequiredError,
     RunOperation,
     RunSignature,
     RunTerminalState,
 )
+from ..indexer._run_ledger_publication_identity import compatibility_for_signature
 from ..indexer._run_ledger_runtime import RunLedger
 from ._child_signal import PROCESS_TIMEOUT_SECONDS
 from ._sqlite_state import assert_sqlite_unchanged, sqlite_contents
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 def ledger_test_digest(value: str) -> str:
@@ -103,27 +107,6 @@ def ledger_test_proof_compatibility() -> ProofCompatibilityKey:
     )
 
 
-def ledger_test_proof_key_for_signature(
-    signature: RunSignature,
-) -> ProofCompatibilityKey:
-    return ProofCompatibilityKey(
-        source_type=PublicSourceType(signature.source_type.value),
-        root_identity=signature.root_identity,
-        backend_identity=signature.backend_identity,
-        collection_identity=signature.collection_identity,
-        storage_schema=store_schema.STORAGE_SCHEMA_VERSION,
-        payload_schema=signature.payload_schema,
-        embedding_schema_identity=(
-            f"{signature.model_identity}:{signature.dense_dimensions}:"
-            f"{signature.embedding_schema}"
-        ),
-        chunking_schema_identity=signature.preprocessing_identity,
-        membership_identity=signature.membership_epoch,
-        content_identity=signature.content_epoch,
-        policy_identity=signature.policy_fingerprint,
-    )
-
-
 def ledger_test_assert_rebuild_required_without_mutation(
     path: Path, *, match: str
 ) -> None:
@@ -134,94 +117,6 @@ def ledger_test_assert_rebuild_required_without_mutation(
 
     assert type(caught.value) is RunLedgerRebuildRequiredError
     assert_sqlite_unchanged(path, before)
-
-
-def ledger_test_seed_publication_proof(
-    ledger: RunLedger,
-    *,
-    generation_id: str,
-    key: ProofCompatibilityKey,
-    evidence: tuple[ProofEvidence, ...],
-) -> None:
-    connection = sqlite3.connect(ledger.path)
-    try:
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute(
-            """
-            INSERT INTO publication_proofs (
-                source_type, root_identity, backend_identity,
-                collection_identity, storage_schema, payload_schema,
-                embedding_schema_identity, chunking_schema_identity,
-                membership_identity, content_identity, policy_identity,
-                generation_id, revision, reservation_sequence,
-                indexed_identities, retained_points, provenance,
-                committed_at, verified_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                key.source_type.value,
-                key.root_identity,
-                key.backend_identity,
-                key.collection_identity,
-                key.storage_schema,
-                key.payload_schema,
-                key.embedding_schema_identity,
-                key.chunking_schema_identity,
-                key.membership_identity,
-                key.content_identity,
-                key.policy_identity,
-                generation_id,
-                3,
-                5,
-                len(evidence),
-                sum(len(item.point_ids) for item in evidence),
-                ProofProvenance.VERIFIED.value,
-                1.0,
-                1.0,
-            ),
-        )
-        for item in evidence:
-            connection.execute(
-                """
-                INSERT INTO publication_evidence (
-                    source_type, root_identity, backend_identity,
-                    collection_identity, rel_path, content_identity,
-                    evidence_generation_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    key.source_type.value,
-                    key.root_identity,
-                    key.backend_identity,
-                    key.collection_identity,
-                    item.rel_path,
-                    item.content_identity,
-                    generation_id,
-                ),
-            )
-            connection.executemany(
-                """
-                INSERT INTO publication_points (
-                    source_type, root_identity, backend_identity,
-                    collection_identity, rel_path, point_ordinal, point_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    (
-                        key.source_type.value,
-                        key.root_identity,
-                        key.backend_identity,
-                        key.collection_identity,
-                        item.rel_path,
-                        ordinal,
-                        point_id,
-                    )
-                    for ordinal, point_id in enumerate(item.point_ids)
-                ),
-            )
-        connection.commit()
-    finally:
-        connection.close()
 
 
 def ledger_test_assert_generation_proof_gate(
@@ -251,60 +146,6 @@ def ledger_test_seal_publication_receipt(
     ledger.seal_publication_receipt(receipt.receipt_id, (delta,))
 
 
-def ledger_test_insert_reserved_receipt(
-    connection: sqlite3.Connection,
-    *,
-    receipt_id: str,
-    reservation_sequence: int,
-    generation_id: str,
-    projection: tuple[str | ProofCompatibilityKey, int] = ("collection-v1", 1),
-) -> None:
-    projection_identity, target_revision = projection
-    key = (
-        projection_identity
-        if isinstance(projection_identity, ProofCompatibilityKey)
-        else ledger_test_proof_compatibility()
-    )
-    collection_identity = (
-        key.collection_identity
-        if isinstance(projection_identity, ProofCompatibilityKey)
-        else projection_identity
-    )
-    connection.execute(
-        """
-        INSERT INTO publication_receipts (
-            receipt_id, reservation_sequence, source_type, root_identity,
-            backend_identity, collection_identity, storage_schema,
-            payload_schema, embedding_schema_identity,
-            chunking_schema_identity, membership_identity, content_identity,
-            policy_identity, generation_id, parent_revision, target_revision,
-            next_mutation_ordinal, state, reserved_at, sealed_at,
-            rollback_started_at, committed_at, rolled_back_at
-        ) VALUES (
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?,
-            0, 'reserved', 1.0, NULL, NULL, NULL, NULL
-        )
-        """,
-        (
-            receipt_id,
-            reservation_sequence,
-            key.source_type.value,
-            key.root_identity,
-            key.backend_identity,
-            collection_identity,
-            key.storage_schema,
-            key.payload_schema,
-            key.embedding_schema_identity,
-            key.chunking_schema_identity,
-            key.membership_identity,
-            key.content_identity,
-            key.policy_identity,
-            generation_id,
-            target_revision,
-        ),
-    )
-
-
 def ledger_test_assert_publication_tables(
     connection: sqlite3.Connection,
     expected_tables: set[str],
@@ -330,6 +171,51 @@ def ledger_test_assert_publication_tables(
     }
     assert bool(receipt_columns["receipt_id"][3])
     assert int(receipt_columns["receipt_id"][5]) == 1
+
+
+def ledger_test_duplicate_receipt_row(
+    connection: sqlite3.Connection,
+    source_id: str,
+    *,
+    receipt_id: str,
+    reservation_sequence: int,
+    overrides: Mapping[str, object] = MappingProxyType({}),
+) -> None:
+    """Copy one receipt row the ledger wrote, under a new identity.
+
+    The copy carries every column of a row ``reserve_publication_receipt``
+    produced, so no table shape is restated here and the duplicate cannot
+    drift from the schema the ledger creates. It exists because the two
+    conditions that need it - a second reservation open on one projection,
+    and a closed history longer than the retention bound - are exactly what
+    the reservation API refuses to produce one call at a time.
+    """
+    connection.execute(
+        "CREATE TEMP TABLE receipt_copy AS "
+        "SELECT * FROM publication_receipts WHERE receipt_id = ?",
+        (source_id,),
+    )
+    try:
+        connection.execute(
+            """
+            UPDATE receipt_copy
+            SET receipt_id = ?, reservation_sequence = ?, state = 'reserved',
+                next_mutation_ordinal = 0, sealed_at = NULL,
+                rollback_started_at = NULL, committed_at = NULL,
+                rolled_back_at = NULL
+            """,
+            (receipt_id, reservation_sequence),
+        )
+        for column, value in overrides.items():
+            connection.execute(
+                f"UPDATE receipt_copy SET {column} = ?",
+                (value,),
+            )
+        connection.execute(
+            "INSERT INTO publication_receipts SELECT * FROM receipt_copy"
+        )
+    finally:
+        connection.execute("DROP TABLE receipt_copy")
 
 
 def ledger_test_assert_publication_indexes(connection: sqlite3.Connection) -> None:
@@ -388,14 +274,11 @@ def ledger_test_seeded_publication_lineage(
     ledger = RunLedger(tmp_path / "runs.sqlite3")
     signature = ledger_test_signature(tmp_path)
     parent = ledger.start_generation(signature)
-    ledger_test_publish_and_compact(ledger, parent.generation_id)
-    key = ledger_test_proof_key_for_signature(signature)
-    ledger_test_seed_publication_proof(
-        ledger,
-        generation_id=parent.generation_id,
-        key=key,
-        evidence=evidence,
+    ledger.establish_verified_publication(
+        parent.generation_id, RunAuthority.REBUILD, evidence
     )
+    ledger_test_publish_and_compact(ledger, parent.generation_id)
+    key = compatibility_for_signature(signature)
     successor = ledger.start_generation(signature)
     assert successor.parent_generation_id == parent.generation_id
     return ledger, key, parent.generation_id, successor.generation_id
@@ -429,7 +312,7 @@ def ledger_test_sealed_modify_receipt(
     receipt = ledger.reserve_publication_receipt(
         key,
         successor_id,
-        expected_parent_revision=3,
+        expected_parent_revision=ledger.publication_proof(key).revision,
     )
     new = replace(old, content_identity=ledger_test_digest("a-v2"))
     delta = PathDelta(
@@ -460,16 +343,10 @@ def ledger_test_publish_generation_with_proof(
     ledger: RunLedger,
     generation_id: str,
     *,
-    key: ProofCompatibilityKey,
     evidence: tuple[ProofEvidence, ...] = (),
 ) -> None:
     ledger.advance_finalization(generation_id, FinalizationPhase.STALE_RECONCILED)
-    ledger_test_seed_publication_proof(
-        ledger,
-        generation_id=generation_id,
-        key=key,
-        evidence=evidence,
-    )
+    ledger.establish_verified_publication(generation_id, RunAuthority.REBUILD, evidence)
     ledger.advance_finalization(generation_id, FinalizationPhase.METADATA_PUBLISHED)
     ledger.advance_finalization(generation_id, FinalizationPhase.GENERATION_PUBLISHED)
     ledger.finish_generation(generation_id, RunTerminalState.SUCCEEDED)
@@ -545,14 +422,12 @@ def _peer_creates_current_schema(path: Path, *, busy_seconds: float) -> bool:
     """
     connection = sqlite3.connect(path, timeout=busy_seconds)
     try:
-        connection.execute("BEGIN IMMEDIATE")
-        RunLedger._create_base_tables(connection)
-        RunLedger._create_publication_tables(connection)
-        RunLedger._create_required_indexes(connection)
-        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-        connection.commit()
+        connection.row_factory = sqlite3.Row
+        # The production initializer owns the whole create sequence, including
+        # its own write lock and commit. Only the connection - and the short
+        # busy budget that makes a held lock observable - is supplied here.
+        RunLedger.__new__(RunLedger)._initialize(connection)
     except sqlite3.OperationalError as exc:
-        connection.rollback()
         assert "locked" in str(exc), exc
         return False
     finally:
@@ -613,7 +488,7 @@ def ledger_test_indexed_path_ledger(
     return ledger, generation.generation_id
 
 
-def ledger_test_publish_and_compact(ledger: RunLedger, generation_id: str) -> int:
+def ledger_test_publish_and_finish(ledger: RunLedger, generation_id: str) -> None:
     for phase in (
         FinalizationPhase.STALE_RECONCILED,
         FinalizationPhase.METADATA_PUBLISHED,
@@ -621,4 +496,8 @@ def ledger_test_publish_and_compact(ledger: RunLedger, generation_id: str) -> in
     ):
         ledger.advance_finalization(generation_id, phase)
     ledger.finish_generation(generation_id, RunTerminalState.SUCCEEDED)
+
+
+def ledger_test_publish_and_compact(ledger: RunLedger, generation_id: str) -> int:
+    ledger_test_publish_and_finish(ledger, generation_id)
     return ledger.compact(generation_id)

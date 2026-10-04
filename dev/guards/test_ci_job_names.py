@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from dev.ci_names import PRODUCT, SHARED_WORKFLOW_NAMES
 from dev.guards import _workflows as workflows
+from dev.guards._ci_names import PRODUCT, SHARED_WORKFLOW_NAMES
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
 

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import pathlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple, cast
 
 from ._store_models import read_served_pointer
 from ._timestamps import parse_iso_timestamp
@@ -37,6 +37,8 @@ __all__ = [
     "RootGenerations",
     "advance_generation_stamps",
     "decide_generation_reclaim",
+    "decode_generation_fields",
+    "generation_fields",
     "survey_generations",
 ]
 
@@ -54,10 +56,34 @@ class RootGenerations(NamedTuple):
     served: str
     unreferenced: tuple[str, ...]
 
-    @property
-    def has_debt(self) -> bool:
-        """Whether this root is carrying generations nothing points at."""
-        return bool(self.unreferenced)
+
+def generation_fields(report: RootGenerations | None) -> dict[str, object]:
+    """Carry served-collection/debt facts, preserving unknown versus known empty."""
+    if report is None:
+        return {"served_code_collection": None, "unreferenced_generations": None}
+    return {
+        "served_code_collection": report.served,
+        "unreferenced_generations": list(report.unreferenced),
+    }
+
+
+def decode_generation_fields(
+    root: str | None, payload: Mapping[str, object]
+) -> RootGenerations | None:
+    """Read published generation facts without recomputing namespace authority."""
+    served = payload.get("served_code_collection")
+    unreferenced = payload.get("unreferenced_generations")
+    if (
+        not root
+        or not isinstance(served, str)
+        or not served
+        or not isinstance(unreferenced, list)
+    ):
+        return None
+    names = cast("list[object]", unreferenced)
+    if not all(isinstance(name, str) and name for name in names):
+        return None
+    return RootGenerations(root, served, tuple(cast("str", name) for name in names))
 
 
 def survey_generations(
@@ -127,19 +153,20 @@ def _proof_referenced(
     turns out not to exist costs nothing: reclamation only ever acts on names
     storage actually reports.
     """
-    from ._publication_state import acquire_publication_snapshot
+    from ._publication_state import (
+        UNREADABLE_PUBLICATION_ERRORS,
+        acquire_publication_snapshot,
+    )
     from ._source_types import PublicSourceType
     from ._store_models import generation_code_collection
-    from .indexer._publication_proof import ProofUnverifiableError
-    from .indexer._run_ledger_models import RunLedgerError
 
     try:
         snapshot = acquire_publication_snapshot(
             pathlib.Path(root), PublicSourceType.CODE
         )
-    except (ProofUnverifiableError, RunLedgerError):
+        snapshot.validate()
+    except UNREADABLE_PUBLICATION_ERRORS:
         return None
-    snapshot.validate()
     referenced: list[str] = []
     for base in dict.fromkeys((derived, served)):
         try:

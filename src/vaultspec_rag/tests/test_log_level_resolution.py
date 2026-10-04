@@ -21,9 +21,10 @@ import pytest
 from vaultspec_core.config import ConfigurationError
 from vaultspec_core.logging_config import reset_logging
 
-from ..config._settings import rag_default, reset_config
+from ..config._settings import rag_default
 from ..config._types import EnvVar
 from ..logging_config import configure_logging
+from ._config_fixtures import reset_config
 
 pytestmark = [pytest.mark.unit]
 

@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 import pytest
+from vaultspec_core.env_values import BOOL_SHAPE
 
 from ..config._types import EnvVar
 from ..service_quiesce import (
@@ -79,7 +80,7 @@ os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(status_dir)
 os.environ["VAULTSPEC_RAG_QDRANT_STORAGE_DIR"] = str(base / "qdrant")
 os.environ["VAULTSPEC_RAG_LOCAL_ONLY"] = "true"
 
-from vaultspec_rag.config._settings import reset_config
+from vaultspec_rag.tests._config_fixtures import reset_config
 
 reset_config()
 
@@ -309,6 +310,6 @@ async def test_jobs_tui_shows_quiesce_unavailable_after_a_route_error(
         )
 
     assert retained is None
-    assert fetch_error == "controllable must be true or false when provided."
+    assert fetch_error == f"controllable must be {BOOL_SHAPE} when provided."
     assert "quiesce unavailable" in painted
     assert "borrower safety safe" not in painted

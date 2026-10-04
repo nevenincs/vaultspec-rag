@@ -151,10 +151,22 @@ class JobManagerQuiesceControl(JobManagerState):
                     managed.runtime.control.request_quiesce()
             return tuple(requested)
 
-    def prepare_quiesced_resume(self) -> QuiescedResumeResult:
-        """Durably prepare same-ID recovery while warming keeps admission closed."""
-        if self._quiesce_controller.snapshot().state is not QuiesceState.WARMING:
-            raise RuntimeError("Quiesced recovery preparation requires warming state.")
+    def prepare_quiesced_resume(
+        self, *, expected_state: QuiesceState = QuiesceState.WARMING
+    ) -> QuiescedResumeResult:
+        """Durably prepare held work for a warming, abort, or running recovery."""
+        if (
+            expected_state
+            not in (
+                QuiesceState.WARMING,
+                QuiesceState.PAUSING,
+                QuiesceState.RUNNING,
+            )
+            or self._quiesce_controller.snapshot().state is not expected_state
+        ):
+            raise RuntimeError(
+                "Quiesced recovery preparation requires its owned state."
+            )
         with self._lock:
             backup = self._capture_state_locked()
             prepared: list[str] = []
@@ -162,7 +174,7 @@ class JobManagerQuiesceControl(JobManagerState):
             for job_id, managed in self._active.items():
                 snapshot = managed.snapshot
                 if (
-                    not snapshot.state.is_idle
+                    snapshot.state not in (JobState.PAUSED, JobState.QUEUED)
                     or snapshot.desired_state is not DesiredJobState.RUNNING
                     or managed.runtime.task is not None
                 ):
@@ -210,14 +222,6 @@ class JobManagerQuiesceControl(JobManagerState):
         ):
             return ()
         return self._schedule_recoverable_quiesced_jobs(prepared.job_ids)
-
-    def recover_running_quiesced_resume(self) -> tuple[str, ...]:
-        """Schedule retained durable queued work during an already-running resume."""
-        if self._quiesce_controller.snapshot().state is not QuiesceState.RUNNING:
-            return ()
-        with self._lock:
-            queued_ids = tuple(self._active)
-        return self._schedule_recoverable_quiesced_jobs(queued_ids)
 
     def _schedule_recoverable_quiesced_jobs(
         self,

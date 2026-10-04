@@ -24,6 +24,7 @@ from ..indexer._run_ledger_models import (
     CommitUnit,
     CommitUnitKind,
     PublicationPointCandidate,
+    RunAuthority,
     RunLedgerCorruptionError,
     RunLedgerStateError,
 )
@@ -35,9 +36,7 @@ from ..indexer._run_ledger_publication_receipts import (
 from ..indexer._run_ledger_runtime import RunLedger
 from ._run_ledger_test_support import (
     ledger_test_digest,
-    ledger_test_proof_key_for_signature,
     ledger_test_publish_and_compact,
-    ledger_test_seed_publication_proof,
     ledger_test_seeded_publication_lineage,
     ledger_test_signature,
     ledger_test_unit,
@@ -68,13 +67,10 @@ def test_generation_start_leaves_canonical_publication_projection_unchanged(
     ledger = RunLedger(tmp_path / "runs.sqlite3")
     signature = ledger_test_signature(tmp_path)
     parent = ledger.start_generation(signature)
-    ledger_test_publish_and_compact(ledger, parent.generation_id)
-    ledger_test_seed_publication_proof(
-        ledger,
-        generation_id=parent.generation_id,
-        key=ledger_test_proof_key_for_signature(signature),
-        evidence=evidence,
+    ledger.establish_verified_publication(
+        parent.generation_id, RunAuthority.REBUILD, evidence
     )
+    ledger_test_publish_and_compact(ledger, parent.generation_id)
 
     def canonical_projection() -> tuple[tuple[object, ...], ...]:
         with closing(sqlite3.connect(ledger.path)) as connection, connection:
@@ -216,7 +212,7 @@ def test_effective_receipt_read_folds_canonical_sparse_and_deleted_state(
     receipt = ledger.reserve_publication_receipt(
         key,
         successor_id,
-        expected_parent_revision=3,
+        expected_parent_revision=ledger.publication_proof(key).revision,
     )
 
     replacement_digest = ledger_test_digest("b-v2")
@@ -352,7 +348,7 @@ def test_effective_receipt_read_refuses_unbounded_or_ambiguous_state(
     receipt = ledger.reserve_publication_receipt(
         key,
         successor_id,
-        expected_parent_revision=3,
+        expected_parent_revision=ledger.publication_proof(key).revision,
     )
 
     with pytest.raises(ValueError, match="at most"):

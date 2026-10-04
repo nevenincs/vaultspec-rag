@@ -18,7 +18,7 @@ from .._job_errors import JobError, JobErrorKind
 from .._source_types import PublicSourceType
 from ..job_control import NO_RUN_CONTROL
 from . import _chunk_worker, _stat_gate
-from ._checkpoint_common import PublicationExecution
+from ._checkpoint_common import PublicationExecution, RunCheckpointBase
 from ._chunk_producer import CodeChunkProducer
 from ._codebase_preprocess import CodebasePreprocessMixin
 from ._consumer_pipeline import (
@@ -43,6 +43,7 @@ from ._content_policy import (
     RootContentPolicy,
     SourceProfileVersion,
 )
+from ._file_state import FileStateKind
 from ._generation_lifecycle import (
     CodeGenerationBindings,
     CodeGenerationLifecycle,
@@ -73,7 +74,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
     from ..embeddings import EmbeddingModel
-    from ..index_profiles import SupportMeasurement
     from ..job_control import RunControl
     from ..memory_probe import MemoryBudgetSnapshot
     from ..progress import ProgressReporter
@@ -238,11 +238,6 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         )
 
     @property
-    def support_measurement(self) -> SupportMeasurement:
-        """Return the latest immutable code workload measurement snapshot."""
-        return self._support_budget.measurement
-
-    @property
     def last_checkpoint(self) -> CodeRunCheckpoint | None:
         """Return the latest run authority for service-domain projection."""
         return self._lifecycle.last_checkpoint
@@ -250,8 +245,13 @@ class CodebaseIndexer(CodebasePreprocessMixin):
     @property
     def memory_budget_snapshot(self) -> MemoryBudgetSnapshot | None:
         """Return the latest immutable enforced-memory observation."""
-        budget = self._support_budget.memory_budget
-        return budget.snapshot if budget is not None else None
+        from ..memory_probe import held_budget_snapshot
+
+        return held_budget_snapshot(self._support_budget.memory_budget)
+
+    def reset_memory_telemetry(self) -> None:
+        """Clear prior attempt observations under managed worker ownership."""
+        self._support_budget.reset_memory_telemetry()
 
     def resolve_policy_snapshot(self) -> ResolvedIndexPolicy:
         """Resolve one immutable policy snapshot before any mutation authority.
@@ -468,20 +468,47 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         )
         return current_files, current_hashes
 
+    @staticmethod
+    def _full_removed_paths(request: _FullStaleReconciliation) -> set[str]:
+        """Select absent sources from the manifest this full run owns."""
+        previous_paths = (
+            {
+                state.rel_path
+                for state in request.checkpoint.ledger.iter_file_states(
+                    request.checkpoint.generation_id
+                )
+                if state.state is FileStateKind.INDEXED
+            }
+            if request.checkpoint.generation.signature.clean
+            else set(request.previous_metadata)
+        )
+        return previous_paths - set(request.metadata)
+
     def _reconcile_full_stale_ids(
         self,
         request: _FullStaleReconciliation,
     ) -> list[str]:
         """Delete stale full-run identities and checkpoint removed paths."""
+        clean = request.checkpoint.generation.signature.clean
         stale_ids = sorted(request.existing_ids - request.retained_ids)
-        removed_paths = set(request.previous_metadata) - set(request.metadata)
-        if not stale_ids:
+        removed_paths = self._full_removed_paths(request)
+        if not stale_ids and not (clean and removed_paths):
             return stale_ids
         removed_ids_by_path = self._lifecycle.checkpoint_ids_by_path(
             request.checkpoint,
             removed_paths,
             retained=True,
         )
+        if clean:
+            removed_ids = {
+                point_id for ids in removed_ids_by_path.values() for point_id in ids
+            }
+            # Resumed upserts seeded the pipeline accumulator before this scan.
+            # A source removed from the shadow corpus cannot remain retained
+            # merely because that earlier attempt confirmed its points.
+            stale_ids = sorted(
+                request.existing_ids - (request.retained_ids - removed_ids)
+            )
         request.reporter.phase_start("purge stale chunks", len(stale_ids))
         try:
             try:
@@ -490,10 +517,15 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                     point_ids = tuple(sorted(removed_ids_by_path[rel]))
                     if not point_ids:
                         continue
-                    self.store.delete_code_chunks(
-                        list(point_ids), collection=request.collection
-                    )
-                    request.checkpoint.record_confirmed_deletion(rel, point_ids)
+                    if clean:
+                        self._lifecycle.drift_owner.retire_retained_outcome(
+                            rel, remove_path=True
+                        )
+                    else:
+                        self.store.delete_code_chunks(
+                            list(point_ids), collection=request.collection
+                        )
+                        request.checkpoint.record_confirmed_deletion(rel, point_ids)
                     path_removed_ids.update(point_ids)
                 remaining_stale_ids = sorted(set(stale_ids) - path_removed_ids)
                 if remaining_stale_ids:
@@ -640,14 +672,18 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             acquire_publication_snapshot,
             read_all_publication_evidence,
         )
-        from ._publication_proof import ProofIncompatibleError, ProofMissingError
+        from ._publication_proof import (
+            ProofIncompatibleError,
+            ProofMissingError,
+            ProofReadConflictError,
+        )
 
         try:
             previous_snapshot = acquire_publication_snapshot(
                 self.root_dir,
                 PublicSourceType.CODE,
             )
-        except (ProofIncompatibleError, ProofMissingError):
+        except (ProofIncompatibleError, ProofMissingError, ProofReadConflictError):
             previous_metadata = {}
         else:
             previous_metadata = {
@@ -712,6 +748,12 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                 effective_clean=effective_clean,
                 clean_has_confirmed_units=clean_has_confirmed_units,
                 reporter=reporter,
+            )
+            self._lifecycle.recover_removed_shadow_paths(
+                checkpoint,
+                current_paths={
+                    path.relative_to(self.root_dir).as_posix() for path in paths
+                },
             )
             run_control.checkpoint()
 
@@ -872,6 +914,12 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         """Locked implementation of cooperative incremental indexing."""
         run_control = execution.run_control
         run_control.checkpoint()
+        RunCheckpointBase.recover_pending_publication(
+            self.root_dir,
+            PublicSourceType.CODE,
+            backend_identity=self.store.backend_identity,
+            run_control=run_control,
+        )
         if self._lifecycle.published_evidence_lost():
             # The predicate has already logged which branch fired and, for a
             # shortfall, both counts. Naming only the absent-collection case
@@ -957,58 +1005,59 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             scope="code incremental",
             execution=execution,
         )
-        resumed_publication = self._resume_pending_finalization(
-            checkpoint,
-            reporter=reporter,
-            started_at=start,
-        )
-        result = resumed_publication
-        if result is None:
-            publication = self._incremental_commit.supersede_and_publish(
-                IncrementalPublicationRequest(
-                    hashes=current_hashes,
-                    to_index=to_index,
-                    paths_to_index=paths_to_index,
-                    attempted_paths=attempted_paths,
-                    pipeline_run=CodePipelineRun(
-                        reporter=reporter,
+        with checkpoint.preserve_incomplete_generation():
+            resumed_publication = self._resume_pending_finalization(
+                checkpoint,
+                reporter=reporter,
+                started_at=start,
+            )
+            result = resumed_publication
+            if result is None:
+                publication = self._incremental_commit.supersede_and_publish(
+                    IncrementalPublicationRequest(
+                        hashes=current_hashes,
+                        to_index=to_index,
+                        paths_to_index=paths_to_index,
+                        attempted_paths=attempted_paths,
+                        pipeline_run=CodePipelineRun(
+                            reporter=reporter,
+                            checkpoint=checkpoint,
+                            limits=limits,
+                            content_epoch=self._content_epoch,
+                            code_build_target=self._lifecycle.active_build_target,
+                            run_control=run_control,
+                        ),
+                    )
+                )
+                current_hashes.update(publication.published_hashes)
+                self._incremental_commit.commit_replacement(
+                    IncrementalReplacementRequest(
+                        existing_ids=publication.existing_ids,
+                        published_ids=publication.published_ids,
+                        prior_ids_by_path=publication.prior_ids_by_path,
+                        deleted_paths=deleted_files,
                         checkpoint=checkpoint,
-                        limits=limits,
-                        content_epoch=self._content_epoch,
-                        code_build_target=self._lifecycle.active_build_target,
+                        files_count=len(attempted_paths),
+                        protect_replacement=bool(modified_files or deleted_files),
+                        reporter=reporter,
                         run_control=run_control,
-                    ),
+                    )
                 )
-            )
-            current_hashes.update(publication.published_hashes)
-            self._incremental_commit.commit_replacement(
-                IncrementalReplacementRequest(
-                    existing_ids=publication.existing_ids,
-                    published_ids=publication.published_ids,
-                    prior_ids_by_path=publication.prior_ids_by_path,
-                    deleted_paths=deleted_files,
-                    checkpoint=checkpoint,
-                    files_count=len(attempted_paths),
-                    protect_replacement=bool(modified_files or deleted_files),
-                    reporter=reporter,
-                    run_control=run_control,
+                result = IndexResult(
+                    total=self.store.count_code(),
+                    added=len(new_files),
+                    updated=len(modified_files),
+                    removed=len(deleted_files),
+                    duration_ms=int((time.time() - start) * 1000),
+                    device=self.model.device,
+                    files=len(to_index),
+                    preprocess_ok=self._prep_ok,
+                    preprocess_skipped=len(self._prep_skips),
+                    preprocess_failures=list(self._prep_skips),
+                    reuse=self._reuse_snapshot(),
+                    drift=self._lifecycle.drift_snapshot(),
                 )
-            )
-            result = IndexResult(
-                total=self.store.count_code(),
-                added=len(new_files),
-                updated=len(modified_files),
-                removed=len(deleted_files),
-                duration_ms=int((time.time() - start) * 1000),
-                device=self.model.device,
-                files=len(to_index),
-                preprocess_ok=self._prep_ok,
-                preprocess_skipped=len(self._prep_skips),
-                preprocess_failures=list(self._prep_skips),
-                reuse=self._reuse_snapshot(),
-                drift=self._lifecycle.drift_snapshot(),
-            )
-        return result
+            return result
 
     @staticmethod
     def _incremental_change_sets(
@@ -1232,55 +1281,56 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             scope="scoped code",
             execution=execution,
         )
-        resumed_publication = self._resume_pending_finalization(
-            checkpoint,
-            reporter=reporter,
-            started_at=start,
-        )
-        if resumed_publication is not None:
-            return resumed_publication
-        publication = self._incremental_commit.supersede_and_publish(
-            IncrementalPublicationRequest(
-                hashes=changed_hashes,
-                to_index=to_index,
-                paths_to_index=paths_to_index,
-                attempted_paths=attempted_paths,
-                pipeline_run=CodePipelineRun(
-                    reporter=reporter,
-                    checkpoint=checkpoint,
-                    limits=limits,
-                    content_epoch=self._content_epoch,
-                    code_build_target=self._lifecycle.active_build_target,
-                    run_control=run_control,
-                ),
-            )
-        )
-        self._incremental_commit.commit_replacement(
-            IncrementalReplacementRequest(
-                existing_ids=publication.existing_ids,
-                published_ids=publication.published_ids,
-                prior_ids_by_path=publication.prior_ids_by_path,
-                deleted_paths=delete_files,
-                checkpoint=checkpoint,
-                files_count=len(attempted_paths),
-                protect_replacement=bool(modified_files or delete_files),
+        with checkpoint.preserve_incomplete_generation():
+            resumed_publication = self._resume_pending_finalization(
+                checkpoint,
                 reporter=reporter,
-                run_control=run_control,
+                started_at=start,
             )
-        )
-        total = self.store.count_code()
-        duration_ms = int((time.time() - start) * 1000)
-        return IndexResult(
-            total=total,
-            added=len(new_files),
-            updated=len(modified_files),
-            removed=len(delete_files.intersection(previous_metadata)),
-            duration_ms=duration_ms,
-            device=self.model.device,
-            files=len(to_index),
-            preprocess_ok=self._prep_ok,
-            preprocess_skipped=len(self._prep_skips),
-            preprocess_failures=list(self._prep_skips),
-            reuse=self._reuse_snapshot(),
-            drift=self._lifecycle.drift_snapshot(),
-        )
+            if resumed_publication is not None:
+                return resumed_publication
+            publication = self._incremental_commit.supersede_and_publish(
+                IncrementalPublicationRequest(
+                    hashes=changed_hashes,
+                    to_index=to_index,
+                    paths_to_index=paths_to_index,
+                    attempted_paths=attempted_paths,
+                    pipeline_run=CodePipelineRun(
+                        reporter=reporter,
+                        checkpoint=checkpoint,
+                        limits=limits,
+                        content_epoch=self._content_epoch,
+                        code_build_target=self._lifecycle.active_build_target,
+                        run_control=run_control,
+                    ),
+                )
+            )
+            self._incremental_commit.commit_replacement(
+                IncrementalReplacementRequest(
+                    existing_ids=publication.existing_ids,
+                    published_ids=publication.published_ids,
+                    prior_ids_by_path=publication.prior_ids_by_path,
+                    deleted_paths=delete_files,
+                    checkpoint=checkpoint,
+                    files_count=len(attempted_paths),
+                    protect_replacement=bool(modified_files or delete_files),
+                    reporter=reporter,
+                    run_control=run_control,
+                )
+            )
+            total = self.store.count_code()
+            duration_ms = int((time.time() - start) * 1000)
+            return IndexResult(
+                total=total,
+                added=len(new_files),
+                updated=len(modified_files),
+                removed=len(delete_files.intersection(previous_metadata)),
+                duration_ms=duration_ms,
+                device=self.model.device,
+                files=len(to_index),
+                preprocess_ok=self._prep_ok,
+                preprocess_skipped=len(self._prep_skips),
+                preprocess_failures=list(self._prep_skips),
+                reuse=self._reuse_snapshot(),
+                drift=self._lifecycle.drift_snapshot(),
+            )
