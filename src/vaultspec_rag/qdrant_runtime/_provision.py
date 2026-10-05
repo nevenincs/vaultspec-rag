@@ -20,10 +20,13 @@ import hashlib
 import http.client
 import logging
 import os
+import random
 import shutil
+import ssl
 import stat
 import sys
 import tarfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -41,6 +44,7 @@ from .._atomic_write import (
     replace_atomically,
     write_json_atomically,
 )
+from .._backoff import jittered_backoff
 from .._rmtree import remove_tree
 from .._sync_vocabulary import ProvisionAction
 from .._units import human_bytes
@@ -55,6 +59,7 @@ from ._constants import (
 )
 
 if TYPE_CHECKING:
+    import io
     from collections.abc import Callable, Generator, Iterable
     from http.client import HTTPMessage, HTTPResponse
 
@@ -71,7 +76,23 @@ __all__ = [
 ]
 
 _DOWNLOAD_CHUNK_BYTES = 1 << 20
+# Bounds one socket operation. A source that keeps trickling bytes never trips
+# it, which is what the whole-download limit below is for.
 _DOWNLOAD_TIMEOUT_SECONDS = 120.0
+# Bounds the whole transfer, across every attempt. Generous for a ~30 MB
+# archive on a slow link, and finite so a stalled source ends as a reported
+# failure rather than a command that never returns.
+_DOWNLOAD_DEADLINE_SECONDS = 900.0
+# A transient transport failure is tried this many times in all. A digest
+# mismatch is never among them: it is a verdict on the bytes, and asking again
+# cannot change it.
+_DOWNLOAD_ATTEMPTS = 3
+_RETRY_BASE_SECONDS = 0.5
+_RETRY_CAP_SECONDS = 4.0
+_RETRY_JITTER_FRACTION = 0.25
+# Statuses that say "not now" rather than "no": a timeout, a rate limit, or a
+# fault on the far side.
+_TRANSIENT_HTTP_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
 # The release archives are ~30 MB; cap the stream well above that so a
 # host-pinned-but-defective response cannot fill the disk before the
 # SHA256 check would reject it (defense in depth behind the host pin).
@@ -83,6 +104,14 @@ _DOWNLOAD_REPORT_BYTES = 4 << 20
 # Marks a file as one run's working copy. Nothing reads a file carrying it as
 # an install, so a run killed before it could clean up strands no executable.
 _STAGING_SUFFIX = ".staging"
+# One file for every version dir, beside them, so two runs cannot write the
+# same install at once whichever version each is after.
+_LOCK_FILENAME = "provision.lock"
+# A waiter outlasts the longest a holder can legitimately take: one whole
+# download plus its verification and extraction. A holder that dies releases
+# the lock with its process, so this is never spent waiting on a dead one.
+_LOCK_WAIT_SECONDS = _DOWNLOAD_DEADLINE_SECONDS + 60.0
+_LOCK_POLL_SECONDS = 0.2
 
 # Everything that can go wrong between creating the first staging file and the
 # manifest landing, and is an outcome to report rather than a defect to raise.
@@ -224,12 +253,33 @@ def _download_line(written: int, declared: int) -> str:
     return f"Downloading the Qdrant server: {human_bytes(written)}"
 
 
+@dataclass(frozen=True)
+class _Deadline:
+    """A whole-operation time limit, kept with its length so a breach names it."""
+
+    expires_at: float
+    seconds: float
+
+    @classmethod
+    def starting_now(cls, seconds: float) -> _Deadline:
+        return cls(time.monotonic() + seconds, seconds)
+
+    def remaining(self) -> float:
+        return self.expires_at - time.monotonic()
+
+    def breach(self) -> urllib.error.URLError:
+        return urllib.error.URLError(
+            f"The download did not finish within its {self.seconds:g} second limit"
+        )
+
+
 def _stream_capped(
-    source: IO[bytes],
+    source: io.BufferedIOBase,
     out: IO[bytes],
     *,
     declared: int,
     on_progress: Callable[[str], None],
+    deadline: _Deadline | None = None,
 ) -> int:
     """Copy *source* into *out* under the size cap, reporting as it goes.
 
@@ -237,21 +287,31 @@ def _stream_capped(
     be exercised over an ordinary binary stream rather than only over a live
     HTTPS response.
 
+    Each read takes whatever one read of the underlying stream returns
+    instead of waiting for a full chunk. A full-chunk read keeps blocking for
+    as long as bytes keep arriving, however slowly, so the deadline could not
+    be checked until a megabyte had trickled in.
+
     Args:
         source: The readable stream to drain.
         out: The staging file to write into.
         declared: The size the response claimed, or 0 when it claimed none.
         on_progress: Sink for byte-progress lines.
+        deadline: When the whole download must be over, if it is bounded.
 
     Returns:
         The number of bytes written.
 
     Raises:
-        urllib.error.URLError: When the stream exceeds the download cap.
+        urllib.error.URLError: When the stream exceeds the download cap, or
+            runs past *deadline*.
+        ConnectionError: When the stream ends short of the size it declared.
     """
     written = 0
     reported = 0
-    while chunk := source.read(_DOWNLOAD_CHUNK_BYTES):
+    while chunk := source.read1(_DOWNLOAD_CHUNK_BYTES):
+        if deadline is not None and deadline.remaining() <= 0:
+            raise deadline.breach()
         written += len(chunk)
         if written > _MAX_DOWNLOAD_BYTES:
             raise urllib.error.URLError(
@@ -262,11 +322,91 @@ def _stream_capped(
         if written - reported >= _DOWNLOAD_REPORT_BYTES:
             reported = written
             on_progress(_download_line(written, declared))
+    # A source that hangs up early ends the stream exactly as a complete body
+    # does. Named here, it is a transport failure worth another attempt; left
+    # to the digest check it would read as a replaced asset.
+    if declared and written < declared:
+        raise ConnectionError(f"The transfer ended after {written} of {declared} bytes")
     # The final tick lands on the true size, so the last thing an operator
     # reads is the transfer completing rather than stalling near the end.
     if written != reported:
         on_progress(_download_line(written, declared))
     return written
+
+
+def _is_transient(exc: Exception) -> bool:
+    """Whether another attempt at the same request could plausibly succeed.
+
+    Only the transport is ever transient. A refusal this module raised itself
+    - a source that is not HTTPS, a redirect outside the allowed hosts, a
+    stream past the size cap or the deadline - carries a message rather than
+    an underlying error, and repeating the request cannot change it. Neither
+    can a certificate that does not verify.
+    """
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code in _TRANSIENT_HTTP_STATUS
+    cause = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+    if isinstance(cause, ssl.SSLCertVerificationError):
+        return False
+    return isinstance(
+        cause,
+        (TimeoutError, ConnectionError, ssl.SSLError, http.client.HTTPException),
+    ) or (isinstance(exc, urllib.error.URLError) and isinstance(cause, OSError))
+
+
+def _transport_detail(exc: Exception) -> str:
+    """Render a transport failure without the wrapper urllib prints around it."""
+    if isinstance(exc, urllib.error.URLError) and not isinstance(
+        exc, urllib.error.HTTPError
+    ):
+        return str(exc.reason)
+    return str(exc)
+
+
+def _retry_delay(exc: Exception, attempt: int, deadline: _Deadline) -> float | None:
+    """Return how long to wait before another attempt, or ``None`` to stop."""
+    if attempt + 1 >= _DOWNLOAD_ATTEMPTS or not _is_transient(exc):
+        return None
+    delay = jittered_backoff(
+        attempt,
+        base=_RETRY_BASE_SECONDS,
+        cap=_RETRY_CAP_SECONDS,
+        fraction=_RETRY_JITTER_FRACTION,
+        random_unit=random.random(),
+    )
+    # An attempt that could not start before the deadline is not worth the
+    # wait for it.
+    return delay if delay < deadline.remaining() else None
+
+
+def _fetch_once(
+    opener: urllib.request.OpenerDirector,
+    url: str,
+    out: IO[bytes],
+    deadline: _Deadline,
+    on_progress: Callable[[str], None],
+) -> None:
+    """Make one attempt at streaming *url* into *out*, from its first byte."""
+    remaining = deadline.remaining()
+    if remaining <= 0:
+        raise deadline.breach()
+    # Nothing of an earlier attempt is kept: the transfer starts the file over.
+    out.seek(0)
+    out.truncate()
+    # ``OpenerDirector.open`` is typed ``Any`` in typeshed (it dispatches
+    # across registered handlers); an HTTPS download always resolves to an
+    # ``HTTPResponse`` at runtime.
+    with cast(
+        "HTTPResponse",
+        opener.open(url, timeout=min(_DOWNLOAD_TIMEOUT_SECONDS, remaining)),
+    ) as resp:
+        _stream_capped(
+            resp,
+            out,
+            declared=_declared_length(resp.headers),
+            on_progress=on_progress,
+            deadline=deadline,
+        )
 
 
 def download_https(
@@ -275,6 +415,7 @@ def download_https(
     *,
     redirect_hosts: frozenset[str],
     on_progress: Callable[[str], None] = _no_progress,
+    deadline_seconds: float = _DOWNLOAD_DEADLINE_SECONDS,
 ) -> None:
     """Stream *url* into the open file *out* over HTTPS with pinned redirects.
 
@@ -287,34 +428,52 @@ def download_https(
     exclusively and discards on any failure, while a build tool streams into
     a file in a directory of its own.
 
+    A transient transport failure is retried a bounded number of times, each
+    attempt starting *out* over. Every attempt shares one deadline. A read
+    that stalls outright is cut by the socket timeout, so the transfer ends
+    no later than one socket timeout after the deadline.
+
     Args:
         url: The pinned release asset to fetch.
-        out: The open binary file to stream into.
+        out: The open, seekable binary file to stream into.
         redirect_hosts: Lower-cased host names a redirect may land on. It is
             a required argument so each caller states the hosts it trusts
             rather than inheriting another caller's.
         on_progress: Sink for byte-progress lines, emitted every few
-            megabytes and once more on the final byte.
+            megabytes and once more on the final byte, and for a line per
+            retry.
+        deadline_seconds: How long the whole download may take.
 
     Raises:
         urllib.error.URLError: On connection failure, a non-HTTPS source,
-            or a redirect that leaves HTTPS or *redirect_hosts*.
+            a redirect that leaves HTTPS or *redirect_hosts*, or a transfer
+            that runs past the deadline.
+        OSError: On a transport failure that outlasted its retries.
     """
     if urllib.parse.urlparse(url).scheme != "https":
         raise urllib.error.URLError(f"Refusing non-HTTPS download URL {url!r}")
     opener = urllib.request.build_opener(_HostPinnedRedirect(redirect_hosts))
-    # ``OpenerDirector.open`` is typed ``Any`` in typeshed (it dispatches
-    # across registered handlers); an HTTPS download always resolves to an
-    # ``HTTPResponse`` at runtime.
-    with cast(
-        "HTTPResponse", opener.open(url, timeout=_DOWNLOAD_TIMEOUT_SECONDS)
-    ) as resp:
-        _stream_capped(
-            resp,
-            out,
-            declared=_declared_length(resp.headers),
-            on_progress=on_progress,
-        )
+    deadline = _Deadline.starting_now(deadline_seconds)
+    attempt = 0
+    # The loop has no bound of its own. The only way out besides success is
+    # the failure being raised, so no branch can fall through and return as
+    # if a failed final attempt had filled the file.
+    while True:
+        try:
+            _fetch_once(opener, url, out, deadline, on_progress)
+        except (OSError, http.client.HTTPException) as exc:
+            delay = _retry_delay(exc, attempt, deadline)
+            if delay is None:
+                raise
+            attempt += 1
+            logger.warning("download attempt %d of %s failed: %s", attempt, url, exc)
+            on_progress(
+                f"The download was interrupted ({_transport_detail(exc)}); "
+                f"retrying, attempt {attempt + 1} of {_DOWNLOAD_ATTEMPTS}..."
+            )
+            time.sleep(delay)
+        else:
+            return
 
 
 def _open_destination(path: Path) -> IO[bytes]:
@@ -798,26 +957,18 @@ def _register_operator_binary(
     return ProvisionReport(action=action, binary=target, sha256=digest)
 
 
-def _provision_operator_binary(
-    binary: Path,
-    version_dir: Path,
-    *,
-    dry_run: bool,
-    previously: str,
-) -> ProvisionReport:
-    """Register an operator-supplied binary into the managed dir."""
-    from ._resolve import binary_filename
+@dataclass(frozen=True)
+class _OperatorRegistration:
+    """An operator-supplied binary waiting to be copied into the managed dir."""
 
-    target = version_dir / binary_filename()
-    if dry_run:
-        return ProvisionReport(
-            action=ProvisionAction.DRY_RUN,
-            binary=target,
-            message=(
-                f"Would copy operator binary {binary} to {target} and record "
-                "an operator-sourced manifest (no checksum pin applies)."
-            ),
-        )
+    binary: Path
+    version_dir: Path
+    previously: str
+
+
+def _provision_operator_binary(registration: _OperatorRegistration) -> ProvisionReport:
+    """Register an operator-supplied binary into the managed dir."""
+    binary = registration.binary
     if not binary.is_file():
         return ProvisionReport(
             action=ProvisionAction.FAILED,
@@ -836,7 +987,9 @@ def _provision_operator_binary(
                 "Provide a regular-file path."
             ),
         )
-    return _register_operator_binary(binary, version_dir, previously)
+    return _register_operator_binary(
+        binary, registration.version_dir, registration.previously
+    )
 
 
 def _failure_message(exc: Exception) -> str:
@@ -850,6 +1003,16 @@ def _failure_message(exc: Exception) -> str:
             f"{exc.reason}. A mirror that redirects to its own storage host "
             f"needs that host listed in {EnvVar.QDRANT_DOWNLOAD_HOSTS.value}."
         )
+    if isinstance(
+        exc,
+        (
+            urllib.error.URLError,
+            http.client.HTTPException,
+            ConnectionError,
+            TimeoutError,
+        ),
+    ):
+        return f"Downloading the Qdrant server failed: {_transport_detail(exc)}"
     return str(exc)
 
 
@@ -905,6 +1068,193 @@ def _download_and_install(request: _DownloadInstallRequest) -> ProvisionReport:
     )
 
 
+@dataclass(frozen=True)
+class _ProvisionRequest:
+    """One provisioning call's arguments, and the platform it is judged for.
+
+    Attributes:
+        platform: ``sys.platform`` value to resolve the asset for; the running
+            platform when ``None``, as the resolver itself defaults.
+        machine: ``platform.machine()`` value, likewise.
+    """
+
+    version_dir: Path
+    upgrade: bool = False
+    binary: Path | None = None
+    on_progress: Callable[[str], None] = _no_progress
+    platform: str | None = None
+    machine: str | None = None
+
+
+type _Install = _OperatorRegistration | _DownloadInstallRequest
+
+
+def _plan(request: _ProvisionRequest) -> ProvisionReport | _Install:
+    """Decide what a run must do, without doing any of it.
+
+    Returns:
+        The report for a run with nothing to write - a healthy install, an
+        unverified one with no upgrade asked for, a platform with no release
+        asset - or the install the run must perform.
+    """
+    # Function-local, like the resolver: the build tools import this module in
+    # an interpreter that has no service configuration to import.
+    from ..config._settings import get_config
+    from ._resolve import UnsupportedPlatformError, asset_for_platform
+
+    existing = _existing_install(request.version_dir)
+    if request.binary is not None:
+        return _OperatorRegistration(
+            request.binary, request.version_dir, existing.state
+        )
+    source = get_config()
+    settled = _settled_report(
+        existing,
+        upgrade=request.upgrade,
+        release_base_url=source.qdrant_release_base_url,
+    )
+    if settled is not None:
+        return settled
+    try:
+        asset = asset_for_platform(request.platform, request.machine)
+    except UnsupportedPlatformError as exc:
+        # An outcome, not a crash: every caller is owed a report, and this
+        # host is never handed another architecture's build.
+        return ProvisionReport(
+            action=ProvisionAction.FAILED,
+            message=(
+                f"{exc} A binary can also be registered with "
+                "`vaultspec-rag server qdrant install --binary <path>`."
+            ),
+        )
+    return _DownloadInstallRequest(
+        url=_asset_url(source.qdrant_release_base_url, asset),
+        redirect_hosts=source.qdrant_download_hosts,
+        asset=asset,
+        archive_sha256=QDRANT_ASSET_SHA256[asset],
+        executable_sha256=QDRANT_EXECUTABLE_SHA256[asset],
+        version_dir=request.version_dir,
+        previously=existing.state,
+        on_progress=request.on_progress,
+    )
+
+
+def _preview(install: _Install) -> ProvisionReport:
+    """Say what *install* would do, touching neither the network nor the disk."""
+    from ._resolve import binary_filename
+
+    target = install.version_dir / binary_filename()
+    if isinstance(install, _OperatorRegistration):
+        return ProvisionReport(
+            action=ProvisionAction.DRY_RUN,
+            binary=target,
+            message=(
+                f"Would copy operator binary {install.binary} to {target} and "
+                "record an operator-sourced manifest (no checksum pin applies)."
+            ),
+        )
+    return ProvisionReport(
+        action=ProvisionAction.DRY_RUN,
+        asset=install.asset,
+        url=install.url,
+        binary=target,
+        sha256=install.archive_sha256,
+        message=(
+            f"Would download {install.asset} from {install.url}, verify SHA256 "
+            f"{install.archive_sha256}, and install to {install.version_dir}."
+        ),
+    )
+
+
+def _perform(install: _Install) -> ProvisionReport:
+    """Carry out *install*; called only while holding the provisioning lock."""
+    if isinstance(install, _OperatorRegistration):
+        return _provision_operator_binary(install)
+    return _download_and_install(install)
+
+
+def _sweep_abandoned_staging(version_dir: Path) -> None:
+    """Remove working files a killed run left behind.
+
+    Called only while holding the provisioning lock. Every run that creates a
+    staging file holds that lock for as long as the file exists, so one found
+    now belongs to a run that is gone.
+    """
+    if version_dir.is_dir():
+        _discard(version_dir.glob(f".*{_STAGING_SUFFIX}"))
+
+
+def _run_exclusively(
+    lock_path: Path,
+    work: Callable[[], ProvisionReport],
+    *,
+    wait_seconds: float,
+    on_progress: Callable[[str], None],
+) -> ProvisionReport:
+    """Run *work* while this process alone holds the provisioning lock.
+
+    Two starts that both find no binary would otherwise download and install
+    at once. The lock is an OS claim on a file beside the version dirs: it is
+    exclusive across processes and across threads of one process, and it is
+    released when its holder dies however it dies, so a crashed run strands
+    nothing. This is deliberately not the machine's service singleton, which
+    a running daemon holds for its whole life.
+
+    A contender waits, saying once whom it waits for, and gives up after
+    *wait_seconds* with a failed report naming the holder.
+    """
+    from .._anchor_claim import claim_anchor, record_claim_owner, release_anchor_claim
+
+    started = time.monotonic()
+    announced = False
+    while True:
+        claim = claim_anchor(lock_path, pid_record=True, create_parent=True)
+        if claim.descriptor is not None:
+            break
+        if claim.fault is not None:
+            return ProvisionReport(
+                action=ProvisionAction.FAILED,
+                message=(
+                    f"Could not take the Qdrant provisioning lock at {lock_path}: "
+                    f"{claim.fault}"
+                ),
+            )
+        holder = (
+            f"process {claim.holder_pid}" if claim.holder_pid else "another process"
+        )
+        remaining = wait_seconds - (time.monotonic() - started)
+        if remaining <= 0:
+            return ProvisionReport(
+                action=ProvisionAction.FAILED,
+                message=(
+                    f"{holder[0].upper()}{holder[1:]} was still provisioning the "
+                    f"Qdrant server after {wait_seconds:g} seconds. Wait for it "
+                    "to finish, then run the command again."
+                ),
+            )
+        if not announced:
+            announced = True
+            logger.info(
+                "process %d is waiting for %s to release %s",
+                os.getpid(),
+                holder,
+                lock_path,
+            )
+            on_progress(
+                f"Waiting for {holder} to finish provisioning the Qdrant server..."
+            )
+        time.sleep(min(_LOCK_POLL_SECONDS, remaining))
+    try:
+        # The record only lets a waiter name this process. The OS claim is
+        # what excludes, so a record that cannot be written costs a waiter
+        # the name and nothing else.
+        with contextlib.suppress(OSError):
+            record_claim_owner(claim.descriptor)
+        return work()
+    finally:
+        release_anchor_claim(claim.descriptor, pid_record=True)
+
+
 def provision(
     *,
     upgrade: bool = False,
@@ -936,52 +1286,35 @@ def provision(
     Returns:
         A :class:`ProvisionReport` in the sync vocabulary.
     """
-    # Function-local, like the resolver below: the build tools import this
-    # module in an interpreter that has no service configuration to import.
-    from ..config._settings import get_config
-    from ._resolve import asset_for_platform, qdrant_bin_dir
+    from ._resolve import qdrant_bin_dir
 
-    version_dir = qdrant_bin_dir()
-    existing = _existing_install(version_dir)
-    if binary is not None:
-        return _provision_operator_binary(
-            binary, version_dir, dry_run=dry_run, previously=existing.state
-        )
-
-    source = get_config()
-    settled = _settled_report(
-        existing, upgrade=upgrade, release_base_url=source.qdrant_release_base_url
+    request = _ProvisionRequest(
+        version_dir=qdrant_bin_dir(),
+        upgrade=upgrade,
+        binary=binary,
+        on_progress=on_progress,
     )
-    if settled is not None:
-        return settled
-
-    asset = asset_for_platform()
-    expected = QDRANT_ASSET_SHA256[asset]
-    url = _asset_url(source.qdrant_release_base_url, asset)
+    planned = _plan(request)
+    if isinstance(planned, ProvisionReport):
+        return planned
     if dry_run:
-        return ProvisionReport(
-            action=ProvisionAction.DRY_RUN,
-            asset=asset,
-            url=url,
-            binary=existing.binary,
-            sha256=expected,
-            message=(
-                f"Would download {asset} from {url}, verify SHA256 "
-                f"{expected}, and install to {version_dir}."
-            ),
-        )
+        return _preview(planned)
 
-    return _download_and_install(
-        _DownloadInstallRequest(
-            url=url,
-            redirect_hosts=source.qdrant_download_hosts,
-            asset=asset,
-            archive_sha256=expected,
-            executable_sha256=QDRANT_EXECUTABLE_SHA256[asset],
-            version_dir=version_dir,
-            previously=existing.state,
-            on_progress=on_progress,
-        )
+    def install_now() -> ProvisionReport:
+        # Another run may have finished this very install while this one
+        # waited, so what to do is decided again now that nothing else can
+        # change it.
+        current = _plan(request)
+        if isinstance(current, ProvisionReport):
+            return current
+        _sweep_abandoned_staging(request.version_dir)
+        return _perform(current)
+
+    return _run_exclusively(
+        request.version_dir.parent / _LOCK_FILENAME,
+        install_now,
+        wait_seconds=_LOCK_WAIT_SECONDS,
+        on_progress=on_progress,
     )
 
 

@@ -21,6 +21,8 @@ import os
 import stat
 import sys
 import tarfile
+import threading
+import time
 import zipfile
 from dataclasses import replace
 from http import HTTPStatus
@@ -28,16 +30,24 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from .._anchor_claim import claim_anchor, record_claim_owner, release_anchor_claim
 from .._sync_vocabulary import ProvisionAction
 from ..config._types import EnvVar
 from ..qdrant_runtime._constants import (
     MANIFEST_FILENAME,
+    MANIFEST_SOURCE_OPERATOR,
     QDRANT_ASSET_SHA256,
     QDRANT_SERVER_VERSION,
+    ProvisionReport,
 )
 from ..qdrant_runtime._provision import (
+    _LOCK_FILENAME,
     _download_and_install,
     _DownloadInstallRequest,
+    _OperatorRegistration,
+    _plan,
+    _ProvisionRequest,
+    _run_exclusively,
     extract_verified_archive,
     file_sha256,
     provision,
@@ -59,6 +69,8 @@ from .conftest import managed_env
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
     from pathlib import Path
+
+    from ._http_stubs import QuietHandler
 
 pytestmark = [pytest.mark.unit]
 
@@ -743,3 +755,283 @@ class TestInstallState:
         assert report.action == ProvisionAction.FAILED
         assert problem in report.message
         assert "--upgrade" in report.message
+
+
+def _lock_path(version_dir: Path) -> Path:
+    return version_dir.parent / _LOCK_FILENAME
+
+
+def _hold_lock(version_dir: Path) -> int:
+    """Take the provisioning lock as another run would, and name its holder."""
+    claim = claim_anchor(_lock_path(version_dir), pid_record=True, create_parent=True)
+    assert claim.descriptor is not None, claim
+    record_claim_owner(claim.descriptor)
+    return claim.descriptor
+
+
+def _installed() -> ProvisionReport:
+    return ProvisionReport(action=ProvisionAction.CREATED)
+
+
+def _silent(_line: str) -> None:
+    """Take a progress line and show it to nobody."""
+
+
+class _InFlight:
+    """Count the requests a slow source is answering at one moment."""
+
+    def __init__(self) -> None:
+        self._guard = threading.Lock()
+        self._now = 0
+        self.peak = 0
+
+    def __call__(self, handler: QuietHandler) -> None:
+        with self._guard:
+            self._now += 1
+            self.peak = max(self.peak, self._now)
+        try:
+            time.sleep(0.3)
+            send_bytes(handler, b"not the release")
+        finally:
+            with self._guard:
+                self._now -= 1
+
+
+class TestProvisioningLock:
+    """One run at a time writes an install, across processes and threads."""
+
+    def test_a_contender_waits_its_bound_then_reports_who_holds_the_lock(
+        self, version_dir: Path
+    ) -> None:
+        """A held lock ends as a failed report naming the holder.
+
+        The lock is the OS claim a second process would meet; it is taken
+        here through a second descriptor, which the claim refuses exactly as
+        it refuses another process.
+
+        Mutation: made ``_run_exclusively`` claim a different file from the
+        one it was given. Observed the action assertion fail (``created``
+        where ``failed`` was required): the work ran beside the holder.
+        Restored; passes.
+        """
+        held = _hold_lock(version_dir)
+        ran: list[str] = []
+        lines: list[str] = []
+
+        def work() -> ProvisionReport:
+            ran.append("work")
+            return _installed()
+
+        started = time.monotonic()
+        try:
+            report = _run_exclusively(
+                _lock_path(version_dir),
+                work,
+                wait_seconds=0.5,
+                on_progress=lines.append,
+            )
+        finally:
+            release_anchor_claim(held, pid_record=True)
+
+        assert report.action == ProvisionAction.FAILED
+        assert f"Process {os.getpid()} was still provisioning" in report.message
+        assert ran == []
+        assert time.monotonic() - started >= 0.5
+        assert lines == [
+            f"Waiting for process {os.getpid()} to finish provisioning the "
+            "Qdrant server..."
+        ]
+
+    def test_the_lock_is_released_by_a_finished_run_and_by_an_interrupted_one(
+        self, version_dir: Path
+    ) -> None:
+        """A run that ends, however it ends, leaves the lock free.
+
+        Mutation: removed the release in ``_run_exclusively``. Observed the
+        second run's action assertion fail (``failed`` where ``created`` was
+        required). Restored; passes.
+        """
+        lock_path = _lock_path(version_dir)
+
+        def interrupted() -> ProvisionReport:
+            raise KeyboardInterrupt
+
+        # Each run is judged before the next starts, so a lock left held is
+        # reported by the run that met it.
+        first = _run_exclusively(
+            lock_path, _installed, wait_seconds=0.0, on_progress=_silent
+        )
+        assert first.action == ProvisionAction.CREATED
+
+        second = _run_exclusively(
+            lock_path, _installed, wait_seconds=0.0, on_progress=_silent
+        )
+        assert second.action == ProvisionAction.CREATED, second.message
+
+        with pytest.raises(KeyboardInterrupt):
+            _run_exclusively(
+                lock_path, interrupted, wait_seconds=0.0, on_progress=_silent
+            )
+        third = _run_exclusively(
+            lock_path, _installed, wait_seconds=0.0, on_progress=_silent
+        )
+        assert third.action == ProvisionAction.CREATED, third.message
+
+    def test_concurrent_runs_download_one_at_a_time(
+        self, sources: LoopbackSources, version_dir: Path
+    ) -> None:
+        """Two starts that both find no binary do not install at once.
+
+        Both runs are released together against a source that holds each
+        request open, so without the lock their downloads must overlap.
+
+        Mutation: made ``provision`` run the install without taking the lock.
+        Observed the peak assertion fail (``2 == 1``). Restored; passes.
+        """
+        del version_dir
+        in_flight = _InFlight()
+        mirror = sources.serve(in_flight)
+        together = threading.Barrier(2)
+        reports: list[ProvisionReport] = []
+
+        def run() -> None:
+            together.wait(timeout=30)
+            reports.append(provision())
+
+        with managed_env(
+            **{EnvVar.QDRANT_RELEASE_BASE_URL.value: mirror.url("/mirror")}
+        ):
+            threads = [threading.Thread(target=run) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=60)
+
+        assert in_flight.peak == 1
+        assert mirror.requests == [_asset_path(), _asset_path()]
+        assert [report.action for report in reports] == [
+            ProvisionAction.FAILED,
+            ProvisionAction.FAILED,
+        ]
+
+    def test_a_run_that_waited_adopts_the_install_made_meanwhile(
+        self, sources: LoopbackSources, version_dir: Path
+    ) -> None:
+        """The second of two starts does not download what the first installed.
+
+        The run finds nothing installed and waits for the lock. While it
+        waits a healthy install appears, as another run's would; once the
+        lock is free the run must look again rather than act on what it saw
+        before.
+
+        Mutation: made the locked step of ``provision`` use the plan made
+        before the wait. Observed the action assertion fail (``failed`` where
+        ``unchanged`` was required): the run went on to download. Restored;
+        passes.
+        """
+        held = _hold_lock(version_dir)
+        waiting = threading.Event()
+        reports: list[ProvisionReport] = []
+        mirror = _mirror(sources)
+
+        def note_waiting(line: str) -> None:
+            if line.startswith("Waiting for"):
+                waiting.set()
+
+        def run() -> None:
+            reports.append(provision(on_progress=note_waiting))
+
+        with managed_env(
+            **{EnvVar.QDRANT_RELEASE_BASE_URL.value: mirror.url("/mirror")}
+        ):
+            thread = threading.Thread(target=run)
+            thread.start()
+            try:
+                assert waiting.wait(timeout=30), "the run never reported waiting"
+                _write_install(
+                    version_dir,
+                    {
+                        "version": QDRANT_SERVER_VERSION,
+                        "binary_sha256": _sha256(_STAND_IN_EXECUTABLE),
+                        "source": MANIFEST_SOURCE_OPERATOR,
+                    },
+                )
+            finally:
+                release_anchor_claim(held, pid_record=True)
+            thread.join(timeout=60)
+
+        assert [report.action for report in reports] == [ProvisionAction.UNCHANGED]
+        assert mirror.requests == []
+
+    def test_a_run_removes_working_files_a_killed_run_left(
+        self, sources: LoopbackSources, version_dir: Path
+    ) -> None:
+        version_dir.mkdir(parents=True)
+        abandoned = version_dir / f".{asset_for_platform()}.4242.0123456789ab.staging"
+        abandoned.write_bytes(b"half a download from a run that was killed")
+        mirror = _mirror(sources)
+
+        with managed_env(
+            **{EnvVar.QDRANT_RELEASE_BASE_URL.value: mirror.url("/mirror")}
+        ):
+            report = provision()
+
+        assert report.action == ProvisionAction.FAILED
+        assert list(version_dir.iterdir()) == []
+
+
+class TestUnsupportedPlatform:
+    """A host with no release asset gets a report, and keeps its other routes."""
+
+    def test_no_release_asset_is_a_failed_report_naming_the_operator_routes(
+        self, version_dir: Path
+    ) -> None:
+        """Every caller is owed a report, not an exception.
+
+        The platform is an argument of the plan, as it is of the resolver, so
+        a host this suite does not run on is judged by the shipped code.
+
+        Mutation: removed the handling of the resolver's unsupported-platform
+        error in ``_plan``. Observed that error escape the call. Restored;
+        passes.
+        """
+        planned = _plan(
+            _ProvisionRequest(
+                version_dir=version_dir, platform="win32", machine="arm64"
+            )
+        )
+
+        assert isinstance(planned, ProvisionReport)
+        assert planned.action == ProvisionAction.FAILED
+        assert EnvVar.QDRANT_BINARY.value in planned.message
+        assert "server qdrant install --binary" in planned.message
+        assert planned.asset == ""
+        assert planned.url == ""
+
+    def test_registering_a_binary_needs_no_release_asset(
+        self, version_dir: Path, tmp_path: Path
+    ) -> None:
+        planned = _plan(
+            _ProvisionRequest(
+                version_dir=version_dir,
+                binary=tmp_path / "operator-qdrant.bin",
+                platform="win32",
+                machine="arm64",
+            )
+        )
+
+        assert isinstance(planned, _OperatorRegistration)
+
+    def test_a_healthy_install_is_unchanged_where_no_release_asset_exists(
+        self, version_dir: Path, tmp_path: Path
+    ) -> None:
+        _seed_registered(version_dir, tmp_path)
+
+        planned = _plan(
+            _ProvisionRequest(
+                version_dir=version_dir, platform="win32", machine="arm64"
+            )
+        )
+
+        assert isinstance(planned, ProvisionReport)
+        assert planned.action == ProvisionAction.UNCHANGED

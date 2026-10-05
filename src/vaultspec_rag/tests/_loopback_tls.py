@@ -38,6 +38,7 @@ __all__ = [
     "StandInSource",
     "send_bytes",
     "send_redirect",
+    "send_truncated",
     "trusted_loopback_sources",
 ]
 
@@ -70,10 +71,11 @@ class _SourceHandler(QuietHandler):
 
     def handle(self) -> None:
         # A client that abandons the transfer mid-body is a case under test,
-        # not a server fault worth a traceback in the captured output.
+        # not a server fault worth a traceback in the captured output. Over
+        # TLS the abandoned write surfaces as one of several socket errors.
         try:
             super().handle()
-        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+        except OSError:
             return
 
 
@@ -141,6 +143,16 @@ def send_bytes(
     handler.send_header("Content-Length", str(len(body)))
     handler.end_headers()
     handler.wfile.write(body)
+
+
+def send_truncated(handler: QuietHandler, body: bytes, *, declared: int) -> None:
+    """Promise *declared* bytes, send only *body*, then hang up."""
+    handler.send_response(HTTPStatus.OK)
+    handler.send_header("Content-Length", str(declared))
+    handler.end_headers()
+    handler.wfile.write(body)
+    handler.wfile.flush()
+    handler.close_connection = True
 
 
 def send_redirect(handler: QuietHandler, location: str) -> None:

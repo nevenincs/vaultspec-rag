@@ -11,7 +11,10 @@ shipped ones. No test here reaches the public network.
 from __future__ import annotations
 
 import io
+import threading
+import time
 import urllib.error
+from http import HTTPStatus
 from typing import TYPE_CHECKING
 
 import pytest
@@ -30,13 +33,16 @@ from ._loopback_tls import (
     LoopbackSources,
     send_bytes,
     send_redirect,
+    send_truncated,
     trusted_loopback_sources,
 )
 from .conftest import managed_env
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Callable, Generator
     from pathlib import Path
+
+    from ._http_stubs import QuietHandler
 
 pytestmark = [pytest.mark.unit]
 
@@ -273,3 +279,177 @@ class TestDownloadHostsSetting:
         assert followed.action == ProvisionAction.FAILED
         assert "SHA256 mismatch" in followed.message
         assert not (qdrant_bin_dir() / binary_filename()).exists()
+
+
+_LONG_PAYLOAD = b"a longer stand-in body, sent in more than one write. " * 512
+
+
+class _InOrder:
+    """Answer successive requests with successive responders, then the last."""
+
+    def __init__(self, *responders: Callable[[QuietHandler], None]) -> None:
+        self._responders = responders
+        self._guard = threading.Lock()
+        self._served = 0
+
+    def __call__(self, handler: QuietHandler) -> None:
+        with self._guard:
+            index = min(self._served, len(self._responders) - 1)
+            self._served += 1
+        self._responders[index](handler)
+
+
+def _busy(handler: QuietHandler) -> None:
+    send_bytes(handler, b"try again later", status=HTTPStatus.SERVICE_UNAVAILABLE)
+
+
+def _trickle(handler: QuietHandler) -> None:
+    """Send a body one small piece at a time, three seconds end to end."""
+    pieces, piece = 60, b"\0" * 1024
+    handler.send_response(HTTPStatus.OK)
+    handler.send_header("Content-Length", str(pieces * len(piece)))
+    handler.end_headers()
+    for _ in range(pieces):
+        handler.wfile.write(piece)
+        handler.wfile.flush()
+        time.sleep(0.05)
+
+
+class TestRetry:
+    """Only a failure of the transport earns another attempt, and only a few."""
+
+    def test_transient_failures_are_retried_and_each_attempt_starts_over(
+        self, sources: LoopbackSources
+    ) -> None:
+        """A dropped transfer and a busy source are both tried again.
+
+        The first answer promises the whole body and hangs up partway, having
+        sent bytes the real body does not contain. Were an attempt to keep
+        what the one before it wrote, they would survive in the result.
+
+        Mutation: removed the rewind and truncate at the start of
+        ``_fetch_once``. Observed the content assertion fail: the result
+        began with the dropped attempt's bytes. Restored; passes.
+        """
+        dropped = b"\xff" * 4096
+        source = sources.serve(
+            _InOrder(
+                lambda handler: send_truncated(
+                    handler, dropped, declared=len(_LONG_PAYLOAD)
+                ),
+                _busy,
+                lambda handler: send_bytes(handler, _LONG_PAYLOAD),
+            )
+        )
+        out = io.BytesIO()
+        lines: list[str] = []
+
+        download_https(
+            source.url("/asset.bin"),
+            out,
+            redirect_hosts=_LOOPBACK_ALLOWED,
+            on_progress=lines.append,
+        )
+
+        assert len(source.requests) == 3
+        assert out.getvalue() == _LONG_PAYLOAD
+        # Each retry is announced, so a slow first attempt does not read as a
+        # hung command.
+        retries = [line for line in lines if "retrying" in line]
+        assert len(retries) == 2
+        assert "attempt 2 of 3" in retries[0]
+        assert "attempt 3 of 3" in retries[1]
+
+    def test_retries_stop_at_the_bound(self, sources: LoopbackSources) -> None:
+        """A source that stays busy is given up on after three attempts.
+
+        The deadline is long enough for a fourth attempt to start, so only
+        the attempt bound can be what stops at three.
+
+        Mutation: made ``_retry_delay`` ignore the attempt count. Observed the
+        request-count assertion fail (``4 == 3``). Restored; passes.
+        """
+        source = sources.serve(_busy)
+
+        with pytest.raises(urllib.error.HTTPError) as gave_up:
+            download_https(
+                source.url("/asset.bin"),
+                io.BytesIO(),
+                redirect_hosts=_LOOPBACK_ALLOWED,
+                deadline_seconds=6.0,
+            )
+
+        assert gave_up.value.code == HTTPStatus.SERVICE_UNAVAILABLE
+        assert len(source.requests) == 3
+
+    def test_a_refusal_is_not_retried(self, sources: LoopbackSources) -> None:
+        """An answer that will not change is asked for once.
+
+        Mutation: made ``_is_transient`` accept every HTTP status. Observed
+        the request-count assertion fail (``3 == 1``). Restored; passes.
+        """
+        source = sources.serve(
+            lambda handler: send_bytes(
+                handler, b"no such asset", status=HTTPStatus.NOT_FOUND
+            )
+        )
+
+        with pytest.raises(urllib.error.HTTPError):
+            download_https(
+                source.url("/asset.bin"),
+                io.BytesIO(),
+                redirect_hosts=_LOOPBACK_ALLOWED,
+            )
+
+        assert len(source.requests) == 1
+
+
+class TestDeadline:
+    """The whole download is bounded, not only each read of it."""
+
+    def test_a_trickling_source_is_cut_at_the_deadline(
+        self, sources: LoopbackSources
+    ) -> None:
+        """A source that never stalls long enough to time out is still bounded.
+
+        Every read succeeds within the socket timeout, so only the overall
+        limit can end this transfer before the source is done three seconds
+        later. Running past the limit is not a transport fault, so it is not
+        retried either.
+
+        Mutation: removed the deadline check in ``_stream_capped``. Observed
+        ``DID NOT RAISE URLError``: the transfer ran to completion. Restored;
+        passes.
+        """
+        source = sources.serve(_trickle)
+        started = time.monotonic()
+
+        with pytest.raises(
+            urllib.error.URLError,
+            match=r"did not finish within its 0\.4 second limit",
+        ):
+            download_https(
+                source.url("/asset.bin"),
+                io.BytesIO(),
+                redirect_hosts=_LOOPBACK_ALLOWED,
+                deadline_seconds=0.4,
+            )
+
+        assert time.monotonic() - started < 2.0
+        assert len(source.requests) == 1
+
+    def test_a_retry_that_cannot_start_before_the_deadline_is_not_made(
+        self, sources: LoopbackSources
+    ) -> None:
+        source = sources.serve(_busy)
+
+        with pytest.raises(urllib.error.HTTPError):
+            download_https(
+                source.url("/asset.bin"),
+                io.BytesIO(),
+                redirect_hosts=_LOOPBACK_ALLOWED,
+                # Shorter than the first wait between attempts can be.
+                deadline_seconds=0.3,
+            )
+
+        assert len(source.requests) == 1
