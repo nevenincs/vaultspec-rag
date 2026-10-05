@@ -10,7 +10,7 @@ related:
   - '[[2026-06-13-provisioning-setup-adr]]'
 modified: '2026-10-05'
 body_schema: body-v2
-body_hash: 'sha256:720fbe70fb482c7261319e3d04942e032fcf26b522c3267dfb4c80018f71131d'
+body_hash: 'sha256:436ec5dbb7f4c99e3ac2007bc90c9ef816a923af5012e52352841b1c7aae298f'
 ---
 
 # `qdrant-provisioning-trust` plan
@@ -29,17 +29,17 @@ Extended 2026-10-05. Basis: after eight Steps had closed, the user wrote that no
 
 - [x] `S01` - commit a per-asset executable digest table for the pinned release with a guard that it covers every selectable asset; `src/vaultspec_rag/qdrant_runtime/_constants.py`.
 - [x] `S02` - remove the PATH resolution tier and require the operator binary setting to name an absolute regular file; `src/vaultspec_rag/qdrant_runtime/_resolve.py`.
-- [ ] `S03` - stage the download and extraction, verify archive and executable digests, then replace atomically with the manifest written last and a prior install left intact on any failure; `src/vaultspec_rag/qdrant_runtime/_provision.py`.
-- [ ] `S04` - hash the installed executable when classifying install state so the upgrade path repairs a mismatched install; `src/vaultspec_rag/qdrant_runtime/_provision.py`.
-- [ ] `S05` - serialise provisioning across processes, bound the whole download with a deadline, guard the staging file against links, and report an unsupported platform as a failed outcome; `src/vaultspec_rag/qdrant_runtime/_provision.py`.
+- [x] `S03` - stage the download and extraction, verify archive and executable digests, then replace atomically with the manifest written last and a prior install left intact on any failure; `src/vaultspec_rag/qdrant_runtime/_provision.py`.
+- [x] `S04` - hash the installed executable when classifying install state so the upgrade path repairs a mismatched install; `src/vaultspec_rag/qdrant_runtime/_provision.py`.
+- [x] `S05` - serialise provisioning across processes, bound the whole download with a deadline, guard the staging file against links, and report an unsupported platform as a failed outcome; `src/vaultspec_rag/qdrant_runtime/_provision.py`.
 - [x] `S06` - decide the installation role before any provisioning on server start and prove that a client start, install, and warmup download nothing; `src/vaultspec_rag/cli/_service_start.py`.
 - [x] `S07` - provision the binary by default on a host server start behind the auto-provision switch and its opt-out flag, and announce an operator binary on the console; `src/vaultspec_rag/cli/_service_start.py`.
 - [x] `S08` - verify the executable through the shared native-binary verifier inside every spawn, fail closed on a missing digest, and label operator binaries on status surfaces; `src/vaultspec_rag/qdrant_runtime/_supervise.py and _resolve.py`.
 - [x] `S09` - add the auto-provision switch, release base URL, and download-host settings with official defaults and prefixed environment overrides kept out of workspace files; `src/vaultspec_rag/config/ and docs/configuration.md`.
-- [ ] `S10` - route the downloader URL and redirect host pin through the source settings and delete the superseded constants and the unused API host; `src/vaultspec_rag/qdrant_runtime/_provision.py and _constants.py`.
-- [ ] `S11` - add prefixed overrides for the model hub endpoint and the CUDA wheel index with their current values as defaults, or record the collision that prevents one; `src/vaultspec_rag/config/ and src/vaultspec_rag/torch_config/_index.py`.
+- [x] `S10` - route the downloader URL and redirect host pin through the source settings and delete the superseded constants and the unused API host; `src/vaultspec_rag/qdrant_runtime/_provision.py and _constants.py`.
+- [x] `S11` - add prefixed overrides for the model hub endpoint and the CUDA wheel index with their current values as defaults, or record the collision that prevents one; `src/vaultspec_rag/config/ and src/vaultspec_rag/torch_config/_index.py`.
 - [x] `S12` - collapse model fetching to one implementation shared by install, server warmup, and the start preflight, and ensure models through it before the daemon spawns; `src/vaultspec_rag/commands/_provision.py, cli/_service_lifecycle.py and cli/_service_start.py`.
-- [ ] `S13` - correct the daemon-provisioning prose and bring the installation, CLI, and backend guides in line with automatic host provisioning and the removed PATH tier; `src/vaultspec_rag/server/_lifespan.py and docs/`.
+- [x] `S13` - correct the daemon-provisioning prose and bring the installation, CLI, and backend guides in line with automatic host provisioning and the removed PATH tier; `src/vaultspec_rag/server/_lifespan.py and docs/`.
 - [x] `S14` - select the static musl asset for Linux x64 and verify an existing install against the committed executable digest of the asset its manifest names; `src/vaultspec_rag/qdrant_runtime/_resolve.py and _constants.py`.
 - [ ] `S15` - add the operator binary digest setting and resolve an operator binary only from the path and digest settings together, dropping the manifest-registered source; `src/vaultspec_rag/config/ and src/vaultspec_rag/qdrant_runtime/_resolve.py`.
 - [ ] `S16` - replace operator registration with an offline install from a local official archive verified against the committed archive and executable digests; `src/vaultspec_rag/qdrant_runtime/_provision.py`.

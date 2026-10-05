@@ -5,7 +5,7 @@ tags:
 date: '2026-10-05'
 modified: '2026-10-05'
 body_schema: 'body-v2'
-body_hash: 'sha256:920b41ac481ff094b353244777ea7747752d64a72187687e30d493a63d955151'
+body_hash: 'sha256:930aa8e496677e3152c807f02a7d9af7a33374e8182b353ce03e28f5521d4e09'
 related:
   - "[[2026-10-05-qdrant-provisioning-trust-plan]]"
 ---
@@ -106,6 +106,71 @@ related:
 - `S12` `verify:` `pytest unit lane over 22 covering modules` -> `pass`
 - `S12` `verify:` `dev lint python, complexity, size, nesting, docs-cli` -> `pass`
 - `S12` `by:` `vaultspec-high-executor`
+- `S03` `M` `src/vaultspec_rag/qdrant_runtime/_provision.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_qdrant_download.py`
+- `S03` `A` `src/vaultspec_rag/tests/test_qdrant_install.py`
+- `S03` `M` `tools/binaries/bun_toolchain.py`
+- `S03` `M` `tools/monitor/acquire.py`
+- `S03` `verify:` `pytest covering unit files` -> `pass`
+- `S03` `by:` `vaultspec-high-executor`
+- `S04` `M` `src/vaultspec_rag/qdrant_runtime/_provision.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_provision.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_qdrant_install.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_qdrant_runtime.py`
+- `S04` `verify:` `pytest covering unit files` -> `pass`
+- `S04` `by:` `vaultspec-high-executor`
+- `S05` `M` `src/vaultspec_rag/qdrant_runtime/_provision.py`
+- `S05` `M` `src/vaultspec_rag/tests/_loopback_tls.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_qdrant_download.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_qdrant_install.py`
+- `S05` `verify:` `pytest covering unit files` -> `pass`
+- `S05` `by:` `vaultspec-high-executor`
+- `S10` `M` `src/vaultspec_rag/qdrant_runtime/_provision.py`
+- `S10` `A` `src/vaultspec_rag/tests/_loopback_tls.py`
+- `S10` `A` `src/vaultspec_rag/tests/test_qdrant_download.py`
+- `S10` `A` `tools/binaries/release_hosts.py`
+- `S10` `M` `tools/binaries/bun_toolchain.py`
+- `S10` `M` `tools/monitor/acquire.py`
+- `S10` `M` `src/vaultspec_rag/qdrant_runtime/_constants.py`
+- `S10` `M` `tools/qdrant_pin_digests.py`
+- `S10` `M` `src/vaultspec_rag/tests/test_qdrant_runtime.py`
+- `S10` `M` `pyproject.toml`
+- `S10` `M` `uv.lock`
+- `S10` `verify:` `pytest over HEAD plus the joint-commit files` -> `pass`
+- `S10` `by:` `vaultspec-high-executor`
+- `S11` `M` `.env.example`
+- `S11` `M` `docs/configuration.md`
+- `S11` `M` `src/vaultspec_rag/cli/_app.py`
+- `S11` `M` `src/vaultspec_rag/config/_registry.py`
+- `S11` `M` `src/vaultspec_rag/config/_schema.py`
+- `S11` `M` `src/vaultspec_rag/config/_settings.py`
+- `S11` `M` `src/vaultspec_rag/config/_types.py`
+- `S11` `M` `src/vaultspec_rag/server/_main.py`
+- `S11` `A` `src/vaultspec_rag/tests/test_model_hub_endpoint.py`
+- `S11` `M` `src/vaultspec_rag/torch_config/_index.py`
+- `S11` `verify:` `pytest over the exported commit, 21 covering modules plus both tools suites` -> `pass`
+- `S11` `verify:` `ruff, ty, basedpyright on the eight python paths` -> `pass`
+- `S11` `by:` `vaultspec-high-executor`
+- `S13` `M` `CHANGELOG.md`
+- `S13` `M` `README.md`
+- `S13` `M` `dev/warm_models.py`
+- `S13` `M` `docs/architecture.md`
+- `S13` `M` `docs/backends.md`
+- `S13` `M` `docs/cli.md`
+- `S13` `M` `docs/getting-started.md`
+- `S13` `M` `docs/glossary.md`
+- `S13` `M` `docs/installation.md`
+- `S13` `M` `docs/service-mode.md`
+- `S13` `M` `src/vaultspec_rag/cli/_service_lifecycle.py`
+- `S13` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S13` `M` `src/vaultspec_rag/server/_lifecycle.py`
+- `S13` `M` `src/vaultspec_rag/server/_lifespan.py`
+- `S13` `A` `src/vaultspec_rag/tests/_loopback_model_hub.py`
+- `S13` `M` `src/vaultspec_rag/tests/test_model_fetch.py`
+- `S13` `M` `src/vaultspec_rag/tests/test_service_lifecycle_helpers.py`
+- `S13` `verify:` `dev lint docs-cli, links, docs-conventions, citations, docs-version, markdown, python` -> `pass`
+- `S13` `verify:` `pytest unit lane, 333 tests` -> `pass`
+- `S13` `by:` `vaultspec-high-executor`
 
 ## Notes
 
@@ -117,3 +182,9 @@ related:
 - `S08` Commit aeda6411. Two TestProvision cases were red only against the then-uncommitted install-state change and were removed in ab883647. Integration supervisor call sites type-check but were not executed: resident service stopped.
 - `S07` Commits e605fc13 (joint, reader half) and 544f095a (status label). The start-time console announcement of an operator-supplied binary landed with S12 in 3676b615, where the start's binary decision moved into the provisioning front door.
 - `S12` Commit 3676b615. server warmup now exits 1 when a model could not be fetched or is missing offline. The download-success branch of the model fetch had no unit coverage at this commit.
+- `S03` Commit 4aece36e.
+- `S04` Commit ab883647.
+- `S05` Commit a9d17cb8. One live Windows-asset provision exercised the retry and deadline path against the real release.
+- `S10` Commits e605fc13 (joint, downloader half), a4352938 (constants deleted, pin tool repointed), 981ba9e4 (superseded download guard tests retired), 2b4760de (cryptography declared for the loopback HTTPS tests; lock format left at revision 3).
+- `S11` Commit 3a964232. The CUDA wheel index keeps its constant: an override would be persisted in a workspace file and would break the canonical-configuration check and the lockfile-derived torch version. The commit message's wide-run sentence describes base 59d99d82, three commits earlier; the landed commit was verified separately. HTTP daemon ordering is pinned by a source-order test, not by starting the daemon.
+- `S13` Commits b2fa5e50 and 560c6c52 (loopback hub coverage of the real model download; `dev/warm_models.py` repointed at the front door). The guide still says server qdrant install --binary registers an operator binary, true at this commit and rewritten when that option is removed.
