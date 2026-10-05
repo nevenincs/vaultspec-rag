@@ -25,6 +25,7 @@ from .._sync_vocabulary import ProvisionAction
 from ..config._types import EnvVar
 from ..qdrant_runtime._constants import (
     QDRANT_ASSET_SHA256,
+    QDRANT_EXECUTABLE_SHA256,
     QDRANT_SERVER_VERSION,
 )
 from ..qdrant_runtime._provision import (
@@ -102,8 +103,29 @@ class TestAssetResolution:
 
 class TestPinTable:
     def test_every_digest_is_sha256_hex(self) -> None:
-        for asset, digest in QDRANT_ASSET_SHA256.items():
-            assert re.fullmatch(r"[0-9a-f]{64}", digest), asset
+        for table in (QDRANT_ASSET_SHA256, QDRANT_EXECUTABLE_SHA256):
+            for asset, digest in table.items():
+                assert re.fullmatch(r"[0-9a-f]{64}", digest), asset
+
+    def test_executable_pins_cover_exactly_the_archive_pins(self) -> None:
+        """Every installable asset has an executable pin, and nothing else does.
+
+        An asset pinned only as an archive would download, verify, install,
+        and then be refused at every spawn. Proven able to fail: deleting one
+        entry from the executable table fails this on the equality below.
+        """
+        assert set(QDRANT_EXECUTABLE_SHA256) == set(QDRANT_ASSET_SHA256)
+
+    def test_no_digest_is_pinned_twice(self) -> None:
+        """An archive digest pasted into the executable table is caught here.
+
+        The two tables hold digests of different files, so no value may
+        repeat within or across them. Proven able to fail: setting one
+        executable entry to its asset's archive digest fails this on the
+        count below.
+        """
+        pinned = [*QDRANT_ASSET_SHA256.values(), *QDRANT_EXECUTABLE_SHA256.values()]
+        assert len(set(pinned)) == len(pinned)
 
     def test_pin_minor_matches_locked_client_minor(self) -> None:
         """The server pin must stay on the locked qdrant-client minor line.
