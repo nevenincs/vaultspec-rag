@@ -337,6 +337,12 @@ class VaultSpecConfigWrapper:
         # read of this key at download time: the client fixes its endpoint
         # when it is imported.
         "hf_endpoint": "https://huggingface.co",
+        # The longest one model fetch may take, every repository together.
+        # A download that receives too little is stopped long before this by
+        # the progress floor; this bounds one that keeps receiving just
+        # enough. Four hours fetches the default models several times over on
+        # a 10 Mbit/s link.
+        "model_fetch_deadline_seconds": 14400.0,
         "reranker_batch_size": 32,
         # Token bound for CrossEncoder inputs. The reranker scores
         # token-bounded full candidate content; its tokenizer truncates
@@ -1272,6 +1278,7 @@ class VaultSpecConfigWrapper:
     embedding_model_revision: str | None
     reranker_model_revision: str | None
     hf_endpoint: str
+    model_fetch_deadline_seconds: float
     reranker_batch_size: int
     reranker_max_length: int
     vault_chunk_chars: int

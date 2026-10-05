@@ -1127,18 +1127,23 @@ class TestAHubWithAnUntrustedCertificate:
         assert cached_snapshot_is_complete(DENSE_REPO, revision=None, cache_dir=cache)
 
 
-#: Run ``server warmup`` as a host in a fresh interpreter and report, on the
-#: last line of stderr, whether the run imported torch. The installation role
-#: is pinned the way the in-process suites pin it - it is read from the
-#: distributions the interpreter holds, which a test cannot change - and the
-#: pin has to be applied here because it does not cross a process boundary.
+#: Run ``server warmup`` as a host that can serve, in a fresh interpreter, and
+#: report on the last line of stderr whether the run imported torch. The
+#: installation role and what the daemon's interpreter can do are pinned with
+#: the helpers the in-process suites use - both are facts about the machine,
+#: which a test cannot change - and the pins have to be applied here because
+#: they do not cross a process boundary.
 _WARMUP_AS_A_HOST = """
 import sys
 
-from vaultspec_rag.operator_state import _compute
-from vaultspec_rag.operator_state._installation import InstallRole
+import pytest
 
-_compute.installed_role = lambda: (InstallRole.HOST, True)
+from vaultspec_rag.operator_state._installation import ComputeCapability, InstallRole
+from vaultspec_rag.tests.conftest import pin_daemon_capability, pin_install_role
+
+pinned = pytest.MonkeyPatch()
+pin_install_role(pinned, InstallRole.HOST)
+pin_daemon_capability(pinned, ComputeCapability.READY)
 
 from vaultspec_rag.cli import app
 

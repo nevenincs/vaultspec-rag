@@ -389,6 +389,7 @@ ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "embedding_model_revision": EnvVar.EMBEDDING_MODEL_REVISION,
     "reranker_model_revision": EnvVar.RERANKER_MODEL_REVISION,
     "hf_endpoint": EnvVar.RAG_HF_ENDPOINT,
+    "model_fetch_deadline_seconds": EnvVar.MODEL_FETCH_DEADLINE_SECONDS,
     "reranker_batch_size": EnvVar.RERANKER_BATCH_SIZE,
     "graph_ttl_seconds": EnvVar.GRAPH_TTL_SECONDS,
     "embedding_batch_size": EnvVar.EMBEDDING_BATCH_SIZE,
@@ -621,6 +622,7 @@ SETTING_BOUNDS: dict[str, _SettingBound] = {
     "qdrant_download_hosts": _DOWNLOAD_HOSTS,
     # Model hub endpoint, held to the same shape as the binary's source.
     "hf_endpoint": _HTTPS_SOURCE_URL,
+    "model_fetch_deadline_seconds": _POSITIVE_NUMBER,
     # The digest an operator declares for a binary they supply. A value that
     # is not a digest could never match a hashed file, so it is refused here
     # instead of surfacing as a mismatch at the first spawn.

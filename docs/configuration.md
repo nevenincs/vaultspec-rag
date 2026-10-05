@@ -171,19 +171,19 @@ The tables in this section list every `VAULTSPEC_RAG_*` variable resolved throug
 
 These variables choose between the supervised Qdrant server (the default) and the on-disk store. They also configure a remote or managed server.
 
-| Variable                             | Type    | Default                                  | Controls                                                                        | CLI flag                   |
-| ------------------------------------ | ------- | ---------------------------------------- | ------------------------------------------------------------------------------- | -------------------------- |
-| `VAULTSPEC_RAG_QDRANT_SERVER`        | boolean | `1` (true)                               | Server-first default backend                                                    | `--qdrant` / `--no-qdrant` |
-| `VAULTSPEC_RAG_LOCAL_ONLY`           | boolean | `0` (false)                              | On-disk store opt-out; overrides the server default                             | `--local-only`             |
-| `VAULTSPEC_RAG_QDRANT_PORT`          | integer | `8765`                                   | Managed server HTTP port (gRPC binds one below)                                 | -                          |
-| `VAULTSPEC_RAG_QDRANT_URL`           | string  | none                                     | Remote or managed server URL; selects server mode in the store                  | -                          |
-| `VAULTSPEC_RAG_QDRANT_API_KEY`       | string  | none                                     | Server API key; a managed server uses it in place of a generated one            | -                          |
-| `VAULTSPEC_RAG_QDRANT_BINARY`        | string  | none                                     | Absolute path to a binary you supply; requires the digest below                 | -                          |
-| `VAULTSPEC_RAG_QDRANT_BINARY_SHA256` | string  | none                                     | SHA256 of that binary; required with the path                                   | -                          |
-| `VAULTSPEC_RAG_QDRANT_STORAGE_DIR`   | string  | `~/.vaultspec-rag/qdrant-server/storage` | Shared multi-root server storage                                                | -                          |
-| `VAULTSPEC_RAG_QDRANT_QUANTIZATION`  | string  | none                                     | Vector quantization (`scalar`, `turbo`, or `product`)                           | -                          |
-| `VAULTSPEC_RAG_QDRANT_READY_TIMEOUT` | float   | `300`                                    | Seconds of no startup progress the supervisor tolerates (total wait is 4x this) | -                          |
-| `VAULTSPEC_RAG_QDRANT_COLLECTION_LOAD_CONCURRENCY` | integer | `2` | Maximum collections loading concurrently during managed server startup; positive integer | - |
+| Variable                                           | Type    | Default                                  | Controls                                                                                 | CLI flag                   |
+| -------------------------------------------------- | ------- | ---------------------------------------- | ---------------------------------------------------------------------------------------- | -------------------------- |
+| `VAULTSPEC_RAG_QDRANT_SERVER`                      | boolean | `1` (true)                               | Server-first default backend                                                             | `--qdrant` / `--no-qdrant` |
+| `VAULTSPEC_RAG_LOCAL_ONLY`                         | boolean | `0` (false)                              | On-disk store opt-out; overrides the server default                                      | `--local-only`             |
+| `VAULTSPEC_RAG_QDRANT_PORT`                        | integer | `8765`                                   | Managed server HTTP port (gRPC binds one below)                                          | -                          |
+| `VAULTSPEC_RAG_QDRANT_URL`                         | string  | none                                     | Remote or managed server URL; selects server mode in the store                           | -                          |
+| `VAULTSPEC_RAG_QDRANT_API_KEY`                     | string  | none                                     | Server API key; a managed server uses it in place of a generated one                     | -                          |
+| `VAULTSPEC_RAG_QDRANT_BINARY`                      | string  | none                                     | Absolute path to a binary you supply; requires the digest below                          | -                          |
+| `VAULTSPEC_RAG_QDRANT_BINARY_SHA256`               | string  | none                                     | SHA256 of that binary; required with the path                                            | -                          |
+| `VAULTSPEC_RAG_QDRANT_STORAGE_DIR`                 | string  | `~/.vaultspec-rag/qdrant-server/storage` | Shared multi-root server storage                                                         | -                          |
+| `VAULTSPEC_RAG_QDRANT_QUANTIZATION`                | string  | none                                     | Vector quantization (`scalar`, `turbo`, or `product`)                                    | -                          |
+| `VAULTSPEC_RAG_QDRANT_READY_TIMEOUT`               | float   | `300`                                    | Seconds of no startup progress the supervisor tolerates (total wait is 4x this)          | -                          |
+| `VAULTSPEC_RAG_QDRANT_COLLECTION_LOAD_CONCURRENCY` | integer | `2`                                      | Maximum collections loading concurrently during managed server startup; positive integer | -                          |
 
 Collection load concurrency takes effect on the next managed Qdrant start. Set it
 to `1` for serial loading; higher values can increase CPU and storage pressure.
@@ -315,9 +315,10 @@ A default model's snapshot is used only when it matches those digests file for f
 
 ### Model download source
 
-| Variable                    | Type   | Default                  | Controls                                                            | CLI flag |
-| --------------------------- | ------ | ------------------------ | ------------------------------------------------------------------- | -------- |
-| `VAULTSPEC_RAG_HF_ENDPOINT` | string | `https://huggingface.co` | Model hub the dense, sparse and reranker models are downloaded from | -        |
+| Variable                                     | Type   | Default                  | Controls                                                            | CLI flag |
+| -------------------------------------------- | ------ | ------------------------ | ------------------------------------------------------------------- | -------- |
+| `VAULTSPEC_RAG_HF_ENDPOINT`                  | string | `https://huggingface.co` | Model hub the dense, sparse and reranker models are downloaded from | -        |
+| `VAULTSPEC_RAG_MODEL_FETCH_DEADLINE_SECONDS` | float  | `14400`                  | Longest one model fetch may take, every repository together         | -        |
 
 Set this to download models from a hub mirror. The value must be an `https` URL with a host. It may carry a port and a path prefix; it may not carry credentials, a query, or a fragment. A mirror must keep the hub's path layout.
 

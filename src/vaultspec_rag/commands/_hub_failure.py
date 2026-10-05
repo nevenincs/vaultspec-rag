@@ -41,6 +41,12 @@ class HubFailure(StrEnum):
     #: The caller judged the size the hub declared and would not let the
     #: download begin. Nothing was fetched.
     REFUSED = "refused"
+    #: The time allowed for the whole fetch ran out, and the download was
+    #: stopped.
+    DEADLINE = "deadline"
+    #: A file or directory of the model cache could not be used: the hub was
+    #: reachable or was never asked, and the fault is on this machine.
+    CACHE = "cache"
 
 
 def _causes(exc: BaseException) -> Iterator[BaseException]:
@@ -56,9 +62,10 @@ def _causes(exc: BaseException) -> Iterator[BaseException]:
 def classify_hub_failure(exc: BaseException) -> HubFailure:
     """Name why a hub request failed, so the remedy offered is the right one.
 
-    The hub client wraps what it catches, so the two causes it cannot name
-    itself are looked for anywhere in the chain: the operating system's own
-    out-of-space error number, and the TLS library's verification error.
+    The hub client wraps what it catches, so the causes it cannot name itself
+    are looked for anywhere in the chain: the operating system's own
+    out-of-space error number, the TLS library's verification error, and a
+    file operation that failed for any other reason.
     """
     from huggingface_hub.errors import (
         RemoteEntryNotFoundError,
@@ -71,6 +78,12 @@ def classify_hub_failure(exc: BaseException) -> HubFailure:
         return HubFailure.NO_SPACE
     if any(isinstance(link, ssl.SSLCertVerificationError) for link in chain):
         return HubFailure.UNTRUSTED_CERTIFICATE
+    # An operating-system error that names a file is a failed file operation.
+    # A failed connection carries no file, including the refusals a firewall
+    # raises under the same error numbers as a permission fault, so the name
+    # and not the number is what tells the two apart.
+    if any(isinstance(link, OSError) and link.filename is not None for link in chain):
+        return HubFailure.CACHE
     # Only what the hub itself answered "not found" for. The client also has a
     # local not-found error, raised when it could not reach the hub and had no
     # snapshot to fall back on; that one is a network failure and is left to

@@ -39,17 +39,20 @@ also makes the request that asks how large it is, because a request made in a
 child is the only kind that can always be stopped. A repository already in the
 cache costs no process and no request.
 
-Two bounds apply to a hub that misbehaves. One that goes silent is given up
+Three bounds apply to a hub that misbehaves. One that goes silent is given up
 on by the hub client itself: it abandons a request after its per-read timeout
 with no bytes, and a file after six consecutive such attempts. One that keeps
 sending too little to ever finish is stopped by the progress floor, whichever
-request it does that to.
+request it does that to. One that keeps sending just enough is stopped by the
+time allowed for the whole fetch, which is a setting, and which the wait for
+another fetch into the same cache is counted against too.
 """
 
 from __future__ import annotations
 
 import logging
 import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -74,6 +77,8 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "MODELS_BUSY",
+    "MODELS_CACHE_UNUSABLE",
+    "MODELS_DEADLINE",
     "MODELS_DOWNLOAD_DIED",
     "MODELS_FETCH_FAILED",
     "MODELS_HUB_MISSING",
@@ -103,6 +108,10 @@ MODELS_HUB_MISSING = "models_hub_missing"
 #: differs from the pinned release, a file is there that the release does not
 #: have, or the model has no safetensors weights.
 MODELS_UNVERIFIED = "models_unverified"
+#: The time allowed for the whole fetch ran out.
+MODELS_DEADLINE = "models_fetch_deadline"
+#: A file or directory of the model cache could not be used.
+MODELS_CACHE_UNUSABLE = "models_cache_unusable"
 
 #: The code each way a hub request can fail is reported under.
 _CODE_OF = {
@@ -112,6 +121,8 @@ _CODE_OF = {
     HubFailure.UNTRUSTED_CERTIFICATE: MODELS_UNTRUSTED_CERTIFICATE,
     HubFailure.STALLED: MODELS_STALLED,
     HubFailure.DIED: MODELS_DOWNLOAD_DIED,
+    HubFailure.DEADLINE: MODELS_DEADLINE,
+    HubFailure.CACHE: MODELS_CACHE_UNUSABLE,
 }
 
 _WARMUP_COMMAND = "vaultspec-rag server warmup"
@@ -174,6 +185,20 @@ class _FetchContext:
     #: either is told about the one actually in use.
     cache: Path
     endpoint: str
+    #: When the fetch began, on the monotonic clock, and how long all of it
+    #: may take. Every wait and every download is measured against the one
+    #: start, so three repositories do not each get the whole allowance.
+    started: float
+    deadline_seconds: float
+
+    @property
+    def until(self) -> float:
+        """The monotonic time by which the whole fetch must be over."""
+        return self.started + self.deadline_seconds
+
+    @property
+    def out_of_time(self) -> bool:
+        return time.monotonic() >= self.until
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,7 +260,7 @@ def fetch_models(
             MODELS_HUB_MISSING,
         )
 
-    from ..config._settings import configured_model_repos
+    from ..config._settings import configured_model_repos, get_config
 
     models = configured_model_repos()
     context = _FetchContext(
@@ -246,6 +271,8 @@ def fetch_models(
         offline=hf_cache_only(),
         cache=Path(constants.HF_HUB_CACHE),
         endpoint=constants.ENDPOINT,
+        started=time.monotonic(),
+        deadline_seconds=float(get_config().model_fetch_deadline_seconds),
     )
     repos = tuple(
         _fetch_repo(
@@ -299,8 +326,9 @@ def _without_fetching(
     """Answer for a repository that needs a fetch this run will not make.
 
     Returns:
-        The preview under a dry run, the failure when the hub is offline, and
-        ``None`` when the fetch should go ahead.
+        The preview under a dry run, the failure when the hub is offline or
+        the time allowed for the whole fetch has passed, and ``None`` when
+        the fetch should go ahead.
     """
     altered = fault.fault is SnapshotFault.MISMATCH
     if context.dry_run:
@@ -309,7 +337,7 @@ def _without_fetching(
             "would be downloaded again" if altered else "would be downloaded",
         )
     if not context.offline:
-        return None
+        return _not_reached(context, wanted) if context.out_of_time else None
     if altered:
         return wanted.result(ProvisionAction.FAILED, fault.detail, MODELS_UNVERIFIED)
     return wanted.result(
@@ -330,10 +358,24 @@ def _fetch_repo(context: _FetchContext, wanted: _Wanted) -> ModelRepoResult:
     if answered is not None:
         return answered
     stage = None if context.progress is None else context.progress.stage
-    with exclusive_fetch(context.cache, limits=context.limits, on_wait=stage) as busy:
+    with exclusive_fetch(
+        context.cache,
+        limits=context.limits,
+        on_wait=stage,
+        # One allowance for the whole fetch: a repository that waited it out
+        # leaves none for the next, which is answered at once.
+        since=context.started,
+        until=context.until,
+    ) as busy:
         if busy is not None:
-            return wanted.result(
-                ProvisionAction.FAILED, f"not fetched: {busy}", MODELS_BUSY
+            # Out of time is the reason when both hold: the wait ended
+            # because the fetch did, not because the allowance for it ran out.
+            return (
+                _not_reached(context, wanted)
+                if context.out_of_time
+                else wanted.result(
+                    ProvisionAction.FAILED, f"not fetched: {busy}", MODELS_BUSY
+                )
             )
         # Whoever held the cache may have fetched this very repository.
         looked = _look(context, wanted)
@@ -342,6 +384,16 @@ def _fetch_repo(context: _FetchContext, wanted: _Wanted) -> ModelRepoResult:
         return _download_repo(
             context, wanted, repair=looked.fault is SnapshotFault.MISMATCH
         )
+
+
+def _not_reached(context: _FetchContext, wanted: _Wanted) -> ModelRepoResult:
+    """Answer for a repository the fetch ran out of time before downloading."""
+    return wanted.result(
+        ProvisionAction.FAILED,
+        f"was not fetched: the {context.deadline_seconds:g} seconds allowed for "
+        "the whole fetch had passed",
+        MODELS_DEADLINE,
+    )
 
 
 def _download_repo(
@@ -377,6 +429,7 @@ def _download_repo(
             # Asked before the first byte, because the alternative is a
             # download of several gigabytes that fails near its end.
             admit=lambda declared: _space_shortfall(context, wanted.repo, declared),
+            until=context.until,
         ),
     )
     if outcome.failure is HubFailure.REFUSED:
@@ -409,8 +462,10 @@ def _failed(
         detail = f"was not found on the hub: {message}"
     elif failure is HubFailure.UNTRUSTED_CERTIFICATE:
         detail = f"was refused: the certificate of {context.endpoint} is not trusted"
-    elif failure in {HubFailure.STALLED, HubFailure.DIED}:
+    elif failure in {HubFailure.STALLED, HubFailure.DIED, HubFailure.DEADLINE}:
         detail = message
+    elif failure is HubFailure.CACHE:
+        detail = f"could not be stored in the model cache: {message}"
     else:
         detail = f"failed: {message}"
     return wanted.result(ProvisionAction.FAILED, detail, _CODE_OF[failure])
@@ -502,6 +557,19 @@ def _remedy(code: str, context: _FetchContext) -> str:
             "report."
         ),
         MODELS_BUSY: (f"Wait for that process to finish, {rerun}."),
+        MODELS_DEADLINE: (
+            f"One fetch is allowed {context.deadline_seconds:g} seconds in "
+            "all, waiting for another fetch included. Files that finished "
+            f"downloading are kept: run `{_WARMUP_COMMAND}` again to continue, "
+            f"or raise {EnvVar.MODEL_FETCH_DEADLINE_SECONDS.value} for a link "
+            "that needs longer."
+        ),
+        MODELS_CACHE_UNUSABLE: (
+            "The hub was not the problem: a file or directory of the model "
+            f"cache in {context.cache} could not be created, written or read. "
+            "Make it writable by the account that runs this command, or set "
+            f"{EnvVar.HF_HOME.value} to a directory that is, {rerun}."
+        ),
         MODELS_UNVERIFIED: (
             "A model that fails its check is never loaded. A file that still "
             "does not match after being downloaded again means the hub at "

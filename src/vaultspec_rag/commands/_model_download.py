@@ -339,6 +339,18 @@ def _stalled(
     return DownloadOutcome(HubFailure.STALLED, message)
 
 
+def _out_of_time(process: subprocess.Popen[str], received: int) -> DownloadOutcome:
+    """Stop a download that was still running when the whole fetch ran out of time."""
+    survivors = _kill_tree(process)
+    message = (
+        "was stopped: the time allowed for the whole fetch ran out with "
+        f"{human_bytes(received)} of it received"
+    )
+    if survivors:
+        message += f"; processes {survivors} could not be confirmed stopped"
+    return DownloadOutcome(HubFailure.DEADLINE, message)
+
+
 def _refused(process: subprocess.Popen[str], reason: str) -> DownloadOutcome:
     """Stop a child the caller would not let download, which fetched no file."""
     survivors = _kill_tree(process)
@@ -380,10 +392,14 @@ class DownloadCaller:
             ``None`` to let the download go ahead or the reason it may not.
             It must not raise: the download process is waiting on the answer.
             Omitted, every size is let through.
+        until: The monotonic time by which the fetch this download belongs
+            to must be over. A download still running then is stopped,
+            however much it is receiving. Omitted, only the floor stops one.
     """
 
     on_progress: Callable[[SnapshotCounts], None] | None = None
     admit: Callable[[int], str | None] | None = None
+    until: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -415,8 +431,10 @@ def download_snapshot(
         revision: The revision to fetch, or ``None`` for the default branch.
         force: Fetch every file again, replacing what the cache holds.
         limits: The progress floor.
-        caller: Where progress is reported and who judges the declared size;
-            omitted, nothing is reported and every size is let through.
+        caller: Where progress is reported, who judges the declared size, and
+            when the fetch this download belongs to must be over; omitted,
+            nothing is reported, every size is let through, and only the
+            floor can stop the download.
 
     Returns:
         How the download ended.
@@ -462,7 +480,11 @@ def _run(request: _Request) -> DownloadOutcome:
     unfinished = True
     try:
         outcome = _watch(process, feed, request)
-        unfinished = outcome.failure in {HubFailure.STALLED, HubFailure.DIED}
+        unfinished = outcome.failure in {
+            HubFailure.STALLED,
+            HubFailure.DIED,
+            HubFailure.DEADLINE,
+        }
         return outcome
     finally:
         if process.poll() is None:
@@ -504,8 +526,12 @@ def _watch(
         refusal = feed.refusal()
         if refusal is not None:
             return _refused(process, refusal)
-        if floor.breached(time.monotonic(), received):
+        now = time.monotonic()
+        if floor.breached(now, received):
             return _stalled(process, limits, received)
+        until = request.caller.until
+        if until is not None and now >= until:
+            return _out_of_time(process, received)
 
 
 @contextlib.contextmanager
@@ -514,6 +540,8 @@ def exclusive_fetch(
     *,
     limits: FetchLimits = DEFAULT_LIMITS,
     on_wait: Callable[[str], None] | None = None,
+    since: float | None = None,
+    until: float | None = None,
 ) -> Generator[str | None]:
     """Hold this cache's one-fetch-at-a-time claim for the block.
 
@@ -526,6 +554,17 @@ def exclusive_fetch(
     It is an operating-system claim on a file, so it is released when its
     holder ends however it ends.
 
+    Args:
+        cache: The hub cache the claim belongs to.
+        limits: How long another holder is waited for.
+        on_wait: Told once, when the wait begins, who is being waited for.
+        since: The monotonic time the wait is counted from. A fetch of
+            several repositories passes the time it began, so the wait is
+            one allowance for the whole fetch and not one per repository;
+            omitted, it is counted from this call.
+        until: A monotonic time past which the wait ends whatever is left of
+            the allowance; omitted, only the allowance ends it.
+
     Yields:
         ``None`` when the block may fetch, or a sentence saying who still
         held the cache after the wait ran out. A cache in which the claim
@@ -535,7 +574,7 @@ def exclusive_fetch(
     from .._anchor_claim import claim_anchor, record_claim_owner, release_anchor_claim
 
     lock_path = cache / _LOCK_NAME
-    started = time.monotonic()
+    started = time.monotonic() if since is None else since
     announced = False
     while True:
         claim = claim_anchor(lock_path, pid_record=True, create_parent=True)
@@ -544,11 +583,14 @@ def exclusive_fetch(
         holder = (
             f"process {claim.holder_pid}" if claim.holder_pid else "another process"
         )
-        remaining = limits.contention_seconds - (time.monotonic() - started)
+        now = time.monotonic()
+        remaining = limits.contention_seconds - (now - started)
+        if until is not None:
+            remaining = min(remaining, until - now)
         if remaining <= 0:
             yield (
                 f"{holder} was still downloading models into {cache} after "
-                f"{limits.contention_seconds:g} seconds"
+                f"{now - started:.0f} seconds"
             )
             return
         if not announced:

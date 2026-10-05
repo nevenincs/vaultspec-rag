@@ -120,6 +120,8 @@ class EnvVar(StrEnum):
     # client's own ``HF_ENDPOINT`` before that client is first imported,
     # because the client reads its endpoint once, at import.
     RAG_HF_ENDPOINT = "VAULTSPEC_RAG_HF_ENDPOINT"
+    # The longest one model fetch may take, every repository together.
+    MODEL_FETCH_DEADLINE_SECONDS = "VAULTSPEC_RAG_MODEL_FETCH_DEADLINE_SECONDS"
     TYPESAFE_API_KEY = "VAULTSPEC_RAG_TYPESAFE_API_KEY"
     EMBEDDING_BATCH_SIZE = "VAULTSPEC_RAG_EMBEDDING_BATCH_SIZE"
     EMBEDDING_ENCODE_BATCH_SIZE = "VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE"
