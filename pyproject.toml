@@ -128,6 +128,11 @@ dev = [
   # ours stands between the test and the listener. It arrives with the qdrant
   # client today; declared here so that test does not depend on that.
   "grpcio>=1.60",
+  # The binary download refuses any source that is not HTTPS and verifies its
+  # certificate, so the tests that drive it against a loopback stand-in mint a
+  # throwaway certificate for that address. It arrives with the MCP SDK's
+  # token support today; declared here so those tests do not depend on that.
+  "cryptography>=42",
   # Module length and the class-shape design limits ruff has no rule for
   # (C0302, R0902, R0904, R0916). Everything else pylint would report is
   # already covered by ruff and stays disabled.
