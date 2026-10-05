@@ -310,13 +310,19 @@ def test_the_entry_runner_started_the_old_way_is_replaced_by_the_project(
 # Run as a script, which is how the command line itself is started: the
 # script's directory is on the import path and the working directory is not,
 # so the parent is not what imports the plant. Absolute imports because a
-# script has no package to resolve a relative one against.
+# script has no package to resolve a relative one against. The driver puts
+# the package under test on its own import path rather than being handed it
+# through the environment: a parent started to ignore its environment would
+# not read that, and would then exercise whatever copy of the package happens
+# to be installed instead of this one.
 _POOL_DRIVER = """\
 import json
 import multiprocessing
 import os
 import sys
 from concurrent.futures import ProcessPoolExecutor
+
+sys.path.insert(0, sys.argv[2])
 
 from vaultspec_rag.indexer._pool_guard import spawn_pool  # absolute-import-ok
 
@@ -368,12 +374,12 @@ def _run_pool_driver(
     checkout = _checkout(tmp_path, f"checkout-{mode}")
     ran = _plant_module(checkout, "multiprocessing")
     source_root = Path(_pool_guard.__file__).resolve().parents[2]
-    extra = {"PYTHONPATH": str(source_root)}
-    if initial is not None:
-        extra["PYTHONSAFEPATH"] = initial
+    extra = {} if initial is None else {"PYTHONSAFEPATH": initial}
 
     proc = _run_in(
-        checkout, [sys.executable, *interpreter_flags, str(driver), mode], **extra
+        checkout,
+        [sys.executable, *interpreter_flags, str(driver), mode, str(source_root)],
+        **extra,
     )
 
     assert proc.returncode == 0, proc.stderr
