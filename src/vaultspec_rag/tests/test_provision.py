@@ -241,6 +241,7 @@ class TestOutcomeModel:
         assert step["sync_pending"] is True
 
 
+@pytest.mark.usefixtures("inference_host")
 class TestModelStep:
     def test_skip_set_opts_out_with_reason(self) -> None:
         result = provision_models(skip={"models"})
@@ -346,6 +347,7 @@ class TestTorchStep:
         assert torch.action == ProvisionAction.SKIPPED
 
 
+@pytest.mark.usefixtures("inference_host")
 class TestQdrantStep:
     def test_local_only_skips_qdrant_with_reason(
         self, isolated_status_dir: Path, consumer_workspace: Path
@@ -408,6 +410,7 @@ class TestQdrantStep:
         assert not (isolated_status_dir / "bin").exists()
 
 
+@pytest.mark.usefixtures("inference_host")
 class TestFrontDoorComposition:
     def test_every_considered_dependency_appears_in_the_outcome(
         self, isolated_status_dir: Path, consumer_workspace: Path
