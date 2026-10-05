@@ -5,7 +5,7 @@ tags:
 date: '2026-10-05'
 modified: '2026-10-05'
 body_schema: 'body-v2'
-body_hash: 'sha256:930aa8e496677e3152c807f02a7d9af7a33374e8182b353ce03e28f5521d4e09'
+body_hash: 'sha256:ee25eb4c0bd2c01c09ae444147a3c5c60c9843ba42b774da8a9b7e46fc971073'
 related:
   - "[[2026-10-05-qdrant-provisioning-trust-plan]]"
 ---
@@ -171,6 +171,61 @@ related:
 - `S13` `verify:` `dev lint docs-cli, links, docs-conventions, citations, docs-version, markdown, python` -> `pass`
 - `S13` `verify:` `pytest unit lane, 333 tests` -> `pass`
 - `S13` `by:` `vaultspec-high-executor`
+- `S20` `M` `src/vaultspec_rag/tests/test_document_index_symlinks.py`
+- `S20` `M` `src/vaultspec_rag/tests/test_monitor_inventory.py`
+- `S20` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S20` `verify:` `dev lint python, type, type-strict at commit time` -> `pass`
+- `S20` `verify:` `pytest test_document_index_symlinks.py test_substitution_discipline.py` -> `pass`
+- `S20` `by:` `vaultspec-high-executor`
+- `S18` `M` `conftest.py`
+- `S18` `M` `src/vaultspec_rag/_readiness.py`
+- `S18` `M` `src/vaultspec_rag/_win32.py`
+- `S18` `M` `src/vaultspec_rag/cli/_service_qdrant.py`
+- `S18` `M` `src/vaultspec_rag/commands/_provision.py`
+- `S18` `A` `src/vaultspec_rag/qdrant_runtime/_executable_hold.py`
+- `S18` `M` `src/vaultspec_rag/qdrant_runtime/_resolve.py`
+- `S18` `A` `src/vaultspec_rag/qdrant_runtime/_spawn_trust.py`
+- `S18` `M` `src/vaultspec_rag/qdrant_runtime/_supervise.py`
+- `S18` `A` `src/vaultspec_rag/tests/test_qdrant_executable_hold.py`
+- `S18` `M` `src/vaultspec_rag/tests/test_qdrant_spawn_trust.py`
+- `S18` `M` `src/vaultspec_rag/tests/test_readiness.py`
+- `S18` `verify:` `pytest 371 covering unit tests in an export of the parent plus the 12 commit paths` -> `pass`
+- `S18` `verify:` `ruff, ty, basedpyright on the 12 paths` -> `pass`
+- `S18` `by:` `vaultspec-high-executor`
+- `S21` `A` `src/vaultspec_rag/qdrant_runtime/_download.py`
+- `S21` `M` `src/vaultspec_rag/qdrant_runtime/_provision.py`
+- `S21` `M` `src/vaultspec_rag/tests/_loopback_tls.py`
+- `S21` `M` `src/vaultspec_rag/tests/_qdrant_provision_seam.py`
+- `S21` `A` `src/vaultspec_rag/tests/_stand_in_release.py`
+- `S21` `M` `src/vaultspec_rag/tests/test_cli_progress_surfaces.py`
+- `S21` `M` `src/vaultspec_rag/tests/test_process_probe_os_guards.py`
+- `S21` `M` `src/vaultspec_rag/tests/test_qdrant_download.py`
+- `S21` `A` `src/vaultspec_rag/tests/test_qdrant_download_faults.py`
+- `S21` `M` `src/vaultspec_rag/tests/test_qdrant_install.py`
+- `S21` `M` `tools/binaries/bun_toolchain.py`
+- `S21` `M` `tools/monitor/acquire.py`
+- `S21` `M` `tools/qdrant_pin_digests.py`
+- `S21` `verify:` `pytest table-driven network and disk conditions for the binary downloader` -> `pass`
+- `S21` `by:` `vaultspec-high-executor`
+- `S18` `A` `src/vaultspec_rag/tests/integration/test_qdrant_descriptor_child_witnesses.py`
+- `S18` `verify:` `two witness tests called directly in WSL against the real binary` -> `pass`
+- `S21` `D` `src/vaultspec_rag/cli/_hf_progress.py`
+- `S21` `M` `src/vaultspec_rag/cli/_install.py`
+- `S21` `M` `src/vaultspec_rag/cli/_provision_progress.py`
+- `S21` `M` `src/vaultspec_rag/cli/_service_lifecycle.py`
+- `S21` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S21` `A` `src/vaultspec_rag/commands/_hub_failure.py`
+- `S21` `A` `src/vaultspec_rag/commands/_model_download.py`
+- `S21` `A` `src/vaultspec_rag/commands/_model_download_child.py`
+- `S21` `M` `src/vaultspec_rag/commands/_model_fetch.py`
+- `S21` `M` `src/vaultspec_rag/commands/_provision.py`
+- `S21` `A` `src/vaultspec_rag/commands/_snapshot_progress.py`
+- `S21` `M` `src/vaultspec_rag/tests/_loopback_model_hub.py`
+- `S21` `M` `src/vaultspec_rag/tests/test_cli_progress_lifetime.py`
+- `S21` `M` `src/vaultspec_rag/tests/test_client_provisions_nothing.py`
+- `S21` `M` `src/vaultspec_rag/tests/test_model_fetch.py`
+- `S21` `verify:` `pytest unit lane over 17 covering modules against da9944f1 plus the commit paths` -> `pass`
+- `S21` `verify:` `dev lint python, complexity, size, nesting, docs-cli; ruff format, ty, basedpyright` -> `pass`
 
 ## Notes
 
@@ -188,3 +243,8 @@ related:
 - `S10` Commits e605fc13 (joint, downloader half), a4352938 (constants deleted, pin tool repointed), 981ba9e4 (superseded download guard tests retired), 2b4760de (cryptography declared for the loopback HTTPS tests; lock format left at revision 3).
 - `S11` Commit 3a964232. The CUDA wheel index keeps its constant: an override would be persisted in a workspace file and would break the canonical-configuration check and the lockfile-derived torch version. The commit message's wide-run sentence describes base 59d99d82, three commits earlier; the landed commit was verified separately. HTTP daemon ordering is pinned by a source-order test, not by starting the daemon.
 - `S13` Commits b2fa5e50 and 560c6c52 (loopback hub coverage of the real model download; `dev/warm_models.py` repointed at the front door). The guide still says server qdrant install --binary registers an operator binary, true at this commit and rewritten when that option is removed.
+- `S20` Commits a44ebf9d and 3d50a180. One declared substitution remains in `test_document_index_symlinks.py:` the device forward on a model built without weights, because the unit tier has no accelerator. The 31 monitor cases could not be re-confirmed after commit because a peer's in-progress move left the CLI unimportable.
+- `S18` Commit 9cf219fa. Live proof in isolated temp dirs on Windows and WSL Linux: pinned archive provisioned from the official host, real 1.19.0 binary started through the supervisor, restarted, stopped. The branch for platforms with no descriptor execution (macOS, BSD, Linux without proc) has not been run on any host; it cannot see a swap-and-swap-back. On Linux a descriptor-created process has the descriptor number as its kernel short name. One load flake seen once in three drain-timing tests, not reproduced in two isolated reruns.
+- `S21` Commit da9944f1, binary half only; the model half is not yet committed. In the suite the mid-write disk failure is simulated with a constructed ENOSPC on a real staging file; outside the suite the install was run on a real 4 MiB tmpfs under WSL with the kernel's own ENOSPC. The commit message says Python 3.14 for the Linux run; it was 3.13.14. The after-body deadline-cut test has no failing run on Windows or Linux.
+- `S18` Commit d42cdcbe. The integration pytest entry needs a GPU loan WSL cannot have, so the two test functions were called directly with the arguments their fixtures supply; they have not run through pytest on any host.
+- `S21` Commit fb3d1962, model half. Each repository downloads in a child interpreter; the parent enforces a progress floor and kills the process tree on a breach. The native xet transport is not exercised in the unit tier; what is proven is the process kill. Out-of-space is staged by the hub declaring a size above the volume's real free space; a volume filling mid-transfer is covered only at the classification seam. No transfer against the real hub was run. The kill-descendants, kill, wait, confirm composition now exists twice, here and in the indexer's preprocess runner.

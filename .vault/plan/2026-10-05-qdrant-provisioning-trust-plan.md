@@ -10,7 +10,7 @@ related:
   - '[[2026-06-13-provisioning-setup-adr]]'
 modified: '2026-10-05'
 body_schema: body-v2
-body_hash: 'sha256:436ec5dbb7f4c99e3ac2007bc90c9ef816a923af5012e52352841b1c7aae298f'
+body_hash: 'sha256:202819fb82bc53b9ed3e7a4925c2a83fd9923abff2605df6860bedf76ec982e8'
 ---
 
 # `qdrant-provisioning-trust` plan
@@ -44,11 +44,13 @@ Extended 2026-10-05. Basis: after eight Steps had closed, the user wrote that no
 - [ ] `S15` - add the operator binary digest setting and resolve an operator binary only from the path and digest settings together, dropping the manifest-registered source; `src/vaultspec_rag/config/ and src/vaultspec_rag/qdrant_runtime/_resolve.py`.
 - [ ] `S16` - replace operator registration with an offline install from a local official archive verified against the committed archive and executable digests; `src/vaultspec_rag/qdrant_runtime/_provision.py`.
 - [ ] `S17` - replace the install verb's binary option with a local archive option and report an operator-claiming manifest as invalid with the two supported routes; `src/vaultspec_rag/cli/_service_qdrant.py and docs/`.
-- [ ] `S18` - pass the verified path as the executable, hold the file against replacement between hashing and process creation where the platform allows, hash the managed install in readiness, and extract spawn trust out of the supervisor module; `src/vaultspec_rag/qdrant_runtime/ and src/vaultspec_rag/_readiness.py`.
+- [x] `S18` - pass the verified path as the executable, hold the file against replacement between hashing and process creation where the platform allows, hash the managed install in readiness, and extract spawn trust out of the supervisor module; `src/vaultspec_rag/qdrant_runtime/ and src/vaultspec_rag/_readiness.py`.
 - [ ] `S19` - commit revisions for the default dense and reranker models with prefixed revision settings, used by every fetch and load, and report an unpinned operator model on status; `src/vaultspec_rag/config/, _sparse_profile.py, _model_cache.py and the model load and fetch sites`.
-- [ ] `S20` - restore the two gates that are red on this branch: the monitor test typing and the undeclared substitution site; `src/vaultspec_rag/tests/test_monitor_inventory.py, test_monitor_browser.py, test_document_index_symlinks.py and test_substitution_discipline.py`.
-- [ ] `S21` - refuse a download that cannot fit with a free-space preflight, and test the binary downloader and the model fetch against stalled, slow, reset, truncated, refused, and untrusted connections and against exhausted disk space, each ending in a failed outcome that leaves a prior install intact; `src/vaultspec_rag/qdrant_runtime/_provision.py, commands/_model_fetch.py and their tests`.
+- [x] `S20` - restore the two gates that are red on this branch: the monitor test typing and the undeclared substitution site; `src/vaultspec_rag/tests/test_monitor_inventory.py, test_monitor_browser.py, test_document_index_symlinks.py and test_substitution_discipline.py`.
+- [x] `S21` - refuse a download that cannot fit with a free-space preflight, and test the binary downloader and the model fetch against stalled, slow, reset, truncated, refused, and untrusted connections and against exhausted disk space, each ending in a failed outcome that leaves a prior install intact; `src/vaultspec_rag/qdrant_runtime/_provision.py, commands/_model_fetch.py and their tests`.
 - [ ] `S22` - describe the provisioning process end to end in the guides and make every provisioning command's help state what it fetches, from where, how it is verified, how it is overridden, and how it fails; `docs/, README.md and the provisioning command help text under src/vaultspec_rag/cli/`.
+- [ ] `S23` - commit a per-file digest manifest for each default model at its pinned revision, verify the snapshot against it after fetch and before every load including the remote-code files that are actually imported, and load weights from safetensors only; `src/vaultspec_rag/_model_cache.py, _sparse_profile.py, _sparse_encoder.py, embeddings.py and the model fetch engine`.
+- [ ] `S24` - collapse the two kill-descendants, kill, wait, and confirm compositions around a child process into one shared teardown; `src/vaultspec_rag/commands/_model_download.py, indexer/_preprocess_runner.py and _process_probe.py`.
 
 ## Parallelization
 

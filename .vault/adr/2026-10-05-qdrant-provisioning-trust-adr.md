@@ -5,7 +5,7 @@ tags:
 date: '2026-10-05'
 modified: '2026-10-05'
 body_schema: 'body-v2'
-body_hash: 'sha256:3b514378f30bc445da5e8f877d8d5579902433e2a22031a95731108c6e8a7d85'
+body_hash: 'sha256:f2c2e8f338e16b82f5fdefcfd72d7fe610d36cd8cf09b8e0f41df5a779444f1f'
 related:
   - "[[2026-10-05-qdrant-provisioning-trust-audit]]"
   - "[[2026-06-12-qdrant-server-provisioning-adr]]"
@@ -131,6 +131,14 @@ A host installation that has never provisioned the managed Qdrant server cannot 
 - Default model revisions are committed constants, overridable by prefixed settings; a model named by the operator without a revision is fetched at the revision the operator's setting names or is reported as unpinned on every status surface.
 
 - This overrides the earlier constraint in this record that a registered operator binary is verified against the digest recorded at registration.
+
+- Refinement of D7, added during execution. A model revision is a name the hub resolves, and since the hub endpoint became a setting that hub may be a mirror, so a revision alone pins nothing locally. Each default model therefore carries a committed per-file SHA256 manifest for its pinned revision. The snapshot is checked against it after a fetch and before every load, fails closed on a missing, extra, or mismatched file, and the bytes that are checked are the bytes that are loaded or imported.
+
+- The sparse default model executes code shipped in its repository. That code is covered by the manifest, and the sparse model has no revision setting: a revision the environment could change would select code with no committed digest.
+
+- Weights are loaded from the safetensors format only, for every model. A model that ships only pickle weights is refused with that reason.
+
+- A model the operator names that is not a default has no manifest; it is fetched at the revision the operator gives, loaded without remote code, and reported as unverified on status and readiness.
 
 ## Implementation
 
