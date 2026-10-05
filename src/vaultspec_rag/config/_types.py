@@ -269,6 +269,10 @@ class EnvVar(StrEnum):
     UV_CACHE_DIR = "UV_CACHE_DIR"
     UV_TOOL_DIR = "UV_TOOL_DIR"
     VIRTUAL_ENV = "VIRTUAL_ENV"
+    # The interpreter's safe-path switch. Never read as configuration: it is
+    # set on this process only while an indexing worker pool is open, because
+    # the environment is the one thing that reaches a pool worker's start.
+    PYTHON_SAFE_PATH = "PYTHONSAFEPATH"
     # The operating system's temporary-directory conventions, read to decide
     # whether an indexed root was throwaway.
     TEMP = "TEMP"

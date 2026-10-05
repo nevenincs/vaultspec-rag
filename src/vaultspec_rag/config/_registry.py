@@ -75,6 +75,7 @@ _EXTERNAL: Final = frozenset(
         EnvVar.UV_CACHE_DIR,
         EnvVar.UV_TOOL_DIR,
         EnvVar.VIRTUAL_ENV,
+        EnvVar.PYTHON_SAFE_PATH,
         EnvVar.TEMP,
         EnvVar.TMP,
         EnvVar.TMPDIR,
@@ -238,6 +239,13 @@ _DESCRIPTIONS: Final[Mapping[EnvVar, str]] = {
     EnvVar.VIRTUAL_ENV: (
         "The active virtual environment, set by the tool that activated it. "
         "Read to report which environment a command is running from."
+    ),
+    EnvVar.PYTHON_SAFE_PATH: (
+        "The Python interpreter's safe-path switch, which keeps the working "
+        "directory off a process's import path. Set by this package in its "
+        "own environment while an indexing worker pool is open, so a pool "
+        "worker does not import from the directory the command was run in, "
+        "and put back as it was when the pool closes."
     ),
     EnvVar.HF_DEACTIVATE_ASYNC_LOAD: (
         "Transformers switch turning off the parallel weight-materialising "
