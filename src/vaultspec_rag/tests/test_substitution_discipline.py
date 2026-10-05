@@ -280,6 +280,18 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "never provision from, where the substitute is a tripwire that also "
         "keeps a regressed run from downloading or going on to spawn a daemon",
     ),
+    # Reducing this bound to zero failed count growth; raising it to two failed
+    # the declared-sites check; exact restoration passed.
+    "test_program_lookup_sites.py": (
+        1,
+        "points the running program's recorded location at a temporary "
+        "directory, because the lookup finds what ships beside this "
+        "installation's own programs by asking where the running program is, "
+        "and that cannot be anywhere but the real environment without building "
+        "a second installation; planting a monitor in the real one would "
+        "change the machine the tests run on. The lookup, the planted file, "
+        "the search path and the resolution under test are all real",
+    ),
     "test_publication_scaling.py": (
         1,
         "observation, not substitution: the replacement opens the real ledger "
@@ -603,7 +615,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "never runs",
     ),
     "test_tool_torch_repair.py": (
-        28,
+        27,
         "the persistent uv tool interpreter and machine singleton cannot be "
         "safely forced through a CUDA repair during a test: that would install "
         "packages into the developer's own tool environment, which is how a "

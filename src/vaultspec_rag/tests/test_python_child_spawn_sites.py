@@ -19,6 +19,15 @@ a site out:
   to spell one of them, so it fails here whatever the interpreter was called;
 * the running interpreter is never placed in a command by hand.
 
+A program that is not Python has the same exposure by another route. A bare
+program name is looked for in the working directory first on a stock Windows
+machine, by process creation and by the standard library's lookup alike. So
+every such program is found by :mod:`vaultspec_rag._program_lookup` and run
+by the absolute path it returns, and two more scans hold that: the standard
+lookup is used nowhere, and no process-creating call is handed a command
+that leads with a program's name. Each listed native site is tied to the
+lookup that finds its program.
+
 The scans read the syntax tree rather than the text, so prose that mentions a
 command line does not trip them and a command split across lines does not
 slip past.
@@ -153,7 +162,7 @@ _SITES: dict[str, _Site] = {
     "qdrant_runtime/_resolve.py::_reap_on_windows": _Site(
         _Starts.NATIVE,
         {"subprocess.run": 1},
-        "taskkill, with a fixed argument list",
+        "taskkill, from the system directory, with a fixed argument list",
     ),
     "qdrant_runtime/_spawn_trust.py::spawn_verified": _Site(
         _Starts.NATIVE,
@@ -187,6 +196,59 @@ _BUILT_BY: dict[str, tuple[str, str]] = {
         "script_command",
     ),
 }
+
+#: How the program each native site runs is found: the function that looks it
+#: up, and the name it looks up. A site handed its program by a caller names
+#: the caller.
+_FOUND_BY: dict[str, tuple[str, str]] = {
+    "_process_probe.py::_windows_image_matches": (
+        "_process_probe.py::_windows_image_matches",
+        "tasklist",
+    ),
+    "commands/_mcp_topology.py::_restore_junction": (
+        "commands/_mcp_topology.py::_restore_junction",
+        "powershell.exe",
+    ),
+    "commands/_tool_torch.py::_run_uv": (
+        "commands/_tool_torch.py::_run_repair",
+        "uv",
+    ),
+    "commands/_tool_torch.py::_target_mismatch": (
+        "commands/_tool_torch.py::_run_repair",
+        "uv",
+    ),
+    "commands/_uv_sync.py::_run_uv_sync_torch": (
+        "commands/_uv_sync.py::_run_uv_sync_torch",
+        "uv",
+    ),
+    "monitor_process.py::MonitorProcess.start": (
+        "monitor_process.py::_resolve_monitor_executable",
+        "vaultspec-rag-monitor",
+    ),
+    "operator_state/_hardware.py::query_hardware": (
+        "operator_state/_hardware.py::read_hardware",
+        "nvidia-smi",
+    ),
+    "qdrant_runtime/_resolve.py::_reap_on_windows": (
+        "qdrant_runtime/_resolve.py::_reap_on_windows",
+        "taskkill",
+    ),
+}
+
+#: Native sites whose program is never looked up by name.
+_NOT_LOOKED_UP: dict[str, str] = {
+    "qdrant_runtime/_spawn_trust.py::spawn_verified": (
+        "an absolute path the resolver refuses unless it is one, checked "
+        "against its pinned digest before and as the process is created"
+    ),
+}
+
+#: The functions that start the resident service. Each must give it a working
+#: directory of its own rather than leave it in the one the start was typed in.
+_SERVICE_SPAWNS = (
+    "cli/_process.py::_spawn_service_request",
+    "cli/_process.py::_spawn_windows",
+)
 
 #: Where the interpreter's mode switches may be spelt, and how many times.
 #: The builder writes them; the launch recogniser reads them back off another
@@ -249,10 +311,67 @@ class _Scan(ast.NodeVisitor):
         self.mode_switches: Counter[str] = Counter()
         self.hand_built: list[str] = []
         self.shells: list[int] = []
+        self.standard_lookups: list[str] = []
+        self.bare_names: set[str] = set()
+        self.lookups: Counter[tuple[str, str]] = Counter()
+        self.given_a_directory: dict[str, list[bool]] = {}
+        self._led_by_a_name: set[tuple[str, str]] = set()
 
     @property
     def _where(self) -> str:
         return ".".join(self.scope) or "<module>"
+
+    def _origin(self, node: ast.AST) -> tuple[str, str] | None:
+        """Return the module and name *node* refers to, when it names one."""
+        if isinstance(node, ast.Name):
+            return self.names.get(node.id)
+        if isinstance(node, ast.Attribute):
+            owner = self._dotted(node.value)
+            module = None if owner is None else self.modules.get(owner.split(".")[0])
+            if owner is not None and module is not None:
+                return ".".join([module, *owner.split(".")[1:]]), node.attr
+        return None
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        target = node.targets[0]
+        if (
+            len(node.targets) == 1
+            and isinstance(target, ast.Name)
+            and self._leads_with_a_name(node.value)
+        ):
+            self._led_by_a_name.add((self._where, target.id))
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        origin = self._origin(node.func)
+        if origin is not None and _creates_a_process(*origin):
+            has_directory = any(keyword.arg == "cwd" for keyword in node.keywords)
+            self.given_a_directory.setdefault(self._where, []).append(has_directory)
+            command = node.args[0] if node.args else None
+            if command is not None and (
+                self._leads_with_a_name(command)
+                or (
+                    isinstance(command, ast.Name)
+                    and (self._where, command.id) in self._led_by_a_name
+                )
+            ):
+                self.bare_names.add(self._where)
+        if (
+            origin is not None
+            and origin[0].endswith("_program_lookup")
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+        ):
+            self.lookups[self._where, str(node.args[0].value)] += 1
+        self.generic_visit(node)
+
+    @staticmethod
+    def _leads_with_a_name(node: ast.AST) -> bool:
+        """Whether *node* is a command written out with its program named."""
+        if not isinstance(node, ast.List | ast.Tuple) or not node.elts:
+            return False
+        first = node.elts[0]
+        return isinstance(first, ast.Constant) and isinstance(first.value, str)
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
@@ -301,17 +420,14 @@ class _Scan(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
-        owner = self._dotted(node.value)
-        if owner is not None:
-            module = self.modules.get(owner.split(".")[0])
-            if module is not None:
-                qualified = ".".join([module, *owner.split(".")[1:]])
-                if _creates_a_process(qualified, node.attr):
-                    self.creating[self._where, f"{qualified}.{node.attr}"] += 1
+        self._note_reference(node)
         self.generic_visit(node)
 
     def visit_Name(self, node: ast.Name) -> None:
-        origin = self.names.get(node.id)
+        self._note_reference(node)
+
+    def _note_reference(self, node: ast.Name | ast.Attribute) -> None:
+        origin = self._origin(node)
         if origin is None:
             return
         module, name = origin
@@ -319,6 +435,8 @@ class _Scan(ast.NodeVisitor):
             self.creating[self._where, f"{module}.{name}"] += 1
         if module.endswith("_python_child"):
             self.builder_calls[self._where, name] += 1
+        if (module, name) == ("shutil", "which"):
+            self.standard_lookups.append(f"{self._where}: line {node.lineno}")
 
     def visit_Constant(self, node: ast.Constant) -> None:
         if node.value in _MODE_SWITCHES:
@@ -522,3 +640,73 @@ def test_the_monitor_starts_its_python_child_in_safe_path_mode() -> None:
                 f"{source.name}: a module is run without the safe-path flag"
             )
     assert launches, "the monitor no longer runs a module; this scan reads nothing"
+
+
+def test_no_program_is_found_with_the_standard_lookup() -> None:
+    """The standard lookup answers from the working directory on Windows.
+
+    It does so even when handed a search path of its own, so no use of it is
+    safe. Shown to fail by resolving the driver's tool with it again: the
+    scan reports the function and line. Passes with the lookup restored.
+    """
+    used = {
+        relative: scan.standard_lookups
+        for relative, scan in _scans().items()
+        if scan.standard_lookups
+    }
+
+    assert not used, f"a program is found with the standard lookup: {used}"
+
+
+def test_no_process_is_started_by_a_bare_program_name() -> None:
+    """A command that leads with a program's name leaves the search to the OS.
+
+    Every such command has to be led by a path the lookup returned. Shown to
+    fail by running ``taskkill`` by name again in the orphan reap: the scan
+    reports that function. Passes with the lookup restored.
+    """
+    bare = sorted(
+        f"{relative}::{where}"
+        for relative, scan in _scans().items()
+        for where in scan.bare_names
+    )
+
+    assert not bare, f"process-creating calls led by a bare program name: {bare}"
+
+
+def test_every_native_program_is_found_by_the_lookup() -> None:
+    """Each native site is tied to the lookup that finds what it runs.
+
+    Shown to fail by resolving the monitor, the driver's tool and the
+    package manager some other way: each of their sites is reported as having
+    no lookup of that name. Passes with the lookups restored.
+    """
+    scans = _scans()
+    native = {key for key, site in _SITES.items() if site.starts is _Starts.NATIVE}
+    explained = set(_FOUND_BY) | set(_NOT_LOOKED_UP)
+    unexplained = sorted(native - explained)
+    assert not unexplained, f"native sites with no lookup named: {unexplained}"
+    not_found: list[str] = []
+    for site, (lookup_site, program) in _FOUND_BY.items():
+        relative, _, where = lookup_site.partition("::")
+        if scans[relative].lookups[where, program] < 1:
+            not_found.append(f"{site}: no lookup of {program} in {lookup_site}")
+    assert not not_found, not_found
+
+
+def test_the_service_is_started_in_a_directory_of_its_own() -> None:
+    """Every call that starts the resident service names its working directory.
+
+    Left out, the service inherits the directory the start was typed in.
+    Shown to fail by removing the argument from one of the Windows spawn's
+    two calls: the scan reports that function. Passes with it restored.
+    """
+    scans = _scans()
+    inherited: list[str] = []
+    for site in _SERVICE_SPAWNS:
+        relative, _, where = site.partition("::")
+        directories = scans[relative].given_a_directory.get(where, [])
+        if not directories or not all(directories):
+            inherited.append(site)
+
+    assert not inherited, f"the service is started without a directory: {inherited}"

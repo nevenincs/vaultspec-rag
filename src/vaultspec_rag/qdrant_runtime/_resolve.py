@@ -468,11 +468,22 @@ def _reap_on_windows(
     """
     import subprocess
 
+    from .._program_lookup import Where, find_program
+
     if target_gone():
         return True
+    # An operating-system tool, run from the operating system's own directory:
+    # by bare name it would be looked for in the working directory first, and
+    # this one is handed a process to kill.
+    taskkill = find_program("taskkill", Where.SYSTEM)
+    if taskkill is None:
+        logger.warning(
+            "taskkill is not in the system directory; pid %d not reaped", pid
+        )
+        return target_gone()
     try:
         subprocess.run(  # fixed argv, no shell, trusted pid
-            ["taskkill", "/F", "/T", "/PID", str(pid)],
+            [taskkill, "/F", "/T", "/PID", str(pid)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,

@@ -350,11 +350,20 @@ def _windows_image_matches(
     """Use tasklist only after handle-based image lookup was unavailable."""
     import subprocess
 
+    from ._program_lookup import Where, find_program
+
     if timeout is not None and timeout <= 0.0:
+        return False
+    # An operating-system tool, run from the operating system's own directory.
+    # By bare name it would be looked for in the working directory first, and
+    # what answers here decides whether a process may be killed.
+    tasklist = find_program("tasklist", Where.SYSTEM)
+    if tasklist is None:
+        logger.debug("tasklist is not in the system directory; pid %d unread", pid)
         return False
     try:
         result = subprocess.run(  # fixed argv, no shell, trusted pid
-            ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+            [tasklist, "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
             capture_output=True,
             check=False,
             timeout=timeout,

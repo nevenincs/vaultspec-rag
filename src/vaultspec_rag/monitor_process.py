@@ -7,7 +7,6 @@ import logging
 import math
 import os
 import queue
-import shutil
 import signal
 import subprocess
 import sys
@@ -26,6 +25,7 @@ from ._process_probe import (
     send_signal,
     wait_for_exit,
 )
+from ._program_lookup import Where, find_program
 from .config._settings import managed_status_dir
 from .config._types import EnvVar
 from .serviceclient._discovery import status_write_lock
@@ -41,7 +41,13 @@ def _resolve_monitor_executable() -> Path:
         if not executable.is_absolute():
             raise RuntimeError("The monitor executable override must be absolute.")
     else:
-        installed = shutil.which("vaultspec-rag-monitor")
+        # The monitor ships in the same archive as this package's commands and
+        # is otherwise put on PATH by the operator. It is started on every
+        # service start, so it is never looked for in the directory that start
+        # was typed in.
+        installed = find_program(
+            "vaultspec-rag-monitor", Where.INSTALLATION, Where.SEARCH_PATH
+        )
         if installed is None:
             raise RuntimeError(
                 "The compiled vaultspec-rag-monitor executable is required. "

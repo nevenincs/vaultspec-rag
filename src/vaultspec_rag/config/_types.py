@@ -273,6 +273,11 @@ class EnvVar(StrEnum):
     # set on this process only while an indexing worker pool is open, because
     # the environment is the one thing that reaches a pool worker's start.
     PYTHON_SAFE_PATH = "PYTHONSAFEPATH"
+    # The program search path and, on Windows, the extensions a program name
+    # may carry. Read to find a helper program in an absolute location: an
+    # empty or relative entry of the search path is never searched.
+    PATH = "PATH"
+    PATHEXT = "PATHEXT"
     # The operating system's temporary-directory conventions, read to decide
     # whether an indexed root was throwaway.
     TEMP = "TEMP"

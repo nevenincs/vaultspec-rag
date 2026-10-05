@@ -44,6 +44,7 @@ __all__ = [
     "grant_every_account_access",
     "open_without_following",
     "program_data_directory",
+    "system_directory",
 ]
 
 #: ``FOLDERID_ProgramData`` (``KnownFolders.h``).
@@ -95,6 +96,9 @@ _SHARED_ANCHOR_DIRECTORY_SDDL: Final = (
 
 #: ``ERROR_ACCESS_DENIED`` (``winerror.h``).
 _ERROR_ACCESS_DENIED: Final = 5
+
+#: ``MAX_PATH`` (``minwindef.h``): the first size offered for a path buffer.
+_MAX_PATH: Final = 260
 
 #: ``GENERIC_READ``, ``FILE_SHARE_READ``, ``FILE_SHARE_READ | FILE_SHARE_WRITE``
 #: and ``OPEN_EXISTING`` (``winnt.h``, ``fileapi.h``).
@@ -662,6 +666,38 @@ def program_data_directory() -> str:
         return resolved.value
     finally:
         ole32.CoTaskMemFree(resolved)
+
+
+def system_directory() -> str:
+    """Return the Windows system directory as the kernel records it.
+
+    Where the operating system keeps its own programs. Asked of the kernel
+    rather than read from ``SystemRoot`` for the reason the ProgramData
+    directory is: the directory an operating-system tool is run from must not
+    be one assignment away from being somewhere else.
+
+    Raises:
+        OSError: Off Windows, or when the kernel returns no path.
+    """
+    if sys.platform != "win32":
+        raise OSError("the system directory exists only on Windows")
+    from ctypes import wintypes
+
+    # A private library handle, so these declarations cannot collide with any
+    # other module's use of the process-global ``ctypes.windll`` cache.
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetSystemDirectoryW.argtypes = (wintypes.LPWSTR, wintypes.UINT)
+    kernel32.GetSystemDirectoryW.restype = wintypes.UINT
+    capacity = _MAX_PATH
+    while True:
+        buffer = ctypes.create_unicode_buffer(capacity)
+        needed = int(kernel32.GetSystemDirectoryW(buffer, capacity))
+        if needed == 0:
+            raise ctypes.WinError(ctypes.get_last_error())
+        if needed < capacity:
+            return buffer.value
+        # A longer path reports the size it needs, terminator included.
+        capacity = needed
 
 
 def assign_process_to_job(

@@ -19,6 +19,7 @@ from vaultspec_core.core.types import (
 
 from .._atomic_write import replace_atomically
 from .._plain_directory import require_plain_parents
+from .._program_lookup import Where, find_program
 from .._workspace_layout import (
     MCP_OWNERSHIP_MANIFEST,
     PROVIDERS_MANIFEST,
@@ -870,8 +871,13 @@ def _restore_junction(path: Path, target: str) -> None:
         f"New-Item -ItemType Junction -Path $env:{EnvVar.RAG_JUNCTION_PATH.value} "
         f"-Target $env:{EnvVar.RAG_JUNCTION_TARGET.value} | Out-Null"
     )
+    # Found on PATH and run by absolute path: this runs in the project being
+    # installed into, where a bare name would be looked for first.
+    powershell = find_program("powershell.exe", Where.SEARCH_PATH)
+    if powershell is None:
+        raise OSError(f"cannot restore the junction at {path}: no powershell.exe")
     completed = subprocess.run(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
+        [powershell, "-NoProfile", "-NonInteractive", "-Command", command],
         check=False,
         capture_output=True,
         env=environment,

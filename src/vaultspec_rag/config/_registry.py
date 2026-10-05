@@ -76,6 +76,8 @@ _EXTERNAL: Final = frozenset(
         EnvVar.UV_TOOL_DIR,
         EnvVar.VIRTUAL_ENV,
         EnvVar.PYTHON_SAFE_PATH,
+        EnvVar.PATH,
+        EnvVar.PATHEXT,
         EnvVar.TEMP,
         EnvVar.TMP,
         EnvVar.TMPDIR,
@@ -276,6 +278,17 @@ _DESCRIPTIONS: Final[Mapping[EnvVar, str]] = {
     ),
     EnvVar.UV_TOOL_DIR: (
         "uv's tool-install location, read for the same classification."
+    ),
+    EnvVar.PATH: (
+        "The program search path. Read to find a helper program this package "
+        "runs but does not ship, such as uv or the graphics driver's query "
+        "tool. Only its absolute entries are searched: an empty or relative "
+        "entry means the working directory, which is never a place a program "
+        "is run from."
+    ),
+    EnvVar.PATHEXT: (
+        "The extensions a program name may carry on Windows, read alongside "
+        "the search path when a helper program is looked for."
     ),
     EnvVar.TEMP: (
         "The operating system's temporary directory, read to decide whether "
