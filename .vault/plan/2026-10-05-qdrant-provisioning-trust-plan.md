@@ -10,7 +10,7 @@ related:
   - '[[2026-06-13-provisioning-setup-adr]]'
 modified: '2026-10-05'
 body_schema: body-v2
-body_hash: 'sha256:273f5732c1b65424f96afad865b3657ae51513b5cbc42f4ee0d88246e1c7610d'
+body_hash: 'sha256:8ccefab764df5777181712cd97b010fc92cdd96f14d46890510caa2e40d1f103'
 ---
 
 # `qdrant-provisioning-trust` plan
@@ -30,10 +30,10 @@ This plan executes `2026-10-05-qdrant-provisioning-trust-adr`, which is grounded
 - [ ] `S03` - stage the download and extraction, verify archive and executable digests, then replace atomically with the manifest written last and a prior install left intact on any failure; `src/vaultspec_rag/qdrant_runtime/_provision.py`.
 - [ ] `S04` - hash the installed executable when classifying install state so the upgrade path repairs a mismatched install; `src/vaultspec_rag/qdrant_runtime/_provision.py`.
 - [ ] `S05` - serialise provisioning across processes, bound the whole download with a deadline, guard the staging file against links, and report an unsupported platform as a failed outcome; `src/vaultspec_rag/qdrant_runtime/_provision.py`.
-- [ ] `S06` - decide the installation role before any provisioning on server start and prove that a client start, install, and warmup download nothing; `src/vaultspec_rag/cli/_service_start.py`.
+- [x] `S06` - decide the installation role before any provisioning on server start and prove that a client start, install, and warmup download nothing; `src/vaultspec_rag/cli/_service_start.py`.
 - [ ] `S07` - provision the binary by default on a host server start behind the auto-provision switch and its opt-out flag, and announce an operator binary on the console; `src/vaultspec_rag/cli/_service_start.py`.
 - [ ] `S08` - verify the executable through the shared native-binary verifier inside every spawn, fail closed on a missing digest, and label operator binaries on status surfaces; `src/vaultspec_rag/qdrant_runtime/_supervise.py and _resolve.py`.
-- [ ] `S09` - add the auto-provision switch, release base URL, and download-host settings with official defaults and prefixed environment overrides kept out of workspace files; `src/vaultspec_rag/config/ and docs/configuration.md`.
+- [x] `S09` - add the auto-provision switch, release base URL, and download-host settings with official defaults and prefixed environment overrides kept out of workspace files; `src/vaultspec_rag/config/ and docs/configuration.md`.
 - [ ] `S10` - route the downloader URL and redirect host pin through the source settings and delete the superseded constants and the unused API host; `src/vaultspec_rag/qdrant_runtime/_provision.py and _constants.py`.
 - [ ] `S11` - add prefixed overrides for the model hub endpoint and the CUDA wheel index with their current values as defaults, or record the collision that prevents one; `src/vaultspec_rag/config/ and src/vaultspec_rag/torch_config/_index.py`.
 - [ ] `S12` - collapse model fetching to one implementation shared by install, server warmup, and the start preflight, and ensure models through it before the daemon spawns; `src/vaultspec_rag/commands/_provision.py, cli/_service_lifecycle.py and cli/_service_start.py`.

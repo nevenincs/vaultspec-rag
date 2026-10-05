@@ -25,15 +25,23 @@ A host installation that has never provisioned the managed Qdrant server cannot 
 ## Considerations
 
 - Model weights and the server binary are both fetch-and-go artifacts outside the Python environment (`2026-06-13-provisioning-setup-adr`); only the binary demands a consent flag on `server start`.
+
 - A client installation never loads a model and cannot run the service (`2026-09-04-cuda-provisioning-adr`, D4); its role gate on `server start` currently sits after the binary check (`2026-10-05-qdrant-provisioning-trust-audit`, `start-does-not-provision`).
+
 - The archive digest is a reviewed constant; the executable digest is not, so every check after extraction trusts the directory it is protecting (`pre-exec-self-attested`).
+
 - The build toolchain already pins executable digests and checks them through one verifier; the qdrant path keeps a second, weaker comparison.
+
 - An implicit PATH tier existed as a convenience when provisioning was opt-in. It runs an unpinned binary of unknown version and, on Windows, resolves from the working directory (`path-tier-cwd-exec`).
+
 - The committed archive digests match the upstream release API for the pinned tag, so the pin table itself is sound and stays.
+
 - GitHub Releases is the channel the earlier research selected (`2026-06-12-qdrant-server-provisioning-research`); its base URL and redirect hosts are code constants with no operator override, which blocks mirrors.
 
 - GitHub Releases is the only first-party channel that yields a native executable on every supported platform; it is mutable and publishes no signatures or provenance, so a committed digest is the only integrity control (`2026-10-05-qdrant-provisioning-trust-research`).
+
 - The Linux x64 gnu build is dynamically linked against a glibc floor that moves with upstream's build runner (2.38 at the pinned release). The musl build is static, already pinned, and is what the upstream package ships (`2026-10-05-qdrant-provisioning-trust-research`).
+
 - Mirrors keep the upstream path suffix but may redirect to their own storage host, and the upstream platform has already moved its asset host once (`2026-10-05-qdrant-provisioning-trust-research`).
 
 ## Considered options
@@ -71,18 +79,29 @@ A host installation that has never provisioned the managed Qdrant server cannot 
 ## Constraints
 
 - Automatic provisioning runs only on a host installation. The installation role is decided before any network or filesystem effect. A client `server start` is refused before the binary check, and no client command - install, search, index, the MCP surface, warmup - downloads a model or a binary.
+
 - The opt-out is a setting with a prefixed environment variable and a matching flag. With it off, an absent binary fails with the install command, as today. `--local-only` still skips the binary entirely.
+
 - Verification order is fixed: archive digest before extraction, executable digest before the staged file replaces anything, executable digest again inside every spawn - first start, heartbeat restart, and recovery retry alike.
+
 - Both digests come from reviewed code constants. A managed install whose executable digest is missing or mismatched never runs, and the remedy the failure names must actually repair it.
+
 - An operator binary is explicit: a setting naming an absolute regular file, or a registration through the install verb. It carries no pin, is labelled as operator-supplied on every status surface, and is announced on the console at start, not only in the service log. A registered operator binary is verified against the digest recorded at registration.
+
 - No lookup derives the binary from PATH or the working directory.
+
 - An install is staged and replaced atomically; a failure at any stage leaves a previous install untouched. Provisioning is serialised across processes and the download has a whole-operation deadline.
+
 - Source settings are read from the process environment and managed configuration only, never from a workspace file. HTTPS is mandatory for any configured source, and redirects stay inside the configured host set.
+
 - Each fetch-and-go dependency has one provisioning implementation, reached by `install`, `server start`, `server warmup`, and the dependency's own verb, reporting in the shared sync vocabulary.
+
 - This record overrides `2026-06-12-qdrant-server-provisioning-adr` on three points: the never-download-without-consent constraint, the PATH resolution tier, and the fixed host pin. It overrides the matching consent clause in `2026-06-13-provisioning-setup-adr`. Everything else in both records stands.
 
 - A new install on Linux x64 uses the musl asset. The gnu pin stays in the table so an install made before this change keeps verifying: the manifest's asset name only selects which committed executable digest to compare, and an asset absent from the table never verifies.
+
 - The base URL's own host is always permitted for the initial request; redirect targets must be in the configured host set. A digest mismatch is a hard failure that names the possibility of a replaced upstream asset; transient transport failures get a bounded retry.
+
 - A platform with no upstream asset is reported as an unsupported outcome that names the operator binary route; it is never routed to another architecture's build.
 
 ## Implementation
@@ -108,11 +127,17 @@ Configurable sources are safe only because digests are not configurable. A mirro
 ## Consequences
 
 - A default `server start` on an unprovisioned host downloads about 30 MB without asking. Operators who relied on the refusal set the opt-out.
+
 - An operator who relied on a `qdrant` found on PATH must name it through the operator binary setting or register it. This is a breaking change for that configuration and must be stated in the release notes and the installation guide.
+
 - A version bump now re-derives two digests per asset instead of one.
+
 - An existing managed install whose executable does not match the committed digest stops starting until it is reinstalled; the upgrade verb repairs it.
+
 - Client installations are unaffected by design, and a client start no longer reaches any provisioning code.
+
 - Reconsider if upstream begins publishing signed provenance for release binaries: signature verification would then be a stronger anchor than a transcribed digest.
 
 - New Linux x64 installs run the musl build; its performance relative to gnu is unmeasured and is the condition to revisit if indexing or search regress on Linux.
+
 - Because upstream assets are mutable, a replaced asset fails every new install until the pin is re-derived. That is the intended alarm.
