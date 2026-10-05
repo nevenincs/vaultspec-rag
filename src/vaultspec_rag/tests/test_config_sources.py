@@ -207,6 +207,9 @@ _URL_KEYS = ("qdrant_release_base_url", "hf_endpoint")
         "https://mirror.example:0/qdrant",
         "https://mirror_.example/qdrant",
         "https://-mirror.example/qdrant",
+        "https://mirror..example.com/qdrant",
+        "https://" + "a" * 64 + ".example/qdrant",
+        "https://" + ".".join(["a" * 60] * 5) + ".example/qdrant",
     ],
     ids=[
         "nul-in-host",
@@ -217,6 +220,9 @@ _URL_KEYS = ("qdrant_release_base_url", "hf_endpoint")
         "port-zero",
         "underscore-in-host",
         "leading-hyphen",
+        "empty-label",
+        "label-over-63",
+        "name-over-253",
     ],
 )
 @pytest.mark.parametrize("key", _URL_KEYS)
@@ -237,6 +243,14 @@ def test_a_url_no_connection_could_be_opened_to_is_refused(key: str, raw: str) -
     present", ``underscore-in-host`` and ``leading-hyphen`` failed the same
     way; with the port test removed, ``port-zero`` did. Restored after each,
     all passed.
+
+    The last three are host names the URL parser accepts and the encoder a
+    connection goes through does not: an empty label, a label over 63
+    characters, a name over 253. Each is held by its own part of the host
+    name pattern. Mutations: with a run of dots admitted between labels only
+    ``empty-label`` failed DID NOT RAISE; with the first label's length limit
+    removed only ``label-over-63`` did; with the whole-name limit removed
+    only ``name-over-253`` did. Restored after each, all passed.
     """
     with pytest.raises(ValueError) as excinfo:
         checked_setting(key, raw, None)
