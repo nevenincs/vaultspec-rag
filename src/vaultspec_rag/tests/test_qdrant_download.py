@@ -19,7 +19,7 @@ import pytest
 from .._sync_vocabulary import ProvisionAction
 from ..config._types import EnvVar
 from ..qdrant_runtime._constants import QDRANT_SERVER_VERSION
-from ..qdrant_runtime._download import download_https
+from ..qdrant_runtime._download import DownloadLimits, download_https
 from ..qdrant_runtime._provision import provision
 from ..qdrant_runtime._resolve import (
     asset_for_platform,
@@ -53,6 +53,34 @@ _LOOPBACK_NOT_ALLOWED = frozenset({"storage.example"})
 def sources(tmp_path: Path) -> Generator[LoopbackSources]:
     with trusted_loopback_sources(tmp_path / "tls") as started:
         yield started
+
+
+class TestShippedLimits:
+    def test_a_source_that_never_answers_costs_under_two_minutes(self) -> None:
+        """The limits a real run uses bound a silent source to a short wait.
+
+        A source that accepts the connection and then sends nothing is waited
+        on for the stall limit, once per attempt, with the longest allowed
+        pause between attempts. That sum is what an operator sits through
+        before being told, so it is held to a figure here rather than left to
+        whatever the three numbers happen to multiply out to. The stall limit
+        itself is exercised against a silent server elsewhere, with limits
+        small enough to reach.
+
+        Mutation: set the stall limit to 120 seconds. Observed the assertion
+        fail (``368.0 <= 100.0``). Restored; passes.
+        """
+        shipped = DownloadLimits()
+
+        worst_case = (
+            shipped.attempts * shipped.stall_seconds
+            + (shipped.attempts - 1) * shipped.retry_cap_seconds
+        )
+
+        assert worst_case <= 100.0
+        # The whole-download deadline must be the looser bound, or it would
+        # cut a silent source first and the message would name the wrong one.
+        assert worst_case < shipped.deadline_seconds
 
 
 class TestSourceScheme:

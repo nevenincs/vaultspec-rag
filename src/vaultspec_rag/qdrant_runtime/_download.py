@@ -105,7 +105,11 @@ class DownloadLimits:
         stall_seconds: The longest the source may send nothing at all before
             the attempt is abandoned. It bounds one socket operation, so a
             source that keeps trickling never trips it; the deadline is what
-            bounds that.
+            bounds that. Any byte that arrives starts the wait over, so a
+            slow link is not what this limit is tuned for: it only has to
+            outlast a pause no working source makes, and a source silent for
+            this long through every attempt costs the operator about a minute
+            and a half.
         max_bytes: The most a response may declare or send.
         attempts: How many times a transient failure is tried in all.
         retry_base_seconds: The wait before the second attempt; it doubles
@@ -119,7 +123,7 @@ class DownloadLimits:
     """
 
     deadline_seconds: float = 900.0
-    stall_seconds: float = 120.0
+    stall_seconds: float = 30.0
     max_bytes: int = _MAX_DOWNLOAD_BYTES
     attempts: int = 3
     retry_base_seconds: float = 0.5
