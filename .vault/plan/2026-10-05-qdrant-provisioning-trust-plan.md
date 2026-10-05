@@ -10,7 +10,7 @@ related:
   - '[[2026-06-13-provisioning-setup-adr]]'
 modified: '2026-10-05'
 body_schema: body-v2
-body_hash: 'sha256:5907dfc9f12d399fb4c83cb5e94bd26f08528fe1d52750a64ef8665688c4dba5'
+body_hash: 'sha256:273f5732c1b65424f96afad865b3657ae51513b5cbc42f4ee0d88246e1c7610d'
 ---
 
 # `qdrant-provisioning-trust` plan
@@ -38,17 +38,18 @@ This plan executes `2026-10-05-qdrant-provisioning-trust-adr`, which is grounded
 - [ ] `S11` - add prefixed overrides for the model hub endpoint and the CUDA wheel index with their current values as defaults, or record the collision that prevents one; `src/vaultspec_rag/config/ and src/vaultspec_rag/torch_config/_index.py`.
 - [ ] `S12` - collapse model fetching to one implementation shared by install, server warmup, and the start preflight, and ensure models through it before the daemon spawns; `src/vaultspec_rag/commands/_provision.py, cli/_service_lifecycle.py and cli/_service_start.py`.
 - [ ] `S13` - correct the daemon-provisioning prose and bring the installation, CLI, and backend guides in line with automatic host provisioning and the removed PATH tier; `src/vaultspec_rag/server/_lifespan.py and docs/`.
+- [ ] `S14` - select the static musl asset for Linux x64 and verify an existing install against the committed executable digest of the asset its manifest names; `src/vaultspec_rag/qdrant_runtime/_resolve.py and _constants.py`.
 
 ## Parallelization
 
 Four workers run in parallel in one working tree with disjoint write ownership. A file is edited only by its owner; a worker that needs a change in another worker's file asks the owner by message.
 
-- Execution trust: S01, S02, S08. Owns `src/vaultspec_rag/qdrant_runtime/_constants.py`, `_resolve.py`, `_supervise.py`, and `src/vaultspec_rag/tests/test_qdrant_runtime.py`.
+- Execution trust: S01, S02, S08, S14. Owns `src/vaultspec_rag/qdrant_runtime/_constants.py`, `_resolve.py`, `_supervise.py`, and `src/vaultspec_rag/tests/test_qdrant_runtime.py`.
 - Install integrity: S03, S04, S05, S10. Owns `src/vaultspec_rag/qdrant_runtime/_provision.py` and `src/vaultspec_rag/tests/test_provision.py`.
 - Sources and settings: S09, S11. Owns `src/vaultspec_rag/config/`, `src/vaultspec_rag/torch_config/`, and `docs/configuration.md`.
 - Start flow: S06, S07, S12, S13. Owns `src/vaultspec_rag/cli/_service_start.py`, `cli/_service_lifecycle.py`, `cli/_service_qdrant.py`, `src/vaultspec_rag/commands/`, `src/vaultspec_rag/server/_lifespan.py`, and the remaining `docs/` guides.
 
-Hard ordering: S01 lands before S03 and S08 consume the table. S09 lands before S07 and S10 read the settings. S10 finishes with the constants owner deleting the superseded names once the downloader no longer imports them. S13 is last. New test files belong to the worker that creates them. Each worker commits its own paths by explicit pathspec on the current branch; nobody pushes or merges.
+Hard ordering: S01 lands before S03, S08, and S14 consume the table. S09 lands before S07 and S10 read the settings. S10 finishes with the constants owner deleting the superseded names once the downloader no longer imports them. S13 is last. New test files belong to the worker that creates them. Each worker commits its own paths by explicit pathspec on the current branch; nobody pushes or merges. Workers do not touch the vault; the orchestrator closes Steps and writes the ledger from their reports.
 
 ## Verification
 
