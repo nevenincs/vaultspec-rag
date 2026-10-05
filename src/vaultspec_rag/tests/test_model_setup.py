@@ -80,15 +80,24 @@ class _ThreadingGatewayTimeoutServer(http.server.ThreadingHTTPServer):
 def test_sparse_cache_requires_reviewed_revision_and_complete_files(
     tmp_path: Path,
 ) -> None:
-    """Main or a config-only snapshot cannot satisfy the pinned sparse model.
+    """Main or a partial snapshot cannot stand in for the pinned sparse model.
 
-    Mutation proof observed 2026-09-30: omitting the sparse revision from the
-    cache lookup failed the first assertion, assert not True. Restoring the
-    pinned lookup passed.
+    The probe is structural: it answers whether the pinned commit's snapshot
+    holds every file of the pinned release, and reads none of them. Whether
+    those files are the release's is the hashing check's question, tested
+    with the snapshot check itself.
+
+    Mutation: with the commit dropped from the cache lookup, the snapshot of
+    the default branch answered for the pinned one and the first assertion
+    failed (assert not True); restored, it passed.
     """
     from .._model_cache import cached_snapshot_is_complete
+    from .._model_pins import committed_manifest
     from .._sparse_profile import SPARSE_MODEL_ID, SPARSE_MODEL_REVISION
 
+    manifest = committed_manifest(SPARSE_MODEL_ID, SPARSE_MODEL_REVISION)
+    assert manifest is not None
+    files = sorted(manifest)
     cache = tmp_path / "cache"
     repo = cache / "models--Linkup-Platform--linkup-sparseup-embed-v1"
     main_revision = "0123456789abcdef0123456789abcdef01234567"
@@ -96,23 +105,22 @@ def test_sparse_cache_requires_reviewed_revision_and_complete_files(
     main.mkdir(parents=True)
     (repo / "refs").mkdir()
     (repo / "refs" / "main").write_text(main_revision, encoding="utf-8")
-    files = (
-        "config.json",
-        "tokenizer.json",
-        "tokenizer_config.json",
-        "modeling_splade.py",
-        "model.safetensors",
-    )
     for name in files:
         (main / name).write_bytes(b"fixture")
-    assert not cached_snapshot_is_complete(SPARSE_MODEL_ID, cache_dir=cache)
+
+    def complete() -> bool:
+        return cached_snapshot_is_complete(
+            SPARSE_MODEL_ID, revision=SPARSE_MODEL_REVISION, cache_dir=cache
+        )
+
+    assert not complete()
     pinned = repo / "snapshots" / SPARSE_MODEL_REVISION
     pinned.mkdir()
     for name in files[:-1]:
         (pinned / name).write_bytes(b"fixture")
-    assert not cached_snapshot_is_complete(SPARSE_MODEL_ID, cache_dir=cache)
-    (pinned / "model.safetensors").write_bytes(b"fixture")
-    assert cached_snapshot_is_complete(SPARSE_MODEL_ID, cache_dir=cache)
+    assert not complete()
+    (pinned / files[-1]).write_bytes(b"fixture")
+    assert complete()
 
 
 def test_configured_service_models_cover_eager_startup() -> None:

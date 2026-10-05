@@ -509,7 +509,6 @@ def run_document_acceptance(
     root: Path,
     spec: DocumentWorkloadSpec,
     *,
-    local_files_only: bool,
     interrupt_after_units: int = 1,
 ) -> DocumentAcceptanceReport:
     """Run real extraction, CUDA embedding, Qdrant writes, interruption, and resume."""
@@ -527,7 +526,7 @@ def run_document_acceptance(
     measurement = measure_document_workload(resolved)
     _validate_measurement(resolved, measurement)
     cfg = get_config()
-    model = EmbeddingModel(local_files_only=local_files_only)
+    model = EmbeddingModel()
     store = VaultStore(resolved)
     try:
         interrupted = DocumentIndexer(
@@ -597,7 +596,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--words", type=int, default=160)
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--accept", action="store_true")
-    parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--interrupt-after-units", type=int, default=1)
     parser.add_argument("--json", type=Path, default=None)
     return parser
@@ -614,7 +612,6 @@ class _ParsedArgs:
     words: int
     prepare_only: bool
     accept: bool
-    local_files_only: bool
     interrupt_after_units: int
     json_path: Path | None
 
@@ -633,7 +630,6 @@ def _parse_args(argv: Sequence[str] | None) -> _ParsedArgs:
         words=cast("int", namespace.words),
         prepare_only=cast("bool", namespace.prepare_only),
         accept=cast("bool", namespace.accept),
-        local_files_only=cast("bool", namespace.local_files_only),
         interrupt_after_units=cast("int", namespace.interrupt_after_units),
         json_path=cast("Path | None", namespace.json),
     )
@@ -660,7 +656,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             run_document_acceptance(
                 args.root,
                 spec,
-                local_files_only=args.local_files_only,
                 interrupt_after_units=args.interrupt_after_units,
             )
         )

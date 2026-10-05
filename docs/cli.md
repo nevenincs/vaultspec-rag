@@ -258,7 +258,7 @@ None.
 
 ## server doctor
 
-Report readiness across two axes: installed dependencies (torch, models, qdrant binary) and the live service (a running daemon's health). A dead daemon is reported as not ready.
+Report readiness across two axes: installed dependencies (torch, models, qdrant binary) and the live service (a running daemon's health). A dead daemon is reported as not ready. Each pinned model's cached files are hashed against the digests compiled into this tool, which reads several gigabytes and takes a few seconds; a model with no such digests is reported as unpinned.
 
 ```bash
 vaultspec-rag server doctor

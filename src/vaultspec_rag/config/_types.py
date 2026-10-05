@@ -109,6 +109,13 @@ class EnvVar(StrEnum):
     EMBEDDING_DIMENSION = "VAULTSPEC_RAG_EMBEDDING_DIMENSION"
     SPARSE_MODEL = "VAULTSPEC_RAG_SPARSE_MODEL"
     RERANKER_MODEL = "VAULTSPEC_RAG_RERANKER_MODEL"
+    # The commit each of those two is fetched and loaded at. Unset, a default
+    # model uses the commit compiled into this package and a model the
+    # operator named uses none. The sparse model has no such variable: its
+    # repository ships the code that builds it, and a commit the environment
+    # could change would select code no committed digest covers.
+    EMBEDDING_MODEL_REVISION = "VAULTSPEC_RAG_EMBEDDING_MODEL_REVISION"
+    RERANKER_MODEL_REVISION = "VAULTSPEC_RAG_RERANKER_MODEL_REVISION"
     # Where the models above are downloaded from. Exported to the hub
     # client's own ``HF_ENDPOINT`` before that client is first imported,
     # because the client reads its endpoint once, at import.
@@ -312,6 +319,26 @@ class OperatorBinary(NamedTuple):
     sha256: str
 
 
+class ModelRepo(NamedTuple):
+    """One model this configuration needs, and how firmly it is identified.
+
+    Attributes:
+        label: What the model is for, as an operator reads it.
+        repo: The hub repository id.
+        revision: The commit it is fetched and loaded at, or ``None`` when
+            none is named and the hub's default branch decides.
+        pinned: Whether file digests are committed for this repository at
+            this commit. Only then can a snapshot be checked against
+            anything; every other model is loaded on the hub's word. It says
+            a check is possible, not that one has been made.
+    """
+
+    label: str
+    repo: str
+    revision: str | None
+    pinned: bool
+
+
 #: Default for ``EnvVar.STATUS_DIR``, declared beside the env var it defaults
 #: so every consumer - the persistence layer and the config wrapper alike -
 #: imports the one literal instead of each keeping its own copy.
@@ -322,10 +349,9 @@ def hf_cache_only() -> bool:
     """Return whether supported Hugging Face offline mode is enabled.
 
     ``HF_HUB_OFFLINE`` is the authoritative Hub switch. Transformers also
-    documents ``TRANSFORMERS_OFFLINE`` for cache-only model loading, so honour
-    either value and pass ``local_files_only=True`` explicitly to model
-    constructors. Normal product construction remains online-capable when both
-    variables are unset.
+    documents ``TRANSFORMERS_OFFLINE``, so either value is honoured. What it
+    decides is whether the provisioning commands may fetch a model. Loading
+    one never fetches, so no load consults this.
 
     These two variables belong to the Hub and Transformers, not to this
     project, so a word neither table recognises is read as "not offline"

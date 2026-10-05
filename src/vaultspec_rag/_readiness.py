@@ -40,8 +40,10 @@ from typing import TYPE_CHECKING, cast
 from .operator_state._compute import local_compute
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
+    from .config._types import ModelRepo
     from .operator_state._models import ComputeReport
     from .qdrant_runtime._constants import ResolvedBinary
 
@@ -263,6 +265,7 @@ def compute_readiness(
     *,
     holders_root: str | Path | None = None,
     compute: ComputeReport | None = None,
+    verify_models: bool = False,
 ) -> ReadinessReport:
     """Aggregate the bounded per-dependency readiness snapshot.
 
@@ -271,6 +274,10 @@ def compute_readiness(
     a model, touching the GPU, downloading, or mutating any state.
 
     Args:
+        verify_models: Hash each pinned model's snapshot against its
+            committed digests instead of only listing its files. Off by
+            default because it reads gigabytes and costs seconds; the deep
+            health command asks for it, a polled route does not.
         holders_root: The environment to scan for holders, or ``None`` to
             skip the scan. Off by default because the walk costs seconds and
             every caller pays it; an operator diagnosing a machine wants it,
@@ -294,7 +301,7 @@ def compute_readiness(
     return ReadinessReport(
         dependencies=[
             _torch_readiness(local_compute() if compute is None else compute),
-            _models_readiness(),
+            _models_readiness(verify=verify_models),
             _qdrant_readiness(server_mode=server_mode),
         ],
         server_mode=server_mode,
@@ -371,18 +378,64 @@ def _torch_readiness(compute: ComputeReport) -> DependencyReadiness:
     )
 
 
-def _models_readiness() -> DependencyReadiness:
-    """Report model presence by probing the Hugging Face cache.
+def _probe_models(
+    models: Sequence[ModelRepo], *, verify: bool
+) -> tuple[dict[str, bool], dict[str, str]]:
+    """Return which model snapshots are usable, and why the others are not.
 
-    Checks complete snapshots offline at the configured model revisions. This
-    neither downloads files nor imports torch or loads a model onto the GPU.
+    Without *verify* a snapshot is usable when its files are present and no
+    reason is recorded for one that is not. With it each snapshot is checked
+    as a load would check it, and a failing one carries the check's own words.
+
+    Raises:
+        ImportError: If the hub client is not installed.
     """
-    from ._model_cache import cached_snapshot_is_complete
+    from ._model_cache import (
+        ModelSnapshotError,
+        cached_snapshot_is_complete,
+        verify_snapshot,
+    )
+
+    usable: dict[str, bool] = {}
+    faults: dict[str, str] = {}
+    for model in models:
+        if not verify:
+            usable[model.repo] = cached_snapshot_is_complete(
+                model.repo, revision=model.revision
+            )
+            continue
+        try:
+            verify_snapshot(model.repo, revision=model.revision)
+        except ModelSnapshotError as fault:
+            usable[model.repo] = False
+            faults[model.repo] = fault.detail
+        else:
+            usable[model.repo] = True
+    return usable, faults
+
+
+def _models_readiness(*, verify: bool) -> DependencyReadiness:
+    """Report the model snapshots in the Hugging Face cache.
+
+    Two depths, and the wording keeps them apart. Without *verify* only the
+    set of files is looked at: a snapshot is *present* or not, and nothing is
+    said about its content. With *verify* each snapshot is put through the
+    check a load makes, which for a pinned model hashes every file against
+    the digests committed for it; only then is a model called verified.
+
+    Either way each model is reported as *pinned* or *unpinned*: whether file
+    digests are committed for that repository at the commit it is used at. An
+    unpinned model is one the operator named, or a default moved to another
+    commit, and no depth of check can vouch for its content.
+
+    This neither downloads files nor imports torch or loads a model onto the
+    GPU.
+    """
     from .config._settings import configured_model_repos
 
-    repos = [repo for _label, repo in configured_model_repos()]
+    models = configured_model_repos()
     try:
-        cached = {repo: cached_snapshot_is_complete(repo) for repo in repos}
+        cached, faults = _probe_models(models, verify=verify)
     except ImportError:
         return DependencyReadiness(
             name="models",
@@ -391,24 +444,49 @@ def _models_readiness() -> DependencyReadiness:
             info={"repos": {}},
         )
 
-    missing = [repo for repo, present in cached.items() if not present]
-
-    info: dict[str, object] = {"repos": cached}
-
-    if not missing:
+    unpinned = [model.repo for model in models if not model.pinned]
+    info: dict[str, object] = {
+        "repos": cached,
+        "pinned": {model.repo: model.pinned for model in models},
+        "revisions": {model.repo: model.revision for model in models},
+        "verified": verify,
+    }
+    unpinned_note = f"; unpinned: {', '.join(unpinned)}" if unpinned else ""
+    unusable = [repo for repo, usable in cached.items() if not usable]
+    if not unusable:
+        checked = len(models) - len(unpinned)
         return DependencyReadiness(
             name="models",
             status=ReadinessStatus.READY,
-            detail=f"all {len(repos)} model repos present in the cache",
+            detail=(
+                (
+                    f"all {len(models)} model repos present; {checked} verified "
+                    "against committed digests"
+                    if verify
+                    else f"all {len(models)} model repos present in the cache"
+                )
+                + unpinned_note
+            ),
+            info=info,
+        )
+    if faults:
+        return DependencyReadiness(
+            name="models",
+            status=ReadinessStatus.NOT_READY,
+            detail=(
+                f"{len(faults)} of {len(models)} model repo(s) cannot be used: "
+                + "; ".join(f"{repo} {detail}" for repo, detail in faults.items())
+                + "; run `vaultspec-rag server warmup` to fetch or repair them"
+                + unpinned_note
+            ),
             info=info,
         )
     return DependencyReadiness(
         name="models",
         status=ReadinessStatus.NOT_READY,
         detail=(
-            f"{len(missing)} of {len(repos)} model repo(s) missing from the cache: "
-            + ", ".join(missing)
-            + "; run install to provision them"
+            f"{len(unusable)} of {len(models)} model repo(s) missing from the "
+            "cache: " + ", ".join(unusable) + "; run install to provision them"
         ),
         info=info,
     )

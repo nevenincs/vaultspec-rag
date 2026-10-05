@@ -18,6 +18,12 @@ from vaultspec_core.config import (
 from vaultspec_core.env_values import BOOL_SHAPE, parse_bool
 from vaultspec_core.logging_config import resolve_log_level
 
+from .._model_pins import (
+    DENSE_MODEL_ID,
+    RERANKER_MODEL_ID,
+    committed_manifest,
+    committed_revision,
+)
 from .._sparse_profile import SPARSE_MODEL_ID
 from ._paths import read_persisted_local_only
 from ._registry import entry
@@ -32,6 +38,7 @@ from ._types import (
     STATUS_DIR_DEFAULT,
     VALID_PREPROCESS_MODES,
     EnvVar,
+    ModelRepo,
     OperatorBinary,
     OperatorBinaryPairError,
     PreprocessMode,
@@ -308,12 +315,21 @@ class VaultSpecConfigWrapper:
         # any failure. ``dense_onnx_file`` is the cached O4 model relative path.
         "dense_backend": "torch",
         "dense_onnx_file": "onnx/model_O4.onnx",
-        "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
+        "embedding_model": DENSE_MODEL_ID,
         "embedding_dimension": 1024,
         "sparse_enabled": True,
         "sparse_model": SPARSE_MODEL_ID,
         "reranker_enabled": True,
-        "reranker_model": "BAAI/bge-reranker-v2-m3",
+        "reranker_model": RERANKER_MODEL_ID,
+        # The commit the dense and reranker models are fetched and loaded
+        # at. Unset is the usual state and does not mean unpinned: a default
+        # model then uses the commit compiled into this package, the only
+        # one its committed file digests describe. Setting one names another
+        # commit, which is honoured and reported as unpinned, because no
+        # digest here covers it. A model the operator named has no compiled
+        # commit, so unset leaves the hub's default branch to decide.
+        "embedding_model_revision": None,
+        "reranker_model_revision": None,
         # The hub the three models above are downloaded from. The default is
         # the hub client's own, so an unset value changes nothing; a mirror
         # is a different base that keeps the hub's path layout. It reaches
@@ -1253,6 +1269,8 @@ class VaultSpecConfigWrapper:
     sparse_model: str
     reranker_enabled: bool
     reranker_model: str
+    embedding_model_revision: str | None
+    reranker_model_revision: str | None
     hf_endpoint: str
     reranker_batch_size: int
     reranker_max_length: int
@@ -1554,18 +1572,70 @@ if _undeclared_settings:
     )
 
 
-def configured_model_repos() -> tuple[tuple[str, str], ...]:
-    """Return every model repo this build needs, label first.
+def _model_repo(label: str, repo: str, configured_revision: str | None) -> ModelRepo:
+    """Resolve the commit one model is used at, and whether digests cover it.
+
+    A commit the operator configured wins. Without one, a default repository
+    uses the commit compiled into this package and any other repository uses
+    none. Either way the model is pinned only when file digests are committed
+    for exactly that repository at exactly that commit, so a default model
+    moved to another commit by configuration is not pinned.
+    """
+    revision = configured_revision or committed_revision(repo)
+    return ModelRepo(
+        label=label,
+        repo=repo,
+        revision=revision,
+        pinned=committed_manifest(repo, revision) is not None,
+    )
+
+
+def dense_model_repo(model_name: str | None = None) -> ModelRepo:
+    """Return the dense embedding model to fetch and load.
+
+    Args:
+        model_name: A repository named by the caller in place of the
+            configured one. The configured commit belongs to the configured
+            repository, so it is not applied to a different one.
+    """
+    cfg = get_config()
+    configured = str(cfg.embedding_model)
+    repo = model_name or configured
+    revision = cfg.embedding_model_revision if repo == configured else None
+    return _model_repo("Dense (Qwen3)", repo, revision)
+
+
+def sparse_model_repo() -> ModelRepo:
+    """Return the sparse model to fetch and load.
+
+    No configured commit is consulted, because there is no setting for one:
+    this model's repository ships the code that builds it, so its commit is
+    part of what was reviewed and not something the environment may move.
+    """
+    return _model_repo("Sparse (SPARSEUP)", str(get_config().sparse_model), None)
+
+
+def reranker_model_repo() -> ModelRepo:
+    """Return the reranker model to fetch and load."""
+    cfg = get_config()
+    return _model_repo(
+        "Reranker (CrossEncoder)",
+        str(cfg.reranker_model),
+        cfg.reranker_model_revision,
+    )
+
+
+def configured_model_repos() -> tuple[ModelRepo, ...]:
+    """Return every model this build needs, with the commit each is used at.
 
     Sparse (SPARSEUP) is omitted when ``sparse_enabled`` is false: a dense-only
     configuration never loads the sparse encoder, so provisioning, warmup, and
     readiness must not require its cached files either.
     """
-    cfg = get_config()
-    repos: list[tuple[str, str]] = [("Dense (Qwen3)", str(cfg.embedding_model))]
-    if bool(cfg.sparse_enabled):
-        repos.append(("Sparse (SPARSEUP)", str(cfg.sparse_model)))
-    repos.append(("Reranker (CrossEncoder)", str(cfg.reranker_model)))
+    repos = [dense_model_repo()]
+    if bool(get_config().sparse_enabled):
+        repos.append(sparse_model_repo())
+    repos.append(reranker_model_repo())
     return tuple(repos)
 
 

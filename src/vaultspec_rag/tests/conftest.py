@@ -397,7 +397,7 @@ def embedding_model() -> EmbeddingModel:
         (str(cfg.embedding_model), str(cfg.sparse_model)),
         timeout_seconds=model_setup_timeout_seconds(),
     )
-    return EmbeddingModel(local_files_only=True)
+    return EmbeddingModel()
 
 
 @pytest.fixture(scope="session")

@@ -24,6 +24,15 @@ the hub declares a size it cannot fit. Nothing has to be cleaned up before the
 next run: a file that was not finished is removed and every file that was is
 kept, so a re-run fetches only what is still missing.
 
+Present is not the same as correct. A model revision is a name the hub
+resolves, and the hub may be a mirror, so every repository is put through the
+snapshot check before it is reported: a default model is hashed against the
+digests committed for its pinned commit, and any other model is checked for
+its files and for safetensors weights. A cached file that fails is downloaded
+again once; a repository that still fails, or that fails in a way no download
+cures, is a failed result under its own code. Nothing is ever reported as
+downloaded without having passed.
+
 This module decides; it downloads nothing and asks the hub nothing itself.
 Each repository that needs fetching is downloaded by a child process, which
 also makes the request that asks how large it is, because a request made in a
@@ -45,6 +54,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .._model_cache import ModelSnapshotError, SnapshotFault, verify_snapshot
 from .._sync_vocabulary import ProvisionAction
 from .._units import human_bytes
 from ..config._types import EnvVar, hf_cache_only
@@ -72,6 +82,7 @@ __all__ = [
     "MODELS_OFFLINE",
     "MODELS_STALLED",
     "MODELS_UNTRUSTED_CERTIFICATE",
+    "MODELS_UNVERIFIED",
     "ModelFetch",
     "ModelRepoResult",
     "fetch_models",
@@ -88,6 +99,10 @@ MODELS_STALLED = "models_stalled"
 MODELS_DOWNLOAD_DIED = "models_download_died"
 MODELS_BUSY = "models_busy"
 MODELS_HUB_MISSING = "models_hub_missing"
+#: A snapshot is in the cache and is not one this package will load: a file
+#: differs from the pinned release, a file is there that the release does not
+#: have, or the model has no safetensors weights.
+MODELS_UNVERIFIED = "models_unverified"
 
 #: The code each way a hub request can fail is reported under.
 _CODE_OF = {
@@ -109,12 +124,17 @@ class ModelRepoResult:
     Attributes:
         label: The operator-facing name of the model's role.
         repo: The repository id.
-        action: ``unchanged`` when already cached, ``created`` when
-            downloaded, ``dry_run`` when a preview found it missing, and
-            ``failed`` otherwise.
+        action: ``unchanged`` when already cached and passing its check,
+            ``created`` when downloaded, ``updated`` when a cached file that
+            failed its check was downloaded again, ``dry_run`` when a preview
+            found it missing, and ``failed`` otherwise.
         detail: The same outcome in words, ready to follow the repo id.
         code: Why it failed, as one of the module's reason constants; empty
             unless ``action`` is ``failed``.
+        pinned: Whether file digests are committed for this repository at
+            the commit it is used at. A model that is not pinned was checked
+            for its files and weight format only, and every surface that
+            lists it says so.
     """
 
     label: str
@@ -122,6 +142,7 @@ class ModelRepoResult:
     action: ProvisionAction
     detail: str
     code: str = ""
+    pinned: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,16 +178,29 @@ class _FetchContext:
 
 @dataclass(frozen=True, slots=True)
 class _Wanted:
-    """One repository of the inventory and where it stands in the run."""
+    """One repository of the inventory and where it stands in the run.
+
+    ``revision`` is the commit it is fetched and checked at, or ``None`` for
+    a model nothing pins. ``pinned`` says whether digests are committed for
+    it, which decides how a passing check is worded: only a pinned model has
+    been compared with anything.
+    """
 
     label: str
     repo: str
     place: str
+    revision: str | None
+    pinned: bool
+
+    @property
+    def passed(self) -> str:
+        """How a snapshot that passed its check is described."""
+        return "verified" if self.pinned else "cached, unpinned"
 
     def result(
         self, action: ProvisionAction, detail: str, code: str = ""
     ) -> ModelRepoResult:
-        return ModelRepoResult(self.label, self.repo, action, detail, code)
+        return ModelRepoResult(self.label, self.repo, action, detail, code, self.pinned)
 
 
 def fetch_models(
@@ -214,28 +248,87 @@ def fetch_models(
         endpoint=constants.ENDPOINT,
     )
     repos = tuple(
-        _fetch_repo(context, _Wanted(label, repo, f"({position}/{len(models)})"))
-        for position, (label, repo) in enumerate(models, start=1)
+        _fetch_repo(
+            context,
+            _Wanted(
+                model.label,
+                model.repo,
+                f"({position}/{len(models)})",
+                model.revision,
+                model.pinned,
+            ),
+        )
+        for position, model in enumerate(models, start=1)
     )
     return _summarise(repos, context)
 
 
-def _fetch_repo(context: _FetchContext, wanted: _Wanted) -> ModelRepoResult:
-    """Probe the cache for one repository and download it when it is absent."""
-    from .._model_cache import cached_snapshot_is_complete
+def _fault(context: _FetchContext, wanted: _Wanted) -> ModelSnapshotError | None:
+    """Check the cached snapshot of one repository; return what is wrong.
 
-    if context.progress is not None:
-        context.progress.stage(f"Checking the cache for {wanted.label} {wanted.place}")
-    if cached_snapshot_is_complete(wanted.repo):
-        return wanted.result(ProvisionAction.UNCHANGED, "cached")
+    The whole check: for a pinned model every file is hashed, so this is the
+    step an operator waits on when the models are already cached.
+    """
+    try:
+        verify_snapshot(wanted.repo, revision=wanted.revision, cache_dir=context.cache)
+    except ModelSnapshotError as fault:
+        return fault
+    return None
+
+
+def _look(
+    context: _FetchContext, wanted: _Wanted
+) -> ModelRepoResult | ModelSnapshotError:
+    """Check the cache and settle the repository when no fetch can help it.
+
+    Returns:
+        The repository's result when the snapshot passes, or fails in a way
+        no download cures; otherwise the fault a download is expected to cure.
+    """
+    fault = _fault(context, wanted)
+    if fault is None:
+        return wanted.result(ProvisionAction.UNCHANGED, wanted.passed)
+    if not fault.fetchable:
+        return wanted.result(ProvisionAction.FAILED, fault.detail, MODELS_UNVERIFIED)
+    return fault
+
+
+def _without_fetching(
+    context: _FetchContext, wanted: _Wanted, fault: ModelSnapshotError
+) -> ModelRepoResult | None:
+    """Answer for a repository that needs a fetch this run will not make.
+
+    Returns:
+        The preview under a dry run, the failure when the hub is offline, and
+        ``None`` when the fetch should go ahead.
+    """
+    altered = fault.fault is SnapshotFault.MISMATCH
     if context.dry_run:
-        return wanted.result(ProvisionAction.DRY_RUN, "would be downloaded")
-    if context.offline:
         return wanted.result(
-            ProvisionAction.FAILED,
-            "not in the local cache, and the hub is offline",
-            MODELS_OFFLINE,
+            ProvisionAction.DRY_RUN,
+            "would be downloaded again" if altered else "would be downloaded",
         )
+    if not context.offline:
+        return None
+    if altered:
+        return wanted.result(ProvisionAction.FAILED, fault.detail, MODELS_UNVERIFIED)
+    return wanted.result(
+        ProvisionAction.FAILED,
+        "not in the local cache, and the hub is offline",
+        MODELS_OFFLINE,
+    )
+
+
+def _fetch_repo(context: _FetchContext, wanted: _Wanted) -> ModelRepoResult:
+    """Check the cache for one repository and download what the check wants."""
+    if context.progress is not None:
+        context.progress.stage(f"Verifying {wanted.label} {wanted.place}")
+    looked = _look(context, wanted)
+    if isinstance(looked, ModelRepoResult):
+        return looked
+    answered = _without_fetching(context, wanted, looked)
+    if answered is not None:
+        return answered
     stage = None if context.progress is None else context.progress.stage
     with exclusive_fetch(context.cache, limits=context.limits, on_wait=stage) as busy:
         if busy is not None:
@@ -243,21 +336,29 @@ def _fetch_repo(context: _FetchContext, wanted: _Wanted) -> ModelRepoResult:
                 ProvisionAction.FAILED, f"not fetched: {busy}", MODELS_BUSY
             )
         # Whoever held the cache may have fetched this very repository.
-        if cached_snapshot_is_complete(wanted.repo):
-            return wanted.result(ProvisionAction.UNCHANGED, "cached")
-        return _download_repo(context, wanted)
+        looked = _look(context, wanted)
+        if isinstance(looked, ModelRepoResult):
+            return looked
+        return _download_repo(
+            context, wanted, repair=looked.fault is SnapshotFault.MISMATCH
+        )
 
 
-def _download_repo(context: _FetchContext, wanted: _Wanted) -> ModelRepoResult:
+def _download_repo(
+    context: _FetchContext, wanted: _Wanted, *, repair: bool
+) -> ModelRepoResult:
     """Download one repository, reporting its counts when a sink was given.
+
+    With *repair* the files are fetched again even though the cache holds
+    them, because one of them failed its check and the hub client would
+    otherwise keep it. Either way the snapshot is checked again afterwards,
+    and only a snapshot that passes is reported as downloaded.
 
     Every failure becomes a result rather than an exception: the caller goes
     on to the next repository, and an operator re-running the fetch to
     discover the next unavailable one is the cost of stopping at the first.
     """
-    from .._sparse_profile import sparse_model_revision
-
-    revision = sparse_model_revision(wanted.repo)
+    revision = wanted.revision
     heading = f"Downloading {wanted.label} {wanted.place}"
     progress = context.progress
     if progress is not None:
@@ -265,6 +366,7 @@ def _download_repo(context: _FetchContext, wanted: _Wanted) -> ModelRepoResult:
     outcome = download_snapshot(
         wanted.repo,
         revision=revision,
+        force=repair,
         limits=context.limits,
         caller=DownloadCaller(
             on_progress=(
@@ -282,6 +384,18 @@ def _download_repo(context: _FetchContext, wanted: _Wanted) -> ModelRepoResult:
     if outcome.failure is not None:
         logger.error("model fetch failed for %s: %s", wanted.repo, outcome.message)
         return _failed(context, wanted, outcome.failure, outcome.message)
+    if progress is not None:
+        progress.stage(f"Verifying {wanted.label} {wanted.place}")
+    fault = _fault(context, wanted)
+    if fault is not None:
+        logger.error("model fetch failed for %s: %s", wanted.repo, fault)
+        return wanted.result(
+            ProvisionAction.FAILED,
+            f"was downloaded from {context.endpoint} and refused: {fault.detail}",
+            MODELS_UNVERIFIED,
+        )
+    if repair:
+        return wanted.result(ProvisionAction.UPDATED, "downloaded again")
     return wanted.result(ProvisionAction.CREATED, "downloaded")
 
 
@@ -388,6 +502,17 @@ def _remedy(code: str, context: _FetchContext) -> str:
             "report."
         ),
         MODELS_BUSY: (f"Wait for that process to finish, {rerun}."),
+        MODELS_UNVERIFIED: (
+            "A model that fails its check is never loaded. A file that still "
+            "does not match after being downloaded again means the hub at "
+            f"{context.endpoint} is not serving the pinned release: if "
+            f"{EnvVar.RAG_HF_ENDPOINT.value} names a mirror, point it at one "
+            "that serves the official files. A file that is not part of the "
+            "release has to be removed by hand; the detail above gives its "
+            "path. A model with only pickle weights cannot be used; name one "
+            "that ships safetensors. After any of these, run "
+            f"`{_WARMUP_COMMAND}`."
+        ),
     }
     return remedies.get(code) or (
         f"Check network access to {context.endpoint}, {rerun}; files that "
@@ -402,12 +527,58 @@ def _summarise(
     repos: tuple[ModelRepoResult, ...], context: _FetchContext
 ) -> ModelFetch:
     """Collapse the per-repository results into the outcome of the fetch."""
-
-    def named(action: ProvisionAction) -> list[str]:
-        return [result.repo for result in repos if result.action == action]
-
     failed = [result for result in repos if result.action == ProvisionAction.FAILED]
-    if failed and context.offline:
+    if failed:
+        return _summarise_failed(failed, repos, context)
+    missing = _named(repos, ProvisionAction.DRY_RUN)
+    if missing:
+        return ModelFetch(
+            ProvisionAction.DRY_RUN,
+            f"would download {len(missing)} missing model repo(s): "
+            + ", ".join(missing),
+            repos=repos,
+        )
+    # Every successful outcome names the models nothing vouches for, so an
+    # operator is told whichever command they ran.
+    unpinned = [result.repo for result in repos if not result.pinned]
+    unpinned_note = f"; unpinned: {', '.join(unpinned)}" if unpinned else ""
+    downloaded = _named(repos, ProvisionAction.CREATED)
+    repaired = _named(repos, ProvisionAction.UPDATED)
+    parts = [
+        f"{verb} {len(repos_of)} model repo(s): " + ", ".join(repos_of)
+        for verb, repos_of in (
+            ("downloaded", downloaded),
+            ("downloaded again", repaired),
+        )
+        if repos_of
+    ]
+    if parts:
+        return ModelFetch(
+            ProvisionAction.CREATED if downloaded else ProvisionAction.UPDATED,
+            "; ".join(parts) + unpinned_note,
+            repos=repos,
+        )
+    return ModelFetch(
+        ProvisionAction.UNCHANGED,
+        f"all {len(repos)} model repos already cached" + unpinned_note,
+        repos=repos,
+    )
+
+
+def _named(repos: tuple[ModelRepoResult, ...], action: ProvisionAction) -> list[str]:
+    """Return the repositories whose result is *action*, in fetch order."""
+    return [result.repo for result in repos if result.action == action]
+
+
+def _summarise_failed(
+    failed: list[ModelRepoResult],
+    repos: tuple[ModelRepoResult, ...],
+    context: _FetchContext,
+) -> ModelFetch:
+    """Word a fetch in which at least one repository failed."""
+    # Offline explains a repository that is missing. One that is present and
+    # refused is refused for its own reason, offline or not.
+    if all(result.code == MODELS_OFFLINE for result in failed):
         return ModelFetch(
             ProvisionAction.FAILED,
             f"{len(failed)} of {len(repos)} model repos are not in the local "
@@ -417,35 +588,14 @@ def _summarise(
             MODELS_OFFLINE,
             repos,
         )
-    if failed:
-        codes = list(dict.fromkeys(result.code for result in failed))
-        return ModelFetch(
-            ProvisionAction.FAILED,
-            f"{len(failed)} of {len(repos)} model repos could not be fetched: "
-            f"{'; '.join(f'{result.repo} {result.detail}' for result in failed)}. "
-            + " ".join(_remedy(code, context) for code in codes),
-            # One reason names the failure; several different ones are a
-            # failed fetch, and the detail says which repository had which.
-            codes[0] if len(codes) == 1 else MODELS_FETCH_FAILED,
-            repos,
-        )
-    missing = named(ProvisionAction.DRY_RUN)
-    if missing:
-        return ModelFetch(
-            ProvisionAction.DRY_RUN,
-            f"would download {len(missing)} missing model repo(s): "
-            + ", ".join(missing),
-            repos=repos,
-        )
-    downloaded = named(ProvisionAction.CREATED)
-    if downloaded:
-        return ModelFetch(
-            ProvisionAction.CREATED,
-            f"downloaded {len(downloaded)} model repo(s): " + ", ".join(downloaded),
-            repos=repos,
-        )
+    codes = list(dict.fromkeys(result.code for result in failed))
     return ModelFetch(
-        ProvisionAction.UNCHANGED,
-        f"all {len(repos)} model repos already cached",
-        repos=repos,
+        ProvisionAction.FAILED,
+        f"{len(failed)} of {len(repos)} model repos could not be fetched: "
+        f"{'; '.join(f'{result.repo} {result.detail}' for result in failed)}. "
+        + " ".join(_remedy(code, context) for code in codes),
+        # One reason names the failure; several different ones are a
+        # failed fetch, and the detail says which repository had which.
+        codes[0] if len(codes) == 1 else MODELS_FETCH_FAILED,
+        repos,
     )

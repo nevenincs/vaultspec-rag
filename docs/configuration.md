@@ -269,19 +269,49 @@ A transient store-write failure (disk pressure, a write-ahead-log stall) is retr
 
 The stored vectors belong to the model that produced them. After changing any model here, reindex. If the dense width disagrees with the dense model, the store rejects the first upsert rather than writing silently.
 
-The public ModernBERT SPARSEUP model uses a pinned revision shared by inference,
-provisioning and warmup. Set `VAULTSPEC_RAG_SPARSE_ENABLED=0` for dense-only search
+Set `VAULTSPEC_RAG_SPARSE_ENABLED=0` for dense-only search
 and rebuild indexes afterwards. The sparse adapter supports only
 `Linkup-Platform/linkup-sparseup-embed-v1`; another sparse repository is refused.
 Dense encoding and reranking still require
 `[gpu]` and a supported accelerator.
 
-| Variable                            | Type    | Default                                    | Controls                                       | CLI flag |
-| ----------------------------------- | ------- | ------------------------------------------ | ---------------------------------------------- | -------- |
-| `VAULTSPEC_RAG_EMBEDDING_MODEL`     | string  | `Qwen/Qwen3-Embedding-0.6B`                | Dense embedding model id                       | -        |
-| `VAULTSPEC_RAG_EMBEDDING_DIMENSION` | integer | `1024`                                     | Dense vector width; must match the dense model | -        |
-| `VAULTSPEC_RAG_SPARSE_MODEL`        | string  | `Linkup-Platform/linkup-sparseup-embed-v1` | SPARSEUP sparse model id                       | -        |
-| `VAULTSPEC_RAG_RERANKER_MODEL`      | string  | `BAAI/bge-reranker-v2-m3`                  | CrossEncoder reranker model id                 | -        |
+| Variable                                 | Type    | Default                                    | Controls                                                        | CLI flag |
+| ---------------------------------------- | ------- | ------------------------------------------ | --------------------------------------------------------------- | -------- |
+| `VAULTSPEC_RAG_EMBEDDING_MODEL`          | string  | `Qwen/Qwen3-Embedding-0.6B`                | Dense embedding model id                                        | -        |
+| `VAULTSPEC_RAG_EMBEDDING_MODEL_REVISION` | string  | none                                       | Commit of the dense model; unset uses the compiled-in commit    | -        |
+| `VAULTSPEC_RAG_EMBEDDING_DIMENSION`      | integer | `1024`                                     | Dense vector width; must match the dense model                  | -        |
+| `VAULTSPEC_RAG_SPARSE_MODEL`             | string  | `Linkup-Platform/linkup-sparseup-embed-v1` | SPARSEUP sparse model id                                        | -        |
+| `VAULTSPEC_RAG_RERANKER_MODEL`           | string  | `BAAI/bge-reranker-v2-m3`                  | CrossEncoder reranker model id                                  | -        |
+| `VAULTSPEC_RAG_RERANKER_MODEL_REVISION`  | string  | none                                       | Commit of the reranker model; unset uses the compiled-in commit | -        |
+
+#### Pinned models and what is verified
+
+Each default model is pinned twice: to a commit of its repository, and to the SHA256 of every file that commit holds. Both are compiled into vaultspec-rag. The commit says which snapshot is asked for. The digests are what make the answer checkable: a commit is a name the hub resolves, and the hub can be a mirror you configured, so the commit alone says nothing about the bytes that arrive.
+
+A default model's snapshot is used only when it matches those digests file for file. A missing file, a file that should not be there, and a file with different content are each refused, and the file is named. The check runs when the models are fetched (`install`, `server start`, `server warmup`) and again every time a model is loaded. It reads every byte, about 4 GB for the three default models, and takes a few seconds.
+
+| What you configure                           | Commit used              | Reported as | Checked against                      |
+| -------------------------------------------- | ------------------------ | ----------- | ------------------------------------ |
+| Nothing                                      | The compiled-in commit   | pinned      | The compiled-in digest of every file |
+| A revision variable set to another commit    | That commit              | unpinned    | Its file set and weight format only  |
+| A model variable naming another repository   | The hub's default branch | unpinned    | Its file set and weight format only  |
+| Another repository and its revision variable | That commit              | unpinned    | Its file set and weight format only  |
+
+**Unset is the pinned state.** The two revision variables default to none, and none means the compiled-in commit for a default model. Setting one moves the model to a commit that no compiled-in digest describes, so the model is then reported as unpinned everywhere it is listed. A revision must be a full commit id of 40 hexadecimal characters. A branch or tag name is rejected at startup, because a name that moves would unpin a model while appearing to pin it.
+
+**The sparse model has no revision variable.** Its repository ships the code that builds the model, and vaultspec-rag runs that code. The code is covered by the compiled-in digests and is loaded from the very bytes that were checked. A commit the environment could change would select code no digest covers, so there is no setting for it.
+
+**Weights are safetensors only, for every model.** A model that ships its weights only in a pickle format is refused with that reason, because loading a pickle file runs code from whatever served it. No model is given permission to run code from its repository.
+
+**An unpinned model still works.** It is fetched, checked for a configuration file, a tokenizer and safetensors weights, and loaded. Once cached it is not refreshed by a later start. What it lacks is any check of its content, and `server doctor`, `install`, `server start` and `server warmup` say so wherever they list it.
+
+**Proving the cache without starting the service.** `vaultspec-rag server doctor` hashes each pinned model's snapshot and reports the result. A failed check names the model and the file. `vaultspec-rag server warmup` repairs it: a file that fails is downloaded again once. If it still fails, the hub is not serving the pinned release; check `VAULTSPEC_RAG_HF_ENDPOINT`.
+
+**A model load never downloads.** Models are fetched by `install`, by `server warmup`, and by the check `server start` runs before it launches the service. The service, and every other process that loads a model, reads the cache only. When a model is absent or fails its check, the load stops with one message: the model, what is wrong with it, and what to run. That is `vaultspec-rag server warmup` for a model or file that is missing, `server warmup` and then `vaultspec-rag server doctor` for a file that fails its digest, and `server doctor` alone, after removing the file, for a file that does not belong. The dense model, the sparse model and the reranker all fail this way, whenever each first loads.
+
+**While a model loads** on Windows, every file of its snapshot is held open against writing, deleting and renaming from before it is hashed until the load has finished. Other platforms offer no such hold: a process that can write the model cache could replace a file between the check and the load. Because weights are safetensors and the sparse model's code is loaded from the checked bytes, such a replacement could change a model's numbers but could not run code.
+
+**The ONNX dense backend** is not used with a pinned model. The pinned release contains no ONNX graph, and a graph made or placed locally would be a file no digest covers. With `VAULTSPEC_RAG_DENSE_BACKEND=onnx` and the default dense model, vaultspec-rag logs a warning and uses the torch backend.
 
 ### Model download source
 
@@ -456,8 +486,8 @@ vaultspec-rag downloads its dense, sparse, and reranker model files through the 
 | `HF_HOME`                        | path    | Hub cache root. Read directly when reporting cache location; falls back to `~/.cache/huggingface` |
 | `HF_ENDPOINT`                    | string  | Hub endpoint. `VAULTSPEC_RAG_HF_ENDPOINT` overwrites it at process start when set                 |
 | `HF_HUB_DOWNLOAD_TIMEOUT`        | integer | Hub client's per-read timeout in seconds. vaultspec-rag does not set it; the default is `10`      |
-| `HF_HUB_OFFLINE`                 | boolean | Cache-only mode; no network access to the Hub                                                     |
-| `TRANSFORMERS_OFFLINE`           | boolean | Cache-only model loading for Transformers                                                         |
+| `HF_HUB_OFFLINE`                 | boolean | Offline mode; no model is fetched from the Hub                                                    |
+| `TRANSFORMERS_OFFLINE`           | boolean | Transformers' offline switch; same effect                                                         |
 | `DISABLE_SAFETENSORS_CONVERSION` | boolean | Skip on-the-fly safetensors conversion                                                            |
 
 All default models download publicly, without account setup. To omit sparse
@@ -468,7 +498,7 @@ rebuild existing indexes. The service still needs `[gpu]` and a supported GPU.
 
 `HF_HUB_DOWNLOAD_TIMEOUT` is the Hub client's per-read timeout: the seconds it waits with no data arriving before it abandons one download attempt. It is not a budget for a whole file. vaultspec-rag does not set it, so the client's default of `10` applies. The client retries a file up to five more times and starts that count again whenever data arrives, so a hub that goes silent fails a file after about a minute. Raise it for a link that pauses for longer than that.
 
-`HF_HUB_OFFLINE` is the authoritative offline switch; vaultspec-rag also honours `TRANSFORMERS_OFFLINE`, and when either is set to `1`, `true`, `yes`, or `on` it loads every model cache-only. See the [Hugging Face environment variable reference](https://huggingface.co/docs/huggingface_hub/en/package_reference/environment_variables).
+`HF_HUB_OFFLINE` is the authoritative offline switch; vaultspec-rag also honours `TRANSFORMERS_OFFLINE`. When either is set to `1`, `true`, `yes`, or `on`, `install`, `server start` and `server warmup` fetch no model and report what the cache lacks. Loading a model never fetches one, whether or not they are set. See the [Hugging Face environment variable reference](https://huggingface.co/docs/huggingface_hub/en/package_reference/environment_variables).
 
 Searches additionally quiet the Hub and Transformers loggers by defaulting `HF_HUB_DISABLE_PROGRESS_BARS`, `TRANSFORMERS_NO_ADVISORY_WARNINGS`, and `TRANSFORMERS_VERBOSITY` when they are unset. Set them yourself to keep the library output.
 

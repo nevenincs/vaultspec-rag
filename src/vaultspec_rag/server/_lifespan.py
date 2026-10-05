@@ -521,8 +521,10 @@ async def _start_components(
     registry._on_close_project = _m._stop_watcher  # pyright: ignore[reportPrivateUsage]
 
     # Load models (raises RuntimeError if no CUDA via _check_rag_deps). This is
-    # the longest cold-start stage - a first run downloads the weights - so the
-    # spinner names it, then names the reranker separately.
+    # the longest cold-start stage - every pinned weight file is hashed before
+    # it is read - so the spinner names it, then names the reranker separately.
+    # Nothing is downloaded here: a model the cache cannot supply stops startup
+    # with the command that fetches it.
     t0 = time.perf_counter()
     reranker_enabled = bool(get_config().reranker_enabled)
     # load_model brings up the dense and sparse encoders (two models); the

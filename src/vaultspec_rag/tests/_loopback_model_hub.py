@@ -83,11 +83,21 @@ class LoopbackModelHub:
             from the offset a ``Range`` header names.
         resumed_from: The offset of every weight-file ``GET`` that asked for
             the rest of a file it already held part of.
+        commits: Per repository, the commit it is at, in place of the one
+            fixed commit every other repository here shares. A repository is
+            answered at its commit whether it is asked for by that id or as
+            the default branch, which is what lets this hub stand in for a
+            mirror serving a pinned release.
+        files: Per repository, the files it holds, in place of the ordinary
+            set. What a mirror serves under a pinned commit is the mirror's
+            choice, and this is where a test makes that choice.
     """
 
     repos: tuple[str, ...]
     endpoint: str = ""
     requests: list[tuple[str, str]] = field(default_factory=list)
+    commits: dict[str, str] = field(default_factory=dict)
+    files: dict[str, dict[str, bytes]] = field(default_factory=dict)
     declared_weight_size: dict[str, int] = field(default_factory=dict)
     weight_responders: dict[str, Callable[[QuietHandler], None]] = field(
         default_factory=dict
@@ -122,15 +132,20 @@ class LoopbackModelHub:
         path = handler.path.split("?", 1)[0]
         self.requests.append((handler.command, path))
         for repo in self.repos:
-            if path in {f"/api/models/{repo}", f"/api/models/{repo}/revision/main"}:
+            commit = self._commit(repo)
+            if path in {
+                f"/api/models/{repo}",
+                f"/api/models/{repo}/revision/main",
+                f"/api/models/{repo}/revision/{commit}",
+            }:
                 _send_json(handler, self._record(repo))
                 return
-            if path == f"/api/models/{repo}/tree/{_COMMIT}":
+            if path == f"/api/models/{repo}/tree/{commit}":
                 _send_json(handler, self._tree(repo))
                 return
-            prefix = f"/{repo}/resolve/{_COMMIT}/"
+            prefix = f"/{repo}/resolve/{commit}/"
             name = path.removeprefix(prefix)
-            if path.startswith(prefix) and name in _FILES:
+            if path.startswith(prefix) and name in self._held(repo):
                 self._send_file(handler, repo, name)
                 return
         code = "RevisionNotFound" if "/revision/" in path else "RepoNotFound"
@@ -139,19 +154,26 @@ class LoopbackModelHub:
         handler.send_header("Content-Length", "0")
         handler.end_headers()
 
+    def _commit(self, repo: str) -> str:
+        return self.commits.get(repo, _COMMIT)
+
+    def _held(self, repo: str) -> dict[str, bytes]:
+        return self.files.get(repo, _FILES)
+
     def _size(self, repo: str, name: str) -> int:
         if name == WEIGHT_FILE and repo in self.declared_weight_size:
             return self.declared_weight_size[repo]
-        return len(_FILES[name])
+        return len(self._held(repo)[name])
 
     def _record(self, repo: str) -> dict[str, object]:
         return {
             "id": repo,
             "modelId": repo,
-            "sha": _COMMIT,
+            "sha": self._commit(repo),
             "private": False,
             "siblings": [
-                {"rfilename": name, "size": self._size(repo, name)} for name in _FILES
+                {"rfilename": name, "size": self._size(repo, name)}
+                for name in self._held(repo)
             ],
         }
 
@@ -163,11 +185,11 @@ class LoopbackModelHub:
                 "size": self._size(repo, name),
                 "oid": hashlib.sha1(content, usedforsecurity=False).hexdigest(),
             }
-            for name, content in _FILES.items()
+            for name, content in self._held(repo).items()
         ]
 
     def _send_file(self, handler: QuietHandler, repo: str, name: str) -> None:
-        content = _FILES[name]
+        content = self._held(repo)[name]
         takeover = self.weight_responders.get(repo)
         if name == WEIGHT_FILE and handler.command == "GET" and takeover is not None:
             takeover(handler)
@@ -179,7 +201,7 @@ class LoopbackModelHub:
         body = content[offset:]
         handler.send_response(HTTPStatus.PARTIAL_CONTENT if offset else HTTPStatus.OK)
         handler.send_header("ETag", f'"{hashlib.sha256(content).hexdigest()}"')
-        handler.send_header("X-Repo-Commit", _COMMIT)
+        handler.send_header("X-Repo-Commit", self._commit(repo))
         if offset:
             handler.send_header(
                 "Content-Range", f"bytes {offset}-{len(content) - 1}/{len(content)}"

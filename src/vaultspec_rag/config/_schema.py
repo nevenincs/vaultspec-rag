@@ -292,6 +292,7 @@ _DOWNLOAD_HOSTS = _HostListBound(
     "a comma-separated list of host names, each without a scheme, port or path"
 )
 _SHA256_DIGEST = _HexBound("a SHA256 digest of 64 hexadecimal characters", 64)
+_COMMIT_ID = _HexBound("a full commit id of 40 hexadecimal characters", 40)
 
 
 def setting_rejection(
@@ -385,6 +386,8 @@ ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "embedding_dimension": EnvVar.EMBEDDING_DIMENSION,
     "sparse_model": EnvVar.SPARSE_MODEL,
     "reranker_model": EnvVar.RERANKER_MODEL,
+    "embedding_model_revision": EnvVar.EMBEDDING_MODEL_REVISION,
+    "reranker_model_revision": EnvVar.RERANKER_MODEL_REVISION,
     "hf_endpoint": EnvVar.RAG_HF_ENDPOINT,
     "reranker_batch_size": EnvVar.RERANKER_BATCH_SIZE,
     "graph_ttl_seconds": EnvVar.GRAPH_TTL_SECONDS,
@@ -622,4 +625,9 @@ SETTING_BOUNDS: dict[str, _SettingBound] = {
     # is not a digest could never match a hashed file, so it is refused here
     # instead of surfacing as a mismatch at the first spawn.
     "qdrant_binary_sha256": _SHA256_DIGEST,
+    # Model revisions. A full commit id and nothing else: a branch or a tag
+    # is a name that moves, so admitting one would let configuration unpin a
+    # model while appearing to pin it.
+    "embedding_model_revision": _COMMIT_ID,
+    "reranker_model_revision": _COMMIT_ID,
 }

@@ -220,10 +220,10 @@ _DESCRIPTIONS: Final[Mapping[EnvVar, str]] = {
         "operator set it."
     ),
     EnvVar.HF_HUB_OFFLINE: (
-        "Hugging Face Hub offline switch. A true word makes model loads "
-        "cache-only; a word the shared vocabulary does not recognise reads as "
+        "Hugging Face Hub offline switch. A true word stops every model "
+        "fetch; a word the shared vocabulary does not recognise reads as "
         "online, because the owning library, not this package, has authority "
-        "over its own value."
+        "over its own value. A model load reads the cache only either way."
     ),
     EnvVar.HF_HUB_DOWNLOAD_TIMEOUT: (
         "The per-read download timeout honoured by huggingface_hub: seconds "

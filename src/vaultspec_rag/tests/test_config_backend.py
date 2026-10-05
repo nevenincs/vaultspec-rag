@@ -562,8 +562,8 @@ class TestConfiguredModelRepos:
             cfg = get_config()
             assert cfg.sparse_enabled is True
             repos = configured_model_repos()
-            labels = [label for label, _repo in repos]
-            values = [repo for _label, repo in repos]
+            labels = [model.label for model in repos]
+            values = [model.repo for model in repos]
             assert labels == [
                 "Dense (Qwen3)",
                 "Sparse (SPARSEUP)",
@@ -583,8 +583,8 @@ class TestConfiguredModelRepos:
             cfg = get_config()
             assert cfg.sparse_enabled is False
             repos = configured_model_repos()
-            labels = [label for label, _repo in repos]
-            values = [repo for _label, repo in repos]
+            labels = [model.label for model in repos]
+            values = [model.repo for model in repos]
             # The sparse label and repo are gone entirely, not merely blanked -
             # a dense-only inventory must never mention the sparse repo at all.
             assert labels == ["Dense (Qwen3)", "Reranker (CrossEncoder)"]

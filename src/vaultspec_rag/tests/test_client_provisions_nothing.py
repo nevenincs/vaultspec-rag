@@ -31,11 +31,10 @@ from .._sync_vocabulary import ProvisionAction
 from ..commands._install import install_run
 from ..commands._provision import ProvisionStep
 from ..config._paths import read_persisted_local_only
-from ..config._settings import configured_model_repos
 from ..config._types import EnvVar
 from ..operator_state._installation import ComputeCapability
 from ._cli_helpers import app, runner
-from ._model_cache_seed import seed_model_cache
+from ._model_cache_seed import STAND_IN_DENSE, STAND_IN_RERANKER, seed_model_cache
 from ._qdrant_provision_seam import record_qdrant_provisioning
 from .conftest import managed_env
 
@@ -81,8 +80,11 @@ def empty_model_cache(
     appeared in it.
     """
     with managed_env(**{EnvVar.HF_HUB_OFFLINE.value: "1"}):
-        every_repo = [repo for _label, repo in configured_model_repos()]
-        yield seed_model_cache(monkeypatch, tmp_path / "hf-cache", missing=every_repo)
+        yield seed_model_cache(
+            monkeypatch,
+            tmp_path / "hf-cache",
+            missing=[STAND_IN_DENSE, STAND_IN_RERANKER],
+        )
 
 
 def test_start_is_refused_before_anything_is_provisioned(
@@ -173,7 +175,7 @@ def test_warmup_reports_models_as_not_needed_and_fetches_none(
 ) -> None:
     """``server warmup`` tells a client the models are not needed, and stops.
 
-    The cache probe is what the fetch reports first, so its absence, and a
+    The cache check is what the fetch reports first, so its absence, and a
     model cache with nothing in it, are the evidence that no repository was
     looked for or downloaded.
 
@@ -184,7 +186,7 @@ def test_warmup_reports_models_as_not_needed_and_fetches_none(
     result = runner.invoke(app, ["server", "warmup"])
 
     assert _NOT_NEEDED in result.output, result.output
-    assert "Checking the cache" not in result.output
+    assert "Verifying" not in result.output
     assert _tree(empty_model_cache) == []
     assert result.exit_code == 0, result.output
 
