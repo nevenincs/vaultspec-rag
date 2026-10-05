@@ -15,6 +15,7 @@ import typer
 from .._operator_commands import server_start_command
 from .._sync_vocabulary import ProvisionAction
 from ..commands._provision import (
+    QDRANT_PROVISION_FAILED,
     ProvisionStep,
     managed_server_unneeded,
     provision_qdrant_binary,
@@ -38,6 +39,7 @@ from ._app import JsonMode, server_qdrant_app
 from ._process import _resolve_daemon_interpreter
 from ._progress import StartupStatusReporter
 from ._render import _emit_json, _plain_line, _print_next_action, address_line
+from ._service_lifecycle import _fail_lifecycle, _LifecycleFailure
 
 
 def _action_label(action: object) -> str:
@@ -47,6 +49,10 @@ def _action_label(action: object) -> str:
 #: Where an install's bytes came from, as the report says it.
 _SOURCE_DOWNLOAD = "download"
 _SOURCE_ARCHIVE = "archive"
+
+#: The install verb as an envelope names it, and as an operator runs it.
+_INSTALL_COMMAND = "server.qdrant.install"
+_INSTALL_VERB = "vaultspec-rag server qdrant install"
 
 
 def _install_source(report: ProvisionReport, archive: Path | None) -> str | None:
@@ -131,28 +137,47 @@ def qdrant_install(
     # reaches stdout. An environment that cannot run the service gets a
     # ``skipped`` report from the front door, with the reason, which is the
     # outcome ``install`` gives it.
-    with StartupStatusReporter(json_mode=json_mode) as progress:
-        progress.announce("Installing the managed Qdrant server...")
-        # The judgement starts an interpreter and imports torch in it, which
-        # takes seconds; saying so keeps the wait from reading as a hang.
-        progress.stage("Checking that this environment can run the service...")
-        environment = judge_service_environment(_resolve_daemon_interpreter())
-        report = provision_qdrant_binary(
-            upgrade=upgrade,
-            dry_run=dry_run,
-            archive=archive,
-            on_progress=progress.stage,
-            environment=environment,
-        )
+    try:
+        with StartupStatusReporter(json_mode=json_mode) as progress:
+            progress.announce("Installing the managed Qdrant server...")
+            # The judgement starts an interpreter and imports torch in it,
+            # which takes seconds; saying so keeps the wait from reading as a
+            # hang.
+            progress.stage("Checking that this environment can run the service...")
+            environment = judge_service_environment(_resolve_daemon_interpreter())
+            report = provision_qdrant_binary(
+                upgrade=upgrade,
+                dry_run=dry_run,
+                archive=archive,
+                on_progress=progress.stage,
+                environment=environment,
+            )
+    except KeyboardInterrupt:
+        # An install replaces the executable in one step at its very end, so
+        # a run stopped before that has installed nothing; the working files
+        # it left are removed by the next run.
+        raise _fail_lifecycle(
+            json_mode,
+            _LifecycleFailure(
+                command=_INSTALL_COMMAND,
+                error="interrupted",
+                message="Qdrant server install interrupted",
+                human_lines=(
+                    "Nothing was installed; an install that was already there "
+                    "is untouched.",
+                ),
+                next_actions=(_INSTALL_VERB,),
+            ),
+        ) from None
     failed = report.action == ProvisionAction.FAILED
 
     if json_mode:
         _emit_json(
             not failed,
-            "server.qdrant.install",
+            _INSTALL_COMMAND,
             data={**report.to_dict(), "source": _install_source(report, archive)},
             **(
-                {"error": str(report.action), "message": report.message}
+                {"error": QDRANT_PROVISION_FAILED, "message": report.message}
                 if failed
                 else {}
             ),
@@ -292,7 +317,7 @@ def _print_qdrant_install_and_state(payload: dict[str, object]) -> str:
     else:
         _plain_line("Executable: not installed")
         if not unneeded:
-            _print_next_action("vaultspec-rag server qdrant install")
+            _print_next_action(_INSTALL_VERB)
     if unneeded:
         # Said in place of a command: neither installing the server nor
         # starting the service is a next step here.

@@ -370,15 +370,32 @@ def _ensure_start_dependencies(
     from ._render import _render_provisioning_outcome
 
     progress.stage("Checking the model files and the Qdrant server...")
-    with ReporterProvisionProgress(progress) as sink:
-        outcome = ensure_runtime_dependencies(
-            environment=environment,
-            server_unneeded=backend.server_unneeded,
-            qdrant_auto_provision=_auto_provision_enabled(
-                options.qdrant_auto_provision
+    try:
+        with ReporterProvisionProgress(progress) as sink:
+            outcome = ensure_runtime_dependencies(
+                environment=environment,
+                server_unneeded=backend.server_unneeded,
+                qdrant_auto_provision=_auto_provision_enabled(
+                    options.qdrant_auto_provision
+                ),
+                progress=sink,
+            )
+    except KeyboardInterrupt:
+        # Nothing has been spawned yet, which is the difference from an
+        # interrupt of the wait for readiness: there is no daemon carrying
+        # on, and the next start resumes the fetch from the files it kept.
+        raise _fail_start(
+            options.json_mode,
+            error="start_interrupted",
+            message="Service start interrupted",
+            human_lines=(
+                "Stopped while fetching what the service needs; "
+                "no service was started.",
+                "Files that finished downloading are kept.",
             ),
-            progress=sink,
-        )
+            next_actions=(server_start_command(),),
+            started=False,
+        ) from None
     for step in outcome.steps:
         if step.action == ProvisionAction.FAILED:
             raise _fail_start_dependency(step, json_mode=options.json_mode)

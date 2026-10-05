@@ -306,7 +306,9 @@ None.
 
 ### Options
 
-None.
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `--json` | boolean | no | off | Emit JSON for scripts instead of human text. |
 
 ## server jobs
 

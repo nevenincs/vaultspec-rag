@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 import typer
 
-from ._app import server_root_app
+from ._app import JsonMode, server_root_app
 from ._progress import StartupStatusReporter
 from ._render import _emit_json, _plain
 
@@ -74,12 +74,17 @@ def _fail_lifecycle(
     explicit ``raise`` and its control flow stays legible.
     """
     if json_mode:
+        # The commands that follow are part of the outcome, so a broker is
+        # given the same ones an operator reads.
+        payload = dict(data)
+        if request.next_actions:
+            payload["next_actions"] = list(request.next_actions)
         _emit_json(
             False,
             request.command,
             error=request.error,
             message=request.message,
-            data=dict(data) or None,
+            data=payload or None,
         )
     else:
         _print_lifecycle_lines(request.message, *request.human_lines)
@@ -137,6 +142,11 @@ def _should_unlink_discovery_file(pid_alive: bool) -> bool:
     return not pid_alive
 
 
+#: The warmup verb as an envelope names it, and as an operator runs it.
+_WARMUP_COMMAND = "service.warmup"
+_WARMUP_VERB = "vaultspec-rag server warmup"
+
+
 @server_root_app.command(
     "warmup",
     help=(
@@ -146,7 +156,7 @@ def _should_unlink_discovery_file(pid_alive: bool) -> bool:
         "is missing while the Hugging Face Hub is in offline mode."
     ),
 )
-def service_warmup() -> None:
+def service_warmup(json_mode: JsonMode = False) -> None:
     """Download GPU model files before they are needed.
 
     Fetches files and nothing else: no model is constructed and this process
@@ -156,6 +166,10 @@ def service_warmup() -> None:
     told so, with the reason, before the cache is probed: a client needs no
     model files, and a host whose accelerator stack is not usable yet gets
     them from ``server start`` once it is.
+
+    Every way the verb ends is one outcome: with ``--json`` one envelope on
+    stdout, and exit 1 whenever the models are not all in place afterwards,
+    an interrupted run included.
     """
     from .._sync_vocabulary import ProvisionAction
     from ..commands._provision import provision_models
@@ -163,26 +177,64 @@ def service_warmup() -> None:
     from ._process import _resolve_daemon_interpreter
     from ._provision_progress import ReporterProvisionProgress
 
-    # No ``--json`` mode on this verb, so the reporter always speaks; it is the
-    # only thing an operator sees during a multi-gigabyte, effectively
-    # unbounded download. The per-model lines are the verb's result, so they
-    # are printed once the fetch returns rather than through the reporter,
-    # whose lines are progress and leave stdout alone off a terminal.
-    with (
-        StartupStatusReporter(json_mode=False) as reporter,
-        ReporterProvisionProgress(reporter) as progress,
-    ):
-        reporter.announce("Model warmup")
-        # The judgement starts an interpreter and imports torch in it, which
-        # takes seconds; saying so keeps the wait from reading as a hang.
-        reporter.stage("Checking that this environment can run the service...")
-        environment = judge_service_environment(_resolve_daemon_interpreter())
-        result = provision_models(progress=progress, environment=environment)
+    # The reporter is the only thing an operator sees during a download of
+    # several gigabytes, and it is silent under ``--json`` so the envelope is
+    # the one document on stdout. The per-model lines are the verb's result,
+    # so they are printed once the fetch returns rather than through the
+    # reporter, whose lines are progress and leave stdout alone off a
+    # terminal.
+    try:
+        with (
+            StartupStatusReporter(json_mode=json_mode) as reporter,
+            ReporterProvisionProgress(reporter) as progress,
+        ):
+            reporter.announce("Model warmup")
+            # The judgement starts an interpreter and imports torch in it,
+            # which takes seconds; saying so keeps the wait from reading as a
+            # hang.
+            reporter.stage("Checking that this environment can run the service...")
+            environment = judge_service_environment(_resolve_daemon_interpreter())
+            result = provision_models(progress=progress, environment=environment)
+    except KeyboardInterrupt:
+        raise _fail_lifecycle(
+            json_mode,
+            _LifecycleFailure(
+                command=_WARMUP_COMMAND,
+                error="interrupted",
+                message="Model warmup interrupted",
+                human_lines=("Files that finished downloading are kept.",),
+                next_actions=(_WARMUP_VERB,),
+            ),
+        ) from None
 
-    for repo in result.repos:
-        _print_detail_line(repo.label, f"{repo.repo} {repo.detail}")
-    if result.action == ProvisionAction.SKIPPED:
-        _print_detail_line("Models", result.detail)
-    if result.action == ProvisionAction.FAILED:
-        _plain(f"Error: {result.detail}", soft_wrap=True)
+    failed = result.action == ProvisionAction.FAILED
+    if json_mode:
+        _emit_json(
+            not failed,
+            _WARMUP_COMMAND,
+            data={
+                "action": str(result.action),
+                "detail": result.detail,
+                "repos": [
+                    {
+                        "label": repo.label,
+                        "repo": repo.repo,
+                        "action": str(repo.action),
+                        "detail": repo.detail,
+                        "code": repo.code,
+                        "pinned": repo.pinned,
+                    }
+                    for repo in result.repos
+                ],
+            },
+            **({"error": result.code, "message": result.detail} if failed else {}),
+        )
+    else:
+        for repo in result.repos:
+            _print_detail_line(repo.label, f"{repo.repo} {repo.detail}")
+        if result.action == ProvisionAction.SKIPPED:
+            _print_detail_line("Models", result.detail)
+        if failed:
+            _plain(f"Error: {result.detail}", soft_wrap=True)
+    if failed:
         raise typer.Exit(code=1)
