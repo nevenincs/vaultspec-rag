@@ -5,7 +5,7 @@ tags:
 date: '2026-10-05'
 modified: '2026-10-05'
 body_schema: 'body-v2'
-body_hash: 'sha256:81f8455475606bd56d319115ea34a9e9fc1dbc8927f2281dae4c8f29a97affe1'
+body_hash: 'sha256:94b998491f1ffa11dd6086a7d6fd34edc7d9c49fd882eb643ef6356d338217b3'
 related:
   - "[[2026-10-05-qdrant-provisioning-trust-plan]]"
 ---
@@ -264,6 +264,59 @@ related:
 - `S17` `M` `src/vaultspec_rag/tests/test_start_provisioning.py`
 - `S17` `verify:` `pytest 34 modules in an export of the parent plus the 32 paths on Windows` -> `pass`
 - `S17` `by:` `vaultspec-high-executor`
+- `S25` `M` `src/vaultspec_rag/_process_probe.py`
+- `S25` `A` `src/vaultspec_rag/_python_child.py`
+- `S25` `M` `src/vaultspec_rag/cli/_process.py`
+- `S25` `M` `src/vaultspec_rag/commands/_model_download.py`
+- `S25` `M` `src/vaultspec_rag/indexer/_pool_guard.py`
+- `S25` `M` `src/vaultspec_rag/indexer/_preprocess_entry.py`
+- `S25` `M` `src/vaultspec_rag/indexer/_preprocess_runner.py`
+- `S25` `M` `src/vaultspec_rag/operator_state/_environment_probe.py`
+- `S25` `A` `src/vaultspec_rag/tests/test_model_download_child_shadowing.py`
+- `S25` `A` `src/vaultspec_rag/tests/test_python_child.py`
+- `S25` `A` `src/vaultspec_rag/tests/test_python_child_shadowing.py`
+- `S25` `A` `src/vaultspec_rag/tests/test_python_child_spawn_sites.py`
+- `S25` `A` `src/vaultspec_rag/tests/test_server_launch_shapes.py`
+- `S25` `verify:` `dev lint python, type, type-strict, size, complexity; 239 unit tests in an export of HEAD plus the commit paths` -> `pass`
+- `S25` `by:` `vaultspec-high-executor`
+- `S26` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S26` `M` `src/vaultspec_rag/commands/_provision.py`
+- `S26` `M` `src/vaultspec_rag/tests/test_cli_service_watch.py`
+- `S26` `A` `src/vaultspec_rag/tests/test_start_backend_decision.py`
+- `S26` `M` `src/vaultspec_rag/tests/test_start_provisioning.py`
+- `S26` `verify:` `pytest 201 tests and dev lint python, type, type-strict, size, complexity, nesting, docs-cli in an export of HEAD plus the 5 paths` -> `pass`
+- `S26` `by:` `vaultspec-high-executor`
+- `S28` `M` `.env.example`
+- `S28` `M` `src/vaultspec_rag/_process_probe.py`
+- `S28` `A` `src/vaultspec_rag/_program_lookup.py`
+- `S28` `M` `src/vaultspec_rag/_win32.py`
+- `S28` `M` `src/vaultspec_rag/cli/_process.py`
+- `S28` `M` `src/vaultspec_rag/commands/_mcp_topology.py`
+- `S28` `M` `src/vaultspec_rag/commands/_tool_torch.py`
+- `S28` `M` `src/vaultspec_rag/commands/_uv_sync.py`
+- `S28` `M` `src/vaultspec_rag/config/_registry.py`
+- `S28` `M` `src/vaultspec_rag/config/_types.py`
+- `S28` `M` `src/vaultspec_rag/monitor_process.py`
+- `S28` `M` `src/vaultspec_rag/operator_state/_hardware.py`
+- `S28` `M` `src/vaultspec_rag/qdrant_runtime/_resolve.py`
+- `S28` `A` `src/vaultspec_rag/tests/_planted_programs.py`
+- `S28` `M` `src/vaultspec_rag/tests/integration/test_daemon_survives_shell_exit.py`
+- `S28` `A` `src/vaultspec_rag/tests/test_program_lookup.py`
+- `S28` `A` `src/vaultspec_rag/tests/test_program_lookup_sites.py`
+- `S28` `M` `src/vaultspec_rag/tests/test_python_child_spawn_sites.py`
+- `S28` `A` `src/vaultspec_rag/tests/test_service_working_directory.py`
+- `S28` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S28` `M` `src/vaultspec_rag/tests/test_tool_torch_repair.py`
+- `S28` `verify:` `pytest every unit test covering the changed files plus the whole-tree guards` -> `pass`
+- `S28` `verify:` `dev lint python, type, type-strict, size, complexity, nesting, absolute-imports` -> `pass`
+- `S28` `by:` `orchestrator`
+- `S31` `M` `src/vaultspec_rag/commands/_hub_failure.py`
+- `S31` `M` `src/vaultspec_rag/commands/_model_download.py`
+- `S31` `M` `src/vaultspec_rag/commands/_model_download_child.py`
+- `S31` `M` `src/vaultspec_rag/commands/_model_fetch.py`
+- `S31` `M` `src/vaultspec_rag/tests/test_model_fetch.py`
+- `S31` `verify:` `pytest ten covering modules in an export of the parent plus the five paths` -> `pass`
+- `S31` `by:` `vaultspec-high-executor`
 
 ## Notes
 
@@ -289,3 +342,7 @@ related:
 - `S15` Commit 4b7f2ee0, one joint commit for the operator-route change across three layers because no intermediate state passes the gates. Verified in an export of HEAD plus the 32 paths on Windows and in WSL. The unconsumed-definitions guard was red at the parent on three helper functions from ff9dc50d, not on these paths. Two torch-dependent readiness tests fail in the torch-free WSL environment, as on the parent.
 - `S16` Commit 4b7f2ee0, one joint commit for the operator-route change across three layers because no intermediate state passes the gates. Verified in an export of HEAD plus the 32 paths on Windows and in WSL. The unconsumed-definitions guard was red at the parent on three helper functions from ff9dc50d, not on these paths. Two torch-dependent readiness tests fail in the torch-free WSL environment, as on the parent.
 - `S17` Commit 4b7f2ee0, one joint commit for the operator-route change across three layers because no intermediate state passes the gates. Verified in an export of HEAD plus the 32 paths on Windows and in WSL. The unconsumed-definitions guard was red at the parent on three helper functions from ff9dc50d, not on these paths. Two torch-dependent readiness tests fail in the torch-free WSL environment, as on the parent.
+- `S25` Commits ff9dc50d (helper), e79b761f (model download child), 37c77b15 (daemon launch, environment probe, preprocess runner, pool guard, recognisers), 79b61667 (source guard, model child test). ff9dc50d left the unconsumed-definitions guard red until 37c77b15 landed the consumers. A parent started with the ignore-environment flag and not in safe-path mode is refused a worker pool. The MCP server entry is rendered by another repository and still starts the module from the workspace directory; not changed here.
+- `S26` Commit 9a80b406. Precedence is flag, exported variable, saved choice, default; the remote address is orthogonal. `cli/_process.py` needed no change: fourteen combinations are driven through the decision, the daemon environment, and a real child interpreter. No start that spawns a real daemon was run.
+- `S28` Commit 9ee5bd95. Begun by a worker that was terminated mid-step; the uncommitted files were read in full, the taskkill site and the search-path declarations were added, and every guard was mutation-proven afterwards against a hashed snapshot. A relative `HF_HUB_CACHE` is not rewritten. The four monitor lifecycle integration cases error at setup for want of a compiled monitor, as before. Not run: the integration tier, macOS, a real resident service.
+- `S31` Commit d5a72983, part of this Step only: every hub request including the size query is now the killable download process's and carries a timeout, and the stop no longer walks a process's ancestry. Still open in this Step: the whole-operation deadline setting, one contention budget across repositories, local cache fault classification, and replacing the substituted start-step tests. Written by a worker that was terminated before committing; the files were byte-identical to its verified copy and were re-run once before commit.
