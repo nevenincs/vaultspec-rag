@@ -801,19 +801,28 @@ configured. That lookup is removed: on Windows it searched the working directory
 and it ran a server of unknown version without checking it. A system `qdrant` is now
 ignored, and a start that relied on it downloads the managed server instead.
 
-To keep using your own executable, name it explicitly, in one of two ways:
+To keep using your own executable, name it and vouch for it, with two settings that are
+only accepted together:
 
-- Set `VAULTSPEC_RAG_QDRANT_BINARY` to its absolute path. The file runs as named, and
-  no checksum applies to it. The path must be absolute and name a regular file that is
-  not a symbolic link; anything else stops `server start` with `qdrant_binary_invalid`
-  rather than falling back to another server.
-- Register it once with `vaultspec-rag server qdrant install --binary <path>`. The file
-  is copied into the managed directory, and every start checks the copy against the
-  digest recorded at registration.
+- `VAULTSPEC_RAG_QDRANT_BINARY` is its absolute path. It must name a regular file.
+- `VAULTSPEC_RAG_QDRANT_BINARY_SHA256` is the SHA256 of that file. Print it with
+  `Get-FileHash -Algorithm SHA256 <path>` on Windows, or `sha256sum <path>` or
+  `shasum -a 256 <path>` elsewhere.
 
-Either way `server start` announces the server as operator-supplied, and
-`vaultspec-rag server qdrant status` labels its source: `operator-supplied (env)` for the
-setting, `operator-supplied (registered)` for a registered file.
+The file is hashed and compared with the digest before every launch, restarts included,
+and a file that does not match is never run. Setting only one of the two, or a path
+that is not an absolute path to a regular file, stops `server start` with
+`qdrant_binary_invalid` rather than falling back to another server. Both settings are
+read from the process environment only; a workspace file cannot name a binary for the
+service to run.
+
+`server start` announces such a server as operator-supplied, and
+`vaultspec-rag server qdrant status` labels its source `operator-supplied (env)`.
+
+Earlier releases could also register an executable by copying it into the managed
+directory. That route is removed: the managed directory now holds the pinned release
+only, and an executable registered that way no longer runs.
+`vaultspec-rag server qdrant status` reports it and names what to do.
 
 <p id="the-qdrant-download-failed-a-checksum"></p>
 
@@ -827,8 +836,14 @@ mirror with `VAULTSPEC_RAG_QDRANT_RELEASE_BASE_URL`, check the mirror; see
 [managed server provisioning](configuration.md#managed-server-provisioning). The
 digests themselves cannot be configured.
 
-On an air-gapped machine, register your own executable with
-`server qdrant install --binary <path>`.
+On a machine with no route to the release source, copy the official release archive for
+your platform onto it and install from that file:
+
+```bash
+vaultspec-rag server qdrant install --archive <file>
+```
+
+The file passes the same two checks as a download, and no request is made.
 
 <p id="the-qdrant-download-is-interrupted-or-waits"></p>
 
@@ -844,7 +859,7 @@ Only one command provisions the server at a time. A second `server start` or
 finds the install present and downloads nothing.
 
 On Windows a running server holds its executable open, so `server qdrant install`
-with `--upgrade` or `--binary` fails while the service runs. Run
+with `--upgrade` or `--archive` fails while the service runs. Run
 `vaultspec-rag server stop` first.
 
 <p id="the-installed-qdrant-server-fails-its-check"></p>

@@ -23,7 +23,7 @@ Both backends need the [GPU runtime and models](installation.md). Local-only sto
 
 The managed server is one pinned Qdrant release. `install` downloads it, and a host `server start` downloads it when none is installed. The archive is checked against a digest committed with this release before it is unpacked, and the executable against a second committed digest before it replaces an install and again before every launch, restarts included. An install that fails the check never runs; `vaultspec-rag server qdrant install --upgrade` replaces it.
 
-To run your own executable instead, name it. Set `VAULTSPEC_RAG_QDRANT_BINARY` to its absolute path, or register it with `vaultspec-rag server qdrant install --binary <path>`. A `qdrant` on `PATH` or in the working directory is never used. No committed digest covers an operator-supplied executable, so `server start` announces it and `server qdrant status` labels it `operator-supplied`. The [installation guide](installation.md#a-qdrant-on-path-is-no-longer-used) covers both routes, and [managed server provisioning](configuration.md#managed-server-provisioning) covers mirrors and the switch that stops `server start` from downloading.
+To run your own executable instead, name it and vouch for it: set `VAULTSPEC_RAG_QDRANT_BINARY` to its absolute path and `VAULTSPEC_RAG_QDRANT_BINARY_SHA256` to the SHA256 of that file. The two are only accepted together, and the file is checked against the digest before every launch. A `qdrant` on `PATH` or in the working directory is never used. The digest committed with this release does not cover an operator-supplied executable, so `server start` announces it and `server qdrant status` labels it `operator-supplied`. A host with no route to the release source installs the managed server from a local copy of the official archive with `vaultspec-rag server qdrant install --archive <file>`. The [installation guide](installation.md#a-qdrant-on-path-is-no-longer-used) covers the operator settings, and [managed server provisioning](configuration.md#managed-server-provisioning) covers mirrors and the switch that stops `server start` from downloading.
 
 ### Access to the managed server
 
@@ -83,14 +83,13 @@ vaultspec-rag server qdrant status
 
 The `Source` line says where the executable came from, and a `Detail` line appears when a start would refuse that executable, naming the fix. The same source words appear in `--json` output, in `server doctor`, and in the running service's own report:
 
-| Source        | Meaning                                                                                              | Held to                                |
-| ------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------- |
-| `provisioned` | The managed install, downloaded as the pinned release                                                | The digest committed with this release |
-| `registered`  | The managed install, registered with `server qdrant install --binary`                                | The digest recorded at registration    |
-| `env`         | The executable named by `VAULTSPEC_RAG_QDRANT_BINARY`                                                | No digest; it runs as named            |
-| `attached`    | Reported by a running service only: it joined a managed server that was already up and spawned none | Not applicable                         |
+| Source        | Meaning                                                                                             | Held to                                                        |
+| ------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `provisioned` | The managed install, downloaded as the pinned release                                               | The digest committed with this release                         |
+| `env`         | The executable named by `VAULTSPEC_RAG_QDRANT_BINARY`                                               | The digest you declare in `VAULTSPEC_RAG_QDRANT_BINARY_SHA256` |
+| `attached`    | Reported by a running service only: it joined a managed server that was already up and spawned none | Not applicable                                                 |
 
-`server qdrant status` prints the first as `managed download (provisioned)` and marks the next two `operator-supplied`. `server doctor` also reports `absent` when nothing resolves, and `invalid` when `VAULTSPEC_RAG_QDRANT_BINARY` names something that is not an absolute path to a regular file; a start refuses that setting rather than falling back to the managed install.
+`server qdrant status` prints the first as `managed download (provisioned)` and marks the second `operator-supplied`. `server doctor` also reports `absent` when nothing resolves, and `invalid` when the two operator settings do not name a usable binary: only one of them is set, the path is not an absolute path to a regular file, or the file does not match the declared digest. A start refuses that rather than falling back to the managed install. See [supplying your own server binary](configuration.md#supplying-your-own-server-binary).
 
 `server doctor` assesses the invoking process's backend configuration alongside service health. It prints one `Backend: server` or `Backend: local-only` line, which describes that configuration and does not prove which backend the running daemon uses.
 
