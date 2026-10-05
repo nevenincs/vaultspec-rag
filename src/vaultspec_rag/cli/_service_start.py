@@ -145,9 +145,9 @@ class _PreparedServiceRequest:
 #: binary, and the embedding and reranker model load. The model load is the
 #: large term. This command fetches missing weights before the timer starts,
 #: so the daemon normally loads from the cache, but a file that vanished in
-#: between is fetched by the daemon itself, where the hub's own per-file
-#: download budget is itself 300 seconds. The accelerator preflight that
-#: precedes the timer is already allowed 60 on its own.
+#: between is fetched by the daemon itself, and that fetch is bounded only by
+#: the size of the file and the speed of the link. The accelerator preflight
+#: that precedes the timer is already allowed 60 on its own.
 _START_OVERHEAD_ALLOWANCE_SECONDS = 300.0
 
 

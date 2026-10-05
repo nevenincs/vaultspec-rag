@@ -9,14 +9,12 @@ words whichever command started it.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from ._hf_progress import SnapshotProgress
+from ..commands._snapshot_progress import progress_line
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
-
+    from ..commands._snapshot_progress import SnapshotCounts
     from ._progress import StartupStatusReporter
 
 __all__ = ["ReporterProvisionProgress"]
@@ -52,18 +50,15 @@ class ReporterProvisionProgress:
         self._open()
         self._reporter.stage(label)
 
-    @contextmanager
-    def download(self, heading: str) -> Generator[type[Any] | None]:
-        """Report one snapshot download; yield the bar class to hand the hub.
+    def downloading(self, heading: str, counts: SnapshotCounts) -> None:
+        """Show how far one model snapshot download has got.
 
-        The hub exposes its byte and file counts only through the bar class it
-        is given, so the block yields that class and collapses what the hub
-        does with it into one line under *heading*.
+        A heartbeat rather than a stage: the counts change several times a
+        second, and off a terminal the reporter thins heartbeats to one line
+        every few seconds instead of printing each.
         """
         self._open()
-        self._reporter.stage(f"{heading}...")
-        with SnapshotProgress(self._reporter.heartbeat, prefix=heading) as tracker:
-            yield tracker.tqdm_class
+        self._reporter.heartbeat(progress_line(heading, counts))
 
     def _open(self) -> None:
         if not self._opened:

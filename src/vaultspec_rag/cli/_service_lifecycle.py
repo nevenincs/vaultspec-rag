@@ -15,7 +15,6 @@ from dataclasses import dataclass
 import typer
 
 from ._app import server_root_app
-from ._gpu_errors import _handle_gpu_error
 from ._progress import StartupStatusReporter
 from ._render import _emit_json, _plain
 
@@ -148,25 +147,18 @@ def _should_unlink_discovery_file(pid_alive: bool) -> bool:
     ),
 )
 def service_warmup() -> None:
-    """Download GPU model files before they are needed."""
+    """Download GPU model files before they are needed.
+
+    Fetches files and nothing else: no model is constructed and torch is never
+    imported, so the verb works on a host whose accelerator is busy or broken.
+    Whether the weights are on disk is one question and whether this
+    environment can run them is another, which ``server start`` asks. The
+    front door's model step answers a client "not needed" before the cache is
+    probed.
+    """
     from .._sync_vocabulary import ProvisionAction
-    from ..commands._provision import ProvisionStep, client_skip, provision_models
+    from ..commands._provision import provision_models
     from ._provision_progress import ReporterProvisionProgress
-
-    # Asked before the accelerator is loaded: a client holds no model and has
-    # no torch to load, and reporting that as a missing GPU build would send
-    # it to install one.
-    not_needed = client_skip(ProvisionStep.MODELS)
-    if not_needed is not None:
-        _print_detail_line("Models", not_needed.detail)
-        return
-
-    try:
-        from .._gpu import load_accelerator
-
-        load_accelerator()
-    except (ImportError, RuntimeError) as exc:
-        _handle_gpu_error(exc)
 
     # No ``--json`` mode on this verb, so the reporter always speaks; it is the
     # only thing an operator sees during a multi-gigabyte, effectively
@@ -182,6 +174,8 @@ def service_warmup() -> None:
 
     for repo in result.repos:
         _print_detail_line(repo.label, f"{repo.repo} {repo.detail}")
+    if result.action == ProvisionAction.SKIPPED:
+        _print_detail_line("Models", result.detail)
     if result.action == ProvisionAction.FAILED:
         _plain(f"Error: {result.detail}", soft_wrap=True)
         raise typer.Exit(code=1)

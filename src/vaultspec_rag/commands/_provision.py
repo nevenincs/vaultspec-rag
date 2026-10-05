@@ -34,18 +34,18 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Protocol, TypedDict, Unpack
+from typing import TYPE_CHECKING, Protocol, TypedDict, Unpack
 
 from .._sync_vocabulary import ProvisionAction
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from contextlib import AbstractContextManager
     from pathlib import Path
 
     from ..qdrant_runtime._constants import ProvisionReport
     from ._model_fetch import ModelRepoResult
     from ._models import ConfirmFn, InstallReport
+    from ._snapshot_progress import SnapshotCounts
 
 logger = logging.getLogger(__name__)
 
@@ -71,14 +71,12 @@ class ProvisionProgress(Protocol):
     def stage(self, label: str) -> None:
         """Declare the activity now running."""
 
-    def download(self, heading: str) -> AbstractContextManager[type[Any] | None]:
-        """Report one model snapshot download for the duration of the block.
+    def downloading(self, heading: str, counts: SnapshotCounts) -> None:
+        """Report how far the model snapshot download named *heading* has got.
 
-        The block yields the progress-bar class to hand the hub, which is the
-        only seam the hub reports byte and file counts through, or ``None`` to
-        leave the hub's own reporting in place.
+        Called whenever the counts change. The download itself runs in another
+        process, so counts are all that reaches here.
         """
-        ...
 
 
 class _ProvisionOptions(TypedDict, total=False):

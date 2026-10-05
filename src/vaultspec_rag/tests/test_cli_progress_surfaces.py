@@ -24,7 +24,6 @@ import contextlib
 import io
 import json
 import re
-import time
 import urllib.error
 import zipfile
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -33,8 +32,13 @@ import pytest
 from typer.testing import CliRunner
 
 from ..cli._core import _build_console
-from ..cli._hf_progress import SnapshotProgress
 from ..cli._progress import StartupStatusReporter
+from ..cli._provision_progress import ReporterProvisionProgress
+from ..commands._snapshot_progress import (
+    SnapshotBars,
+    SnapshotCounts,
+    progress_line,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -125,7 +129,7 @@ def _seed_totals(bars: list[_ByteBar], totals: list[int]) -> None:
 
 
 def _drive_snapshot_bars(
-    tracker: SnapshotProgress,
+    tracker: SnapshotBars,
     *,
     transfer_total: int = 3 * _MIB,
     reconstruct_total: int = 3 * _MIB,
@@ -152,8 +156,15 @@ def _drive_snapshot_bars(
     )
 
 
-class TestModelWarmupProgress:
-    """``server warmup``: the hub's own counters, rendered as one line."""
+class TestModelDownloadProgress:
+    """A model download: the hub's own counters, counted in one place and shown
+    in another.
+
+    The bars are built and counted in the process that downloads; the command
+    that started it only receives the counts and renders them. Both halves are
+    driven here - the counting with the hub's real bar factory, the rendering
+    through the sink every fetching command hands the provisioning front door.
+    """
 
     def test_a_terminal_gets_a_painted_frame_carrying_both_counts(
         self, monkeypatch: pytest.MonkeyPatch
@@ -168,13 +179,9 @@ class TestModelWarmupProgress:
         monkeypatch.setenv("TERM", "xterm-256color")
         buffer = io.StringIO()
         reporter = _reporter(buffer, interactive=True)
-        with (
-            reporter,
-            SnapshotProgress(
-                reporter.heartbeat, prefix="Downloading Dense (1/3)", min_interval_s=0.0
-            ) as tracker,
-        ):
-            _drive_snapshot_bars(tracker)
+        with SnapshotBars() as bars, ReporterProvisionProgress(reporter) as sink:
+            _drive_snapshot_bars(bars)
+            sink.downloading("Downloading Dense (1/3)", bars.counts())
 
         rendered = buffer.getvalue()
         plain = _plain(rendered)
@@ -186,16 +193,14 @@ class TestModelWarmupProgress:
         """Off a terminal the counts still land, with no frame around them."""
         buffer = io.StringIO()
         reporter = _reporter(buffer, interactive=False)
-        with (
-            reporter,
-            SnapshotProgress(
-                reporter.heartbeat, prefix="Downloading Dense (1/3)", min_interval_s=0.0
-            ) as tracker,
-        ):
-            _drive_snapshot_bars(tracker)
+        with SnapshotBars() as bars, ReporterProvisionProgress(reporter) as sink:
+            _drive_snapshot_bars(bars)
+            sink.downloading("Downloading Dense (1/3)", bars.counts())
 
         rendered = buffer.getvalue()
-        assert "1.0 MiB of 3.0 MiB" in _plain(rendered)
+        assert "Downloading Dense (1/3): 3/3 files, 1.0 MiB of 3.0 MiB" in _plain(
+            rendered
+        )
         assert _SPINNER_RE.search(rendered) is None
 
     def test_the_denominator_takes_the_smaller_declared_total(self):
@@ -207,46 +212,44 @@ class TestModelWarmupProgress:
         grew. This is the assertion that catches a future ``max`` or ``sum``
         over the two byte bars.
         """
-        buffer = io.StringIO()
-        reporter = _reporter(buffer, interactive=False)
-        with (
-            reporter,
-            SnapshotProgress(
-                reporter.heartbeat, prefix="Downloading", min_interval_s=0.0
-            ) as tracker,
-        ):
+        with SnapshotBars() as bars:
             _drive_snapshot_bars(
-                tracker, transfer_total=8 * _MIB, reconstruct_total=3 * _MIB
+                bars, transfer_total=8 * _MIB, reconstruct_total=3 * _MIB
             )
+            counts = bars.counts()
 
-        plain = _plain(buffer.getvalue())
-        assert "of 3.0 MiB" in plain
-        assert "8.0 MiB" not in plain
-        assert "11.0 MiB" not in plain
+        assert counts == SnapshotCounts(
+            files_done=3, files_total=3, bytes_done=_MIB, bytes_total=3 * _MIB
+        )
+        line = progress_line("Downloading", counts)
+        assert "of 3.0 MiB" in line
+        assert "8.0 MiB" not in line
+        assert "11.0 MiB" not in line
 
-    def test_a_whole_download_writes_nothing_to_the_real_streams(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
-        """tqdm's own frames never reach the terminal the reporter owns.
+    def test_bytes_past_the_declared_size_are_shown_without_a_denominator(self):
+        """A count above the declared size is never shown as a fraction of it."""
+        line = progress_line(
+            "Downloading", SnapshotCounts(bytes_done=5 * _MIB, bytes_total=0)
+        )
+
+        assert line == "Downloading: 5.0 MiB"
+        assert progress_line("Downloading", SnapshotCounts()) == "Downloading..."
+
+    def test_a_whole_download_writes_nothing_to_the_real_streams(self):
+        """tqdm's own frames never reach a stream somebody else owns.
 
         End-to-end over all three bars. Two mechanisms defend this - the bars
         are pointed at a throwaway buffer AND their draw method is replaced -
         so removing either one alone leaves this green; the single-bar case
         below is the one that binds to the buffer.
         """
-        monkeypatch.setenv("TERM", "xterm-256color")
-        buffer = io.StringIO()
         out, err = io.StringIO(), io.StringIO()
-        reporter = _reporter(buffer, interactive=True)
         with (
             contextlib.redirect_stdout(out),
             contextlib.redirect_stderr(err),
-            reporter,
-            SnapshotProgress(
-                reporter.heartbeat, prefix="Downloading", min_interval_s=0.0
-            ) as tracker,
+            SnapshotBars() as bars,
         ):
-            _drive_snapshot_bars(tracker)
+            _drive_snapshot_bars(bars)
 
         assert out.getvalue() == ""
         assert err.getvalue() == ""
@@ -257,22 +260,17 @@ class TestModelWarmupProgress:
         Deliberately one bar at position zero: that is the only shape in which
         tqdm's close writes to its stream directly rather than through the
         replaced draw method, so it is the case that proves the bars are
-        pointed away from the real terminal. Adding a second bar renumbers the
+        pointed away from the real streams. Adding a second bar renumbers the
         positions and the write stops happening, which would make this test
         stop testing anything.
         """
-        buffer = io.StringIO()
         out, err = io.StringIO(), io.StringIO()
-        reporter = _reporter(buffer, interactive=False)
         with (
             contextlib.redirect_stdout(out),
             contextlib.redirect_stderr(err),
-            reporter,
-            SnapshotProgress(
-                reporter.heartbeat, prefix="Downloading", min_interval_s=0.0
-            ) as tracker,
+            SnapshotBars() as bars,
         ):
-            bar_class = tracker.tqdm_class
+            bar_class = bars.tqdm_class
             assert bar_class is not None
             bar = _byte_bar(bar_class, desc="Downloading bytes")
             _seed_totals([bar], [3 * _MIB])
@@ -281,63 +279,15 @@ class TestModelWarmupProgress:
         assert out.getvalue() == ""
         assert err.getvalue() == ""
 
-    def test_the_emit_rate_limit_drops_ticks_inside_the_interval(self):
-        """A per-chunk counter must not repaint the region per chunk."""
-        buffer = io.StringIO()
-        clock = _Clock()
-        reporter = _reporter(buffer, interactive=False)
-        with (
-            reporter,
-            SnapshotProgress(
-                reporter.heartbeat, prefix="Downloading", min_interval_s=5.0, now=clock
-            ) as tracker,
-        ):
-            _drive_snapshot_bars(tracker)
-
-        # Everything after the first emission falls inside one interval, so the
-        # counts never advance past their opening values.
-        assert _plain(buffer.getvalue()).count("Downloading") == 1
-
-    def test_finishing_silences_further_reports(self):
-        """A report attempted after the block must not reach the console.
-
-        The hub abandons its byte bars without closing them, so tqdm's
-        finaliser closes them later - during interpreter shutdown, when the
-        console's own modules are already gone, and the report raises from
-        there. Leaving the block has to make that callback inert. The refresh
-        is invoked directly, which is what the finaliser does and what makes
-        this fail if the silencing is removed.
-        """
-        buffer = io.StringIO()
-        reporter = _reporter(buffer, interactive=False)
-        with reporter:
-            with SnapshotProgress(
-                reporter.heartbeat, prefix="Downloading", min_interval_s=0.0
-            ) as tracker:
-                bar_class = tracker.tqdm_class
-                assert bar_class is not None
-                bar = _byte_bar(bar_class, desc="Downloading bytes")
-                _seed_totals([bar], [4 * _MIB])
-                bar.update(_MIB)
-            before = buffer.getvalue()
-            assert "Downloading" in _plain(before), "premise: it reported while open"
-            tracker.refresh()
-
-        assert buffer.getvalue() == before
-
     def test_finishing_closes_every_bar_it_tracked(self):
         """The bars are closed on the way out, not left to the finaliser.
 
-        Closing here is the half of the defence that removes the shutdown
-        callback entirely rather than merely making it quiet, so it is
-        asserted separately from the silencing above.
+        The hub abandons its byte bars without closing them, so tqdm's
+        finaliser would close them during interpreter shutdown, when the
+        modules a bar draws with are already gone.
         """
-        buffer = io.StringIO()
-        reporter = _reporter(buffer, interactive=False)
-        with SnapshotProgress(
-            reporter.heartbeat, prefix="Downloading", min_interval_s=0.0
-        ) as tracker:
-            bar_class = tracker.tqdm_class
+        with SnapshotBars() as bars:
+            bar_class = bars.tqdm_class
             assert bar_class is not None
             bar = _byte_bar(bar_class, desc="Downloading bytes")
             assert not bar.disable, "premise: the bar counts while open"
@@ -350,44 +300,12 @@ class TestModelWarmupProgress:
         """A machine-readable caller owes stdout exactly one envelope."""
         buffer = io.StringIO()
         reporter = _reporter(buffer, interactive=False, json_mode=True)
-        with (
-            reporter,
-            SnapshotProgress(
-                reporter.heartbeat, prefix="Downloading", min_interval_s=0.0
-            ) as tracker,
-        ):
-            _drive_snapshot_bars(tracker)
+        with SnapshotBars() as bars, ReporterProvisionProgress(reporter) as sink:
+            _drive_snapshot_bars(bars)
+            sink.stage("Downloading Dense (1/3)...")
+            sink.downloading("Downloading Dense (1/3)", bars.counts())
 
         assert buffer.getvalue() == ""
-
-    def test_the_provisioning_sink_reports_a_download_through_the_reporter(self):
-        """The sink every fetching command hands the front door carries the counts.
-
-        ``install``, ``server start`` and ``server warmup`` all report a model
-        download through this one object, so this is the path the hub's bars
-        actually take in production rather than a tracker built by hand.
-        """
-        from ..cli._provision_progress import ReporterProvisionProgress
-
-        buffer = io.StringIO()
-        reporter = _reporter(buffer, interactive=False)
-        with (
-            ReporterProvisionProgress(reporter) as sink,
-            sink.download("Downloading Dense (1/3)") as bar_class,
-        ):
-            assert bar_class is not None, "premise: tqdm ships with the hub"
-            transfer = _byte_bar(bar_class, desc="Downloading bytes")
-            _seed_totals([transfer], [3 * _MIB])
-            # The sink builds its tracker with the production emit interval,
-            # which exists so a per-chunk counter does not repaint per chunk.
-            # Constructing the bar reported once; the count has to arrive
-            # after that interval to be reported at all.
-            time.sleep(0.3)
-            transfer.update(_MIB)
-
-        plain = _plain(buffer.getvalue())
-        assert "Downloading Dense (1/3)..." in plain
-        assert "1.0 MiB of 3.0 MiB" in plain
 
     def test_the_provisioning_sink_draws_nothing_until_it_reports(
         self, monkeypatch: pytest.MonkeyPatch
@@ -402,8 +320,6 @@ class TestModelWarmupProgress:
         already been written to when the first assertion runs, and it fails;
         restoring the lazy open passes.
         """
-        from ..cli._provision_progress import ReporterProvisionProgress
-
         monkeypatch.setenv("TERM", "xterm-256color")
         buffer = io.StringIO()
         reporter = _reporter(buffer, interactive=True)

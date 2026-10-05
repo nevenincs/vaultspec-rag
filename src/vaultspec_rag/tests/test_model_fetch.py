@@ -19,29 +19,63 @@ it executes is the shipped one, reporting through the CLI's own sink.
 
 from __future__ import annotations
 
+import contextlib
+import errno
 import json
+import os
+import shutil
+import subprocess
 import sys
+import threading
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from .._anchor_claim import claim_anchor, release_anchor_claim
 from .._model_cache import cached_snapshot_is_complete
 from .._sync_vocabulary import ProvisionAction
+from ..commands._hub_failure import HubFailure, classify_hub_failure
 from ..commands._install import install_run
-from ..commands._model_fetch import MODELS_OFFLINE
+from ..commands._model_fetch import (
+    MODELS_BUSY,
+    MODELS_DOWNLOAD_DIED,
+    MODELS_FETCH_FAILED,
+    MODELS_NO_SPACE,
+    MODELS_NOT_FOUND,
+    MODELS_OFFLINE,
+    MODELS_STALLED,
+    MODELS_UNTRUSTED_CERTIFICATE,
+)
 from ..commands._provision import ProvisionStep, provision_models
 from ..config._settings import configured_model_repos
 from ..config._types import EnvVar
 from ._child_signal import CHILD_PROCESS_TIMEOUT_SECONDS
-from ._loopback_model_hub import LoopbackModelHub, loopback_model_hub
+from ._cli_helpers import app, runner
+from ._loopback_model_hub import (
+    WEIGHT_FILE,
+    LoopbackModelHub,
+    loopback_model_hub,
+    weight_bytes,
+)
+from ._loopback_tls import (
+    LOOPBACK_HOST,
+    send_then_reset,
+    send_trickle,
+    stay_silent,
+    trusted_loopback_sources,
+)
 from ._model_cache_seed import seed_model_cache
+from ._ports import free_loopback_port
 from ._provision_fixtures import result_for
 from .conftest import managed_env
 
 if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
+
+    from ..commands._snapshot_progress import SnapshotCounts
+    from ._http_stubs import QuietHandler
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("inference_host")]
 
@@ -69,11 +103,12 @@ class _RecordingProgress:
 
     def stage(self, label: str) -> None:
         self.stages.append(label)
+        if label.startswith("Downloading"):
+            self.downloads.append(label)
 
-    @contextmanager
-    def download(self, heading: str) -> Generator[type[Any] | None]:
+    def downloading(self, heading: str, counts: SnapshotCounts) -> None:
+        del counts
         self.downloads.append(heading)
-        yield None
 
 
 @pytest.fixture(autouse=True)
@@ -202,14 +237,49 @@ _RERANKER_REPO = "vaultspec-test/reranker"
 #: it off a terminal.
 _FETCH_IN_A_FRESH_INTERPRETER = """
 import json
+import os
+import sys
+import time
+
+import psutil
 
 from vaultspec_rag.cli._progress import StartupStatusReporter
 from vaultspec_rag.cli._provision_progress import ReporterProvisionProgress
+from vaultspec_rag.commands._model_download import FetchLimits
 from vaultspec_rag.commands._model_fetch import fetch_models
 
+# Observation only: the interpreter reports every process it creates to an
+# audit hook, so "was a download process started" is read, not arranged.
+started = []
+sys.addaudithook(
+    lambda event, args: started.append(args[1]) if event == "subprocess.Popen" else None
+)
+limits = FetchLimits(
+    window_seconds=float(os.environ.get("TEST_FETCH_WINDOW", "600")),
+    contention_seconds=float(os.environ.get("TEST_FETCH_CONTENTION", "3600")),
+)
+if os.environ.get("TEST_KILL_FIRST_DOWNLOAD"):
+    import threading
+
+    def kill_the_first_download():
+        # What an out-of-memory kill or a task manager does: the download
+        # process and whatever it started are ended from outside, mid-work.
+        me = psutil.Process()
+        while not me.children(recursive=True):
+            time.sleep(0.05)
+        time.sleep(1.5)
+        for child in me.children(recursive=True):
+            try:
+                child.kill()
+            except psutil.Error:
+                pass
+
+    threading.Thread(target=kill_the_first_download, daemon=True).start()
+began = time.monotonic()
 reporter = StartupStatusReporter(json_mode=False, interactive=False)
 with ReporterProvisionProgress(reporter) as sink:
-    fetched = fetch_models(progress=sink)
+    fetched = fetch_models(progress=sink, limits=limits)
+took = time.monotonic() - began
 print(
     json.dumps(
         {
@@ -217,25 +287,57 @@ print(
             "detail": fetched.detail,
             "code": fetched.code,
             "repos": [
-                [repo.label, repo.repo, str(repo.action), repo.detail]
+                [repo.repo, str(repo.action), repo.code]
                 for repo in fetched.repos
             ],
+            "details": [repo.detail for repo in fetched.repos],
+            "processes_started": len(started),
+            "processes_left": [
+                child.pid for child in psutil.Process().children(recursive=True)
+            ],
+            "seconds": took,
         }
     )
 )
 """
 
+#: Run the fetch as a preview, which reaches the hub client without asking
+#: the network for anything, then print the per-read timeout the client is
+#: left with.
+_TIMEOUT_AFTER_A_FETCH = """
+from vaultspec_rag.commands._model_fetch import fetch_models
 
-def _fetch_from(hub: LoopbackModelHub, cache: Path) -> tuple[dict[str, object], str]:
-    """Run the fetch in a fresh interpreter aimed at *hub*; return it and stderr."""
-    import subprocess
+fetch_models(dry_run=True)
 
+from huggingface_hub import constants
+
+print(constants.HF_HUB_DOWNLOAD_TIMEOUT)
+"""
+
+#: The hub client's own timeouts, shortened so a hub that stops answering is
+#: given up on in seconds. They are the knobs an operator has, set the way an
+#: operator sets them; nothing about how the client waits is replaced.
+_QUICK_TIMEOUTS = {
+    EnvVar.HF_HUB_DOWNLOAD_TIMEOUT.value: "1",
+    "HF_HUB_ETAG_TIMEOUT": "1",
+}
+
+
+def _child_environment(
+    hub: LoopbackModelHub, cache: Path, extra: dict[str, str] | None = None
+) -> dict[str, str]:
+    """Build a fresh interpreter's environment: *hub*, *cache*, two fake repos."""
     env = hub.child_environment(cache)
     env[EnvVar.EMBEDDING_MODEL.value] = _DENSE_REPO
     env[EnvVar.RERANKER_MODEL.value] = _RERANKER_REPO
     env[EnvVar.SPARSE_ENABLED.value] = "0"
-    completed = subprocess.run(
-        [sys.executable, "-c", _FETCH_IN_A_FRESH_INTERPRETER],
+    env.update(extra or {})
+    return env
+
+
+def _run_child(script: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-c", script],
         env=env,
         capture_output=True,
         text=True,
@@ -244,11 +346,42 @@ def _fetch_from(hub: LoopbackModelHub, cache: Path) -> tuple[dict[str, object], 
         timeout=CHILD_PROCESS_TIMEOUT_SECONDS,
         check=False,
     )
+
+
+def _fetch_from(
+    hub: LoopbackModelHub, cache: Path, extra: dict[str, str] | None = None
+) -> tuple[dict[str, object], str]:
+    """Run the fetch in a fresh interpreter aimed at *hub*; return it and stderr."""
+    completed = _run_child(
+        _FETCH_IN_A_FRESH_INTERPRETER, _child_environment(hub, cache, extra)
+    )
     assert completed.returncode == 0, completed.stderr
     outcome = cast(
         "dict[str, object]", json.loads(completed.stdout.strip().splitlines()[-1])
     )
     return outcome, completed.stderr
+
+
+def _unserved_hub() -> LoopbackModelHub:
+    """An endpoint nothing listens on: every connection to it is refused."""
+    return LoopbackModelHub(
+        repos=(), endpoint=f"http://{LOOPBACK_HOST}:{free_loopback_port()}"
+    )
+
+
+def _assert_a_rerun_completes(cache: Path) -> None:
+    """A healthy hub and no cleanup: the next run must finish the job.
+
+    Whatever the failed run left in the cache - nothing, lock files, a partial
+    weight file - is left exactly as it was, because an operator is told to
+    run the command again and nothing more.
+    """
+    with loopback_model_hub([_DENSE_REPO, _RERANKER_REPO]) as healthy:
+        outcome, _progress = _fetch_from(healthy, cache)
+
+    assert outcome["action"] in {ProvisionAction.CREATED, ProvisionAction.UNCHANGED}
+    assert cached_snapshot_is_complete(_DENSE_REPO, cache_dir=cache)
+    assert cached_snapshot_is_complete(_RERANKER_REPO, cache_dir=cache)
 
 
 def test_missing_repos_are_downloaded_reported_and_then_left_alone(
@@ -261,11 +394,14 @@ def test_missing_repos_are_downloaded_reported_and_then_left_alone(
     client. The cache is then judged by the product's own completeness probe,
     and a second run has to find it complete and ask the hub for nothing.
 
-    Mutation check: with the download call removed from the fetch, the
-    repositories are reported ``downloaded`` although nothing arrived - the
-    hub saw no file request and the first downloads assertion fails. With the
-    cache probe ignored on the second run, the hub is asked again and the
-    request-count assertion fails. Restoring each passes.
+    Mutation check: with the download call removed from the download
+    process, the repositories are reported ``downloaded`` although nothing
+    arrived - the hub saw no file request and the first downloads assertion
+    fails. With both of the fetch's looks at the cache ignored, the second run
+    starts download processes and asks the hub again, and the request-count
+    assertion fails; the first look alone is held by the cached-inventory test
+    above, and the second by the test of a fetch that waited. Restoring each
+    passes.
     """
     cache = tmp_path / "hub-cache"
     with loopback_model_hub([_DENSE_REPO, _RERANKER_REPO]) as hub:
@@ -273,15 +409,18 @@ def test_missing_repos_are_downloaded_reported_and_then_left_alone(
 
         assert hub.downloads_of(_DENSE_REPO).count("model.safetensors") == 1
         assert hub.downloads_of(_RERANKER_REPO).count("model.safetensors") == 1
+        assert first["processes_started"] == 2, "one download process per repository"
+        assert first["processes_left"] == []
         assert first["action"] == ProvisionAction.CREATED
         assert first["code"] == ""
         assert first["detail"] == (
             f"downloaded 2 model repo(s): {_DENSE_REPO}, {_RERANKER_REPO}"
         )
         assert first["repos"] == [
-            ["Dense (Qwen3)", _DENSE_REPO, "created", "downloaded"],
-            ["Reranker (CrossEncoder)", _RERANKER_REPO, "created", "downloaded"],
+            [_DENSE_REPO, "created", ""],
+            [_RERANKER_REPO, "created", ""],
         ]
+        assert first["details"] == ["downloaded", "downloaded"]
         assert "Checking the cache for Dense (Qwen3) (1/2)" in progress
         assert "Downloading Dense (Qwen3) (1/2)" in progress
         assert "Downloading Reranker (CrossEncoder) (2/2)" in progress
@@ -292,5 +431,757 @@ def test_missing_repos_are_downloaded_reported_and_then_left_alone(
         second, _progress = _fetch_from(hub, cache)
 
         assert len(hub.requests) == asked_so_far, hub.requests[asked_so_far:]
+        assert second["processes_started"] == 0, "a cached start pays for no process"
         assert second["action"] == ProvisionAction.UNCHANGED
         assert second["detail"] == "all 2 model repos already cached"
+
+
+class TestAFetchThatCannotComplete:
+    """Each way the hub or the disk lets a fetch down ends the same way.
+
+    One failed outcome whose code names the cause and whose detail names what
+    to do, with every repository still attempted - and then, with the cause
+    gone and nothing cleaned up by hand, a run that completes. The fetch is
+    the shipped one in a fresh interpreter; the hub is a loopback stand-in and
+    the conditions are real ones on a real socket or a real volume.
+    """
+
+    def test_a_hub_that_refuses_connections(self, tmp_path: Path) -> None:
+        """Nothing listens at the endpoint: the network is the remedy.
+
+        Mutation check: with an unreachable hub classed as a missing
+        repository, the code assertion fails with ``models_not_found``;
+        restoring the classification passes.
+        """
+        cache = tmp_path / "hub-cache"
+        dead = _unserved_hub()
+
+        outcome, _progress = _fetch_from(dead, cache, _QUICK_TIMEOUTS)
+
+        assert outcome["action"] == ProvisionAction.FAILED
+        assert outcome["code"] == MODELS_FETCH_FAILED
+        assert outcome["repos"] == [
+            [_DENSE_REPO, "failed", MODELS_FETCH_FAILED],
+            [_RERANKER_REPO, "failed", MODELS_FETCH_FAILED],
+        ]
+        detail = str(outcome["detail"])
+        assert f"Check network access to {dead.endpoint}" in detail
+        assert "vaultspec-rag server warmup" in detail
+        assert EnvVar.HF_HUB_DOWNLOAD_TIMEOUT.value in detail
+        _assert_a_rerun_completes(cache)
+
+    def test_a_repository_the_hub_does_not_have(self, tmp_path: Path) -> None:
+        """A name the hub answers "not found" for: the setting is the remedy.
+
+        The other repository is still fetched, so the failure names exactly
+        the one that is wrong.
+
+        Mutation check: with the not-found errors no longer recognised, the
+        code assertion fails with ``models_fetch_failed`` and the operator
+        would be sent to check a network that works; restoring them passes.
+        """
+        cache = tmp_path / "hub-cache"
+        with loopback_model_hub([_RERANKER_REPO]) as hub:
+            outcome, _progress = _fetch_from(hub, cache)
+
+            assert hub.downloads_of(_DENSE_REPO) == []
+            assert outcome["action"] == ProvisionAction.FAILED
+            assert outcome["code"] == MODELS_NOT_FOUND
+            assert outcome["repos"] == [
+                [_DENSE_REPO, "failed", MODELS_NOT_FOUND],
+                [_RERANKER_REPO, "created", ""],
+            ]
+            detail = str(outcome["detail"])
+            assert f"The hub at {hub.endpoint} has no such public repository" in detail
+            assert "Correct the model setting" in detail
+        _assert_a_rerun_completes(cache)
+
+    def test_a_download_the_volume_cannot_hold(self, tmp_path: Path) -> None:
+        """A repository larger than the free space is refused before a byte.
+
+        How the condition is staged, exactly: the volume is not filled. The
+        hub declares a weight file one gibibyte larger than the space this
+        volume really has free, and the fetch compares that declaration with
+        the volume's real free space, as it would for a real repository. What
+        is proven is the refusal and that nothing was requested; what is not
+        reproduced here is a volume that fills during a transfer, which is
+        the classification test below.
+
+        Mutation check: with the free-space comparison removed, the weight
+        file is requested and the downloads assertion fails; restoring it
+        passes.
+        """
+        cache = tmp_path / "hub-cache"
+        with loopback_model_hub([_DENSE_REPO, _RERANKER_REPO]) as hub:
+            hub.declared_weight_size[_DENSE_REPO] = shutil.disk_usage(tmp_path).free + (
+                1 << 30
+            )
+
+            outcome, _progress = _fetch_from(hub, cache)
+
+            assert hub.downloads_of(_DENSE_REPO) == [], "a doomed download was started"
+            assert outcome["action"] == ProvisionAction.FAILED
+            assert outcome["code"] == MODELS_NO_SPACE
+            assert outcome["repos"] == [
+                [_DENSE_REPO, "failed", MODELS_NO_SPACE],
+                [_RERANKER_REPO, "created", ""],
+            ]
+            detail = str(outcome["detail"])
+            assert str(cache) in detail
+            assert "Free space on the volume" in detail
+            assert EnvVar.HF_HOME.value in detail
+        _assert_a_rerun_completes(cache)
+
+    def test_a_hub_that_goes_silent_mid_fetch(self, tmp_path: Path) -> None:
+        """A hub that accepts the request and then says nothing is given up on.
+
+        The bound is the hub client's own, and this pins it: one attempt per
+        read timeout, and six attempts before the file fails, because no byte
+        ever arrives to start the count again. With the client's default
+        timeout of ten seconds that is about a minute for a dead hub; here the
+        operator's own variable shortens the timeout to one second.
+
+        Mutation check: the attempt count is the client's and cannot be broken
+        from this side, so what was mutated is the outcome - with a timed-out
+        transfer classed as a missing repository the code assertion fails;
+        restoring the classification passes.
+        """
+        cache = tmp_path / "hub-cache"
+        with loopback_model_hub([_DENSE_REPO, _RERANKER_REPO]) as hub:
+            hub.weight_responders[_DENSE_REPO] = stay_silent
+
+            outcome, _progress = _fetch_from(hub, cache, _QUICK_TIMEOUTS)
+
+            assert hub.downloads_of(_DENSE_REPO).count(WEIGHT_FILE) == 6
+            assert outcome["action"] == ProvisionAction.FAILED
+            assert outcome["code"] == MODELS_FETCH_FAILED
+            assert outcome["repos"] == [
+                [_DENSE_REPO, "failed", MODELS_FETCH_FAILED],
+                [_RERANKER_REPO, "created", ""],
+            ]
+            assert f"Check network access to {hub.endpoint}" in str(outcome["detail"])
+        assert list(cache.rglob("*.incomplete")) == []
+        _assert_a_rerun_completes(cache)
+
+    def test_a_connection_reset_in_the_middle_of_a_file(self, tmp_path: Path) -> None:
+        """A transfer cut off part-way fails once and leaves nothing half-made.
+
+        The hub sends the first half of the weight file and then resets the
+        connection, every time it is asked. The hub client deletes the file it
+        could not finish, so the cache holds no partial file afterwards. The
+        run that follows fetches that file whole from a healthy hub and does
+        not ask again for the repository that had already finished - which is
+        what the remedy tells the operator to expect.
+
+        Mutation check: with the remedy still promising that a partial
+        download resumes, the wording assertion fails; the cache and request
+        assertions describe the hub client and cannot be broken from here.
+        """
+        cache = tmp_path / "hub-cache"
+        weight = weight_bytes()
+        half = len(weight) // 2
+        with loopback_model_hub([_DENSE_REPO, _RERANKER_REPO]) as hub:
+            hub.weight_responders[_DENSE_REPO] = lambda handler: send_then_reset(
+                handler, weight[:half], declared=len(weight)
+            )
+
+            outcome, _progress = _fetch_from(hub, cache, _QUICK_TIMEOUTS)
+
+            assert outcome["action"] == ProvisionAction.FAILED
+            assert outcome["code"] == MODELS_FETCH_FAILED
+            assert outcome["repos"] == [
+                [_DENSE_REPO, "failed", MODELS_FETCH_FAILED],
+                [_RERANKER_REPO, "created", ""],
+            ]
+            assert "an interrupted one is fetched again" in str(outcome["detail"])
+        assert list(cache.rglob("*.incomplete")) == []
+
+        with loopback_model_hub([_DENSE_REPO, _RERANKER_REPO]) as healthy:
+            again, _progress = _fetch_from(healthy, cache)
+
+            assert again["action"] == ProvisionAction.CREATED
+            assert healthy.downloads_of(_DENSE_REPO).count(WEIGHT_FILE) == 1
+            assert healthy.resumed_from == []
+            assert healthy.downloads_of(_RERANKER_REPO) == []
+        assert cached_snapshot_is_complete(_DENSE_REPO, cache_dir=cache)
+
+    def test_the_fetch_leaves_the_hub_clients_read_timeout_alone(
+        self, tmp_path: Path
+    ) -> None:
+        """How long a silent hub is waited on is the client's default, ten seconds.
+
+        The fetch once raised that timeout to five minutes, which let a dead
+        hub hold a run for half an hour. The stall bound the guides state -
+        six attempts of ten seconds - is true only while nothing here
+        overrides the client, and while the client's own default stays what
+        it is; either changing must fail here, not go unnoticed.
+
+        Mutation check: with a default for the client's timeout written into
+        the environment before the client is imported, the value read back is
+        that default and the assertion fails; removing it passes.
+        """
+        env = _child_environment(_unserved_hub(), tmp_path / "hub-cache")
+        env.pop(EnvVar.HF_HUB_DOWNLOAD_TIMEOUT.value, None)
+
+        completed = _run_child(_TIMEOUT_AFTER_A_FETCH, env)
+
+        assert completed.returncode == 0, completed.stderr
+        assert completed.stdout.strip().splitlines()[-1] == "10"
+
+    def test_a_volume_that_fills_mid_transfer_is_named_as_such(self) -> None:
+        """An out-of-space error is recognised wherever the client wrapped it.
+
+        The limit of this test, stated plainly: no volume is filled. A
+        transfer that exhausts a real volume cannot be staged in a unit run
+        without a volume of a chosen size, which needs privileges the suite
+        does not have. What is exercised is the classification, at the one
+        seam it has: the operating system's own error object, bare and as the
+        cause of the error the hub client raises. That the client's write
+        raises it, and that the run then ends as one failed outcome, is the
+        same path the refused-connection test drives with a different error.
+
+        Mutation check: with the error-number test removed, the first
+        assertion fails with ``models_fetch_failed``; restoring it passes.
+        """
+        full = OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+        wrapped = RuntimeError("the hub client gave up on the file")
+        wrapped.__cause__ = full
+
+        assert classify_hub_failure(full) is HubFailure.NO_SPACE
+        assert classify_hub_failure(wrapped) is HubFailure.NO_SPACE
+        assert (
+            classify_hub_failure(OSError(errno.EACCES, "denied"))
+            is HubFailure.UNREACHABLE
+        )
+
+
+def _cache_holding_the_reranker(cache: Path) -> None:
+    """Fetch the reranker into *cache* and leave the dense model missing.
+
+    The cases below shorten the progress window to seconds, and a window that
+    short would also catch a healthy download whose process is slow to start
+    on a loaded machine. With one repository already cached, the only download
+    a short window ever judges is the one that is meant to fail.
+    """
+    with loopback_model_hub([_RERANKER_REPO]) as partial:
+        _fetch_from(partial, cache)
+    assert cached_snapshot_is_complete(_RERANKER_REPO, cache_dir=cache)
+    assert not cached_snapshot_is_complete(_DENSE_REPO, cache_dir=cache)
+
+
+class TestADownloadThatMustBeStopped:
+    """A download that will never finish is stopped, and nothing is left running.
+
+    The download runs in a process of its own and the fetch watches what it
+    reports: fewer than a mebibyte in a whole window, and the process and
+    everything it started are killed. The window is ten minutes in production
+    and a few seconds here; the code is the same.
+
+    What these cases do not exercise is the hub's native transfer protocol,
+    which the default weights use and a loopback hub cannot serve. They do not
+    need to: the stop is the operating system ending a process, which does not
+    depend on what was moving the bytes inside it.
+    """
+
+    def test_a_hub_that_trickles_is_stopped_by_the_floor(self, tmp_path: Path) -> None:
+        """A kilobyte every fifth of a second never trips a read timeout.
+
+        The stand-in sends for half a minute and then stops short of the file;
+        a hub that chose to keep going could hold a command for ever. The
+        floor stops the download after one window, and the hub then sees the
+        connection drop while it is still sending - which is the evidence that
+        the download is really gone and not merely no longer waited for.
+
+        Mutation check: with the floor never judged breached, the fetch waits
+        out the whole trickle and ends as a failed transfer, failing the code
+        assertion with ``models_fetch_failed``; restoring the judgement
+        passes.
+        """
+        cache = tmp_path / "hub-cache"
+        _cache_holding_the_reranker(cache)
+        dropped = threading.Event()
+
+        def trickle(handler: QuietHandler) -> None:
+            try:
+                send_trickle(handler, pieces=150, piece=b"\0" * 1024, interval=0.2)
+            except OSError:
+                dropped.set()
+                raise
+
+        with loopback_model_hub([_DENSE_REPO, _RERANKER_REPO]) as hub:
+            hub.weight_responders[_DENSE_REPO] = trickle
+
+            outcome, _progress = _fetch_from(hub, cache, {"TEST_FETCH_WINDOW": "3"})
+
+            assert outcome["code"] == MODELS_STALLED
+            assert outcome["repos"] == [
+                [_DENSE_REPO, "failed", MODELS_STALLED],
+                [_RERANKER_REPO, "unchanged", ""],
+            ]
+            assert outcome["processes_left"] == [], "the download outlived its outcome"
+            assert dropped.wait(timeout=15), "the hub never saw the connection close"
+            assert cast("float", outcome["seconds"]) < 60
+        detail = str(outcome["detail"])
+        assert "fewer than 1.0 MiB arrived in 3 seconds" in detail
+        assert f"{EnvVar.HF_HUB_OFFLINE.value}=1" in detail
+        assert EnvVar.RAG_HF_ENDPOINT.value in detail
+        assert list(cache.rglob("*.incomplete")) == []
+        _assert_a_rerun_completes(cache)
+
+    def test_a_download_that_reports_nothing_is_stopped_by_the_floor(
+        self, tmp_path: Path
+    ) -> None:
+        """A wedged download is caught by the same rule as a slow one.
+
+        The hub accepts the request for the weight file and never answers, and
+        the hub client's read timeout - normally the fast path for exactly
+        this - is set well above the window, as an operator on a poor link
+        might raise it: left to that timeout alone the client would take over
+        a minute to give the file up. Nothing more arrives and nothing more is
+        reported, which is itself less than the floor. The download process is
+        still alive and
+        still waiting when it is stopped, so this is also where the stop is
+        held to killing the whole process tree and to removing the file the
+        download had opened.
+
+        Mutation checks, each restored and passing afterwards. With the floor
+        judged only when a new report arrives, the fetch waits out the read
+        timeout and the ``seconds`` assertion fails (78 seconds observed).
+        With nothing killed after a breach, the fetch cannot return while the
+        download still holds its pipes, and the same assertion fails. With
+        the unfinished file left where the killed download put it, the
+        ``.incomplete`` assertion fails. Killing only the one process, and
+        not what it started, is not caught here - on a host whose interpreter
+        is not a launcher the download has no descendants - and has its own
+        test below.
+        """
+        cache = tmp_path / "hub-cache"
+        _cache_holding_the_reranker(cache)
+        with loopback_model_hub([_DENSE_REPO, _RERANKER_REPO]) as hub:
+            hub.weight_responders[_DENSE_REPO] = stay_silent
+
+            outcome, _progress = _fetch_from(
+                hub,
+                cache,
+                {"TEST_FETCH_WINDOW": "3", EnvVar.HF_HUB_DOWNLOAD_TIMEOUT.value: "12"},
+            )
+
+            assert cast("float", outcome["seconds"]) < 30
+            assert outcome["code"] == MODELS_STALLED
+            assert outcome["processes_left"] == []
+        assert list(cache.rglob("*.incomplete")) == []
+        _assert_a_rerun_completes(cache)
+
+    def test_stopping_a_download_kills_what_it_started_too(self) -> None:
+        """The stop reaches a process the download process started.
+
+        On Windows the interpreter a virtual environment names can be a
+        launcher that runs the real interpreter as its child, so the process
+        this package starts is not always the one doing the downloading. A
+        real two-level tree stands in for that shape: a process that starts
+        another and waits. Both must be gone, and confirmed gone, when the
+        stop returns.
+
+        Mutation check: with only the process itself killed, the one it
+        started is still running and the last assertion fails; restoring the
+        descendant kill passes.
+        """
+        import psutil
+
+        from .._process_probe import wait_for_exit
+        from ..commands._model_download import _kill_tree
+
+        started_another = (
+            "import subprocess, sys, time\n"
+            "inner = subprocess.Popen("
+            "[sys.executable, '-c', 'import time; time.sleep(120)'])\n"
+            "print(inner.pid, flush=True)\n"
+            "time.sleep(120)\n"
+        )
+        outer = subprocess.Popen(
+            [sys.executable, "-c", started_another],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        inner_pid = 0
+        try:
+            assert outer.stdout is not None
+            inner_pid = int(outer.stdout.readline())
+            assert psutil.pid_exists(inner_pid), "premise: a two-level tree is running"
+
+            survivors = _kill_tree(outer)
+
+            assert survivors == []
+            assert outer.poll() is not None
+            assert wait_for_exit(inner_pid, timeout=5.0), "a started process survived"
+        finally:
+            for pipe in (outer.stdout, outer.stderr):
+                if pipe is not None:
+                    pipe.close()
+            # Only reached with something alive when the stop under test failed.
+            for pid in (outer.pid, inner_pid):
+                if pid and psutil.pid_exists(pid):
+                    with contextlib.suppress(psutil.Error):
+                        psutil.Process(pid).kill()
+
+    def test_a_download_process_that_dies_is_its_own_failure(
+        self, tmp_path: Path
+    ) -> None:
+        """A process ended from outside reports nothing, and that is reported.
+
+        The download is killed mid-transfer the way the operating system kills
+        one that ran out of memory. It leaves no result and no chance to
+        remove the file it was writing, so the fetch says the process died,
+        with its exit code, and removes the file itself.
+
+        Mutation check: with a process that reported no result taken as a
+        completed download, the repository is reported downloaded and the
+        code assertion fails; restoring the check passes.
+        """
+        cache = tmp_path / "hub-cache"
+        _cache_holding_the_reranker(cache)
+        with loopback_model_hub([_DENSE_REPO, _RERANKER_REPO]) as hub:
+            hub.weight_responders[_DENSE_REPO] = stay_silent
+
+            outcome, _progress = _fetch_from(
+                hub,
+                cache,
+                {
+                    "TEST_KILL_FIRST_DOWNLOAD": "1",
+                    EnvVar.HF_HUB_DOWNLOAD_TIMEOUT.value: "45",
+                },
+            )
+
+            assert outcome["code"] == MODELS_DOWNLOAD_DIED
+            assert outcome["processes_left"] == []
+        details = cast("list[str]", outcome["details"])
+        assert "exit code" in details[0]
+        assert "reported no result" in details[0]
+        assert list(cache.rglob("*.incomplete")) == []
+        _assert_a_rerun_completes(cache)
+
+    def test_a_second_fetch_waits_for_the_cache_and_is_not_called_stalled(
+        self, tmp_path: Path
+    ) -> None:
+        """Waiting for another process's fetch is not a failing download.
+
+        Two fetches of one repository meet inside the hub client, where the
+        second waits on a file lock and receives nothing - which the floor
+        would stop as stalled. The second waits for the cache instead, before
+        it asks the hub for anything, and says who it is waiting for; only
+        when that wait runs out does it fail, as busy.
+
+        Mutation check: with the claim on the cache not taken, the fetch goes
+        straight to the hub and downloads both repositories, failing the
+        request assertion; restoring the claim passes.
+        """
+        cache = tmp_path / "hub-cache"
+        held = claim_anchor(
+            cache / ".locks" / "vaultspec-rag-fetch.lock",
+            pid_record=True,
+            create_parent=True,
+        )
+        assert held.descriptor is not None, "premise: this test holds the cache"
+        try:
+            with loopback_model_hub([_DENSE_REPO, _RERANKER_REPO]) as hub:
+                outcome, progress = _fetch_from(
+                    hub, cache, {"TEST_FETCH_CONTENTION": "1.5"}
+                )
+
+                assert hub.requests == [], "the hub was asked while the cache was held"
+        finally:
+            release_anchor_claim(held.descriptor, pid_record=True)
+        assert outcome["code"] == MODELS_BUSY
+        assert outcome["processes_started"] == 0
+        assert "to finish downloading models" in progress
+        assert "Wait for that process to finish" in str(outcome["detail"])
+        _assert_a_rerun_completes(cache)
+
+
+@contextmanager
+def _tls_hub(tmp_path: Path, *, trusted: bool) -> Generator[LoopbackModelHub]:
+    """Serve the stand-in hub over real TLS, with a known or an unknown certificate."""
+    hub = LoopbackModelHub(repos=(_DENSE_REPO, _RERANKER_REPO))
+    with trusted_loopback_sources(tmp_path / "tls") as sources:
+        hub.endpoint = sources.serve(hub.respond, trusted=trusted).url()
+        yield hub
+
+
+def test_what_another_process_fetched_meanwhile_is_not_fetched_again(
+    tmp_path: Path,
+) -> None:
+    """A fetch that waited for the cache looks at it again before downloading.
+
+    The cache is held while a fetch starts, so the fetch waits. While it
+    waits, both repositories appear in the cache - what the holder was there
+    to do - and the claim is released. The waiting fetch must find them and
+    ask the hub for nothing.
+
+    Mutation check: with the look after the wait removed, the fetch downloads
+    the first repository it had already judged missing, and the request
+    assertion fails; restoring the look passes.
+    """
+    prepared = tmp_path / "prepared"
+    with loopback_model_hub([_DENSE_REPO, _RERANKER_REPO]) as healthy:
+        _fetch_from(healthy, prepared)
+    cache = tmp_path / "hub-cache"
+    held = claim_anchor(
+        cache / ".locks" / "vaultspec-rag-fetch.lock",
+        pid_record=True,
+        create_parent=True,
+    )
+    assert held.descriptor is not None, "premise: this test holds the cache"
+    released = False
+    with loopback_model_hub([_DENSE_REPO, _RERANKER_REPO]) as hub:
+        waiting = subprocess.Popen(
+            [sys.executable, "-c", _FETCH_IN_A_FRESH_INTERPRETER],
+            env=_child_environment(hub, cache),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        try:
+            assert waiting.stderr is not None
+            line = "\n"
+            while "to finish downloading models" not in line:
+                assert line, "the fetch ended without ever waiting for the cache"
+                line = waiting.stderr.readline()
+            for repository in prepared.glob("models--*"):
+                shutil.copytree(repository, cache / repository.name, symlinks=True)
+            release_anchor_claim(held.descriptor, pid_record=True)
+            released = True
+            stdout, _stderr = waiting.communicate(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
+        finally:
+            if waiting.poll() is None:
+                waiting.kill()
+                waiting.communicate()
+            if not released:
+                release_anchor_claim(held.descriptor, pid_record=True)
+
+        assert hub.requests == [], "what the cache already held was asked for again"
+    outcome = cast("dict[str, object]", json.loads(stdout.strip().splitlines()[-1]))
+    assert outcome["repos"] == [
+        [_DENSE_REPO, "unchanged", ""],
+        [_RERANKER_REPO, "unchanged", ""],
+    ]
+    assert outcome["processes_started"] == 0
+
+
+class TestAHubWithAnUntrustedCertificate:
+    """A mirror whose certificate this host does not trust, and the way to trust it."""
+
+    def test_an_untrusted_certificate_is_refused_and_named(
+        self, tmp_path: Path
+    ) -> None:
+        """Nothing is fetched, and the remedy is the certificate, not the network.
+
+        The hub serves real TLS with a certificate the client has never been
+        told about; the bundle named in ``SSL_CERT_FILE`` holds a different
+        one.
+
+        Mutation check: with a verification failure no longer recognised, the
+        code assertion fails with ``models_fetch_failed`` and the operator
+        would be sent to check a network that works; restoring it passes.
+        """
+        cache = tmp_path / "hub-cache"
+        with _tls_hub(tmp_path, trusted=False) as hub:
+            outcome, _progress = _fetch_from(hub, cache, _QUICK_TIMEOUTS)
+
+            assert hub.requests == [], "a request was served over an untrusted link"
+        assert outcome["code"] == MODELS_UNTRUSTED_CERTIFICATE
+        assert outcome["processes_started"] == 0
+        detail = str(outcome["detail"])
+        assert f"the certificate of {hub.endpoint} is not trusted" in detail
+        assert "SSL_CERT_FILE" in detail
+        assert "verification is never skipped" in detail
+
+    def test_the_named_bundle_is_what_makes_a_private_hub_usable(
+        self, tmp_path: Path
+    ) -> None:
+        """The remedy works: a bundle in ``SSL_CERT_FILE`` is honoured end to end.
+
+        The same kind of hub, with the certificate the named bundle holds.
+        Both halves of the fetch reach it - the size query in the command's
+        own process and the download in its child - so this is the proof that
+        the sentence the failure prints is true of the client that printed it.
+        """
+        cache = tmp_path / "hub-cache"
+        with _tls_hub(tmp_path, trusted=True) as hub:
+            outcome, _progress = _fetch_from(hub, cache)
+
+            assert hub.downloads_of(_DENSE_REPO).count(WEIGHT_FILE) == 1
+        assert outcome["action"] == ProvisionAction.CREATED
+        assert cached_snapshot_is_complete(_DENSE_REPO, cache_dir=cache)
+
+
+#: Run ``server warmup`` as a host in a fresh interpreter and report, on the
+#: last line of stderr, whether the run imported torch. The installation role
+#: is pinned the way the in-process suites pin it - it is read from the
+#: distributions the interpreter holds, which a test cannot change - and the
+#: pin has to be applied here because it does not cross a process boundary.
+_WARMUP_AS_A_HOST = """
+import sys
+
+from vaultspec_rag.operator_state import _compute
+from vaultspec_rag.operator_state._installation import InstallRole
+
+_compute.installed_role = lambda: (InstallRole.HOST, True)
+
+from vaultspec_rag.cli import app
+
+code = 0
+try:
+    app(["server", "warmup"])
+except SystemExit as stopped:
+    code = stopped.code if isinstance(stopped.code, int) else 1
+print("torch loaded" if "torch" in sys.modules else "torch absent", file=sys.stderr)
+sys.exit(code)
+"""
+
+
+class TestWarmupVerb:
+    """``server warmup`` exits by what it achieved, and never loads torch.
+
+    The verb is run whole, in a fresh interpreter, against the stand-in hub:
+    its exit code is the process's, and its lines are what an operator reads.
+    """
+
+    def test_fetched_then_already_cached_both_exit_zero(self, tmp_path: Path) -> None:
+        cache = tmp_path / "hub-cache"
+        with loopback_model_hub([_DENSE_REPO, _RERANKER_REPO]) as hub:
+            env = _child_environment(hub, cache)
+
+            fetched = _run_child(_WARMUP_AS_A_HOST, env)
+            asked_so_far = len(hub.requests)
+            cached = _run_child(_WARMUP_AS_A_HOST, env)
+
+            assert fetched.returncode == 0, fetched.stderr
+            assert f"Dense (Qwen3): {_DENSE_REPO} downloaded" in fetched.stdout
+            assert f"Reranker (CrossEncoder): {_RERANKER_REPO} downloaded" in (
+                fetched.stdout
+            )
+            assert cached.returncode == 0, cached.stderr
+            assert f"Dense (Qwen3): {_DENSE_REPO} cached" in cached.stdout
+            assert len(hub.requests) == asked_so_far
+
+    def test_a_missing_model_with_the_hub_offline_exits_one(
+        self, tmp_path: Path
+    ) -> None:
+        """Offline and missing is a failed warmup, with the switch named.
+
+        Mutation check: with the verb no longer exiting on a failed fetch, the
+        return code is 0 and the first assertion fails; restoring the exit
+        passes.
+        """
+        dead = _unserved_hub()
+        env = _child_environment(
+            dead, tmp_path / "hub-cache", {EnvVar.HF_HUB_OFFLINE.value: "1"}
+        )
+
+        completed = _run_child(_WARMUP_AS_A_HOST, env)
+
+        assert completed.returncode == 1, completed.stdout
+        assert f"{_DENSE_REPO} not in the local cache" in completed.stdout
+        flattened = " ".join(completed.stdout.split())
+        assert f"Unset {EnvVar.HF_HUB_OFFLINE.value}" in flattened
+
+    def test_a_fetch_that_fails_exits_one_with_the_remedy(self, tmp_path: Path) -> None:
+        dead = _unserved_hub()
+        env = _child_environment(dead, tmp_path / "hub-cache", _QUICK_TIMEOUTS)
+
+        completed = _run_child(_WARMUP_AS_A_HOST, env)
+
+        assert completed.returncode == 1, completed.stdout
+        flattened = " ".join(completed.stdout.split())
+        assert f"Check network access to {dead.endpoint}" in flattened
+
+    def test_warmup_never_imports_torch(self, tmp_path: Path) -> None:
+        """The verb fetches files; whether torch works is not its question.
+
+        A service-control command that imports torch pays seconds for it and
+        refuses on a host whose card is merely busy. The fetch is driven all
+        the way through a real download so the claim covers the whole verb,
+        not only its first branch.
+
+        Mutation check: with the accelerator loaded at the top of the verb
+        again, a host interpreter reports ``torch loaded`` and the assertion
+        fails; restoring the verb passes. In a lane without torch installed
+        the assertion cannot fail, which is why the host lane is where it
+        was proven.
+        """
+        with loopback_model_hub([_DENSE_REPO, _RERANKER_REPO]) as hub:
+            completed = _run_child(
+                _WARMUP_AS_A_HOST, _child_environment(hub, tmp_path / "hub-cache")
+            )
+
+        assert completed.returncode == 0, completed.stderr
+        assert completed.stderr.strip().splitlines()[-1] == "torch absent"
+
+
+class TestInstallExitCode:
+    """``install`` fails when a dependency it was asked to provision is missing."""
+
+    def test_a_failed_model_step_fails_the_run_and_a_rerun_completes(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        isolated_status_dir: Path,
+    ) -> None:
+        """Exit 1 and status ``failed``, with the whole report still there.
+
+        Enrollment completed before provisioning ran, so the envelope has to
+        go on carrying it: a caller reads which step failed, why, and what to
+        do, and a second run - once the model is there - finds the enrollment
+        in place and finishes.
+
+        Mutation check: with a failed provisioning step no longer counted as
+        a failure of the run, the first run exits 0 with status ``created``
+        and the exit-code assertion fails; restoring it passes.
+        """
+        del isolated_status_dir
+        workspace = tmp_path / "consumer"
+        workspace.mkdir()
+        (workspace / "pyproject.toml").write_text(
+            PROJECT_ONLY, encoding="utf-8", newline=""
+        )
+        argv = [
+            "install",
+            "--target",
+            str(workspace),
+            "--local-only",
+            "--yes",
+            "--json",
+        ]
+
+        with managed_env(**{EnvVar.EMBEDDING_MODEL.value: _ABSENT_MODEL}):
+            cache = seed_model_cache(
+                monkeypatch, tmp_path / "hf-cache", missing=[_ABSENT_MODEL]
+            )
+            failed = runner.invoke(app, argv)
+
+            assert failed.exit_code == 1, failed.output
+            envelope = cast("dict[str, object]", json.loads(failed.stdout))
+            assert envelope["status"] == "failed"
+            report = cast("dict[str, object]", envelope["data"])
+            assert report["action"] == "install"
+            provisioning = cast("dict[str, object]", report["provisioning"])
+            steps = cast("list[dict[str, object]]", provisioning["steps"])
+            models = next(step for step in steps if step["step"] == "models")
+            assert models["action"] == ProvisionAction.FAILED
+            assert models["code"] == MODELS_OFFLINE
+            assert "vaultspec-rag server warmup" in str(models["detail"])
+
+            seed_model_cache(monkeypatch, cache.with_name("hf-cache-complete"))
+            again = runner.invoke(app, argv)
+
+        assert again.exit_code == 0, again.output
+        envelope = cast("dict[str, object]", json.loads(again.stdout))
+        assert envelope["status"] == "created"
+        report = cast("dict[str, object]", envelope["data"])
+        provisioning = cast("dict[str, object]", report["provisioning"])
+        steps = cast("list[dict[str, object]]", provisioning["steps"])
+        models = next(step for step in steps if step["step"] == "models")
+        assert models["action"] == ProvisionAction.UNCHANGED

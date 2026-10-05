@@ -460,6 +460,17 @@ def _install_outcome(
         TorchConfigAction.SKIPPED_EOF,
         TorchConfigAction.SKIPPED_NON_TTY,
     }
+    # A dependency the run was asked to provision and could not is a failure of
+    # the run, not a remark on it: the models or the Qdrant server are still
+    # missing, and a caller that reads only the exit code must learn that.
+    # Enrollment has completed by then and the envelope still carries the whole
+    # report, so the step that failed and its remedy are both there, and a
+    # re-run finds the enrollment unchanged and tries the step again. It
+    # outranks a skipped consent step because it is the more serious of the
+    # two and the shared table gives failure the lower code.
+    provisioning_failed = (
+        report.provision_outcome is not None and not report.provision_outcome.ok
+    )
     hard_failure = (
         report.mcp_extra_action == "error"
         or report.mcp_sync_failed
@@ -468,6 +479,7 @@ def _install_outcome(
             and report.tool_torch_repair.blocks_install
         )
         or torch_errored
+        or provisioning_failed
     )
     if hard_failure:
         return "failed", 1

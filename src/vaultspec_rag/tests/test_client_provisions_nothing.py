@@ -171,19 +171,20 @@ def test_install_provisions_nothing_with_every_step_left_on(
 def test_warmup_reports_models_as_not_needed_and_fetches_none(
     empty_model_cache: Path,
 ) -> None:
-    """``server warmup`` answers a client before it loads anything.
+    """``server warmup`` tells a client the models are not needed, and stops.
 
-    The announcement line is what the fetch prints first, so its absence is
-    the evidence that no repository was probed or downloaded.
+    The cache probe is what the fetch reports first, so its absence, and a
+    model cache with nothing in it, are the evidence that no repository was
+    looked for or downloaded.
 
-    Mutation check: with the front door's client answer disabled, this host
-    loads its accelerator and walks the model list, which is all missing with
-    the hub offline - failing the not-needed assertion. Restoring it passes.
+    Mutation check: with the front door's client answer disabled, the verb
+    walks the model list, which is all missing with the hub offline, and
+    exits 1 - failing the not-needed assertion. Restoring it passes.
     """
     result = runner.invoke(app, ["server", "warmup"])
 
     assert _NOT_NEEDED in result.output, result.output
-    assert "Model warmup" not in result.output
+    assert "Checking the cache" not in result.output
     assert _tree(empty_model_cache) == []
     assert result.exit_code == 0, result.output
 

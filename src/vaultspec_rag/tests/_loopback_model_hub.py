@@ -11,25 +11,33 @@ into whatever cache it was given.
 The client reads its endpoint and cache location once, when it is first
 imported, so the process that downloads has to be started with both in its
 environment. :meth:`LoopbackModelHub.child_environment` builds that.
+
+Only the hub's URL layout lives here. The sockets, and every way a transfer
+can go wrong on one, belong to the shared loopback source module: a test that
+wants a file's transfer to fail hands this hub one of that module's responders
+for a repository's weight file.
 """
 
 from __future__ import annotations
 
 import hashlib
-import http.server
 import json
 import os
-import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from http import HTTPStatus
 from typing import TYPE_CHECKING
 
 from ..config._types import EnvVar
-from ._http_stubs import QuietHandler
+from ._loopback_tls import plain_loopback_sources
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Generator
+    from collections.abc import Callable, Collection, Generator
     from pathlib import Path
+
+    from ._http_stubs import QuietHandler
+
+__all__ = ["WEIGHT_FILE", "LoopbackModelHub", "loopback_model_hub", "weight_bytes"]
 
 _COMMIT = "0123456789abcdef0123456789abcdef01234567"
 
@@ -37,26 +45,54 @@ _COMMIT = "0123456789abcdef0123456789abcdef01234567"
 #: the client does - so this stand-in is its only reader here.
 _HUB_CACHE_ENV = "HF_HUB_CACHE"
 
+#: The one file large enough to arrive in several chunks, and so the one a
+#: test interferes with.
+WEIGHT_FILE = "model.safetensors"
+
 #: One snapshot's worth of files: what the completeness probe requires of an
-#: ordinary repository, with a weight file large enough to arrive in chunks.
+#: ordinary repository.
 _FILES: dict[str, bytes] = {
     "config.json": b"{}",
     "tokenizer.json": b"{}",
-    "model.safetensors": b"\0" * (256 << 10),
+    WEIGHT_FILE: bytes(range(256)) * (1 << 10),
 }
+
+
+def weight_bytes() -> bytes:
+    """Return the weight file every repository here serves.
+
+    For a responder that sends part of it before interfering.
+    """
+    return _FILES[WEIGHT_FILE]
 
 
 @dataclass
 class LoopbackModelHub:
-    """A running stand-in hub and what it has been asked.
+    """A running stand-in hub, what it serves, and what it has been asked.
 
     Attributes:
+        repos: The repository ids this hub has; any other is answered the way
+            the real hub answers an unknown repository.
         endpoint: The base URL to hand the hub client.
         requests: ``(method, path)`` for every request received, in order.
+        declared_weight_size: Per repository, the size to declare for the
+            weight file in place of its real one. The hub client sizes a
+            download from this record before it fetches anything.
+        weight_responders: Per repository, a responder that takes over the
+            ``GET`` of the weight file. Absent, the file is served whole, or
+            from the offset a ``Range`` header names.
+        resumed_from: The offset of every weight-file ``GET`` that asked for
+            the rest of a file it already held part of.
     """
 
-    endpoint: str
+    repos: tuple[str, ...]
+    endpoint: str = ""
     requests: list[tuple[str, str]] = field(default_factory=list)
+    declared_weight_size: dict[str, int] = field(default_factory=dict)
+    weight_responders: dict[str, Callable[[QuietHandler], None]] = field(
+        default_factory=dict
+    )
+    resumed_from: list[int] = field(default_factory=list)
 
     def downloads_of(self, repo: str) -> list[str]:
         """Return the file names fetched with ``GET`` from *repo*."""
@@ -81,97 +117,105 @@ class LoopbackModelHub:
         env[_HUB_CACHE_ENV] = str(cache)
         return env
 
+    def respond(self, handler: QuietHandler) -> None:
+        """Answer one hub request, or refuse it the way the hub would."""
+        path = handler.path.split("?", 1)[0]
+        self.requests.append((handler.command, path))
+        for repo in self.repos:
+            if path in {f"/api/models/{repo}", f"/api/models/{repo}/revision/main"}:
+                _send_json(handler, self._record(repo))
+                return
+            if path == f"/api/models/{repo}/tree/{_COMMIT}":
+                _send_json(handler, self._tree(repo))
+                return
+            prefix = f"/{repo}/resolve/{_COMMIT}/"
+            name = path.removeprefix(prefix)
+            if path.startswith(prefix) and name in _FILES:
+                self._send_file(handler, repo, name)
+                return
+        code = "RevisionNotFound" if "/revision/" in path else "RepoNotFound"
+        handler.send_response(HTTPStatus.NOT_FOUND)
+        handler.send_header("X-Error-Code", code)
+        handler.send_header("Content-Length", "0")
+        handler.end_headers()
 
-def _send(
-    handler: http.server.BaseHTTPRequestHandler,
-    body: bytes,
-    headers: dict[str, str],
-) -> None:
-    handler.send_response(http.HTTPStatus.OK)
-    for name, value in headers.items():
-        handler.send_header(name, value)
+    def _size(self, repo: str, name: str) -> int:
+        if name == WEIGHT_FILE and repo in self.declared_weight_size:
+            return self.declared_weight_size[repo]
+        return len(_FILES[name])
+
+    def _record(self, repo: str) -> dict[str, object]:
+        return {
+            "id": repo,
+            "modelId": repo,
+            "sha": _COMMIT,
+            "private": False,
+            "siblings": [
+                {"rfilename": name, "size": self._size(repo, name)} for name in _FILES
+            ],
+        }
+
+    def _tree(self, repo: str) -> list[dict[str, object]]:
+        return [
+            {
+                "type": "file",
+                "path": name,
+                "size": self._size(repo, name),
+                "oid": hashlib.sha1(content, usedforsecurity=False).hexdigest(),
+            }
+            for name, content in _FILES.items()
+        ]
+
+    def _send_file(self, handler: QuietHandler, repo: str, name: str) -> None:
+        content = _FILES[name]
+        takeover = self.weight_responders.get(repo)
+        if name == WEIGHT_FILE and handler.command == "GET" and takeover is not None:
+            takeover(handler)
+            return
+        # The client resumes a partial file by asking for the rest of it.
+        offset = _range_start(handler.headers.get("Range"))
+        if offset and name == WEIGHT_FILE and handler.command == "GET":
+            self.resumed_from.append(offset)
+        body = content[offset:]
+        handler.send_response(HTTPStatus.PARTIAL_CONTENT if offset else HTTPStatus.OK)
+        handler.send_header("ETag", f'"{hashlib.sha256(content).hexdigest()}"')
+        handler.send_header("X-Repo-Commit", _COMMIT)
+        if offset:
+            handler.send_header(
+                "Content-Range", f"bytes {offset}-{len(content) - 1}/{len(content)}"
+            )
+        handler.send_header("Content-Length", str(len(body)))
+        handler.end_headers()
+        if handler.command != "HEAD":
+            handler.wfile.write(body)
+
+
+def _range_start(header: str | None) -> int:
+    """Return the first byte a ``Range: bytes=N-`` header asks for, else zero."""
+    if header is None or not header.startswith("bytes="):
+        return 0
+    start = header.removeprefix("bytes=").split("-", 1)[0]
+    return int(start) if start.isdigit() else 0
+
+
+def _send_json(handler: QuietHandler, payload: object) -> None:
+    body = json.dumps(payload).encode("utf-8")
+    handler.send_response(HTTPStatus.OK)
+    handler.send_header("Content-Type", "application/json")
     handler.send_header("Content-Length", str(len(body)))
     handler.end_headers()
     if handler.command != "HEAD":
         handler.wfile.write(body)
 
 
-def _handler_for(
-    hub: LoopbackModelHub, repos: Collection[str]
-) -> type[http.server.BaseHTTPRequestHandler]:
-    class _Hub(QuietHandler):
-        def do_HEAD(self) -> None:
-            self._answer()
-
-        def do_GET(self) -> None:
-            self._answer()
-
-        def _answer(self) -> None:
-            path = self.path.split("?", 1)[0]
-            hub.requests.append((self.command, path))
-            for repo in repos:
-                if path == f"/api/models/{repo}/revision/main":
-                    record = {
-                        "id": repo,
-                        "modelId": repo,
-                        "sha": _COMMIT,
-                        "private": False,
-                        "siblings": [{"rfilename": name} for name in _FILES],
-                    }
-                    _send(
-                        self,
-                        json.dumps(record).encode("utf-8"),
-                        {"Content-Type": "application/json"},
-                    )
-                    return
-                if path == f"/api/models/{repo}/tree/{_COMMIT}":
-                    tree = [
-                        {
-                            "type": "file",
-                            "path": name,
-                            "size": len(content),
-                            "oid": hashlib.sha1(
-                                content, usedforsecurity=False
-                            ).hexdigest(),
-                        }
-                        for name, content in _FILES.items()
-                    ]
-                    _send(
-                        self,
-                        json.dumps(tree).encode("utf-8"),
-                        {"Content-Type": "application/json"},
-                    )
-                    return
-                prefix = f"/{repo}/resolve/{_COMMIT}/"
-                content = _FILES.get(path.removeprefix(prefix))
-                if path.startswith(prefix) and content is not None:
-                    _send(
-                        self,
-                        content,
-                        {
-                            "ETag": f'"{hashlib.sha256(content).hexdigest()}"',
-                            "X-Repo-Commit": _COMMIT,
-                        },
-                    )
-                    return
-            self.send_response(http.HTTPStatus.NOT_FOUND)
-            self.end_headers()
-
-    return _Hub
-
-
 @contextmanager
 def loopback_model_hub(repos: Collection[str]) -> Generator[LoopbackModelHub]:
-    """Serve complete snapshots of *repos* on loopback for the block."""
-    hub = LoopbackModelHub(endpoint="")
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _handler_for(hub, repos))
-    server.daemon_threads = True
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    hub.endpoint = f"http://127.0.0.1:{int(server.server_address[1])}"
-    try:
+    """Serve complete snapshots of *repos* on loopback for the block.
+
+    Plain HTTP: the hub client takes whatever scheme its endpoint variable
+    names, so no certificate has to be minted or trusted for it.
+    """
+    hub = LoopbackModelHub(repos=tuple(repos))
+    with plain_loopback_sources() as sources:
+        hub.endpoint = sources.serve(hub.respond, tls=False).url()
         yield hub
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
