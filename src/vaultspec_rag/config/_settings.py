@@ -25,6 +25,7 @@ from ._schema import (
     ENV_OVERRIDE_MAP,
     SETTING_BOUNDS,
     checked_setting,
+    comma_separated,
     setting_rejection,
 )
 from ._types import STATUS_DIR_DEFAULT, VALID_PREPROCESS_MODES, EnvVar, PreprocessMode
@@ -90,6 +91,26 @@ class VaultSpecConfigWrapper:
         "qdrant_port": 8765,
         "qdrant_binary": None,
         "qdrant_storage_dir": "~/.vaultspec-rag/qdrant-server/storage",
+        # Managed qdrant binary provisioning. Starting the service on a host
+        # is consent to fetch what the service needs, the binary as much as
+        # the model weights, so the switch ships on; turning it off restores
+        # failing with the install command when no binary resolves.
+        "qdrant_auto_provision": True,
+        # The release channel. The download URL is
+        # ``{base}/v{version}/{asset}``, the layout generic mirrors preserve,
+        # so a mirror is a different base and nothing else. The digests a
+        # download is checked against stay code constants: this moves where
+        # the bytes come from, never which bytes are accepted.
+        "qdrant_release_base_url": "https://github.com/qdrant/qdrant/releases/download",
+        # Hosts a redirect may land on while downloading. The base URL's own
+        # host serves the first request whatever this says; these are the
+        # hosts that request is allowed to be redirected to. The default is
+        # the upstream path as it is today and as it was before the asset
+        # host last moved. Comma-separated, like the other list settings.
+        "qdrant_download_hosts": (
+            "github.com,release-assets.githubusercontent.com,"
+            "objects.githubusercontent.com"
+        ),
         # Scheduled storage maintenance (auto-prune). The daemon's hourly
         # maintenance tick reclaims time-confirmed dangling namespaces:
         # empty (zero-point) orphans after a continuous grace window,
@@ -558,8 +579,7 @@ class VaultSpecConfigWrapper:
 
         if not isinstance(raw, str):
             return frozenset()
-        wanted = {tok.strip().lower() for tok in raw.split(",") if tok.strip()}
-        return frozenset(wanted & NOISE_DOMAINS)
+        return frozenset(comma_separated(raw)) & NOISE_DOMAINS
 
     @property
     def code_noise_hide_domains(self) -> frozenset[str]:
@@ -1109,6 +1129,9 @@ class VaultSpecConfigWrapper:
     qdrant_port: int
     qdrant_binary: str | None
     qdrant_storage_dir: str
+    qdrant_auto_provision: bool
+    qdrant_release_base_url: str
+    qdrant_download_hosts: frozenset[str]
     storage_autoprune: bool
     storage_autoprune_interval_minutes: float
     storage_autoprune_grace_hours: float

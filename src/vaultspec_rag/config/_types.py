@@ -193,6 +193,13 @@ class EnvVar(StrEnum):
     QDRANT_PORT = "VAULTSPEC_RAG_QDRANT_PORT"
     QDRANT_BINARY = "VAULTSPEC_RAG_QDRANT_BINARY"
     QDRANT_STORAGE_DIR = "VAULTSPEC_RAG_QDRANT_STORAGE_DIR"
+    # Where the managed qdrant binary comes from, and whether a host start
+    # fetches it unasked. The digests the download is checked against are
+    # code constants and have no variable here: a source may be redirected,
+    # the bytes it must serve may not.
+    QDRANT_AUTO_PROVISION = "VAULTSPEC_RAG_QDRANT_AUTO_PROVISION"
+    QDRANT_RELEASE_BASE_URL = "VAULTSPEC_RAG_QDRANT_RELEASE_BASE_URL"
+    QDRANT_DOWNLOAD_HOSTS = "VAULTSPEC_RAG_QDRANT_DOWNLOAD_HOSTS"
     # Scheduled storage maintenance (auto-prune) knobs.
     STORAGE_AUTOPRUNE = "VAULTSPEC_RAG_STORAGE_AUTOPRUNE"
     STORAGE_AUTOPRUNE_INTERVAL_MINUTES = (

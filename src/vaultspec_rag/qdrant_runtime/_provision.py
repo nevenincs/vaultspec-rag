@@ -1,7 +1,8 @@
 """Download-on-first-use provisioning of the pinned Qdrant server binary.
 
 The flow: resolve the release asset for the running platform, download
-it over HTTPS with redirects host-pinned to the allowed set, verify
+it over HTTPS from the configured release base with every redirect held
+to HTTPS and to the configured download hosts, verify
 the committed SHA256 digest BEFORE extraction, extract the single
 binary into the managed versioned dir, mark it executable, and write a
 provisioning manifest. A repeat run against a verified install reports
@@ -32,10 +33,8 @@ from .._rmtree import remove_tree
 from .._sync_vocabulary import ProvisionAction
 from .._units import human_bytes
 from ._constants import (
-    ALLOWED_DOWNLOAD_HOSTS,
     MANIFEST_FILENAME,
     QDRANT_ASSET_SHA256,
-    QDRANT_RELEASE_BASE_URL,
     QDRANT_SERVER_VERSION,
     ProvisionReport,
 )
@@ -95,6 +94,7 @@ class ChecksumMismatchError(RuntimeError):
 @dataclass(frozen=True)
 class _DownloadInstallRequest:
     url: str
+    redirect_hosts: frozenset[str]
     asset: str
     expected_sha256: str
     version_dir: Path
@@ -121,8 +121,20 @@ def verify_native_binary(binary: Path, expected_sha256: str) -> None:
         raise RuntimeError(f"Native executable pin mismatch: {binary}")
 
 
+class _RedirectRefusedError(urllib.error.URLError):
+    """A redirect left HTTPS or the hosts the caller allowed."""
+
+
 class _HostPinnedRedirect(urllib.request.HTTPRedirectHandler):
-    """Allow redirects only inside :data:`ALLOWED_DOWNLOAD_HOSTS`."""
+    """Allow redirects only over HTTPS and only onto the hosts it was given.
+
+    The request that starts a download goes to a source its caller chose. A
+    redirect is chosen by whoever answered that request, so each hop is
+    checked here before it is followed.
+    """
+
+    def __init__(self, allowed_hosts: frozenset[str]) -> None:
+        self._allowed_hosts = allowed_hosts
 
     def redirect_request(  # noqa: PLR0913 - stdlib redirect callback contract
         self,
@@ -139,14 +151,14 @@ class _HostPinnedRedirect(urllib.request.HTTPRedirectHandler):
         # host would still strip TLS, so reject it as firmly as a
         # cross-host redirect.
         if parsed.scheme != "https":
-            raise urllib.error.URLError(
+            raise _RedirectRefusedError(
                 f"Redirect to non-HTTPS URL {newurl!r} rejected"
             )
-        host = parsed.hostname or ""
-        if host.lower() not in ALLOWED_DOWNLOAD_HOSTS:
-            raise urllib.error.URLError(
+        host = (parsed.hostname or "").lower()
+        if host not in self._allowed_hosts:
+            raise _RedirectRefusedError(
                 f"Redirect to disallowed host {host!r} rejected "
-                f"(allowed: {sorted(ALLOWED_DOWNLOAD_HOSTS)})"
+                f"(allowed: {sorted(self._allowed_hosts)})"
             )
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
@@ -221,29 +233,31 @@ def _download(
     url: str,
     dest: Path,
     *,
+    redirect_hosts: frozenset[str],
     on_progress: Callable[[str], None] = _no_progress,
 ) -> None:
-    """Stream *url* to *dest* with host-pinned redirects.
+    """Stream *url* to *dest* over HTTPS with host-pinned redirects.
+
+    The host *url* names is contacted whatever *redirect_hosts* says: it is
+    the source the caller chose. *redirect_hosts* bounds where that source may
+    redirect to, and every hop must stay HTTPS.
 
     Args:
         url: The pinned release asset to fetch.
         dest: The staging path to stream into.
+        redirect_hosts: Lower-cased host names a redirect may land on. It is
+            a required argument so each caller states the hosts it trusts
+            rather than inheriting another caller's.
         on_progress: Sink for byte-progress lines, emitted every few
             megabytes and once more on the final byte.
 
     Raises:
-        urllib.error.URLError: On connection failure, a disallowed
-            redirect, or a scheme/host outside the pinned set.
+        urllib.error.URLError: On connection failure, a non-HTTPS source,
+            or a redirect that leaves HTTPS or *redirect_hosts*.
     """
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme != "https":
+    if urllib.parse.urlparse(url).scheme != "https":
         raise urllib.error.URLError(f"Refusing non-HTTPS download URL {url!r}")
-    if (parsed.hostname or "").lower() not in ALLOWED_DOWNLOAD_HOSTS:
-        raise urllib.error.URLError(
-            f"Refusing download from host {parsed.hostname!r} "
-            f"(allowed: {sorted(ALLOWED_DOWNLOAD_HOSTS)})"
-        )
-    opener = urllib.request.build_opener(_HostPinnedRedirect)
+    opener = urllib.request.build_opener(_HostPinnedRedirect(redirect_hosts))
     with (
         # ``OpenerDirector.open`` is typed ``Any`` in typeshed (it dispatches
         # across registered handlers); an HTTPS download always resolves to
@@ -493,6 +507,20 @@ def _provision_operator_binary(
     return ProvisionReport(action=action, binary=target, sha256=digest)
 
 
+def _failure_message(exc: Exception) -> str:
+    """Describe a failed install, naming the setting that admits a mirror."""
+    if isinstance(exc, _RedirectRefusedError):
+        # Function-local: the build tools import this module in an interpreter
+        # that has no service configuration to import.
+        from ..config._types import EnvVar
+
+        return (
+            f"{exc.reason}. A mirror that redirects to its own storage host "
+            f"needs that host listed in {EnvVar.QDRANT_DOWNLOAD_HOSTS.value}."
+        )
+    return str(exc)
+
+
 def _download_and_install(request: _DownloadInstallRequest) -> ProvisionReport:
     """Download, verify, extract, and record the pinned binary."""
     from ._resolve import binary_filename
@@ -510,7 +538,12 @@ def _download_and_install(request: _DownloadInstallRequest) -> ProvisionReport:
     try:
         logger.info("Downloading %s", url)
         on_progress(f"Downloading the Qdrant server ({asset})...")
-        _download(url, archive, on_progress=on_progress)
+        _download(
+            url,
+            archive,
+            redirect_hosts=request.redirect_hosts,
+            on_progress=on_progress,
+        )
         binary, binary_sha = extract_verified_archive(
             archive, expected_sha256, version_dir, on_progress=on_progress
         )
@@ -541,7 +574,7 @@ def _download_and_install(request: _DownloadInstallRequest) -> ProvisionReport:
             asset=asset,
             url=url,
             sha256=expected_sha256,
-            message=str(exc),
+            message=_failure_message(exc),
         )
     archive.unlink(missing_ok=True)
     _write_manifest(
@@ -594,11 +627,15 @@ def provision(
     Returns:
         A :class:`ProvisionReport` in the sync vocabulary.
     """
+    # Function-local, like the resolver below: the build tools import this
+    # module in an interpreter that has no service configuration to import.
+    from ..config._settings import get_config
     from ._resolve import asset_for_platform, binary_filename, qdrant_bin_dir
 
     asset = asset_for_platform()
     expected = QDRANT_ASSET_SHA256[asset]
-    url = f"{QDRANT_RELEASE_BASE_URL}/v{QDRANT_SERVER_VERSION}/{asset}"
+    source = get_config()
+    url = f"{source.qdrant_release_base_url}/v{QDRANT_SERVER_VERSION}/{asset}"
     version_dir = qdrant_bin_dir()
     state = _existing_install_state(version_dir, expected)
 
@@ -657,12 +694,13 @@ def provision(
 
     return _download_and_install(
         _DownloadInstallRequest(
-            url,
-            asset,
-            expected,
-            version_dir,
-            state,
-            on_progress,
+            url=url,
+            redirect_hosts=source.qdrant_download_hosts,
+            asset=asset,
+            expected_sha256=expected,
+            version_dir=version_dir,
+            previously=state,
+            on_progress=on_progress,
         )
     )
 

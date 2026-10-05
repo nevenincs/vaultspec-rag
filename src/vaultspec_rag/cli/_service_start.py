@@ -35,7 +35,7 @@ if TYPE_CHECKING:
         repeat_update_delay_s: float | None
         local_only: bool
         qdrant: bool | None
-        qdrant_auto_provision: bool
+        qdrant_auto_provision: bool | None
         no_preprocess: bool
         json: bool
 
@@ -198,7 +198,9 @@ class _ServiceStartOptions:
     repeat_update_delay_s: float | None
     local_only: bool
     qdrant: bool | None
-    qdrant_auto_provision: bool
+    #: ``None`` when neither spelling of the flag was passed, which leaves the
+    #: configured switch in force.
+    qdrant_auto_provision: bool | None
     no_preprocess: bool
     json_mode: bool
 
@@ -266,12 +268,15 @@ class _ServiceStartCommand(TyperCommand):
                     ),
                 ),
                 TyperOption(
-                    param_decls=["--qdrant-auto-provision"],
-                    default=False,
+                    param_decls=["--qdrant-auto-provision/--no-qdrant-auto-provision"],
+                    default=None,
                     is_flag=True,
                     help=(
-                        "Download the managed Qdrant server if it is missing. "
-                        "Without this flag, start prints the install command."
+                        "Download and verify the managed Qdrant server when it "
+                        "is missing (default: enabled). With "
+                        "--no-qdrant-auto-provision, start prints the install "
+                        "command instead. Unset leaves the "
+                        f"{EnvVar.QDRANT_AUTO_PROVISION.value} setting in force."
                     ),
                 ),
                 TyperOption(
@@ -324,19 +329,33 @@ def _ensure_qdrant_binary(
     json_mode: bool = False,
     progress: StartupStatusReporter | None = None,
 ) -> None:
-    """Fail fast (or provision with consent) before a server-mode start.
+    """Make sure a server-mode start has a Qdrant server to run, or fail.
 
-    Server mode is the default backend, so this guard runs by default and
-    only ``--local-only`` (or an explicit ``--no-qdrant``) skips it. Never
-    downloads silently: an absent executable without ``auto_provision`` prints
-    the exact install command and exits non-zero. In ``--json`` mode the absent/
-    failed outcomes are emitted as start envelopes so a broker reads one document.
+    Starting the service is the consent to fetch what it needs, so an absent
+    server is downloaded and verified here, in the foreground, where the
+    transfer and any failure are visible. With ``auto_provision`` off an absent
+    server prints the exact install command and exits non-zero instead.
+
+    A binary the operator named is never replaced by a download: a setting that
+    names something unusable is a failure in its own right, because falling
+    through would run a different server than the one asked for. Every outcome
+    that stops the start is one start envelope in ``--json`` mode.
     """
     from .._sync_vocabulary import ProvisionAction
     from ..commands._provision import provision_qdrant_binary
-    from ..qdrant_runtime._resolve import resolve_binary
+    from ..qdrant_runtime._resolve import QdrantBinaryError, resolve_binary
 
-    if resolve_binary() is not None:
+    try:
+        resolved = resolve_binary()
+    except QdrantBinaryError as exc:
+        raise _fail_start(
+            json_mode,
+            error=exc.error,
+            message="Service start failed",
+            human_lines=(str(exc),),
+            detail=str(exc),
+        ) from exc
+    if resolved is not None:
         return
     if not auto_provision:
         raise _fail_start(
@@ -347,7 +366,7 @@ def _ensure_qdrant_binary(
                 "Qdrant server mode needs the managed Qdrant server, "
                 "which is not installed.",
                 "Run: vaultspec-rag server qdrant install",
-                "(or re-run with --qdrant-auto-provision to consent to the download)",
+                "(or re-run with --qdrant-auto-provision to download it now)",
                 "Local-only option: vaultspec-rag server start --local-only",
             ),
         )
@@ -374,6 +393,35 @@ def _ensure_qdrant_binary(
             f"Version: {report.version}",
             f"Install: {report.binary}",
         )
+
+
+def _auto_provision_enabled(flag: bool | None) -> bool:
+    """Whether this start may download a missing Qdrant server.
+
+    Either spelling of the flag decides it for this run; neither leaves the
+    configured switch in force.
+    """
+    return get_config().qdrant_auto_provision if flag is None else flag
+
+
+def _ensure_start_dependencies(
+    options: _ServiceStartOptions,
+    progress: StartupStatusReporter,
+) -> None:
+    """Fetch what the daemon needs and does not have, before it is spawned.
+
+    Server mode is the default backend, so the Qdrant server is ensured by
+    default. ``--local-only`` (and an explicit ``--no-qdrant``) select the
+    on-disk store and never touch the server at all.
+    """
+    if options.local_only or options.qdrant is False:
+        return
+    progress.stage("Checking the Qdrant server binary...")
+    _ensure_qdrant_binary(
+        auto_provision=_auto_provision_enabled(options.qdrant_auto_provision),
+        json_mode=options.json_mode,
+        progress=progress,
+    )
 
 
 def _health_service_pid(health: dict[str, object], fallback_pid: int) -> int:
@@ -959,17 +1007,7 @@ def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None
         progress.stage("Checking accelerator support in the service environment...")
         _preflight_daemon_accelerator(interpreter, json_mode=json_mode)
 
-        # Server mode is the default backend, so the qdrant-binary guard runs
-        # by default. --local-only (and an explicit --no-qdrant) select the
-        # on-disk store and skip it, so a default start fails fast on a missing
-        # binary while the local opt-out never touches the server.
-        if not options.local_only and options.qdrant is not False:
-            progress.stage("Checking the Qdrant server binary...")
-            _ensure_qdrant_binary(
-                auto_provision=options.qdrant_auto_provision,
-                json_mode=json_mode,
-                progress=progress,
-            )
+        _ensure_start_dependencies(options, progress)
 
         resolved_root = _global_target(ctx) or Path.cwd()
 

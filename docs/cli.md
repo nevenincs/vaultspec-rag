@@ -512,7 +512,7 @@ None.
 | `--repeat-update-delay-s` | float | no | - | Minimum wait before automatically updating a project again, in seconds. |
 | `--local-only` | boolean | no | off | Use the on-disk local store instead of the default managed Qdrant server. This is the first-class opt-out for CI, offline, and small-project hosts. |
 | `--qdrant`, `--no-qdrant` | boolean | no | - | Explicitly opt in to (or out of) the managed Qdrant server. Server mode is already the default, so --qdrant is redundant; use --local-only to select the on-disk store. Unset leaves the current Qdrant setting unchanged. |
-| `--qdrant-auto-provision` | boolean | no | off | Download the managed Qdrant server if it is missing. Without this flag, start prints the install command. |
+| `--qdrant-auto-provision`, `--no-qdrant-auto-provision` | boolean | no | - | Download and verify the managed Qdrant server when it is missing (default: enabled). With --no-qdrant-auto-provision, start prints the install command instead. Unset leaves the VAULTSPEC_RAG_QDRANT_AUTO_PROVISION setting in force. |
 | `--no-preprocess` | boolean | no | off | Kill switch: the service loads no document-preprocessing rules for any root (forwards VAULTSPEC_RAG_PREPROCESS=off). |
 | `--json` | boolean | no | off | Emit one structured JSON outcome. An already-running owned service is the success `already_running` (exit 0), so a supervising broker can attach rather than treating it as a fault. |
 

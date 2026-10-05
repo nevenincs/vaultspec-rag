@@ -12,6 +12,7 @@ from tools.binaries.bun_pins import (
     BUN_VERSION,
 )
 from tools.binaries.native import host_target_triple
+from tools.binaries.release_hosts import GITHUB_RELEASE_REDIRECT_HOSTS
 from tools.packaging.products import executable_filename
 from vaultspec_rag.qdrant_runtime._provision import (
     _download,
@@ -34,7 +35,11 @@ def provision_bun(cache: Path, target: str) -> Path:
         asset, digest = BUN_ARCHIVES[target]
         archive = directory / asset
         try:
-            _download(f"{BUN_RELEASE}/{asset}", archive)
+            _download(
+                f"{BUN_RELEASE}/{asset}",
+                archive,
+                redirect_hosts=GITHUB_RELEASE_REDIRECT_HOSTS,
+            )
             binary, _ = extract_verified_archive(
                 archive, digest, directory, binary_name=binary.name
             )

@@ -95,6 +95,15 @@ _SECRETS: Final = frozenset(
 #: there as a project dependency. The Qdrant key is deliberately absent - it
 #: addresses an operator's own deployment, which repository content has no
 #: business naming.
+#:
+#: No setting belongs here, and the framework refuses to build a non-secret
+#: entry marked eligible. That refusal is load-bearing for the download-source
+#: settings in particular: where the managed Qdrant binary is fetched from,
+#: and which hosts a redirect may reach, must come from the operator's own
+#: environment, because a cloned repository that could name them would be
+#: choosing the server a host downloads an executable from. For the same
+#: reason no entry is declared persistable, which is what would let a
+#: workspace's project store supply one.
 _WORKSPACE_DOTENV: Final = frozenset(
     {
         EnvVar.TYPESAFE_API_KEY,

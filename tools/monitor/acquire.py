@@ -12,6 +12,7 @@ from typing import cast
 
 from tools.binaries.build_pyapp import check_platform_floor
 from tools.binaries.native import host_target_triple
+from tools.binaries.release_hosts import GITHUB_RELEASE_REDIRECT_HOSTS
 from tools.monitor.offline import probe_offline
 from tools.monitor.pins import (
     ROOT,
@@ -79,8 +80,12 @@ def extract_delivery(
 
 def latest_tag(directory: Path) -> str:
     metadata = directory / "latest.json"
+    # The API host is the source named here, which is contacted whatever the
+    # redirect set says; the set only bounds where an answer may send us on.
     _download(
-        "https://api.github.com/repos/nevenincs/vaultspec-rag/releases/latest", metadata
+        "https://api.github.com/repos/nevenincs/vaultspec-rag/releases/latest",
+        metadata,
+        redirect_hosts=GITHUB_RELEASE_REDIRECT_HOSTS,
     )
     if metadata.stat().st_size > 1 << 20:
         raise PinError("Latest-release metadata exceeds its bounded window")
@@ -108,13 +113,19 @@ def acquire(
         base = VAULTSPEC_RAG.release_base_url(version)
         sums = directory / "SHA256SUMS"
         # Live checksums add coverage; the committed catalog supplies authority.
-        _download(base + "/SHA256SUMS", sums)
+        _download(
+            base + "/SHA256SUMS", sums, redirect_hosts=GITHUB_RELEASE_REDIRECT_HOSTS
+        )
         digests = parse_checksums(
             sums.read_text(encoding="utf-8", newline=""), require_unique=True
         )
         if require(digests, archive.name) != pins.targets[target].archive_sha256:
             raise PinError("Live SHA256SUMS differs from the reviewed archive pin")
-        _download(base + "/" + archive.name, archive)
+        _download(
+            base + "/" + archive.name,
+            archive,
+            redirect_hosts=GITHUB_RELEASE_REDIRECT_HOSTS,
+        )
         extracted = directory / "extracted"
         extract_delivery(archive, spec, pins, extracted)
         # Keep backend bootstrappers outside the shell-only process placement.

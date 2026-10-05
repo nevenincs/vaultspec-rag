@@ -189,6 +189,24 @@ The managed child translates this setting to Qdrant's
 `storage.performance.max_concurrent_collection_loads` and logs the applied value.
 It does not configure remote servers or alter shard and segment load concurrency.
 
+### Managed server provisioning
+
+These variables decide whether a host `server start` fetches the pinned Qdrant server binary when none is installed, and where it fetches it from. They do not apply to a client installation, which never downloads a binary, or to `--local-only`, which needs none.
+
+| Variable                                | Type    | Default                                                                         | Controls                                                                                                    | CLI flag                                                 |
+| --------------------------------------- | ------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `VAULTSPEC_RAG_QDRANT_AUTO_PROVISION`   | boolean | `1` (true)                                                                      | Download the pinned binary on `server start` when none resolves; `0` fails with the install command instead | `--qdrant-auto-provision` / `--no-qdrant-auto-provision` |
+| `VAULTSPEC_RAG_QDRANT_RELEASE_BASE_URL` | string  | `https://github.com/qdrant/qdrant/releases/download`                            | Release base URL; the archive is fetched from `{base}/v{version}/{asset}`                                   | -                                                        |
+| `VAULTSPEC_RAG_QDRANT_DOWNLOAD_HOSTS`   | string  | `github.com,release-assets.githubusercontent.com,objects.githubusercontent.com` | Hosts a download redirect may land on                                                                       | -                                                        |
+
+**Mirrors.** Point `VAULTSPEC_RAG_QDRANT_RELEASE_BASE_URL` at a mirror that keeps the upstream path layout, so that `{base}/v{version}/{asset}` resolves. The value must be an `https` URL with a host. It may carry a port and a path prefix; it may not carry credentials, a query, or a fragment. A trailing slash is ignored.
+
+**Host list syntax.** `VAULTSPEC_RAG_QDRANT_DOWNLOAD_HOSTS` is a comma-separated list of host names. Whitespace around an entry is ignored and case does not matter. Each entry is a bare host name: an entry with a scheme, a port, a path, or a wildcard is rejected, and so is a list with no entries. The base URL's own host always serves the first request, whatever the list says; the list names the hosts that request may be redirected to. A mirror that redirects to its own storage host needs that host listed. Setting the list replaces the default rather than adding to it.
+
+**What a mirror cannot change.** The download is checked against SHA256 digests compiled into vaultspec-rag. No variable overrides a digest, so a mirror changes where the bytes come from and never which bytes are accepted.
+
+**Where these are read from.** The process environment only. Like every setting on this page, none of the three is read from a workspace `.env` or any other file in a project, so a cloned repository cannot choose the server a host downloads an executable from. A value that fails the rules above is rejected at startup with the other unusable settings, before any download begins.
+
 ### Project and data locations
 
 | Variable                   | Type | Default                   | Controls                                               | CLI flag        |

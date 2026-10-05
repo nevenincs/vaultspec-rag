@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from typing import cast
+from urllib.parse import urlsplit
 
 from vaultspec_core.env_values import rejection
 
@@ -88,7 +90,100 @@ class _ChoiceBound:
         return cast("str", value).strip().lower()
 
 
-type _SettingBound = _NumericBound | _ChoiceBound
+def comma_separated(raw: str) -> tuple[str, ...]:
+    """Split a list-valued setting into its entries.
+
+    Entries are separated by commas, stripped and case-folded; an empty entry
+    is dropped, so a trailing comma or doubled separator is not an entry.
+    Every list-valued setting is tokenised here, so the same text means the
+    same list whichever setting carries it.
+    """
+    return tuple(token.strip().lower() for token in raw.split(",") if token.strip())
+
+
+@dataclass(frozen=True, slots=True)
+class _HttpsUrlBound:
+    """The admissible shape for a settings key naming a download source.
+
+    A source is fetched over TLS or not at all, so only ``https`` is admitted.
+    Credentials are refused because the value is echoed in diagnostics, and a
+    query or fragment because the consumer appends a path to the value.
+    """
+
+    shape: str
+
+    def parse(self, raw: str) -> object:
+        """Return environment text unchanged; narrowing normalises it."""
+        return raw
+
+    def admits(self, value: object) -> bool:
+        """Return whether *value* is an HTTPS URL a path can be appended to."""
+        if not isinstance(value, str) or any(char.isspace() for char in value.strip()):
+            return False
+        try:
+            parts = urlsplit(value.strip())
+            # Reading the port is what validates it: a non-numeric or
+            # out-of-range one raises here rather than at the first request.
+            _ = parts.port
+        except ValueError:
+            return False
+        return (
+            parts.scheme == "https"
+            and bool(parts.hostname)
+            and parts.username is None
+            and parts.password is None
+            and not parts.query
+            and not parts.fragment
+        )
+
+    def narrow(self, value: object) -> object:
+        """Return the URL without surrounding whitespace or a trailing slash.
+
+        Only reached through ``checked_setting``, which calls ``admits``
+        first; ``admits`` is what establishes ``value`` is a ``str`` here.
+        """
+        return cast("str", value).strip().rstrip("/")
+
+
+_HOST_NAME = re.compile(
+    r"(?=.{1,253}\Z)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _HostListBound:
+    """The admissible shape for a settings key naming a set of hosts.
+
+    Each entry is compared against the host of a URL, so it is a bare host
+    name: an entry carrying a scheme, a port, a path or a wildcard would never
+    equal one and is refused rather than silently matching nothing. An empty
+    list is refused for the same reason - it reads as a pin and admits nothing.
+    """
+
+    shape: str
+
+    def parse(self, raw: str) -> object:
+        """Return environment text unchanged; narrowing normalises it."""
+        return raw
+
+    def admits(self, value: object) -> bool:
+        """Return whether *value* lists at least one host, and only hosts."""
+        if not isinstance(value, str):
+            return False
+        hosts = comma_separated(value)
+        return bool(hosts) and all(_HOST_NAME.fullmatch(host) for host in hosts)
+
+    def narrow(self, value: object) -> object:
+        """Return the hosts as a set of lower-cased names.
+
+        Only reached through ``checked_setting``, which calls ``admits``
+        first; ``admits`` is what establishes ``value`` is a ``str`` here.
+        """
+        return frozenset(comma_separated(cast("str", value)))
+
+
+type _SettingBound = _NumericBound | _ChoiceBound | _HttpsUrlBound | _HostListBound
 
 _POSITIVE_INT = _NumericBound("a positive integer", integral=True, minimum=1)
 _NON_NEGATIVE_INT = _NumericBound("a non-negative integer", integral=True, minimum=0)
@@ -127,6 +222,12 @@ _OPEN_UNIT_INTERVAL = _NumericBound(
     minimum=0.0,
     minimum_exclusive=True,
     maximum=1.0,
+)
+_HTTPS_SOURCE_URL = _HttpsUrlBound(
+    "an https URL with a host and no credentials, query or fragment"
+)
+_DOWNLOAD_HOSTS = _HostListBound(
+    "a comma-separated list of host names, each without a scheme, port or path"
 )
 
 
@@ -290,6 +391,10 @@ ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "qdrant_port": EnvVar.QDRANT_PORT,
     "qdrant_binary": EnvVar.QDRANT_BINARY,
     "qdrant_storage_dir": EnvVar.QDRANT_STORAGE_DIR,
+    # Managed qdrant binary provisioning: the consent switch and the source.
+    "qdrant_auto_provision": EnvVar.QDRANT_AUTO_PROVISION,
+    "qdrant_release_base_url": EnvVar.QDRANT_RELEASE_BASE_URL,
+    "qdrant_download_hosts": EnvVar.QDRANT_DOWNLOAD_HOSTS,
     # Scheduled storage maintenance (auto-prune) knobs.
     "storage_autoprune": EnvVar.STORAGE_AUTOPRUNE,
     "storage_autoprune_interval_minutes": EnvVar.STORAGE_AUTOPRUNE_INTERVAL_MINUTES,
@@ -440,4 +545,10 @@ SETTING_BOUNDS: dict[str, _SettingBound] = {
     "storage_autoprune_ephemeral_idle_hours": _NON_NEGATIVE_NUMBER,
     "storage_reconcile_max_per_cycle": _NON_NEGATIVE_INT,
     "storage_reconcile_budget_seconds": _POSITIVE_NUMBER,
+    # Managed qdrant binary source. Declared here so a source that is not
+    # HTTPS, or a host pin that could match nothing, stops the process with
+    # every other unusable setting instead of failing partway through a
+    # download.
+    "qdrant_release_base_url": _HTTPS_SOURCE_URL,
+    "qdrant_download_hosts": _DOWNLOAD_HOSTS,
 }
