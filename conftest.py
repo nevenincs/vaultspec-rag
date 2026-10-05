@@ -216,9 +216,18 @@ def _capture_host_provisioned_qdrant() -> tuple[Path, Path] | None:
         QDRANT_SERVER_VERSION,
     )
     from vaultspec_rag.qdrant_runtime._provision import file_sha256
-    from vaultspec_rag.qdrant_runtime._resolve import resolve_binary
+    from vaultspec_rag.qdrant_runtime._resolve import (
+        QdrantBinaryError,
+        resolve_binary,
+    )
 
-    resolved = resolve_binary(QDRANT_SERVER_VERSION)
+    try:
+        resolved = resolve_binary(QDRANT_SERVER_VERSION)
+    except QdrantBinaryError:
+        # An ambient operator setting that names an unusable path is refused
+        # by resolution. It names no managed install either way, so there is
+        # nothing to capture - and collection must not die on it.
+        return None
     if resolved is None or resolved.source != "provisioned" or not resolved.sha256:
         return None
     manifest = resolved.path.parent / MANIFEST_FILENAME

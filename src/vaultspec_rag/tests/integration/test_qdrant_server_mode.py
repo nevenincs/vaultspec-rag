@@ -700,9 +700,9 @@ class TestServerFirstStartupSelection:
     ) -> None:
         """The default server backend with no binary aborts actionably.
 
-        Server mode is the default; with the managed dir empty, no
-        operator binary, and ``qdrant`` absent from ``PATH``,
-        ``start_supervised_from_config`` (the call the lifespan wraps)
+        Server mode is the default; with the managed dir empty and no
+        operator binary, nothing resolves - ``PATH`` is never consulted -
+        and ``start_supervised_from_config`` (the call the lifespan wraps)
         raises a ``RuntimeError`` that names the install command. The
         service lifespan turns this into the startup abort that also
         names ``--local-only``; here we prove the underlying loud failure
@@ -715,10 +715,10 @@ class TestServerFirstStartupSelection:
         prev_local = os.environ.get(EnvVar.LOCAL_ONLY.value)
         prev_port = os.environ.get(EnvVar.QDRANT_PORT.value)
         # Isolate the managed dir to an empty tmp so nothing is
-        # provisioned, point the operator-binary knob at a path that does
-        # not exist, and keep server mode the default (no local-only).
+        # provisioned, clear the operator-binary knob so no ambient value
+        # resolves, and keep server mode the default (no local-only).
         os.environ[EnvVar.STATUS_DIR.value] = str(tmp_path)
-        os.environ[EnvVar.QDRANT_BINARY.value] = str(tmp_path / "does-not-exist")
+        os.environ.pop(EnvVar.QDRANT_BINARY.value, None)
         os.environ.pop(EnvVar.LOCAL_ONLY.value, None)
         # The port must be isolated too, or this test asserts nothing on a
         # host that happens to run qdrant. The supervisor checks the port
@@ -728,11 +728,7 @@ class TestServerFirstStartupSelection:
         os.environ[EnvVar.QDRANT_PORT.value] = str(_get_ephemeral_qdrant_port())
         reset_config()
         try:
-            if resolve_binary() is not None:
-                pytest.fail(
-                    "a qdrant binary resolved on PATH; this host cannot "
-                    "exercise the missing-binary loud-failure contract"
-                )
+            assert resolve_binary() is None
             with pytest.raises(RuntimeError) as exc_info:
                 start_supervised_from_config()
             message = str(exc_info.value)

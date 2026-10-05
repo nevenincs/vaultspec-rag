@@ -217,9 +217,8 @@ class ResolvedBinary:
 
     Attributes:
         path: Absolute path to the binary.
-        source: Resolution origin - ``"env"`` (operator env var),
-            ``"provisioned"`` (the managed bin dir), or ``"path"``
-            (found on ``PATH``).
+        source: Resolution origin - ``"env"`` (the operator binary
+            setting) or ``"provisioned"`` (the managed bin dir).
         version: The provisioned version when ``source`` is
             ``"provisioned"``; empty otherwise (operator binaries are
             trusted as-is).

@@ -265,7 +265,7 @@ def _resolve_host_provisioned_qdrant() -> tuple[Path, Path] | None:
     resolved = resolve_binary(QDRANT_SERVER_VERSION)
     if resolved is None or resolved.source != "provisioned":
         # Only a provisioned (pinned, manifest-backed) binary is mirrorable with
-        # its verification intact; an env/PATH binary carries no manifest.
+        # its verification intact; an operator-setting binary carries no manifest.
         return None
     manifest = resolved.path.parent / MANIFEST_FILENAME
     if not manifest.is_file():

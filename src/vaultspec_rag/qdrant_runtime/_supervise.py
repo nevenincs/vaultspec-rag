@@ -1249,7 +1249,7 @@ def _attach_to_running(**options: Unpack[_SupervisorOptions]) -> QdrantSuperviso
 def start_supervised_from_config() -> QdrantSupervisor:
     """Resolve, verify, spawn, and ready-wait the qdrant child per config.
 
-    Resolution follows the env-var > provisioned > PATH order. A
+    Resolution follows the operator setting > provisioned order. A
     provisioned binary is re-hashed against its pinned digest before
     execution so a tampered managed dir never runs. The started
     supervisor is installed as the process-wide active supervisor.
@@ -1258,7 +1258,8 @@ def start_supervised_from_config() -> QdrantSupervisor:
         The running, ready supervisor.
 
     Raises:
-        RuntimeError: When no binary is resolvable (the message names
+        RuntimeError: When the operator binary setting names an unusable
+            path, when no binary is resolvable (the message names
             the exact install command), when the provisioned binary
             fails its pre-execution hash check, or when the server
             does not become ready.
@@ -1333,19 +1334,17 @@ def start_supervised_from_config() -> QdrantSupervisor:
                 "match its pinned digest; refusing to execute. Re-run: "
                 "vaultspec-rag server qdrant install --upgrade"
             )
-    elif resolved.source in ("env", "path"):
-        # An env-var or PATH binary carries no pinned digest, so it runs
+    elif resolved.source == "env":
+        # An operator-setting binary carries no pinned digest, so it runs
         # UNVERIFIED. Make the bypass loud (it is otherwise silent), and call
-        # out when it is shadowing a verified provisioned install - the case a
-        # PATH/env plant would exploit.
-        from ..config._types import EnvVar
+        # out when it is shadowing a managed install - the case a planted
+        # setting would exploit.
         from ._resolve import has_provisioned_binary
 
         shadowed = has_provisioned_binary(QDRANT_SERVER_VERSION)
         remedy = (
-            f"It is SHADOWING a verified provisioned install; unset "
-            f"{EnvVar.QDRANT_BINARY.value} or remove qdrant from PATH to run the "
-            "pinned binary."
+            f"It is SHADOWING a managed install; unset "
+            f"{EnvVar.QDRANT_BINARY.value} to run the pinned binary."
             if shadowed
             else "Provision a pinned binary with: vaultspec-rag server qdrant install."
         )

@@ -3,12 +3,17 @@
 Resolution order for the binary the service will execute:
 
 1. ``VAULTSPEC_RAG_QDRANT_BINARY`` - operator-supplied path (the
-   air-gapped / proxy / policy escape hatch). Trusted as-is.
+   air-gapped / proxy / policy escape hatch). It must name an absolute
+   path to a regular file that is not a link, and it carries no pin. A
+   value that names anything else is an error, never a reason to fall
+   through: an operator who named a binary must not be handed another.
 2. The managed bin dir (``{status_dir}/bin/qdrant/{version}/``) when a
-   provisioning manifest is present and consistent with the committed
-   pin.
-3. ``qdrant`` on ``PATH`` - a convenience for system-managed installs;
-   version is not guaranteed and a skew warning is logged downstream.
+   provisioning manifest is present and names the requested version.
+
+Nothing else is consulted. In particular the binary is never looked up
+on ``PATH`` or in the working directory: that lookup runs an unpinned
+file of unknown version, and on Windows it finds one in the directory
+the service happened to be started from.
 """
 
 from __future__ import annotations
@@ -17,7 +22,6 @@ import json
 import logging
 import os
 import platform as _platform
-import shutil
 import sys
 import time
 import urllib.error
@@ -60,6 +64,8 @@ from ._constants import (
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "QDRANT_BINARY_INVALID",
+    "QdrantBinaryError",
     "QdrantEndpointProbe",
     "QdrantIdentity",
     "UnsupportedPlatformError",
@@ -785,19 +791,52 @@ def decide_qdrant_action(
     return ("spawn", state)
 
 
+#: Machine-readable code for an operator binary setting that names something
+#: other than an absolute path to a regular, non-link file.
+QDRANT_BINARY_INVALID = "qdrant_binary_invalid"
+
+
+class QdrantBinaryError(RuntimeError):
+    """The qdrant binary that would run is refused.
+
+    Attributes:
+        error: A stable machine-readable code naming why, for envelopes.
+    """
+
+    def __init__(self, error: str, message: str) -> None:
+        super().__init__(message)
+        self.error = error
+
+
+def _operator_binary_fault(candidate: Path) -> str | None:
+    """Say why *candidate* may not be the operator binary, or ``None``.
+
+    Absolute, so the working directory can never choose the file. Not a link,
+    so what is named is what runs and cannot be re-pointed after the fact.
+    """
+    if not candidate.is_absolute():
+        return "is not an absolute path"
+    if candidate.is_symlink():
+        return "is a symbolic link"
+    if not candidate.is_file():
+        return "is not an existing regular file"
+    return None
+
+
 def _resolve_env_binary() -> ResolvedBinary | None:
     raw = get_config().qdrant_binary
     if not raw:
         return None
     candidate = Path(raw).expanduser()
-    if candidate.is_file():
-        return ResolvedBinary(path=candidate, source="env")
-    logger.debug(
-        "%s points at %s which does not exist; ignoring",
-        EnvVar.QDRANT_BINARY.value,
-        candidate,
-    )
-    return None
+    fault = _operator_binary_fault(candidate)
+    if fault is not None:
+        raise QdrantBinaryError(
+            QDRANT_BINARY_INVALID,
+            f"{EnvVar.QDRANT_BINARY.value} names {candidate}, which {fault}. "
+            "It must name an absolute path to a regular file that is not a "
+            "link. Correct it, or unset it to use the managed qdrant server.",
+        )
+    return ResolvedBinary(path=candidate, source="env")
 
 
 def _resolve_provisioned(version: str) -> ResolvedBinary | None:
@@ -829,10 +868,10 @@ def _resolve_provisioned(version: str) -> ResolvedBinary | None:
 
 
 def has_provisioned_binary(version: str = QDRANT_SERVER_VERSION) -> bool:
-    """Return whether a verified provisioned binary exists for *version*.
+    """Return whether a managed install with a manifest exists for *version*.
 
-    Lets callers detect when an unpinned env/PATH binary would shadow a
-    properly provisioned (pinned, digest-checked) install.
+    Lets callers detect when an unpinned operator binary would shadow a
+    managed install. Presence only: nothing is hashed here.
     """
     return _resolve_provisioned(version) is not None
 
@@ -842,26 +881,21 @@ def resolve_binary(
 ) -> ResolvedBinary | None:
     """Resolve the active qdrant binary, or ``None`` when absent.
 
-    Resolution order: operator env var, the managed provisioned dir
-    for *version*, then ``PATH``.
+    Resolution order: the operator binary setting, then the managed
+    provisioned dir for *version*. Nothing is looked up on ``PATH`` or in
+    the working directory.
 
     Args:
         version: The provisioned version to look for in the managed
             dir (the pinned version by default).
 
     Returns:
-        The resolved binary with its origin, or ``None`` when no
-        candidate exists.
+        The resolved binary with its origin, or ``None`` when the operator
+        setting is unset and no managed install exists.
+
+    Raises:
+        QdrantBinaryError: When the operator setting is set but does not
+            name an absolute path to a regular, non-link file. The managed
+            install is deliberately not consulted in that case.
     """
-    resolved = _resolve_env_binary()
-    if resolved is not None:
-        return resolved
-
-    resolved = _resolve_provisioned(version)
-    if resolved is not None:
-        return resolved
-
-    on_path = shutil.which("qdrant")
-    if on_path:
-        return ResolvedBinary(path=Path(on_path), source="path")
-    return None
+    return _resolve_env_binary() or _resolve_provisioned(version)

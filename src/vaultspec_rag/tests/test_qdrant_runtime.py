@@ -36,6 +36,7 @@ from ..qdrant_runtime._provision import (
     provisioned_versions,
 )
 from ..qdrant_runtime._resolve import (
+    QdrantBinaryError,
     UnsupportedPlatformError,
     asset_for_platform,
     binary_filename,
@@ -57,17 +58,26 @@ def isolated_status_dir(
     tmp_path: Path,
     isolated_singleton_dirs: Path,
 ) -> Iterator[Path]:
-    """Add port isolation on top of the shared singleton-dir relocation.
+    """Add port and operator-binary isolation to the singleton-dir relocation.
 
     A supervisor test binds a real Qdrant port, so the configured port must
     move off the machine default as well as the two managed directories -
     otherwise a test collides with a live server on the shared port.
+
+    The operator binary setting is cleared too. It outranks the managed
+    install, so a value in the developer's own environment would decide every
+    resolution here instead of the install the test seeded.
     """
     del isolated_singleton_dirs
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(("127.0.0.1", 0))
         isolated_port = int(probe.getsockname()[1])
-    with managed_env(**{EnvVar.QDRANT_PORT.value: str(isolated_port)}):
+    with managed_env(
+        **{
+            EnvVar.QDRANT_PORT.value: str(isolated_port),
+            EnvVar.QDRANT_BINARY.value: None,
+        }
+    ):
         yield tmp_path
 
 
@@ -466,9 +476,7 @@ class TestResolution:
         version_dir.mkdir(parents=True)
         (version_dir / binary_filename()).write_bytes(b"no-manifest")
 
-        resolved = resolve_binary()
-
-        assert resolved is None or resolved.source == "path"
+        assert resolve_binary() is None
 
     def test_provisioned_versions_lists_seeded_install(
         self, isolated_status_dir: Path
@@ -481,6 +489,119 @@ class TestResolution:
         assert len(versions) == 1
         assert versions[0]["version"] == QDRANT_SERVER_VERSION
         assert versions[0]["current"] is True
+
+
+class TestNoImplicitLookup:
+    """The binary is never derived from ``PATH`` or the working directory."""
+
+    def test_a_planted_qdrant_on_path_and_in_the_cwd_is_never_resolved(
+        self,
+        isolated_status_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A file a ``PATH`` lookup would find is not a resolution candidate.
+
+        The plant is proven effective first: the standard lookup does return
+        it, from the working directory and from ``PATH`` alike, so the final
+        assertion is about resolution refusing it and not about a plant that
+        missed. Proven able to fail: restoring a ``PATH`` lookup as a last
+        tier fails this on the ``is None`` assertion below.
+        """
+        import shutil
+
+        planted = isolated_status_dir / "planted"
+        planted.mkdir()
+        for name in ("qdrant", "qdrant.exe", "qdrant.cmd", "qdrant.bat"):
+            candidate = planted / name
+            candidate.write_bytes(b"planted")
+            candidate.chmod(0o755)
+        monkeypatch.chdir(planted)
+        monkeypatch.setenv("PATH", f"{planted}{os.pathsep}{os.environ['PATH']}")
+        found = shutil.which("qdrant")
+        assert found is not None
+        assert Path(found).resolve().parent == planted.resolve()
+
+        assert resolve_binary() is None
+
+
+class TestOperatorBinarySetting:
+    """The operator setting names one exact file, or resolution refuses."""
+
+    @staticmethod
+    def _candidates(tmp_path: Path) -> dict[str, tuple[str, str]]:
+        """Build every unusable shape; map a label to (setting, fault phrase)."""
+        real = tmp_path / "real-qdrant.bin"
+        real.write_bytes(b"operator-binary")
+        (tmp_path / "relative-qdrant.bin").write_bytes(b"operator-binary")
+        link = tmp_path / "linked-qdrant.bin"
+        link.symlink_to(real)
+        directory = tmp_path / "a-directory"
+        directory.mkdir()
+        return {
+            "relative": ("relative-qdrant.bin", "is not an absolute path"),
+            "link": (str(link), "is a symbolic link"),
+            "directory": (str(directory), "is not an existing regular file"),
+            "missing": (
+                str(tmp_path / "does-not-exist"),
+                "is not an existing regular file",
+            ),
+        }
+
+    @pytest.mark.parametrize("shape", ["relative", "link", "directory", "missing"])
+    def test_an_unusable_setting_is_refused_and_never_falls_through(
+        self,
+        shape: str,
+        isolated_status_dir: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A named binary that cannot be used is an error, not a fallback.
+
+        A managed install is present throughout, so a silent fall-through
+        would return it and this would fail with no exception raised. The
+        relative case runs with the working directory holding a real file of
+        that name: the working directory must not be able to choose the
+        binary. Each case asserts its own fault phrase, so one check standing
+        in for another does not pass.
+
+        Proven able to fail, one mutation per branch: returning ``None``
+        instead of raising fails all four on the missing exception; dropping
+        the absolute-path check fails ``relative``; dropping the link check
+        fails ``link``; dropping the regular-file check fails ``directory``
+        and ``missing``.
+        """
+        _ = isolated_status_dir
+        _seed_verified_install(qdrant_bin_dir())
+        setting, fault = self._candidates(tmp_path)[shape]
+        monkeypatch.chdir(tmp_path)
+
+        with (
+            managed_env(**{EnvVar.QDRANT_BINARY.value: setting}),
+            pytest.raises(QdrantBinaryError) as refused,
+        ):
+            resolve_binary()
+
+        assert refused.value.error == "qdrant_binary_invalid"
+        assert fault in str(refused.value)
+        assert EnvVar.QDRANT_BINARY.value in str(refused.value)
+
+    def test_an_unusable_setting_stops_a_supervised_start(
+        self, isolated_status_dir: Path, tmp_path: Path
+    ) -> None:
+        from ..qdrant_runtime._supervise import start_supervised_from_config
+
+        _ = isolated_status_dir
+        _seed_verified_install(qdrant_bin_dir())
+
+        with (
+            managed_env(
+                **{EnvVar.QDRANT_BINARY.value: str(tmp_path / "does-not-exist")}
+            ),
+            pytest.raises(QdrantBinaryError) as refused,
+        ):
+            start_supervised_from_config()
+
+        assert refused.value.error == "qdrant_binary_invalid"
 
 
 class TestConfigKnobs:

@@ -407,20 +407,30 @@ def _models_readiness() -> DependencyReadiness:
 def _qdrant_readiness(*, server_mode: bool) -> DependencyReadiness:
     """Report the qdrant binary resolution source plus supervised liveness.
 
-    Reads the resolution order (operator env / managed dir / PATH /
-    absent) and the live runtime snapshot without spawning a process.
+    Reads the resolution order (operator setting / managed dir / absent)
+    and the live runtime snapshot without spawning a process.
     When server mode is the effective backend, the binary must resolve
     and - if a child is being supervised in this process - it must be
     alive for the dimension to read ``READY``. In local-only mode the
     binary is not required, so an absent binary is ``READY`` (the
-    on-disk store needs no server).
+    on-disk store needs no server). An operator setting that names an
+    unusable path reads as the source ``invalid``: a start would refuse
+    it, so server mode is ``NOT_READY`` with the refusal as the detail.
     """
-    from .qdrant_runtime._resolve import resolve_binary
+    from .qdrant_runtime._resolve import QdrantBinaryError, resolve_binary
     from .qdrant_runtime._supervise import runtime_state
 
     state = runtime_state()
-    resolved = resolve_binary()
-    source = resolved.source if resolved is not None else "absent"
+    resolved = None
+    refusal: QdrantBinaryError | None = None
+    try:
+        resolved = resolve_binary()
+    except QdrantBinaryError as exc:
+        refusal = exc
+    if refusal is not None:
+        source = "invalid"
+    else:
+        source = resolved.source if resolved is not None else "absent"
 
     info: dict[str, object] = {
         "binary_source": source,
@@ -428,6 +438,8 @@ def _qdrant_readiness(*, server_mode: bool) -> DependencyReadiness:
         "server_mode": server_mode,
         "runtime": state.to_dict(),
     }
+    if refusal is not None:
+        info["binary_error"] = refusal.error
 
     if not server_mode:
         return DependencyReadiness(
@@ -437,6 +449,14 @@ def _qdrant_readiness(*, server_mode: bool) -> DependencyReadiness:
                 "local-only backend selected; the on-disk store needs no "
                 f"server binary (binary source: {source})"
             ),
+            info=info,
+        )
+
+    if refusal is not None:
+        return DependencyReadiness(
+            name="qdrant",
+            status=ReadinessStatus.NOT_READY,
+            detail=str(refusal),
             info=info,
         )
 

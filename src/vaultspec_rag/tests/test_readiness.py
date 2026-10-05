@@ -33,6 +33,7 @@ from ..config._types import EnvVar
 from ..operator_state._compute import classify_torch
 from ..store_schema import STORAGE_SCHEMA_VERSION as _STORAGE_SCHEMA_VERSION
 from ._config_fixtures import reset_config
+from .conftest import managed_env
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -310,27 +311,37 @@ class TestModelsDimension:
 @pytest.mark.usefixtures("isolated_status_dir")
 class TestQdrantDimension:
     def test_absent_binary_is_not_ready_in_server_mode(self) -> None:
-        # Server mode is the effective default and the temp-isolated
-        # managed dir holds no provisioned binary. Unless an operator env
-        # binary or a PATH qdrant resolves on this host, the dimension is
-        # NOT_READY with an actionable remediation.
-        from ..qdrant_runtime._resolve import resolve_binary
-
-        report = compute_readiness()
+        # Server mode is the effective default, the temp-isolated managed dir
+        # holds no provisioned binary, and the operator setting is cleared, so
+        # nothing resolves: there is no other place a binary is looked for.
+        with managed_env(**{EnvVar.QDRANT_BINARY.value: None}):
+            report = compute_readiness()
         qdrant = report.dimension("qdrant")
         assert qdrant is not None
         assert report.server_mode is True
+        assert qdrant.status == ReadinessStatus.NOT_READY
+        assert qdrant.info["binary_source"] == "absent"
+        assert "--local-only" in qdrant.detail
 
-        if resolve_binary() is None:
-            assert qdrant.status == ReadinessStatus.NOT_READY
-            assert qdrant.info["binary_source"] == "absent"
-            assert "--local-only" in qdrant.detail
-        else:
-            # A real provisioned/PATH binary on the dev host: with no
-            # supervised child in this process, a resolvable binary reads
-            # READY.
-            assert qdrant.status == ReadinessStatus.READY
-            assert qdrant.info["binary_source"] in {"env", "provisioned", "path"}
+    def test_an_unusable_operator_setting_is_not_ready_and_says_why(
+        self, tmp_path: Path
+    ) -> None:
+        """A setting a start would refuse must not read as an absent binary.
+
+        Proven able to fail: letting the refusal fall through to the absent
+        branch fails this on the ``invalid`` source assertion below.
+        """
+        missing = tmp_path / "no-such-qdrant"
+        with managed_env(**{EnvVar.QDRANT_BINARY.value: str(missing)}):
+            report = compute_readiness()
+        qdrant = report.dimension("qdrant")
+        assert qdrant is not None
+        assert qdrant.status == ReadinessStatus.NOT_READY
+        assert qdrant.info["binary_source"] == "invalid"
+        assert qdrant.info["binary_error"] == "qdrant_binary_invalid"
+        assert qdrant.info["binary_path"] is None
+        assert EnvVar.QDRANT_BINARY.value in qdrant.detail
+        assert str(missing) in qdrant.detail
 
     @pytest.mark.usefixtures("local_only_env")
     def test_local_only_makes_an_absent_binary_ready(self) -> None:
