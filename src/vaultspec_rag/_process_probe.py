@@ -791,7 +791,7 @@ def _server_application_arguments(argv: Sequence[str]) -> tuple[str, ...] | None
         return None
     index = _python_application_index(argv)
     if index is not None:
-        if argv[index] == "-m" and argv[index - 1] != "--":
+        if argv[index] == SERVER_LAUNCH_MARKER[0] and argv[index - 1] != "--":
             if index + 1 < len(argv) and argv[index + 1] == SERVER_LAUNCH_MARKER[1]:
                 return tuple(argv[index + 2 :])
         elif _is_server_console_script(argv[index]):

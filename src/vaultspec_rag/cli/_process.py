@@ -49,6 +49,7 @@ from .._process_probe import (
     server_launch_port,
     wait_for_exit,
 )
+from .._python_child import module_command
 from .._win32 import (
     WIN_CREATE_BREAKAWAY_FROM_JOB,
     WIN_CREATE_NEW_PROCESS_GROUP,
@@ -518,6 +519,29 @@ def _spawn_service(
     )
 
 
+def _service_launch_command(
+    interpreter: str, port: int, launch_token: str
+) -> list[str]:
+    """Return the command line that starts the resident service on *port*.
+
+    The service is started from wherever the operator happens to be, which is
+    usually a project checkout, so it runs with that directory off its import
+    path. The mode is inherited by the worker pools it creates, which is what
+    keeps a checkout from handing code to an indexing worker either.
+
+    The port and the launch token are how every later command finds this
+    process again, so the shape here is the one the launch recognisers read.
+    """
+    return module_command(
+        interpreter,
+        SERVER_LAUNCH_MARKER[1],
+        "--port",
+        str(port),
+        "--launch-token",
+        launch_token,
+    )
+
+
 def _spawn_service_request(request: _ServiceSpawnRequest) -> int:
     """Spawn the RAG service as a detached background process.
 
@@ -547,15 +571,7 @@ def _spawn_service_request(request: _ServiceSpawnRequest) -> int:
     launch_token = uuid.uuid4().hex
     if deadline is not None and deadline <= time.monotonic():
         raise TimeoutError("service spawn received no remaining startup budget")
-    interpreter = _resolve_daemon_interpreter()
-    cmd = [
-        interpreter,
-        *SERVER_LAUNCH_MARKER,
-        "--port",
-        str(port),
-        "--launch-token",
-        launch_token,
-    ]
+    cmd = _service_launch_command(_resolve_daemon_interpreter(), port, launch_token)
     env = _build_service_child_env(request.child_env)
     # Owner-only log, refusing a pre-planted symlink at the path where the
     # platform offers O_NOFOLLOW (local log-tamper / redirect hardening).
