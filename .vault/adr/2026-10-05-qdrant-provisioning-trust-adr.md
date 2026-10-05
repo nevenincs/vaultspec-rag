@@ -5,7 +5,7 @@ tags:
 date: '2026-10-05'
 modified: '2026-10-05'
 body_schema: 'body-v2'
-body_hash: 'sha256:caf3aed7da23061a9a5c765aa68f6ceb6a97d1357a4bb546218fba181fb67205'
+body_hash: 'sha256:3b514378f30bc445da5e8f877d8d5579902433e2a22031a95731108c6e8a7d85'
 related:
   - "[[2026-10-05-qdrant-provisioning-trust-audit]]"
   - "[[2026-06-12-qdrant-server-provisioning-adr]]"
@@ -76,6 +76,22 @@ A host installation that has never provisioned the managed Qdrant server cannot 
 - **O-5b - keep the gnu build.** Rejected: a verified install then fails at spawn on any host below the moving glibc floor.
 - **O-5c - probe glibc and choose.** Rejected: two paths and a platform probe to keep what one static build already covers.
 
+**D6 - operator-supplied binary.** Added 2026-10-05 after execution showed that a registered binary is trusted on a manifest inside the directory it protects, so a writer to that directory can relabel a pinned download as operator-supplied.
+
+- **O-6a (chosen) - one operator route: a setting naming an absolute file together with a setting declaring its SHA256, both from the process environment; the managed directory holds pinned downloads only.** An offline host installs the official archive from a local file through the same verified path.
+- **O-6b - keep manifest registration with a label and a warning.** Rejected: the label is written by whoever wrote the manifest.
+- **O-6c - keep the path setting with an optional digest.** Rejected: it leaves one spawn path that checks nothing.
+
+**D7 - model weight revisions.**
+
+- **O-7a (chosen) - every default model is fetched and loaded at a committed revision, as the sparse model already is; a revision setting accompanies each model setting.**
+- **O-7b - keep the moving default branch for the dense and reranker models.** Rejected: an automatic download of unpinned content is the same gap the binary pin exists to close.
+
+**D8 - binding verification to execution.**
+
+- **O-8a (chosen) - the file that was hashed is the file that is executed: the verified path is passed as the executable itself, and the file is held against replacement between hashing and process creation wherever the platform offers a way.** A platform with no such mechanism is named as a stated residual, not left silent.
+- **O-8b - verify then spawn by path.** Rejected as the end state: it leaves a replacement window and, on Windows, a command-line lookup that can pick a sibling file.
+
 ## Constraints
 
 - Automatic provisioning runs only on a host installation. The installation role is decided before any network or filesystem effect. A client `server start` is refused before the binary check, and no client command - install, search, index, the MCP surface, warmup - downloads a model or a binary.
@@ -104,6 +120,18 @@ A host installation that has never provisioned the managed Qdrant server cannot 
 
 - A platform with no upstream asset is reported as an unsupported outcome that names the operator binary route; it is never routed to another architecture's build.
 
+- No process is created for the server binary without a digest check: a committed constant for a managed install, the operator-declared digest for an operator binary. An operator path without a declared digest is a start failure naming both settings.
+
+- The manifest is never a source of trust. A manifest that claims an operator source is not honoured; such an install is reported as invalid with the two supported routes.
+
+- An offline install takes a local copy of the official release archive and passes the same archive and executable digest checks as a download.
+
+- Readiness and status surfaces report a managed install as usable only after hashing it.
+
+- Default model revisions are committed constants, overridable by prefixed settings; a model named by the operator without a revision is fetched at the revision the operator's setting names or is reported as unpinned on every status surface.
+
+- This overrides the earlier constraint in this record that a registered operator binary is verified against the digest recorded at registration.
+
 ## Implementation
 
 We will make a host `server start` provision the pinned Qdrant binary by default, anchor its execution to committed executable digests, resolve it from an explicit operator setting or the managed install only, and read its source from settings.
@@ -113,6 +141,8 @@ We will make a host `server start` provision the pinned Qdrant binary by default
 - Install-state classification hashes the executable, so the upgrade path replaces an install that fails its digest.
 - Settings gain the auto-provision switch, the release base URL, and the allowed download hosts, each with a prefixed environment variable and the current official values as defaults. Hypothesis: the model hub endpoint and the CUDA wheel index take the same shape; if either collides with an existing canonical-configuration check, that source keeps its constant and the collision is recorded.
 - Hypothesis: the start preflight ensures models through the same front door `install` uses, while the daemon's own model loading stays online-capable as a backstop for starts that bypass the command.
+
+Outcome of the CUDA wheel index hypothesis: it fails. The index URL takes effect only by being written into a workspace file, is what the canonical-configuration check and the lockfile-derived torch version compare against, and is read by build tooling that cannot load settings. It stays a constant; an operator who needs a wheel mirror edits the index entry, which is classified as customised and never rewritten. The model hub endpoint hypothesis holds and is a setting published to the hub client at process start.
 
 ## Rationale
 
@@ -141,3 +171,7 @@ Configurable sources are safe only because digests are not configurable. A mirro
 - New Linux x64 installs run the musl build; its performance relative to gnu is unmeasured and is the condition to revisit if indexing or search regress on Linux.
 
 - Because upstream assets are mutable, a replaced asset fails every new install until the pin is re-derived. That is the intended alarm.
+
+- `server qdrant install --binary` is removed. An operator running a custom build sets the path and its digest; an air-gapped operator installs the official archive from a local file. Both are breaking changes for existing registered installs and must be stated in the release notes.
+
+- Pinning the dense and reranker revisions makes a first start after upgrade fetch any file that changed between the cached revision and the pinned one.
