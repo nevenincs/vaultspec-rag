@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#qdrant-provisioning-trust'
 date: '2026-10-05'
-modified: '2026-10-05'
+modified: '2026-10-06'
 body_schema: 'body-v2'
-body_hash: 'sha256:94b998491f1ffa11dd6086a7d6fd34edc7d9c49fd882eb643ef6356d338217b3'
+body_hash: 'sha256:a3322f9352ddaeb35d8078246f1a92b8752db1e802b940f5b2ab5ba7a912a838'
 related:
   - "[[2026-10-05-qdrant-provisioning-trust-plan]]"
 ---
@@ -317,6 +317,120 @@ related:
 - `S31` `M` `src/vaultspec_rag/tests/test_model_fetch.py`
 - `S31` `verify:` `pytest ten covering modules in an export of the parent plus the five paths` -> `pass`
 - `S31` `by:` `vaultspec-high-executor`
+- `S29` `M` `src/vaultspec_rag/_anchor_claim.py`
+- `S29` `M` `src/vaultspec_rag/_readiness.py`
+- `S29` `M` `src/vaultspec_rag/commands/_provision.py`
+- `S29` `M` `src/vaultspec_rag/qdrant_runtime/_constants.py`
+- `S29` `M` `src/vaultspec_rag/qdrant_runtime/_download.py`
+- `S29` `A` `src/vaultspec_rag/qdrant_runtime/_managed_install.py`
+- `S29` `M` `src/vaultspec_rag/qdrant_runtime/_provision.py`
+- `S29` `M` `src/vaultspec_rag/qdrant_runtime/_resolve.py`
+- `S29` `M` `src/vaultspec_rag/qdrant_runtime/_spawn_trust.py`
+- `S29` `A` `src/vaultspec_rag/tests/_committed_pins.py`
+- `S29` `M` `src/vaultspec_rag/tests/_fake_qdrant_binary.py`
+- `S29` `M` `src/vaultspec_rag/tests/_loopback_tls.py`
+- `S29` `A` `src/vaultspec_rag/tests/_provisioning_child.py`
+- `S29` `M` `src/vaultspec_rag/tests/_qdrant_provision_seam.py`
+- `S29` `M` `src/vaultspec_rag/tests/_stand_in_release.py`
+- `S29` `M` `src/vaultspec_rag/tests/conftest.py`
+- `S29` `M` `src/vaultspec_rag/tests/integration/_helpers.py`
+- `S29` `A` `src/vaultspec_rag/tests/test_anchor_claim_refusals.py`
+- `S29` `M` `src/vaultspec_rag/tests/test_cli_qdrant.py`
+- `S29` `M` `src/vaultspec_rag/tests/test_client_provisions_nothing.py`
+- `S29` `A` `src/vaultspec_rag/tests/test_managed_install.py`
+- `S29` `A` `src/vaultspec_rag/tests/test_pin_table_writers.py`
+- `S29` `M` `src/vaultspec_rag/tests/test_provision.py`
+- `S29` `M` `src/vaultspec_rag/tests/test_qdrant_download_faults.py`
+- `S29` `M` `src/vaultspec_rag/tests/test_qdrant_install.py`
+- `S29` `A` `src/vaultspec_rag/tests/test_qdrant_install_recovery.py`
+- `S29` `M` `src/vaultspec_rag/tests/test_qdrant_offline_install.py`
+- `S29` `M` `src/vaultspec_rag/tests/test_qdrant_runtime.py`
+- `S29` `M` `src/vaultspec_rag/tests/test_qdrant_spawn_trust.py`
+- `S29` `M` `src/vaultspec_rag/tests/test_qdrant_store_format.py`
+- `S29` `M` `src/vaultspec_rag/tests/test_readiness.py`
+- `S29` `M` `src/vaultspec_rag/tests/test_start_provisioning.py`
+- `S29` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S29` `verify:` `pytest unit qdrant and start modules (Windows)` -> `pass`
+- `S29` `verify:` `ruff, ty, basedpyright, dev lint` -> `pass`
+- `S29` `by:` `claude`
+- `S19` `M` `.env.example`
+- `S19` `M` `docs/configuration.md`
+- `S19` `A` `src/vaultspec_rag/_model_pins.py`
+- `S19` `M` `src/vaultspec_rag/_sparse_profile.py`
+- `S19` `M` `src/vaultspec_rag/config/_registry.py`
+- `S19` `M` `src/vaultspec_rag/config/_schema.py`
+- `S19` `M` `src/vaultspec_rag/config/_settings.py`
+- `S19` `M` `src/vaultspec_rag/config/_types.py`
+- `S19` `M` `src/vaultspec_rag/search/_options.py`
+- `S19` `M` `src/vaultspec_rag/tests/test_config_backend.py`
+- `S19` `A` `src/vaultspec_rag/tests/test_model_pins.py`
+- `S19` `verify:` `pytest unit model modules (Windows 237 passed, Linux 234 passed 3 skipped)` -> `pass`
+- `S19` `by:` `claude`
+- `S23` `M` `src/vaultspec_rag/_model_cache.py`
+- `S23` `M` `src/vaultspec_rag/_readiness.py`
+- `S23` `M` `src/vaultspec_rag/_sparse_encoder.py`
+- `S23` `A` `src/vaultspec_rag/_verified_import.py`
+- `S23` `M` `src/vaultspec_rag/api.py`
+- `S23` `M` `src/vaultspec_rag/cli/_service_doctor.py`
+- `S23` `M` `src/vaultspec_rag/commands/_model_fetch.py`
+- `S23` `M` `src/vaultspec_rag/embeddings.py`
+- `S23` `M` `src/vaultspec_rag/search/_searcher.py`
+- `S23` `M` `src/vaultspec_rag/server/_lifespan.py`
+- `S23` `M` `src/vaultspec_rag/service.py`
+- `S23` `M` `src/vaultspec_rag/tests/_loopback_model_hub.py`
+- `S23` `M` `src/vaultspec_rag/tests/_model_cache_seed.py`
+- `S23` `A` `src/vaultspec_rag/tests/_model_fetch_child.py`
+- `S23` `M` `src/vaultspec_rag/tests/_model_setup.py`
+- `S23` `M` `src/vaultspec_rag/tests/benchmarks/bench_document_index_resilience.py`
+- `S23` `M` `src/vaultspec_rag/tests/benchmarks/bench_large_index_resilience.py`
+- `S23` `M` `src/vaultspec_rag/tests/conftest.py`
+- `S23` `M` `src/vaultspec_rag/tests/integration/test_server_doctor_route.py`
+- `S23` `M` `src/vaultspec_rag/tests/test_adr_regression.py`
+- `S23` `M` `src/vaultspec_rag/tests/test_client_provisions_nothing.py`
+- `S23` `M` `src/vaultspec_rag/tests/test_config_backend.py`
+- `S23` `M` `src/vaultspec_rag/tests/test_model_fetch.py`
+- `S23` `A` `src/vaultspec_rag/tests/test_model_fetch_checked.py`
+- `S23` `A` `src/vaultspec_rag/tests/test_model_pins.py`
+- `S23` `A` `src/vaultspec_rag/tests/test_model_readiness.py`
+- `S23` `M` `src/vaultspec_rag/tests/test_model_setup.py`
+- `S23` `A` `src/vaultspec_rag/tests/test_model_snapshot.py`
+- `S23` `M` `src/vaultspec_rag/tests/test_server_doctor.py`
+- `S23` `A` `src/vaultspec_rag/tests/test_verified_import.py`
+- `S23` `verify:` `pytest unit whole tier in six chunks (Windows)` -> `pass`
+- `S23` `verify:` `six break-and-restore proofs` -> `pass`
+- `S23` `by:` `claude`
+- `S27` `M` `docs/cli.md`
+- `S27` `M` `src/vaultspec_rag/_readiness.py`
+- `S27` `M` `src/vaultspec_rag/cli/_install.py`
+- `S27` `M` `src/vaultspec_rag/cli/_render.py`
+- `S27` `M` `src/vaultspec_rag/cli/_service_lifecycle.py`
+- `S27` `M` `src/vaultspec_rag/cli/_service_qdrant.py`
+- `S27` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S27` `M` `src/vaultspec_rag/cli/_service_status.py`
+- `S27` `A` `src/vaultspec_rag/commands/_backend_choice.py`
+- `S27` `M` `src/vaultspec_rag/commands/_install.py`
+- `S27` `M` `src/vaultspec_rag/commands/_provision.py`
+- `S27` `M` `src/vaultspec_rag/logging_config.py`
+- `S27` `A` `src/vaultspec_rag/operator_state/_service_environment.py`
+- `S27` `M` `src/vaultspec_rag/serviceclient/_discovery.py`
+- `S27` `M` `src/vaultspec_rag/tests/conftest.py`
+- `S27` `M` `src/vaultspec_rag/tests/test_cli.py`
+- `S27` `M` `src/vaultspec_rag/tests/test_cli_qdrant.py`
+- `S27` `M` `src/vaultspec_rag/tests/test_cli_server_start.py`
+- `S27` `M` `src/vaultspec_rag/tests/test_cli_service_watch.py`
+- `S27` `M` `src/vaultspec_rag/tests/test_machine_discovery_resolution.py`
+- `S27` `A` `src/vaultspec_rag/tests/test_provisioning_gate.py`
+- `S27` `M` `src/vaultspec_rag/tests/test_readiness.py`
+- `S27` `A` `src/vaultspec_rag/tests/test_readiness_service_environment.py`
+- `S27` `M` `src/vaultspec_rag/tests/test_service_discovery_schema.py`
+- `S27` `A` `src/vaultspec_rag/tests/test_service_environment.py`
+- `S27` `M` `src/vaultspec_rag/tests/test_start_backend_decision.py`
+- `S27` `M` `src/vaultspec_rag/tests/test_start_provisioning.py`
+- `S27` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S27` `verify:` `pytest unit whole tier in six chunks (Windows)` -> `pass`
+- `S27` `verify:` `pytest unit CLI, service, start, install, readiness, qdrant modules (Linux)` -> `pass`
+- `S27` `verify:` `eight break-and-restore proofs` -> `pass`
+- `S27` `by:` `claude`
 
 ## Notes
 
@@ -346,3 +460,7 @@ related:
 - `S26` Commit 9a80b406. Precedence is flag, exported variable, saved choice, default; the remote address is orthogonal. `cli/_process.py` needed no change: fourteen combinations are driven through the decision, the daemon environment, and a real child interpreter. No start that spawns a real daemon was run.
 - `S28` Commit 9ee5bd95. Begun by a worker that was terminated mid-step; the uncommitted files were read in full, the taskkill site and the search-path declarations were added, and every guard was mutation-proven afterwards against a hashed snapshot. A relative `HF_HUB_CACHE` is not rewritten. The four monitor lifecycle integration cases error at setup for want of a compiled monitor, as before. Not run: the integration tier, macOS, a real resident service.
 - `S31` Commit d5a72983, part of this Step only: every hub request including the size query is now the killable download process's and carries a timeout, and the stop no longer walks a process's ancestry. Still open in this Step: the whole-operation deadline setting, one contention budget across repositories, local cache fault classification, and replacing the substituted start-step tests. Written by a worker that was terminated before committing; the files were byte-identical to its verified copy and were re-run once before commit.
+- `S29` Committed as f3e831a6. Integrated from a terminated worker's tree by three-way merge; eight cross-lane tests repaired in the same commit.
+- `S19` Committed as 960027fd together with S23. Pinned commits: Qwen/Qwen3-Embedding-0.6B at 97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3, BAAI/bge-reranker-v2-m3 at 953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e. The sparse model has no revision setting.
+- `S23` Committed as 960027fd together with S19. Six guards proven to fail when broken and pass when restored: digest comparison, extra file, file added during load, pickle-only weights, missing shard, source digest. Residual stated in the module: off Windows a writer to the model cache can replace a file between the hash and the loader's read; weights are safetensors only and the executed source is the hashed buffer. GPU tier not run: no model was loaded on a device in this session.
+- `S27` Committed as bc1f583c. Integrated from a terminated worker's draft by three-way merge. Added the doctor readiness tests the draft lacked. Eight guards proven both ways. install --skip-torch removed. Tests that reached host behaviour without pinning a host were pinned, so the accelerator-free lane asserts the same branch.
