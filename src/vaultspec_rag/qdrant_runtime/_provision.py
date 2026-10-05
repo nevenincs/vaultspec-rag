@@ -32,6 +32,7 @@ import zlib
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, cast
 
@@ -601,27 +602,145 @@ def _write_manifest(
     )
 
 
-def _existing_install_state(version_dir: Path, expected_sha256: str) -> str:
+class _InstallState(StrEnum):
+    """What the installed name holds, judged by hashing the executable."""
+
+    ABSENT = "absent"
+    #: A downloaded install whose executable matches the committed digest of
+    #: the asset its manifest names.
+    VERIFIED = "verified"
+    #: An operator-registered install whose executable matches the digest
+    #: recorded when it was registered. No committed pin applies to it.
+    REGISTERED = "registered"
+    #: An executable is present and nothing vouches for it.
+    UNVERIFIED = "unverified"
+
+
+@dataclass(frozen=True)
+class _ExistingInstall:
+    """The classified contents of a version dir.
+
+    Attributes:
+        state: Whether an executable is present and what it was held to.
+        binary: The installed name, whether or not anything is there.
+        asset: The release asset a verified download was made from.
+        sha256: The digest the executable matched; empty unless it matched.
+        problem: Why an unverified executable does not verify.
+    """
+
+    state: _InstallState
+    binary: Path
+    asset: str = ""
+    sha256: str = ""
+    problem: str = ""
+
+
+def _existing_install(version_dir: Path) -> _ExistingInstall:
     """Classify the current contents of *version_dir*.
 
-    Returns:
-        ``"verified"`` when the binary and a pin-consistent manifest
-        are present, ``"stale"`` when a binary exists but the manifest
-        is absent or disagrees with the pin, ``"absent"`` otherwise.
+    The executable is hashed every time. A manifest records what was
+    installed, but it sits in the directory it would be vouching for, so on
+    its own it cannot tell an intact install from one whose executable was
+    replaced. What the executable must hash to comes from the resolver: the
+    committed digest of the asset the manifest names for a download, the
+    digest recorded at registration for an operator binary.
     """
-    from ._resolve import binary_filename, read_manifest
+    from ._resolve import binary_filename, expected_executable_sha256, read_manifest
 
     binary = version_dir / binary_filename()
+
+    def unverified(problem: str) -> _ExistingInstall:
+        return _ExistingInstall(_InstallState.UNVERIFIED, binary, problem=problem)
+
     if not binary.is_file():
-        return "absent"
+        return _ExistingInstall(_InstallState.ABSENT, binary)
     manifest = read_manifest(version_dir)
-    if (
-        manifest is not None
-        and str(manifest.get("version")) == QDRANT_SERVER_VERSION
-        and str(manifest.get("asset_sha256", "")).lower() == expected_sha256.lower()
-    ):
-        return "verified"
-    return "stale"
+    if manifest is None:
+        return unverified("it has no readable manifest")
+    recorded = str(manifest.get("version", ""))
+    if recorded != QDRANT_SERVER_VERSION:
+        return unverified(
+            f"its manifest records version {recorded or '<none>'}, not the "
+            f"pinned {QDRANT_SERVER_VERSION}"
+        )
+    registered = manifest.get("source") == MANIFEST_SOURCE_OPERATOR
+    expected = expected_executable_sha256(manifest)
+    if not expected:
+        return unverified(
+            "its manifest records no registration digest"
+            if registered
+            else "its manifest names no pinned release asset"
+        )
+    try:
+        verify_native_binary(binary, expected)
+    except RuntimeError:
+        return unverified(
+            "its executable does not match the digest recorded when it was registered"
+            if registered
+            else "its executable does not match the committed digest of its "
+            "release asset"
+        )
+    return _ExistingInstall(
+        _InstallState.REGISTERED if registered else _InstallState.VERIFIED,
+        binary,
+        asset=str(manifest.get("asset", "")),
+        sha256=expected,
+    )
+
+
+def _asset_url(release_base_url: str, asset: str) -> str:
+    """Return where *asset* of the pinned release lives under the base."""
+    return f"{release_base_url}/v{QDRANT_SERVER_VERSION}/{asset}"
+
+
+def _settled_report(
+    existing: _ExistingInstall, *, upgrade: bool, release_base_url: str
+) -> ProvisionReport | None:
+    """Answer for an install this run must not write to, or ``None``.
+
+    ``None`` means the run goes on to download: nothing is installed, or
+    ``upgrade`` asked for whatever is there to be replaced.
+    """
+    if existing.state is _InstallState.VERIFIED:
+        # An upgrade finds nothing to do here either: the executable already
+        # is the pinned one, and a version bump installs to a new directory.
+        return ProvisionReport(
+            action=ProvisionAction.UNCHANGED,
+            asset=existing.asset,
+            url=_asset_url(release_base_url, existing.asset),
+            binary=existing.binary,
+            sha256=QDRANT_ASSET_SHA256.get(existing.asset, ""),
+            message=(
+                "Install already matches the pin; nothing to upgrade."
+                if upgrade
+                else "Verified install already present; nothing to do."
+            ),
+        )
+    if upgrade:
+        return None
+    if existing.state is _InstallState.REGISTERED:
+        return ProvisionReport(
+            action=ProvisionAction.UNCHANGED,
+            binary=existing.binary,
+            sha256=existing.sha256,
+            message=(
+                "An operator-registered binary is installed and matches the "
+                "digest recorded when it was registered; nothing to do. The "
+                "committed pin does not apply to it. Re-run with --upgrade to "
+                "replace it with the pinned release."
+            ),
+        )
+    if existing.state is _InstallState.UNVERIFIED:
+        return ProvisionReport(
+            action=ProvisionAction.FAILED,
+            binary=existing.binary,
+            message=(
+                f"The Qdrant server at {existing.binary} cannot be trusted: "
+                f"{existing.problem}. Re-run with --upgrade to replace it with "
+                f"the pinned release, or remove {existing.binary.parent}."
+            ),
+        )
+    return None
 
 
 def _open_without_following(path: Path) -> IO[bytes]:
@@ -795,15 +914,16 @@ def provision(
 ) -> ProvisionReport:
     """Provision the pinned qdrant server binary into the managed dir.
 
-    Idempotent: a verified existing install reports ``unchanged`` with
-    zero network I/O. A stale install (binary present but manifest
-    absent or disagreeing with the pin) requires ``upgrade=True`` to
-    be replaced and reports ``failed`` otherwise, so a manual
-    modification is never silently overwritten.
+    Idempotent: an install whose executable still hashes to what it is held
+    to reports ``unchanged`` with zero network I/O. One that does not - its
+    executable replaced, its manifest missing or naming no pinned asset -
+    requires ``upgrade=True`` to be replaced and reports ``failed`` otherwise,
+    so a manual modification is never silently overwritten and never
+    silently trusted.
 
     Args:
-        upgrade: Re-fetch and replace a stale or pin-divergent
-            install.
+        upgrade: Re-fetch the pinned release and replace an install that does
+            not verify, or an operator-registered one.
         dry_run: Report what would happen without touching the network
             or the filesystem.
         binary: Operator-supplied binary to register instead of
@@ -819,61 +939,31 @@ def provision(
     # Function-local, like the resolver below: the build tools import this
     # module in an interpreter that has no service configuration to import.
     from ..config._settings import get_config
-    from ._resolve import asset_for_platform, binary_filename, qdrant_bin_dir
+    from ._resolve import asset_for_platform, qdrant_bin_dir
+
+    version_dir = qdrant_bin_dir()
+    existing = _existing_install(version_dir)
+    if binary is not None:
+        return _provision_operator_binary(
+            binary, version_dir, dry_run=dry_run, previously=existing.state
+        )
+
+    source = get_config()
+    settled = _settled_report(
+        existing, upgrade=upgrade, release_base_url=source.qdrant_release_base_url
+    )
+    if settled is not None:
+        return settled
 
     asset = asset_for_platform()
     expected = QDRANT_ASSET_SHA256[asset]
-    source = get_config()
-    url = f"{source.qdrant_release_base_url}/v{QDRANT_SERVER_VERSION}/{asset}"
-    version_dir = qdrant_bin_dir()
-    state = _existing_install_state(version_dir, expected)
-
-    if binary is not None:
-        return _provision_operator_binary(
-            binary, version_dir, dry_run=dry_run, previously=state
-        )
-
-    if state == "verified" and not upgrade:
-        return ProvisionReport(
-            action=ProvisionAction.UNCHANGED,
-            asset=asset,
-            url=url,
-            binary=version_dir / binary_filename(),
-            sha256=expected,
-            message="Verified install already present; nothing to do.",
-        )
-    if state == "verified" and upgrade:
-        # The versioned dir already matches the pin; an upgrade run
-        # after a constants bump targets a new version dir, so this
-        # path is also a no-op.
-        return ProvisionReport(
-            action=ProvisionAction.UNCHANGED,
-            asset=asset,
-            url=url,
-            binary=version_dir / binary_filename(),
-            sha256=expected,
-            message="Install already matches the pin; nothing to upgrade.",
-        )
-    if state == "stale" and not upgrade:
-        return ProvisionReport(
-            action=ProvisionAction.FAILED,
-            asset=asset,
-            url=url,
-            binary=version_dir / binary_filename(),
-            sha256=expected,
-            message=(
-                f"A binary exists at {version_dir} but its manifest does not "
-                "match the committed pin. Re-run with --upgrade to replace "
-                "it, or remove the directory."
-            ),
-        )
-
+    url = _asset_url(source.qdrant_release_base_url, asset)
     if dry_run:
         return ProvisionReport(
             action=ProvisionAction.DRY_RUN,
             asset=asset,
             url=url,
-            binary=version_dir / binary_filename(),
+            binary=existing.binary,
             sha256=expected,
             message=(
                 f"Would download {asset} from {url}, verify SHA256 "
@@ -889,7 +979,7 @@ def provision(
             archive_sha256=expected,
             executable_sha256=QDRANT_EXECUTABLE_SHA256[asset],
             version_dir=version_dir,
-            previously=state,
+            previously=existing.state,
             on_progress=on_progress,
         )
     )

@@ -394,30 +394,6 @@ class TestProvision:
         assert report.sha256 == QDRANT_ASSET_SHA256[asset_for_platform()]
         assert not (isolated_status_dir / "bin").exists()
 
-    def test_preseeded_verified_install_is_unchanged(
-        self, isolated_status_dir: Path
-    ) -> None:
-        _ = isolated_status_dir
-        version_dir = qdrant_bin_dir()
-        binary = _seed_verified_install(version_dir)
-        before = binary.stat().st_mtime_ns
-
-        report = provision()
-
-        assert report.action == ProvisionAction.UNCHANGED
-        assert report.binary == binary
-        assert binary.stat().st_mtime_ns == before, "unchanged must not rewrite"
-
-    def test_preseeded_verified_install_unchanged_under_upgrade(
-        self, isolated_status_dir: Path
-    ) -> None:
-        _ = isolated_status_dir
-        _seed_verified_install(qdrant_bin_dir())
-
-        report = provision(upgrade=True)
-
-        assert report.action == ProvisionAction.UNCHANGED
-
     def test_stale_install_fails_without_upgrade(
         self, isolated_status_dir: Path
     ) -> None:

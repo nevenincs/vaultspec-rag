@@ -29,7 +29,12 @@ from typing import TYPE_CHECKING
 import pytest
 
 from .._sync_vocabulary import ProvisionAction
-from ..qdrant_runtime._constants import MANIFEST_FILENAME, QDRANT_SERVER_VERSION
+from ..config._types import EnvVar
+from ..qdrant_runtime._constants import (
+    MANIFEST_FILENAME,
+    QDRANT_ASSET_SHA256,
+    QDRANT_SERVER_VERSION,
+)
 from ..qdrant_runtime._provision import (
     _download_and_install,
     _DownloadInstallRequest,
@@ -37,7 +42,11 @@ from ..qdrant_runtime._provision import (
     file_sha256,
     provision,
 )
-from ..qdrant_runtime._resolve import binary_filename, qdrant_bin_dir
+from ..qdrant_runtime._resolve import (
+    asset_for_platform,
+    binary_filename,
+    qdrant_bin_dir,
+)
 from ._loopback_tls import (
     LOOPBACK_HOST,
     LoopbackSources,
@@ -45,9 +54,10 @@ from ._loopback_tls import (
     send_bytes,
     trusted_loopback_sources,
 )
+from .conftest import managed_env
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Callable, Generator
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
@@ -506,3 +516,230 @@ class TestArchiveExtraction:
         assert binary == dest / binary_filename()
         assert binary.read_bytes() == _NEW_EXECUTABLE
         assert digest == _sha256(_NEW_EXECUTABLE)
+
+
+_STAND_IN_EXECUTABLE = b"stand-in bytes that are not the release executable"
+_OPERATOR_EXECUTABLE = b"operator-supplied server"
+
+
+def _asset_path() -> str:
+    """Where a stand-in mirror is asked for this platform's pinned asset."""
+    return f"/mirror/v{QDRANT_SERVER_VERSION}/{asset_for_platform()}"
+
+
+def _mirror(sources: LoopbackSources) -> StandInSource:
+    """A mirror that answers every request with bytes that are not a release."""
+    return sources.serve(lambda handler: send_bytes(handler, b"not the release"))
+
+
+def _write_install(version_dir: Path, manifest: dict[str, str] | None) -> bytes:
+    """Place stand-in bytes at the installed name, beside *manifest* if given."""
+    version_dir.mkdir(parents=True, exist_ok=True)
+    (version_dir / binary_filename()).write_bytes(_STAND_IN_EXECUTABLE)
+    if manifest is not None:
+        (version_dir / MANIFEST_FILENAME).write_text(
+            json.dumps(manifest), encoding="utf-8"
+        )
+    return _STAND_IN_EXECUTABLE
+
+
+def _seed_self_attested_download(version_dir: Path, tmp_path: Path) -> bytes:
+    """A download manifest that vouches for bytes the release never held.
+
+    Every field agrees with the pin table and the recorded executable digest
+    is the true digest of the file beside it, so nothing in the directory
+    disagrees with anything else in it. Only the committed executable digest
+    shows the file is not the release.
+    """
+    del tmp_path
+    asset = asset_for_platform()
+    return _write_install(
+        version_dir,
+        {
+            "version": QDRANT_SERVER_VERSION,
+            "asset": asset,
+            "asset_sha256": QDRANT_ASSET_SHA256[asset],
+            "binary_sha256": _sha256(_STAND_IN_EXECUTABLE),
+            "source": "download",
+        },
+    )
+
+
+def _seed_version_only_manifest(version_dir: Path, tmp_path: Path) -> bytes:
+    del tmp_path
+    return _write_install(version_dir, {"version": QDRANT_SERVER_VERSION})
+
+
+def _seed_no_manifest(version_dir: Path, tmp_path: Path) -> bytes:
+    del tmp_path
+    return _write_install(version_dir, None)
+
+
+def _seed_registered(version_dir: Path, tmp_path: Path) -> bytes:
+    """Register an operator binary through the shipped registration."""
+    operator_binary = tmp_path / "operator-qdrant.bin"
+    operator_binary.write_bytes(_OPERATOR_EXECUTABLE)
+    report = provision(binary=operator_binary)
+    assert report.action == ProvisionAction.CREATED, report.message
+    assert report.binary == version_dir / binary_filename()
+    return _OPERATOR_EXECUTABLE
+
+
+def _seed_registered_then_replaced(version_dir: Path, tmp_path: Path) -> bytes:
+    _seed_registered(version_dir, tmp_path)
+    replaced = b"swapped in after registration"
+    (version_dir / binary_filename()).write_bytes(replaced)
+    return replaced
+
+
+#: Installs no committed or recorded digest vouches for, by how they got so.
+_UNVERIFIED_SEEDS: dict[str, Callable[[Path, Path], bytes]] = {
+    "download manifest over other bytes": _seed_self_attested_download,
+    "manifest with only a version": _seed_version_only_manifest,
+    "no manifest": _seed_no_manifest,
+    "registered, then replaced": _seed_registered_then_replaced,
+}
+
+
+class TestInstallState:
+    """An install is called healthy only when its executable hashes right."""
+
+    def test_a_registered_install_is_unchanged_with_no_network(
+        self, sources: LoopbackSources, version_dir: Path, tmp_path: Path
+    ) -> None:
+        """An operator-registered install is a healthy state of its own.
+
+        It carries no committed pin, so it is not called verified, and it
+        matches the digest recorded at registration, so it is not called
+        stale: a plain run leaves it alone.
+
+        Mutation: classed a registered install with the unverified ones in
+        ``_settled_report``. Observed the action assertion fail (``failed``
+        where ``unchanged`` was required). Restored; passes.
+        """
+        _seed_registered(version_dir, tmp_path)
+        binary = version_dir / binary_filename()
+        before = binary.stat().st_mtime_ns
+        mirror = _mirror(sources)
+
+        with managed_env(
+            **{EnvVar.QDRANT_RELEASE_BASE_URL.value: mirror.url("/mirror")}
+        ):
+            report = provision()
+
+        assert report.action == ProvisionAction.UNCHANGED, report.message
+        assert "operator-registered" in report.message
+        assert report.sha256 == _sha256(_OPERATOR_EXECUTABLE)
+        assert mirror.requests == []
+        assert binary.stat().st_mtime_ns == before
+
+    @pytest.mark.parametrize("seed", _UNVERIFIED_SEEDS.values(), ids=_UNVERIFIED_SEEDS)
+    def test_an_install_that_does_not_verify_fails_and_names_the_upgrade(
+        self,
+        sources: LoopbackSources,
+        version_dir: Path,
+        tmp_path: Path,
+        seed: Callable[[Path, Path], bytes],
+    ) -> None:
+        """A plain run neither trusts nor overwrites an unverified executable.
+
+        The first seed is the one a manifest-only check cannot see: its
+        manifest agrees with the pin table and with the file beside it.
+
+        Mutation: made ``_existing_install`` skip hashing the executable.
+        Observed the first and last seeds fail on the action (``unchanged``
+        where ``failed`` was required); the other two carry no digest to
+        compare and stayed refused. Restored; passes.
+        """
+        installed = seed(version_dir, tmp_path)
+        mirror = _mirror(sources)
+
+        with managed_env(
+            **{EnvVar.QDRANT_RELEASE_BASE_URL.value: mirror.url("/mirror")}
+        ):
+            report = provision()
+
+        assert report.action == ProvisionAction.FAILED
+        assert "--upgrade" in report.message
+        assert mirror.requests == []
+        assert (version_dir / binary_filename()).read_bytes() == installed
+
+    @pytest.mark.parametrize("seed", _UNVERIFIED_SEEDS.values(), ids=_UNVERIFIED_SEEDS)
+    def test_an_upgrade_re_downloads_an_install_that_does_not_verify(
+        self,
+        sources: LoopbackSources,
+        version_dir: Path,
+        tmp_path: Path,
+        seed: Callable[[Path, Path], bytes],
+    ) -> None:
+        """The remedy a failed start names reaches the download.
+
+        The stand-in mirror cannot serve the pinned release, so the run then
+        stops on the committed archive digest and must leave the executable
+        it found exactly as it was. The other half of the repair - a verified
+        download replacing a previous executable - is proven at the install
+        itself, against an archive held to its own digests.
+
+        Mutation: made ``_existing_install`` skip hashing the executable.
+        Observed the first seed fail on the request log (``[]`` where the
+        asset path was required): the upgrade did nothing. Restored; passes.
+        """
+        installed = seed(version_dir, tmp_path)
+        mirror = _mirror(sources)
+
+        with managed_env(
+            **{EnvVar.QDRANT_RELEASE_BASE_URL.value: mirror.url("/mirror")}
+        ):
+            report = provision(upgrade=True)
+
+        assert mirror.requests == [_asset_path()]
+        assert report.action == ProvisionAction.FAILED
+        assert "SHA256 mismatch" in report.message
+        assert (version_dir / binary_filename()).read_bytes() == installed
+        assert _working_files(version_dir) == []
+
+    def test_an_upgrade_replaces_a_registered_install_with_the_pinned_release(
+        self, sources: LoopbackSources, version_dir: Path, tmp_path: Path
+    ) -> None:
+        installed = _seed_registered(version_dir, tmp_path)
+        mirror = _mirror(sources)
+
+        with managed_env(
+            **{EnvVar.QDRANT_RELEASE_BASE_URL.value: mirror.url("/mirror")}
+        ):
+            attempted = provision(upgrade=True)
+            afterwards = provision()
+
+        assert mirror.requests == [_asset_path()]
+        assert attempted.action == ProvisionAction.FAILED
+        # The download could not be verified, so the registered install is
+        # still there and still healthy.
+        assert (version_dir / binary_filename()).read_bytes() == installed
+        assert afterwards.action == ProvisionAction.UNCHANGED
+
+    @pytest.mark.parametrize(
+        ("field", "value", "problem"),
+        [
+            ("asset", "qdrant-not-a-release.zip", "names no pinned release asset"),
+            ("version", "0.0.1", "records version 0.0.1"),
+        ],
+    )
+    def test_a_manifest_the_pin_table_does_not_cover_never_verifies(
+        self, version_dir: Path, field: str, value: str, problem: str
+    ) -> None:
+        """The manifest only selects a committed digest; it supplies none."""
+        asset = asset_for_platform()
+        manifest = {
+            "version": QDRANT_SERVER_VERSION,
+            "asset": asset,
+            "asset_sha256": QDRANT_ASSET_SHA256[asset],
+            "binary_sha256": _sha256(_STAND_IN_EXECUTABLE),
+            "source": "download",
+        }
+        _write_install(version_dir, {**manifest, field: value})
+
+        report = provision()
+
+        assert report.action == ProvisionAction.FAILED
+        assert problem in report.message
+        assert "--upgrade" in report.message

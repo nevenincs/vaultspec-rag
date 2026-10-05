@@ -2,7 +2,7 @@
 
 Exercises real orchestration over the real backends with no network:
 the qdrant step runs against a temp-isolated managed dir pre-seeded
-exactly as a verified provision leaves it (proving the ``unchanged``
+exactly as registering a binary leaves it (proving the ``unchanged``
 idempotent no-op without downloading), the torch step patches a real
 temp ``pyproject.toml`` via the real ``torch_config`` backend, and the
 model step exercises the skip / dry-run / opt-out paths plus the real
@@ -10,8 +10,8 @@ Hugging Face cache probe. The one pinned input is the installation role:
 torch is configured only on an inference host, so the torch tests run as
 one in every lane. The verify-before-execute
 security contract of the qdrant provisioner is never weakened to make a
-test pass - the idempotency path is proven by pre-seeding, the way
-``test_qdrant_runtime`` does.
+test pass - the idempotency path is proven by pre-seeding an install the
+provisioner itself would call healthy.
 """
 
 from __future__ import annotations
@@ -30,13 +30,12 @@ from ..commands._provision import (
     provision_dependencies,
     provision_models,
 )
-from ..qdrant_runtime._constants import QDRANT_ASSET_SHA256, QDRANT_SERVER_VERSION
-from ..qdrant_runtime._provision import file_sha256
-from ..qdrant_runtime._resolve import (
-    asset_for_platform,
-    binary_filename,
-    qdrant_bin_dir,
+from ..qdrant_runtime._constants import (
+    MANIFEST_SOURCE_OPERATOR,
+    QDRANT_SERVER_VERSION,
 )
+from ..qdrant_runtime._provision import file_sha256
+from ..qdrant_runtime._resolve import binary_filename, qdrant_bin_dir
 from ..torch_config._constants import TorchConfigState
 from ..torch_config._inspect import detect_state
 from ._provision_fixtures import result_for
@@ -96,7 +95,7 @@ def test_has_provisioned_binary_reflects_managed_install(
     from ..qdrant_runtime._resolve import has_provisioned_binary
 
     assert has_provisioned_binary() is False
-    _seed_verified_install()
+    _seed_healthy_install()
     assert has_provisioned_binary() is True
 
 
@@ -161,23 +160,25 @@ def test_child_env_excludes_secrets_keeps_essentials() -> None:
             os.environ["MY_FAKE_SECRET_TOKEN"] = prev
 
 
-def _seed_verified_install() -> Path:
-    """Pre-seed the managed dir exactly as a verified provision leaves it.
+def _seed_healthy_install() -> Path:
+    """Pre-seed the managed dir exactly as registering a binary leaves it.
 
-    Mirrors ``test_qdrant_runtime._seed_verified_install`` so the front
-    door's qdrant step reports ``unchanged`` with zero network I/O.
+    A downloaded install is held to the committed executable digest of its
+    release asset, which stand-in bytes can never hash to. A registered one
+    is held to the digest recorded at registration, so it is the healthy
+    install a test can seed without the release, and the front door's qdrant
+    step reports it ``unchanged`` with zero network I/O.
     """
     version_dir = qdrant_bin_dir()
     version_dir.mkdir(parents=True, exist_ok=True)
     binary = version_dir / binary_filename()
     binary.write_bytes(b"preseeded-binary")
-    asset = asset_for_platform()
     manifest = {
         "version": QDRANT_SERVER_VERSION,
-        "asset": asset,
-        "asset_sha256": QDRANT_ASSET_SHA256[asset],
+        "asset": "",
+        "asset_sha256": "",
         "binary_sha256": file_sha256(binary),
-        "source": "download",
+        "source": MANIFEST_SOURCE_OPERATOR,
         "provisioned_at": "2026-06-12T00:00:00+00:00",
     }
     (version_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -383,7 +384,7 @@ class TestQdrantStep:
     def test_preseeded_install_reports_unchanged_no_network(
         self, isolated_status_dir: Path, consumer_workspace: Path
     ) -> None:
-        binary = _seed_verified_install()
+        binary = _seed_healthy_install()
         assert binary.is_relative_to(isolated_status_dir)
         before = binary.stat().st_mtime_ns
 
@@ -394,7 +395,7 @@ class TestQdrantStep:
         qdrant = result_for(outcome, ProvisionStep.QDRANT)
         assert qdrant is not None
         assert qdrant.action == ProvisionAction.UNCHANGED
-        # An unchanged no-op must not rewrite the verified binary.
+        # An unchanged no-op must not rewrite the installed binary.
         assert binary.stat().st_mtime_ns == before
 
     def test_dry_run_previews_qdrant_without_writing(
@@ -418,7 +419,7 @@ class TestFrontDoorComposition:
     def test_every_considered_dependency_appears_in_the_outcome(
         self, isolated_status_dir: Path, consumer_workspace: Path
     ) -> None:
-        binary = _seed_verified_install()
+        binary = _seed_healthy_install()
         assert binary.is_relative_to(isolated_status_dir)
         outcome = provision_dependencies(
             consumer_workspace,
@@ -453,10 +454,10 @@ class TestFrontDoorIdempotency:
     def test_second_run_reports_unchanged_with_no_network(
         self, isolated_status_dir: Path, consumer_workspace: Path
     ) -> None:
-        binary = _seed_verified_install()
+        binary = _seed_healthy_install()
         assert binary.is_relative_to(isolated_status_dir)
 
-        # First run configures torch (created) and verifies the preseeded
+        # First run configures torch (created) and checks the preseeded
         # qdrant binary (unchanged). Models are opted out so the front door
         # never touches the network for a fetch.
         first = provision_dependencies(
@@ -471,8 +472,8 @@ class TestFrontDoorIdempotency:
         before = binary.stat().st_mtime_ns
 
         # Second run: torch is already configured and the qdrant binary is
-        # already verified, so each satisfied dependency reports
-        # ``unchanged`` and the verified binary is never rewritten. The
+        # already installed and healthy, so each satisfied dependency reports
+        # ``unchanged`` and the installed binary is never rewritten. The
         # opted-out model step stays ``skipped`` (its own honest outcome),
         # so the aggregate is ``mixed`` - per-step idempotency is the
         # contract, not a single collapsed status.
@@ -487,7 +488,7 @@ class TestFrontDoorIdempotency:
         assert torch is not None and torch.action == ProvisionAction.UNCHANGED
         assert qdrant is not None and qdrant.action == ProvisionAction.UNCHANGED
         assert models is not None and models.action == ProvisionAction.SKIPPED
-        # An idempotent no-op must not have rewritten the verified binary.
+        # An idempotent no-op must not have rewritten the installed binary.
         assert binary.stat().st_mtime_ns == before
 
     def test_satisfied_front_door_is_unchanged_on_second_run(
@@ -499,7 +500,7 @@ class TestFrontDoorIdempotency:
         # test is hermetic (no network / no model cache assumption); the
         # model step's own cached/dry-run contract is covered by
         # ``TestModelStep``.
-        binary = _seed_verified_install()
+        binary = _seed_healthy_install()
         assert binary.is_relative_to(isolated_status_dir)
         provision_dependencies(
             consumer_workspace, skip={"models"}, assume_yes=True
