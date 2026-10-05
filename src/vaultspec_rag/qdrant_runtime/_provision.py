@@ -1,18 +1,23 @@
 """Download-on-first-use provisioning of the pinned Qdrant server binary.
 
-The flow: resolve the release asset for the running platform, download
-it over HTTPS from the configured release base with every redirect held
-to HTTPS and to the configured download hosts, verify
-the committed SHA256 digest BEFORE extraction, extract the single
-binary into the managed versioned dir, mark it executable, and write a
-provisioning manifest. A repeat run against a verified install reports
-``unchanged`` with zero network I/O; checksum mismatch is a hard
-failure that deletes the partial download.
+The flow: resolve the release asset for the running platform and download it
+over HTTPS from the configured release base, with every redirect held to HTTPS
+and to the configured download hosts. The archive lands in a uniquely named
+staging file and is hashed against its committed digest BEFORE anything is
+extracted. The single executable member is extracted to a second staging
+file, hashed against the committed executable digest for the asset, and only
+then moved onto the installed name in one atomic replace; the manifest is
+written last. A failure or an interrupt at any stage removes this run's
+staging files and leaves a previous install exactly as it was. A repeat run
+against a verified install reports ``unchanged`` with zero network I/O; a
+digest mismatch is a hard failure.
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import http.client
 import logging
 import os
 import shutil
@@ -23,24 +28,33 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+import zlib
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, cast
 
-from .._atomic_write import JsonWriteOptions, write_json_atomically
+from .._atomic_write import (
+    JsonWriteOptions,
+    replace_atomically,
+    write_json_atomically,
+)
 from .._rmtree import remove_tree
 from .._sync_vocabulary import ProvisionAction
 from .._units import human_bytes
 from ._constants import (
     MANIFEST_FILENAME,
+    MANIFEST_SOURCE_DOWNLOAD,
+    MANIFEST_SOURCE_OPERATOR,
     QDRANT_ASSET_SHA256,
+    QDRANT_EXECUTABLE_SHA256,
     QDRANT_SERVER_VERSION,
     ProvisionReport,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Generator, Iterable
     from http.client import HTTPMessage, HTTPResponse
 
 logger = logging.getLogger(__name__)
@@ -48,6 +62,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "ChecksumMismatchError",
     "clean_provisioned",
+    "download_https",
     "extract_verified_archive",
     "file_sha256",
     "provision",
@@ -64,30 +79,47 @@ _MAX_DOWNLOAD_BYTES = 256 << 20
 # line per distinct activity off a terminal, so a per-megabyte tick would fill
 # a piped install log with a hundred near-identical lines.
 _DOWNLOAD_REPORT_BYTES = 4 << 20
+# Marks a file as one run's working copy. Nothing reads a file carrying it as
+# an install, so a run killed before it could clean up strands no executable.
+_STAGING_SUFFIX = ".staging"
+
+# Everything that can go wrong between creating the first staging file and the
+# manifest landing, and is an outcome to report rather than a defect to raise.
+# An interrupt is deliberately absent: it propagates once staging is removed.
+_INSTALL_FAILURES = (
+    OSError,
+    RuntimeError,
+    EOFError,
+    tarfile.TarError,
+    zipfile.BadZipFile,
+    zlib.error,
+    http.client.HTTPException,
+)
 
 
 def _no_progress(_line: str) -> None:
     """Drop a progress line, for callers that asked for no reporting.
 
-    A no-op sink rather than a ``None`` check at each call site: provisioning
-    runs on a daemon start path as well as an operator command, and only the
-    latter has a console to report to.
+    A no-op sink rather than a ``None`` check at each call site. Provisioning
+    always runs in a foreground command and never in the daemon, which only
+    resolves and verifies the binary; the commands that have a console pass a
+    sink of their own, and a caller with nothing to show passes none.
     """
 
 
 class ChecksumMismatchError(RuntimeError):
-    """Raised when a downloaded archive fails SHA256 verification.
+    """Raised when an artifact does not hash to its committed SHA256 digest.
 
-    The offending file has already been deleted when this is raised.
+    Nothing from the artifact is kept or installed once this is raised.
     """
 
-    def __init__(self, path: Path, expected: str, actual: str) -> None:
+    def __init__(self, name: str, expected: str, actual: str) -> None:
         self.expected = expected
         self.actual = actual
         super().__init__(
-            f"SHA256 mismatch for {path.name}: expected {expected}, got "
-            f"{actual}. The partial download was deleted; the upstream "
-            "artifact may have been tampered with or the pin is stale."
+            f"SHA256 mismatch for {name}: expected {expected}, got {actual}. "
+            "Nothing from it was kept or installed. The upstream asset may "
+            "have been replaced, or the committed pin is stale."
         )
 
 
@@ -96,19 +128,26 @@ class _DownloadInstallRequest:
     url: str
     redirect_hosts: frozenset[str]
     asset: str
-    expected_sha256: str
+    archive_sha256: str
+    executable_sha256: str
     version_dir: Path
     previously: str
     on_progress: Callable[[str], None] = _no_progress
 
 
+def _stream_sha256(handle: IO[bytes]) -> str:
+    """Return the hex SHA256 of everything in *handle*, read from its start."""
+    handle.seek(0)
+    digest = hashlib.sha256()
+    while chunk := handle.read(_DOWNLOAD_CHUNK_BYTES):
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
 def file_sha256(path: Path) -> str:
     """Return the hex SHA256 digest of *path*'s content."""
-    digest = hashlib.sha256()
-    with path.open("rb") as fh:
-        while chunk := fh.read(_DOWNLOAD_CHUNK_BYTES):
-            digest.update(chunk)
-    return digest.hexdigest()
+    with path.open("rb") as handle:
+        return _stream_sha256(handle)
 
 
 def verify_native_binary(binary: Path, expected_sha256: str) -> None:
@@ -229,22 +268,27 @@ def _stream_capped(
     return written
 
 
-def _download(
+def download_https(
     url: str,
-    dest: Path,
+    out: IO[bytes],
     *,
     redirect_hosts: frozenset[str],
     on_progress: Callable[[str], None] = _no_progress,
 ) -> None:
-    """Stream *url* to *dest* over HTTPS with host-pinned redirects.
+    """Stream *url* into the open file *out* over HTTPS with pinned redirects.
 
     The host *url* names is contacted whatever *redirect_hosts* says: it is
     the source the caller chose. *redirect_hosts* bounds where that source may
     redirect to, and every hop must stay HTTPS.
 
+    The caller opens *out* and owns what happens to it afterwards, because
+    that differs: the managed install streams into a staging file it created
+    exclusively and discards on any failure, while a build tool streams into
+    a file in a directory of its own.
+
     Args:
         url: The pinned release asset to fetch.
-        dest: The staging path to stream into.
+        out: The open binary file to stream into.
         redirect_hosts: Lower-cased host names a redirect may land on. It is
             a required argument so each caller states the hosts it trusts
             rather than inheriting another caller's.
@@ -258,15 +302,12 @@ def _download(
     if urllib.parse.urlparse(url).scheme != "https":
         raise urllib.error.URLError(f"Refusing non-HTTPS download URL {url!r}")
     opener = urllib.request.build_opener(_HostPinnedRedirect(redirect_hosts))
-    with (
-        # ``OpenerDirector.open`` is typed ``Any`` in typeshed (it dispatches
-        # across registered handlers); an HTTPS download always resolves to
-        # an ``HTTPResponse`` at runtime.
-        cast(
-            "HTTPResponse", opener.open(url, timeout=_DOWNLOAD_TIMEOUT_SECONDS)
-        ) as resp,
-        dest.open("wb") as out,
-    ):
+    # ``OpenerDirector.open`` is typed ``Any`` in typeshed (it dispatches
+    # across registered handlers); an HTTPS download always resolves to an
+    # ``HTTPResponse`` at runtime.
+    with cast(
+        "HTTPResponse", opener.open(url, timeout=_DOWNLOAD_TIMEOUT_SECONDS)
+    ) as resp:
         _stream_capped(
             resp,
             out,
@@ -275,11 +316,11 @@ def _download(
         )
 
 
-def _open_extract_dest(path: Path) -> IO[bytes]:
+def _open_destination(path: Path) -> IO[bytes]:
     """Open *path* for writing without following a pre-planted symlink.
 
-    A local attacker who can pre-create a symlink at the managed destination
-    could otherwise redirect the extraction write outside the managed dir. We
+    A local attacker who can pre-create a symlink at the destination could
+    otherwise redirect the write outside the directory the caller chose. We
     unlink any existing symlink and open with ``O_NOFOLLOW`` where available,
     owner-only.
     """
@@ -289,17 +330,87 @@ def _open_extract_dest(path: Path) -> IO[bytes]:
     return os.fdopen(os.open(path, flags, 0o600), "wb")
 
 
-def _extract_binary_member(archive: Path, dest_dir: Path, target_name: str) -> Path:
-    """Extract one unique regular executable from *archive* into *dest_dir*.
+def _open_staging(directory: Path, label: str) -> tuple[Path, IO[bytes]]:
+    """Create a uniquely named staging file in *directory*, open read-write.
+
+    The name carries the pid and a random token and the file is created
+    exclusively, so the open fails rather than following or truncating
+    anything already planted at that name. Staging beside the destination
+    keeps the final move a rename within one volume, which is what makes it
+    atomic.
+    """
+    path = directory / (
+        f".{label}.{os.getpid()}.{os.urandom(6).hex()}{_STAGING_SUFFIX}"
+    )
+    flags = (
+        os.O_RDWR
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    return path, os.fdopen(os.open(path, flags, 0o600), "w+b")
+
+
+def _discard(paths: Iterable[Path]) -> None:
+    """Remove this run's staging files, tolerating ones already moved away."""
+    for path in paths:
+        with contextlib.suppress(OSError):
+            path.unlink(missing_ok=True)
+
+
+def _zip_member(zf: zipfile.ZipFile, target_name: str) -> zipfile.ZipInfo | None:
+    """Return the one regular *target_name* entry of *zf*, or ``None``."""
+    matches = [
+        info
+        for info in zf.infolist()
+        if Path(info.filename.replace("\\", "/")).name == target_name
+    ]
+    if len(matches) != 1:
+        return None
+    info = matches[0]
+    if info.is_dir() or stat.S_IFMT(info.external_attr >> 16) not in (
+        0,
+        stat.S_IFREG,
+    ):
+        return None
+    return info
+
+
+def _tar_member(tf: tarfile.TarFile, target_name: str) -> tarfile.TarInfo | None:
+    """Return the one regular *target_name* entry of *tf*, or ``None``."""
+    matches = [
+        member
+        for member in tf.getmembers()
+        if Path(member.name.replace("\\", "/")).name == target_name
+    ]
+    if len(matches) != 1 or not matches[0].isfile():
+        return None
+    return matches[0]
+
+
+@contextmanager
+def _binary_member(
+    archive: IO[bytes], archive_name: str, target_name: str
+) -> Generator[IO[bytes]]:
+    """Yield a reader over the one regular executable member of *archive*.
 
     Handles both the Windows ``.zip`` (single ``qdrant.exe`` entry)
     and the Unix ``.tar.gz`` (single ``qdrant`` entry) shapes. Only
-    the executable member is extracted - any other entry is ignored -
-    and the member name is flattened so archive paths can never
-    escape *dest_dir*.
+    the executable member is read - any other entry is ignored - and the
+    member is matched by basename, so a path embedded in the archive never
+    decides where anything is written.
+
+    The archive is read through the caller's open handle rather than reopened
+    by path, so the bytes extracted are the bytes that handle was hashed from.
+    The member is validated before the reader is yielded, so a caller that
+    opens its destination inside the block never creates one for an archive
+    that is refused.
 
     Raises:
-        RuntimeError: When no qdrant executable member exists.
+        ValueError: When *target_name* is not a bare filename.
+        RuntimeError: When the archive does not hold exactly one regular
+            member of that name.
     """
     if (
         not target_name
@@ -308,49 +419,33 @@ def _extract_binary_member(archive: Path, dest_dir: Path, target_name: str) -> P
         or "\\" in target_name
     ):
         raise ValueError("The executable name must be a basename")
-    out_path = dest_dir / target_name
     invalid_member = RuntimeError(
-        f"Archive {archive.name} requires one regular {target_name} member"
+        f"Archive {archive_name} requires one regular {target_name} member"
     )
-
-    # The download stages the archive under an extra ``.partial``
-    # suffix; strip it before sniffing the archive format.
-    effective_name = archive.name.removesuffix(".partial")
-    if effective_name.endswith(".zip"):
+    archive.seek(0)
+    if archive_name.endswith(".zip"):
         with zipfile.ZipFile(archive) as zf:
-            matches = [
-                info
-                for info in zf.infolist()
-                if Path(info.filename.replace("\\", "/")).name == target_name
-            ]
-            if len(matches) != 1:
+            info = _zip_member(zf, target_name)
+            if info is None:
                 raise invalid_member
-            info = matches[0]
-            if info.is_dir() or stat.S_IFMT(info.external_attr >> 16) not in (
-                0,
-                stat.S_IFREG,
-            ):
-                raise invalid_member
-            with zf.open(info) as src, _open_extract_dest(out_path) as out:
-                shutil.copyfileobj(src, out, _DOWNLOAD_CHUNK_BYTES)
-            return out_path
-    with tarfile.open(archive, "r:gz") as tf:
-        matches = [
-            member
-            for member in tf.getmembers()
-            if Path(member.name.replace("\\", "/")).name == target_name
-        ]
-        if len(matches) != 1:
+            with zf.open(info) as source:
+                yield source
+        return
+    with tarfile.open(fileobj=archive, mode="r:gz") as tf:
+        member = _tar_member(tf, target_name)
+        source = tf.extractfile(member) if member is not None else None
+        if source is None:
             raise invalid_member
-        member = matches[0]
-        if not member.isfile():
-            raise invalid_member
-        src = tf.extractfile(member)
-        if src is None:
-            raise invalid_member
-        with src, _open_extract_dest(out_path) as out:
-            shutil.copyfileobj(src, out, _DOWNLOAD_CHUNK_BYTES)
-        return out_path
+        with source:
+            yield source
+
+
+def _mark_executable(path: Path) -> None:
+    """Make *path* runnable by its owner, and by nobody else."""
+    if sys.platform != "win32":
+        # Owner-only rwx: the service runs as one user; a world-executable
+        # managed binary needlessly widens who can run it on a shared host.
+        path.chmod(0o700)
 
 
 def extract_verified_archive(
@@ -365,7 +460,9 @@ def extract_verified_archive(
 
     Verification strictly precedes extraction; on mismatch the archive
     is deleted and :class:`ChecksumMismatchError` raised, so a
-    tampered artifact is never unpacked.
+    tampered artifact is never unpacked. The archive is opened once and both
+    hashed and extracted through that handle, so the file cannot be swapped
+    between the two.
 
     Args:
         archive: The downloaded release archive.
@@ -374,6 +471,8 @@ def extract_verified_archive(
         on_progress: Sink announcing each stage; reporting only, and the
             verify-then-extract order it describes is the order enforced
             below.
+        binary_name: The executable member to extract; the qdrant
+            executable for this platform when omitted.
 
     Returns:
         ``(binary_path, binary_sha256)`` for the extracted executable.
@@ -381,24 +480,103 @@ def extract_verified_archive(
     Raises:
         ChecksumMismatchError: On digest mismatch (archive deleted).
     """
-    on_progress("Verifying the Qdrant download checksum...")
-    actual = file_sha256(archive)
-    if actual.lower() != expected_sha256.lower():
-        archive.unlink(missing_ok=True)
-        raise ChecksumMismatchError(archive, expected_sha256, actual)
-
-    on_progress("Extracting the Qdrant server...")
     if binary_name is None:
         from ._resolve import binary_filename
 
         binary_name = binary_filename()
-    binary = _extract_binary_member(archive, dest_dir, binary_name)
-    if sys.platform != "win32":
-        # Owner-only rwx: the service runs as one user; a world-executable
-        # managed binary needlessly widens who can run it on a shared host.
-        binary.chmod(0o700)
+    binary = dest_dir / binary_name
+    with archive.open("rb") as handle:
+        on_progress("Verifying the Qdrant download checksum...")
+        actual = _stream_sha256(handle)
+        verified = actual.lower() == expected_sha256.lower()
+        if verified:
+            on_progress("Extracting the Qdrant server...")
+            with (
+                _binary_member(handle, archive.name, binary_name) as source,
+                _open_destination(binary) as out,
+            ):
+                shutil.copyfileobj(source, out, _DOWNLOAD_CHUNK_BYTES)
+    if not verified:
+        # Removed only once the handle above is closed: an open file cannot
+        # be unlinked on Windows.
+        archive.unlink(missing_ok=True)
+        raise ChecksumMismatchError(archive.name, expected_sha256, actual)
+    _mark_executable(binary)
     on_progress("Verifying the extracted Qdrant server...")
     return binary, file_sha256(binary)
+
+
+def _replace_executable(staged: Path, target: Path) -> None:
+    """Move a verified staging file onto the installed name in one step.
+
+    Raises:
+        RuntimeError: On Windows, when a process is running from *target*.
+        OSError: When the replace fails for any other reason.
+    """
+    _mark_executable(staged)
+    try:
+        replace_atomically(staged, target)
+    except PermissionError as exc:
+        if sys.platform != "win32" or not target.exists():
+            raise
+        # Windows refuses to replace a file a process is executing. That is
+        # the operator's own server in every ordinary case, so say what to do
+        # about it instead of surfacing an access-denied error.
+        raise RuntimeError(
+            f"{target} is in use and cannot be replaced; a running Qdrant "
+            "server holds it open. Stop the service with "
+            "`vaultspec-rag server stop`, then run the install again."
+        ) from exc
+
+
+def _stage_verified_executable(
+    request: _DownloadInstallRequest, staged: list[Path]
+) -> Path:
+    """Download and verify the archive, then stage its verified executable.
+
+    Each staging file is recorded in *staged* as it is created, so the caller
+    can remove them whatever happens next. The archive handle stays open from
+    the download through the hash and the extraction, so all three see the
+    same file. The executable digest is the check that decides what may be
+    installed: it is taken from the staged file itself, after the last byte
+    was written to it.
+
+    Raises:
+        ChecksumMismatchError: When the archive or the staged executable does
+            not hash to its committed digest.
+    """
+    from ._resolve import binary_filename
+
+    name = binary_filename()
+    on_progress = request.on_progress
+    archive_path, archive = _open_staging(request.version_dir, request.asset)
+    staged.append(archive_path)
+    with archive:
+        logger.info("Downloading %s", request.url)
+        on_progress(f"Downloading the Qdrant server ({request.asset})...")
+        download_https(
+            request.url,
+            archive,
+            redirect_hosts=request.redirect_hosts,
+            on_progress=on_progress,
+        )
+        on_progress("Verifying the Qdrant download checksum...")
+        actual = _stream_sha256(archive)
+        if actual.lower() != request.archive_sha256.lower():
+            raise ChecksumMismatchError(request.asset, request.archive_sha256, actual)
+        on_progress("Extracting the Qdrant server...")
+        with _binary_member(archive, request.asset, name) as source:
+            executable_path, executable = _open_staging(request.version_dir, name)
+            staged.append(executable_path)
+            with executable:
+                shutil.copyfileobj(source, executable, _DOWNLOAD_CHUNK_BYTES)
+                on_progress("Verifying the extracted Qdrant server...")
+                actual = _stream_sha256(executable)
+    if actual.lower() != request.executable_sha256.lower():
+        raise ChecksumMismatchError(
+            f"the {name} member of {request.asset}", request.executable_sha256, actual
+        )
+    return executable_path
 
 
 def _write_manifest(
@@ -446,6 +624,61 @@ def _existing_install_state(version_dir: Path, expected_sha256: str) -> str:
     return "stale"
 
 
+def _open_without_following(path: Path) -> IO[bytes]:
+    """Open *path* for reading, refusing a symlink where the platform can."""
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    return os.fdopen(os.open(path, flags), "rb")
+
+
+def _register_operator_binary(
+    binary: Path, version_dir: Path, previously: str
+) -> ProvisionReport:
+    """Copy an operator-supplied binary into the managed dir and record it.
+
+    Staged and moved into place exactly as a download is, so a copy that
+    fails partway, or a target a running server still holds, leaves the
+    previous install as it was.
+    """
+    from ._resolve import binary_filename
+
+    target = version_dir / binary_filename()
+    staged: list[Path] = []
+    try:
+        version_dir.mkdir(parents=True, exist_ok=True)
+        staging_path, staging = _open_staging(version_dir, target.name)
+        staged.append(staging_path)
+        # The source is opened without following a link: the caller checked
+        # that it is a regular file, and a link swapped in after that check
+        # must not be what gets registered.
+        with staging, _open_without_following(binary) as source:
+            shutil.copyfileobj(source, staging, _DOWNLOAD_CHUNK_BYTES)
+            digest = _stream_sha256(staging)
+        _replace_executable(staging_path, target)
+        _write_manifest(
+            version_dir,
+            asset="",
+            asset_sha256="",
+            binary_sha256=digest,
+            source=MANIFEST_SOURCE_OPERATOR,
+        )
+    except (OSError, RuntimeError) as exc:
+        logger.error("registering operator qdrant binary %s failed: %s", binary, exc)
+        return ProvisionReport(
+            action=ProvisionAction.FAILED, binary=binary, message=str(exc)
+        )
+    finally:
+        _discard(staged)
+    logger.warning(
+        "Registered operator-supplied qdrant binary %s; the committed "
+        "checksum pin does not apply to it",
+        binary,
+    )
+    action = (
+        ProvisionAction.UPDATED if previously != "absent" else ProvisionAction.CREATED
+    )
+    return ProvisionReport(action=action, binary=target, sha256=digest)
+
+
 def _provision_operator_binary(
     binary: Path,
     version_dir: Path,
@@ -484,27 +717,7 @@ def _provision_operator_binary(
                 "Provide a regular-file path."
             ),
         )
-    version_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(binary, target, follow_symlinks=False)
-    if sys.platform != "win32":
-        target.chmod(0o700)
-    digest = file_sha256(target)
-    _write_manifest(
-        version_dir,
-        asset="",
-        asset_sha256="",
-        binary_sha256=digest,
-        source="operator",
-    )
-    logger.warning(
-        "Registered operator-supplied qdrant binary %s; the committed "
-        "checksum pin does not apply to it",
-        binary,
-    )
-    action = (
-        ProvisionAction.UPDATED if previously != "absent" else ProvisionAction.CREATED
-    )
-    return ProvisionReport(action=action, binary=target, sha256=digest)
+    return _register_operator_binary(binary, version_dir, previously)
 
 
 def _failure_message(exc: Exception) -> str:
@@ -522,77 +735,54 @@ def _failure_message(exc: Exception) -> str:
 
 
 def _download_and_install(request: _DownloadInstallRequest) -> ProvisionReport:
-    """Download, verify, extract, and record the pinned binary."""
+    """Stage, verify, and atomically install the pinned binary.
+
+    Nothing is written at the installed name until the staged executable has
+    matched its committed digest, and the manifest is written only after the
+    executable is in place. A failure before the replace therefore leaves a
+    previous install untouched. One after it leaves a verified executable
+    whose manifest may still describe its predecessor; that install is
+    refused at start until the install is run again, which fails closed.
+    """
     from ._resolve import binary_filename
 
-    url, asset, expected_sha256, version_dir, previously, on_progress = (
-        request.url,
-        request.asset,
-        request.expected_sha256,
-        request.version_dir,
-        request.previously,
-        request.on_progress,
-    )
-    version_dir.mkdir(parents=True, exist_ok=True)
-    archive = version_dir / f"{asset}.partial"
+    target = request.version_dir / binary_filename()
+    staged: list[Path] = []
     try:
-        logger.info("Downloading %s", url)
-        on_progress(f"Downloading the Qdrant server ({asset})...")
-        _download(
-            url,
-            archive,
-            redirect_hosts=request.redirect_hosts,
-            on_progress=on_progress,
+        request.version_dir.mkdir(parents=True, exist_ok=True)
+        executable = _stage_verified_executable(request, staged)
+        _replace_executable(executable, target)
+        _write_manifest(
+            request.version_dir,
+            asset=request.asset,
+            asset_sha256=request.archive_sha256,
+            binary_sha256=request.executable_sha256,
+            source=MANIFEST_SOURCE_DOWNLOAD,
         )
-        binary, binary_sha = extract_verified_archive(
-            archive, expected_sha256, version_dir, on_progress=on_progress
-        )
-    except ChecksumMismatchError as exc:
-        logger.error("qdrant provisioning failed verification: %s", exc)
-        return ProvisionReport(
-            action=ProvisionAction.FAILED,
-            asset=asset,
-            url=url,
-            sha256=expected_sha256,
-            message=str(exc),
-        )
-    except (
-        OSError,
-        urllib.error.URLError,
-        RuntimeError,
-        tarfile.TarError,
-        zipfile.BadZipFile,
-    ) as exc:
-        archive.unlink(missing_ok=True)
-        # Also remove any partially-extracted binary so a failed install never
-        # leaves a half-written executable behind (it would lack a manifest and
-        # so never run, but it should not linger or mislead install state).
-        (version_dir / binary_filename()).unlink(missing_ok=True)
+    except _INSTALL_FAILURES as exc:
         logger.error("qdrant provisioning failed: %s", exc)
         return ProvisionReport(
             action=ProvisionAction.FAILED,
-            asset=asset,
-            url=url,
-            sha256=expected_sha256,
+            asset=request.asset,
+            url=request.url,
+            sha256=request.archive_sha256,
             message=_failure_message(exc),
         )
-    archive.unlink(missing_ok=True)
-    _write_manifest(
-        version_dir,
-        asset=asset,
-        asset_sha256=expected_sha256,
-        binary_sha256=binary_sha,
-        source="download",
-    )
+    finally:
+        # Reached by an interrupt as well as by a failure, so a run stopped
+        # at the keyboard strands no working file either.
+        _discard(staged)
     action = (
-        ProvisionAction.UPDATED if previously != "absent" else ProvisionAction.CREATED
+        ProvisionAction.UPDATED
+        if request.previously != "absent"
+        else ProvisionAction.CREATED
     )
     return ProvisionReport(
         action=action,
-        asset=asset,
-        url=url,
-        binary=binary,
-        sha256=expected_sha256,
+        asset=request.asset,
+        url=request.url,
+        binary=target,
+        sha256=request.archive_sha256,
     )
 
 
@@ -621,8 +811,7 @@ def provision(
             manifest as operator-sourced).
         on_progress: Sink for stage and byte-progress lines during a real
             download. Reporting only: it observes the download, verify, and
-            extract sequence and never alters it. Defaults to silence, which
-            is what a daemon-side provision wants.
+            extract sequence and never alters it. Defaults to silence.
 
     Returns:
         A :class:`ProvisionReport` in the sync vocabulary.
@@ -697,7 +886,8 @@ def provision(
             url=url,
             redirect_hosts=source.qdrant_download_hosts,
             asset=asset,
-            expected_sha256=expected,
+            archive_sha256=expected,
+            executable_sha256=QDRANT_EXECUTABLE_SHA256[asset],
             version_dir=version_dir,
             previously=state,
             on_progress=on_progress,

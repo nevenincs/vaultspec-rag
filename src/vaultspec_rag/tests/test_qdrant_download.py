@@ -10,6 +10,7 @@ shipped ones. No test here reaches the public network.
 
 from __future__ import annotations
 
+import io
 import urllib.error
 from typing import TYPE_CHECKING
 
@@ -18,7 +19,7 @@ import pytest
 from .._sync_vocabulary import ProvisionAction
 from ..config._types import EnvVar
 from ..qdrant_runtime._constants import QDRANT_SERVER_VERSION
-from ..qdrant_runtime._provision import _download, provision
+from ..qdrant_runtime._provision import download_https, provision
 from ..qdrant_runtime._resolve import (
     asset_for_platform,
     binary_filename,
@@ -54,66 +55,68 @@ def sources(tmp_path: Path) -> Generator[LoopbackSources]:
 
 class TestSourceScheme:
     def test_a_source_that_is_not_https_is_refused_without_a_request(
-        self, sources: LoopbackSources, tmp_path: Path
+        self, sources: LoopbackSources
     ) -> None:
         """A plain-HTTP source is refused before anything is sent to it.
 
-        Mutation: removed the scheme check at the top of ``_download``.
+        Mutation: removed the scheme check at the top of ``download_https``.
         Observed ``DID NOT RAISE URLError``. Restored; passes.
         """
         plain = sources.serve(
             lambda handler: send_bytes(handler, _PAYLOAD),
             tls=False,
         )
-        dest = tmp_path / "asset.bin"
+        out = io.BytesIO()
 
         with pytest.raises(urllib.error.URLError, match="non-HTTPS download URL"):
-            _download(plain.url("/asset.bin"), dest, redirect_hosts=_LOOPBACK_ALLOWED)
+            download_https(
+                plain.url("/asset.bin"), out, redirect_hosts=_LOOPBACK_ALLOWED
+            )
 
         assert plain.requests == []
-        assert not dest.exists()
+        assert out.getvalue() == b""
 
 
 class TestRedirectHosts:
     """Each redirect hop must stay HTTPS and inside the hosts the caller gave."""
 
     def test_the_source_host_is_contacted_though_the_set_does_not_list_it(
-        self, sources: LoopbackSources, tmp_path: Path
+        self, sources: LoopbackSources
     ) -> None:
         """The set bounds redirects only; the source is the caller's choice.
 
         A caller whose source is one host and whose redirect targets are
         others - a release API in front of an asset store - depends on this.
 
-        Mutation: restored a check in ``_download`` that refused a source
+        Mutation: restored a check in ``download_https`` that refused a source
         whose host is outside the set. Observed the ``URLError`` it raised
         escape the call. Restored; passes.
         """
         source = sources.serve(lambda handler: send_bytes(handler, _PAYLOAD))
-        dest = tmp_path / "asset.bin"
+        out = io.BytesIO()
 
-        _download(source.url("/latest"), dest, redirect_hosts=_LOOPBACK_NOT_ALLOWED)
+        download_https(source.url("/latest"), out, redirect_hosts=_LOOPBACK_NOT_ALLOWED)
 
         assert source.requests == ["/latest"]
-        assert dest.read_bytes() == _PAYLOAD
+        assert out.getvalue() == _PAYLOAD
 
     def test_a_redirect_onto_a_listed_host_is_followed(
-        self, sources: LoopbackSources, tmp_path: Path
+        self, sources: LoopbackSources
     ) -> None:
         storage = sources.serve(lambda handler: send_bytes(handler, _PAYLOAD))
         origin = sources.serve(
             lambda handler: send_redirect(handler, storage.url("/blob"))
         )
-        dest = tmp_path / "asset.bin"
+        out = io.BytesIO()
 
-        _download(origin.url("/asset.bin"), dest, redirect_hosts=_LOOPBACK_ALLOWED)
+        download_https(origin.url("/asset.bin"), out, redirect_hosts=_LOOPBACK_ALLOWED)
 
         assert origin.requests == ["/asset.bin"]
         assert storage.requests == ["/blob"]
-        assert dest.read_bytes() == _PAYLOAD
+        assert out.getvalue() == _PAYLOAD
 
     def test_a_redirect_onto_an_unlisted_host_is_refused_unfollowed(
-        self, sources: LoopbackSources, tmp_path: Path
+        self, sources: LoopbackSources
     ) -> None:
         """A hop to a host outside the set is refused, the source's own included.
 
@@ -129,24 +132,24 @@ class TestRedirectHosts:
         origin = sources.serve(
             lambda handler: send_redirect(handler, storage.url("/blob"))
         )
-        dest = tmp_path / "asset.bin"
+        out = io.BytesIO()
 
         with pytest.raises(
             urllib.error.URLError,
             match=f"disallowed host '{LOOPBACK_HOST}'",
         ):
-            _download(
+            download_https(
                 origin.url("/asset.bin"),
-                dest,
+                out,
                 redirect_hosts=_LOOPBACK_NOT_ALLOWED,
             )
 
         assert origin.requests == ["/asset.bin"]
         assert storage.requests == []
-        assert not dest.exists()
+        assert out.getvalue() == b""
 
     def test_a_redirect_that_leaves_https_is_refused_unfollowed(
-        self, sources: LoopbackSources, tmp_path: Path
+        self, sources: LoopbackSources
     ) -> None:
         """A downgrade is refused even onto a host the set lists.
 
@@ -160,14 +163,16 @@ class TestRedirectHosts:
         origin = sources.serve(
             lambda handler: send_redirect(handler, plain.url("/blob"))
         )
-        dest = tmp_path / "asset.bin"
+        out = io.BytesIO()
 
         with pytest.raises(urllib.error.URLError, match="non-HTTPS URL"):
-            _download(origin.url("/asset.bin"), dest, redirect_hosts=_LOOPBACK_ALLOWED)
+            download_https(
+                origin.url("/asset.bin"), out, redirect_hosts=_LOOPBACK_ALLOWED
+            )
 
         assert origin.requests == ["/asset.bin"]
         assert plain.requests == []
-        assert not dest.exists()
+        assert out.getvalue() == b""
 
 
 class TestReleaseBaseSetting:

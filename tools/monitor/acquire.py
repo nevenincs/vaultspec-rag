@@ -26,11 +26,21 @@ from tools.packaging.bundles import BundleSpec, verify_bundle
 from tools.packaging.checksums import parse_checksums, require
 from tools.packaging.products import MONITOR_EXECUTABLE, VAULTSPEC_RAG
 from vaultspec_rag.qdrant_runtime._provision import (
-    _download,
+    download_https,
     extract_verified_archive,
     file_sha256,
     verify_native_binary,
 )
+
+
+def _fetch(url: str, destination: Path) -> None:
+    """Download one GitHub-hosted file into this run's scratch directory.
+
+    A source on the API host is contacted like any other: the redirect set
+    bounds only where an answer may send the request on.
+    """
+    with destination.open("wb") as out:
+        download_https(url, out, redirect_hosts=GITHUB_RELEASE_REDIRECT_HOSTS)
 
 
 def extract_delivery(
@@ -80,12 +90,8 @@ def extract_delivery(
 
 def latest_tag(directory: Path) -> str:
     metadata = directory / "latest.json"
-    # The API host is the source named here, which is contacted whatever the
-    # redirect set says; the set only bounds where an answer may send us on.
-    _download(
-        "https://api.github.com/repos/nevenincs/vaultspec-rag/releases/latest",
-        metadata,
-        redirect_hosts=GITHUB_RELEASE_REDIRECT_HOSTS,
+    _fetch(
+        "https://api.github.com/repos/nevenincs/vaultspec-rag/releases/latest", metadata
     )
     if metadata.stat().st_size > 1 << 20:
         raise PinError("Latest-release metadata exceeds its bounded window")
@@ -113,19 +119,13 @@ def acquire(
         base = VAULTSPEC_RAG.release_base_url(version)
         sums = directory / "SHA256SUMS"
         # Live checksums add coverage; the committed catalog supplies authority.
-        _download(
-            base + "/SHA256SUMS", sums, redirect_hosts=GITHUB_RELEASE_REDIRECT_HOSTS
-        )
+        _fetch(base + "/SHA256SUMS", sums)
         digests = parse_checksums(
             sums.read_text(encoding="utf-8", newline=""), require_unique=True
         )
         if require(digests, archive.name) != pins.targets[target].archive_sha256:
             raise PinError("Live SHA256SUMS differs from the reviewed archive pin")
-        _download(
-            base + "/" + archive.name,
-            archive,
-            redirect_hosts=GITHUB_RELEASE_REDIRECT_HOSTS,
-        )
+        _fetch(base + "/" + archive.name, archive)
         extracted = directory / "extracted"
         extract_delivery(archive, spec, pins, extracted)
         # Keep backend bootstrappers outside the shell-only process placement.
