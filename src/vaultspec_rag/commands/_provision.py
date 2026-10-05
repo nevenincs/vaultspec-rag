@@ -24,9 +24,14 @@ provisioning runs by default; ``local_only`` skips the Qdrant binary
 steps. Every step is idempotent (re-running a satisfied dependency is
 an ``unchanged`` no-op with no network) and honours ``dry_run``.
 
-Only a host installation provisions. A client loads no model and never
-runs the service, so every step answers ``skipped`` for it before its
-backend is reached, whichever command asked.
+The model files and the Qdrant server are fetched only for an environment
+that can run the service. Each of those steps asks the one judgement of
+that, the same one a start makes, before its backend is reached, whichever
+command asked. A client is answered ``skipped`` because it never runs the
+service, and a host whose accelerator stack is not usable yet is answered
+``skipped`` with the reason and the command that fetches them later. The
+torch step is the exception by necessity: it is what makes a host able to
+run the service, so it is gated on the installation role alone.
 """
 
 from __future__ import annotations
@@ -43,6 +48,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ..config._settings import VaultSpecConfigWrapper
+    from ..operator_state._service_environment import ServiceEnvironment
     from ..qdrant_runtime._constants import ProvisionReport
     from ..qdrant_runtime._resolve import QdrantBinaryError
     from ._model_fetch import ModelRepoResult
@@ -95,6 +101,7 @@ class _ProvisionOptions(TypedDict, total=False):
     sync_after: bool
     confirm: ConfirmFn | None
     progress: ProvisionProgress | None
+    environment: ServiceEnvironment | None
 
 
 @dataclass(frozen=True)
@@ -108,6 +115,7 @@ class _ProvisionRequest:
     sync_after: bool = False
     confirm: ConfirmFn | None = None
     progress: ProvisionProgress | None = None
+    environment: ServiceEnvironment | None = None
 
 
 @dataclass(frozen=True)
@@ -125,17 +133,21 @@ __all__ = [
     "LOCAL_STORE_SELECTED",
     "QDRANT_MISSING",
     "QDRANT_PROVISION_FAILED",
+    "BackendDecision",
     "ModelsStepResult",
     "ProvisionOutcome",
     "ProvisionProgress",
     "ProvisionStep",
     "ProvisionStepResult",
+    "SavedBackend",
     "client_skip",
+    "decide_backend",
     "ensure_runtime_dependencies",
     "managed_server_unneeded",
     "provision_dependencies",
     "provision_models",
     "provision_qdrant_binary",
+    "unable_skip",
 ]
 
 
@@ -202,6 +214,30 @@ class ModelsStepResult(ProvisionStepResult):
     repos: tuple[ModelRepoResult, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class SavedBackend:
+    """What an install did about the saved backend choice.
+
+    Attributes:
+        saved: Whether this run wrote the choice.
+        local_only: The choice written, or ``None`` when nothing was.
+        detail: Why it was or was not written, and what a plain
+            ``server start`` will therefore do.
+    """
+
+    saved: bool
+    local_only: bool | None
+    detail: str
+
+    def to_dict(self) -> dict[str, object]:
+        """Return a JSON-serialisable view of the saved choice."""
+        return {
+            "saved": self.saved,
+            "local_only": self.local_only,
+            "detail": self.detail,
+        }
+
+
 @dataclass
 class ProvisionOutcome:
     """Heterogeneous per-dependency result of a front-door run.
@@ -216,10 +252,14 @@ class ProvisionOutcome:
     Attributes:
         steps: One result per considered dependency, in run order.
         dry_run: True when the whole run was a preview.
+        backend: What the run did about the saved backend choice; ``None``
+            for a run that has no part in saving one, which is every run
+            but an install's.
     """
 
     steps: list[ProvisionStepResult] = field(default_factory=list)
     dry_run: bool = False
+    backend: SavedBackend | None = None
 
     @property
     def status(self) -> str:
@@ -244,14 +284,16 @@ class ProvisionOutcome:
             "status": self.status,
             "dry_run": self.dry_run,
             "steps": [r.to_dict() for r in self.steps],
+            "backend": None if self.backend is None else self.backend.to_dict(),
         }
 
 
 def client_skip(step: ProvisionStep) -> ProvisionStepResult | None:
     """Answer *step* as skipped when this installation is a client.
 
-    Asked ahead of every step's backend, so no entry point can provision for a
-    client by reaching a step some other way. The role is read through the
+    The gate of the torch step alone. That step is what gives a host its
+    accelerator stack, so it cannot wait for the stack to be usable, and the
+    installation role is all there is to ask. The role is read through the
     module rather than bound at import, which is the one reading a caller can
     pin.
     """
@@ -261,6 +303,127 @@ def client_skip(step: ProvisionStep) -> ProvisionStepResult | None:
     if _compute.installed_role()[0] is InstallRole.HOST:
         return None
     return ProvisionStepResult(step, ProvisionAction.SKIPPED, _CLIENT_SKIP)
+
+
+def unable_skip(
+    step: ProvisionStep, environment: ServiceEnvironment | None
+) -> ProvisionStepResult | None:
+    """Answer *step* as skipped when this environment cannot run the service.
+
+    Asked ahead of the model and Qdrant backends, so no entry point can fetch
+    either for an environment that has no use for it by reaching a step some
+    other way. A caller that has already judged the environment passes its
+    verdict, so one command asks once; a caller that has not leaves it out
+    and the judgement is made here.
+
+    A client is told it needs nothing. A host that cannot run the service yet
+    is told why, what repairs it, and that a start fetches what was skipped:
+    this is the ordinary state of a project whose torch configuration was
+    just written and not yet synced, and it is not a failure.
+    """
+    from ..operator_state._service_environment import judge_service_environment
+
+    judged = judge_service_environment() if environment is None else environment
+    if judged.can_run_service:
+        return None
+    if judged.is_client:
+        return ProvisionStepResult(step, ProvisionAction.SKIPPED, _CLIENT_SKIP)
+    repair = judged.capability.remediation
+    return ProvisionStepResult(
+        step,
+        ProvisionAction.SKIPPED,
+        f"not fetched, because this environment cannot run the service yet: "
+        f"{judged.reason}. "
+        + (f"{repair} " if repair else "")
+        + "`vaultspec-rag server start` fetches it once the environment is ready",
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class BackendDecision:
+    """The storage backend one command selected.
+
+    Made once per command and read by everything in it that depends on the
+    backend. A start reads it twice: in the preflight, which fetches the
+    Qdrant server only for a daemon that will run one, and in the spawn, which
+    hands the daemon exactly what a flag decided. When those two read the
+    options separately, a start with no backend flag fetched a server on the
+    strength of the flags alone and then told the daemon to ignore the choice
+    its own settings held.
+
+    Attributes:
+        local_only: What ``--local-only`` or ``--qdrant`` decided for the
+            on-disk store, or ``None`` when no flag spoke to it. ``None`` is
+            written nowhere, so a daemon reads its own environment and the
+            saved choice.
+        qdrant: What ``--qdrant/--no-qdrant`` decided for server mode, or
+            ``None`` likewise.
+        server_unneeded: Why no managed Qdrant server will be run, or
+            ``None`` when one will be.
+    """
+
+    local_only: bool | None
+    qdrant: bool | None
+    server_unneeded: str | None
+
+
+def decide_backend(
+    *, local_only: bool, qdrant: bool | None = None, saved_choice: bool = True
+) -> BackendDecision:
+    """Decide the storage backend from a command's flags and the settings.
+
+    Precedence, highest first: a flag on the command, an exported variable,
+    the choice ``install`` saved, and the default, which is the managed
+    server. ``--local-only`` outranks ``--qdrant`` when both are passed.
+    ``--qdrant`` asks for the managed server outright, so it overrides a saved
+    or exported local-only choice as well as a server mode that was switched
+    off; ``--no-qdrant`` switches server mode off and says nothing about the
+    on-disk choice, which could only agree with it.
+
+    The address of a server that is already running is not a backend choice
+    and no flag overrides it: server mode then uses that server, and none is
+    run or fetched here.
+
+    The flags are applied as overrides to the one settings resolution every
+    other reader goes through, rather than compared against the settings
+    here, so the lower rungs are not restated and cannot drift from what a
+    daemon resolves for itself. A daemon is handed the flags and nothing
+    else, and reaches the same answer from the same environment.
+
+    Args:
+        local_only: Whether ``--local-only`` was passed.
+        qdrant: ``True`` for ``--qdrant``, ``False`` for ``--no-qdrant``,
+            ``None`` when neither was passed or the command has no such flag.
+        saved_choice: Whether the saved choice is an input. It is for every
+            command but the one that writes it: an install that read back the
+            choice an earlier install saved could never change it.
+    """
+    from vaultspec_core.config import env_value
+
+    from ..config._registry import entry
+    from ..config._settings import VaultSpecConfigWrapper, rag_default
+    from ..config._types import EnvVar
+
+    flags: dict[str, bool] = {}
+    if qdrant is not None:
+        flags["qdrant_server"] = qdrant
+    if local_only:
+        flags["local_only"] = True
+    elif qdrant:
+        flags["local_only"] = False
+    overrides: dict[str, object] = dict(flags)
+    exported = env_value(entry(EnvVar.LOCAL_ONLY)) is not None
+    if not saved_choice and "local_only" not in overrides and not exported:
+        # The only rung beneath an exported variable that is not the saved
+        # choice is the default, so naming the default here is what takes the
+        # saved choice out of the resolution without restating the rest.
+        overrides["local_only"] = rag_default("local_only")
+    decided = VaultSpecConfigWrapper.from_environment(overrides)
+    return BackendDecision(
+        local_only=flags.get("local_only"),
+        qdrant=flags.get("qdrant_server"),
+        server_unneeded=managed_server_unneeded(decided),
+    )
 
 
 def provision_dependencies(
@@ -282,11 +445,20 @@ def _provision_dependencies(request: _ProvisionRequest) -> ProvisionOutcome:
     ``"qdrant"``). Each step delegates to its existing backend, is
     idempotent, and honours ``dry_run``.
 
+    The Qdrant step also follows the backend the settings select: an
+    exported local-only choice, a server mode switched off, or the address
+    of a server that is already running each mean there is no server to
+    fetch. The choice an earlier install saved is not consulted, because
+    this is the command that writes it.
+
     Args:
         target: Workspace whose ``pyproject.toml`` the torch step
             patches.
         local_only: When True, skip the Qdrant binary step entirely
             (reported as ``skipped`` with the local-only reason).
+        environment: The caller's judgement of whether this environment
+            can run the service, when it has already made one; judged here
+            when omitted.
         skip: Per-dependency opt-out tokens; finer than ``local_only``.
         dry_run: Preview every step without touching the network or
             disk.
@@ -325,6 +497,8 @@ def _provision_dependencies(request: _ProvisionRequest) -> ProvisionOutcome:
         request.confirm,
         request.progress,
     )
+    from ..operator_state._service_environment import judge_service_environment
+
     skip = {s.lower() for s in (skip or set())}
     outcome = ProvisionOutcome(dry_run=dry_run)
 
@@ -343,15 +517,25 @@ def _provision_dependencies(request: _ProvisionRequest) -> ProvisionOutcome:
         )
     )
 
+    # Judged after the torch step, which may be what makes this environment
+    # able to run the service, and once for both fetches.
+    environment = request.environment or judge_service_environment()
+
     outcome.steps.append(
-        provision_models(dry_run=dry_run, skip=skip, progress=progress)
+        provision_models(
+            dry_run=dry_run, skip=skip, progress=progress, environment=environment
+        )
     )
 
+    backend = decide_backend(local_only=local_only, saved_choice=False)
+    opted_out = (
+        "qdrant binary provisioning opted out" if ProvisionStep.QDRANT in skip else None
+    )
     outcome.steps.append(
         _provision_qdrant(
             dry_run=dry_run,
-            skip=skip,
-            unneeded=LOCAL_STORE_SELECTED if local_only else None,
+            unneeded=backend.server_unneeded or opted_out,
+            environment=environment,
             progress=progress,
         )
     )
@@ -510,13 +694,14 @@ def provision_models(
     dry_run: bool = False,
     skip: set[str] | None = None,
     progress: ProvisionProgress | None = None,
+    environment: ServiceEnvironment | None = None,
 ) -> ModelsStepResult:
     """Ensure the configured embedding and reranker models are cached.
 
     The model step of the front door, and the one way any command reaches the
     model fetch: ``install``, ``server warmup``, and the preflight of
-    ``server start`` all call this. A client is answered ``skipped`` before
-    the cache is probed.
+    ``server start`` all call this. An environment that cannot run the
+    service is answered ``skipped`` before the cache is probed.
 
     No model is constructed and no GPU is touched - only snapshot files are
     fetched - so it is safe on a path that must not load torch.
@@ -527,14 +712,17 @@ def provision_models(
         skip: When it contains ``"models"``, the step is opted out.
         progress: Where to report the cache probe and each download while
             they run; silent when omitted.
+        environment: The caller's judgement of whether this environment can
+            run the service, when it has already made one; judged here when
+            omitted.
 
     Returns:
         The step's outcome in the shared sync vocabulary, with one result per
         configured repository when the cache was reached.
     """
-    client = client_skip(ProvisionStep.MODELS)
-    if client is not None:
-        return ModelsStepResult(client.step, client.action, client.detail)
+    unable = unable_skip(ProvisionStep.MODELS, environment)
+    if unable is not None:
+        return ModelsStepResult(unable.step, unable.action, unable.detail)
     if ProvisionStep.MODELS in {s.lower() for s in (skip or set())}:
         return ModelsStepResult(
             step=ProvisionStep.MODELS,
@@ -582,6 +770,7 @@ def managed_server_unneeded(settings: VaultSpecConfigWrapper) -> str | None:
 
 def ensure_runtime_dependencies(
     *,
+    environment: ServiceEnvironment,
     server_unneeded: str | None,
     qdrant_auto_provision: bool,
     progress: ProvisionProgress | None = None,
@@ -596,6 +785,9 @@ def ensure_runtime_dependencies(
     sent to download a server it cannot use yet.
 
     Args:
+        environment: The start's own judgement of the interpreter that will
+            run the daemon. It is required here because a start has always
+            made it by this point, and both steps answer to it.
         server_unneeded: Why the daemon about to be spawned will run no
             managed Qdrant server, as :func:`managed_server_unneeded` words
             it, or ``None`` when it will run one.
@@ -609,15 +801,15 @@ def ensure_runtime_dependencies(
         One result per step that ran, in order.
     """
     outcome = ProvisionOutcome()
-    models = provision_models(progress=progress)
+    models = provision_models(progress=progress, environment=environment)
     outcome.steps.append(models)
     if models.action == ProvisionAction.FAILED:
         return outcome
     outcome.steps.append(
         _provision_qdrant(
             dry_run=False,
-            skip=set(),
             unneeded=server_unneeded,
+            environment=environment,
             auto_provision=qdrant_auto_provision,
             progress=progress,
         )
@@ -628,8 +820,8 @@ def ensure_runtime_dependencies(
 def _provision_qdrant(
     *,
     dry_run: bool,
-    skip: set[str],
     unneeded: str | None,
+    environment: ServiceEnvironment,
     auto_provision: bool = True,
     progress: ProvisionProgress | None = None,
 ) -> ProvisionStepResult:
@@ -642,26 +834,22 @@ def _provision_qdrant(
     verify-before-execute contract is untouched: it reports in the shared
     vocabulary, so there is nothing to translate.
 
-    ``unneeded`` is the reason no managed server will be run, when there is
-    one. The step is then skipped with that reason before anything is
-    resolved, verified or fetched.
+    ``unneeded`` is the reason this run fetches no server, when it has one:
+    the backend runs none, or the caller opted the step out. The step is then
+    skipped with that reason before anything is resolved, verified or
+    fetched. An environment that cannot run the service is answered first,
+    because that is the reason that holds whatever else was asked for.
     """
-    client = client_skip(ProvisionStep.QDRANT)
-    if client is not None:
-        return client
+    unable = unable_skip(ProvisionStep.QDRANT, environment)
+    if unable is not None:
+        return unable
     if unneeded is not None:
         return ProvisionStepResult(
             step=ProvisionStep.QDRANT,
             action=ProvisionAction.SKIPPED,
             detail=unneeded,
         )
-    if ProvisionStep.QDRANT in skip:
-        return ProvisionStepResult(
-            step=ProvisionStep.QDRANT,
-            action=ProvisionAction.SKIPPED,
-            detail="qdrant binary provisioning opted out",
-        )
-    present = _resolved_qdrant(dry_run=dry_run)
+    present = _resolved_qdrant(dry_run=dry_run, environment=environment)
     if present is not None:
         return present
     if not auto_provision:
@@ -672,7 +860,7 @@ def _provision_qdrant(
             "download is switched off; run: vaultspec-rag server qdrant install",
             code=QDRANT_MISSING,
         )
-    return _download_qdrant(dry_run=dry_run, progress=progress)
+    return _download_qdrant(dry_run=dry_run, progress=progress, environment=environment)
 
 
 def _refused_qdrant(exc: QdrantBinaryError) -> ProvisionStepResult:
@@ -685,7 +873,9 @@ def _refused_qdrant(exc: QdrantBinaryError) -> ProvisionStepResult:
     )
 
 
-def _resolved_qdrant(*, dry_run: bool) -> ProvisionStepResult | None:
+def _resolved_qdrant(
+    *, dry_run: bool, environment: ServiceEnvironment
+) -> ProvisionStepResult | None:
     """Answer for a binary that already resolves, or ``None`` when none does.
 
     The binary is held to its source's check here, in the foreground, so one
@@ -728,7 +918,7 @@ def _resolved_qdrant(*, dry_run: bool) -> ProvisionStepResult | None:
                 f"{EnvVar.QDRANT_BINARY_SHA256.value}"
             ),
         )
-    report = provision_qdrant_binary(dry_run=dry_run)
+    report = provision_qdrant_binary(dry_run=dry_run, environment=environment)
     if report.action == ProvisionAction.FAILED:
         return ProvisionStepResult(
             step=ProvisionStep.QDRANT,
@@ -749,9 +939,19 @@ def _resolved_qdrant(*, dry_run: bool) -> ProvisionStepResult | None:
 
 
 def _download_qdrant(
-    *, dry_run: bool, progress: ProvisionProgress | None
+    *,
+    dry_run: bool,
+    progress: ProvisionProgress | None,
+    environment: ServiceEnvironment,
 ) -> ProvisionStepResult:
-    """Provision the pinned release and confirm that it now resolves."""
+    """Provision the pinned release and confirm that it now resolves.
+
+    The confirmation asks the resolver, and a resolver that refuses what was
+    just installed is a failed step with the resolver's own reason and code,
+    the same as a refusal met before provisioning. It must not leave here as
+    an exception: a start reports every outcome that stops it as one
+    document.
+    """
     from ..qdrant_runtime._resolve import QdrantBinaryError, resolve_binary
 
     # A first-use provision downloads and verifies a native archive over the
@@ -761,7 +961,9 @@ def _download_qdrant(
     if progress is not None and not dry_run:
         progress.stage("Downloading the Qdrant server (first use)...")
     report = provision_qdrant_binary(
-        dry_run=dry_run, on_progress=None if progress is None else progress.stage
+        dry_run=dry_run,
+        on_progress=None if progress is None else progress.stage,
+        environment=environment,
     )
     if report.action == ProvisionAction.FAILED:
         return ProvisionStepResult(
@@ -798,13 +1000,14 @@ def provision_qdrant_binary(
     dry_run: bool = False,
     archive: Path | None = None,
     on_progress: Callable[[str], None] | None = None,
+    environment: ServiceEnvironment | None = None,
 ) -> ProvisionReport:
-    """Provision the pinned Qdrant server binary, on a host installation only.
+    """Provision the pinned Qdrant server binary, where the service can run.
 
-    The one way any command reaches the Qdrant provisioner, so the role is
-    judged in one place: a client gets a ``skipped`` report and the
-    provisioner - its download, its staging directory, and an install from a
-    local archive alike - is never entered.
+    The one way any command reaches the Qdrant provisioner, so the
+    environment is judged in one place: one that cannot run the service gets
+    a ``skipped`` report and the provisioner - its download, its staging
+    directory, and an install from a local archive alike - is never entered.
 
     Args:
         upgrade: Replace an install that no longer matches the pin.
@@ -814,15 +1017,19 @@ def provision_qdrant_binary(
             and no request is made.
         on_progress: Sink for stage and byte-progress lines; silent when
             omitted.
+        environment: The caller's judgement of whether this environment can
+            run the service, when it has already made one; judged here when
+            omitted.
 
     Returns:
-        The provisioner's report, or a ``skipped`` report for a client.
+        The provisioner's report, or a ``skipped`` report for an environment
+        that cannot run the service.
     """
-    client = client_skip(ProvisionStep.QDRANT)
-    if client is not None:
+    unable = unable_skip(ProvisionStep.QDRANT, environment)
+    if unable is not None:
         from ..qdrant_runtime._constants import ProvisionReport
 
-        return ProvisionReport(action=client.action, message=client.detail)
+        return ProvisionReport(action=unable.action, message=unable.detail)
 
     from ..qdrant_runtime._provision import provision
 

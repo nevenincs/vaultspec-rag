@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import io
 import json
+import sys
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -30,11 +31,13 @@ from ..cli._core import _build_console
 from ..cli._progress import StartupStatusReporter
 from ..cli._service_start import (
     _auto_provision_enabled,
-    _decide_backend,
     _ensure_start_dependencies,
     _ServiceStartOptions,
 )
+from ..commands._provision import decide_backend
 from ..config._types import EnvVar
+from ..operator_state._installation import ComputeCapability
+from ..operator_state._service_environment import ServiceEnvironment
 from ..qdrant_runtime._constants import MANIFEST_SOURCE_UNRECORDED, BinarySource
 from ..qdrant_runtime._resolve import (
     qdrant_bin_dir,
@@ -68,6 +71,10 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("inference_host")]
 
 _SWITCH = EnvVar.QDRANT_AUTO_PROVISION.value
+
+#: The judgement a start has made of its environment by the time it
+#: reaches the dependency step: it only gets there accepted.
+_ACCEPTED = ServiceEnvironment(sys.executable, ComputeCapability.READY)
 _ABSENT_MODEL = "vaultspec-test/absent-reranker"
 
 
@@ -113,10 +120,10 @@ def _exit_code_of(
     should fail on the download it was written to forbid.
     """
     buffer = io.StringIO() if progress is None else progress
-    backend = _decide_backend(local_only=options.local_only, qdrant=options.qdrant)
+    backend = decide_backend(local_only=options.local_only, qdrant=options.qdrant)
     try:
         with _reporter_into(buffer, json_mode=options.json_mode) as reporter:
-            _ensure_start_dependencies(options, backend, reporter)
+            _ensure_start_dependencies(options, backend, _ACCEPTED, reporter)
     except typer.Exit as stopped:
         return stopped.exit_code
     return None

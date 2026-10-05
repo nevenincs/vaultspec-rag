@@ -33,6 +33,8 @@ from .._readiness import (
 )
 from ..config._types import EnvVar
 from ..operator_state._compute import classify_torch
+from ..operator_state._installation import ComputeCapability
+from ..operator_state._models import ComputeReport
 from ..store_schema import STORAGE_SCHEMA_VERSION as _STORAGE_SCHEMA_VERSION
 from ._config_fixtures import reset_config
 from .conftest import managed_env
@@ -51,6 +53,18 @@ _NO_OPERATOR_BINARY: dict[str, str | None] = {
     EnvVar.QDRANT_BINARY.value: None,
     EnvVar.QDRANT_BINARY_SHA256.value: None,
 }
+
+
+def _host_readiness() -> ReadinessReport:
+    """The report a host that can serve is given, whatever this lane installs.
+
+    A client needs neither the model files nor a server binary, so neither
+    is looked for on its behalf. What a host is told about each is asserted
+    with a host's verdict handed in, the way a caller that probed out of
+    process hands it, or the accelerator-free lane would assert the client
+    answer instead.
+    """
+    return compute_readiness(compute=ComputeReport(capability=ComputeCapability.READY))
 
 
 @pytest.fixture
@@ -225,9 +239,6 @@ class TestTorchDimension:
         this client as broken and fails the status assertion; restoring the
         client branch passes.
         """
-        from ..operator_state._installation import ComputeCapability
-        from ..operator_state._models import ComputeReport
-
         torch_dep = _torch_readiness(
             ComputeReport(capability=ComputeCapability.NOT_APPLICABLE)
         )
@@ -259,7 +270,7 @@ class TestModelsDimension:
         from ..config._settings import get_config
 
         cfg = get_config()
-        report = compute_readiness()
+        report = _host_readiness()
         models = report.dimension("models")
         assert models is not None
         repos = cast("dict[str, object]", models.info["repos"])
@@ -275,7 +286,7 @@ class TestModelsDimension:
         assert all(isinstance(v, bool) for v in repos.values())
 
     def test_models_status_matches_the_real_cache_state(self) -> None:
-        report = compute_readiness()
+        report = _host_readiness()
         models = report.dimension("models")
         assert models is not None
         repos = cast("dict[str, object]", models.info["repos"])
@@ -299,7 +310,7 @@ class TestModelsDimension:
         try:
             cfg = get_config()
             assert cfg.sparse_enabled is False
-            report = compute_readiness()
+            report = _host_readiness()
             models = report.dimension("models")
             assert models is not None
             repos = cast("dict[str, object]", models.info["repos"])
@@ -324,7 +335,7 @@ class TestQdrantDimension:
         # holds no provisioned binary, and the operator setting is cleared, so
         # nothing resolves: there is no other place a binary is looked for.
         with managed_env(**_NO_OPERATOR_BINARY):
-            report = compute_readiness()
+            report = _host_readiness()
         qdrant = report.dimension("qdrant")
         assert qdrant is not None
         assert report.server_mode is True
@@ -347,7 +358,7 @@ class TestQdrantDimension:
                 EnvVar.QDRANT_BINARY_SHA256.value: "c" * 64,
             }
         ):
-            report = compute_readiness()
+            report = _host_readiness()
         qdrant = report.dimension("qdrant")
         assert qdrant is not None
         assert qdrant.status == ReadinessStatus.NOT_READY
@@ -359,7 +370,7 @@ class TestQdrantDimension:
 
     @pytest.mark.usefixtures("local_only_env")
     def test_local_only_makes_an_absent_binary_ready(self) -> None:
-        report = compute_readiness()
+        report = _host_readiness()
         assert report.server_mode is False
         qdrant = report.dimension("qdrant")
         assert qdrant is not None
@@ -383,7 +394,7 @@ class TestQdrantDimension:
                 EnvVar.QDRANT_BINARY_SHA256.value: declared,
             }
         ):
-            report = compute_readiness()
+            report = _host_readiness()
         qdrant = report.dimension("qdrant")
         assert qdrant is not None
         assert qdrant.info["binary_source"] == "env"
@@ -409,7 +420,7 @@ class TestQdrantDimension:
                 EnvVar.QDRANT_BINARY_SHA256.value: declared,
             }
         ):
-            report = compute_readiness()
+            report = _host_readiness()
         qdrant = report.dimension("qdrant")
         assert qdrant is not None
         assert qdrant.status == ReadinessStatus.NOT_READY
@@ -472,7 +483,7 @@ class TestQdrantDimension:
         binary = self._seed_install_that_is_not_the_pinned_release(source)
 
         with managed_env(**_NO_OPERATOR_BINARY):
-            report = compute_readiness()
+            report = _host_readiness()
 
         qdrant = report.dimension("qdrant")
         assert qdrant is not None
@@ -496,7 +507,7 @@ class TestQdrantDimension:
         self._seed_install_that_is_not_the_pinned_release()
 
         with managed_env(**_NO_OPERATOR_BINARY):
-            report = compute_readiness()
+            report = _host_readiness()
 
         qdrant = report.dimension("qdrant")
         assert qdrant is not None

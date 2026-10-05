@@ -14,8 +14,14 @@ import typer
 
 from .._operator_commands import server_start_command
 from .._sync_vocabulary import ProvisionAction
-from ..commands._provision import provision_qdrant_binary
+from ..commands._provision import (
+    ProvisionStep,
+    managed_server_unneeded,
+    provision_qdrant_binary,
+    unable_skip,
+)
 from ..config._settings import get_config
+from ..operator_state._service_environment import judge_service_environment
 from ..qdrant_runtime._constants import (
     QDRANT_SERVER_VERSION,
     ProvisionReport,
@@ -29,6 +35,7 @@ from ..qdrant_runtime._resolve import (
 from ..qdrant_runtime._spawn_trust import verify_resolved_binary
 from ..serviceclient._discovery import read_service_status
 from ._app import JsonMode, server_qdrant_app
+from ._process import _resolve_daemon_interpreter
 from ._progress import StartupStatusReporter
 from ._render import _emit_json, _plain_line, _print_next_action, address_line
 
@@ -121,15 +128,21 @@ def qdrant_install(
     # none of which said anything before this. The report is rendered after the
     # block so the terminal outcome never has to share a line with a live
     # region, and ``--json`` keeps the reporter silent so exactly one envelope
-    # reaches stdout. A client installation gets a ``skipped`` report from the
-    # front door, the same not-needed outcome ``install`` gives it.
+    # reaches stdout. An environment that cannot run the service gets a
+    # ``skipped`` report from the front door, with the reason, which is the
+    # outcome ``install`` gives it.
     with StartupStatusReporter(json_mode=json_mode) as progress:
         progress.announce("Installing the managed Qdrant server...")
+        # The judgement starts an interpreter and imports torch in it, which
+        # takes seconds; saying so keeps the wait from reading as a hang.
+        progress.stage("Checking that this environment can run the service...")
+        environment = judge_service_environment(_resolve_daemon_interpreter())
         report = provision_qdrant_binary(
             upgrade=upgrade,
             dry_run=dry_run,
             archive=archive,
             on_progress=progress.stage,
+            environment=environment,
         )
     failed = report.action == ProvisionAction.FAILED
 
@@ -193,6 +206,29 @@ def _active_binary_blocks() -> tuple[dict[str, object] | None, dict[str, str] | 
     return active, None
 
 
+def _server_unneeded() -> str | None:
+    """Say why nothing here needs a managed Qdrant server, or ``None``.
+
+    Status names the install command for a missing server, so it asks what
+    the install command itself asks before fetching one: can this environment
+    run the service, and does the selected backend run a server at all. An
+    environment or a backend with no use for the server is told that, and is
+    not sent to a command that would decline.
+
+    The capability is read from installed versions only. This is a status
+    view, and the deeper check costs the seconds of a torch import.
+    """
+    from ..operator_state._compute import ProbeDepth
+
+    environment = judge_service_environment(
+        _resolve_daemon_interpreter(), ProbeDepth.METADATA
+    )
+    unable = unable_skip(ProvisionStep.QDRANT, environment)
+    if unable is not None:
+        return unable.detail
+    return managed_server_unneeded(get_config())
+
+
 def _qdrant_status_payload(port: int | None = None) -> dict[str, Any]:
     cfg = get_config()
     active_binary, binary_error = _active_binary_blocks()
@@ -212,6 +248,7 @@ def _qdrant_status_payload(port: int | None = None) -> dict[str, Any]:
         "ready": probe_qdrant_endpoint(qdrant_port).ready,
         "active_binary": active_binary,
         "binary_error": binary_error,
+        "server_unneeded": _server_unneeded(),
         "provisioned": provisioned_versions(),
         "service": service,
     }
@@ -240,6 +277,7 @@ def _print_qdrant_install_and_state(payload: dict[str, object]) -> str:
     """
     active = payload["active_binary"]
     refusal = payload["binary_error"]
+    unneeded = payload["server_unneeded"]
     detail = (
         str(cast("dict[str, object]", refusal)["message"])
         if isinstance(refusal, dict)
@@ -253,7 +291,12 @@ def _print_qdrant_install_and_state(payload: dict[str, object]) -> str:
         _plain_line("Executable: not usable")
     else:
         _plain_line("Executable: not installed")
-        _print_next_action("vaultspec-rag server qdrant install")
+        if not unneeded:
+            _print_next_action("vaultspec-rag server qdrant install")
+    if unneeded:
+        # Said in place of a command: neither installing the server nor
+        # starting the service is a next step here.
+        _plain_line(f"Not needed here: {unneeded}")
     if detail:
         # The refusal names its own remedy, and a start would only repeat it.
         _plain_line(f"Detail: {detail}")
@@ -262,7 +305,7 @@ def _print_qdrant_install_and_state(payload: dict[str, object]) -> str:
         _plain_line("Connection: accepting requests")
         return detail
     _plain_line("Connection: not accepting requests")
-    if isinstance(active, dict) and refusal is None:
+    if isinstance(active, dict) and refusal is None and not unneeded:
         _print_next_action(server_start_command(qdrant=True))
     return detail
 

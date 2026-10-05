@@ -51,7 +51,6 @@ if TYPE_CHECKING:
         provision: bool
         mcp: bool
         local_only: bool
-        skip_torch: bool
         skip_models: bool
         skip_qdrant: bool
         json: bool
@@ -95,7 +94,6 @@ class _InstallOptions:
     provision: bool
     install_mcp: bool
     local_only: bool
-    skip_torch: bool
     skip_models: bool
     skip_qdrant: bool
     json_output: bool
@@ -263,14 +261,6 @@ class _InstallCommand(TyperCommand):
                     ),
                 ),
                 TyperOption(
-                    param_decls=["--skip-torch"],
-                    default=False,
-                    is_flag=True,
-                    help=(
-                        "Skip the PyTorch provisioning step (finer than --local-only)."
-                    ),
-                ),
-                TyperOption(
                     param_decls=["--skip-models"],
                     default=False,
                     is_flag=True,
@@ -327,7 +317,6 @@ class _InstallCommand(TyperCommand):
                 provision=params["provision"],
                 install_mcp=params["mcp"],
                 local_only=params["local_only"],
-                skip_torch=params["skip_torch"],
                 skip_models=params["skip_models"],
                 skip_qdrant=params["skip_qdrant"],
                 json_output=params["json"],
@@ -349,7 +338,7 @@ class _InstallCommand(TyperCommand):
         "the agent-facing MCP search surface can run, and asks before changing "
         "PyTorch package configuration. Use --local-only for the minimal local "
         "backend (skips the binary), the finer "
-        "--skip-torch/--skip-models/--skip-qdrant flags for partial opt-out, "
+        "--skip-models/--skip-qdrant flags for partial opt-out, "
         "--no-mcp for a CLI-only workspace without the mcp dependency, and "
         "--no-provision to set up the workspace only; use --yes or "
         "--no-torch-config for non-interactive runs."
@@ -546,10 +535,10 @@ def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
     # Map the per-dependency opt-out flags onto the front door's skip
     # token set. ``--local-only`` already drops the qdrant binary in the
     # front door, so the explicit ``--skip-qdrant`` is the redundant-but-
-    # honest finer control; both are unioned here.
+    # honest finer control; both are unioned here. There is no such flag for
+    # torch: the torch step belongs to enrollment, where ``--no-torch-config``
+    # skips it, and the front door never runs it for this command.
     provision_skip: set[str] = set()
-    if options.skip_torch:
-        provision_skip.add("torch")
     if options.skip_models:
         provision_skip.add("models")
     if options.skip_qdrant:

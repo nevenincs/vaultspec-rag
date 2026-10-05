@@ -583,7 +583,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "be",
     ),
     "conftest.py": (
-        3,
+        4,
         "install's torch and provisioning steps and the release-mismatch advice "
         "all branch on whether this is a host or a client installation, and the "
         "role is read from the distributions the running interpreter holds. The "
@@ -591,7 +591,13 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "always does, and the suite can neither add nor remove the inference "
         "stack in the shared interpreter, so each lane would otherwise reach "
         "only one side of every branch. Only the role reading is substituted; "
-        "every consumer of it runs unchanged. Separately, both machine "
+        "every consumer of it runs unchanged. The same holds for what the "
+        "interpreter that would run the daemon can do: that is asked of a "
+        "child which imports torch, a workstation answers ready and an "
+        "accelerator-free runner answers otherwise, and the model and Qdrant "
+        "steps are gated on the answer, so a test of either side pins the "
+        "child's answer alone while the judgement made of it and every "
+        "command that acts on it run unchanged. Separately, both machine "
         "hardware anchors are pointed at private files for every test, "
         "because the machine's own anchors may be held by a live service, a "
         "test must never contend for them, and an ownership claim outlives "

@@ -38,6 +38,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, cast
 
 from .operator_state._compute import local_compute
+from .operator_state._installation import ComputeCapability
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -297,12 +298,13 @@ def compute_readiness(
 
     cfg = get_config()
     server_mode = bool(cfg.effective_server_mode())
+    judged = local_compute() if compute is None else compute
 
     return ReadinessReport(
         dependencies=[
-            _torch_readiness(local_compute() if compute is None else compute),
-            _models_readiness(verify=verify_models),
-            _qdrant_readiness(server_mode=server_mode),
+            _torch_readiness(judged),
+            _models_readiness(verify=verify_models, capability=judged.capability),
+            _qdrant_readiness(server_mode=server_mode, capability=judged.capability),
         ],
         server_mode=server_mode,
         environment_holders=(
@@ -378,6 +380,30 @@ def _torch_readiness(compute: ComputeReport) -> DependencyReadiness:
     )
 
 
+#: The detail of a dependency a client installation has no use for. A client
+#: never runs the service, so nothing is looked for and nothing is missing.
+_CLIENT_NEEDS_NONE = (
+    "not needed (this installation is a client); the host installation that "
+    "runs the service provides it"
+)
+
+
+def _fetch_remedy(capability: ComputeCapability, command: str) -> str:
+    """Say how a missing dependency gets fetched in this environment.
+
+    An environment that can run the service is given *command*, whole. One
+    that cannot yet is not: every command that fetches would decline it, so
+    it is told what fetches the dependency once the environment is repaired.
+    The torch row beside this one says what the repair is.
+    """
+    if capability.blocks_start:
+        return (
+            "`vaultspec-rag server start` fetches it once this environment "
+            "can run the service"
+        )
+    return f"run `{command}`"
+
+
 def _probe_models(
     models: Sequence[ModelRepo], *, verify: bool
 ) -> tuple[dict[str, bool], dict[str, str]]:
@@ -414,7 +440,9 @@ def _probe_models(
     return usable, faults
 
 
-def _models_readiness(*, verify: bool) -> DependencyReadiness:
+def _models_readiness(
+    *, verify: bool, capability: ComputeCapability
+) -> DependencyReadiness:
     """Report the model snapshots in the Hugging Face cache.
 
     Two depths, and the wording keeps them apart. Without *verify* only the
@@ -428,10 +456,22 @@ def _models_readiness(*, verify: bool) -> DependencyReadiness:
     unpinned model is one the operator named, or a default moved to another
     commit, and no depth of check can vouch for its content.
 
+    *capability* is what the environment being assessed can do. A client
+    needs no model files and its cache is not probed. Any other environment
+    is told the truth about its cache, with a remedy it can act on.
+
     This neither downloads files nor imports torch or loads a model onto the
     GPU.
     """
     from .config._settings import configured_model_repos
+
+    if capability is ComputeCapability.NOT_APPLICABLE:
+        return DependencyReadiness(
+            name="models",
+            status=ReadinessStatus.READY,
+            detail=_CLIENT_NEEDS_NONE,
+            info={"repos": {}},
+        )
 
     models = configured_model_repos()
     try:
@@ -476,7 +516,8 @@ def _models_readiness(*, verify: bool) -> DependencyReadiness:
             detail=(
                 f"{len(faults)} of {len(models)} model repo(s) cannot be used: "
                 + "; ".join(f"{repo} {detail}" for repo, detail in faults.items())
-                + "; run `vaultspec-rag server warmup` to fetch or repair them"
+                + "; "
+                + _fetch_remedy(capability, "vaultspec-rag server warmup")
                 + unpinned_note
             ),
             info=info,
@@ -486,7 +527,10 @@ def _models_readiness(*, verify: bool) -> DependencyReadiness:
         status=ReadinessStatus.NOT_READY,
         detail=(
             f"{len(unusable)} of {len(models)} model repo(s) missing from the "
-            "cache: " + ", ".join(unusable) + "; run install to provision them"
+            "cache: "
+            + ", ".join(unusable)
+            + "; "
+            + _fetch_remedy(capability, "vaultspec-rag server warmup")
         ),
         info=info,
     )
@@ -537,8 +581,30 @@ def _binary_refusal(
     )
 
 
+def _server_binary_unneeded(
+    *, server_mode: bool, capability: ComputeCapability, remote: bool
+) -> str | None:
+    """Say why this machine needs no Qdrant server binary, or ``None``."""
+    from .config._types import EnvVar
+
+    if capability is ComputeCapability.NOT_APPLICABLE:
+        return _CLIENT_NEEDS_NONE
+    if not server_mode:
+        return "local-only backend selected; the on-disk store needs no server binary"
+    if remote:
+        # The address is not repeated: it may carry a credential.
+        return (
+            f"{EnvVar.QDRANT_URL.value} names a Qdrant server that is already "
+            "running; no server binary is needed on this machine"
+        )
+    return None
+
+
 def _qdrant_readiness(
-    *, server_mode: bool, verify_budget: float = _BINARY_VERIFY_BUDGET_SECONDS
+    *,
+    server_mode: bool,
+    capability: ComputeCapability = ComputeCapability.READY,
+    verify_budget: float = _BINARY_VERIFY_BUDGET_SECONDS,
 ) -> DependencyReadiness:
     """Report the qdrant binary resolution source plus supervised liveness.
 
@@ -554,22 +620,25 @@ def _qdrant_readiness(
 
     In local-only mode no server binary runs, so none is looked for and
     nothing is hashed: the dimension is ``READY`` and says the binary is not
-    needed.
+    needed. The same holds for a client installation, which never runs the
+    service, and for a server that is already running at a configured
+    address, which this machine does not run.
     """
     from .qdrant_runtime._supervise import runtime_state
 
     state = runtime_state()
-    if not server_mode:
+    unneeded = _server_binary_unneeded(
+        server_mode=server_mode, capability=capability, remote=state.mode == "remote"
+    )
+    if unneeded is not None:
         return DependencyReadiness(
             name="qdrant",
             status=ReadinessStatus.READY,
-            detail=(
-                "local-only backend selected; the on-disk store needs no server binary"
-            ),
+            detail=unneeded,
             info={
                 "binary_source": "not_needed",
                 "binary_path": None,
-                "server_mode": False,
+                "server_mode": server_mode,
                 "runtime": state.to_dict(),
             },
         )
@@ -607,7 +676,9 @@ def _qdrant_readiness(
             status=ReadinessStatus.NOT_READY,
             detail=(
                 "server mode is the default but no qdrant binary resolves; "
-                "run install to provision it, or start with --local-only"
+                + _fetch_remedy(capability, "vaultspec-rag server qdrant install")
+                + ", or select the on-disk store with "
+                "`vaultspec-rag server start --local-only`"
             ),
             info=info,
         )

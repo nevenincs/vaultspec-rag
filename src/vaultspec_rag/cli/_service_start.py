@@ -23,7 +23,8 @@ if TYPE_CHECKING:
     import typer
     from typer._click import Context as ClickContext
 
-    from ..commands._provision import ProvisionStepResult
+    from ..commands._provision import BackendDecision, ProvisionStepResult
+    from ..operator_state._service_environment import ServiceEnvironment
 
     # Click types ``Context.params`` as ``dict[str, Any]`` because the keys
     # and value types are only known once a command's options are parsed at
@@ -51,9 +52,9 @@ from .._operator_commands import (
 )
 from .._ports import port_is_available
 from .._process_probe import pid_alive
-from ..config._settings import VaultSpecConfigWrapper, get_config
+from ..config._settings import get_config
 from ..config._types import EnvVar
-from ..operator_state._installation import ComputeCapability, InstallRole
+from ..operator_state._installation import ComputeCapability
 from ..operator_state._provisioning import cuda_remediation
 from ..operator_state._topology import (
     RuntimeEnvKind,
@@ -122,33 +123,6 @@ _START_COMMAND = "service.start"
 
 
 @dataclass(frozen=True, slots=True)
-class _BackendDecision:
-    """The storage backend one start selected.
-
-    Made once per start and read twice: by the preflight, which fetches the
-    Qdrant server only for a daemon that will run one, and by the spawn, which
-    hands the daemon exactly what a flag decided. When those two read the
-    options separately, a start with no backend flag fetched a server on the
-    strength of the flags alone and then told the daemon to ignore the choice
-    its own settings held.
-
-    Attributes:
-        local_only: What ``--local-only`` or ``--qdrant`` decided for the
-            on-disk store, or ``None`` when no flag spoke to it. ``None`` is
-            written nowhere, so the daemon reads its own environment and the
-            saved choice.
-        qdrant: What ``--qdrant/--no-qdrant`` decided for server mode, or
-            ``None`` likewise.
-        server_unneeded: Why the daemon will run no managed Qdrant server, or
-            ``None`` when it will run one.
-    """
-
-    local_only: bool | None
-    qdrant: bool | None
-    server_unneeded: str | None
-
-
-@dataclass(frozen=True, slots=True)
 class _PreparedServiceRequest:
     """The daemon-launch options resolved by the start command."""
 
@@ -157,7 +131,9 @@ class _PreparedServiceRequest:
     updates: bool | None
     update_delay_ms: int | None
     repeat_update_delay_s: float | None
-    backend: _BackendDecision
+    #: The one backend decision of this start. The spawn hands the daemon
+    #: what a flag decided from it and nothing else.
+    backend: BackendDecision
     preprocess_forward: Literal["off"] | None
     json_mode: bool
     #: The workspace this invocation resolved. The daemon never opens a
@@ -363,52 +339,10 @@ def _auto_provision_enabled(flag: bool | None) -> bool:
     return get_config().qdrant_auto_provision if flag is None else flag
 
 
-def _decide_backend(*, local_only: bool, qdrant: bool | None) -> _BackendDecision:
-    """Decide the storage backend for this start from its flags and the settings.
-
-    Precedence, highest first: a flag on this command, an exported variable,
-    the choice ``install`` saved, and the default, which is the managed
-    server. ``--local-only`` outranks ``--qdrant`` when both are passed.
-    ``--qdrant`` asks for the managed server outright, so it overrides a saved
-    or exported local-only choice as well as a server mode that was switched
-    off; ``--no-qdrant`` switches server mode off and says nothing about the
-    on-disk choice, which could only agree with it.
-
-    The address of a server that is already running is not a backend choice
-    and no flag overrides it: server mode then uses that server, and none is
-    run or fetched here.
-
-    The flags are applied as overrides to the one settings resolution every
-    other reader goes through, rather than compared against the settings
-    here, so the lower three rungs are not restated and cannot drift from
-    what the daemon resolves for itself. The daemon is handed the flags and
-    nothing else, and reaches the same answer from the same environment.
-
-    Args:
-        local_only: Whether ``--local-only`` was passed.
-        qdrant: ``True`` for ``--qdrant``, ``False`` for ``--no-qdrant``,
-            ``None`` when neither was passed.
-    """
-    from ..commands._provision import managed_server_unneeded
-
-    flags: dict[str, bool] = {}
-    if qdrant is not None:
-        flags["qdrant_server"] = qdrant
-    if local_only:
-        flags["local_only"] = True
-    elif qdrant:
-        flags["local_only"] = False
-    decided = VaultSpecConfigWrapper.from_environment(dict(flags))
-    return _BackendDecision(
-        local_only=flags.get("local_only"),
-        qdrant=flags.get("qdrant_server"),
-        server_unneeded=managed_server_unneeded(decided),
-    )
-
-
 def _ensure_start_dependencies(
     options: _ServiceStartOptions,
-    backend: _BackendDecision,
+    backend: BackendDecision,
+    environment: ServiceEnvironment,
     progress: StartupStatusReporter,
 ) -> None:
     """Fetch what the daemon needs and does not have, before it is spawned.
@@ -424,6 +358,11 @@ def _ensure_start_dependencies(
     one. The on-disk store and a server that is already running elsewhere
     never touch it at all. Every outcome that stops the start is one start
     envelope in ``--json`` mode.
+
+    *environment* is the judgement this start already made of the interpreter
+    that will run the daemon. Both steps answer to it, so nothing is probed a
+    second time and nothing is fetched for an environment the start itself
+    would have refused.
     """
     from .._sync_vocabulary import ProvisionAction
     from ..commands._provision import ensure_runtime_dependencies
@@ -433,6 +372,7 @@ def _ensure_start_dependencies(
     progress.stage("Checking the model files and the Qdrant server...")
     with ReporterProvisionProgress(progress) as sink:
         outcome = ensure_runtime_dependencies(
+            environment=environment,
             server_unneeded=backend.server_unneeded,
             qdrant_auto_provision=_auto_provision_enabled(
                 options.qdrant_auto_provision
@@ -652,7 +592,9 @@ def _fail_start(
     )
 
 
-def _preflight_daemon_accelerator(interpreter: str, *, json_mode: bool) -> None:
+def _preflight_daemon_accelerator(
+    interpreter: str, *, json_mode: bool
+) -> ServiceEnvironment:
     """Fail fast if the daemon interpreter cannot run the GPU-only service.
 
     The daemon inherits this interpreter and is GPU-only, so a missing /
@@ -660,24 +602,28 @@ def _preflight_daemon_accelerator(interpreter: str, *, json_mode: bool) -> None:
     model-load crash. The service does not provision its own python environment.
     A check that could not finish is logged and allowed to proceed, leaving the
     spawn-and-detect path as the backstop.
-    """
-    from ..operator_state._compute import ProbeDepth
-    from ..operator_state._environment_probe import probe_interpreter
 
-    compute = probe_interpreter(interpreter, ProbeDepth.VERIFY).compute
-    capability = compute.capability
-    if capability is ComputeCapability.READY:
-        return
-    reason = capability.label + (f" ({compute.detail})" if compute.detail else "")
-    if capability.blocks_start:
+    Returns:
+        The judgement, for the dependency step that follows: it fetches for
+        the environment this start accepted and asks nothing a second time.
+    """
+    from ..operator_state._service_environment import judge_service_environment
+
+    environment = judge_service_environment(interpreter)
+    if not environment.can_run_service:
         raise _fail_unusable_environment(
-            interpreter, capability, reason, json_mode=json_mode
+            interpreter,
+            environment.capability,
+            environment.reason,
+            json_mode=json_mode,
         )
-    logger.warning(
-        "daemon torch pre-flight inconclusive for %s (%s); proceeding",
-        interpreter,
-        reason,
-    )
+    if environment.capability is not ComputeCapability.READY:
+        logger.warning(
+            "daemon torch pre-flight inconclusive for %s (%s); proceeding",
+            interpreter,
+            environment.reason,
+        )
+    return environment
 
 
 def _fail_unusable_environment(
@@ -689,7 +635,7 @@ def _fail_unusable_environment(
 ) -> typer.Exit:
     """Render the refusal for an environment that cannot run the service.
 
-    One renderer for both judges of the environment - the installation role
+    One renderer for both halves of the judgement - the installation role
     read in this process and the capability the daemon interpreter reports -
     so a client is told the same thing whichever of them refuses it.
     """
@@ -714,27 +660,6 @@ def _fail_unusable_environment(
         ),
         next_actions=next_actions,
         detail=reason,
-    )
-
-
-def _refuse_client_installation(interpreter: str, *, json_mode: bool) -> None:
-    """Refuse a start from a client installation before anything else can run.
-
-    A client carries no inference stack and cannot run the service, so nothing
-    a start would fetch or write is of any use to it. The role is read from
-    the distributions this environment holds, which costs nothing and touches
-    neither the network nor the disk, and it is asked before every guard and
-    preflight that does. The daemon runs in this same environment, so the
-    capability probe that follows would reach the same verdict - seconds
-    later, and only after whatever had been ordered ahead of it.
-    """
-    from ..operator_state import _compute
-
-    if _compute.installed_role()[0] is InstallRole.HOST:
-        return
-    capability = ComputeCapability.NOT_APPLICABLE
-    raise _fail_unusable_environment(
-        interpreter, capability, capability.label, json_mode=json_mode
     )
 
 
@@ -1003,6 +928,8 @@ def service_start() -> None:
 
 def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None:
     """Start the background search service from parsed command options."""
+    from ..commands._provision import decide_backend
+
     json_mode = options.json_mode
     preprocess_forward: Literal["off"] | None = "off" if options.no_preprocess else None
     with StartupStatusReporter(json_mode=json_mode) as progress:
@@ -1040,26 +967,27 @@ def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None
             return
 
         # Everything from here on starts a daemon, so the environment that
-        # would run it is judged before anything is fetched or written for it:
-        # the installation role first, which needs no probe at all, and the
-        # accelerator below, ahead of the binary check. A client or a host
-        # whose torch cannot serve is refused with nothing provisioned.
+        # would run it is judged before anything is fetched or written for
+        # it. The judgement comes ahead of the port and machine guards, whose
+        # probes can create a lock file, and ahead of the binary check. A
+        # client or a host whose torch cannot serve is refused with nothing
+        # provisioned and nothing written.
         interpreter = _resolve_daemon_interpreter()
-        _refuse_client_installation(interpreter, json_mode=json_mode)
+        env_warnings = _ephemeral_env_warning(interpreter)
+        if env_warnings and not json_mode:
+            _print_lifecycle_lines(*env_warnings)
+        # A client is answered from the distributions this environment holds,
+        # at no cost. A host is asked in a child of the daemon interpreter,
+        # which imports torch there: the single longest pre-spawn stall (its
+        # own timeout is 60s).
+        progress.stage("Checking accelerator support in the service environment...")
+        environment = _preflight_daemon_accelerator(interpreter, json_mode=json_mode)
 
         progress.stage("Checking the port and machine singleton...")
         _guard_start_preconditions(options.port, json_mode)
 
-        env_warnings = _ephemeral_env_warning(interpreter)
-        if env_warnings and not json_mode:
-            _print_lifecycle_lines(*env_warnings)
-        # This probe spawns the daemon interpreter and imports torch in it,
-        # which is the single longest pre-spawn stall (its own timeout is 60s).
-        progress.stage("Checking accelerator support in the service environment...")
-        _preflight_daemon_accelerator(interpreter, json_mode=json_mode)
-
-        backend = _decide_backend(local_only=options.local_only, qdrant=options.qdrant)
-        _ensure_start_dependencies(options, backend, progress)
+        backend = decide_backend(local_only=options.local_only, qdrant=options.qdrant)
+        _ensure_start_dependencies(options, backend, environment, progress)
 
         resolved_root = _global_target(ctx) or Path.cwd()
 
@@ -1071,6 +999,11 @@ def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None
             _print_preprocess_start_notice(resolved_root, effective_mode)
 
         log_path = _log_file()
+        # The daemon's log is the first thing this command writes into the
+        # managed directory, so this is where the directory is created: after
+        # every refusal, and not as a side effect of having looked for a
+        # service that might already be running.
+        log_path.parent.mkdir(parents=True, exist_ok=True)
         t0 = time.perf_counter()
         progress.stage("Launching the service process...")
         start_request = _PreparedServiceRequest(

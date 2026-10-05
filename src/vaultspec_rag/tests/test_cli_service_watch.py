@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from ..cli._process import _build_service_child_env, _ServiceChildEnvRequest
-from ..cli._service_start import _decide_backend
+from ..commands._provision import decide_backend
 from ..config._types import EnvVar
 from ._scaffold import restore_env, set_env
 
@@ -94,7 +94,7 @@ def _env_for_start(*, local_only: bool, qdrant: bool | None) -> dict[str, str]:
     The request comes from the start command's own decision, so what is held
     is the value the command passes and not one a test chose for it.
     """
-    backend = _decide_backend(local_only=local_only, qdrant=qdrant)
+    backend = decide_backend(local_only=local_only, qdrant=qdrant)
     return _build_service_child_env(
         _ServiceChildEnvRequest(local_only=backend.local_only, qdrant=backend.qdrant)
     )

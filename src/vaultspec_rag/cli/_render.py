@@ -987,6 +987,12 @@ def _render_provisioning_outcome(outcome: ProvisionOutcome | None) -> None:
         detail = str(step_map.get("detail", "")).strip()
         suffix = f" ({detail})" if detail else ""
         _plain(f"  {label}: {phrase}{suffix}")
+    backend = data.get("backend")
+    if isinstance(backend, dict):
+        # Only an install has a part in saving the backend choice. It says
+        # whether it did, because the next plain start depends on it.
+        saved = cast("dict[str, object]", backend)
+        _plain(f"  Backend choice: {saved.get('detail', '')}", soft_wrap=True)
 
 
 def _render_uninstall_report(report: UninstallReport) -> None:

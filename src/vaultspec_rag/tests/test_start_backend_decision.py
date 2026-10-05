@@ -37,13 +37,14 @@ from ..cli._core import _build_console
 from ..cli._process import _build_service_child_env, _ServiceChildEnvRequest
 from ..cli._progress import StartupStatusReporter
 from ..cli._service_start import (
-    _decide_backend,
     _ensure_start_dependencies,
     _ServiceStartOptions,
 )
-from ..commands._provision import LOCAL_STORE_SELECTED
+from ..commands._provision import LOCAL_STORE_SELECTED, decide_backend
 from ..config._paths import persist_local_only
 from ..config._types import EnvVar
+from ..operator_state._installation import ComputeCapability
+from ..operator_state._service_environment import ServiceEnvironment
 from ..qdrant_runtime._resolve import resolve_binary
 from ._model_cache_seed import seed_model_cache
 from .conftest import managed_env
@@ -58,6 +59,10 @@ _LOCAL = EnvVar.LOCAL_ONLY.value
 _SERVER = EnvVar.QDRANT_SERVER.value
 _URL = EnvVar.QDRANT_URL.value
 _REMOTE = "http://qdrant.invalid:6333"
+
+#: The judgement a start has made of its environment by the time it
+#: reaches the dependency step: it only gets there accepted.
+_ACCEPTED = ServiceEnvironment(sys.executable, ComputeCapability.READY)
 
 #: What a daemon would decide from the environment it was handed. Run in a
 #: real interpreter because the claim under test is about a second process:
@@ -155,7 +160,7 @@ def staged(
 
 def _daemon_environment(case: _Case) -> dict[str, str]:
     """The environment a start with *case*'s flags builds for its daemon."""
-    backend = _decide_backend(local_only=case.local_only, qdrant=case.qdrant)
+    backend = decide_backend(local_only=case.local_only, qdrant=case.qdrant)
     return _build_service_child_env(
         _ServiceChildEnvRequest(qdrant=backend.qdrant, local_only=backend.local_only)
     )
@@ -187,7 +192,7 @@ def test_the_command_decides_what_the_settings_and_flags_call_for(
     fail here; with ``--qdrant`` no longer overriding the on-disk choice, the
     two ``qdrant-flag-over`` cases fail here. Restoring each passes.
     """
-    backend = _decide_backend(local_only=staged.local_only, qdrant=staged.qdrant)
+    backend = decide_backend(local_only=staged.local_only, qdrant=staged.qdrant)
 
     assert (backend.server_unneeded is None) is staged.runs_server
 
@@ -259,7 +264,7 @@ def test_the_preflight_wants_a_server_only_when_the_daemon_will_run_one(
     with managed_env(**off):
         seed_model_cache(monkeypatch, tmp_path / "hf-cache")
         assert resolve_binary() is None, "premise: no server may already resolve"
-        backend = _decide_backend(local_only=staged.local_only, qdrant=staged.qdrant)
+        backend = decide_backend(local_only=staged.local_only, qdrant=staged.qdrant)
         reporter = StartupStatusReporter(
             json_mode=False,
             console=_build_console(interactive=False, file=io.StringIO()),
@@ -269,7 +274,9 @@ def test_the_preflight_wants_a_server_only_when_the_daemon_will_run_one(
         stopped: int | None = None
         try:
             with reporter:
-                _ensure_start_dependencies(_options(staged), backend, reporter)
+                _ensure_start_dependencies(
+                    _options(staged), backend, _ACCEPTED, reporter
+                )
         except typer.Exit as exit_:
             stopped = exit_.exit_code
 
@@ -289,7 +296,7 @@ def test_a_remote_address_is_named_as_the_reason_and_not_repeated() -> None:
     """
     secret = "http://user:hunter2@qdrant.invalid:6333"
     with managed_env(**{_URL: secret, _LOCAL: None, _SERVER: None}):
-        reason = _decide_backend(local_only=False, qdrant=None).server_unneeded
+        reason = decide_backend(local_only=False, qdrant=None).server_unneeded
 
     assert reason is not None
     assert _URL in reason

@@ -149,15 +149,18 @@ def _should_unlink_discovery_file(pid_alive: bool) -> bool:
 def service_warmup() -> None:
     """Download GPU model files before they are needed.
 
-    Fetches files and nothing else: no model is constructed and torch is never
-    imported, so the verb works on a host whose accelerator is busy or broken.
-    Whether the weights are on disk is one question and whether this
-    environment can run them is another, which ``server start`` asks. The
-    front door's model step answers a client "not needed" before the cache is
-    probed.
+    Fetches files and nothing else: no model is constructed and this process
+    never imports torch. The files are fetched only for an environment that
+    can run the service, judged the way ``server start`` judges it, in a
+    child of the interpreter that would run the daemon. One that cannot is
+    told so, with the reason, before the cache is probed: a client needs no
+    model files, and a host whose accelerator stack is not usable yet gets
+    them from ``server start`` once it is.
     """
     from .._sync_vocabulary import ProvisionAction
     from ..commands._provision import provision_models
+    from ..operator_state._service_environment import judge_service_environment
+    from ._process import _resolve_daemon_interpreter
     from ._provision_progress import ReporterProvisionProgress
 
     # No ``--json`` mode on this verb, so the reporter always speaks; it is the
@@ -170,7 +173,11 @@ def service_warmup() -> None:
         ReporterProvisionProgress(reporter) as progress,
     ):
         reporter.announce("Model warmup")
-        result = provision_models(progress=progress)
+        # The judgement starts an interpreter and imports torch in it, which
+        # takes seconds; saying so keeps the wait from reading as a hang.
+        reporter.stage("Checking that this environment can run the service...")
+        environment = judge_service_environment(_resolve_daemon_interpreter())
+        result = provision_models(progress=progress, environment=environment)
 
     for repo in result.repos:
         _print_detail_line(repo.label, f"{repo.repo} {repo.detail}")

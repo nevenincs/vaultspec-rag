@@ -80,6 +80,9 @@ def test_qdrant_help_uses_managed_server_language() -> None:
         assert old_term not in result.output
 
 
+# What status tells a host: a client is told it needs no server, so the
+# install command and the start are only offered as a host that can serve.
+@pytest.mark.usefixtures("inference_host")
 def test_qdrant_status_is_operator_facing_when_not_installed(tmp_path: Path) -> None:
     help_result = runner.invoke(app, ["server", "qdrant", "status", "--help"])
     assert help_result.exit_code == 0, help_result.output
@@ -113,6 +116,7 @@ def test_qdrant_status_is_operator_facing_when_not_installed(tmp_path: Path) -> 
     assert "vaultspec-rag server qdrant install" in result.output
 
 
+@pytest.mark.usefixtures("inference_host")
 def test_qdrant_status_labels_an_operator_binary_and_offers_the_start(
     tmp_path: Path,
 ) -> None:

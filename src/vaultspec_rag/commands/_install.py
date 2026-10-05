@@ -1313,26 +1313,6 @@ def _install_run_unchecked(request: _InstallRunRequest) -> InstallReport:
     return report
 
 
-def _persist_runtime_selection(report: InstallReport, local_only: bool) -> None:
-    """Write the local-only runtime marker, degrading to a warning on error.
-
-    A persisted runtime hint must never crash setup, so an OSError on the
-    write is logged and surfaced as a recoverable warning naming the
-    runtime escape hatches, rather than raised.
-    """
-    from ..config._paths import persist_local_only
-
-    try:
-        persist_local_only(local_only)
-    except OSError as exc:
-        logger.error("failed to persist local-only selection: %s", exc)
-        report.warnings.append(
-            f"could not persist the local-only selection: {exc}; "
-            f"pass --local-only on `server start` or set "
-            f"VAULTSPEC_RAG_LOCAL_ONLY to select the local backend."
-        )
-
-
 @dataclass(frozen=True, slots=True)
 class _ProvisioningRequest:
     target: Path
@@ -1350,10 +1330,12 @@ class _ProvisioningRequest:
 def _run_provisioning(request: _ProvisioningRequest) -> None:
     """Run the provisioning front door and attach its outcome to the report.
 
-    A client installation provisions nothing: the front door answers every
-    step skipped for it. The backend selection this step persists is read by
-    the host installation's ``server start``, so a client writing it would
-    override the host's choice, and it is left untouched.
+    The model files and the Qdrant server are fetched only for an environment
+    that can run the service, and that is judged here once, for both steps
+    and for the backend choice. A client is answered ``skipped`` for each. A
+    host whose accelerator stack is not usable yet - the state this command
+    itself leaves a project in until its torch configuration is synced - is
+    answered ``skipped`` with the reason and told that a start fetches them.
 
     Torch is already configured by the enrollment torch step above (its
     honest two-phase state lives on ``report.torch_config_action`` and the
@@ -1365,6 +1347,8 @@ def _run_provisioning(request: _ProvisioningRequest) -> None:
     surfaced as a warning rather than raised, because enrollment already
     succeeded and provisioning is the recoverable, re-runnable phase.
     """
+    from ..operator_state._service_environment import judge_service_environment
+    from ._backend_choice import save_backend_choice
     from ._provision import provision_dependencies
 
     # The enrollment torch step already ran (and is reported on its own
@@ -1373,6 +1357,13 @@ def _run_provisioning(request: _ProvisioningRequest) -> None:
     skip = set(request.provision_skip or set())
     skip.add("torch")
 
+    # The tool-environment check at the head of the run has usually probed
+    # this interpreter already, and its verdict is carried on the report so
+    # that nothing asks a second time.
+    repair = request.report.tool_torch_repair
+    environment = judge_service_environment(
+        probed=None if repair is None else repair.capability
+    )
     outcome = provision_dependencies(
         request.target,
         local_only=request.local_only,
@@ -1383,6 +1374,7 @@ def _run_provisioning(request: _ProvisioningRequest) -> None:
         sync_after=request.sync_after,
         confirm=request.confirm,
         progress=request.progress,
+        environment=environment,
     )
     request.report.provision_outcome = outcome
     if not outcome.ok:
@@ -1391,16 +1383,7 @@ def _run_provisioning(request: _ProvisioningRequest) -> None:
             request.report.warnings.append(
                 f"provisioning step {result.step} failed: {result.detail}"
             )
-
-    # Persist the local-only runtime selection so the resident service
-    # honours the chosen backend on a later ``server start`` without the
-    # operator re-passing ``--local-only``. Only the setup path reaches here,
-    # so a plain enrollment-only call never writes runtime state, and a
-    # preview must not touch disk. The explicit choice is persisted either way
-    # (``False`` records a deliberate server-mode selection) so the marker is
-    # unambiguous; env / flag still override it at resolution time.
-    if request.host and not request.dry_run:
-        _persist_runtime_selection(request.report, request.local_only)
+    outcome.backend = save_backend_choice(request, outcome, environment)
 
 
 def _rollback_seeded(base_dir: Path, seeded: list[str], report: InstallReport) -> None:

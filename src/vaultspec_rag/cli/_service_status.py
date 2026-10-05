@@ -4,7 +4,7 @@ Owns the ``~/.vaultspec-rag`` status directory, the ``service.json``
 status file (atomic write + tolerant read), the rotating log file, and
 the Windows-only lifecycle shutdown mirror line.
 
-The read-only discovery surface (``_status_dir``, ``_status_file``,
+The read-only discovery surface (``_status_file``,
 ``read_service_status``, ``_default_service_port``) was factored into the
 import-light ``vaultspec_rag.serviceclient`` package so the CLI and the MCP
 share one client. Those names are re-exported here unchanged so the CLI's
@@ -23,7 +23,6 @@ from ..serviceclient._discovery import (
     SERVICE_DISCOVERY_VERSION,
     _discovery_timestamp,
     _merge_service_status,
-    _status_dir,
     _status_file,
     read_service_status,
 )
@@ -53,15 +52,16 @@ def _service_phase(status: dict[str, object] | None) -> str | None:
 def _log_file() -> Path:
     """Return the path to the service log file.
 
-    Resolved via ``cfg.log_file`` relative to the status directory.
+    Resolved via ``cfg.log_file`` relative to the status directory. Nothing
+    is created: a caller about to write the log creates its directory.
 
     Returns:
         Path to ``{status_dir}/{log_file}``.
     """
-    from ..config._settings import get_config
+    from ..config._settings import get_config, managed_status_dir
 
     cfg = get_config()
-    return _status_dir() / cfg.log_file
+    return managed_status_dir() / cfg.log_file
 
 
 def _append_lifecycle_shutdown_log(reason: str, **kv: object) -> None:
