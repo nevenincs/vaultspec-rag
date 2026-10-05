@@ -7,17 +7,27 @@ process can interrupt, so a download that must be stoppable has to be a
 process: stopping it is then the operating system's job, whatever is moving
 the bytes.
 
-This process downloads and reports, and decides nothing. What to fetch,
+This process talks to the hub and reports, and decides nothing. What to fetch,
 whether there is room for it, whether what arrived can be trusted, and what a
-failure means to the operator all stay with the process that started it.
+failure means to the operator all stay with the process that started it. Every
+request to the hub is made here, including the one that asks how large the
+repository is: a request made by the starting process could not be stopped
+either, and a hub that answers it a few bytes at a time would hold that
+process for as long as it liked.
 
 Standard output carries one JSON record per line and nothing else:
 
 - ``progress`` - the bytes received so far and the file and byte counts, sent
   whenever they change;
+- ``declared`` - the size the hub declares for the revision, sent once, before
+  any file is asked for;
 - ``done`` - the download completed;
 - ``failed`` - it did not, with the failure's class and the hub client's own
   first line.
+
+After ``declared`` nothing is fetched until the reader answers with one line
+on standard input saying to go. The reader is the one that knows whether the
+download fits, so a download that cannot fit is refused before its first byte.
 
 A process that ends without a ``done`` or ``failed`` record has died, and the
 reader treats that as its own kind of failure.
@@ -30,7 +40,7 @@ import json
 import os
 import sys
 import threading
-from typing import IO, TYPE_CHECKING, cast
+from typing import IO, TYPE_CHECKING, Protocol, cast
 
 from ._hub_failure import classify_hub_failure, first_line
 from ._snapshot_progress import SnapshotBars
@@ -38,17 +48,29 @@ from ._snapshot_progress import SnapshotBars
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-__all__ = ["RECORD_DONE", "RECORD_FAILED", "RECORD_PROGRESS", "main"]
+__all__ = [
+    "GO_AHEAD",
+    "RECORD_DECLARED",
+    "RECORD_DONE",
+    "RECORD_FAILED",
+    "RECORD_PROGRESS",
+    "main",
+]
 
 RECORD_PROGRESS = "progress"
+RECORD_DECLARED = "declared"
 RECORD_DONE = "done"
 RECORD_FAILED = "failed"
+
+#: The line the reader sends on standard input to let the download begin.
+GO_AHEAD = "go"
 
 #: How often the counts are looked at. Fast enough that the reader's progress
 #: line moves, slow enough that a download of an hour is a few thousand lines.
 _REPORT_INTERVAL_SECONDS = 0.25
 
-#: Exit status when nobody is reading the records any more.
+#: Exit status when nobody is waiting for a result any more: the reader went
+#: away, or answered the declared size with anything but the go-ahead.
 _EXIT_UNREAD = 3
 
 
@@ -198,22 +220,63 @@ def _arguments(argv: Sequence[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+class _SizedApi(Protocol):
+    """The one hub call that asks how large a revision is, as used here."""
+
+    def model_info(self, repo_id: str, **kwargs: object) -> object: ...
+
+
+def _declared_bytes(
+    api: _SizedApi, repo: str, revision: str | None, *, timeout: float
+) -> int:
+    """Return the size the hub declares for *revision*, or 0 when it declares none.
+
+    The request is given the timeout the hub client gives its own request
+    for a repository's files. Left unset, the client waits on this one
+    without limit, and a hub that accepted it and said nothing would be
+    waited on until the progress floor stopped the whole process.
+
+    Raises:
+        Exception: Whatever the hub client raises when it cannot answer.
+    """
+    info = api.model_info(
+        repo, revision=revision, files_metadata=True, token=False, timeout=timeout
+    )
+    siblings = cast("list[object]", getattr(info, "siblings", None) or [])
+    declared = [getattr(sibling, "size", None) for sibling in siblings]
+    return sum(size for size in declared if isinstance(size, int))
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Download one repository and report how it went."""
     args = _arguments(argv)
     records = _Records(sys.stdout)
     try:
         from huggingface_hub import (
+            HfApi,
+            constants,
             snapshot_download,  # pyright: ignore[reportUnknownVariableType]  # huggingface_hub stubs partially unknown
         )
 
         wire = _Wire()
         _count_wire_bytes(wire)
-        # The hub ships partial stubs, so the imported symbol is only
-        # partially typed; naming the shape this call site actually uses is
+        # The hub ships partial stubs, so the imported symbols are only
+        # partially typed; naming the shapes this call site actually uses is
         # what keeps the strict gate honest.
+        api = cast("_SizedApi", HfApi())
         download = cast("Callable[..., object]", snapshot_download)
         with SnapshotBars() as bars, _Reporter(records, wire, bars):
+            declared = _declared_bytes(
+                api,
+                args.repo,
+                args.revision,
+                timeout=constants.HF_HUB_ETAG_TIMEOUT,
+            )
+            records.write({"record": RECORD_DECLARED, "bytes": declared})
+            if sys.stdin.readline().strip() != GO_AHEAD:
+                # The reader refused the download or is gone; either way it
+                # is not waiting for a result, and nothing was fetched.
+                return _EXIT_UNREAD
             download(
                 args.repo,
                 revision=args.revision,

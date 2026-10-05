@@ -13,8 +13,14 @@ killed and the caller gets one failed outcome. Killing a process is the one
 stop that does not depend on which transport was moving the bytes. An
 interrupt of the caller takes the same path.
 
-Nothing is decided in the child. It reports bytes, counts, and how it ended;
-what that means is settled here and by the caller.
+Every request to the hub is the child's, the first one included: the child
+asks how large the repository is and waits, and only when the caller has
+judged that size does it fetch anything. This process never opens a
+connection to the hub, so there is no request of its own that a hub could
+hold it on.
+
+Nothing is decided in the child. It reports bytes, counts, the declared size,
+and how it ended; what that means is settled here and by the caller.
 """
 
 from __future__ import annotations
@@ -34,7 +40,13 @@ from typing import IO, TYPE_CHECKING, cast
 from .._python_child import module_command
 from .._units import human_bytes
 from ._hub_failure import HubFailure
-from ._model_download_child import RECORD_DONE, RECORD_FAILED, RECORD_PROGRESS
+from ._model_download_child import (
+    GO_AHEAD,
+    RECORD_DECLARED,
+    RECORD_DONE,
+    RECORD_FAILED,
+    RECORD_PROGRESS,
+)
 from ._snapshot_progress import SnapshotCounts
 
 if TYPE_CHECKING:
@@ -44,6 +56,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "DEFAULT_LIMITS",
+    "DownloadCaller",
     "DownloadOutcome",
     "FetchLimits",
     "download_snapshot",
@@ -79,6 +92,23 @@ class FetchLimits:
     it, and a hub that trickles to hold a client open is. Ten minutes is long
     enough to ride out an access point restarting.
 
+    The window is not counted from the moment the download process is
+    started. A process takes time to start and to reach the hub - half a
+    second measured on an idle machine, a quarter of a minute on one with six
+    busy processes to every core - and that is not time in which the hub sent
+    too little. So the first window opens when the first byte arrives. It
+    opens a minute after the start whatever has happened, so a download that
+    never receives anything at all is judged like any other, one window
+    later. A minute is four times the slowest start measured, and it costs
+    nothing to be generous with: reaching it stops nothing, it only starts
+    the clock that can.
+
+    So the longest a download that will never finish is waited on is the
+    window plus the wait for a first byte: eleven minutes when nothing ever
+    arrives, and ten minutes from its first byte when a hub trickles. The
+    look every half second and the ten seconds allowed to confirm the kill
+    come on top of either.
+
     An hour waiting for another process is longer than a first fetch of the
     default models takes on a 10 Mbit/s link; past that, saying who holds the
     cache is more use than waiting in silence.
@@ -88,6 +118,7 @@ class FetchLimits:
 
     window_seconds: float = 600.0
     min_bytes: int = 1 << 20
+    first_byte_seconds: float = 60.0
     contention_seconds: float = 3600.0
 
 
@@ -102,6 +133,7 @@ class DownloadOutcome:
         failure: ``None`` when the repository was downloaded; otherwise why
             it was not.
         message: The detail of a failure, ready to follow the repository id.
+            For a refusal it is the caller's own reason, unchanged.
     """
 
     failure: HubFailure | None = None
@@ -109,11 +141,17 @@ class DownloadOutcome:
 
 
 class _Floor:
-    """Judge whether enough has arrived in the window that just passed."""
+    """Judge whether enough has arrived in the window that just passed.
+
+    Nothing is judged until the first window opens: at the first byte, or
+    ``first_byte_seconds`` after the download process was started when no
+    byte has arrived by then.
+    """
 
     def __init__(self, limits: FetchLimits, started: float) -> None:
         self._limits = limits
-        self._samples: deque[tuple[float, int]] = deque([(started, 0)])
+        self._opens_by = started + limits.first_byte_seconds
+        self._samples: deque[tuple[float, int]] = deque()
 
     def breached(self, now: float, received: int) -> bool:
         """Record *received* at *now*; say whether the last window fell short.
@@ -122,6 +160,8 @@ class _Floor:
         window old, so the judgement is over a sliding window and a burst at
         the start of the download buys no more than one window of silence.
         """
+        if not self._samples and received <= 0 and now < self._opens_by:
+            return False
         self._samples.append((now, received))
         horizon = now - self._limits.window_seconds
         while len(self._samples) > 1 and self._samples[1][0] <= horizon:
@@ -131,13 +171,23 @@ class _Floor:
 
 
 class _ChildFeed:
-    """Read the child's records and keep the latest of each kind."""
+    """Read the child's records, keep the latest of each kind, and answer one.
 
-    def __init__(self, process: subprocess.Popen[str]) -> None:
+    The child's ``declared`` record is answered from the reading thread, the
+    moment it is read: the child fetches nothing until it is, so answering on
+    the watcher's next look would add that wait to every download.
+    """
+
+    def __init__(
+        self, process: subprocess.Popen[str], admit: Callable[[int], str | None] | None
+    ) -> None:
         self._lock = threading.Lock()
         self._received = 0
         self._counts = SnapshotCounts()
         self._terminal: dict[str, object] | None = None
+        self._refusal: str | None = None
+        self._admit = admit
+        self._answers = process.stdin
         self._stderr: deque[str] = deque(maxlen=_STDERR_TAIL_LINES)
         self._threads = (
             threading.Thread(target=self._read_records, args=(process.stdout,)),
@@ -160,6 +210,9 @@ class _ChildFeed:
 
     def _take(self, record: dict[str, object]) -> None:
         kind = record.get("record")
+        if kind == RECORD_DECLARED:
+            self._answer(_int(record.get("bytes")))
+            return
         with self._lock:
             if kind == RECORD_PROGRESS:
                 self._received = max(self._received, _int(record.get("received")))
@@ -172,6 +225,24 @@ class _ChildFeed:
             elif kind in {RECORD_DONE, RECORD_FAILED}:
                 self._terminal = record
 
+    def _answer(self, declared: int) -> None:
+        """Let the child download *declared* bytes, or keep it waiting.
+
+        A refusal sends nothing: the child stays where it is, having fetched
+        no file, until the watcher sees the refusal and stops it.
+        """
+        reason = None if self._admit is None else self._admit(declared)
+        if reason is not None:
+            with self._lock:
+                self._refusal = reason
+            return
+        # A child that died before it could be answered is found by the
+        # watcher; there is nobody left to tell.
+        with contextlib.suppress(OSError, ValueError):
+            if self._answers is not None:
+                self._answers.write(GO_AHEAD + "\n")
+                self._answers.flush()
+
     def _read_stderr(self, stream: IO[str] | None) -> None:
         for line in stream or ():
             if line.strip():
@@ -182,6 +253,11 @@ class _ChildFeed:
         """Return the bytes received and the counts last reported."""
         with self._lock:
             return self._received, self._counts
+
+    def refusal(self) -> str | None:
+        """Return why the caller refused the declared size, if it did."""
+        with self._lock:
+            return self._refusal
 
     def finish(self) -> tuple[dict[str, object] | None, str]:
         """Wait for both pipes to end; return the terminal record and stderr."""
@@ -203,20 +279,27 @@ def _kill_tree(process: subprocess.Popen[str]) -> list[int]:
     killing the launcher alone would leave the download running. Descendants
     are witnessed before the parent dies, because afterwards the ancestry can
     no longer be established.
+
+    Only the process's own creation time is read to pin it. Walking its
+    ancestry to learn the same thing cost most of a second on an idle machine
+    and a quarter of a minute on a loaded one, and the download kept running
+    for all of it.
     """
     from .._process_probe import (
         LineageEntry,
         kill_process_descendants,
-        process_lineage,
+        pid_start_time,
         wait_for_exit,
     )
 
     descendants: tuple[LineageEntry, ...] = ()
     if process.poll() is None:
-        lineage = process_lineage(process.pid)
-        if lineage and lineage[0].pid == process.pid:
+        created = pid_start_time(process.pid)
+        if created > 0.0:
             with contextlib.suppress(OSError, ValueError):
-                descendants = kill_process_descendants(lineage[0])
+                descendants = kill_process_descendants(
+                    LineageEntry(process.pid, created)
+                )
         with contextlib.suppress(OSError):
             process.kill()
     deadline = time.monotonic() + _KILL_CONFIRM_SECONDS
@@ -256,6 +339,14 @@ def _stalled(
     return DownloadOutcome(HubFailure.STALLED, message)
 
 
+def _refused(process: subprocess.Popen[str], reason: str) -> DownloadOutcome:
+    """Stop a child the caller would not let download, which fetched no file."""
+    survivors = _kill_tree(process)
+    if survivors:
+        reason += f"; processes {survivors} could not be confirmed stopped"
+    return DownloadOutcome(HubFailure.REFUSED, reason)
+
+
 def _ended(process: subprocess.Popen[str], feed: _ChildFeed) -> DownloadOutcome:
     """Turn a child that exited on its own into an outcome."""
     terminal, stderr = feed.finish()
@@ -278,13 +369,31 @@ def _ended(process: subprocess.Popen[str], feed: _ChildFeed) -> DownloadOutcome:
 
 
 @dataclass(frozen=True, slots=True)
+class DownloadCaller:
+    """What the caller of a download is told, and what it is asked.
+
+    Attributes:
+        on_progress: Called with the counts whenever they change.
+        admit: The caller's judgement of the size the hub declares for the
+            revision, in bytes (0 when it declares none). Called once, before
+            any file is fetched, on a thread of this module's; it returns
+            ``None`` to let the download go ahead or the reason it may not.
+            It must not raise: the download process is waiting on the answer.
+            Omitted, every size is let through.
+    """
+
+    on_progress: Callable[[SnapshotCounts], None] | None = None
+    admit: Callable[[int], str | None] | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class _Request:
     repo: str
     revision: str | None
     force: bool
     blobs: Path
     limits: FetchLimits
-    on_progress: Callable[[SnapshotCounts], None] | None
+    caller: DownloadCaller
 
 
 def download_snapshot(
@@ -293,7 +402,7 @@ def download_snapshot(
     revision: str | None,
     force: bool = False,
     limits: FetchLimits = DEFAULT_LIMITS,
-    on_progress: Callable[[SnapshotCounts], None] | None = None,
+    caller: DownloadCaller | None = None,
 ) -> DownloadOutcome:
     """Download *repo* into the hub cache in a child process, under the floor.
 
@@ -306,7 +415,8 @@ def download_snapshot(
         revision: The revision to fetch, or ``None`` for the default branch.
         force: Fetch every file again, replacing what the cache holds.
         limits: The progress floor.
-        on_progress: Called with the counts whenever they change.
+        caller: Where progress is reported and who judges the declared size;
+            omitted, nothing is reported and every size is let through.
 
     Returns:
         How the download ended.
@@ -322,7 +432,9 @@ def download_snapshot(
         / repo_folder_name(repo_id=repo, repo_type="model")
         / "blobs"
     )
-    return _run(_Request(repo, revision, force, blobs, limits, on_progress))
+    return _run(
+        _Request(repo, revision, force, blobs, limits, caller or DownloadCaller())
+    )
 
 
 def _run(request: _Request) -> DownloadOutcome:
@@ -337,14 +449,14 @@ def _run(request: _Request) -> DownloadOutcome:
     # exactly what this process would have used.
     process = subprocess.Popen(
         command,
-        stdin=subprocess.DEVNULL,
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
         errors="replace",
     )
-    feed = _ChildFeed(process)
+    feed = _ChildFeed(process, request.caller.admit)
     # A child that ends on its own removes the file it could not finish. One
     # that was stopped, or died, did not get the chance.
     unfinished = True
@@ -355,9 +467,12 @@ def _run(request: _Request) -> DownloadOutcome:
     finally:
         if process.poll() is None:
             _kill_tree(process)
-        for pipe in (process.stdout, process.stderr):
+        for pipe in (process.stdin, process.stdout, process.stderr):
             if pipe is not None:
-                pipe.close()
+                # Closing the answering pipe of a dead child can report the
+                # line it never read; there is nothing to do about that.
+                with contextlib.suppress(OSError):
+                    pipe.close()
         if unfinished:
             # Only what appeared during this call. Under the fetch claim no
             # other fetch of this package is writing here; a file another tool
@@ -381,11 +496,14 @@ def _watch(
         except subprocess.TimeoutExpired:
             exited = False
         received, counts = feed.latest()
-        if request.on_progress is not None and counts != shown:
+        if request.caller.on_progress is not None and counts != shown:
             shown = counts
-            request.on_progress(counts)
+            request.caller.on_progress(counts)
         if exited:
             return _ended(process, feed)
+        refusal = feed.refusal()
+        if refusal is not None:
+            return _refused(process, refusal)
         if floor.breached(time.monotonic(), received):
             return _stalled(process, limits, received)
 

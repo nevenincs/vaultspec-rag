@@ -24,15 +24,17 @@ the hub declares a size it cannot fit. Nothing has to be cleaned up before the
 next run: a file that was not finished is removed and every file that was is
 kept, so a re-run fetches only what is still missing.
 
-This module decides; it downloads nothing itself. Each repository that needs
-fetching is downloaded by a child process, because that is the only kind of
-download that can always be stopped. A repository already in the cache costs
-no process and no request.
+This module decides; it downloads nothing and asks the hub nothing itself.
+Each repository that needs fetching is downloaded by a child process, which
+also makes the request that asks how large it is, because a request made in a
+child is the only kind that can always be stopped. A repository already in the
+cache costs no process and no request.
 
 Two bounds apply to a hub that misbehaves. One that goes silent is given up
 on by the hub client itself: it abandons a request after its per-read timeout
 with no bytes, and a file after six consecutive such attempts. One that keeps
-sending too little to ever finish is stopped by the progress floor.
+sending too little to ever finish is stopped by the progress floor, whichever
+request it does that to.
 """
 
 from __future__ import annotations
@@ -41,14 +43,15 @@ import logging
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING
 
 from .._sync_vocabulary import ProvisionAction
 from .._units import human_bytes
 from ..config._types import EnvVar, hf_cache_only
-from ._hub_failure import HubFailure, classify_hub_failure, first_line
+from ._hub_failure import HubFailure
 from ._model_download import (
     DEFAULT_LIMITS,
+    DownloadCaller,
     FetchLimits,
     download_snapshot,
     exclusive_fetch,
@@ -138,15 +141,8 @@ class ModelFetch:
     repos: tuple[ModelRepoResult, ...] = ()
 
 
-class _HubApi(Protocol):
-    """The one hub call the free-space check makes, as this module uses it."""
-
-    def model_info(self, repo_id: str, **kwargs: object) -> object: ...
-
-
 @dataclass(frozen=True, slots=True)
 class _FetchContext:
-    api: _HubApi
     progress: ProvisionProgress | None
     limits: FetchLimits
     total: int
@@ -196,7 +192,7 @@ def fetch_models(
         The outcome of the whole fetch with one result per repository.
     """
     try:
-        from huggingface_hub import HfApi, constants
+        from huggingface_hub import constants
     except ImportError:
         return ModelFetch(
             ProvisionAction.FAILED,
@@ -209,10 +205,6 @@ def fetch_models(
 
     models = configured_model_repos()
     context = _FetchContext(
-        # The hub ships partial stubs, so the imported symbol is only
-        # partially typed; naming the shape this call site actually uses is
-        # what keeps the strict gate honest.
-        api=cast("_HubApi", HfApi()),
         progress=progress,
         limits=limits,
         total=len(models),
@@ -268,25 +260,25 @@ def _download_repo(context: _FetchContext, wanted: _Wanted) -> ModelRepoResult:
     revision = sparse_model_revision(wanted.repo)
     heading = f"Downloading {wanted.label} {wanted.place}"
     progress = context.progress
-    try:
-        shortfall = _space_shortfall(context, wanted.repo, revision)
-    except Exception as exc:
-        logger.error("model fetch failed for %s: %s", wanted.repo, exc)
-        return _failed(context, wanted, classify_hub_failure(exc), first_line(exc))
-    if shortfall is not None:
-        return wanted.result(ProvisionAction.FAILED, shortfall, MODELS_NO_SPACE)
     if progress is not None:
         progress.stage(f"{heading}...")
     outcome = download_snapshot(
         wanted.repo,
         revision=revision,
         limits=context.limits,
-        on_progress=(
-            None
-            if progress is None
-            else lambda counts: progress.downloading(heading, counts)
+        caller=DownloadCaller(
+            on_progress=(
+                None
+                if progress is None
+                else lambda counts: progress.downloading(heading, counts)
+            ),
+            # Asked before the first byte, because the alternative is a
+            # download of several gigabytes that fails near its end.
+            admit=lambda declared: _space_shortfall(context, wanted.repo, declared),
         ),
     )
+    if outcome.failure is HubFailure.REFUSED:
+        return wanted.result(ProvisionAction.FAILED, outcome.message, MODELS_NO_SPACE)
     if outcome.failure is not None:
         logger.error("model fetch failed for %s: %s", wanted.repo, outcome.message)
         return _failed(context, wanted, outcome.failure, outcome.message)
@@ -310,37 +302,32 @@ def _failed(
     return wanted.result(ProvisionAction.FAILED, detail, _CODE_OF[failure])
 
 
-def _space_shortfall(
-    context: _FetchContext, repo: str, revision: str | None
-) -> str | None:
+def _space_shortfall(context: _FetchContext, repo: str, needed: int) -> str | None:
     """Say why *repo* cannot fit in the cache, or ``None`` when it can.
 
-    Asked before the first byte, because the alternative is a download of
-    several gigabytes that fails near its end. The size is the one the hub
-    declares for the revision; the files of this repository the cache already
-    holds are credited against it, since the hub client does not fetch a
-    finished file again. A hub that declares no sizes cannot be judged, and
-    the download goes ahead.
+    *needed* is the size the hub declares for the revision, as the download
+    process reported it; this process asks the hub nothing. The files of this
+    repository the cache already holds are credited against it, since the hub
+    client does not fetch a finished file again. A hub that declares no sizes
+    cannot be judged, and neither can a volume that cannot be measured: the
+    download goes ahead, and one that does not fit still ends as one outcome.
 
-    Raises:
-        Exception: Whatever the hub client raises when it cannot answer; the
-            caller classifies it exactly as it would a failed download.
+    Never raises: it is called while the download process waits for its
+    answer, and an error here would leave it waiting.
     """
     from huggingface_hub.file_download import repo_folder_name
 
-    info = context.api.model_info(
-        repo, revision=revision, files_metadata=True, token=False
-    )
-    siblings = cast("list[object]", getattr(info, "siblings", None) or [])
-    declared = [getattr(sibling, "size", None) for sibling in siblings]
-    needed = sum(size for size in declared if isinstance(size, int))
     blobs = context.cache / repo_folder_name(repo_id=repo, repo_type="model") / "blobs"
-    held = (
-        sum(entry.stat().st_size for entry in blobs.iterdir() if entry.is_file())
-        if blobs.is_dir()
-        else 0
-    )
-    free = shutil.disk_usage(_existing_ancestor(context.cache)).free
+    try:
+        held = (
+            sum(entry.stat().st_size for entry in blobs.iterdir() if entry.is_file())
+            if blobs.is_dir()
+            else 0
+        )
+        free = shutil.disk_usage(_existing_ancestor(context.cache)).free
+    except OSError as exc:
+        logger.debug("free space in %s could not be measured: %s", context.cache, exc)
+        return None
     if needed - held <= free:
         return None
     return (

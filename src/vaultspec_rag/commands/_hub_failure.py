@@ -4,9 +4,10 @@ A failed fetch asks different things of an operator depending on its cause: a
 hub that cannot be reached, a name the hub does not have, a full volume, a
 certificate this host does not trust. The cause is read from the exception the
 hub client raised, which has to happen in the process that caught it - an
-exception does not cross a pipe - so the download child classifies its own
-failure and reports the class, and the command that started it classifies what
-it catches itself with the same function.
+exception does not cross a pipe - so the download child, which makes every
+request to the hub, classifies its own failure and reports the class. The
+command that started it adds the reasons only it can know: a download it
+stopped, one that died, and one it would not let begin.
 """
 
 from __future__ import annotations
@@ -37,6 +38,9 @@ class HubFailure(StrEnum):
     STALLED = "stalled"
     #: The download process ended without saying how it went.
     DIED = "died"
+    #: The caller judged the size the hub declared and would not let the
+    #: download begin. Nothing was fetched.
+    REFUSED = "refused"
 
 
 def _causes(exc: BaseException) -> Iterator[BaseException]:
