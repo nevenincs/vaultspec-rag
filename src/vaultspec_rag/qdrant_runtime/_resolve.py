@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, Unpack, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
     from http.client import HTTPResponse
 
 from .._atomic_write import write_json_atomically
@@ -45,12 +45,14 @@ from ..config._settings import get_config, managed_status_dir
 from ..config._types import EnvVar
 from ._constants import (
     ASSET_LINUX_ARM_MUSL,
-    ASSET_LINUX_X86_GNU,
+    ASSET_LINUX_X86_MUSL,
     ASSET_MACOS_ARM,
     ASSET_MACOS_X86,
     ASSET_WINDOWS_X86,
     MANIFEST_FILENAME,
+    MANIFEST_SOURCE_OPERATOR,
     QDRANT_ASSET_SHA256,
+    QDRANT_EXECUTABLE_SHA256,
     QDRANT_SERVER_VERSION,
     ResolvedBinary,
 )
@@ -60,10 +62,12 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "QdrantEndpointProbe",
     "QdrantIdentity",
+    "UnsupportedPlatformError",
     "asset_for_platform",
     "binary_filename",
     "classify_qdrant_state",
     "decide_qdrant_action",
+    "expected_executable_sha256",
     "has_provisioned_binary",
     "owner_pid_witness_state",
     "probe_qdrant_endpoint",
@@ -150,11 +154,24 @@ _ARM_MACHINES = frozenset({"arm64", "aarch64"})
 _X86_MACHINES = frozenset({"amd64", "x86_64"})
 
 
+class UnsupportedPlatformError(RuntimeError):
+    """No upstream release asset exists for the platform/arch pair.
+
+    Distinct from a pin-table defect so a caller can report an unsupported
+    host as an outcome instead of a crash. Such a host is never routed to
+    another architecture's build; the operator binary setting is its route.
+    """
+
+
 def asset_for_platform(
     platform: str | None = None,
     machine: str | None = None,
 ) -> str:
-    """Return the release asset name for a platform/arch pair.
+    """Return the release asset name a new install uses on a platform/arch pair.
+
+    Linux selects the static musl build on both architectures, so one linkage
+    model applies and no host glibc version can fail a verified install at
+    spawn.
 
     Args:
         platform: ``sys.platform`` value (``win32`` / ``darwin`` /
@@ -163,12 +180,13 @@ def asset_for_platform(
             machine.
 
     Returns:
-        The asset filename, guaranteed to be a key of
-        :data:`QDRANT_ASSET_SHA256`.
+        The asset filename, guaranteed to be a key of both
+        :data:`QDRANT_ASSET_SHA256` and :data:`QDRANT_EXECUTABLE_SHA256`.
 
     Raises:
-        RuntimeError: If the platform/arch pair has no upstream
+        UnsupportedPlatformError: If the platform/arch pair has no upstream
             release asset.
+        RuntimeError: If the selected asset is missing from a pin table.
     """
     plat = (platform or sys.platform).lower()
     mach = (machine or _platform.machine()).lower()
@@ -183,17 +201,17 @@ def asset_for_platform(
             asset = ASSET_MACOS_X86
     elif plat.startswith("linux"):
         if mach in _X86_MACHINES:
-            asset = ASSET_LINUX_X86_GNU
+            asset = ASSET_LINUX_X86_MUSL
         elif mach in _ARM_MACHINES:
             asset = ASSET_LINUX_ARM_MUSL
 
     if asset is None:
-        raise RuntimeError(
+        raise UnsupportedPlatformError(
             f"No Qdrant server release asset exists for platform={plat!r} "
             f"machine={mach!r}. Supply a binary via "
             f"{EnvVar.QDRANT_BINARY.value} instead."
         )
-    if asset not in QDRANT_ASSET_SHA256:
+    if asset not in QDRANT_ASSET_SHA256 or asset not in QDRANT_EXECUTABLE_SHA256:
         raise RuntimeError(
             f"Asset {asset!r} has no committed SHA256 digest; the pin "
             "table is incomplete."
@@ -236,6 +254,28 @@ def read_manifest(version_dir: Path) -> dict[str, object] | None:
         logger.debug("qdrant manifest at %s is not a dict", path)
         return None
     return cast("dict[str, object]", data)
+
+
+def expected_executable_sha256(manifest: Mapping[str, object]) -> str:
+    """Return the digest a managed install's executable must hash to.
+
+    The manifest records what was installed; it is not a source of trust for
+    a downloaded binary, because it sits in the directory it would be
+    vouching for. Its asset name only selects which committed digest applies,
+    so an install made from an asset no platform selects any more keeps
+    verifying for as long as that asset stays pinned. An install an operator
+    registered has no committed digest, and the one recorded at registration
+    stands in for it.
+
+    Returns:
+        The digest, or ``""`` when none can be established: a downloaded
+        install whose manifest names no asset, or one absent from the pin
+        table, or a registered install with no recorded digest. No file
+        hashes to the empty string, so such an install never verifies.
+    """
+    if manifest.get("source") == MANIFEST_SOURCE_OPERATOR:
+        return str(manifest.get("binary_sha256", ""))
+    return QDRANT_EXECUTABLE_SHA256.get(str(manifest.get("asset", "")), "")
 
 
 _IDENTITY_FILENAME = "identity.json"
@@ -784,7 +824,7 @@ def _resolve_provisioned(version: str) -> ResolvedBinary | None:
         path=binary,
         source="provisioned",
         version=recorded_version,
-        sha256=str(manifest.get("binary_sha256", "")),
+        sha256=expected_executable_sha256(manifest),
     )
 
 

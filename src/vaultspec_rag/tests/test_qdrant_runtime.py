@@ -36,8 +36,10 @@ from ..qdrant_runtime._provision import (
     provisioned_versions,
 )
 from ..qdrant_runtime._resolve import (
+    UnsupportedPlatformError,
     asset_for_platform,
     binary_filename,
+    expected_executable_sha256,
     qdrant_bin_dir,
     resolve_binary,
 )
@@ -77,9 +79,9 @@ class TestAssetResolution:
             ("win32", "x86_64", "qdrant-x86_64-pc-windows-msvc.zip"),
             ("darwin", "arm64", "qdrant-aarch64-apple-darwin.tar.gz"),
             ("darwin", "x86_64", "qdrant-x86_64-apple-darwin.tar.gz"),
-            ("linux", "x86_64", "qdrant-x86_64-unknown-linux-gnu.tar.gz"),
+            ("linux", "x86_64", "qdrant-x86_64-unknown-linux-musl.tar.gz"),
             ("linux", "aarch64", "qdrant-aarch64-unknown-linux-musl.tar.gz"),
-            ("linux2", "amd64", "qdrant-x86_64-unknown-linux-gnu.tar.gz"),
+            ("linux2", "amd64", "qdrant-x86_64-unknown-linux-musl.tar.gz"),
         ],
     )
     def test_known_platforms(self, platform: str, machine: str, expected: str) -> None:
@@ -94,7 +96,9 @@ class TestAssetResolution:
         ],
     )
     def test_unsupported_platforms_raise(self, platform: str, machine: str) -> None:
-        with pytest.raises(RuntimeError, match="No Qdrant server release asset"):
+        with pytest.raises(
+            UnsupportedPlatformError, match="No Qdrant server release asset"
+        ):
             asset_for_platform(platform, machine)
 
     def test_running_platform_resolves(self) -> None:
@@ -126,6 +130,78 @@ class TestPinTable:
         """
         pinned = [*QDRANT_ASSET_SHA256.values(), *QDRANT_EXECUTABLE_SHA256.values()]
         assert len(set(pinned)) == len(pinned)
+
+
+_GNU_ASSET = "qdrant-x86_64-unknown-linux-gnu.tar.gz"
+
+
+class TestExpectedExecutableDigest:
+    """Which digest a managed install's executable is held to.
+
+    The manifest sits beside the binary it describes, so for a downloaded
+    install it may only say which asset was installed. The digest itself has
+    to come from the committed table.
+    """
+
+    @pytest.mark.parametrize("asset", sorted(QDRANT_EXECUTABLE_SHA256))
+    def test_a_download_is_held_to_the_committed_digest_of_its_asset(
+        self, asset: str
+    ) -> None:
+        """The manifest's own digest is never the expectation for a download.
+
+        Proven able to fail: returning the manifest's ``binary_sha256`` for a
+        downloaded install fails this on the equality below, for every asset.
+        """
+        manifest = {
+            "source": "download",
+            "asset": asset,
+            "binary_sha256": "f" * 64,
+        }
+        assert expected_executable_sha256(manifest) == QDRANT_EXECUTABLE_SHA256[asset]
+
+    def test_an_install_from_the_unselected_gnu_asset_keeps_its_own_digest(
+        self,
+    ) -> None:
+        """An install made while gnu was selected is compared to the gnu pin.
+
+        Proven able to fail: looking the digest up by the asset the running
+        platform selects, instead of the one the manifest names, fails this on
+        the equality below - no platform selects gnu.
+        """
+        assert (
+            expected_executable_sha256({"source": "download", "asset": _GNU_ASSET})
+            == QDRANT_EXECUTABLE_SHA256[_GNU_ASSET]
+        )
+
+    @pytest.mark.parametrize(
+        "manifest",
+        [
+            {"version": QDRANT_SERVER_VERSION},
+            {"source": "download"},
+            {"source": "download", "asset": ""},
+            {"source": "download", "asset": "qdrant-riscv64-unknown-linux.tar.gz"},
+            {"asset": "not-an-asset", "binary_sha256": "a" * 64},
+            {"source": "operator"},
+        ],
+    )
+    def test_no_digest_is_established_without_a_pinned_asset_or_a_registration(
+        self, manifest: dict[str, object]
+    ) -> None:
+        """An asset outside the table never verifies; nothing stands in for it.
+
+        Proven able to fail: falling back to the running platform's digest for
+        an unknown asset fails this on the equality below.
+        """
+        assert expected_executable_sha256(manifest) == ""
+
+    def test_a_registered_install_is_held_to_its_registration_digest(self) -> None:
+        recorded = "b" * 64
+        manifest = {
+            "source": "operator",
+            "asset": asset_for_platform(),
+            "binary_sha256": recorded,
+        }
+        assert expected_executable_sha256(manifest) == recorded
 
     def test_pin_minor_matches_locked_client_minor(self) -> None:
         """The server pin must stay on the locked qdrant-client minor line.
@@ -204,7 +280,7 @@ class TestPreExecDigestGuard:
         get_config(None)
         reset_config()
         try:
-            with pytest.raises(RuntimeError, match="manifest digest"):
+            with pytest.raises(RuntimeError, match="pinned digest"):
                 start_supervised_from_config()
         finally:
             os.environ.pop(EnvVar.QDRANT_SERVER.value, None)
@@ -335,7 +411,28 @@ class TestResolution:
         assert resolved.path == binary
         assert resolved.source == "provisioned"
         assert resolved.version == QDRANT_SERVER_VERSION
-        assert resolved.sha256 == file_sha256(binary)
+        # The seeded file is not the real server, so the expectation it is
+        # held to differs from its own hash: the digest comes from the pin
+        # table, not from the manifest written beside the file.
+        assert resolved.sha256 == QDRANT_EXECUTABLE_SHA256[asset_for_platform()]
+        assert resolved.sha256 != file_sha256(binary)
+
+    def test_resolves_an_install_made_from_the_gnu_asset_to_the_gnu_digest(
+        self, isolated_status_dir: Path
+    ) -> None:
+        _ = isolated_status_dir
+        version_dir = qdrant_bin_dir()
+        _seed_verified_install(version_dir)
+        manifest_path = version_dir / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["asset"] = _GNU_ASSET
+        manifest["asset_sha256"] = QDRANT_ASSET_SHA256[_GNU_ASSET]
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        resolved = resolve_binary()
+
+        assert resolved is not None
+        assert resolved.sha256 == QDRANT_EXECUTABLE_SHA256[_GNU_ASSET]
 
     def test_env_binary_wins_over_provisioned(
         self, isolated_status_dir: Path, tmp_path: Path

@@ -1250,7 +1250,7 @@ def start_supervised_from_config() -> QdrantSupervisor:
     """Resolve, verify, spawn, and ready-wait the qdrant child per config.
 
     Resolution follows the env-var > provisioned > PATH order. A
-    provisioned binary is re-hashed against its manifest digest before
+    provisioned binary is re-hashed against its pinned digest before
     execution so a tampered managed dir never runs. The started
     supervisor is installed as the process-wide active supervisor.
 
@@ -1330,7 +1330,7 @@ def start_supervised_from_config() -> QdrantSupervisor:
         if actual.lower() != resolved.sha256.lower():
             raise RuntimeError(
                 f"Provisioned qdrant binary at {resolved.path} does not "
-                "match its manifest digest; refusing to execute. Re-run: "
+                "match its pinned digest; refusing to execute. Re-run: "
                 "vaultspec-rag server qdrant install --upgrade"
             )
     elif resolved.source in ("env", "path"):

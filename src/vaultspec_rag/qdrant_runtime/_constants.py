@@ -87,11 +87,14 @@ ASSET_WINDOWS_X86: Final = "qdrant-x86_64-pc-windows-msvc.zip"
 #: archive BEFORE extraction; a mismatch deletes the partial download
 #: and fails the provisioning run.
 #:
-#: ``ASSET_LINUX_X86_MUSL`` is pinned but no platform selects it: the resolver
-#: sends x86-64 Linux to the gnu build. The digest is kept rather than dropped
-#: because removing a reviewed pin is how an unpinned asset later becomes
-#: reachable, but it is deliberately unreachable today and a guard asserts the
-#: two lists differ only by this one entry.
+#: ``ASSET_LINUX_X86_GNU`` is pinned but no platform selects it: the resolver
+#: sends x86-64 Linux to the static musl build, because the gnu build links
+#: against a glibc floor that moves with upstream's build runner and a verified
+#: install could then fail at spawn on an older host. The gnu pins are kept in
+#: both tables so an install made while gnu was selected keeps verifying - its
+#: manifest names the asset, and that name selects the digest to compare. A
+#: guard asserts the selectable set and the pinned set differ only by this one
+#: entry.
 QDRANT_ASSET_SHA256: Final[dict[str, str]] = {
     ASSET_MACOS_ARM: (
         "4e279a80cc1ebe73e859318ff86375af54c123887dd7ae46605c0eb6cb7c44e8"
@@ -159,6 +162,13 @@ QDRANT_EXECUTABLE_SHA256: Final[dict[str, str]] = {
 #: Name of the provisioning manifest written next to the binary.
 MANIFEST_FILENAME: Final[str] = "manifest.json"
 
+#: The manifest's ``source`` values. A downloaded install is held to the
+#: committed executable digest of the asset its manifest names; an install an
+#: operator registered has no committed digest and is held to the one recorded
+#: when it was registered.
+MANIFEST_SOURCE_DOWNLOAD: Final = "download"
+MANIFEST_SOURCE_OPERATOR: Final = "operator"
+
 
 @dataclass
 class ProvisionReport:
@@ -213,8 +223,10 @@ class ResolvedBinary:
         version: The provisioned version when ``source`` is
             ``"provisioned"``; empty otherwise (operator binaries are
             trusted as-is).
-        sha256: The recorded binary digest from the provisioning
-            manifest when available; empty otherwise.
+        sha256: The digest the executable must hash to before it may run.
+            For a managed install this is never read from a downloaded
+            install's own manifest; empty means no digest applies, and no
+            file hashes to it.
     """
 
     path: Path
