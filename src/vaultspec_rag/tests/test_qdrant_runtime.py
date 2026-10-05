@@ -5,8 +5,8 @@ verification against real archives built on disk, real provisioning
 state machines against a temp-isolated managed dir, and the
 pin-vs-lockfile guard parsed from the repository's actual ``uv.lock``.
 No network I/O happens anywhere in this module: the idempotency path
-is proven by pre-seeding a verified install (downloads are host-pinned
-to upstream, so a fixture URL cannot stand in for the network leg).
+is proven by pre-seeding a verified install, and the download leg has
+its own module.
 """
 
 from __future__ import annotations
@@ -209,63 +209,6 @@ class TestPreExecDigestGuard:
         finally:
             os.environ.pop(EnvVar.QDRANT_SERVER.value, None)
             reset_config()
-
-
-class TestDownloadGuards:
-    """The host/scheme pin is the security boundary; prove it refuses."""
-
-    def test_non_https_url_refused(self, tmp_path: Path) -> None:
-        import urllib.error
-
-        from ..qdrant_runtime import _provision
-
-        with pytest.raises(urllib.error.URLError, match="non-HTTPS"):
-            _provision._download(
-                "http://github.com/qdrant/qdrant/releases/x.zip",
-                tmp_path / "out.zip",
-            )
-        assert not (tmp_path / "out.zip").exists()
-
-    def test_cross_host_url_refused(self, tmp_path: Path) -> None:
-        import urllib.error
-
-        from ..qdrant_runtime import _provision
-
-        with pytest.raises(urllib.error.URLError, match="host"):
-            _provision._download(
-                "https://evil.example.com/qdrant.zip",
-                tmp_path / "out.zip",
-            )
-        assert not (tmp_path / "out.zip").exists()
-
-    def test_redirect_handler_rejects_downgrade_and_cross_host(self) -> None:
-        import urllib.error
-        from typing import Any, cast
-
-        from ..qdrant_runtime import _provision
-
-        handler = _provision._HostPinnedRedirect()
-        none = cast("Any", None)  # req/fp/headers are unused before the guard
-        # A redirect that downgrades to http on an allowed host must be
-        # refused as firmly as a cross-host redirect.
-        with pytest.raises(urllib.error.URLError, match="non-HTTPS"):
-            handler.redirect_request(
-                none,
-                none,
-                302,
-                "Found",
-                none,
-                "http://github.com/qdrant/qdrant/x.zip",
-            )
-        with pytest.raises(urllib.error.URLError, match="disallowed host"):
-            handler.redirect_request(
-                none,
-                none,
-                302,
-                "Found",
-                none,
-                "https://evil.example.com/x.zip",
-            )
 
 
 class TestArchiveTraversal:
