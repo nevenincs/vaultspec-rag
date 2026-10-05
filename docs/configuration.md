@@ -442,7 +442,7 @@ vaultspec-rag downloads its dense, sparse, and reranker model files through the 
 | -------------------------------- | ------- | ------------------------------------------------------------------------------------------------- |
 | `HF_HOME`                        | path    | Hub cache root. Read directly when reporting cache location; falls back to `~/.cache/huggingface` |
 | `HF_ENDPOINT`                    | string  | Hub endpoint. `VAULTSPEC_RAG_HF_ENDPOINT` overwrites it at process start when set                 |
-| `HF_HUB_DOWNLOAD_TIMEOUT`        | integer | Per-file download timeout. The service defaults it to `300` when unset                            |
+| `HF_HUB_DOWNLOAD_TIMEOUT`        | integer | Hub client's per-read timeout in seconds. vaultspec-rag does not set it; the default is `10`      |
 | `HF_HUB_OFFLINE`                 | boolean | Cache-only mode; no network access to the Hub                                                     |
 | `TRANSFORMERS_OFFLINE`           | boolean | Cache-only model loading for Transformers                                                         |
 | `DISABLE_SAFETENSORS_CONVERSION` | boolean | Skip on-the-fly safetensors conversion                                                            |
@@ -452,6 +452,8 @@ encoding, set `VAULTSPEC_RAG_SPARSE_ENABLED=0` in the service environment and
 rebuild existing indexes. The service still needs `[gpu]` and a supported GPU.
 
 `HF_HOME` sets where model files are cached, and defaults to `~/.cache/huggingface`. Set it to a persistent location before the first download.
+
+`HF_HUB_DOWNLOAD_TIMEOUT` is the Hub client's per-read timeout: the seconds it waits with no data arriving before it abandons one download attempt. It is not a budget for a whole file. vaultspec-rag does not set it, so the client's default of `10` applies. The client retries a file up to five more times and starts that count again whenever data arrives, so a hub that goes silent fails a file after about a minute. Raise it for a link that pauses for longer than that.
 
 `HF_HUB_OFFLINE` is the authoritative offline switch; vaultspec-rag also honours `TRANSFORMERS_OFFLINE`, and when either is set to `1`, `true`, `yes`, or `on` it loads every model cache-only. See the [Hugging Face environment variable reference](https://huggingface.co/docs/huggingface_hub/en/package_reference/environment_variables).
 

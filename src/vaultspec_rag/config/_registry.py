@@ -212,8 +212,9 @@ _DESCRIPTIONS: Final[Mapping[EnvVar, str]] = {
         "over its own value."
     ),
     EnvVar.HF_HUB_DOWNLOAD_TIMEOUT: (
-        "Per-request download timeout, honoured by huggingface_hub. Named "
-        "here so the literal lives in one place."
+        "The per-read download timeout honoured by huggingface_hub: seconds "
+        "with no data before it abandons one attempt. Never set by this "
+        "package; named in the remedy a failed model fetch prints."
     ),
     EnvVar.TRANSFORMERS_OFFLINE: (
         "Transformers offline switch, read alongside the Hub's own and under "
