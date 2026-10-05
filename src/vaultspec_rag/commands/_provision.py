@@ -23,6 +23,10 @@ provisioning runs by default; ``local_only`` skips the Qdrant binary
 (the headline escape hatch), and a finer ``skip`` set drops individual
 steps. Every step is idempotent (re-running a satisfied dependency is
 an ``unchanged`` no-op with no network) and honours ``dry_run``.
+
+Only a host installation provisions. A client loads no model and never
+runs the service, so every step answers ``skipped`` for it before its
+backend is reached, whichever command asked.
 """
 
 from __future__ import annotations
@@ -35,11 +39,18 @@ from typing import TYPE_CHECKING, TypedDict, Unpack
 from .._sync_vocabulary import ProvisionAction
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
+    from ..qdrant_runtime._constants import ProvisionReport
     from ._models import ConfirmFn, InstallReport
 
 logger = logging.getLogger(__name__)
+
+_CLIENT_SKIP = (
+    "not needed by a client installation; the host installation that runs "
+    "the service provides it"
+)
 
 
 class _ProvisionOptions(TypedDict, total=False):
@@ -79,8 +90,10 @@ __all__ = [
     "ProvisionOutcome",
     "ProvisionStep",
     "ProvisionStepResult",
+    "client_skip",
     "provision_dependencies",
     "provision_models",
+    "provision_qdrant_binary",
 ]
 
 
@@ -175,6 +188,22 @@ class ProvisionOutcome:
         }
 
 
+def client_skip(step: ProvisionStep) -> ProvisionStepResult | None:
+    """Answer *step* as skipped when this installation is a client.
+
+    Asked ahead of every step's backend, so no entry point can provision for a
+    client by reaching a step some other way. The role is read through the
+    module rather than bound at import, which is the one reading a caller can
+    pin.
+    """
+    from ..operator_state import _compute
+    from ..operator_state._installation import InstallRole
+
+    if _compute.installed_role()[0] is InstallRole.HOST:
+        return None
+    return ProvisionStepResult(step, ProvisionAction.SKIPPED, _CLIENT_SKIP)
+
+
 def provision_dependencies(
     target: Path,
     **options: Unpack[_ProvisionOptions],
@@ -237,7 +266,8 @@ def _provision_dependencies(request: _ProvisionRequest) -> ProvisionOutcome:
     outcome = ProvisionOutcome(dry_run=dry_run)
 
     outcome.steps.append(
-        _provision_torch(
+        client_skip(ProvisionStep.TORCH)
+        or _provision_torch(
             _TorchProvisionRequest(
                 target,
                 dry_run,
@@ -436,6 +466,9 @@ def provision_models(
     Returns:
         A :class:`ProvisionStepResult` in the shared sync vocabulary.
     """
+    client = client_skip(ProvisionStep.MODELS)
+    if client is not None:
+        return client
     skip = {s.lower() for s in (skip or set())}
     if ProvisionStep.MODELS in skip:
         return ProvisionStepResult(
@@ -443,7 +476,11 @@ def provision_models(
             action=ProvisionAction.SKIPPED,
             detail="model provisioning opted out",
         )
+    return _fetch_missing_models(dry_run=dry_run)
 
+
+def _fetch_missing_models(*, dry_run: bool) -> ProvisionStepResult:
+    """Probe the cache for each configured repo and download the absent ones."""
     try:
         from huggingface_hub import (
             snapshot_download,  # pyright: ignore[reportUnknownVariableType]  # huggingface_hub stubs partially unknown
@@ -511,6 +548,9 @@ def _provision_qdrant(
     untouched. The provisioner already reports in the shared vocabulary,
     so there is nothing to translate.
     """
+    client = client_skip(ProvisionStep.QDRANT)
+    if client is not None:
+        return client
     if local_only:
         return ProvisionStepResult(
             step=ProvisionStep.QDRANT,
@@ -524,13 +564,51 @@ def _provision_qdrant(
             detail="qdrant binary provisioning opted out",
         )
 
-    from ..qdrant_runtime._provision import provision
-
-    report = provision(dry_run=dry_run)
+    report = provision_qdrant_binary(dry_run=dry_run)
     return ProvisionStepResult(
         step=ProvisionStep.QDRANT,
         action=report.action,
         detail=report.message or _qdrant_default_detail(report.action),
+    )
+
+
+def provision_qdrant_binary(
+    *,
+    upgrade: bool = False,
+    dry_run: bool = False,
+    binary: Path | None = None,
+    on_progress: Callable[[str], None] | None = None,
+) -> ProvisionReport:
+    """Provision the pinned Qdrant server binary, on a host installation only.
+
+    The one way any command reaches the Qdrant provisioner, so the role is
+    judged in one place: a client gets a ``skipped`` report and the
+    provisioner - its download, its staging directory, and the registration of
+    an operator binary alike - is never entered.
+
+    Args:
+        upgrade: Replace an install that no longer matches the pin.
+        dry_run: Report what would happen without network or disk effects.
+        binary: Operator-supplied executable to register instead of
+            downloading.
+        on_progress: Sink for stage and byte-progress lines; silent when
+            omitted.
+
+    Returns:
+        The provisioner's report, or a ``skipped`` report for a client.
+    """
+    client = client_skip(ProvisionStep.QDRANT)
+    if client is not None:
+        from ..qdrant_runtime._constants import ProvisionReport
+
+        return ProvisionReport(action=client.action, message=client.detail)
+
+    from ..qdrant_runtime._provision import provision
+
+    if on_progress is None:
+        return provision(upgrade=upgrade, dry_run=dry_run, binary=binary)
+    return provision(
+        upgrade=upgrade, dry_run=dry_run, binary=binary, on_progress=on_progress
     )
 
 

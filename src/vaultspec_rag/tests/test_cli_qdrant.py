@@ -73,24 +73,32 @@ def test_server_start_help_exposes_qdrant_options_in_operator_language() -> None
 
 
 def test_server_start_missing_qdrant_names_local_only_escape_hatch(
-    tmp_path: Path,
+    isolated_status_dir: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    result = runner.invoke(
-        app,
-        ["server", "start", "--port", str(_closed_port())],
-        env={
-            EnvVar.STATUS_DIR.value: str(tmp_path),
-            EnvVar.QDRANT_STORAGE_DIR.value: str(tmp_path / "qdrant" / "storage"),
-            EnvVar.QDRANT_BINARY.value: str(tmp_path / "missing-qdrant"),
-            EnvVar.LOCAL_ONLY.value: "0",
-        },
-    )
+    """With provisioning declined, an absent server names both ways forward.
 
-    assert result.exit_code == 1, result.output
-    assert "Service start failed" in result.output
-    assert "vaultspec-rag server qdrant install" in result.output
-    assert "vaultspec-rag server start --local-only" in result.output
-    assert "Traceback" not in result.output
+    Driven at the binary check rather than through the whole verb: start
+    judges the environment that would run the daemon before it looks for the
+    binary, so the verb reaches this check only on a host whose accelerator
+    the probe accepts, and the wording under test does not depend on that.
+    """
+    import typer
+
+    from ..cli._service_start import _ensure_qdrant_binary
+    from ..qdrant_runtime._resolve import resolve_binary
+
+    del isolated_status_dir
+    assert resolve_binary() is None, "premise: the isolated managed dir is empty"
+
+    with pytest.raises(typer.Exit) as exit_info:
+        _ensure_qdrant_binary(auto_provision=False)
+
+    assert exit_info.value.exit_code == 1
+    output = capsys.readouterr().out
+    assert "Service start failed" in output
+    assert "vaultspec-rag server qdrant install" in output
+    assert "vaultspec-rag server start --local-only" in output
 
 
 def test_qdrant_help_uses_managed_server_language() -> None:
@@ -164,6 +172,7 @@ def test_qdrant_status_is_actionable_when_installed_but_not_running(
     assert f"{QDRANT_SERVER_VERSION} - downloaded release (current)" in result.output
 
 
+@pytest.mark.usefixtures("inference_host")
 def test_qdrant_install_dry_run_uses_install_language(tmp_path: Path) -> None:
     help_result = runner.invoke(app, ["server", "qdrant", "install", "--help"])
     assert help_result.exit_code == 0, help_result.output

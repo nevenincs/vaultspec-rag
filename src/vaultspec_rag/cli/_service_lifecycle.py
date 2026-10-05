@@ -216,6 +216,16 @@ def _warmup_fetch_model(request: _WarmupFetchRequest) -> str:
 )
 def service_warmup() -> None:
     """Download GPU model files before they are needed."""
+    from ..commands._provision import ProvisionStep, client_skip
+
+    # Asked before the accelerator is loaded: a client holds no model and has
+    # no torch to load, and reporting that as a missing GPU build would send
+    # it to install one.
+    not_needed = client_skip(ProvisionStep.MODELS)
+    if not_needed is not None:
+        _print_detail_line("Models", not_needed.detail)
+        return
+
     try:
         from .._gpu import load_accelerator
 

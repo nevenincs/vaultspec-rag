@@ -1,0 +1,192 @@
+"""A client installation provisions nothing, on any command.
+
+A client carries no inference stack: it loads no model and cannot run the
+service, so a model snapshot or a Qdrant server binary fetched for it is a
+download nobody will use. Every command that provisions on a host is driven
+here as a client, and each must leave the network and the managed directory
+alone.
+
+The installation role is the one pinned input, as everywhere else in the
+suite, so the client branch is exercised on a GPU workstation too. The
+provisioner's network half is replaced by a recording tripwire that is never
+supposed to be reached; it exists for the regressed run, which would otherwise
+download the pinned release and - on the start path - go on to spawn a daemon.
+What each test asserts is the real outcome: the report the command gives a
+client, and a managed directory with nothing new in it.
+"""
+
+from __future__ import annotations
+
+import json
+import socket
+from typing import TYPE_CHECKING, cast
+
+import pytest
+
+from .._sync_vocabulary import ProvisionAction
+from ..commands._install import install_run
+from ..commands._provision import ProvisionStep
+from ..config._paths import read_persisted_local_only
+from ..operator_state._installation import ComputeCapability
+from ._cli_helpers import app, runner
+from ._qdrant_provision_seam import substitute_qdrant_download
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("client_installation")]
+
+PROJECT_ONLY = (
+    "[project]\n"
+    'name = "demo-client"\n'
+    'version = "0.1.0"\n'
+    'dependencies = ["vaultspec-rag[mcp]"]\n'
+)
+
+_NOT_NEEDED = "not needed by a client installation"
+
+
+def _tree(root: Path) -> list[str]:
+    """Every path under *root*, so a comparison names whatever appeared."""
+    return sorted(path.relative_to(root).as_posix() for path in root.rglob("*"))
+
+
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def test_start_is_refused_before_anything_is_provisioned(
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_singleton_dirs: Path,
+    tmp_path: Path,
+) -> None:
+    """``server start`` judges the role before it looks for the binary.
+
+    The download is asked for explicitly, so the provisioner is what a start
+    that got past the role would reach next. Two things stand in its way: the
+    start command's own refusal, and the provisioning front door, which
+    declines to fetch for a client whoever asks.
+
+    Mutation check: with the refusal removed from the start command alone,
+    this host's accelerator probe passes and the binary check runs; the front
+    door still fetches nothing, so the start fails as
+    ``qdrant_provision_failed`` and the error assertion catches it. With the
+    front door's client answer disabled as well, the tripwire is reached and
+    the ``calls`` assertion fails with ``['provision']``. Restoring both
+    passes.
+    """
+    del isolated_singleton_dirs
+    calls = substitute_qdrant_download(monkeypatch, succeeds=False)
+    before = _tree(tmp_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "server",
+            "start",
+            "--json",
+            "--qdrant-auto-provision",
+            "--port",
+            str(_free_port()),
+        ],
+    )
+
+    assert calls == [], "a client start reached the Qdrant provisioner"
+    assert _tree(tmp_path) == before
+    assert result.exit_code == 1, result.output
+    payload = cast("dict[str, object]", json.loads(result.stdout))
+    assert payload["ok"] is False
+    assert payload["error"] == "service_env_no_gpu"
+    data = cast("dict[str, object]", payload["data"])
+    assert data["detail"] == ComputeCapability.NOT_APPLICABLE.label
+
+
+def test_install_provisions_nothing_with_every_step_left_on(
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_singleton_dirs: Path,
+    tmp_path: Path,
+) -> None:
+    """``install`` with no opt-out at all still fetches nothing for a client.
+
+    No ``--local-only`` and no skip token, so the role is the only thing
+    standing between this run and both downloads.
+
+    Mutation check: with the front door's client answer disabled, the Qdrant
+    step reaches the tripwire - failing the ``calls`` assertion with
+    ``['provision']``. Restoring it passes.
+    """
+    workspace = tmp_path / "client"
+    workspace.mkdir()
+    (workspace / "pyproject.toml").write_text(
+        PROJECT_ONLY, encoding="utf-8", newline=""
+    )
+    calls = substitute_qdrant_download(monkeypatch, succeeds=False)
+    before = _tree(isolated_singleton_dirs)
+
+    report = install_run(path=workspace, provision=True, assume_yes=True)
+
+    assert calls == [], "a client install reached the Qdrant provisioner"
+    outcome = report.provision_outcome
+    assert outcome is not None
+    assert {result.step for result in outcome.steps} == set(ProvisionStep)
+    for result in outcome.steps:
+        assert result.action == ProvisionAction.SKIPPED, result
+        assert _NOT_NEEDED in result.detail, result
+    assert _tree(isolated_singleton_dirs) == before
+    assert read_persisted_local_only() is None
+
+
+def test_warmup_reports_models_as_not_needed_and_fetches_none() -> None:
+    """``server warmup`` answers a client before it loads anything.
+
+    The announcement line is what the fetch loop prints first, so its absence
+    is the evidence that no repository was probed or downloaded.
+
+    Mutation check: with the client answer removed from the verb, this host
+    loads its accelerator and walks the model list - failing the not-needed
+    assertion. Restoring it passes.
+    """
+    result = runner.invoke(app, ["server", "warmup"])
+
+    assert _NOT_NEEDED in result.output, result.output
+    assert "Model warmup" not in result.output
+    assert result.exit_code == 0, result.output
+
+
+@pytest.mark.parametrize("register_a_binary", [False, True])
+def test_qdrant_install_reports_skipped_and_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_status_dir: Path,
+    tmp_path: Path,
+    register_a_binary: bool,
+) -> None:
+    """``server qdrant install`` is not needed on a client, like torch.
+
+    Registering an operator binary is provisioning too: it copies an
+    executable into the managed directory, so a client is answered the same
+    way for both shapes of the verb.
+
+    Mutation check: with the client answer removed from the front door's
+    Qdrant entry, both shapes reach the tripwire - failing the ``calls``
+    assertion with ``['provision']``. Restoring it passes.
+    """
+    calls = substitute_qdrant_download(monkeypatch, succeeds=False)
+    argv = ["server", "qdrant", "install", "--json"]
+    if register_a_binary:
+        supplied = tmp_path / "operator-qdrant"
+        supplied.write_bytes(b"operator supplied")
+        argv += ["--binary", str(supplied)]
+    before = _tree(isolated_status_dir)
+
+    result = runner.invoke(app, argv)
+
+    assert calls == [], "a client reached the Qdrant provisioner"
+    assert _tree(isolated_status_dir) == before
+    assert result.exit_code == 0, result.output
+    payload = cast("dict[str, object]", json.loads(result.stdout))
+    assert payload["ok"] is True
+    data = cast("dict[str, object]", payload["data"])
+    assert data["action"] == ProvisionAction.SKIPPED
+    assert _NOT_NEEDED in str(data["message"])

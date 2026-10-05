@@ -240,13 +240,17 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         'source-scan this replaced matched the literal watch_mode="server" '
         "and so passed while the verb really dispatched jobs mode",
     ),
-    "test_cli_progress_surfaces.py": (
+    "_qdrant_provision_seam.py": (
         1,
         "no substitute source can be staged - the provisioner requires https "
-        "on a pinned host and an archive matching a committed digest - and "
+        "on an allowed host and an archive matching a committed digest - and "
         "the only real alternative is re-downloading the pinned release on "
         "every run, which the suite's mirror-the-installed-binary design "
-        "exists to avoid",
+        "exists to avoid. One site shared by every suite that must observe "
+        "whether a command reached the provisioner: the start path that "
+        "provisions unattended, and the commands a client installation must "
+        "never provision from, where the substitute is a tripwire that also "
+        "keeps a regressed run from downloading or going on to spawn a daemon",
     ),
     "test_publication_scaling.py": (
         1,

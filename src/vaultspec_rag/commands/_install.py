@@ -31,7 +31,6 @@ from vaultspec_core.core.workspace_mode import (
     read_package_declaration,
 )
 
-from .._sync_vocabulary import ProvisionAction
 from .._workspace_layout import (
     MCP_OWNERSHIP_MANIFEST,
     PROVIDERS_MANIFEST,
@@ -87,11 +86,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _DEFAULT_PROJECT_MCP_PROVIDERS = (Tool.CLAUDE, Tool.CODEX)
-
-_CLIENT_SKIP = (
-    "not needed by a client installation; the host installation that runs "
-    "the service provides it"
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1349,10 +1343,10 @@ class _ProvisioningRequest:
 def _run_provisioning(request: _ProvisioningRequest) -> None:
     """Run the provisioning front door and attach its outcome to the report.
 
-    A client installation provisions nothing. It loads no models and never
-    starts the service, and the backend selection this step persists is read by
+    A client installation provisions nothing: the front door answers every
+    step skipped for it. The backend selection this step persists is read by
     the host installation's ``server start``, so a client writing it would
-    override the host's choice. Every step is reported skipped with that reason.
+    override the host's choice, and it is left untouched.
 
     Torch is already configured by the enrollment torch step above (its
     honest two-phase state lives on ``report.torch_config_action`` and the
@@ -1364,22 +1358,7 @@ def _run_provisioning(request: _ProvisioningRequest) -> None:
     surfaced as a warning rather than raised, because enrollment already
     succeeded and provisioning is the recoverable, re-runnable phase.
     """
-    from ._provision import (
-        ProvisionOutcome,
-        ProvisionStep,
-        ProvisionStepResult,
-        provision_dependencies,
-    )
-
-    if not request.host:
-        request.report.provision_outcome = ProvisionOutcome(
-            steps=[
-                ProvisionStepResult(step, ProvisionAction.SKIPPED, _CLIENT_SKIP)
-                for step in ProvisionStep
-            ],
-            dry_run=request.dry_run,
-        )
-        return
+    from ._provision import provision_dependencies
 
     # The enrollment torch step already ran (and is reported on its own
     # report fields); fold "torch" into the front door's skip set so its
@@ -1412,7 +1391,7 @@ def _run_provisioning(request: _ProvisioningRequest) -> None:
     # preview must not touch disk. The explicit choice is persisted either way
     # (``False`` records a deliberate server-mode selection) so the marker is
     # unambiguous; env / flag still override it at resolution time.
-    if not request.dry_run:
+    if request.host and not request.dry_run:
         _persist_runtime_selection(request.report, request.local_only)
 
 

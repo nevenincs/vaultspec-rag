@@ -50,6 +50,7 @@ from .._ports import port_is_available
 from .._process_probe import pid_alive
 from ..config._settings import get_config
 from ..config._types import EnvVar
+from ..operator_state._installation import ComputeCapability, InstallRole
 from ..operator_state._provisioning import cuda_remediation
 from ..operator_state._topology import (
     RuntimeEnvKind,
@@ -332,7 +333,7 @@ def _ensure_qdrant_binary(
     failed outcomes are emitted as start envelopes so a broker reads one document.
     """
     from .._sync_vocabulary import ProvisionAction
-    from ..qdrant_runtime._provision import provision
+    from ..commands._provision import provision_qdrant_binary
     from ..qdrant_runtime._resolve import resolve_binary
 
     if resolve_binary() is not None:
@@ -356,9 +357,9 @@ def _ensure_qdrant_binary(
     # slow link is distinguishable from a wedged one.
     if progress is not None:
         progress.stage("Downloading the Qdrant server (first use)...")
-        report = provision(on_progress=progress.stage)
+        report = provision_qdrant_binary(on_progress=progress.stage)
     else:
-        report = provision()
+        report = provision_qdrant_binary()
     if report.action == ProvisionAction.FAILED or resolve_binary() is None:
         raise _fail_start(
             json_mode,
@@ -563,7 +564,6 @@ def _preflight_daemon_accelerator(interpreter: str, *, json_mode: bool) -> None:
     """
     from ..operator_state._compute import ProbeDepth
     from ..operator_state._environment_probe import probe_interpreter
-    from ..operator_state._installation import ComputeCapability
 
     compute = probe_interpreter(interpreter, ProbeDepth.VERIFY).compute
     capability = compute.capability
@@ -571,32 +571,71 @@ def _preflight_daemon_accelerator(interpreter: str, *, json_mode: bool) -> None:
         return
     reason = capability.label + (f" ({compute.detail})" if compute.detail else "")
     if capability.blocks_start:
-        kind = classify_environment(environment_root(interpreter))
-        next_actions: tuple[str, ...]
-        if capability.fixed_by_torch_reinstall:
-            next_actions = cuda_remediation(interpreter, env_kind=kind).steps
-        else:
-            remediation = capability.remediation
-            if remediation is None:
-                raise AssertionError(f"{capability} blocks a start without a remedy")
-            next_actions = (remediation,)
-        raise _fail_start(
-            json_mode,
-            error="service_env_no_gpu",
-            message="Service start failed",
-            human_lines=(
-                f"Service interpreter: {interpreter} ({kind.label})",
-                f"That environment cannot run the GPU-only service: {reason}.",
-                "The service runs in the environment that launches it and does "
-                "not provision its own python.",
-            ),
-            next_actions=next_actions,
-            detail=reason,
+        raise _fail_unusable_environment(
+            interpreter, capability, reason, json_mode=json_mode
         )
     logger.warning(
         "daemon torch pre-flight inconclusive for %s (%s); proceeding",
         interpreter,
         reason,
+    )
+
+
+def _fail_unusable_environment(
+    interpreter: str,
+    capability: ComputeCapability,
+    reason: str,
+    *,
+    json_mode: bool,
+) -> typer.Exit:
+    """Render the refusal for an environment that cannot run the service.
+
+    One renderer for both judges of the environment - the installation role
+    read in this process and the capability the daemon interpreter reports -
+    so a client is told the same thing whichever of them refuses it.
+    """
+    kind = classify_environment(environment_root(interpreter))
+    next_actions: tuple[str, ...]
+    if capability.fixed_by_torch_reinstall:
+        next_actions = cuda_remediation(interpreter, env_kind=kind).steps
+    else:
+        remediation = capability.remediation
+        if remediation is None:
+            raise AssertionError(f"{capability} blocks a start without a remedy")
+        next_actions = (remediation,)
+    return _fail_start(
+        json_mode,
+        error="service_env_no_gpu",
+        message="Service start failed",
+        human_lines=(
+            f"Service interpreter: {interpreter} ({kind.label})",
+            f"That environment cannot run the GPU-only service: {reason}.",
+            "The service runs in the environment that launches it and does "
+            "not provision its own python.",
+        ),
+        next_actions=next_actions,
+        detail=reason,
+    )
+
+
+def _refuse_client_installation(interpreter: str, *, json_mode: bool) -> None:
+    """Refuse a start from a client installation before anything else can run.
+
+    A client carries no inference stack and cannot run the service, so nothing
+    a start would fetch or write is of any use to it. The role is read from
+    the distributions this environment holds, which costs nothing and touches
+    neither the network nor the disk, and it is asked before every guard and
+    preflight that does. The daemon runs in this same environment, so the
+    capability probe that follows would reach the same verdict - seconds
+    later, and only after whatever had been ordered ahead of it.
+    """
+    from ..operator_state import _compute
+
+    if _compute.installed_role()[0] is InstallRole.HOST:
+        return
+    capability = ComputeCapability.NOT_APPLICABLE
+    raise _fail_unusable_environment(
+        interpreter, capability, capability.label, json_mode=json_mode
     )
 
 
@@ -901,8 +940,24 @@ def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None
         if _attach_warming_service(json_mode):
             return
 
+        # Everything from here on starts a daemon, so the environment that
+        # would run it is judged before anything is fetched or written for it:
+        # the installation role first, which needs no probe at all, and the
+        # accelerator below, ahead of the binary check. A client or a host
+        # whose torch cannot serve is refused with nothing provisioned.
+        interpreter = _resolve_daemon_interpreter()
+        _refuse_client_installation(interpreter, json_mode=json_mode)
+
         progress.stage("Checking the port and machine singleton...")
         _guard_start_preconditions(options.port, json_mode)
+
+        env_warnings = _ephemeral_env_warning(interpreter)
+        if env_warnings and not json_mode:
+            _print_lifecycle_lines(*env_warnings)
+        # This probe spawns the daemon interpreter and imports torch in it,
+        # which is the single longest pre-spawn stall (its own timeout is 60s).
+        progress.stage("Checking accelerator support in the service environment...")
+        _preflight_daemon_accelerator(interpreter, json_mode=json_mode)
 
         # Server mode is the default backend, so the qdrant-binary guard runs
         # by default. --local-only (and an explicit --no-qdrant) select the
@@ -926,14 +981,6 @@ def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None
             _print_preprocess_start_notice(resolved_root, effective_mode)
 
         log_path = _log_file()
-        interpreter = _resolve_daemon_interpreter()
-        env_warnings = _ephemeral_env_warning(interpreter)
-        if env_warnings and not json_mode:
-            _print_lifecycle_lines(*env_warnings)
-        # This probe spawns the daemon interpreter and imports torch in it,
-        # which is the single longest pre-spawn stall (its own timeout is 60s).
-        progress.stage("Checking accelerator support in the service environment...")
-        _preflight_daemon_accelerator(interpreter, json_mode=json_mode)
         t0 = time.perf_counter()
         progress.stage("Launching the service process...")
         start_request = _PreparedServiceRequest(

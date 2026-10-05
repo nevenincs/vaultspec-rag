@@ -14,12 +14,13 @@ import typer
 
 from .._operator_commands import server_start_command
 from .._sync_vocabulary import ProvisionAction
+from ..commands._provision import provision_qdrant_binary
 from ..config._settings import get_config
 from ..qdrant_runtime._constants import (
     QDRANT_SERVER_VERSION,
     ProvisionReport,
 )
-from ..qdrant_runtime._provision import provision, provisioned_versions
+from ..qdrant_runtime._provision import provisioned_versions
 from ..qdrant_runtime._resolve import probe_qdrant_endpoint, resolve_binary
 from ..serviceclient._discovery import read_service_status
 from ._app import JsonMode, server_qdrant_app
@@ -88,10 +89,11 @@ def qdrant_install(
     # none of which said anything before this. The report is rendered after the
     # block so the terminal outcome never has to share a line with a live
     # region, and ``--json`` keeps the reporter silent so exactly one envelope
-    # reaches stdout.
+    # reaches stdout. A client installation gets a ``skipped`` report from the
+    # front door, the same not-needed outcome ``install`` gives it.
     with StartupStatusReporter(json_mode=json_mode) as progress:
         progress.announce("Installing the managed Qdrant server...")
-        report = provision(
+        report = provision_qdrant_binary(
             upgrade=upgrade,
             dry_run=dry_run,
             binary=binary,
