@@ -2,8 +2,8 @@
 
 A check made once, when the service resolves its binary, says nothing about
 the file a later spawn runs: the heartbeat restarts a dead child, and the
-recovery loop re-spawns after moving a collection aside. So the check lives in
-the supervisor's one spawn path, and these tests reach it by each of the three
+recovery loop re-spawns after moving a collection aside. So the check lives
+where the process is created, and these tests reach it by each of the three
 ways a child comes to exist.
 
 No mocks: every binary here is a real launcher on the real filesystem, the
@@ -24,10 +24,11 @@ from pathlib import Path
 
 import pytest
 
-from ..qdrant_runtime import _supervise
+from ..qdrant_runtime import _spawn_trust, _supervise
 from ..qdrant_runtime._constants import BinarySource, ResolvedBinary
 from ..qdrant_runtime._provision import file_sha256
-from ..qdrant_runtime._resolve import QdrantBinaryError, verify_resolved_binary
+from ..qdrant_runtime._resolve import QdrantBinaryError
+from ..qdrant_runtime._spawn_trust import verify_resolved_binary
 from ..qdrant_runtime._supervise import QdrantSupervisor
 from ._fake_qdrant_binary import FAKE_SERVER, fake_qdrant_binary, unpinned
 from ._ports import free_loopback_port
@@ -334,35 +335,103 @@ class TestTheSourceVocabulary:
         }
 
 
-class TestSpawnIsTheOnlyPlaceAProcessIsCreated:
-    """The check guards every process creation only if there is one of them."""
+class TestAProcessIsCreatedOnlyInsideTheHold:
+    """The check guards a process creation only if the creation is inside it.
+
+    Behaviour proves a refused binary does not run. It cannot prove there is
+    no second way to run one, or that the process is created while the checked
+    file is still held and from that file - those are properties of where the
+    creation call sits, so they are read off the source.
+    """
 
     _CREATORS = ("subprocess.", "os.spawn", "os.exec", "os.startfile", "os.system")
 
-    def test_every_process_creation_sits_in_spawn_after_the_check(self) -> None:
-        """A second creation site would be a second, unchecked way to run it.
+    @classmethod
+    def _creations(cls, module_file: str) -> list[tuple[str, ast.Call]]:
+        """Every process-creating call in a module, with its enclosing function."""
+        tree = ast.parse(Path(module_file).read_text(encoding="utf-8"))
+        return [
+            (function.name, call)
+            for function in ast.walk(tree)
+            if isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef)
+            for call in ast.walk(function)
+            if isinstance(call, ast.Call)
+            and ast.unparse(call.func).startswith(cls._CREATORS)
+        ]
 
-        Mutation it catches: dropping the check from ``spawn()`` (no check is
-        found before the creation), or creating a process in any other
-        function of the module (the owner set stops being ``{"spawn"}``).
+    def test_the_supervisor_creates_no_process_of_its_own(self) -> None:
+        """A creation call in the supervisor would be a way around the check.
+
+        Mutation it catches: any ``subprocess`` call added to the supervisor
+        module fails the emptiness assertion below.
         """
-        tree = ast.parse(Path(_supervise.__file__).read_text(encoding="utf-8"))
-        creations: list[tuple[str, int]] = []
-        checks: list[tuple[str, int]] = []
-        for function in ast.walk(tree):
-            if not isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef):
-                continue
-            for call in ast.walk(function):
-                if not isinstance(call, ast.Call):
-                    continue
-                called = ast.unparse(call.func)
-                if called.startswith(self._CREATORS):
-                    creations.append((function.name, call.lineno))
-                elif called == "verify_resolved_binary":
-                    checks.append((function.name, call.lineno))
+        assert not [owner for owner, _call in self._creations(_supervise.__file__)]
+        spawn = Path(_supervise.__file__).read_text(encoding="utf-8")
+        assert "self._proc = spawn_verified(" in spawn
 
-        assert creations, "the supervisor creates no process here; has it moved?"
-        assert {owner for owner, _line in creations} == {"spawn"}
-        checked_at = [line for owner, line in checks if owner == "spawn"]
-        assert checked_at, "spawn() creates a process without checking the binary"
-        assert max(checked_at) < min(line for _owner, line in creations)
+    def test_every_creation_is_inside_the_hold_and_names_the_held_file(self) -> None:
+        """Created while the checked file is held, and from that file.
+
+        Mutations it catches: moving a creation call out of the ``with``
+        block that holds the verified file fails the containment assertion;
+        dropping ``executable=`` or pointing it at the bare path fails the
+        last assertion, and with it returns the Windows command-line lookup
+        that completes a missing name with ``.exe``.
+        """
+        creations = self._creations(_spawn_trust.__file__)
+        assert creations, "no process is created here; has the spawn moved?"
+        assert {owner for owner, _call in creations} == {"spawn_verified"}
+
+        tree = ast.parse(Path(_spawn_trust.__file__).read_text(encoding="utf-8"))
+        holds = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.With)
+            and [ast.unparse(item) for item in node.items]
+            == ["_verified(resolved) as held"]
+        ]
+        held_calls = {
+            (call.lineno, call.col_offset)
+            for hold in holds
+            for call in ast.walk(hold)
+            if isinstance(call, ast.Call)
+        }
+        for _owner, call in creations:
+            assert (call.lineno, call.col_offset) in held_calls, (
+                f"line {call.lineno} creates a process outside the hold"
+            )
+            executable = [k.value for k in call.keywords if k.arg == "executable"]
+            assert [ast.unparse(value) for value in executable] == [
+                "held.launch_path"
+            ], f"line {call.lineno} does not create the process from the held file"
+
+    def test_a_file_that_changed_under_the_spawn_stops_the_new_process(self) -> None:
+        """Where the hold cannot freeze the file, the process is checked after.
+
+        The gap this covers is a few instructions wide and cannot be entered
+        from a test without rewriting the function, so the test reads that the
+        look-again is still the statement after the creation, still inside the
+        hold, and still kills before it raises. What the look-again itself
+        detects is proven by behaviour beside the hold.
+
+        Mutation it catches: deleting the look-again, or raising without
+        killing, fails the assertion on the block below.
+        """
+        tree = ast.parse(Path(_spawn_trust.__file__).read_text(encoding="utf-8"))
+        look_again = [
+            node
+            for hold in ast.walk(tree)
+            if isinstance(hold, ast.With)
+            for node in hold.body
+            if isinstance(node, ast.If)
+            and ast.unparse(node.test)
+            == "not held.unchanged(_expected_digest(resolved))"
+        ]
+        assert len(look_again) == 1
+        steps = [ast.unparse(step) for step in look_again[0].body]
+        assert steps[0] == "proc.kill()"
+        assert steps[-1].startswith("raise _refusal(resolved, ")
+        creation_lines = [
+            call.lineno for _owner, call in self._creations(_spawn_trust.__file__)
+        ]
+        assert look_again[0].lineno > max(creation_lines)

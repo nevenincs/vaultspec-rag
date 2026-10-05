@@ -26,6 +26,7 @@ from .._readiness import (
     DependencyReadiness,
     ReadinessReport,
     ReadinessStatus,
+    _qdrant_readiness,
     _torch_readiness,
     compute_readiness,
 )
@@ -380,6 +381,96 @@ class TestQdrantDimension:
             else:
                 os.environ[EnvVar.QDRANT_BINARY.value] = prev
             reset_config()
+
+    @staticmethod
+    def _seed_install_that_is_not_the_pinned_release() -> Path:
+        """Seed a managed install whose manifest is in order and whose bytes are not.
+
+        It resolves exactly as a real download does. Only hashing the
+        executable tells it from one.
+        """
+        from ..qdrant_runtime._constants import (
+            MANIFEST_FILENAME,
+            MANIFEST_SOURCE_DOWNLOAD,
+            QDRANT_ASSET_SHA256,
+            QDRANT_EXECUTABLE_SHA256,
+            QDRANT_SERVER_VERSION,
+        )
+        from ..qdrant_runtime._resolve import (
+            asset_for_platform,
+            binary_filename,
+            qdrant_bin_dir,
+        )
+
+        version_dir = qdrant_bin_dir()
+        version_dir.mkdir(parents=True)
+        binary = version_dir / binary_filename()
+        binary.write_bytes(b"not the pinned release")
+        asset = asset_for_platform()
+        (version_dir / MANIFEST_FILENAME).write_text(
+            json.dumps(
+                {
+                    "version": QDRANT_SERVER_VERSION,
+                    "asset": asset,
+                    "asset_sha256": QDRANT_ASSET_SHA256[asset],
+                    "binary_sha256": QDRANT_EXECUTABLE_SHA256[asset],
+                    "source": MANIFEST_SOURCE_DOWNLOAD,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return binary
+
+    def test_an_install_that_fails_its_digest_is_not_ready(self) -> None:
+        """An install a start would refuse must not be reported usable.
+
+        Mutation it catches: reporting on resolution alone, without the check
+        a spawn makes. The seeded install resolves, so the dimension then
+        reads ``READY`` and this fails on the status assertion.
+        """
+        binary = self._seed_install_that_is_not_the_pinned_release()
+
+        with managed_env(**{EnvVar.QDRANT_BINARY.value: None}):
+            report = compute_readiness()
+
+        qdrant = report.dimension("qdrant")
+        assert qdrant is not None
+        assert qdrant.status == ReadinessStatus.NOT_READY
+        assert qdrant.info["binary_source"] == "provisioned"
+        assert qdrant.info["binary_path"] == str(binary)
+        assert qdrant.info["binary_error"] == "qdrant_binary_unverified"
+        assert "vaultspec-rag server qdrant install --upgrade" in qdrant.detail
+
+    @pytest.mark.usefixtures("local_only_env")
+    def test_local_only_does_not_judge_a_binary_it_will_not_run(self) -> None:
+        self._seed_install_that_is_not_the_pinned_release()
+
+        with managed_env(**{EnvVar.QDRANT_BINARY.value: None}):
+            report = compute_readiness()
+
+        qdrant = report.dimension("qdrant")
+        assert qdrant is not None
+        assert qdrant.status == ReadinessStatus.READY
+        assert "binary_error" not in qdrant.info
+
+    def test_a_check_that_does_not_finish_is_not_ready(self) -> None:
+        """Running out of time is not a pass.
+
+        A budget of nothing stands in for a file that cannot be read in time:
+        the check is never given the chance to finish.
+
+        Mutation it catches: treating an unfinished check as no refusal. The
+        dimension then reads ``READY`` for an install nothing vouched for and
+        this fails on the status assertion.
+        """
+        self._seed_install_that_is_not_the_pinned_release()
+
+        with managed_env(**{EnvVar.QDRANT_BINARY.value: None}):
+            qdrant = _qdrant_readiness(server_mode=True, verify_budget=0.0)
+
+        assert qdrant.status == ReadinessStatus.NOT_READY
+        assert qdrant.info["binary_error"] == "qdrant_binary_unchecked"
+        assert "could not be verified" in qdrant.detail
 
 
 class TestReadOnlyContract:

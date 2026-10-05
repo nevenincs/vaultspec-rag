@@ -25,8 +25,8 @@ from ..qdrant_runtime._resolve import (
     QdrantBinaryError,
     probe_qdrant_endpoint,
     resolve_binary,
-    verify_resolved_binary,
 )
+from ..qdrant_runtime._spawn_trust import verify_resolved_binary
 from ..serviceclient._discovery import read_service_status
 from ._app import JsonMode, server_qdrant_app
 from ._progress import StartupStatusReporter

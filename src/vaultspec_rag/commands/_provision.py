@@ -646,11 +646,8 @@ def _resolved_qdrant() -> ProvisionStepResult | None:
     """
     from ..config._types import EnvVar
     from ..qdrant_runtime._constants import BinarySource
-    from ..qdrant_runtime._resolve import (
-        QdrantBinaryError,
-        resolve_binary,
-        verify_resolved_binary,
-    )
+    from ..qdrant_runtime._resolve import QdrantBinaryError, resolve_binary
+    from ..qdrant_runtime._spawn_trust import verify_resolved_binary
 
     try:
         resolved = resolve_binary()

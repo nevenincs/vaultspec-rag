@@ -37,12 +37,7 @@ from .._loopback_http import (
 )
 from .._managed_log_sink import RawRotatingLogSink
 from .._operator_commands import server_start_command
-from .._win32 import (
-    WIN_CREATE_NEW_PROCESS_GROUP,
-    WIN_CREATE_NO_WINDOW,
-    assign_process_to_job,
-    create_kill_on_close_job,
-)
+from .._win32 import assign_process_to_job, create_kill_on_close_job
 from ..config._settings import managed_status_dir, rag_default
 from ..config._types import EnvVar
 from ..logging_config import QDRANT_LOG_NAME
@@ -57,6 +52,7 @@ from ._credential import (
     server_api_key,
     write_managed_api_key,
 )
+from ._spawn_trust import spawn_verified, warn_when_operator_supplied
 from ._store_format import (
     QUARANTINE_DIRNAME,
     judge_store_format,
@@ -487,8 +483,6 @@ class QdrantSupervisor:
                 ``QdrantBinaryError`` when the binary fails its check.
             OSError: If the spawn itself fails.
         """
-        from ._resolve import verify_resolved_binary
-
         binary = self.binary
         if binary is None:
             raise RuntimeError(
@@ -520,41 +514,14 @@ class QdrantSupervisor:
         # opaque readiness timeout. The drain thread appends to the log file
         # with the same owner-only, no-symlink-follow protection as before.
         #
-        # Verified as the last statement before the process is created: what
-        # held at resolution or at the previous spawn says nothing about now.
-        verify_resolved_binary(binary)
+        # The binary is checked inside this call, as the process is created:
+        # what held at resolution or at the previous spawn says nothing now.
+        self._proc = spawn_verified(binary, env=child_env, cwd=self.storage_dir.parent)
         if sys.platform == "win32":
-            self._proc = subprocess.Popen(
-                [str(binary.path)],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                env=child_env,
-                # Pin the child's working directory to the managed qdrant dir:
-                # the binary writes runtime markers (.qdrant-initialized) into
-                # its cwd, which must never be the service's start directory.
-                cwd=str(self.storage_dir.parent),
-                text=False,
-                bufsize=0,
-                creationflags=(WIN_CREATE_NEW_PROCESS_GROUP | WIN_CREATE_NO_WINDOW),
-            )
             if self._job_handle is None:
                 self._job_handle = _win_kill_on_close_job()
             if self._job_handle is not None:
                 _win_assign_to_job(self._job_handle, self._proc)
-        else:
-            self._proc = subprocess.Popen(
-                [str(binary.path)],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                env=child_env,
-                # Same managed-cwd pin as the Windows branch above.
-                cwd=str(self.storage_dir.parent),
-                text=False,
-                bufsize=0,
-                start_new_session=True,
-            )
         self._start_output_drain()
         logger.info(
             "qdrant child spawned: pid=%d http=%d grpc=%d storage=%s "
@@ -1269,38 +1236,6 @@ def _attach_to_running(**options: Unpack[_SupervisorOptions]) -> QdrantSuperviso
     return supervisor
 
 
-def _warn_when_operator_supplied(resolved: ResolvedBinary) -> None:
-    """Log that an operator-supplied binary runs outside the committed pin.
-
-    The setting is called out harder when it shadows a managed install - the
-    case a planted setting would exploit.
-    """
-    if resolved.source is BinarySource.OPERATOR_SETTING:
-        from ._resolve import has_provisioned_binary
-
-        remedy = (
-            f"It is SHADOWING a managed install; unset "
-            f"{EnvVar.QDRANT_BINARY.value} to run the pinned binary."
-            if has_provisioned_binary(QDRANT_SERVER_VERSION)
-            else "Provision a pinned binary with: vaultspec-rag server qdrant install."
-        )
-        logger.warning(
-            "qdrant binary named by %s (%s) runs UNVERIFIED - no pinned-digest "
-            "check applies to an operator-supplied binary. %s",
-            EnvVar.QDRANT_BINARY.value,
-            resolved.path,
-            remedy,
-        )
-    elif resolved.source is BinarySource.MANAGED_OPERATOR:
-        logger.warning(
-            "qdrant binary at %s was registered by an operator; it is held to "
-            "the digest recorded at registration, not to the committed pin. "
-            "Install the pinned release with: vaultspec-rag server qdrant "
-            "install --upgrade",
-            resolved.path,
-        )
-
-
 def start_supervised_from_config() -> QdrantSupervisor:
     """Resolve, spawn, and ready-wait the qdrant child per config.
 
@@ -1380,7 +1315,7 @@ def start_supervised_from_config() -> QdrantSupervisor:
             "available. Run: vaultspec-rag server qdrant install. "
             "Local-only option: vaultspec-rag server start --local-only"
         )
-    _warn_when_operator_supplied(resolved)
+    warn_when_operator_supplied(resolved)
 
     # Judge the on-disk storage format against the binary about to open it.
     # The version gate on the attach path only fires when a server is already

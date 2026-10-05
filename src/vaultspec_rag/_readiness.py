@@ -16,8 +16,8 @@ It reports, per dependency, whether it is provisioned and usable:
   snapshot probe from warmup and provisioning, without downloading or loading
   models onto the GPU.
 - **qdrant**: where does the qdrant binary resolve from (managed /
-  operator-supplied / on PATH / absent), and - when server mode is the
-  effective backend - is the supervised child live?
+  operator-supplied / absent), and - when server mode is the effective
+  backend - would a start accept it, and is the supervised child live?
 
 This is a *report*, not a fixer: it performs no provisioning, no
 download, and no mutation. It is bounded to the known dependency set
@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from .operator_state._models import ComputeReport
+    from .qdrant_runtime._constants import ResolvedBinary
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,15 @@ _HOLDER_SCAN_BUDGET_SECONDS = 20.0
 
 #: An operator clears holders one at a time; a census helps nobody.
 _HOLDER_REPORT_LIMIT = 10
+
+#: Hashing the server executable takes well under a second on a healthy disk.
+#: The budget is for the unhealthy one: a stalled volume or a scanner holding
+#: the file must not hang a status command.
+_BINARY_VERIFY_BUDGET_SECONDS = 10.0
+
+#: Reported when that budget runs out. Distinct from a failed check: the file
+#: was not shown to be wrong, only not shown to be right.
+_BINARY_UNCHECKED = "qdrant_binary_unchecked"
 
 __all__ = [
     "DependencyReadiness",
@@ -404,33 +414,75 @@ def _models_readiness() -> DependencyReadiness:
     )
 
 
-def _qdrant_readiness(*, server_mode: bool) -> DependencyReadiness:
+def _binary_refusal(
+    resolved: ResolvedBinary, *, budget: float
+) -> tuple[str, str] | None:
+    """Say why a start would refuse *resolved*, as ``(code, detail)``, or ``None``.
+
+    Runs the check a spawn runs, which hashes the file. A binary that merely
+    resolves is not known to be usable: a managed install that fails its digest
+    is refused at every start, and reporting it ready would send an operator
+    looking everywhere but at the install.
+
+    Bounded, because this is a report: a file that cannot be read within
+    *budget* seconds is reported as unchecked and not ready. It is never
+    reported ready on the strength of a check that did not finish.
+    """
+    from ._process_probe import bounded_call
+    from .qdrant_runtime._resolve import QdrantBinaryError
+    from .qdrant_runtime._spawn_trust import verify_resolved_binary
+
+    def check() -> tuple[str, str] | None:
+        try:
+            verify_resolved_binary(resolved)
+        except QdrantBinaryError as exc:
+            return exc.error, str(exc)
+        return None
+
+    return bounded_call(
+        check,
+        timeout=budget,
+        fallback=(
+            _BINARY_UNCHECKED,
+            f"the qdrant binary at {resolved.path} could not be verified "
+            f"within {budget:.0f}s, so it is not known to be usable",
+        ),
+        label="qdrant-binary-verify",
+    )
+
+
+def _qdrant_readiness(
+    *, server_mode: bool, verify_budget: float = _BINARY_VERIFY_BUDGET_SECONDS
+) -> DependencyReadiness:
     """Report the qdrant binary resolution source plus supervised liveness.
 
     Reads the resolution order (operator setting / managed dir / absent)
     and the live runtime snapshot without spawning a process.
-    When server mode is the effective backend, the binary must resolve
-    and - if a child is being supervised in this process - it must be
-    alive for the dimension to read ``READY``. In local-only mode the
-    binary is not required, so an absent binary is ``READY`` (the
-    on-disk store needs no server). An operator setting that names an
-    unusable path reads as the source ``invalid``: a start would refuse
-    it, so server mode is ``NOT_READY`` with the refusal as the detail.
+    When server mode is the effective backend, the binary must resolve,
+    pass the check a spawn would make of it, and - if a child is being
+    supervised in this process - that child must be alive for the dimension
+    to read ``READY``. In local-only mode the binary is not required, so an
+    absent binary is ``READY`` (the on-disk store needs no server) and
+    nothing is hashed. A binary a start would refuse - an operator setting
+    that names an unusable path, or an install that fails its digest - is
+    ``NOT_READY`` in server mode with the refusal as the detail.
     """
     from .qdrant_runtime._resolve import QdrantBinaryError, resolve_binary
     from .qdrant_runtime._supervise import runtime_state
 
     state = runtime_state()
     resolved = None
-    refusal: QdrantBinaryError | None = None
+    refusal: tuple[str, str] | None = None
     try:
         resolved = resolve_binary()
     except QdrantBinaryError as exc:
-        refusal = exc
-    if refusal is not None:
-        source = "invalid"
+        refusal = exc.error, str(exc)
+    if resolved is None:
+        source = "invalid" if refusal is not None else "absent"
     else:
-        source = resolved.source if resolved is not None else "absent"
+        source = resolved.source
+        if server_mode:
+            refusal = _binary_refusal(resolved, budget=verify_budget)
 
     info: dict[str, object] = {
         "binary_source": source,
@@ -439,7 +491,7 @@ def _qdrant_readiness(*, server_mode: bool) -> DependencyReadiness:
         "runtime": state.to_dict(),
     }
     if refusal is not None:
-        info["binary_error"] = refusal.error
+        info["binary_error"] = refusal[0]
 
     if not server_mode:
         return DependencyReadiness(
@@ -456,7 +508,7 @@ def _qdrant_readiness(*, server_mode: bool) -> DependencyReadiness:
         return DependencyReadiness(
             name="qdrant",
             status=ReadinessStatus.NOT_READY,
-            detail=str(refusal),
+            detail=refusal[1],
             info=info,
         )
 

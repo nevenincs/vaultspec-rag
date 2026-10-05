@@ -220,8 +220,8 @@ def _capture_host_provisioned_qdrant() -> tuple[Path, Path] | None:
     from vaultspec_rag.qdrant_runtime._resolve import (
         QdrantBinaryError,
         resolve_binary,
-        verify_resolved_binary,
     )
+    from vaultspec_rag.qdrant_runtime._spawn_trust import verify_resolved_binary
 
     try:
         resolved = resolve_binary(QDRANT_SERVER_VERSION)

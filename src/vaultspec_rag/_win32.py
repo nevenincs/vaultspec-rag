@@ -96,9 +96,10 @@ _SHARED_ANCHOR_DIRECTORY_SDDL: Final = (
 #: ``ERROR_ACCESS_DENIED`` (``winerror.h``).
 _ERROR_ACCESS_DENIED: Final = 5
 
-#: ``GENERIC_READ``, ``FILE_SHARE_READ | FILE_SHARE_WRITE`` and
-#: ``OPEN_EXISTING`` (``winnt.h``, ``fileapi.h``).
+#: ``GENERIC_READ``, ``FILE_SHARE_READ``, ``FILE_SHARE_READ | FILE_SHARE_WRITE``
+#: and ``OPEN_EXISTING`` (``winnt.h``, ``fileapi.h``).
 _GENERIC_READ: Final = 0x80000000
+_FILE_SHARE_READ: Final = 0x00000001
 _FILE_SHARE_READ_WRITE: Final = 0x00000003
 _OPEN_EXISTING: Final = 3
 
@@ -397,7 +398,9 @@ def create_private_file(path: str) -> int:
         kernel32.LocalFree(descriptor)
 
 
-def open_without_following(path: str, *, directory: bool = False) -> int:
+def open_without_following(
+    path: str, *, directory: bool = False, share_write: bool = True
+) -> int:
     """Open the node at *path* itself for reading, never what a link names.
 
     A link is opened as the link, so the caller can examine what is really at
@@ -408,6 +411,11 @@ def open_without_following(path: str, *, directory: bool = False) -> int:
     Windows opens a directory only when asked to, so *directory* must be set
     for one; it is left off for a file so that open keeps its ordinary access
     checks.
+
+    With *share_write* off the handle shares reads only, so the content cannot
+    be rewritten in place either. That is for a caller relying on what it read
+    and not only on which node it read; the open then fails while another
+    process holds the file open for writing.
     """
     import msvcrt
     import os
@@ -429,8 +437,9 @@ def open_without_following(path: str, *, directory: bool = False) -> int:
     flags = _FILE_FLAG_OPEN_REPARSE_POINT
     if directory:
         flags |= _FILE_FLAG_BACKUP_SEMANTICS
+    share = _FILE_SHARE_READ_WRITE if share_write else _FILE_SHARE_READ
     handle = kernel32.CreateFileW(
-        path, _GENERIC_READ, _FILE_SHARE_READ_WRITE, None, _OPEN_EXISTING, flags, None
+        path, _GENERIC_READ, share, None, _OPEN_EXISTING, flags, None
     )
     if handle is None or handle == ctypes.c_void_p(-1).value:
         raise ctypes.WinError(ctypes.get_last_error())
