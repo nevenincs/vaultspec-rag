@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, cast
 
+from .._python_child import module_command
 from .._units import human_bytes
 from ._hub_failure import HubFailure
 from ._model_download_child import RECORD_DONE, RECORD_FAILED, RECORD_PROGRESS
@@ -325,7 +326,7 @@ def download_snapshot(
 
 
 def _run(request: _Request) -> DownloadOutcome:
-    command = [sys.executable, "-m", _CHILD_MODULE, request.repo]
+    command = module_command(sys.executable, _CHILD_MODULE, request.repo)
     if request.revision is not None:
         command += ["--revision", request.revision]
     if request.force:
