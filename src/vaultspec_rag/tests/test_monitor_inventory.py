@@ -66,9 +66,9 @@ def _seed_inventory(tmp_path: Path) -> tuple[Path, Path, str, str, Path]:
 
 @pytest.mark.parametrize("discovery", ["missing", "stale"])
 def test_stopped_bridge_reads_attributed_disk_inventory_without_writes(
-    browser_bridge: tuple[int, Path], tmp_path: Path, discovery: str
+    browser_bridge: tuple[str, Path], tmp_path: Path, discovery: str
 ) -> None:
-    port, status_directory = browser_bridge
+    access, status_directory = browser_bridge
     root, gone, prefix, gone_prefix, storage = _seed_inventory(tmp_path)
     discovery_path = status_directory / "service.json"
     if discovery == "missing":
@@ -83,7 +83,7 @@ def test_stopped_bridge_reads_attributed_disk_inventory_without_writes(
         )
     before_status = _files(status_directory)
     before_storage = _files(storage)
-    status, inventory = _read(port, "/repositories?limit=100")
+    status, inventory = _read(access, "/repositories?limit=100")
     assert status == 200
     assert inventory["source"] == "persisted"
     assert inventory["live_available"] is False
@@ -95,7 +95,7 @@ def test_stopped_bridge_reads_attributed_disk_inventory_without_writes(
     assert by_root[str(root)]["last_indexed"] == "2026-10-01T09:00:00Z"
     assert all(row["watching"] is None and row["resident"] is None for row in rows)
     with managed_env(**{EnvVar.QDRANT_STORAGE_DIR.value: str(storage)}):
-        status, survey = _read(port, "/storage/survey?limit=100")
+        status, survey = _read(access, "/storage/survey?limit=100")
         assert status == 200
         assert survey["source"] == "disk"
         assert survey["live_available"] is False
@@ -173,11 +173,11 @@ def test_inventory_module_is_torch_free_and_preserves_manifest(
 
 
 def test_stopped_bridge_reports_unavailable_storage(
-    browser_bridge: tuple[int, Path],
+    browser_bridge: tuple[str, Path],
 ) -> None:
-    port, directory = browser_bridge
+    access, directory = browser_bridge
     (directory / "service.json").unlink()
-    status, result = _read(port, "/storage/survey")
+    status, result = _read(access, "/storage/survey")
     assert status == 503
     assert result["error"] == "inventory_unavailable"
 
@@ -186,10 +186,10 @@ def test_stopped_bridge_reports_unavailable_storage(
     "query", [{"root": " "}, {"status": "invalid"}, {"command": "start"}]
 )
 def test_stopped_bridge_preserves_validation(
-    browser_bridge: tuple[int, Path], query: dict[str, str]
+    browser_bridge: tuple[str, Path], query: dict[str, str]
 ) -> None:
-    port, directory = browser_bridge
+    access, directory = browser_bridge
     (directory / "service.json").unlink()
-    status, result = _read(port, "/storage/survey?" + urllib.parse.urlencode(query))
+    status, result = _read(access, "/storage/survey?" + urllib.parse.urlencode(query))
     assert status == 400
     assert result["error"] == "bad_request"
