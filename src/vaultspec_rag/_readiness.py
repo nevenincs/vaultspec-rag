@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, cast
 
+from ._operator_commands import server_restart_remedy
 from .operator_state._compute import local_compute
 from .operator_state._installation import ComputeCapability
 
@@ -693,7 +694,8 @@ def _qdrant_readiness(
             status=ReadinessStatus.NOT_READY,
             detail=(
                 f"qdrant binary resolves from {source} but the supervised "
-                "server is not live"
+                f"server is not live{state.restart_refusal_note}; "
+                + server_restart_remedy()
             ),
             info=info,
         )

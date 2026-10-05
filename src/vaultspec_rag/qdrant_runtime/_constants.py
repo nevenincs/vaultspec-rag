@@ -279,6 +279,16 @@ class QdrantRuntimeState:
     restarts: int = 0
     extra: dict[str, object] = field(default_factory=dict)
 
+    @property
+    def restart_refusal_note(self) -> str:
+        """A clause saying why the latest restart started nothing, or ``""``.
+
+        Written to follow a statement that the server is not live, so every
+        surface that makes that statement gives the same cause for it.
+        """
+        refusal = str(self.extra.get("restart_refusal") or "")
+        return f"; its restart started nothing: {refusal}" if refusal else ""
+
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-serialisable view of this state."""
         data: dict[str, object] = {

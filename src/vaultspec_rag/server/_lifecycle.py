@@ -443,8 +443,10 @@ def _qdrant_liveness_tick() -> None:
     """Check the supervised qdrant child; one bounded auto-restart.
 
     Runs synchronously inside the heartbeat's worker thread. A dead
-    child gets exactly one restart attempt for the daemon's lifetime;
-    after that the dead state surfaces as ``degraded`` through the
+    child gets exactly one restart that starts a process for the daemon's
+    lifetime; an attempt refused before any process existed does not spend
+    it, and is retried on later ticks up to the supervisor's own bound.
+    After that the dead state surfaces as ``degraded`` through the
     health payload and the runtime-state block until an operator
     intervenes. There is deliberately no background sweeper - this
     rides the existing heartbeat cadence.
@@ -454,13 +456,14 @@ def _qdrant_liveness_tick() -> None:
     supervisor = _supervise.active_supervisor()
     if supervisor is None or supervisor.is_alive():
         return
-    if supervisor.restart_count >= 1:
+    if supervisor.restart_exhausted:
         log_event(
             logger,
             "service.lifecycle",
             "qdrant_dead",
             severity=logging.WARNING,
             restarts=supervisor.restart_count,
+            refused_restarts=supervisor.refused_restarts,
         )
         return
     log_event(

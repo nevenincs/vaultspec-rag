@@ -30,7 +30,7 @@ from __future__ import annotations
 import ctypes
 import logging
 import sys
-from typing import Final
+from typing import Final, cast
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +42,11 @@ __all__ = [
     "assign_process_to_job",
     "create_kill_on_close_job",
     "grant_every_account_access",
+    "job_member_count",
     "open_without_following",
     "program_data_directory",
     "system_directory",
+    "terminate_job",
 ]
 
 #: ``FOLDERID_ProgramData`` (``KnownFolders.h``).
@@ -114,6 +116,7 @@ _FILE_FLAG_BACKUP_SEMANTICS: Final = 0x02000000
 #: Job Object constants (``winnt.h``).
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: Final = 0x2000
 _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION: Final = 9
+_JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION: Final = 1
 
 
 def create_kill_on_close_job(*, purpose: str) -> int | None:
@@ -204,6 +207,80 @@ def create_kill_on_close_job(*, purpose: str) -> int | None:
         kernel32.CloseHandle(job)
         return None
     return int(job)
+
+
+def terminate_job(job: int | None, *, purpose: str) -> bool:
+    """End every process that is a member of *job*, and keep the job.
+
+    A member's descendants are members too, so this ends a tree that
+    terminating its first process would leave running. The job itself
+    survives: a process assigned to it afterwards is governed as before.
+
+    Returns whether the request was accepted; a refusal is logged, never
+    raised, and ``False`` is also the answer off-Windows or with no job.
+    """
+    if sys.platform != "win32" or job is None:
+        return False
+    from ctypes import wintypes
+
+    from ._process_probe import win_kernel32
+
+    kernel32 = win_kernel32()
+    kernel32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
+    kernel32.TerminateJobObject.restype = wintypes.BOOL
+    if kernel32.TerminateJobObject(job, 1):
+        return True
+    logger.error(
+        "TerminateJobObject failed for the %s job; processes it holds may "
+        "still be running",
+        purpose,
+    )
+    return False
+
+
+def job_member_count(job: int | None) -> int | None:
+    """Return how many live processes *job* holds.
+
+    ``None`` when there is no job or it cannot be queried, which a caller
+    must not read as empty.
+    """
+    if sys.platform != "win32" or job is None:
+        return None
+    from ctypes import wintypes
+
+    from ._process_probe import win_kernel32
+
+    class _BasicAccounting(ctypes.Structure):
+        _fields_ = [
+            ("TotalUserTime", wintypes.LARGE_INTEGER),
+            ("TotalKernelTime", wintypes.LARGE_INTEGER),
+            ("ThisPeriodTotalUserTime", wintypes.LARGE_INTEGER),
+            ("ThisPeriodTotalKernelTime", wintypes.LARGE_INTEGER),
+            ("TotalPageFaultCount", wintypes.DWORD),
+            ("TotalProcesses", wintypes.DWORD),
+            ("ActiveProcesses", wintypes.DWORD),
+            ("TotalTerminatedProcesses", wintypes.DWORD),
+        ]
+
+    kernel32 = win_kernel32()
+    kernel32.QueryInformationJobObject.argtypes = (
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+    )
+    kernel32.QueryInformationJobObject.restype = wintypes.BOOL
+    info = _BasicAccounting()
+    if not kernel32.QueryInformationJobObject(
+        job,
+        _JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION,
+        ctypes.byref(info),
+        ctypes.sizeof(info),
+        None,
+    ):
+        return None
+    return int(cast("int", info.ActiveProcesses))
 
 
 class _AclHeader(ctypes.Structure):

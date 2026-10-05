@@ -992,7 +992,8 @@ def _service_health_status(
         degradations.append(
             Degradation(
                 reason=DegradationReason.VECTOR_SERVICE_UNAVAILABLE,
-                detail="the configured vector service is not live",
+                detail="the configured vector service is not live"
+                + qdrant_state.restart_refusal_note,
             )
         )
         if status is HealthVerdict.READY:

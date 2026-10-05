@@ -1220,6 +1220,37 @@ def send_signal(pid: int, sig: int) -> bool:
     return False
 
 
+def send_group_signal(leader: int, sig: int) -> bool:
+    """Deliver *sig* to the process group *leader* leads; report a refusal.
+
+    A process group carries the pid of the process that created it, so a
+    group of that number is *leader*'s own or does not exist. When it does
+    not exist, *leader* was not started in a session of its own and is then
+    all that can be addressed, so the signal goes to it alone.
+
+    That reasoning holds only while *leader*'s pid cannot have been given to
+    another process: the caller must be its parent and must not have reaped
+    it. Signalling a group by a number recorded earlier, for a process that
+    may since have been reaped, can reach a group that belongs to something
+    else.
+
+    Returns whether permission was refused, as :func:`send_signal` does. On
+    Windows there are no process groups to signal and nothing is sent.
+    """
+    if sys.platform == "win32":
+        return False
+    try:
+        os.killpg(leader, sig)
+    except ProcessLookupError:
+        return send_signal(leader, sig)
+    except PermissionError as exc:
+        logger.debug("process group %s refused signal %s: %s", leader, sig, exc)
+        return True
+    except OSError as exc:
+        logger.debug("signal %s to process group %s failed: %s", sig, leader, exc)
+    return False
+
+
 def reap_if_child(pid: int) -> bool:
     """Reap an exited child and report its confirmed exit.
 

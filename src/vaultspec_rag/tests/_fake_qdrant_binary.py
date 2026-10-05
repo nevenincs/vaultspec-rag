@@ -29,8 +29,9 @@ if TYPE_CHECKING:
 #
 # It serves only while every process above it lives. The supervisor's child is
 # the launcher, not this interpreter - a shell on Windows, with the virtual
-# environment's own launcher beneath that - so terminating the child would
-# otherwise leave this process holding the port and the output pipe.
+# environment's own launcher beneath that. A stop ends that whole tree, which
+# has its own tests; watching its ancestors is what keeps this process from
+# holding the port and the output pipe after a run in which the stop failed.
 FAKE_SERVER = """
 import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -68,18 +69,40 @@ while all(ancestor.is_running() for ancestor in ancestors):
 """
 
 
-def fake_qdrant_binary(tmp_path: Path, source: str, name: str = "fake_qdrant") -> Path:
-    """Write a fake qdrant 'binary' the supervisor can exec as ``[binary]``."""
+def fake_qdrant_binary(
+    tmp_path: Path,
+    source: str,
+    name: str = "fake_qdrant",
+    *,
+    launcher_exits_first: bool | None = None,
+) -> Path:
+    """Write a fake qdrant 'binary' the supervisor can exec as ``[binary]``.
+
+    Args:
+        tmp_path: Where the script and its launcher are written.
+        source: The script's source.
+        name: The stem both files share.
+        launcher_exits_first: The shape of the process tree. ``None`` is the
+            ordinary one: on POSIX the launcher becomes the script. ``False``
+            keeps the launcher as a separate process that waits for the
+            script, the way a wrapper around a real server does. ``True``
+            starts the script and lets the launcher exit, leaving the script
+            running with no parent of its own.
+    """
     script = tmp_path / f"{name}.py"
     script.write_text(source, encoding="utf-8")
+    run = f'"{sys.executable}" "{script}"'
     if sys.platform == "win32":
         launcher = tmp_path / f"{name}.bat"
-        launcher.write_text(f'@"{sys.executable}" "{script}"\r\n', encoding="utf-8")
+        # A batch file is always a separate process: the shell that reads it.
+        line = f'@start "" /B {run}' if launcher_exits_first else f"@{run}"
+        launcher.write_text(f"{line}\r\n", encoding="utf-8")
         return launcher
     launcher = tmp_path / f"{name}.sh"
-    launcher.write_text(
-        f'#!/bin/sh\nexec "{sys.executable}" "{script}"\n', encoding="utf-8"
-    )
+    line = {None: f"exec {run}", False: f"{run}\ntrue", True: f"{run} &"}[
+        launcher_exits_first
+    ]
+    launcher.write_text(f"#!/bin/sh\n{line}\n", encoding="utf-8")
     launcher.chmod(0o755)
     return launcher
 

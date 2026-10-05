@@ -18,8 +18,6 @@ import json
 import logging
 import os
 import re
-import signal
-import subprocess
 import sys
 import threading
 import time
@@ -41,6 +39,7 @@ from .._win32 import assign_process_to_job, create_kill_on_close_job
 from ..config._settings import managed_status_dir, rag_default
 from ..config._types import EnvVar
 from ..logging_config import QDRANT_LOG_NAME
+from ._child_tree import end_tree, exited
 from ._constants import (
     QDRANT_SERVER_VERSION,
     BinarySource,
@@ -61,6 +60,7 @@ from ._store_format import (
 )
 
 if TYPE_CHECKING:
+    import subprocess
     from http.client import HTTPResponse
     from typing import BinaryIO
 
@@ -86,6 +86,11 @@ __all__ = [
 # of holding the machine singleton lock indefinitely.
 _REAP_BUDGET_DEFAULT_SECONDS = 30.0
 _STOP_TIMEOUT_SECONDS = 10.0
+#: How many restart attempts in a row may be refused before any process is
+#: started, before the server is left for an operator. Each is one heartbeat
+#: apart and hashes the binary, so the bound is what keeps a binary that stays
+#: unusable from being hashed for as long as the daemon runs.
+_MAX_REFUSED_RESTARTS = 5
 # How many of the child's most-recent output lines to retain in memory so a
 # non-ready exit can be reported with its cause (a Rust panic, a bind error, a
 # storage-lock error) instead of an opaque timeout.
@@ -369,7 +374,11 @@ class QdrantSupervisor:
             RAG service's own port one above.
         storage_dir: Shared multi-root storage directory.
         log_path: File qdrant stdout/stderr is appended to.
-        restart_count: Heartbeat-initiated restarts performed so far.
+        restart_count: Heartbeat-initiated restarts that started a process.
+        refused_restarts: Consecutive restart attempts refused before any
+            process was started.
+        restart_refusal: Why the latest such attempt was refused; empty when
+            the latest attempt started a process.
         migrated_from: The server version that wrote this store, when opening
             it carries the store across a version change; empty otherwise.
     """
@@ -405,6 +414,8 @@ class QdrantSupervisor:
         if self.log_backup_count < 0:
             raise ValueError("log_backup_count must be non-negative")
         self.restart_count = 0
+        self.refused_restarts = 0
+        self.restart_refusal = ""
         self._proc: subprocess.Popen[bytes] | None = None
         # Most-recent child output lines, filled by the drain thread, so a
         # non-ready exit reports its cause instead of an opaque timeout.
@@ -847,7 +858,15 @@ class QdrantSupervisor:
             )
 
     def restart(self, timeout: float | None = None) -> bool:
-        """One supervised restart attempt; increments the counter.
+        """One supervised restart attempt.
+
+        A restart is counted when it creates a process. An attempt that is
+        refused before that - the previous child would not stop, the binary
+        could not be read or failed its check, the process could not be
+        created - started nothing, so it is counted apart and its reason is
+        kept for the surfaces that report a dead server. What stops a read is
+        usually gone a moment later, and an attempt that spent the one
+        restart on it would leave the server down for the daemon's lifetime.
 
         Args:
             timeout: Seconds of no observable progress to tolerate while
@@ -859,17 +878,19 @@ class QdrantSupervisor:
         """
         if timeout is None:
             timeout = ready_timeout_seconds()
-        self.restart_count += 1
         if not self.stop():
-            logger.error(
-                "qdrant restart refused: prior child or output drain did not converge"
+            self._restart_refused(
+                "the previous qdrant process or its output drain did not stop"
             )
             return False
         try:
             self.spawn()
-        except (OSError, RuntimeError):
-            logger.exception("qdrant restart spawn failed")
+        except (OSError, RuntimeError) as exc:
+            self._restart_refused(str(exc))
             return False
+        self.restart_count += 1
+        self.refused_restarts = 0
+        self.restart_refusal = ""
         ready = self.wait_ready(timeout)
         if ready and self._refuse_unprotected_data_plane() is not None:
             return False
@@ -894,6 +915,29 @@ class QdrantSupervisor:
                     )
                 return False
         return ready
+
+    def _restart_refused(self, reason: str) -> None:
+        """Record a restart attempt that created no process."""
+        self.refused_restarts += 1
+        self.restart_refusal = reason
+        logger.error(
+            "qdrant restart refused before any process was started "
+            "(attempt %d of %d): %s",
+            self.refused_restarts,
+            _MAX_REFUSED_RESTARTS,
+            reason,
+        )
+
+    @property
+    def restart_exhausted(self) -> bool:
+        """Whether no further automatic restart will be attempted.
+
+        One restart that started a process is the whole allowance. Attempts
+        refused before any process existed are retried, a bounded number of
+        times in a row, so a binary that stays unusable is not hashed on
+        every heartbeat for ever.
+        """
+        return self.restart_count >= 1 or self.refused_restarts >= _MAX_REFUSED_RESTARTS
 
     def _refuse_unprotected_data_plane(self) -> str | None:
         """Stop a ready child whose data plane is not behind this key.
@@ -929,39 +973,23 @@ class QdrantSupervisor:
         """
         if self._attached:
             return self._ready_probe()
-        return self._proc is not None and self._proc.poll() is None
+        return self._proc is not None and not exited(self._proc)
 
     def stop(self, timeout: float = _STOP_TIMEOUT_SECONDS) -> bool:
-        """Terminate the child and report confirmed child and drain convergence.
+        """End the child's whole process tree and report confirmed convergence.
 
-        Idempotent; safe to call with no child running. A drain that does not
+        True only when the child, every process it started, and the output
+        drain are all gone. Idempotent; safe to call with no child running,
+        and for a child that already exited. A drain that does not
         reach EOF within the bounded join remains referenced so no replacement
         child can acquire a second rotating-log sink concurrently.
         """
         proc = self._proc
-        child_stopped = proc is None or proc.poll() is not None
-        if proc is not None and proc.poll() is None:
-            try:
-                if sys.platform == "win32":
-                    proc.terminate()
-                else:
-                    proc.send_signal(signal.SIGTERM)
-            except OSError as exc:
-                logger.debug("qdrant terminate signal failed: %s", exc)
-            try:
-                proc.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                logger.warning(
-                    "qdrant pid=%d did not exit in %.0fs; killing",
-                    proc.pid,
-                    timeout,
-                )
-                proc.kill()
-                try:
-                    proc.wait(timeout=5.0)
-                except subprocess.TimeoutExpired:
-                    logger.error("qdrant pid=%d survived kill", proc.pid)
-            child_stopped = proc.poll() is not None
+        # The child and whatever it started: a binary an operator named may
+        # be a launcher, and the server it started must not outlive a stop.
+        child_stopped = proc is None or end_tree(
+            proc, self._job_handle, timeout=timeout
+        )
         # The child's exit closes the output pipe, so the drain thread sees EOF
         # and finishes; join it (bounded) so the log handle is flushed/closed.
         drain_stopped = self._join_output_drain(timeout=_DRAIN_JOIN_TIMEOUT_SECONDS)
@@ -997,6 +1025,10 @@ class QdrantSupervisor:
         Carries the source of the binary the child was spawned from: an
         operator-supplied binary runs without the committed pin, and that must
         be readable from the running service, not only from its log.
+
+        Carries why the latest restart attempt started nothing, when one did
+        not: a dead server whose restart was refused is otherwise reported
+        with no cause outside the service log.
         """
         return QdrantRuntimeState(
             mode="server",
@@ -1010,6 +1042,7 @@ class QdrantSupervisor:
                 "quarantined": list_quarantined_collections(self.storage_dir),
                 "migrated_from": self.migrated_from,
                 "binary_source": str(self.binary_source),
+                "restart_refusal": self.restart_refusal,
             },
         )
 

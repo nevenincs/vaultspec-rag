@@ -343,14 +343,31 @@ class TestDegradedStatusExplainsItself:
         assert "run server warmup when the model files are missing" in lines
         assert lines[lines.index("Next action:") + 1] == "vaultspec-rag server doctor"
 
-    def test_dead_vector_service_points_at_the_qdrant_view(
+    def test_dead_vector_service_names_the_stop_and_the_start(
         self, tmp_path: Path
     ) -> None:
+        """A dead server needs a new service, and the refusal is its cause.
+
+        The service restarts a dead server once on its own, so one still
+        reported dead is past that. The remedy is a stop and then a start;
+        the stop is the command offered to run, and the sentence above it
+        names both, with why the restart started nothing when it did not.
+
+        Mutation check: with the finding pointing at an inspection verb
+        again, the next action is that verb and the last assertion fails;
+        with the refusal dropped from the finding, the ``cannot be read``
+        assertion fails. Restoring each passes.
+        """
         result = _status_against(
             tmp_path,
             _health_payload(
                 reasons=["the configured vector service is not live"],
-                qdrant={"mode": "server", "alive": False, "port": 6333},
+                qdrant={
+                    "mode": "server",
+                    "alive": False,
+                    "port": 6333,
+                    "restart_refusal": "the binary cannot be read",
+                },
             ),
             jobs=_jobs_payload(failed=0),
         )
@@ -358,9 +375,11 @@ class TestDegradedStatusExplainsItself:
         assert result.exit_code == 0, result.output
         lines = _plain_lines(result.output)
         assert "- the configured vector service is not live" in lines
-        assert lines[lines.index("Next action:") + 1] == (
-            "vaultspec-rag server qdrant status"
-        )
+        assert (
+            "its restart started nothing: the binary cannot be read; run "
+            "`vaultspec-rag server stop`, then `vaultspec-rag server start`"
+        ) in " ".join(lines)
+        assert lines[lines.index("Next action:") + 1] == "vaultspec-rag server stop"
 
     def test_every_reason_is_rendered_when_several_are_reported(
         self, tmp_path: Path
