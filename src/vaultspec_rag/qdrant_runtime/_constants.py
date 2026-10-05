@@ -10,9 +10,10 @@ it, verified before an install is replaced and before every execution.
 An upgrade replaces the version and both tables here, then runs
 ``vaultspec-rag server qdrant install --upgrade``.
 
-Every digest below reproduces by streaming the asset from the pinned
-host and hashing it; the live release JSON is never consulted at
-provisioning time.
+Every digest below reproduces by streaming the asset from the shipped
+default release source and hashing it; the live release JSON is never
+consulted at provisioning time. Where the bytes come from is a setting;
+which bytes may run is decided here and cannot be configured.
 """
 
 from __future__ import annotations
@@ -32,11 +33,12 @@ if TYPE_CHECKING:
 #: The lock tracks the newest client, so this pin is what follows it rather
 #: than what holds it back, and a guard fails the suite whenever the two drift
 #: apart. Moving the pin means re-deriving every digest in both tables below:
-#: stream each asset from the pinned host and hash the archive and the
-#: executable inside it, and re-derive the OUTGOING version's digests the same
-#: way first. Reproducing the digests already committed here is what shows the
-#: method and the transport can be trusted to mint the next set - without that
-#: step, a digest taken alongside the artifact attests to nothing but itself.
+#: stream each asset from the shipped default release source - never from a
+#: mirror an operator configured - and hash the archive and the executable
+#: inside it, and re-derive the OUTGOING version's digests the same way first.
+#: Reproducing the digests already committed here is what shows the method and
+#: the transport can be trusted to mint the next set - without that step, a
+#: digest taken alongside the artifact attests to nothing but itself.
 QDRANT_SERVER_VERSION: Final[str] = "1.19.0"
 
 #: The pinned Qdrant server cannot complete uploaded-snapshot recovery on
@@ -45,26 +47,6 @@ QDRANT_SERVER_VERSION: Final[str] = "1.19.0"
 WINDOWS_SERVER_ARCHIVE_RESTORE_UNSUPPORTED_REASON: Final[str] = (
     "windows_server_archive_restore_unsupported: "
     "restore the archive with a supported non-Windows Qdrant server"
-)
-
-#: Base URL for upstream release downloads. The effective download URL
-#: is ``{base}/v{version}/{asset}``.
-QDRANT_RELEASE_BASE_URL: Final[str] = (
-    "https://github.com/qdrant/qdrant/releases/download"
-)
-
-#: Hosts a provisioning download may touch. GitHub serves release
-#: artifacts via a redirect to its object-store hosts (observed:
-#: ``release-assets.githubusercontent.com``; historically
-#: ``objects.githubusercontent.com``); any redirect outside this set
-#: is rejected as a potential hijack.
-ALLOWED_DOWNLOAD_HOSTS: Final[frozenset[str]] = frozenset(
-    {
-        "github.com",
-        "api.github.com",
-        "objects.githubusercontent.com",
-        "release-assets.githubusercontent.com",
-    }
 )
 
 #: The release asset filenames, named once.
@@ -129,8 +111,9 @@ QDRANT_ASSET_SHA256: Final[dict[str, str]] = {
 #: again immediately before every spawn.
 #:
 #: How a value is derived is part of the pin. For each asset: stream it from
-#: the pinned host, confirm the archive hashes to its entry in the table above,
-#: then hash the one executable member extracted from that same archive.
+#: the shipped default release source, confirm the archive hashes to its entry
+#: in the table above, then hash the one executable member extracted from that
+#: same archive.
 #: ``tools/qdrant_pin_digests.py`` does exactly this and prints both tables, so
 #: a version bump replaces both from one run. Never take a value from an
 #: installed copy, a provisioning manifest, or release metadata, and never run
