@@ -143,7 +143,8 @@ def _should_unlink_discovery_file(pid_alive: bool) -> bool:
     help=(
         "Download GPU model files before they are needed. "
         "Run once before the first index to avoid model download latency at "
-        "search time."
+        "search time. Exits non-zero when a model could not be downloaded, or "
+        "is missing while the Hugging Face Hub is in offline mode."
     ),
 )
 def service_warmup() -> None:

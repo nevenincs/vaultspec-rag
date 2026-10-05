@@ -19,6 +19,12 @@ Managed storage separates projects by namespaces based on each project's resolve
 
 Both backends need the [GPU runtime and models](installation.md). Local-only storage avoids the Qdrant binary download; packages and models still need downloading if they are not cached.
 
+### Where the managed server binary comes from
+
+The managed server is one pinned Qdrant release. `install` downloads it, and a host `server start` downloads it when none is installed. The archive is checked against a digest committed with this release before it is unpacked, and the executable against a second committed digest before it replaces an install and again before every launch, restarts included. An install that fails the check never runs; `vaultspec-rag server qdrant install --upgrade` replaces it.
+
+To run your own executable instead, name it. Set `VAULTSPEC_RAG_QDRANT_BINARY` to its absolute path, or register it with `vaultspec-rag server qdrant install --binary <path>`. A `qdrant` on `PATH` or in the working directory is never used. No committed digest covers an operator-supplied executable, so `server start` announces it and `server qdrant status` labels it `operator-supplied`. The [installation guide](installation.md#a-qdrant-on-path-is-no-longer-used) covers both routes, and [managed server provisioning](configuration.md#managed-server-provisioning) covers mirrors and the switch that stops `server start` from downloading.
+
 ### Access to the managed server
 
 The managed server listens on loopback, which every account on the machine can reach, so it requires an API key on both its HTTP and gRPC ports. The service generates a new key each time it starts the server and writes it to `credential.json` beside the storage directory (`~/.vaultspec-rag/qdrant-server/credential.json` by default), readable only by your account. vaultspec-rag reads it from there; nothing needs configuring.
@@ -57,7 +63,7 @@ Include `--local-only` on every start. A plain `server start` overrides a saved 
 vaultspec-rag server start --qdrant
 ```
 
-The explicit flag re-enables managed Qdrant if it was disabled. If the binary is missing, follow the install command printed by startup. See [startup options](cli.md#server-start) for automatic provisioning.
+The explicit flag re-enables managed Qdrant if it was disabled. If the binary is missing, the start downloads and verifies it first. With the download switched off (`--no-qdrant-auto-provision` or `VAULTSPEC_RAG_QDRANT_AUTO_PROVISION=0`), the start prints the install command instead. See [startup options](cli.md#server-start).
 
 After either start, [build or refresh the project's index](search-and-index.md#build-and-refresh-the-index).
 
@@ -74,6 +80,17 @@ Check that the service is running. For managed Qdrant, also check its process an
 ```sh
 vaultspec-rag server qdrant status
 ```
+
+The `Source` line says where the executable came from, and a `Detail` line appears when a start would refuse that executable, naming the fix. The same source words appear in `--json` output, in `server doctor`, and in the running service's own report:
+
+| Source        | Meaning                                                                                              | Held to                                |
+| ------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| `provisioned` | The managed install, downloaded as the pinned release                                                | The digest committed with this release |
+| `registered`  | The managed install, registered with `server qdrant install --binary`                                | The digest recorded at registration    |
+| `env`         | The executable named by `VAULTSPEC_RAG_QDRANT_BINARY`                                                | No digest; it runs as named            |
+| `attached`    | Reported by a running service only: it joined a managed server that was already up and spawned none | Not applicable                         |
+
+`server qdrant status` prints the first as `managed download (provisioned)` and marks the next two `operator-supplied`. `server doctor` also reports `absent` when nothing resolves, and `invalid` when `VAULTSPEC_RAG_QDRANT_BINARY` names something that is not an absolute path to a regular file; a start refuses that setting rather than falling back to the managed install.
 
 `server doctor` assesses the invoking process's backend configuration alongside service health. It prints one `Backend: server` or `Backend: local-only` line, which describes that configuration and does not prove which backend the running daemon uses.
 

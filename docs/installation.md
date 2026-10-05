@@ -65,7 +65,8 @@ needs their own host installation, running exactly the release the project pins.
 - Several gigabytes of free disk for the model download, which every repository shares.
 - Network access to the Python Package Index (PyPI), the PyTorch download server
   (`download.pytorch.org`) on Windows and Linux, the Hugging Face model server, and
-  GitHub release downloads.
+  GitHub release downloads. A site that mirrors the models or the Qdrant release names
+  its mirror instead; see [download sources](configuration.md#download-sources).
 
 | Profile                     | Total system RAM | Free index-store space | Free CUDA memory at startup |
 | --------------------------- | ---------------- | ---------------------- | --------------------------- |
@@ -413,6 +414,15 @@ vocabulary:
 
 Uninstall reports only `failed`, `unchanged`, or `removed`.
 
+When install provisions, `data.provisioning.steps` holds one entry for each of `torch`,
+`models`, and `qdrant`. An entry carries its `step`, its `action` in the same
+vocabulary, a `detail` sentence, `sync_pending`, and `code`. `code` is a stable
+machine-readable reason when the `models` or `qdrant` step failed, such as
+`models_offline`, `models_fetch_failed`, `qdrant_provision_failed`,
+`qdrant_binary_invalid`, or `qdrant_binary_unverified`, and is empty otherwise.
+`server start --json` reports the same codes as its `error` when one of these steps
+stops a start.
+
 A run that can't start at all prints the `vaultspec.error.v1` envelope with its reason
 instead, so every `--json` run is parsed the same way.
 
@@ -432,8 +442,14 @@ Start the service from the host installation:
 vaultspec-rag server start
 ```
 
-The command loads the models and waits until the service is ready. Stop the service
-with `vaultspec-rag server stop`. It doesn't restart by itself after a reboot, and
+On a host installation the command first downloads whatever the service needs and
+doesn't have yet: any missing model files, and the Qdrant server if none is installed.
+It shows each transfer, then loads the models and waits until the service is ready. A
+repository setup that already downloaded both leaves nothing to fetch. To stop
+`server start` from downloading the Qdrant server, pass `--no-qdrant-auto-provision` or
+set `VAULTSPEC_RAG_QDRANT_AUTO_PROVISION=0`; see
+[managed server provisioning](configuration.md#managed-server-provisioning). Stop the
+service with `vaultspec-rag server stop`. It doesn't restart by itself after a reboot, and
 vaultspec-rag ships no autostart. The [service guide](service-mode.md) explains how the
 service is started and what a service manager must account for.
 
@@ -526,7 +542,9 @@ From the project root:
 
    A client installation skips the PyTorch step and every download automatically. The
    output reports `PyTorch configuration: not needed (this installation is a client)`
-   and each provisioning step as skipped.
+   and each provisioning step as skipped. No command downloads a model or the Qdrant
+   server for a client: `server warmup` and `server qdrant install` report that they
+   aren't needed, and `server start` is refused before it looks for either.
 
 Run the client as `uv run vaultspec-rag` from the project. If the host installation is
 a standalone tool, a plain `vaultspec-rag` runs the host instead.
@@ -631,7 +649,8 @@ installation and every client together.
 1. If you ran the host's repository setup with `--local-only`, `--skip-qdrant`, or
    `--no-provision`, it skipped the Qdrant download. When the
    [release notes](https://github.com/nevenincs/vaultspec-rag/releases) name a new
-   Qdrant version, install it:
+   Qdrant version, the next `server start` downloads it. To fetch it ahead of time, or
+   if you switched the automatic download off, install it:
 
    ```bash
    vaultspec-rag server qdrant install
@@ -673,10 +692,21 @@ a tool's environment. After making changes, rerun the checks in
 
 ### The model download fails
 
-Check network access to the Hugging Face Hub or your configured `HF_ENDPOINT`,
-and confirm that `HF_HOME` is writable. With offline mode enabled, the cache
-must already contain the pinned model revision. Rerun `vaultspec-rag server warmup`
-to download missing files before starting an index.
+`install`, `server warmup`, and `server start` download missing model files the same
+way, in the foreground, and name the repository that failed. Each repository is
+attempted before the command reports, so one failure doesn't hide the next. Check
+network access to the Hugging Face Hub or your configured `HF_ENDPOINT`, and confirm
+that `HF_HOME` is writable, then rerun `vaultspec-rag server warmup`.
+
+`server warmup` exits `1` when any model could not be fetched. Earlier releases printed
+the failure and exited `0`, so a script that ignored its output should now check the
+exit code. `server start` stops with `models_fetch_failed` before it starts a daemon.
+
+With offline mode enabled (`HF_HUB_OFFLINE` or `TRANSFORMERS_OFFLINE`), nothing is
+downloaded: the cache must already contain the pinned model revision. A model that is
+missing then stops the command, and `server start --json` reports it as
+`models_offline`. Unset the offline switch and run `vaultspec-rag server warmup`, or copy
+a complete model cache onto the machine.
 
 ### The GPU runs out of memory
 
@@ -750,8 +780,11 @@ this failure mode.
 
 ### `server start` can't find the Qdrant binary
 
-Install the Qdrant binary, then retry your original start command. For a project
-dependency, add `uv run`:
+A host `server start` downloads the Qdrant server when none is installed, so this
+message appears only when that download is switched off, with
+`--no-qdrant-auto-provision` or `VAULTSPEC_RAG_QDRANT_AUTO_PROVISION=0`. Install the
+Qdrant binary, then retry your original start command, or rerun the start with
+`--qdrant-auto-provision`. For a project dependency, add `uv run`:
 
 ```bash
 vaultspec-rag server qdrant install
@@ -759,13 +792,91 @@ vaultspec-rag server qdrant install
 
 To use the local-only backend instead, follow [storage backends](backends.md).
 
+<p id="a-qdrant-on-path-is-no-longer-used"></p>
+
+### A `qdrant` on `PATH` is no longer used
+
+Earlier releases ran a `qdrant` executable found on `PATH` when no other one was
+configured. That lookup is removed: on Windows it searched the working directory first,
+and it ran a server of unknown version without checking it. A system `qdrant` is now
+ignored, and a start that relied on it downloads the managed server instead.
+
+To keep using your own executable, name it explicitly, in one of two ways:
+
+- Set `VAULTSPEC_RAG_QDRANT_BINARY` to its absolute path. The file runs as named, and
+  no checksum applies to it. The path must be absolute and name a regular file that is
+  not a symbolic link; anything else stops `server start` with `qdrant_binary_invalid`
+  rather than falling back to another server.
+- Register it once with `vaultspec-rag server qdrant install --binary <path>`. The file
+  is copied into the managed directory, and every start checks the copy against the
+  digest recorded at registration.
+
+Either way `server start` announces the server as operator-supplied, and
+`vaultspec-rag server qdrant status` labels its source: `operator-supplied (env)` for the
+setting, `operator-supplied (registered)` for a registered file.
+
 <p id="the-qdrant-download-failed-a-checksum"></p>
 
 ### The Qdrant download fails a checksum
 
-The archive didn't match the committed digest, and the command deleted the partial
-file. Retry. On an air-gapped machine, register your own executable with
+The archive, or the executable inside it, didn't match the digest committed with this
+release. Nothing was installed, and an install that was already there is untouched.
+Retry once: a truncated transfer fails this way. A mismatch that repeats means the
+source is serving different bytes than the release was built against. If you set a
+mirror with `VAULTSPEC_RAG_QDRANT_RELEASE_BASE_URL`, check the mirror; see
+[managed server provisioning](configuration.md#managed-server-provisioning). The
+digests themselves cannot be configured.
+
+On an air-gapped machine, register your own executable with
 `server qdrant install --binary <path>`.
+
+<p id="the-qdrant-download-is-interrupted-or-waits"></p>
+
+### The Qdrant download is interrupted or waits
+
+An interrupted transfer is retried, up to three attempts in all, and the whole download
+has a 15 minute limit. A checksum mismatch, a refusal from the source such as a missing
+file, a certificate failure, and a redirect to a host outside the allowed set are not
+retried: they fail at once with the reason.
+
+Only one command provisions the server at a time. A second `server start` or
+`server qdrant install` run meanwhile reports that it is waiting for the first, then
+finds the install present and downloads nothing.
+
+On Windows a running server holds its executable open, so `server qdrant install`
+with `--upgrade` or `--binary` fails while the service runs. Run
+`vaultspec-rag server stop` first.
+
+<p id="the-installed-qdrant-server-fails-its-check"></p>
+
+### The installed Qdrant server fails its check
+
+`server start` reports `qdrant_binary_unverified` and refuses to run the server. The
+installed executable is checked against its committed digest before every launch, and
+it no longer matches: the file was modified, or the install is incomplete. Replace it
+with the pinned release:
+
+```bash
+vaultspec-rag server qdrant install --upgrade
+```
+
+`vaultspec-rag server qdrant status` shows the same refusal as its detail line.
+
+<p id="the-linux-x64-server-build"></p>
+
+### The Linux x64 server build
+
+On Linux x64 the managed server is now the static musl build, as it already was on
+Linux arm64. It doesn't depend on the host's C library, so it starts on distributions
+whose glibc is older than the one the upstream gnu build needs. An install made by an
+earlier release keeps running and keeps verifying, and `--upgrade` leaves a healthy
+install alone. To move it to the musl build, stop the service, remove the install with
+`vaultspec-rag server qdrant clean --yes`, and start the service again; index data is
+not touched.
+
+A platform with no upstream Qdrant build is reported as unsupported rather than given
+another platform's server. Supply your own executable there, as described under
+[a `qdrant` on `PATH` is no longer used](#a-qdrant-on-path-is-no-longer-used).
 
 ### Pin the GPU build
 

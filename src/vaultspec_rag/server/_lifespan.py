@@ -460,10 +460,12 @@ async def _start_components(
                 cfg.qdrant_url,
             )
         else:
-            # First-use provisioning downloads and verifies the qdrant binary,
-            # which can take many seconds; surface it so the start spinner is
-            # not a silent wait before the daemon even binds a port.
-            discovery.publish_phase("warming", detail="provisioning the qdrant server")
+            # The daemon never downloads the server: it resolves the binary the
+            # start command ensured, verifies it, and spawns it. Bringing a
+            # large store up can still take many seconds; surface it so the
+            # start spinner is not a silent wait before the daemon even binds a
+            # port.
+            discovery.publish_phase("warming", detail="starting the qdrant server")
             t_q = time.perf_counter()
             try:
                 supervisor = await _run_in_thread(

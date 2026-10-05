@@ -13,12 +13,50 @@
   remains available for the Typesafe key.
 - Raise GPU stack requirements to Sentence Transformers 5.4.0 or newer and
   Transformers 5.3 or newer within version 5.
+- A `qdrant` executable on `PATH` or in the working directory is no longer used
+  as the managed server. Name your own executable with
+  `VAULTSPEC_RAG_QDRANT_BINARY=<absolute path>`, or register it with
+  `vaultspec-rag server qdrant install --binary <path>`. A setting that names
+  anything other than an absolute path to a regular file now stops
+  `server start` instead of being skipped.
+- A host `server start` downloads the pinned Qdrant server, and any missing
+  model files, when they are not installed. Starting the service is the consent
+  to fetch what it needs. `--qdrant-auto-provision` is now a pair with
+  `--no-qdrant-auto-provision`; set `VAULTSPEC_RAG_QDRANT_AUTO_PROVISION=0` or
+  pass the opt-out to keep the earlier behaviour, where a missing server fails
+  the start with the install command.
+- New Linux x64 installs of the managed Qdrant server use the static musl
+  build in place of the gnu build, so the server no longer depends on the
+  host's glibc. An existing gnu install keeps running and keeps verifying. To
+  move it, stop the service, run `vaultspec-rag server qdrant clean --yes`, and
+  start the service again.
+- The installed Qdrant executable is checked against a committed digest before
+  every launch. An install that does not match no longer starts until
+  `vaultspec-rag server qdrant install --upgrade` replaces it.
+- `server warmup` exits `1` when a model could not be downloaded, or is missing
+  while the Hugging Face Hub is in offline mode. It used to print the failure
+  and exit `0`.
 
 ### Improvements
 
 - Share the pinned sparse profile across inference, provisioning, cache checks
   and warmup. Prepare tokens and convert sparse outputs outside GPU forward
   locking, with vectorized CPU conversion.
+- `install`, `server warmup`, and `server start` fetch the model files through
+  one implementation and report the same progress. With the Hugging Face Hub in
+  offline mode a missing model is a failure that names the switch, not a
+  download attempt.
+- A client installation provisions nothing on any command: `server warmup` and
+  `server qdrant install` report that they are not needed, and `server start`
+  is refused before it looks for a model or a binary.
+- The Qdrant release source and the model hub endpoint are settings with
+  prefixed environment overrides, for sites that mirror them. The digests are
+  not configurable.
+- `server qdrant status` labels an operator-supplied executable and reports an
+  install that would be refused at start.
+- Each provisioning step in `install --json` carries a `code`: a stable
+  machine-readable reason when the step failed, empty otherwise.
+  `server start --json` reports the same codes as its `error`.
 
 ## [0.5.3](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.5.2...vaultspec-rag-v0.5.3) (2026-09-29)
 

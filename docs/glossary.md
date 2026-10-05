@@ -126,7 +126,7 @@ The directory vaultspec-rag treats as the project boundary, the folder holding `
 
 ## Provisioning
 
-The one-time setup, run during `install`, that obtains the external dependencies vaultspec-rag needs: search models cached from Hugging Face, the managed Qdrant server binary, and, when the [host installation](#host-installation) is a project dependency, the CUDA PyTorch source in that project's `pyproject.toml`. CUDA uses the configured cu130 source; macOS uses the standard MPS-capable wheel. A [client installation](#client-installation) needs none of these, and `install` skips them for it automatically. See [the installation guide](installation.md).
+The one-time setup, run during `install` and completed by a host `server start` for any model file or Qdrant binary still missing, that obtains the external dependencies vaultspec-rag needs: search models cached from Hugging Face, the managed Qdrant server binary, and, when the [host installation](#host-installation) is a project dependency, the CUDA PyTorch source in that project's `pyproject.toml`. CUDA uses the configured cu130 source; macOS uses the standard MPS-capable wheel. A [client installation](#client-installation) needs none of these, and `install` skips them for it automatically. See [the installation guide](installation.md).
 
 ## Readiness
 

@@ -295,7 +295,7 @@ None.
 
 ## server warmup
 
-Download GPU model files before they are needed. Run once before the first index to avoid model download latency at search time.
+Download GPU model files before they are needed. Run once before the first index to avoid model download latency at search time. Exits non-zero when a model could not be downloaded, or is missing while the Hugging Face Hub is in offline mode.
 
 ```bash
 vaultspec-rag server warmup

@@ -154,7 +154,7 @@ def _daemon_discovery_snapshot(
     """Build one complete discovery view from daemon-owned live state.
 
     ``phase_detail`` is an optional human-readable description of the current
-    cold-start stage (provisioning the qdrant server, loading models, warming)
+    cold-start stage (starting the qdrant server, loading models, warming)
     that the CLI start spinner renders so a minutes-long warm-up shows visible
     progress instead of a static wait. It is advisory only: the coarse ``phase``
     (``warming``/``running``) remains the authoritative machine-readable state,
@@ -259,7 +259,7 @@ class _DiscoveryPublisher:
         publications stay best-effort (``require=False``).
 
         ``detail`` is a human-readable description of the current warm-up stage
-        (e.g. "provisioning the qdrant server", "loading models") that the CLI
+        (e.g. "starting the qdrant server", "loading models") that the CLI
         start spinner renders. It is carried on every subsequent publication -
         including heartbeats - until the next ``publish_phase`` changes it, so a
         stage set here stays visible while that stage runs.

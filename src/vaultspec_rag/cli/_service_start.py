@@ -143,9 +143,11 @@ class _PreparedServiceRequest:
 #: Everything the start wait must cover BEYOND the qdrant readiness budget:
 #: the daemon interpreter's own import, resolving and re-verifying the server
 #: binary, and the embedding and reranker model load. The model load is the
-#: large term - on a cold host it fetches weights, where the hub's own
-#: per-file download budget is itself 300 seconds - and the accelerator
-#: preflight that precedes the timer is already allowed 60 on its own.
+#: large term. This command fetches missing weights before the timer starts,
+#: so the daemon normally loads from the cache, but a file that vanished in
+#: between is fetched by the daemon itself, where the hub's own per-file
+#: download budget is itself 300 seconds. The accelerator preflight that
+#: precedes the timer is already allowed 60 on its own.
 _START_OVERHEAD_ALLOWANCE_SECONDS = 300.0
 
 
@@ -1129,7 +1131,7 @@ def _startup_phase_label(health: dict[str, object] | None) -> str:
     Once the daemon serves, its own ``/health`` status is authoritative; before
     the port binds, the ``warming`` phase stamped in the discovery file
     distinguishes model loading from a daemon that never came up. When the
-    daemon has stamped a granular cold-start ``phase_detail`` (provisioning the
+    daemon has stamped a granular cold-start ``phase_detail`` (starting the
     qdrant server, loading models, loading the reranker), that is shown verbatim
     so a minutes-long warm-up reports which stage is running.
     """
@@ -1321,7 +1323,7 @@ def _await_service_ready(request: _ServiceReadinessRequest) -> None:
         ) from None
 
     # Report the last phase the daemon published rather than a bare "not ready":
-    # a timeout that names the stage it died on (provisioning, model load, never
+    # a timeout that names the stage it died on (qdrant start, model load, never
     # answered at all) is the difference between a diagnosis and a mystery.
     raise _fail_start(
         request.json_mode,

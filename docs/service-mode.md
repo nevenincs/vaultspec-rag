@@ -2,7 +2,7 @@
 
 Run vaultspec-rag as a long-lived background service to keep the models loaded and the managed server running. The first query pays the model-loading cost once, and every later query reuses the already-loaded models.
 
-This guide assumes the workspace is already installed and provisioned. "Provisioned" means `install` has fetched the model files and the Qdrant binary. It also means the environment has a PyTorch build for CUDA or Metal Performance Shaders (MPS). If you haven't done that, start with the [installation guide](installation.md).
+This guide assumes the workspace is already installed and provisioned. "Provisioned" means `install` has fetched the model files and the Qdrant binary. It also means the environment has a PyTorch build for CUDA or Metal Performance Shaders (MPS). If you haven't done that, start with the [installation guide](installation.md). A host `server start` fetches the model files and the Qdrant binary itself when either is missing, but it never changes the PyTorch build.
 
 Starting the service also requires the compiled browser monitor executable; see
 [local browser monitor setup](#local-carbon-browser-monitor).
@@ -21,7 +21,11 @@ Run:
 uv run vaultspec-rag server start
 ```
 
-The command starts the managed Qdrant server on loopback at `http://127.0.0.1:8765` and warms the models. It then binds the service on port 8766, writes a status file, and polls until the service reports ready.
+Before it starts anything, the command checks that the environment can run the service, then makes sure the model files and the Qdrant binary are present, downloading whichever is missing and showing the transfer. It prints the outcome of both under `Provisioning:` in the words `install` uses, and names an operator-supplied Qdrant binary as such. A download that fails, or a model that is missing while the Hugging Face Hub is in offline mode, stops the start there with the reason, before any daemon exists.
+
+The command then starts the managed Qdrant server on loopback at `http://127.0.0.1:8765` and warms the models. It then binds the service on port 8766, writes a status file, and polls until the service reports ready.
+
+To keep `server start` from downloading the Qdrant binary, pass `--no-qdrant-auto-provision` or set `VAULTSPEC_RAG_QDRANT_AUTO_PROVISION=0`; a missing binary then fails the start with the install command. See [managed server provisioning](configuration.md#managed-server-provisioning).
 
 If you don't want a managed server, run local-only instead:
 
@@ -502,7 +506,7 @@ A stale process ID can keep `server stop` from completing. Kill the process by i
 
 ### The managed server can't start
 
-Server mode needs the Qdrant binary. Provision it with `server qdrant install`, or run local-only with `server start --local-only` and the `embedded-local` index profile (see [Start the service](#start-the-service)).
+Server mode needs the Qdrant binary. `server start` downloads it when it is missing, unless that download is switched off, in which case provision it with `server qdrant install`. If the start reports `qdrant_binary_unverified`, the installed binary failed its checksum: replace it with `server qdrant install --upgrade`. If it reports `qdrant_binary_invalid`, `VAULTSPEC_RAG_QDRANT_BINARY` names something that is not an absolute path to a regular file: correct or unset it. The [installation guide](installation.md#server-start-cannot-find-the-qdrant-binary) covers each case. To run without the managed server, use `server start --local-only` and the `embedded-local` index profile (see [Start the service](#start-the-service)).
 
 ### `server start` says the environment cannot run the service
 

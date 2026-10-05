@@ -114,7 +114,8 @@ vaultspec-rag install --no-torch-config
 
 Setup connects your AI assistant and creates the `.vault/` folder for decision records.
 The first run also downloads the models and Qdrant, the index server; later
-repositories reuse them. `--no-torch-config` leaves the repository's own PyTorch
+repositories reuse them. If either is still missing when you start the service,
+`server start` downloads it then. `--no-torch-config` leaves the repository's own PyTorch
 settings alone, because the host carries its own.
 
 Start the service and check it:
