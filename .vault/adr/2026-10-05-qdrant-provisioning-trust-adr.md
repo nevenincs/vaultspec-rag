@@ -1,0 +1,100 @@
+---
+tags:
+  - '#adr'
+  - '#qdrant-provisioning-trust'
+date: '2026-10-05'
+modified: '2026-10-05'
+body_schema: 'body-v2'
+body_hash: 'sha256:4da0e3cd2bc8d15b7a8e4486db791e80f21e35fba12c3e9481d45dd409894a01'
+related:
+  - "[[2026-10-05-qdrant-provisioning-trust-audit]]"
+  - "[[2026-06-12-qdrant-server-provisioning-adr]]"
+  - "[[2026-06-13-provisioning-setup-adr]]"
+  - "[[2026-06-13-server-first-default-adr]]"
+  - "[[2026-09-04-cuda-provisioning-adr]]"
+  - "[[2026-06-12-qdrant-server-provisioning-research]]"
+---
+
+# `qdrant-provisioning-trust` adr: `automatic host provisioning and executable-anchored trust for the managed qdrant binary` | (**status:** `accepted`)
+
+## Problem Statement
+
+A host installation that has never provisioned the managed Qdrant server cannot complete a default `server start`: the binary is fetched only behind an explicit consent flag, while the model weights the same command needs are fetched without one. The path that does fetch and run the binary also falls short of the verify-before-execute contract it was built on. `2026-10-05-qdrant-provisioning-trust-audit` shows an implicit PATH lookup that runs a file from the working directory on Windows, a pre-execution check anchored to a digest stored beside the binary, restarts that re-execute without re-verifying, a recovery command that does nothing, and an install that is not atomic. This record decides the consent model for the binary on `server start`, where its trust is anchored, how it is resolved, and how its source is configured, and reconciles the two earlier provisioning records it changes.
+
+## Considerations
+
+- Model weights and the server binary are both fetch-and-go artifacts outside the Python environment (`2026-06-13-provisioning-setup-adr`); only the binary demands a consent flag on `server start`.
+- A client installation never loads a model and cannot run the service (`2026-09-04-cuda-provisioning-adr`, D4); its role gate on `server start` currently sits after the binary check (`2026-10-05-qdrant-provisioning-trust-audit`, `start-does-not-provision`).
+- The archive digest is a reviewed constant; the executable digest is not, so every check after extraction trusts the directory it is protecting (`pre-exec-self-attested`).
+- The build toolchain already pins executable digests and checks them through one verifier; the qdrant path keeps a second, weaker comparison.
+- An implicit PATH tier existed as a convenience when provisioning was opt-in. It runs an unpinned binary of unknown version and, on Windows, resolves from the working directory (`path-tier-cwd-exec`).
+- The committed archive digests match the upstream release API for the pinned tag, so the pin table itself is sound and stays.
+- GitHub Releases is the channel the earlier research selected (`2026-06-12-qdrant-server-provisioning-research`); its base URL and redirect hosts are code constants with no operator override, which blocks mirrors.
+
+## Considered options
+
+**D1 - consent for the binary on `server start`.**
+
+- **O-1a (chosen) - a host start provisions the pinned binary when none resolves; invoking start is the consent, as it is for model weights.** An opt-out setting and flag restore fail-with-instructions.
+- **O-1b - keep the explicit consent flag.** Rejected: the default command fails on every unprovisioned host and treats two like dependencies differently.
+- **O-1c - provision inside the daemon.** Rejected: the daemon holds the machine lock and has no console; a first-use download belongs where progress and failure are visible.
+
+**D2 - resolution tiers.**
+
+- **O-2a (chosen) - operator binary setting, then the managed install; no PATH lookup.**
+- **O-2b - keep PATH but accept only absolute hits outside the working directory.** Rejected: still an unpinned binary of unknown version, now with a platform-specific filter to maintain.
+- **O-2c - keep PATH as is with a louder warning.** Rejected: a warning does not stop the execution the audit traced.
+
+**D3 - trust anchor for execution.**
+
+- **O-3a (chosen) - commit a per-asset executable digest beside the archive digest and check it after extraction and at every spawn.**
+- **O-3b - keep the manifest digest and fail closed when it is absent.** Rejected: closes the skip but leaves the digest co-located with the artifact.
+- **O-3c - re-verify the retained archive before each spawn.** Rejected: keeps a 30 MB archive per version and re-extracts on every start.
+
+**D4 - source configuration.**
+
+- **O-4a (chosen) - the release base URL and the allowed download hosts are settings with the official channel as default and prefixed environment overrides; digests stay code constants.**
+- **O-4b - constants only.** Rejected: an operator behind a mirror has no supported route except hand-registering a binary.
+- **O-4c - make digests overridable too.** Rejected: a digest that configuration can change is not a pin.
+
+## Constraints
+
+- Automatic provisioning runs only on a host installation. The installation role is decided before any network or filesystem effect. A client `server start` is refused before the binary check, and no client command - install, search, index, the MCP surface, warmup - downloads a model or a binary.
+- The opt-out is a setting with a prefixed environment variable and a matching flag. With it off, an absent binary fails with the install command, as today. `--local-only` still skips the binary entirely.
+- Verification order is fixed: archive digest before extraction, executable digest before the staged file replaces anything, executable digest again inside every spawn - first start, heartbeat restart, and recovery retry alike.
+- Both digests come from reviewed code constants. A managed install whose executable digest is missing or mismatched never runs, and the remedy the failure names must actually repair it.
+- An operator binary is explicit: a setting naming an absolute regular file, or a registration through the install verb. It carries no pin, is labelled as operator-supplied on every status surface, and is announced on the console at start, not only in the service log. A registered operator binary is verified against the digest recorded at registration.
+- No lookup derives the binary from PATH or the working directory.
+- An install is staged and replaced atomically; a failure at any stage leaves a previous install untouched. Provisioning is serialised across processes and the download has a whole-operation deadline.
+- Source settings are read from the process environment and managed configuration only, never from a workspace file. HTTPS is mandatory for any configured source, and redirects stay inside the configured host set.
+- Each fetch-and-go dependency has one provisioning implementation, reached by `install`, `server start`, `server warmup`, and the dependency's own verb, reporting in the shared sync vocabulary.
+- This record overrides `2026-06-12-qdrant-server-provisioning-adr` on three points: the never-download-without-consent constraint, the PATH resolution tier, and the fixed host pin. It overrides the matching consent clause in `2026-06-13-provisioning-setup-adr`. Everything else in both records stands.
+
+## Implementation
+
+We will make a host `server start` provision the pinned Qdrant binary by default, anchor its execution to committed executable digests, resolve it from an explicit operator setting or the managed install only, and read its source from settings.
+
+- The start command decides the installation role first, then ensures models and the binary through the provisioning front door with visible progress, then spawns the daemon. The daemon resolves and verifies; it never downloads the binary.
+- The pin table gains one executable digest per asset. The one native-binary verifier checks it after extraction and inside the supervisor's spawn. The manifest remains as a record of what was installed, not as a source of trust for a downloaded binary.
+- Install-state classification hashes the executable, so the upgrade path replaces an install that fails its digest.
+- Settings gain the auto-provision switch, the release base URL, and the allowed download hosts, each with a prefixed environment variable and the current official values as defaults. Hypothesis: the model hub endpoint and the CUDA wheel index take the same shape; if either collides with an existing canonical-configuration check, that source keeps its constant and the collision is recorded.
+- Hypothesis: the start preflight ensures models through the same front door `install` uses, while the daemon's own model loading stays online-capable as a backstop for starts that bypass the command.
+
+## Rationale
+
+The consent flag protected against a surprise download, but the same command already downloads several gigabytes of model weights on first use, so the flag bought no real control and cost a failing default. Making start the consent, on hosts only, gives one behaviour for both dependencies and keeps the opt-out for operators who want it.
+
+The trust decisions follow from one observation in `2026-10-05-qdrant-provisioning-trust-audit`: every check after extraction read its expected value from the directory under protection. Committing the executable digest removes that dependency at each point the audit found - the skipped check, the unverified restart, the gap between hashing and extracting, and the recovery that could not see a tampered file - with a pattern the build toolchain already uses.
+
+Removing the PATH tier is the knockout for the working-directory execution: once provisioning is automatic there is no unprovisioned state for the convenience to serve, and the explicit operator setting covers every legitimate use of a system binary.
+
+Configurable sources are safe only because digests are not configurable. A mirror can change where bytes come from, never which bytes run.
+
+## Consequences
+
+- A default `server start` on an unprovisioned host downloads about 30 MB without asking. Operators who relied on the refusal set the opt-out.
+- An operator who relied on a `qdrant` found on PATH must name it through the operator binary setting or register it. This is a breaking change for that configuration and must be stated in the release notes and the installation guide.
+- A version bump now re-derives two digests per asset instead of one.
+- An existing managed install whose executable does not match the committed digest stops starting until it is reinstalled; the upgrade verb repairs it.
+- Client installations are unaffected by design, and a client start no longer reaches any provisioning code.
+- Reconsider if upstream begins publishing signed provenance for release binaries: signature verification would then be a stronger anchor than a transcribed digest.

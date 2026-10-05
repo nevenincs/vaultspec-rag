@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#qdrant-server-provisioning'
 date: '2026-06-12'
-modified: '2026-10-04'
-body_hash: 'sha256:51d7bf1c28db0364673d0eab438f1377f5e4d52ca171e99e82570170f76af680'
+modified: '2026-10-05'
+body_hash: 'sha256:975fb5d64ed504dce77f9439bcfe20b4cf4e1f6fc806f1ce9ca74ca7e521b005'
 related:
   - "[[2026-06-12-qdrant-server-provisioning-research]]"
   - "[[2026-06-12-serving-runtime-research]]"
@@ -72,6 +72,8 @@ the remote-server escape hatch. Loopback binding alone does not separate local
 accounts, so the managed child requires a per-instance key on both protocols and
 every internal client presents it. Loopback binding, the curated child environment,
 pinned-binary verification and supervision remain in force.
+
+2026-10-05 authorized refinement: `2026-10-05-qdrant-provisioning-trust-adr` governs consent, resolution, and source configuration for the managed binary and overrides three statements in this record. A host `server start` now provisions the pinned binary by default, so "never silently download" holds only when the operator sets the opt-out. The PATH resolution tier named under Implementation is removed; the operator setting and the managed install are the only sources. The download host set is a setting defaulting to the official channel rather than a fixed pin. HTTPS-only, verification before extraction and execution, loopback binding, the curated child environment, and supervision remain in force, and execution is additionally anchored to a committed executable digest.
 
 ## Implementation
 
