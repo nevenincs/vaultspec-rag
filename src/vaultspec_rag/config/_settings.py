@@ -293,6 +293,13 @@ class VaultSpecConfigWrapper:
         "sparse_model": SPARSE_MODEL_ID,
         "reranker_enabled": True,
         "reranker_model": "BAAI/bge-reranker-v2-m3",
+        # The hub the three models above are downloaded from. The default is
+        # the hub client's own, so an unset value changes nothing; a mirror
+        # is a different base that keeps the hub's path layout. It reaches
+        # the client through ``publish_model_hub_endpoint``, never through a
+        # read of this key at download time: the client fixes its endpoint
+        # when it is imported.
+        "hf_endpoint": "https://huggingface.co",
         "reranker_batch_size": 32,
         # Token bound for CrossEncoder inputs. The reranker scores
         # token-bounded full candidate content; its tokenizer truncates
@@ -1172,6 +1179,7 @@ class VaultSpecConfigWrapper:
     sparse_model: str
     reranker_enabled: bool
     reranker_model: str
+    hf_endpoint: str
     reranker_batch_size: int
     reranker_max_length: int
     vault_chunk_chars: int
@@ -1383,6 +1391,40 @@ def collect_environment_problems(
     except ValueError as refusal:
         problems.append(str(refusal))
     return problems
+
+
+def publish_model_hub_endpoint() -> None:
+    """Export the configured model hub endpoint to the hub client's variable.
+
+    The hub client reads ``HF_ENDPOINT`` once, when it is first imported, and
+    builds its download URLs from that reading. A setting consulted at
+    download time would therefore arrive too late to move anything, so the
+    configured endpoint is written into the process environment instead, and
+    this has to run before anything imports the client. Every process kind
+    calls it at entry, straight after the shared startup refusal has vouched
+    for the value.
+
+    Precedence, highest first: this package's own variable; the operator's
+    own ``HF_ENDPOINT``; the client's built-in default. Nothing is written
+    unless this package's variable is set, so an operator who configures the
+    client directly keeps exactly the behaviour the client gives them, and
+    that value stays the client's to judge. A child process inherits the
+    export with the rest of the environment.
+
+    Raises:
+        ValueError: If the configured endpoint is unusable. The startup
+            refusal reports that first; this is reached only by a caller
+            that skipped it.
+    """
+    import os
+
+    if env_value(entry(EnvVar.RAG_HF_ENDPOINT)) is None:
+        return
+    # A throwaway settings object, for the same reason the refusal builds
+    # one: this runs before a workspace root is resolved, and must not leave
+    # a configuration built against the wrong root cached for a later reader.
+    endpoint = VaultSpecConfigWrapper.from_environment().hf_endpoint
+    os.environ[EnvVar.HF_ENDPOINT.value] = endpoint
 
 
 # Every numeric setting must declare its admissible range, and every declared

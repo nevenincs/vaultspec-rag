@@ -322,6 +322,7 @@ ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "embedding_dimension": EnvVar.EMBEDDING_DIMENSION,
     "sparse_model": EnvVar.SPARSE_MODEL,
     "reranker_model": EnvVar.RERANKER_MODEL,
+    "hf_endpoint": EnvVar.RAG_HF_ENDPOINT,
     "reranker_batch_size": EnvVar.RERANKER_BATCH_SIZE,
     "graph_ttl_seconds": EnvVar.GRAPH_TTL_SECONDS,
     "embedding_batch_size": EnvVar.EMBEDDING_BATCH_SIZE,
@@ -551,4 +552,6 @@ SETTING_BOUNDS: dict[str, _SettingBound] = {
     # download.
     "qdrant_release_base_url": _HTTPS_SOURCE_URL,
     "qdrant_download_hosts": _DOWNLOAD_HOSTS,
+    # Model hub endpoint, held to the same shape as the binary's source.
+    "hf_endpoint": _HTTPS_SOURCE_URL,
 }

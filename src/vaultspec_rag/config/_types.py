@@ -109,6 +109,10 @@ class EnvVar(StrEnum):
     EMBEDDING_DIMENSION = "VAULTSPEC_RAG_EMBEDDING_DIMENSION"
     SPARSE_MODEL = "VAULTSPEC_RAG_SPARSE_MODEL"
     RERANKER_MODEL = "VAULTSPEC_RAG_RERANKER_MODEL"
+    # Where the models above are downloaded from. Exported to the hub
+    # client's own ``HF_ENDPOINT`` before that client is first imported,
+    # because the client reads its endpoint once, at import.
+    RAG_HF_ENDPOINT = "VAULTSPEC_RAG_HF_ENDPOINT"
     TYPESAFE_API_KEY = "VAULTSPEC_RAG_TYPESAFE_API_KEY"
     EMBEDDING_BATCH_SIZE = "VAULTSPEC_RAG_EMBEDDING_BATCH_SIZE"
     EMBEDDING_ENCODE_BATCH_SIZE = "VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE"
@@ -248,6 +252,7 @@ class EnvVar(StrEnum):
     # Third-party env vars this codebase reads or sets - defined here so
     # the string literal lives in exactly one place.
     HF_HOME = "HF_HOME"
+    HF_ENDPOINT = "HF_ENDPOINT"
     HF_HUB_OFFLINE = "HF_HUB_OFFLINE"
     HF_HUB_DOWNLOAD_TIMEOUT = "HF_HUB_DOWNLOAD_TIMEOUT"
     TRANSFORMERS_OFFLINE = "TRANSFORMERS_OFFLINE"

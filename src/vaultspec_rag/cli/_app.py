@@ -631,6 +631,13 @@ def _configure_root_context(ctx: ClickContext, options: _RootOptions) -> None:
     # the run on its own.
     _refuse_unusable_environment(ctx, cli_overrides)
 
+    # The hub client fixes its endpoint when it is first imported, so the
+    # configured one is exported here: after the refusal has vouched for the
+    # value, and before any command can import the client.
+    from ..config._settings import publish_model_hub_endpoint
+
+    publish_model_hub_endpoint()
+
     configure_logging(debug=options.debug, verbose=options.verbose)
 
     if ctx.invoked_subcommand is None:

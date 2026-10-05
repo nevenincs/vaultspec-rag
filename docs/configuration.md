@@ -15,6 +15,7 @@ standalone tool and no-install routes.
 - [Core variables](#core-variables) - every variable resolved through the standard chain, grouped by what it affects
 - [Config-only keys](#config-only-keys) - settings with no environment variable
 - [Hugging Face cache](#hugging-face-cache) - the third-party variables that govern model downloads
+- [Download sources](#download-sources) - where the server binary, the models and the CUDA wheels come from
 - [Renamed and removed variables](#renamed-and-removed-variables) - old names and what replaced them
 - [Tuning for memory and speed](#tuning-for-memory-and-speed) - task guidance rather than reference
 - [Examples](#examples)
@@ -269,6 +270,20 @@ Dense encoding and reranking still require
 | `VAULTSPEC_RAG_SPARSE_MODEL`        | string  | `Linkup-Platform/linkup-sparseup-embed-v1` | SPARSEUP sparse model id                       | -        |
 | `VAULTSPEC_RAG_RERANKER_MODEL`      | string  | `BAAI/bge-reranker-v2-m3`                  | CrossEncoder reranker model id                 | -        |
 
+### Model download source
+
+| Variable                    | Type   | Default                  | Controls                                                            | CLI flag |
+| --------------------------- | ------ | ------------------------ | ------------------------------------------------------------------- | -------- |
+| `VAULTSPEC_RAG_HF_ENDPOINT` | string | `https://huggingface.co` | Model hub the dense, sparse and reranker models are downloaded from | -        |
+
+Set this to download models from a hub mirror. The value must be an `https` URL with a host. It may carry a port and a path prefix; it may not carry credentials, a query, or a fragment. A mirror must keep the hub's path layout.
+
+**Set it before the process starts.** The Hugging Face Hub client reads its endpoint once, when it is first loaded, so vaultspec-rag exports this value to `HF_ENDPOINT` at the start of every process: the CLI, the stdio MCP server, and the resident service. The resident service inherits it from the command that starts it. Changing the variable in a shell does not move a service that is already running; restart it from the intended environment.
+
+**Precedence.** `VAULTSPEC_RAG_HF_ENDPOINT` wins when it is set. Otherwise an `HF_ENDPOINT` you set yourself is left exactly as it is, and the Hub client judges it by its own rules. With neither set, the Hub client's default applies, which is the same `https://huggingface.co`. An unset or blank `VAULTSPEC_RAG_HF_ENDPOINT` exports nothing.
+
+Like every setting on this page, it is read from the process environment only, never from a workspace `.env`.
+
 ### Embedding and reranking
 
 | Variable                                             | Type    | Default | Controls                                                                            | CLI flag |
@@ -426,6 +441,7 @@ vaultspec-rag downloads its dense, sparse, and reranker model files through the 
 | Variable                         | Type    | Controls                                                                                          |
 | -------------------------------- | ------- | ------------------------------------------------------------------------------------------------- |
 | `HF_HOME`                        | path    | Hub cache root. Read directly when reporting cache location; falls back to `~/.cache/huggingface` |
+| `HF_ENDPOINT`                    | string  | Hub endpoint. `VAULTSPEC_RAG_HF_ENDPOINT` overwrites it at process start when set                 |
 | `HF_HUB_DOWNLOAD_TIMEOUT`        | integer | Per-file download timeout. The service defaults it to `300` when unset                            |
 | `HF_HUB_OFFLINE`                 | boolean | Cache-only mode; no network access to the Hub                                                     |
 | `TRANSFORMERS_OFFLINE`           | boolean | Cache-only model loading for Transformers                                                         |
@@ -440,6 +456,20 @@ rebuild existing indexes. The service still needs `[gpu]` and a supported GPU.
 `HF_HUB_OFFLINE` is the authoritative offline switch; vaultspec-rag also honours `TRANSFORMERS_OFFLINE`, and when either is set to `1`, `true`, `yes`, or `on` it loads every model cache-only. See the [Hugging Face environment variable reference](https://huggingface.co/docs/huggingface_hub/en/package_reference/environment_variables).
 
 Searches additionally quiet the Hub and Transformers loggers by defaulting `HF_HUB_DISABLE_PROGRESS_BARS`, `TRANSFORMERS_NO_ADVISORY_WARNINGS`, and `TRANSFORMERS_VERBOSITY` when they are unset. Set them yourself to keep the library output.
+
+`HF_ENDPOINT` is the Hub client's own endpoint variable. Setting it directly still works. `VAULTSPEC_RAG_HF_ENDPOINT` outranks it; see [Model download source](#model-download-source).
+
+## Download sources
+
+vaultspec-rag downloads three things on its own. This table says where each one comes from and what moves it.
+
+| What                           | Default source                                       | How to change it                                                                                                                                   |
+| ------------------------------ | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Managed Qdrant server binary   | `https://github.com/qdrant/qdrant/releases/download` | `VAULTSPEC_RAG_QDRANT_RELEASE_BASE_URL` and `VAULTSPEC_RAG_QDRANT_DOWNLOAD_HOSTS`; see [Managed server provisioning](#managed-server-provisioning) |
+| Dense, sparse, reranker models | `https://huggingface.co`                             | `VAULTSPEC_RAG_HF_ENDPOINT`; see [Model download source](#model-download-source)                                                                   |
+| CUDA build of PyTorch          | `https://download.pytorch.org/whl/cu130`             | No variable; edit the index entry in your own `pyproject.toml`                                                                                     |
+
+**The CUDA wheel index has no variable, on purpose.** `vaultspec-rag install` writes that index into a project's `pyproject.toml` as a `[[tool.uv.index]]` entry named `pytorch-cu130`, and `uv` reads the file from then on. The URL is therefore a value committed to a repository, not a setting of the running process, and an environment variable could not make it consistent across the people and jobs that share the file. To use a wheel mirror, change the `url` of that entry by hand. vaultspec-rag then treats the block as customised and never rewrites or removes it. The [installation guide](installation.md) shows the entry.
 
 ## Renamed and removed variables
 

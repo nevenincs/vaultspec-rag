@@ -62,6 +62,7 @@ PACKAGE: Final = "vaultspec-rag"
 _EXTERNAL: Final = frozenset(
     {
         EnvVar.HF_HOME,
+        EnvVar.HF_ENDPOINT,
         EnvVar.HF_HUB_OFFLINE,
         EnvVar.HF_HUB_DOWNLOAD_TIMEOUT,
         EnvVar.HF_DEACTIVATE_ASYNC_LOAD,
@@ -190,6 +191,19 @@ _DESCRIPTIONS: Final[Mapping[EnvVar, str]] = {
     EnvVar.HF_HOME: (
         "Hugging Face cache location, honoured by huggingface_hub. Reported "
         "on status surfaces so an operator can see where models will land."
+    ),
+    EnvVar.RAG_HF_ENDPOINT: (
+        "The model hub every model is downloaded from, as an https URL with "
+        "a host and no credentials, query or fragment. Exported to "
+        "HF_ENDPOINT when the process starts, where it outranks a value "
+        "already there; unset or blank exports nothing and leaves the hub "
+        "client's own configuration in force."
+    ),
+    EnvVar.HF_ENDPOINT: (
+        "Hugging Face Hub endpoint, read by huggingface_hub once, when it is "
+        "first imported. Overwritten at process start when this package's "
+        "own endpoint variable is set, and otherwise left exactly as the "
+        "operator set it."
     ),
     EnvVar.HF_HUB_OFFLINE: (
         "Hugging Face Hub offline switch. A true word makes model loads "

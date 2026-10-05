@@ -165,13 +165,22 @@ def _refuse_unusable_server_environment() -> None:
     stderr only, never stdout. Runs before ``configure_logging`` so a bad
     log-level name is reported as one plain line here instead of raising a
     bare ``ConfigurationError`` from inside ``resolve_log_level`` mid-setup.
+
+    A usable environment is then finished here, by exporting the configured
+    model hub endpoint. This is the one function both process kinds run
+    before anything else, and the hub client fixes its endpoint when it is
+    first imported, so no later point is early enough for both.
     """
     import sys
 
-    from ..config._settings import collect_environment_problems
+    from ..config._settings import (
+        collect_environment_problems,
+        publish_model_hub_endpoint,
+    )
 
     problems = collect_environment_problems()
     if not problems:
+        publish_model_hub_endpoint()
         return
     for problem in problems:
         print(f"Error: {problem}", file=sys.stderr)
