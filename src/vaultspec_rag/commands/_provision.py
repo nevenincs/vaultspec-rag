@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from ..config._settings import VaultSpecConfigWrapper
     from ..qdrant_runtime._constants import ProvisionReport
     from ._model_fetch import ModelRepoResult
     from ._models import ConfirmFn, InstallReport
@@ -52,6 +53,11 @@ logger = logging.getLogger(__name__)
 _CLIENT_SKIP = (
     "not needed by a client installation; the host installation that runs "
     "the service provides it"
+)
+
+#: Why the Qdrant step fetches nothing when the on-disk store is the backend.
+LOCAL_STORE_SELECTED = (
+    "the on-disk local-only store is selected; no Qdrant server binary is needed"
 )
 
 #: Machine-readable reasons the Qdrant step failed for want of a binary. A
@@ -115,6 +121,7 @@ class _TorchProvisionRequest:
 
 
 __all__ = [
+    "LOCAL_STORE_SELECTED",
     "QDRANT_MISSING",
     "QDRANT_PROVISION_FAILED",
     "ModelsStepResult",
@@ -124,6 +131,7 @@ __all__ = [
     "ProvisionStepResult",
     "client_skip",
     "ensure_runtime_dependencies",
+    "managed_server_unneeded",
     "provision_dependencies",
     "provision_models",
     "provision_qdrant_binary",
@@ -340,7 +348,10 @@ def _provision_dependencies(request: _ProvisionRequest) -> ProvisionOutcome:
 
     outcome.steps.append(
         _provision_qdrant(
-            dry_run=dry_run, skip=skip, local_only=local_only, progress=progress
+            dry_run=dry_run,
+            skip=skip,
+            unneeded=LOCAL_STORE_SELECTED if local_only else None,
+            progress=progress,
         )
     )
 
@@ -542,9 +553,35 @@ def provision_models(
     )
 
 
+def managed_server_unneeded(settings: VaultSpecConfigWrapper) -> str | None:
+    """Say why *settings* call for no managed Qdrant server, or ``None``.
+
+    The daemon runs the managed server in server mode, and only when no
+    address of a server that is already running is configured. Those are the
+    two states with nothing to fetch, and the sentence returned is the reason
+    the Qdrant step reports for skipping. A caller whose command line can
+    override the backend asks with settings that already carry its flags, so
+    the answer is the one the daemon it spawns will reach.
+
+    The address itself is not repeated: it may carry a credential, and the
+    variable's name is what an operator needs to find it.
+    """
+    from ..config._types import EnvVar
+
+    if not settings.effective_server_mode():
+        return LOCAL_STORE_SELECTED
+    if str(settings.qdrant_url or ""):
+        return (
+            f"{EnvVar.QDRANT_URL.value} names a Qdrant server that is already "
+            "running, so none is run from this machine and no Qdrant server "
+            "binary is needed"
+        )
+    return None
+
+
 def ensure_runtime_dependencies(
     *,
-    local_only: bool,
+    server_unneeded: str | None,
     qdrant_auto_provision: bool,
     progress: ProvisionProgress | None = None,
 ) -> ProvisionOutcome:
@@ -558,8 +595,9 @@ def ensure_runtime_dependencies(
     sent to download a server it cannot use yet.
 
     Args:
-        local_only: The on-disk store is selected, so no Qdrant server is
-            needed.
+        server_unneeded: Why the daemon about to be spawned will run no
+            managed Qdrant server, as :func:`managed_server_unneeded` words
+            it, or ``None`` when it will run one.
         qdrant_auto_provision: Whether an absent Qdrant server may be
             downloaded. Off, an absent server is a failure naming the install
             command.
@@ -578,7 +616,7 @@ def ensure_runtime_dependencies(
         _provision_qdrant(
             dry_run=False,
             skip=set(),
-            local_only=local_only,
+            unneeded=server_unneeded,
             auto_provision=qdrant_auto_provision,
             progress=progress,
         )
@@ -590,7 +628,7 @@ def _provision_qdrant(
     *,
     dry_run: bool,
     skip: set[str],
-    local_only: bool,
+    unneeded: str | None,
     auto_provision: bool = True,
     progress: ProvisionProgress | None = None,
 ) -> ProvisionStepResult:
@@ -602,16 +640,19 @@ def _provision_qdrant(
     provisioned, and only when ``auto_provision`` allows it. The provisioner's
     verify-before-execute contract is untouched: it reports in the shared
     vocabulary, so there is nothing to translate.
+
+    ``unneeded`` is the reason no managed server will be run, when there is
+    one. The step is then skipped with that reason before anything is
+    resolved, verified or fetched.
     """
     client = client_skip(ProvisionStep.QDRANT)
     if client is not None:
         return client
-    if local_only:
+    if unneeded is not None:
         return ProvisionStepResult(
             step=ProvisionStep.QDRANT,
             action=ProvisionAction.SKIPPED,
-            detail="the on-disk local-only store is selected; no Qdrant server "
-            "binary is needed",
+            detail=unneeded,
         )
     if ProvisionStep.QDRANT in skip:
         return ProvisionStepResult(

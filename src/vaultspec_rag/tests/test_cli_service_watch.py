@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 
 from ..cli._process import _build_service_child_env, _ServiceChildEnvRequest
+from ..cli._service_start import _decide_backend
 from ..config._types import EnvVar
 from ._scaffold import restore_env, set_env
 
@@ -87,21 +88,35 @@ def test_local_only_false_sets_enabled_zero() -> None:
     assert env[EnvVar.LOCAL_ONLY.value] == "0"
 
 
-def test_unset_local_only_flag_preserves_operator_env() -> None:
-    # An operator who exported VAULTSPEC_RAG_LOCAL_ONLY=1 must keep it
-    # when no --local-only flag selects a value (None).
+def _env_for_start(*, local_only: bool, qdrant: bool | None) -> dict[str, str]:
+    """The daemon environment a start with these backend flags builds.
+
+    The request comes from the start command's own decision, so what is held
+    is the value the command passes and not one a test chose for it.
+    """
+    backend = _decide_backend(local_only=local_only, qdrant=qdrant)
+    return _build_service_child_env(
+        _ServiceChildEnvRequest(local_only=backend.local_only, qdrant=backend.qdrant)
+    )
+
+
+def test_a_start_with_no_backend_flag_preserves_an_exported_local_only() -> None:
+    # An operator who exported VAULTSPEC_RAG_LOCAL_ONLY=1 must keep it when
+    # the start names no backend. Mutation check: with the absent flag passed
+    # on as an explicit off, the daemon is handed "0" and this fails.
     prev = set_env(EnvVar.LOCAL_ONLY, "1")
     try:
-        env = _build_service_child_env(_ServiceChildEnvRequest(local_only=None))
+        env = _env_for_start(local_only=False, qdrant=None)
         assert env[EnvVar.LOCAL_ONLY.value] == "1"
     finally:
         restore_env(EnvVar.LOCAL_ONLY, prev)
 
 
-def test_set_local_only_flag_overrides_operator_env() -> None:
+def test_the_qdrant_flag_overrides_an_exported_local_only() -> None:
     prev = set_env(EnvVar.LOCAL_ONLY, "1")
     try:
-        env = _build_service_child_env(_ServiceChildEnvRequest(local_only=False))
+        env = _env_for_start(local_only=False, qdrant=True)
         assert env[EnvVar.LOCAL_ONLY.value] == "0"
+        assert env[EnvVar.QDRANT_SERVER.value] == "1"
     finally:
         restore_env(EnvVar.LOCAL_ONLY, prev)

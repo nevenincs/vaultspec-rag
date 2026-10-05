@@ -29,6 +29,7 @@ from ..cli._core import _build_console
 from ..cli._progress import StartupStatusReporter
 from ..cli._service_start import (
     _auto_provision_enabled,
+    _decide_backend,
     _ensure_start_dependencies,
     _ServiceStartOptions,
 )
@@ -96,9 +97,10 @@ def _exit_code_of(
     should fail on the download it was written to forbid.
     """
     buffer = io.StringIO() if progress is None else progress
+    backend = _decide_backend(local_only=options.local_only, qdrant=options.qdrant)
     try:
         with _reporter_into(buffer, json_mode=options.json_mode) as reporter:
-            _ensure_start_dependencies(options, reporter)
+            _ensure_start_dependencies(options, backend, reporter)
     except typer.Exit as stopped:
         return stopped.exit_code
     return None

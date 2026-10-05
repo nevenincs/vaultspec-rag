@@ -51,7 +51,7 @@ from .._operator_commands import (
 )
 from .._ports import port_is_available
 from .._process_probe import pid_alive
-from ..config._settings import get_config
+from ..config._settings import VaultSpecConfigWrapper, get_config
 from ..config._types import EnvVar
 from ..operator_state._installation import ComputeCapability, InstallRole
 from ..operator_state._provisioning import cuda_remediation
@@ -122,6 +122,33 @@ _START_COMMAND = "service.start"
 
 
 @dataclass(frozen=True, slots=True)
+class _BackendDecision:
+    """The storage backend one start selected.
+
+    Made once per start and read twice: by the preflight, which fetches the
+    Qdrant server only for a daemon that will run one, and by the spawn, which
+    hands the daemon exactly what a flag decided. When those two read the
+    options separately, a start with no backend flag fetched a server on the
+    strength of the flags alone and then told the daemon to ignore the choice
+    its own settings held.
+
+    Attributes:
+        local_only: What ``--local-only`` or ``--qdrant`` decided for the
+            on-disk store, or ``None`` when no flag spoke to it. ``None`` is
+            written nowhere, so the daemon reads its own environment and the
+            saved choice.
+        qdrant: What ``--qdrant/--no-qdrant`` decided for server mode, or
+            ``None`` likewise.
+        server_unneeded: Why the daemon will run no managed Qdrant server, or
+            ``None`` when it will run one.
+    """
+
+    local_only: bool | None
+    qdrant: bool | None
+    server_unneeded: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class _PreparedServiceRequest:
     """The daemon-launch options resolved by the start command."""
 
@@ -130,8 +157,7 @@ class _PreparedServiceRequest:
     updates: bool | None
     update_delay_ms: int | None
     repeat_update_delay_s: float | None
-    qdrant: bool | None
-    local_only: bool
+    backend: _BackendDecision
     preprocess_forward: Literal["off"] | None
     json_mode: bool
     #: The workspace this invocation resolved. The daemon never opens a
@@ -337,8 +363,52 @@ def _auto_provision_enabled(flag: bool | None) -> bool:
     return get_config().qdrant_auto_provision if flag is None else flag
 
 
+def _decide_backend(*, local_only: bool, qdrant: bool | None) -> _BackendDecision:
+    """Decide the storage backend for this start from its flags and the settings.
+
+    Precedence, highest first: a flag on this command, an exported variable,
+    the choice ``install`` saved, and the default, which is the managed
+    server. ``--local-only`` outranks ``--qdrant`` when both are passed.
+    ``--qdrant`` asks for the managed server outright, so it overrides a saved
+    or exported local-only choice as well as a server mode that was switched
+    off; ``--no-qdrant`` switches server mode off and says nothing about the
+    on-disk choice, which could only agree with it.
+
+    The address of a server that is already running is not a backend choice
+    and no flag overrides it: server mode then uses that server, and none is
+    run or fetched here.
+
+    The flags are applied as overrides to the one settings resolution every
+    other reader goes through, rather than compared against the settings
+    here, so the lower three rungs are not restated and cannot drift from
+    what the daemon resolves for itself. The daemon is handed the flags and
+    nothing else, and reaches the same answer from the same environment.
+
+    Args:
+        local_only: Whether ``--local-only`` was passed.
+        qdrant: ``True`` for ``--qdrant``, ``False`` for ``--no-qdrant``,
+            ``None`` when neither was passed.
+    """
+    from ..commands._provision import managed_server_unneeded
+
+    flags: dict[str, bool] = {}
+    if qdrant is not None:
+        flags["qdrant_server"] = qdrant
+    if local_only:
+        flags["local_only"] = True
+    elif qdrant:
+        flags["local_only"] = False
+    decided = VaultSpecConfigWrapper.from_environment(dict(flags))
+    return _BackendDecision(
+        local_only=flags.get("local_only"),
+        qdrant=flags.get("qdrant_server"),
+        server_unneeded=managed_server_unneeded(decided),
+    )
+
+
 def _ensure_start_dependencies(
     options: _ServiceStartOptions,
+    backend: _BackendDecision,
     progress: StartupStatusReporter,
 ) -> None:
     """Fetch what the daemon needs and does not have, before it is spawned.
@@ -350,10 +420,10 @@ def _ensure_start_dependencies(
     warm-up that never ends. The daemon still loads its models online-capable,
     as the backstop for a start that did not come through this command.
 
-    Server mode is the default backend, so the Qdrant server is ensured by
-    default. ``--local-only`` (and an explicit ``--no-qdrant``) select the
-    on-disk store and never touch the server at all. Every outcome that stops
-    the start is one start envelope in ``--json`` mode.
+    The Qdrant server is ensured only when *backend* says the daemon will run
+    one. The on-disk store and a server that is already running elsewhere
+    never touch it at all. Every outcome that stops the start is one start
+    envelope in ``--json`` mode.
     """
     from .._sync_vocabulary import ProvisionAction
     from ..commands._provision import ensure_runtime_dependencies
@@ -363,7 +433,7 @@ def _ensure_start_dependencies(
     progress.stage("Checking the model files and the Qdrant server...")
     with ReporterProvisionProgress(progress) as sink:
         outcome = ensure_runtime_dependencies(
-            local_only=options.local_only or options.qdrant is False,
+            server_unneeded=backend.server_unneeded,
             qdrant_auto_provision=_auto_provision_enabled(
                 options.qdrant_auto_provision
             ),
@@ -898,8 +968,8 @@ def _spawn_prepared_service(request: _PreparedServiceRequest) -> int:
             watch=request.updates,
             watch_debounce_ms=request.update_delay_ms,
             watch_cooldown_s=request.repeat_update_delay_s,
-            qdrant=request.qdrant,
-            local_only=request.local_only,
+            qdrant=request.backend.qdrant,
+            local_only=request.backend.local_only,
             preprocess_mode=request.preprocess_forward,
             root=request.root,
         )
@@ -988,7 +1058,8 @@ def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None
         progress.stage("Checking accelerator support in the service environment...")
         _preflight_daemon_accelerator(interpreter, json_mode=json_mode)
 
-        _ensure_start_dependencies(options, progress)
+        backend = _decide_backend(local_only=options.local_only, qdrant=options.qdrant)
+        _ensure_start_dependencies(options, backend, progress)
 
         resolved_root = _global_target(ctx) or Path.cwd()
 
@@ -1008,8 +1079,7 @@ def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None
             updates=options.updates,
             update_delay_ms=options.update_delay_ms,
             repeat_update_delay_s=options.repeat_update_delay_s,
-            qdrant=options.qdrant,
-            local_only=options.local_only,
+            backend=backend,
             preprocess_forward=preprocess_forward,
             json_mode=json_mode,
             root=resolved_root,
