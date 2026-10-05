@@ -192,6 +192,17 @@ _DESCRIPTIONS: Final[Mapping[EnvVar, str]] = {
         "Hugging Face cache location, honoured by huggingface_hub. Reported "
         "on status surfaces so an operator can see where models will land."
     ),
+    EnvVar.QDRANT_BINARY: (
+        "Absolute path to a Qdrant server binary the operator supplies, used "
+        "in place of the managed install. Refused unless "
+        "VAULTSPEC_RAG_QDRANT_BINARY_SHA256 declares its digest: the file is "
+        "hashed and compared before every start, and never run unverified."
+    ),
+    EnvVar.QDRANT_BINARY_SHA256: (
+        "The SHA256 of the binary VAULTSPEC_RAG_QDRANT_BINARY names, as 64 "
+        "hexadecimal characters in either letter case. Required with that "
+        "variable and refused without it."
+    ),
     EnvVar.RAG_HF_ENDPOINT: (
         "The model hub every model is downloaded from, as an https URL with "
         "a host and no credentials, query or fragment. Exported to "

@@ -638,12 +638,17 @@ def _resolved_qdrant() -> ProvisionStepResult | None:
 
     The binary is held to its source's check here, in the foreground, so one
     that may not run is refused where an operator sees the reason rather than
-    in the service log after the daemon has been spawned. An operator-supplied
-    binary is named as such in the detail: no committed pin vouches for it,
-    and that has to be visible wherever the outcome is shown.
+    in the service log after the daemon has been spawned. That covers every
+    refusal resolution itself makes: an operator path without its digest, an
+    operator file that is not the one declared, and a managed install whose
+    manifest claims a source the managed directory no longer accepts. The
+    refusal's own sentence names the supported routes and is passed on whole.
+
+    An operator-supplied binary is named as such in the detail: the pin that
+    vouches for it is the operator's, not this release's, and that has to be
+    visible wherever the outcome is shown.
     """
     from ..config._types import EnvVar
-    from ..qdrant_runtime._constants import BinarySource
     from ..qdrant_runtime._resolve import QdrantBinaryError, resolve_binary
     from ..qdrant_runtime._spawn_trust import verify_resolved_binary
 
@@ -659,17 +664,12 @@ def _resolved_qdrant() -> ProvisionStepResult | None:
             detail=str(exc),
             code=exc.error,
         )
-    if resolved.source is BinarySource.OPERATOR_SETTING:
+    if resolved.source.operator_supplied:
         detail = (
             f"operator-supplied binary {resolved.path} (source: "
             f"{resolved.source.value}, named by {EnvVar.QDRANT_BINARY.value}); "
-            "no checksum pin applies and it runs as named"
-        )
-    elif resolved.source.operator_supplied:
-        detail = (
-            f"operator-supplied binary {resolved.path} (source: "
-            f"{resolved.source.value}); verified against the digest recorded "
-            "when it was registered"
+            "verified against the digest declared in "
+            f"{EnvVar.QDRANT_BINARY_SHA256.value}"
         )
     else:
         detail = _qdrant_default_detail(ProvisionAction.UNCHANGED)
@@ -722,21 +722,22 @@ def provision_qdrant_binary(
     *,
     upgrade: bool = False,
     dry_run: bool = False,
-    binary: Path | None = None,
+    archive: Path | None = None,
     on_progress: Callable[[str], None] | None = None,
 ) -> ProvisionReport:
     """Provision the pinned Qdrant server binary, on a host installation only.
 
     The one way any command reaches the Qdrant provisioner, so the role is
     judged in one place: a client gets a ``skipped`` report and the
-    provisioner - its download, its staging directory, and the registration of
-    an operator binary alike - is never entered.
+    provisioner - its download, its staging directory, and an install from a
+    local archive alike - is never entered.
 
     Args:
         upgrade: Replace an install that no longer matches the pin.
         dry_run: Report what would happen without network or disk effects.
-        binary: Operator-supplied executable to register instead of
-            downloading.
+        archive: A local copy of the pinned release archive to install from
+            in place of a download. It passes the same checks as a download
+            and no request is made.
         on_progress: Sink for stage and byte-progress lines; silent when
             omitted.
 
@@ -752,9 +753,9 @@ def provision_qdrant_binary(
     from ..qdrant_runtime._provision import provision
 
     if on_progress is None:
-        return provision(upgrade=upgrade, dry_run=dry_run, binary=binary)
+        return provision(upgrade=upgrade, dry_run=dry_run, archive=archive)
     return provision(
-        upgrade=upgrade, dry_run=dry_run, binary=binary, on_progress=on_progress
+        upgrade=upgrade, dry_run=dry_run, archive=archive, on_progress=on_progress
     )
 
 

@@ -146,11 +146,18 @@ QDRANT_EXECUTABLE_SHA256: Final[dict[str, str]] = {
 #: Name of the provisioning manifest written next to the binary.
 MANIFEST_FILENAME: Final[str] = "manifest.json"
 
-#: The manifest's ``source`` values. A downloaded install is held to the
-#: committed executable digest of the asset its manifest names; an install an
-#: operator registered has no committed digest and is held to the one recorded
-#: when it was registered.
+#: The manifest's ``source`` values for the two ways the pinned release reaches
+#: the managed directory: fetched, or unpacked from a local copy of the same
+#: official archive. Both are held to the committed executable digest of the
+#: asset the manifest names, and the manifest is trusted for nothing else.
 MANIFEST_SOURCE_DOWNLOAD: Final = "download"
+MANIFEST_SOURCE_ARCHIVE: Final = "archive"
+
+#: What a manifest written by an operator registration says. Nothing writes it
+#: any more and nothing honours it: such an install vouched for itself from
+#: inside the directory it was protecting. The value is kept only so an install
+#: left behind by one can be told apart and reported with the routes that
+#: replace it.
 MANIFEST_SOURCE_OPERATOR: Final = "operator"
 
 
@@ -164,8 +171,8 @@ class ProvisionReport:
             values, so JSON consumers can filter on ``"created"``.
         version: The pinned server version the run targeted.
         asset: The release asset name for this platform.
-        url: The upstream download URL (informational; empty for
-            operator-supplied binaries).
+        url: The upstream download URL (informational; empty when nothing
+            was or would be fetched).
         binary: Path the active binary lives at (or would live at for
             a dry run).
         sha256: The committed digest the run verified (or would
@@ -200,18 +207,18 @@ class BinarySource(StrEnum):
 
     The values are what status surfaces and envelopes print. A source says
     what was checked before the binary ran, so two origins held to different
-    evidence never share a value.
+    evidence never share a value. Every source that can run is held to a
+    digest; they differ in who states it.
     """
 
-    #: Named by the operator binary setting. No pin applies and the file is
-    #: not hashed; it runs as named.
+    #: Named by the operator binary settings: a path and the SHA256 the
+    #: operator declares for it, both from the process environment. Held to
+    #: that declared digest. The committed pin does not apply.
     OPERATOR_SETTING = "env"
-    #: The managed install, downloaded. Held to the committed executable
+    #: The managed install: the pinned release, fetched or unpacked from a
+    #: local copy of the official archive. Held to the committed executable
     #: digest of the asset its manifest names.
     MANAGED_DOWNLOAD = "provisioned"
-    #: The managed install, registered from a binary an operator supplied.
-    #: Held to the digest recorded when it was registered.
-    MANAGED_OPERATOR = "registered"
     #: A running server this process did not spawn. It names no binary and is
     #: never executable; it exists so an attached supervisor reports a source
     #: of its own instead of borrowing one.
@@ -220,7 +227,7 @@ class BinarySource(StrEnum):
     @property
     def operator_supplied(self) -> bool:
         """Whether an operator, not the committed pin, vouches for the binary."""
-        return self in (BinarySource.OPERATOR_SETTING, BinarySource.MANAGED_OPERATOR)
+        return self is BinarySource.OPERATOR_SETTING
 
 
 @dataclass
@@ -232,13 +239,14 @@ class ResolvedBinary:
         source: Resolution origin, which selects the check the binary must
             pass before it runs.
         version: The server version the binary is known to be: the pinned
-            version for a downloaded install, and for a registered one only
-            when its recorded digest is a pinned release executable. Empty
-            when unknown, which is every other operator-supplied binary.
-        sha256: The digest the executable must hash to before it may run.
-            For a managed install this is never read from a downloaded
-            install's own manifest; empty means no digest applies, and no
-            file hashes to it.
+            version for the managed install, and for an operator binary only
+            when the digest declared for it is a pinned release executable's,
+            because a file that hashes to that digest is that release. Empty
+            when unknown, which is every other operator binary.
+        sha256: The digest the executable must hash to before it may run: a
+            committed constant for the managed install, the operator's
+            declaration for an operator binary. Never read from a manifest.
+            Empty means none could be established, and no file hashes to it.
     """
 
     path: Path

@@ -33,10 +33,15 @@ from ..cli._service_start import (
     _ServiceStartOptions,
 )
 from ..config._types import EnvVar
-from ..qdrant_runtime._resolve import resolve_binary
+from ..qdrant_runtime._resolve import qdrant_bin_dir, resolve_binary
 from ._cli_helpers import app, runner
 from ._model_cache_seed import seed_model_cache
-from ._qdrant_provision_seam import substitute_qdrant_download
+from ._qdrant_provision_seam import (
+    OPERATOR_REGISTERED,
+    operator_pair,
+    substitute_qdrant_download,
+    write_managed_install,
+)
 from .conftest import managed_env
 
 if TYPE_CHECKING:
@@ -337,7 +342,7 @@ class TestAnOperatorNamedBinary:
         supplied = tmp_path / "operator-qdrant"
         supplied.write_bytes(b"operator supplied")
 
-        with managed_env(**{EnvVar.QDRANT_BINARY.value: str(supplied)}):
+        with managed_env(**operator_pair(supplied)):
             exit_code = _exit_code_of(_options())
 
         assert calls == [], "an operator binary was replaced by a download"
@@ -346,6 +351,43 @@ class TestAnOperatorNamedBinary:
         assert "operator-supplied binary" in announced
         assert "source: env" in announced
         assert EnvVar.QDRANT_BINARY.value in announced
+        assert (
+            f"verified against the digest declared in "
+            f"{EnvVar.QDRANT_BINARY_SHA256.value}" in announced
+        )
+
+    def test_an_operator_binary_that_is_not_the_one_declared_stops_the_start(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A file that no longer hashes to its declared digest starts nothing.
+
+        The announcement says the binary was verified against that digest, so
+        it must not be printed for a file that was not. The failure is one
+        document, and the managed release is not fetched in its place.
+
+        Mutation check: with the foreground verification removed, the start
+        announces the file as verified and exits cleanly, failing the
+        exit-code assertion; restoring it passes.
+        """
+        calls = substitute_qdrant_download(monkeypatch, succeeds=False)
+        supplied = tmp_path / "operator-qdrant"
+        supplied.write_bytes(b"operator supplied")
+        declared = operator_pair(supplied)
+        supplied.write_bytes(b"replaced after it was declared")
+
+        with managed_env(**declared, **{_SWITCH: "1"}):
+            exit_code = _exit_code_of(_options(json_mode=True))
+
+        assert calls == [], "an unverified operator binary was replaced by a download"
+        assert exit_code == 1
+        payload = cast("dict[str, object]", json.loads(capsys.readouterr().out))
+        assert payload["ok"] is False
+        assert payload["error"] == "qdrant_binary_unverified"
+        data = cast("dict[str, object]", payload["data"])
+        assert EnvVar.QDRANT_BINARY_SHA256.value in str(data["detail"])
 
     def test_an_unusable_setting_is_one_envelope_and_never_a_download(
         self,
@@ -362,8 +404,12 @@ class TestAnOperatorNamedBinary:
         """
         calls = substitute_qdrant_download(monkeypatch, succeeds=False)
         missing = tmp_path / "no-such-qdrant"
+        named = {
+            EnvVar.QDRANT_BINARY.value: str(missing),
+            EnvVar.QDRANT_BINARY_SHA256.value: "0" * 64,
+        }
 
-        with managed_env(**{EnvVar.QDRANT_BINARY.value: str(missing), _SWITCH: "1"}):
+        with managed_env(**named, **{_SWITCH: "1"}):
             exit_code = _exit_code_of(_options(json_mode=True))
 
         assert calls == [], "an unusable operator binary was replaced by a download"
@@ -374,6 +420,45 @@ class TestAnOperatorNamedBinary:
         data = cast("dict[str, object]", payload["data"])
         assert EnvVar.QDRANT_BINARY.value in str(data["detail"])
         assert str(missing) in str(data["detail"])
+
+    def test_an_install_an_operator_registered_stops_the_start_with_both_routes(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        host_with_models: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A managed install whose manifest claims an operator source is refused.
+
+        An earlier release recorded such an install for a binary an operator
+        registered, and trusted it on that manifest. A start that meets one
+        fails as one document naming both supported routes, and does not
+        replace the install unasked: the operator put a binary there on
+        purpose and is told how to keep running it.
+
+        Mutation check: with the resolver's refusal swallowed and treated as
+        "nothing resolved", the start goes on to provision over the install,
+        the substitute is reached, and the ``calls`` assertion fails with
+        ``['provision']``; restoring the failure passes.
+        """
+        calls = substitute_qdrant_download(monkeypatch, succeeds=True)
+        version_dir = qdrant_bin_dir()
+        assert host_with_models in version_dir.parents, "premise: the temp managed dir"
+        write_managed_install(
+            version_dir, b"operator registered", source=OPERATOR_REGISTERED
+        )
+
+        with managed_env(**{_SWITCH: "1"}):
+            exit_code = _exit_code_of(_options(json_mode=True))
+
+        assert calls == [], "a registered install was replaced unasked"
+        assert exit_code == 1
+        payload = cast("dict[str, object]", json.loads(capsys.readouterr().out))
+        assert payload["ok"] is False
+        assert payload["error"] == "qdrant_install_invalid"
+        detail = str(cast("dict[str, object]", payload["data"])["detail"])
+        assert EnvVar.QDRANT_BINARY.value in detail
+        assert EnvVar.QDRANT_BINARY_SHA256.value in detail
+        assert "server qdrant install --upgrade --archive <file>" in detail
 
     def test_a_managed_install_that_fails_its_digest_stops_the_start(
         self,

@@ -16,7 +16,7 @@ import zipfile
 from typing import TYPE_CHECKING
 
 from ..qdrant_runtime._constants import MANIFEST_FILENAME
-from ..qdrant_runtime._provision import _DownloadInstallRequest
+from ..qdrant_runtime._provision import _InstallRequest
 from ..qdrant_runtime._resolve import binary_filename
 from ._loopback_tls import LOOPBACK_HOST
 
@@ -72,14 +72,14 @@ def install_request(
     *,
     asset: str,
     pinned_archive: bytes,
-) -> _DownloadInstallRequest:
+) -> _InstallRequest:
     """A first-install request pinned to *pinned_archive* and the new executable.
 
     A test that needs another pin, other limits, or a request that replaces an
     install derives it from this one, so the difference it is about stays
     visible.
     """
-    return _DownloadInstallRequest(
+    return _InstallRequest(
         url=url,
         redirect_hosts=frozenset({LOOPBACK_HOST}),
         asset=asset,

@@ -2,11 +2,13 @@
 
 Resolution order for the binary the service will execute:
 
-1. ``VAULTSPEC_RAG_QDRANT_BINARY`` - operator-supplied path (the
-   air-gapped / proxy / policy escape hatch). It must name an absolute
-   path to a regular file that is not a link, and it carries no pin. A
-   value that names anything else is an error, never a reason to fall
-   through: an operator who named a binary must not be handed another.
+1. The operator binary: ``VAULTSPEC_RAG_QDRANT_BINARY`` names the file and
+   ``VAULTSPEC_RAG_QDRANT_BINARY_SHA256`` declares its digest, both from
+   the process environment and both required together. The path must be
+   absolute and name a regular file that is not a link. Half the pair, or
+   a path that names anything else, is an error and never a reason to
+   fall through: an operator who named a binary must not be handed
+   another, and no binary runs without a digest to hold it to.
 2. The managed bin dir (``{status_dir}/bin/qdrant/{version}/``) when a
    provisioning manifest is present and names the requested version.
 
@@ -14,6 +16,11 @@ Nothing else is consulted. In particular the binary is never looked up
 on ``PATH`` or in the working directory: that lookup runs an unpinned
 file of unknown version, and on Windows it finds one in the directory
 the service happened to be started from.
+
+The manifest is a record of what was installed and is never a source of
+trust. The managed directory holds the pinned release only; a manifest
+that says an operator put the binary there is refused, because whoever
+can write that directory can write that claim.
 """
 
 from __future__ import annotations
@@ -46,7 +53,7 @@ from .._process_probe import (
     send_signal,
 )
 from ..config._settings import get_config, managed_status_dir
-from ..config._types import EnvVar
+from ..config._types import EnvVar, OperatorBinaryPairError
 from ._constants import (
     ASSET_LINUX_ARM_MUSL,
     ASSET_LINUX_X86_MUSL,
@@ -54,6 +61,8 @@ from ._constants import (
     ASSET_MACOS_X86,
     ASSET_WINDOWS_X86,
     MANIFEST_FILENAME,
+    MANIFEST_SOURCE_ARCHIVE,
+    MANIFEST_SOURCE_DOWNLOAD,
     MANIFEST_SOURCE_OPERATOR,
     QDRANT_ASSET_SHA256,
     QDRANT_EXECUTABLE_SHA256,
@@ -67,6 +76,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "QDRANT_BINARY_INVALID",
     "QDRANT_BINARY_UNVERIFIED",
+    "QDRANT_INSTALL_INVALID",
     "QdrantBinaryError",
     "QdrantEndpointProbe",
     "QdrantIdentity",
@@ -78,6 +88,7 @@ __all__ = [
     "expected_executable_sha256",
     "has_provisioned_binary",
     "operator_binary_fault",
+    "operator_registration_refusal",
     "operator_setting_refusal",
     "owner_pid_witness_state",
     "probe_qdrant_endpoint",
@@ -218,8 +229,9 @@ def asset_for_platform(
     if asset is None:
         raise UnsupportedPlatformError(
             f"No Qdrant server release asset exists for platform={plat!r} "
-            f"machine={mach!r}. Supply a binary via "
-            f"{EnvVar.QDRANT_BINARY.value} instead."
+            f"machine={mach!r}. Supply a binary by setting "
+            f"{EnvVar.QDRANT_BINARY.value} to its absolute path and "
+            f"{EnvVar.QDRANT_BINARY_SHA256.value} to its SHA256."
         )
     if asset not in QDRANT_ASSET_SHA256 or asset not in QDRANT_EXECUTABLE_SHA256:
         raise RuntimeError(
@@ -269,22 +281,28 @@ def read_manifest(version_dir: Path) -> dict[str, object] | None:
 def expected_executable_sha256(manifest: Mapping[str, object]) -> str:
     """Return the digest a managed install's executable must hash to.
 
-    The manifest records what was installed; it is not a source of trust for
-    a downloaded binary, because it sits in the directory it would be
-    vouching for. Its asset name only selects which committed digest applies,
-    so an install made from an asset no platform selects any more keeps
-    verifying for as long as that asset stays pinned. An install an operator
-    registered has no committed digest, and the one recorded at registration
-    stands in for it.
+    The manifest records what was installed; it is never a source of trust,
+    because it sits in the directory it would be vouching for. It is read for
+    two things only: that it describes the pinned release arriving by one of
+    the two supported ways, and which asset that was. The asset name selects
+    the committed digest, so an install made from an asset no platform
+    selects any more keeps verifying for as long as that asset stays pinned.
+    No digest is ever taken from the manifest itself.
+
+    Resolution and install-state classification both ask here, so they cannot
+    disagree about which installs may run.
 
     Returns:
-        The digest, or ``""`` when none can be established: a downloaded
-        install whose manifest names no asset, or one absent from the pin
-        table, or a registered install with no recorded digest. No file
-        hashes to the empty string, so such an install never verifies.
+        The committed digest, or ``""`` when none applies: the manifest names
+        any other source or none - an operator registration included - or it
+        names no asset, or one absent from the pin table. No file hashes to
+        the empty string, so such an install never verifies.
     """
-    if manifest.get("source") == MANIFEST_SOURCE_OPERATOR:
-        return str(manifest.get("binary_sha256", ""))
+    if manifest.get("source") not in (
+        MANIFEST_SOURCE_DOWNLOAD,
+        MANIFEST_SOURCE_ARCHIVE,
+    ):
+        return ""
     return QDRANT_EXECUTABLE_SHA256.get(str(manifest.get("asset", "")), "")
 
 
@@ -795,11 +813,17 @@ def decide_qdrant_action(
     return ("spawn", state)
 
 
-#: Machine-readable code for an operator binary setting that names something
-#: other than an absolute path to a regular, non-link file.
+#: Machine-readable code for operator binary settings that cannot name a
+#: binary: only half the pair is set, or the path is not an absolute path to a
+#: regular, non-link file.
 QDRANT_BINARY_INVALID = "qdrant_binary_invalid"
-#: Machine-readable code for a managed install that fails its digest check.
+#: Machine-readable code for a binary that does not hash to the digest it is
+#: held to: the committed one for the managed install, the declared one for an
+#: operator binary.
 QDRANT_BINARY_UNVERIFIED = "qdrant_binary_unverified"
+#: Machine-readable code for a managed install whose manifest claims an
+#: operator put it there.
+QDRANT_INSTALL_INVALID = "qdrant_install_invalid"
 
 
 class QdrantBinaryError(RuntimeError):
@@ -836,19 +860,54 @@ def operator_setting_refusal(candidate: Path, fault: str) -> QdrantBinaryError:
         QDRANT_BINARY_INVALID,
         f"{EnvVar.QDRANT_BINARY.value} names {candidate}, which {fault}. "
         "It must name an absolute path to a regular file that is not a "
-        "link. Correct it, or unset it to use the managed qdrant server.",
+        f"link. Correct it, or unset it and {EnvVar.QDRANT_BINARY_SHA256.value} "
+        "to use the managed qdrant server.",
+    )
+
+
+def operator_registration_refusal(binary: Path) -> str:
+    """Say why an install an operator registered is refused, and what replaces it.
+
+    One sentence for every surface that meets such an install - a start, a
+    status read, an install run - so an operator is told the same two routes
+    whichever they reach first.
+    """
+    return (
+        f"The qdrant install at {binary} was registered from an "
+        "operator-supplied binary. That is no longer supported: the managed "
+        "directory holds the pinned release only, and nothing in it is trusted "
+        "on its own say-so. To run your own binary, set "
+        f"{EnvVar.QDRANT_BINARY.value} to its absolute path and "
+        f"{EnvVar.QDRANT_BINARY_SHA256.value} to its SHA256. To run the pinned "
+        "release, replace the install with: vaultspec-rag server qdrant install "
+        "--upgrade (offline: vaultspec-rag server qdrant install --upgrade "
+        "--archive <file>)."
     )
 
 
 def _resolve_env_binary() -> ResolvedBinary | None:
-    raw = get_config().qdrant_binary
-    if not raw:
+    try:
+        declared = get_config().qdrant_operator_binary
+    except OperatorBinaryPairError as exc:
+        # Half a pair names either a binary nothing vouches for or a digest
+        # with nothing to check. Neither is "no operator binary".
+        raise QdrantBinaryError(QDRANT_BINARY_INVALID, str(exc)) from exc
+    if declared is None:
         return None
-    candidate = Path(raw).expanduser()
+    candidate = Path(declared.path).expanduser()
     fault = operator_binary_fault(candidate)
     if fault is not None:
         raise operator_setting_refusal(candidate, fault)
-    return ResolvedBinary(path=candidate, source=BinarySource.OPERATOR_SETTING)
+    # A file that hashes to a pinned release executable's digest is that
+    # release, and every spawn enforces the digest. Anything else is a binary
+    # whose version nobody has established.
+    is_pinned_release = declared.sha256 in QDRANT_EXECUTABLE_SHA256.values()
+    return ResolvedBinary(
+        path=candidate,
+        source=BinarySource.OPERATOR_SETTING,
+        version=QDRANT_SERVER_VERSION if is_pinned_release else "",
+        sha256=declared.sha256,
+    )
 
 
 def _resolve_provisioned(version: str) -> ResolvedBinary | None:
@@ -871,33 +930,29 @@ def _resolve_provisioned(version: str) -> ResolvedBinary | None:
             version,
         )
         return None
-    expected = expected_executable_sha256(manifest)
-    if manifest.get("source") != MANIFEST_SOURCE_OPERATOR:
-        return ResolvedBinary(
-            path=binary,
-            source=BinarySource.MANAGED_DOWNLOAD,
-            version=recorded_version,
-            sha256=expected,
+    if manifest.get("source") == MANIFEST_SOURCE_OPERATOR:
+        raise QdrantBinaryError(
+            QDRANT_INSTALL_INVALID, operator_registration_refusal(binary)
         )
-    # The version directory says where a registered binary was put, not what
-    # it is. Its version is known only when the digest it is held to is one of
-    # the pinned release executables.
-    is_pinned_release = expected in QDRANT_EXECUTABLE_SHA256.values()
     return ResolvedBinary(
         path=binary,
-        source=BinarySource.MANAGED_OPERATOR,
-        version=recorded_version if is_pinned_release else "",
-        sha256=expected,
+        source=BinarySource.MANAGED_DOWNLOAD,
+        version=recorded_version,
+        sha256=expected_executable_sha256(manifest),
     )
 
 
 def has_provisioned_binary(version: str = QDRANT_SERVER_VERSION) -> bool:
-    """Return whether a managed install with a manifest exists for *version*.
+    """Return whether a managed install of the pinned release exists for *version*.
 
-    Lets callers detect when an unpinned operator binary would shadow a
-    managed install. Presence only: nothing is hashed here.
+    Lets callers detect when an operator binary would shadow a managed
+    install. Presence only: nothing is hashed here. An install an operator
+    registered is not one.
     """
-    return _resolve_provisioned(version) is not None
+    try:
+        return _resolve_provisioned(version) is not None
+    except QdrantBinaryError:
+        return False
 
 
 def resolve_binary(
@@ -918,8 +973,10 @@ def resolve_binary(
         setting is unset and no managed install exists.
 
     Raises:
-        QdrantBinaryError: When the operator setting is set but does not
-            name an absolute path to a regular, non-link file. The managed
-            install is deliberately not consulted in that case.
+        QdrantBinaryError: When only half the operator pair is set, or its
+            path does not name an absolute path to a regular, non-link file;
+            the managed install is deliberately not consulted in that case.
+            Also when the managed install's manifest claims an operator
+            registered it.
     """
     return _resolve_env_binary() or _resolve_provisioned(version)

@@ -463,9 +463,10 @@ def _qdrant_readiness(
     supervised in this process - that child must be alive for the dimension
     to read ``READY``. In local-only mode the binary is not required, so an
     absent binary is ``READY`` (the on-disk store needs no server) and
-    nothing is hashed. A binary a start would refuse - an operator setting
-    that names an unusable path, or an install that fails its digest - is
-    ``NOT_READY`` in server mode with the refusal as the detail.
+    nothing is hashed. A binary a start would refuse - operator settings that
+    name no usable binary, an install an operator registered, or a file that
+    fails the digest it is held to, committed or declared - is ``NOT_READY``
+    in server mode with the refusal as the detail.
     """
     from .qdrant_runtime._resolve import QdrantBinaryError, resolve_binary
     from .qdrant_runtime._supervise import runtime_state

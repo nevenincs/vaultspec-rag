@@ -33,6 +33,7 @@ from ..qdrant_runtime._constants import (
     QDRANT_SERVER_VERSION,
     QdrantRuntimeState,
 )
+from ..qdrant_runtime._provision import file_sha256
 from ..qdrant_runtime._resolve import (
     QdrantIdentity,
     asset_for_platform,
@@ -422,6 +423,7 @@ class TestSpawnGateRefusesBeforeSpawning:
             **{
                 EnvVar.QDRANT_STORAGE_DIR.value: str(storage),
                 EnvVar.QDRANT_BINARY.value: None,
+                EnvVar.QDRANT_BINARY_SHA256.value: None,
                 EnvVar.QDRANT_PORT.value: str(free_loopback_port()),
             }
         ):
@@ -441,7 +443,8 @@ class TestSpawnGateRefusesBeforeSpawning:
         """A load failure under a binary of unknown version blames no collection.
 
         The store was last opened by the pinned version. A binary named by the
-        operator setting is of unknown version, so the store is unverifiable
+        operator settings, whose declared digest is not a pinned release
+        executable's, is of unknown version, so the store is unverifiable
         for it: it may open, but a dying child that names a collection must
         not have that collection moved aside on the guess that the store and
         the binary agree.
@@ -462,6 +465,9 @@ class TestSpawnGateRefusesBeforeSpawning:
             **{
                 EnvVar.QDRANT_STORAGE_DIR.value: str(storage),
                 EnvVar.QDRANT_BINARY.value: str(binary),
+                # Not a pinned release executable's digest, so the binary's
+                # version stays unknown - which is what this test is about.
+                EnvVar.QDRANT_BINARY_SHA256.value: file_sha256(binary),
                 EnvVar.QDRANT_PORT.value: str(free_loopback_port()),
             }
         ):

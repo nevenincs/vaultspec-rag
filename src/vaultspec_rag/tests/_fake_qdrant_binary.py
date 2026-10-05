@@ -12,6 +12,7 @@ import sys
 from typing import TYPE_CHECKING
 
 from ..qdrant_runtime._constants import BinarySource, ResolvedBinary
+from ..qdrant_runtime._provision import file_sha256
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -78,10 +79,15 @@ def fake_qdrant_binary(tmp_path: Path, source: str, name: str = "fake_qdrant") -
 
 
 def unpinned(path: Path) -> ResolvedBinary:
-    """Present *path* to a supervisor the way the operator binary setting does.
+    """Present *path* to a supervisor the way the operator binary settings do.
 
     A stand-in is not a release executable, so no committed digest can apply
-    to it. The operator setting is the one source that runs a binary as
-    named, which is exactly what a test handing over its own script means.
+    to it. An operator binary is held to the digest its operator declares
+    instead, and a test handing over its own script is that operator: the
+    digest declared here is the file's own, as it stands now. A path that
+    names no file is given none, and so can never be spawned.
     """
-    return ResolvedBinary(path=path, source=BinarySource.OPERATOR_SETTING)
+    declared = file_sha256(path) if path.is_file() else ""
+    return ResolvedBinary(
+        path=path, source=BinarySource.OPERATOR_SETTING, sha256=declared
+    )

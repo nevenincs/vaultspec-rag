@@ -814,7 +814,7 @@ None.
 | --- | --- | --- | --- | --- |
 | `--upgrade` | boolean | no | off | Replace an installed Qdrant server when the managed version changed. |
 | `--dry-run` | boolean | no | off | Preview the version, release package, download, install path, and digest without downloading or writing anything. |
-| `--binary` | path | no | - | Register an operator-supplied Qdrant executable instead of downloading the managed release. |
+| `--archive` | path | no | - | Install from a local copy of the release package instead of downloading it, for a host with no route to the release source. The file passes the same checksum checks as a download, is read where it lies, and no request is made. |
 | `--json` | boolean | no | off | Emit JSON for scripts instead of human text. |
 
 ## server qdrant status

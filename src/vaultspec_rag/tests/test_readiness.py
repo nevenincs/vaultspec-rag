@@ -14,6 +14,7 @@ round-tripping through ``json.dumps``.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -43,6 +44,13 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.unit]
 
 _DIMENSIONS = ("torch", "models", "qdrant")
+
+#: Both operator binary settings cleared. They outrank the managed install, so
+#: a pair in the developer's own environment would decide the dimension.
+_NO_OPERATOR_BINARY: dict[str, str | None] = {
+    EnvVar.QDRANT_BINARY.value: None,
+    EnvVar.QDRANT_BINARY_SHA256.value: None,
+}
 
 
 @pytest.fixture
@@ -315,7 +323,7 @@ class TestQdrantDimension:
         # Server mode is the effective default, the temp-isolated managed dir
         # holds no provisioned binary, and the operator setting is cleared, so
         # nothing resolves: there is no other place a binary is looked for.
-        with managed_env(**{EnvVar.QDRANT_BINARY.value: None}):
+        with managed_env(**_NO_OPERATOR_BINARY):
             report = compute_readiness()
         qdrant = report.dimension("qdrant")
         assert qdrant is not None
@@ -333,7 +341,12 @@ class TestQdrantDimension:
         branch fails this on the ``invalid`` source assertion below.
         """
         missing = tmp_path / "no-such-qdrant"
-        with managed_env(**{EnvVar.QDRANT_BINARY.value: str(missing)}):
+        with managed_env(
+            **{
+                EnvVar.QDRANT_BINARY.value: str(missing),
+                EnvVar.QDRANT_BINARY_SHA256.value: "c" * 64,
+            }
+        ):
             report = compute_readiness()
         qdrant = report.dimension("qdrant")
         assert qdrant is not None
@@ -355,32 +368,82 @@ class TestQdrantDimension:
         assert qdrant.status == ReadinessStatus.READY
         assert qdrant.info["server_mode"] is False
 
-    def test_resolution_source_reflects_an_operator_supplied_binary(
+    def test_an_operator_binary_that_matches_its_declared_digest_is_ready(
         self, tmp_path: Path
     ) -> None:
-        # An operator-supplied binary is the first resolution source.
-        # Point the env knob at a real file and confirm the dimension
-        # reports the ``env`` source - read-only, no execution.
+        # An operator binary is the first resolution source. Name a real file
+        # with its real digest and confirm the dimension reports the ``env``
+        # source - read-only, hashed, never executed.
         fake_binary = tmp_path / "qdrant-operator"
         fake_binary.write_bytes(b"operator-supplied")
-        prev = os.environ.get(EnvVar.QDRANT_BINARY.value)
-        os.environ[EnvVar.QDRANT_BINARY.value] = str(fake_binary)
-        reset_config()
-        try:
+        declared = hashlib.sha256(b"operator-supplied").hexdigest()
+        with managed_env(
+            **{
+                EnvVar.QDRANT_BINARY.value: str(fake_binary),
+                EnvVar.QDRANT_BINARY_SHA256.value: declared,
+            }
+        ):
             report = compute_readiness()
-            qdrant = report.dimension("qdrant")
-            assert qdrant is not None
-            assert qdrant.info["binary_source"] == "env"
-            assert qdrant.info["binary_path"] == str(fake_binary)
-            # Binary resolves and no child is supervised in this process,
-            # so the read-only reporter can honestly call it ready.
-            assert qdrant.status == ReadinessStatus.READY
-        finally:
-            if prev is None:
-                os.environ.pop(EnvVar.QDRANT_BINARY.value, None)
-            else:
-                os.environ[EnvVar.QDRANT_BINARY.value] = prev
-            reset_config()
+        qdrant = report.dimension("qdrant")
+        assert qdrant is not None
+        assert qdrant.info["binary_source"] == "env"
+        assert qdrant.info["binary_path"] == str(fake_binary)
+        assert "binary_error" not in qdrant.info
+        assert qdrant.status == ReadinessStatus.READY
+
+    def test_an_operator_binary_that_is_not_what_was_declared_is_not_ready(
+        self, tmp_path: Path
+    ) -> None:
+        """An operator binary is reported usable only after hashing it too.
+
+        Mutation it catches: hashing only the managed install. The operator
+        binary then reads ``READY`` on resolution alone and this fails on the
+        status assertion.
+        """
+        fake_binary = tmp_path / "qdrant-operator"
+        fake_binary.write_bytes(b"what the operator has")
+        declared = hashlib.sha256(b"what the operator declared").hexdigest()
+        with managed_env(
+            **{
+                EnvVar.QDRANT_BINARY.value: str(fake_binary),
+                EnvVar.QDRANT_BINARY_SHA256.value: declared,
+            }
+        ):
+            report = compute_readiness()
+        qdrant = report.dimension("qdrant")
+        assert qdrant is not None
+        assert qdrant.status == ReadinessStatus.NOT_READY
+        assert qdrant.info["binary_source"] == "env"
+        assert qdrant.info["binary_error"] == "qdrant_binary_unverified"
+        assert EnvVar.QDRANT_BINARY_SHA256.value in qdrant.detail
+
+    def test_an_operator_claiming_install_is_not_ready_and_names_both_routes(
+        self,
+    ) -> None:
+        from ..qdrant_runtime._constants import (
+            MANIFEST_FILENAME,
+            QDRANT_SERVER_VERSION,
+        )
+        from ..qdrant_runtime._resolve import binary_filename, qdrant_bin_dir
+
+        version_dir = qdrant_bin_dir()
+        version_dir.mkdir(parents=True)
+        (version_dir / binary_filename()).write_bytes(b"operator-registered")
+        (version_dir / MANIFEST_FILENAME).write_text(
+            json.dumps({"version": QDRANT_SERVER_VERSION, "source": "operator"}),
+            encoding="utf-8",
+        )
+
+        with managed_env(**_NO_OPERATOR_BINARY):
+            report = compute_readiness()
+
+        qdrant = report.dimension("qdrant")
+        assert qdrant is not None
+        assert qdrant.status == ReadinessStatus.NOT_READY
+        assert qdrant.info["binary_source"] == "invalid"
+        assert qdrant.info["binary_error"] == "qdrant_install_invalid"
+        assert EnvVar.QDRANT_BINARY_SHA256.value in qdrant.detail
+        assert "--archive <file>" in qdrant.detail
 
     @staticmethod
     def _seed_install_that_is_not_the_pinned_release() -> Path:
@@ -430,7 +493,7 @@ class TestQdrantDimension:
         """
         binary = self._seed_install_that_is_not_the_pinned_release()
 
-        with managed_env(**{EnvVar.QDRANT_BINARY.value: None}):
+        with managed_env(**_NO_OPERATOR_BINARY):
             report = compute_readiness()
 
         qdrant = report.dimension("qdrant")
@@ -445,7 +508,7 @@ class TestQdrantDimension:
     def test_local_only_does_not_judge_a_binary_it_will_not_run(self) -> None:
         self._seed_install_that_is_not_the_pinned_release()
 
-        with managed_env(**{EnvVar.QDRANT_BINARY.value: None}):
+        with managed_env(**_NO_OPERATOR_BINARY):
             report = compute_readiness()
 
         qdrant = report.dimension("qdrant")
@@ -465,7 +528,7 @@ class TestQdrantDimension:
         """
         self._seed_install_that_is_not_the_pinned_release()
 
-        with managed_env(**{EnvVar.QDRANT_BINARY.value: None}):
+        with managed_env(**_NO_OPERATOR_BINARY):
             qdrant = _qdrant_readiness(server_mode=True, verify_budget=0.0)
 
         assert qdrant.status == ReadinessStatus.NOT_READY

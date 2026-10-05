@@ -713,13 +713,15 @@ class TestServerFirstStartupSelection:
 
         prev_status = os.environ.get(EnvVar.STATUS_DIR.value)
         prev_binary = os.environ.get(EnvVar.QDRANT_BINARY.value)
+        prev_digest = os.environ.get(EnvVar.QDRANT_BINARY_SHA256.value)
         prev_local = os.environ.get(EnvVar.LOCAL_ONLY.value)
         prev_port = os.environ.get(EnvVar.QDRANT_PORT.value)
         # Isolate the managed dir to an empty tmp so nothing is
-        # provisioned, clear the operator-binary knob so no ambient value
+        # provisioned, clear both operator-binary knobs so no ambient pair
         # resolves, and keep server mode the default (no local-only).
         os.environ[EnvVar.STATUS_DIR.value] = str(tmp_path)
         os.environ.pop(EnvVar.QDRANT_BINARY.value, None)
+        os.environ.pop(EnvVar.QDRANT_BINARY_SHA256.value, None)
         os.environ.pop(EnvVar.LOCAL_ONLY.value, None)
         # The port must be isolated too, or this test asserts nothing on a
         # host that happens to run qdrant. The supervisor checks the port
@@ -744,6 +746,8 @@ class TestServerFirstStartupSelection:
                 os.environ.pop(EnvVar.QDRANT_BINARY.value, None)
             else:
                 os.environ[EnvVar.QDRANT_BINARY.value] = prev_binary
+            if prev_digest is not None:
+                os.environ[EnvVar.QDRANT_BINARY_SHA256.value] = prev_digest
             if prev_local is not None:
                 os.environ[EnvVar.LOCAL_ONLY.value] = prev_local
             if prev_port is None:

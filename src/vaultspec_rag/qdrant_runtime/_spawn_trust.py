@@ -6,11 +6,12 @@ from it, so the two cannot come apart: the process is created while the file
 that was just hashed is still held, from that file and not from whatever a
 command line would find.
 
-A managed install is always hashed. There is no branch that lets one run
-unhashed: a digest that is missing or empty is a mismatch like any other,
-because no file hashes to it. Only the operator setting runs without a digest,
-and it is re-checked for the shape resolution required of it, so a file
-swapped for a link or removed after resolution is refused too.
+Every binary is hashed, whatever its source. There is no branch that lets one
+run unhashed: a digest that is missing or empty is a mismatch like any other,
+because no file hashes to it. The managed install is held to a committed
+constant and an operator binary to the digest its operator declared. The
+operator binary is also re-checked for the shape resolution required of it,
+so a file swapped for a link or removed after resolution is refused by name.
 """
 
 from __future__ import annotations
@@ -45,38 +46,26 @@ __all__ = [
     "warn_when_operator_supplied",
 ]
 
-_MANAGED_SOURCES = (BinarySource.MANAGED_DOWNLOAD, BinarySource.MANAGED_OPERATOR)
-
 
 def _refusal(resolved: ResolvedBinary, problem: str) -> QdrantBinaryError:
     """Build the refusal for a binary that failed its check, with its remedy."""
-    if resolved.source is BinarySource.MANAGED_OPERATOR:
-        remedy = (
-            "Register it again with: vaultspec-rag server qdrant install "
-            "--binary <path>, or replace it with the pinned release: "
-            "vaultspec-rag server qdrant install --upgrade"
-        )
-    elif resolved.source is BinarySource.MANAGED_DOWNLOAD:
+    if resolved.source is BinarySource.MANAGED_DOWNLOAD:
+        subject = "managed qdrant binary"
         remedy = (
             "Replace it with the pinned release: "
             "vaultspec-rag server qdrant install --upgrade"
         )
     else:
+        subject = "qdrant binary"
         remedy = (
-            f"Correct {EnvVar.QDRANT_BINARY.value}, or unset it to use the "
+            f"Correct {EnvVar.QDRANT_BINARY.value} or "
+            f"{EnvVar.QDRANT_BINARY_SHA256.value}, or unset both to use the "
             "managed qdrant server."
         )
-    managed = "managed " if resolved.source in _MANAGED_SOURCES else ""
     return QdrantBinaryError(
         QDRANT_BINARY_UNVERIFIED,
-        f"The {managed}qdrant binary at {resolved.path} {problem}; refusing to "
-        f"execute it. {remedy}",
+        f"The {subject} at {resolved.path} {problem}; refusing to execute it. {remedy}",
     )
-
-
-def _expected_digest(resolved: ResolvedBinary) -> str | None:
-    """The digest *resolved* must hash to, or ``None`` when none applies."""
-    return resolved.sha256 if resolved.source in _MANAGED_SOURCES else None
 
 
 @contextmanager
@@ -93,7 +82,7 @@ def _verified(resolved: ResolvedBinary) -> Generator[HeldExecutable]:
         fault = operator_binary_fault(resolved.path)
         if fault is not None:
             raise operator_setting_refusal(resolved.path, fault)
-    elif resolved.source not in _MANAGED_SOURCES:
+    elif resolved.source is not BinarySource.MANAGED_DOWNLOAD:
         raise QdrantBinaryError(
             QDRANT_BINARY_UNVERIFIED,
             f"A qdrant binary of source {resolved.source!r} is never executed.",
@@ -107,11 +96,10 @@ def _verified(resolved: ResolvedBinary) -> Generator[HeldExecutable]:
             raise _refusal(
                 resolved, f"could not be held for verification ({exc})"
             ) from exc
-        expected = _expected_digest(resolved)
-        if expected is not None and held.sha256() != expected:
+        if held.sha256() != resolved.sha256:
             held_to = (
-                "the digest recorded when it was registered"
-                if resolved.source is BinarySource.MANAGED_OPERATOR
+                f"the SHA256 declared in {EnvVar.QDRANT_BINARY_SHA256.value}"
+                if resolved.source is BinarySource.OPERATOR_SETTING
                 else "the pinned digest of its release asset"
             )
             raise _refusal(resolved, f"does not match {held_to}")
@@ -181,7 +169,7 @@ def spawn_verified(
                 bufsize=0,
                 start_new_session=True,
             )
-        if not held.unchanged(_expected_digest(resolved)):
+        if not held.unchanged(resolved.sha256):
             proc.kill()
             proc.wait()
             if proc.stdout is not None:
@@ -193,28 +181,24 @@ def spawn_verified(
 def warn_when_operator_supplied(resolved: ResolvedBinary) -> None:
     """Log that an operator-supplied binary runs outside the committed pin.
 
-    The setting is called out harder when it shadows a managed install - the
-    case a planted setting would exploit.
+    It is verified, but against a digest the operator declared: the service
+    knows the file is the one that was named, not that it is a release anyone
+    reviewed. The setting is called out harder when it shadows a managed
+    install - the case a planted environment would exploit.
     """
-    if resolved.source is BinarySource.OPERATOR_SETTING:
-        remedy = (
-            f"It is SHADOWING a managed install; unset "
-            f"{EnvVar.QDRANT_BINARY.value} to run the pinned binary."
-            if has_provisioned_binary(QDRANT_SERVER_VERSION)
-            else "Provision a pinned binary with: vaultspec-rag server qdrant install."
-        )
-        logger.warning(
-            "qdrant binary named by %s (%s) runs UNVERIFIED - no pinned-digest "
-            "check applies to an operator-supplied binary. %s",
-            EnvVar.QDRANT_BINARY.value,
-            resolved.path,
-            remedy,
-        )
-    elif resolved.source is BinarySource.MANAGED_OPERATOR:
-        logger.warning(
-            "qdrant binary at %s was registered by an operator; it is held to "
-            "the digest recorded at registration, not to the committed pin. "
-            "Install the pinned release with: vaultspec-rag server qdrant "
-            "install --upgrade",
-            resolved.path,
-        )
+    if resolved.source is not BinarySource.OPERATOR_SETTING:
+        return
+    remedy = (
+        f"It is SHADOWING a managed install; unset {EnvVar.QDRANT_BINARY.value} "
+        f"and {EnvVar.QDRANT_BINARY_SHA256.value} to run the pinned binary."
+        if has_provisioned_binary(QDRANT_SERVER_VERSION)
+        else "Provision the pinned binary with: vaultspec-rag server qdrant install."
+    )
+    logger.warning(
+        "qdrant binary named by %s (%s) is operator-supplied: it is held to the "
+        "digest declared in %s, not to the committed pin. %s",
+        EnvVar.QDRANT_BINARY.value,
+        resolved.path,
+        EnvVar.QDRANT_BINARY_SHA256.value,
+        remedy,
+    )

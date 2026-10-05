@@ -31,16 +31,14 @@ from .._sync_vocabulary import ProvisionAction
 from ..config._types import EnvVar
 from ..qdrant_runtime._constants import (
     MANIFEST_FILENAME,
-    MANIFEST_SOURCE_OPERATOR,
     QDRANT_ASSET_SHA256,
     QDRANT_SERVER_VERSION,
     ProvisionReport,
 )
 from ..qdrant_runtime._provision import (
     _LOCK_FILENAME,
-    _download_and_install,
-    _DownloadInstallRequest,
-    _OperatorRegistration,
+    _install,
+    _InstallRequest,
     _plan,
     _ProvisionRequest,
     _run_exclusively,
@@ -119,7 +117,7 @@ def _request(
     *,
     asset: str,
     pinned_archive: bytes,
-) -> _DownloadInstallRequest:
+) -> _InstallRequest:
     """A first-install request for *asset* as *source* serves it."""
     return install_request(
         source.url(f"/{asset}"),
@@ -137,7 +135,7 @@ class TestVerifiedInstall:
         archive = release_archive(asset)
         source = sources.serve(lambda handler: send_bytes(handler, archive))
 
-        report = _download_and_install(
+        report = _install(
             _request(source, version_dir, asset=asset, pinned_archive=archive)
         )
 
@@ -166,7 +164,7 @@ class TestVerifiedInstall:
         source = sources.serve(lambda handler: send_bytes(handler, archive))
 
         request = _request(source, version_dir, asset=asset, pinned_archive=archive)
-        report = _download_and_install(replace(request, previously="stale"))
+        report = _install(replace(request, previously="stale"))
 
         assert report.action == ProvisionAction.UPDATED, report.message
         assert (version_dir / binary_filename()).read_bytes() == NEW_EXECUTABLE
@@ -181,7 +179,7 @@ class TestFailureLeavesThePreviousInstall:
     ) -> None:
         """The source refusing the asset costs the operator nothing installed.
 
-        Mutation: made the failure branch of ``_download_and_install`` remove
+        Mutation: made the failure branch of ``_install`` remove
         the installed executable, as the handler it replaces did. Observed
         "the previous executable was removed". Restored; passes.
         """
@@ -193,7 +191,7 @@ class TestFailureLeavesThePreviousInstall:
             )
         )
 
-        report = _download_and_install(
+        report = _install(
             _request(
                 source, version_dir, asset=asset, pinned_archive=release_archive(asset)
             )
@@ -228,7 +226,7 @@ class TestFailureLeavesThePreviousInstall:
         request = _request(
             source, version_dir, asset=asset, pinned_archive=release_archive(asset)
         )
-        report = _download_and_install(replace(request, previously="stale"))
+        report = _install(replace(request, previously="stale"))
 
         assert report.action == ProvisionAction.FAILED
         assert "SHA256 mismatch" in report.message
@@ -262,7 +260,7 @@ class TestFailureLeavesThePreviousInstall:
         _seed_prior_install(version_dir)
         source = sources.serve(lambda handler: send_bytes(handler, archive))
 
-        report = _download_and_install(
+        report = _install(
             _request(source, version_dir, asset=asset, pinned_archive=archive)
         )
 
@@ -279,7 +277,7 @@ class TestFailureLeavesThePreviousInstall:
         _seed_prior_install(version_dir)
         source = sources.serve(lambda handler: send_bytes(handler, garbage))
 
-        report = _download_and_install(
+        report = _install(
             _request(source, version_dir, asset=asset, pinned_archive=garbage)
         )
 
@@ -306,7 +304,7 @@ class TestFailureLeavesThePreviousInstall:
         source = sources.serve(lambda handler: send_bytes(handler, archive))
 
         request = _request(source, version_dir, asset=asset, pinned_archive=archive)
-        report = _download_and_install(
+        report = _install(
             replace(
                 request,
                 executable_sha256=sha256_hex(b"what the pin table says it should be"),
@@ -328,7 +326,7 @@ class TestFailureLeavesThePreviousInstall:
         source = sources.serve(lambda handler: send_bytes(handler, archive))
 
         request = _request(source, version_dir, asset=asset, pinned_archive=archive)
-        report = _download_and_install(
+        report = _install(
             replace(request, executable_sha256=sha256_hex(b"something else"))
         )
 
@@ -354,7 +352,7 @@ class TestInterrupt:
         where a console delivers one, at a stage each parameter names. By the
         last of them both staging files exist.
 
-        Mutation: moved the staging cleanup in ``_download_and_install`` out
+        Mutation: moved the staging cleanup in ``_install`` out
         of ``finally`` and into the failure branch. Observed the working-file
         assertion fail at every stage, listing the staging files left behind.
         Restored; passes.
@@ -373,7 +371,7 @@ class TestInterrupt:
             on_progress=interrupt_at_stage,
         )
         with pytest.raises(KeyboardInterrupt):
-            _download_and_install(request)
+            _install(request)
 
         _assert_prior_install_intact(version_dir)
         assert working_files(version_dir) == []
@@ -395,7 +393,7 @@ class TestInstalledName:
         archive = release_archive(asset)
         source = sources.serve(lambda handler: send_bytes(handler, archive))
 
-        report = _download_and_install(
+        report = _install(
             _request(source, version_dir, asset=asset, pinned_archive=archive)
         )
 
@@ -427,48 +425,7 @@ class TestInstalledName:
 
         request = _request(source, version_dir, asset=asset, pinned_archive=archive)
         with binary.open("rb"):
-            report = _download_and_install(replace(request, previously="stale"))
-
-        assert report.action == ProvisionAction.FAILED
-        assert "vaultspec-rag server stop" in report.message
-        _assert_prior_install_intact(version_dir)
-        assert working_files(version_dir) == []
-
-
-class TestOperatorRegistration:
-    def test_a_registration_replaces_a_previous_install_and_strands_nothing(
-        self, version_dir: Path, tmp_path: Path
-    ) -> None:
-        _seed_prior_install(version_dir)
-        operator_binary = tmp_path / "operator-qdrant.bin"
-        operator_binary.write_bytes(b"operator-supplied server")
-
-        report = provision(binary=operator_binary)
-
-        assert report.action == ProvisionAction.UPDATED, report.message
-        binary = version_dir / binary_filename()
-        assert binary.read_bytes() == b"operator-supplied server"
-        manifest = json.loads(
-            (version_dir / MANIFEST_FILENAME).read_text(encoding="utf-8")
-        )
-        assert manifest["source"] == "operator"
-        assert manifest["binary_sha256"] == file_sha256(binary)
-        assert report.sha256 == manifest["binary_sha256"]
-        assert working_files(version_dir) == []
-
-    @pytest.mark.skipif(
-        sys.platform != "win32",
-        reason="only Windows refuses to replace a file a process holds open",
-    )
-    def test_registering_over_an_executable_in_use_is_a_failed_outcome(
-        self, version_dir: Path, tmp_path: Path
-    ) -> None:
-        binary = _seed_prior_install(version_dir)
-        operator_binary = tmp_path / "operator-qdrant.bin"
-        operator_binary.write_bytes(b"operator-supplied server")
-
-        with binary.open("rb"):
-            report = provision(binary=operator_binary)
+            report = _install(replace(request, previously="stale"))
 
         assert report.action == ProvisionAction.FAILED
         assert "vaultspec-rag server stop" in report.message
@@ -494,7 +451,6 @@ class TestArchiveExtraction:
 
 
 _STAND_IN_EXECUTABLE = b"stand-in bytes that are not the release executable"
-_OPERATOR_EXECUTABLE = b"operator-supplied server"
 
 
 def _asset_path() -> str:
@@ -550,51 +506,72 @@ def _seed_no_manifest(version_dir: Path, tmp_path: Path) -> bytes:
     return _write_install(version_dir, None)
 
 
-def _seed_registered(version_dir: Path, tmp_path: Path) -> bytes:
-    """Register an operator binary through the shipped registration."""
-    operator_binary = tmp_path / "operator-qdrant.bin"
-    operator_binary.write_bytes(_OPERATOR_EXECUTABLE)
-    report = provision(binary=operator_binary)
-    assert report.action == ProvisionAction.CREATED, report.message
-    assert report.binary == version_dir / binary_filename()
-    return _OPERATOR_EXECUTABLE
+def _seed_operator_claim(version_dir: Path, tmp_path: Path) -> bytes:
+    """A manifest exactly as registering an operator's binary used to write it.
+
+    It names the operator as its source and records the true digest of the
+    file beside it. That was once a healthy install. It is also what anyone
+    able to write the manifest could put over any file at all.
+    """
+    del tmp_path
+    return _write_install(
+        version_dir,
+        {
+            "version": QDRANT_SERVER_VERSION,
+            "asset": "",
+            "asset_sha256": "",
+            "binary_sha256": sha256_hex(_STAND_IN_EXECUTABLE),
+            "source": "operator",
+        },
+    )
 
 
-def _seed_registered_then_replaced(version_dir: Path, tmp_path: Path) -> bytes:
-    _seed_registered(version_dir, tmp_path)
-    replaced = b"swapped in after registration"
-    (version_dir / binary_filename()).write_bytes(replaced)
-    return replaced
+def _seed_relabelled_release(version_dir: Path, tmp_path: Path) -> bytes:
+    """A manifest naming the pinned asset under a source nothing writes."""
+    del tmp_path
+    asset = asset_for_platform()
+    return _write_install(
+        version_dir,
+        {
+            "version": QDRANT_SERVER_VERSION,
+            "asset": asset,
+            "asset_sha256": QDRANT_ASSET_SHA256[asset],
+            "binary_sha256": sha256_hex(_STAND_IN_EXECUTABLE),
+            "source": "Operator",
+        },
+    )
 
 
-#: Installs no committed or recorded digest vouches for, by how they got so.
+#: Installs no committed digest vouches for, by how they got so.
 _UNVERIFIED_SEEDS: dict[str, Callable[[Path, Path], bytes]] = {
     "download manifest over other bytes": _seed_self_attested_download,
     "manifest with only a version": _seed_version_only_manifest,
     "no manifest": _seed_no_manifest,
-    "registered, then replaced": _seed_registered_then_replaced,
+    "manifest claiming an operator binary": _seed_operator_claim,
+    "manifest with an unknown source": _seed_relabelled_release,
 }
 
 
 class TestInstallState:
     """An install is called healthy only when its executable hashes right."""
 
-    def test_a_registered_install_is_unchanged_with_no_network(
+    def test_a_manifest_claiming_an_operator_binary_is_refused_with_both_routes(
         self, sources: LoopbackSources, version_dir: Path, tmp_path: Path
     ) -> None:
-        """An operator-registered install is a healthy state of its own.
+        """The manifest's own word for where a binary came from buys nothing.
 
-        It carries no committed pin, so it is not called verified, and it
-        matches the digest recorded at registration, so it is not called
-        stale: a plain run leaves it alone.
+        This manifest records the true digest of the file beside it, which is
+        all an operator registration ever had to show. The managed directory
+        holds the pinned release only, so the install is refused, and the
+        refusal names the two supported ways forward: the pinned release,
+        online or from a local archive, and the operator binary settings.
 
-        Mutation: classed a registered install with the unverified ones in
-        ``_settled_report``. Observed the action assertion fail (``failed``
-        where ``unchanged`` was required). Restored; passes.
+        Mutation: made ``_manifest_fault`` stop judging the manifest's source.
+        Observed the settings assertion fail: the install was still refused,
+        by the resolver's own rule, but as one that names no release asset,
+        with no word of the operator route. Restored; passes.
         """
-        _seed_registered(version_dir, tmp_path)
-        binary = version_dir / binary_filename()
-        before = binary.stat().st_mtime_ns
+        installed = _seed_operator_claim(version_dir, tmp_path)
         mirror = _mirror(sources)
 
         with managed_env(
@@ -602,11 +579,13 @@ class TestInstallState:
         ):
             report = provision()
 
-        assert report.action == ProvisionAction.UNCHANGED, report.message
-        assert "operator-registered" in report.message
-        assert report.sha256 == sha256_hex(_OPERATOR_EXECUTABLE)
+        assert report.action == ProvisionAction.FAILED
+        assert EnvVar.QDRANT_BINARY.value in report.message
+        assert EnvVar.QDRANT_BINARY_SHA256.value in report.message
+        assert "server qdrant install --upgrade" in report.message
+        assert "--archive <file>" in report.message
         assert mirror.requests == []
-        assert binary.stat().st_mtime_ns == before
+        assert (version_dir / binary_filename()).read_bytes() == installed
 
     @pytest.mark.parametrize("seed", _UNVERIFIED_SEEDS.values(), ids=_UNVERIFIED_SEEDS)
     def test_an_install_that_does_not_verify_fails_and_names_the_upgrade(
@@ -622,9 +601,9 @@ class TestInstallState:
         manifest agrees with the pin table and with the file beside it.
 
         Mutation: made ``_existing_install`` skip hashing the executable.
-        Observed the first and last seeds fail on the action (``unchanged``
-        where ``failed`` was required); the other two carry no digest to
-        compare and stayed refused. Restored; passes.
+        Observed the first seed fail on the action (``unchanged`` where
+        ``failed`` was required); the others are refused on what their
+        manifests say before any hash is taken. Restored; passes.
         """
         installed = seed(version_dir, tmp_path)
         mirror = _mirror(sources)
@@ -673,36 +652,28 @@ class TestInstallState:
         assert (version_dir / binary_filename()).read_bytes() == installed
         assert working_files(version_dir) == []
 
-    def test_an_upgrade_replaces_a_registered_install_with_the_pinned_release(
-        self, sources: LoopbackSources, version_dir: Path, tmp_path: Path
-    ) -> None:
-        installed = _seed_registered(version_dir, tmp_path)
-        mirror = _mirror(sources)
-
-        with managed_env(
-            **{EnvVar.QDRANT_RELEASE_BASE_URL.value: mirror.url("/mirror")}
-        ):
-            attempted = provision(upgrade=True)
-            afterwards = provision()
-
-        assert mirror.requests == [_asset_path()]
-        assert attempted.action == ProvisionAction.FAILED
-        # The download could not be verified, so the registered install is
-        # still there and still healthy.
-        assert (version_dir / binary_filename()).read_bytes() == installed
-        assert afterwards.action == ProvisionAction.UNCHANGED
-
     @pytest.mark.parametrize(
         ("field", "value", "problem"),
         [
             ("asset", "qdrant-not-a-release.zip", "names no pinned release asset"),
             ("version", "0.0.1", "records version 0.0.1"),
+            ("source", "mirror", "records the source 'mirror'"),
         ],
     )
     def test_a_manifest_the_pin_table_does_not_cover_never_verifies(
         self, version_dir: Path, field: str, value: str, problem: str
     ) -> None:
-        """The manifest only selects a committed digest; it supplies none."""
+        """The manifest only selects a committed digest; it supplies none.
+
+        Each manifest is refused for the thing it actually gets wrong, so the
+        operator is told which.
+
+        Mutation: made ``_manifest_fault`` stop refusing a source it does not
+        recognise. Observed the source case fail on the problem assertion:
+        the install was still refused, by the resolver's rule, but described
+        as naming no pinned asset when the asset it names is pinned.
+        Restored; passes.
+        """
         asset = asset_for_platform()
         manifest = {
             "version": QDRANT_SERVER_VERSION,
@@ -877,20 +848,25 @@ class TestProvisioningLock:
             ProvisionAction.FAILED,
         ]
 
-    def test_a_run_that_waited_adopts_the_install_made_meanwhile(
+    def test_a_run_that_waited_judges_again_what_it_finds_installed(
         self, sources: LoopbackSources, version_dir: Path
     ) -> None:
-        """The second of two starts does not download what the first installed.
+        """What a run saw before it waited for the lock is not what it acts on.
 
         The run finds nothing installed and waits for the lock. While it
-        waits a healthy install appears, as another run's would; once the
-        lock is free the run must look again rather than act on what it saw
-        before.
+        waits an executable appears at the installed name, with no manifest.
+        A run acting on what it saw before the wait would download and write
+        over it. Looking again, it finds an executable nothing vouches for
+        and refuses to overwrite it without being told to.
+
+        The same second look is what lets the second of two starts adopt the
+        first one's install instead of downloading it again. That case needs
+        a verified install to appear, and only the release executable
+        verifies, so it is not staged here.
 
         Mutation: made the locked step of ``provision`` use the plan made
-        before the wait. Observed the action assertion fail (``failed`` where
-        ``unchanged`` was required): the run went on to download. Restored;
-        passes.
+        before the wait. Observed the request-log assertion fail: the asset
+        was requested. Restored; passes.
         """
         held = _hold_lock(version_dir)
         waiting = threading.Event()
@@ -911,20 +887,15 @@ class TestProvisioningLock:
             thread.start()
             try:
                 assert waiting.wait(timeout=30), "the run never reported waiting"
-                _write_install(
-                    version_dir,
-                    {
-                        "version": QDRANT_SERVER_VERSION,
-                        "binary_sha256": sha256_hex(_STAND_IN_EXECUTABLE),
-                        "source": MANIFEST_SOURCE_OPERATOR,
-                    },
-                )
+                installed = _write_install(version_dir, None)
             finally:
                 release_anchor_claim(held, pid_record=True)
             thread.join(timeout=60)
 
-        assert [report.action for report in reports] == [ProvisionAction.UNCHANGED]
         assert mirror.requests == []
+        assert [report.action for report in reports] == [ProvisionAction.FAILED]
+        assert "--upgrade" in reports[0].message
+        assert (version_dir / binary_filename()).read_bytes() == installed
 
     def test_a_run_removes_working_files_a_killed_run_left(
         self, sources: LoopbackSources, version_dir: Path
@@ -966,35 +937,30 @@ class TestUnsupportedPlatform:
 
         assert isinstance(planned, ProvisionReport)
         assert planned.action == ProvisionAction.FAILED
+        # The one route such a host has: a binary of the operator's own,
+        # named with its digest.
         assert EnvVar.QDRANT_BINARY.value in planned.message
-        assert "server qdrant install --binary" in planned.message
+        assert EnvVar.QDRANT_BINARY_SHA256.value in planned.message
+        assert "--binary" not in planned.message
         assert planned.asset == ""
         assert planned.url == ""
 
-    def test_registering_a_binary_needs_no_release_asset(
+    def test_a_local_archive_does_not_make_an_unsupported_platform_installable(
         self, version_dir: Path, tmp_path: Path
     ) -> None:
+        """No release asset means no archive is the right one for this host."""
+        archive = tmp_path / "some-other-platform.zip"
+        archive.write_bytes(release_archive(ARCHIVE_SHAPES[0]))
+
         planned = _plan(
             _ProvisionRequest(
                 version_dir=version_dir,
-                binary=tmp_path / "operator-qdrant.bin",
+                archive=archive,
                 platform="win32",
                 machine="arm64",
             )
         )
 
-        assert isinstance(planned, _OperatorRegistration)
-
-    def test_a_healthy_install_is_unchanged_where_no_release_asset_exists(
-        self, version_dir: Path, tmp_path: Path
-    ) -> None:
-        _seed_registered(version_dir, tmp_path)
-
-        planned = _plan(
-            _ProvisionRequest(
-                version_dir=version_dir, platform="win32", machine="arm64"
-            )
-        )
-
         assert isinstance(planned, ProvisionReport)
-        assert planned.action == ProvisionAction.UNCHANGED
+        assert planned.action == ProvisionAction.FAILED
+        assert archive.read_bytes() == release_archive(ARCHIVE_SHAPES[0])

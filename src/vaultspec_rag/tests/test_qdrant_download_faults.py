@@ -50,7 +50,7 @@ from ..qdrant_runtime._download import (
     download_https,
 )
 from ..qdrant_runtime._provision import (
-    _download_and_install,
+    _install,
     _open_staging,
     verify_native_binary,
 )
@@ -82,7 +82,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator
     from pathlib import Path
 
-    from ..qdrant_runtime._provision import _DownloadInstallRequest
+    from ..qdrant_runtime._provision import _InstallRequest
     from ._http_stubs import QuietHandler
 
 pytestmark = [pytest.mark.unit]
@@ -612,7 +612,7 @@ _DEGRADED: dict[str, _Degraded] = {
 
 def _install_healthy(
     sources: LoopbackSources, version_dir: Path, executable: bytes
-) -> _DownloadInstallRequest:
+) -> _InstallRequest:
     """Install *executable* from a healthy source and return the request used."""
     asset = ARCHIVE_SHAPES[0]
     archive = release_archive(asset, executable)
@@ -623,7 +623,7 @@ def _install_healthy(
         ),
         executable_sha256=sha256_hex(executable),
     )
-    report = _download_and_install(request)
+    report = _install(request)
     assert report.action in {ProvisionAction.CREATED, ProvisionAction.UPDATED}, (
         report.message
     )
@@ -635,7 +635,7 @@ _PRIOR_EXECUTABLE = b"the executable installed before anything went wrong\x00" *
 
 
 def _assert_failed_cleanly(
-    version_dir: Path, prior: _DownloadInstallRequest, prior_manifest: bytes
+    version_dir: Path, prior: _InstallRequest, prior_manifest: bytes
 ) -> None:
     """Nothing is left behind and the previous install still verifies."""
     assert working_files(version_dir) == []
@@ -651,7 +651,7 @@ class TestDegradedSource:
     ) -> None:
         """One failed outcome with a remedy, nothing left over, nothing lost.
 
-        Mutation: moved the staging cleanup in ``_download_and_install`` out
+        Mutation: moved the staging cleanup in ``_install`` out
         of ``finally`` and onto the success path. Observed every condition
         fail on the working-file assertion, each listing the staging archive
         it had left. Restored; passes.
@@ -669,7 +669,7 @@ class TestDegradedSource:
         )
 
         started = time.monotonic()
-        report = _download_and_install(request)
+        report = _install(request)
         elapsed = time.monotonic() - started
 
         assert report.action == ProvisionAction.FAILED
@@ -755,7 +755,7 @@ class TestFreeSpace:
             reserve_bytes=reserve,
         )
 
-        report = _download_and_install(request)
+        report = _install(request)
 
         assert report.action == ProvisionAction.FAILED
         assert "Not enough free space" in report.message
@@ -811,7 +811,7 @@ class TestFreeSpace:
             open_staging=recording,
         )
 
-        report = _download_and_install(request)
+        report = _install(request)
 
         assert report.action == ProvisionAction.FAILED, report.message
         assert "Not enough free space" in report.message
@@ -862,7 +862,7 @@ class TestFreeSpace:
             open_staging=_fills_up(stage, fail_after=fail_after),
         )
 
-        report = _download_and_install(request)
+        report = _install(request)
 
         assert report.action == ProvisionAction.FAILED
         assert "ran out of space" in report.message

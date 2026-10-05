@@ -189,18 +189,18 @@ def test_warmup_reports_models_as_not_needed_and_fetches_none(
     assert result.exit_code == 0, result.output
 
 
-@pytest.mark.parametrize("register_a_binary", [False, True])
+@pytest.mark.parametrize("from_a_local_archive", [False, True])
 def test_qdrant_install_reports_skipped_and_writes_nothing(
     monkeypatch: pytest.MonkeyPatch,
     isolated_status_dir: Path,
     tmp_path: Path,
-    register_a_binary: bool,
+    from_a_local_archive: bool,
 ) -> None:
     """``server qdrant install`` is not needed on a client, like torch.
 
-    Registering an operator binary is provisioning too: it copies an
+    Installing from a local archive is provisioning too: it puts an
     executable into the managed directory, so a client is answered the same
-    way for both shapes of the verb.
+    way for both shapes of the verb, and the archive it named is not read.
 
     Mutation check: with the client answer removed from the front door's
     Qdrant entry, both shapes reach the tripwire - failing the ``calls``
@@ -208,10 +208,10 @@ def test_qdrant_install_reports_skipped_and_writes_nothing(
     """
     calls = substitute_qdrant_download(monkeypatch, succeeds=False)
     argv = ["server", "qdrant", "install", "--json"]
-    if register_a_binary:
-        supplied = tmp_path / "operator-qdrant"
-        supplied.write_bytes(b"operator supplied")
-        argv += ["--binary", str(supplied)]
+    if from_a_local_archive:
+        supplied = tmp_path / "release-archive"
+        supplied.write_bytes(b"a local copy of the release package")
+        argv += ["--archive", str(supplied)]
     before = _tree(isolated_status_dir)
 
     result = runner.invoke(app, argv)
@@ -223,4 +223,5 @@ def test_qdrant_install_reports_skipped_and_writes_nothing(
     assert payload["ok"] is True
     data = cast("dict[str, object]", payload["data"])
     assert data["action"] == ProvisionAction.SKIPPED
+    assert data["source"] is None
     assert _NOT_NEEDED in str(data["message"])

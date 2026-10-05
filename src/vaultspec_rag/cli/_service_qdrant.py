@@ -37,13 +37,38 @@ def _action_label(action: object) -> str:
     return str(action).replace("_", " ")
 
 
-def _render_install_report(report: ProvisionReport) -> None:
+#: Where an install's bytes came from, as the report says it.
+_SOURCE_DOWNLOAD = "download"
+_SOURCE_ARCHIVE = "archive"
+
+
+def _install_source(report: ProvisionReport, archive: Path | None) -> str | None:
+    """Say which source a run read, or would read, or ``None`` when it read none.
+
+    Only a run that installs or previews an install has a source. One that
+    found a healthy install, declined, or failed before reading anything did
+    not use the archive it was handed, and saying it did would be a claim
+    about bytes nobody looked at.
+    """
+    if report.action not in {
+        ProvisionAction.CREATED,
+        ProvisionAction.UPDATED,
+        ProvisionAction.DRY_RUN,
+    }:
+        return None
+    return _SOURCE_ARCHIVE if archive is not None else _SOURCE_DOWNLOAD
+
+
+def _render_install_report(report: ProvisionReport, archive: Path | None) -> None:
     _plain_line(f"Action: {_action_label(report.action)}")
     _plain_line(f"Version: {report.version}")
     if report.asset:
         _plain_line(f"Release package: {report.asset}")
-    if report.url:
-        _plain_line(f"Download: {report.url}")
+    source = _install_source(report, archive)
+    if source == _SOURCE_ARCHIVE:
+        _plain_line(f"Source: local archive {archive} (no request was made)")
+    elif source == _SOURCE_DOWNLOAD:
+        _plain_line(f"Source: download from {report.url}")
     if report.binary is not None:
         _plain_line(f"Install: {report.binary}")
     if report.sha256:
@@ -77,13 +102,15 @@ def qdrant_install(
             ),
         ),
     ] = False,
-    binary: Annotated[
+    archive: Annotated[
         Path | None,
         typer.Option(
-            "--binary",
+            "--archive",
             help=(
-                "Register an operator-supplied Qdrant executable instead of "
-                "downloading the managed release."
+                "Install from a local copy of the release package instead of "
+                "downloading it, for a host with no route to the release "
+                "source. The file passes the same checksum checks as a "
+                "download, is read where it lies, and no request is made."
             ),
         ),
     ] = None,
@@ -101,7 +128,7 @@ def qdrant_install(
         report = provision_qdrant_binary(
             upgrade=upgrade,
             dry_run=dry_run,
-            binary=binary,
+            archive=archive,
             on_progress=progress.stage,
         )
     failed = report.action == ProvisionAction.FAILED
@@ -110,7 +137,7 @@ def qdrant_install(
         _emit_json(
             not failed,
             "server.qdrant.install",
-            data=report.to_dict(),
+            data={**report.to_dict(), "source": _install_source(report, archive)},
             **(
                 {"error": str(report.action), "message": report.message}
                 if failed
@@ -118,7 +145,7 @@ def qdrant_install(
             ),
         )
     else:
-        _render_install_report(report)
+        _render_install_report(report, archive)
     if failed:
         raise typer.Exit(code=1)
 
@@ -193,38 +220,51 @@ def _qdrant_status_payload(port: int | None = None) -> dict[str, Any]:
 def _source_label(active: dict[str, object]) -> str:
     """Say where the active binary came from, in the resolver's own word.
 
-    An operator-supplied binary is named as such on every surface: no
-    committed pin vouches for it, so a reader must not take it for the
-    managed release.
+    An operator-supplied binary is named as such on every surface: the digest
+    it is held to is the operator's own declaration, so a reader must not
+    take it for the pinned release. The managed install is the pinned release
+    however it arrived, by download or from a local archive.
     """
     source = str(active["source"])
     if active.get("operator_supplied"):
         return f"operator-supplied ({source})"
-    return f"managed download ({source})"
+    return f"pinned release ({source})"
 
 
-def _print_qdrant_install_and_state(payload: dict[str, object]) -> None:
+def _print_qdrant_install_and_state(payload: dict[str, object]) -> str:
+    """Print the executable and connection lines; return the refusal printed.
+
+    Returns:
+        The refusal's sentence when the binary a start would run is refused,
+        empty otherwise, so a later section does not print it again.
+    """
     active = payload["active_binary"]
     refusal = payload["binary_error"]
+    detail = (
+        str(cast("dict[str, object]", refusal)["message"])
+        if isinstance(refusal, dict)
+        else ""
+    )
     if isinstance(active, dict):
         active_binary = cast("dict[str, object]", active)
         _plain_line(f"Executable: {active_binary['path']}")
         _plain_line(f"Source: {_source_label(active_binary)}")
-    elif isinstance(refusal, dict):
+    elif detail:
         _plain_line("Executable: not usable")
     else:
         _plain_line("Executable: not installed")
         _print_next_action("vaultspec-rag server qdrant install")
-    if isinstance(refusal, dict):
+    if detail:
         # The refusal names its own remedy, and a start would only repeat it.
-        _plain_line(f"Detail: {cast('dict[str, object]', refusal)['message']}")
+        _plain_line(f"Detail: {detail}")
     _plain_line(address_line(payload["port"]))
     if payload["ready"]:
         _plain_line("Connection: accepting requests")
-        return
+        return detail
     _plain_line("Connection: not accepting requests")
     if isinstance(active, dict) and refusal is None:
         _print_next_action(server_start_command(qdrant=True))
+    return detail
 
 
 def _print_qdrant_process(service: object) -> None:
@@ -248,7 +288,7 @@ def _print_qdrant_process(service: object) -> None:
     _plain_line(f"Process port: {service_block.get('qdrant_port', 'not reported')}")
 
 
-def _print_qdrant_versions(provisioned: object) -> None:
+def _print_qdrant_versions(provisioned: object, *, already_said: str) -> None:
     if not (isinstance(provisioned, list) and provisioned):
         _plain_line("Available installs: none")
         return
@@ -259,10 +299,19 @@ def _print_qdrant_versions(provisioned: object) -> None:
         entry = cast("dict[str, object]", raw_entry)
         marker = " (current)" if entry.get("current") else ""
         source = {
-            "download": "downloaded release",
-            "operator": "operator-supplied",
+            _SOURCE_DOWNLOAD: "downloaded release",
+            _SOURCE_ARCHIVE: "release installed from a local archive",
+            "unverified": "not verified",
         }.get(str(entry.get("source")), entry.get("source"))
         _plain_line(f"  {entry.get('version')} - {source}{marker}")
+        # An install nothing vouches for says why, so the listing never
+        # leaves an operator to guess what is wrong with it. The active
+        # install's refusal can be the very same sentence, already printed
+        # above as the detail, and is said once.
+        problem = entry.get("problem")
+        unexplained = not entry.get("verified", True) and problem != already_said
+        if unexplained and isinstance(problem, str) and problem:
+            _plain_line(f"    {problem}")
 
 
 @server_qdrant_app.command(
@@ -290,9 +339,9 @@ def qdrant_status(
 
     _plain_line("Qdrant storage service")
     _plain_line(f"Managed version: {payload['pinned_version']}")
-    _print_qdrant_install_and_state(payload)
+    refused = _print_qdrant_install_and_state(payload)
     _print_qdrant_process(payload["service"])
-    _print_qdrant_versions(payload["provisioned"])
+    _print_qdrant_versions(payload["provisioned"], already_said=refused)
 
 
 @server_qdrant_app.command(

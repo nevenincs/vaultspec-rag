@@ -178,7 +178,8 @@ These variables choose between the supervised Qdrant server (the default) and th
 | `VAULTSPEC_RAG_QDRANT_PORT`          | integer | `8765`                                   | Managed server HTTP port (gRPC binds one below)                                 | -                          |
 | `VAULTSPEC_RAG_QDRANT_URL`           | string  | none                                     | Remote or managed server URL; selects server mode in the store                  | -                          |
 | `VAULTSPEC_RAG_QDRANT_API_KEY`       | string  | none                                     | Server API key; a managed server uses it in place of a generated one            | -                          |
-| `VAULTSPEC_RAG_QDRANT_BINARY`        | string  | none                                     | Operator-supplied binary path (air-gapped escape hatch)                         | -                          |
+| `VAULTSPEC_RAG_QDRANT_BINARY`        | string  | none                                     | Absolute path to a binary you supply; requires the digest below                 | -                          |
+| `VAULTSPEC_RAG_QDRANT_BINARY_SHA256` | string  | none                                     | SHA256 of that binary; required with the path                                   | -                          |
 | `VAULTSPEC_RAG_QDRANT_STORAGE_DIR`   | string  | `~/.vaultspec-rag/qdrant-server/storage` | Shared multi-root server storage                                                | -                          |
 | `VAULTSPEC_RAG_QDRANT_QUANTIZATION`  | string  | none                                     | Vector quantization (`scalar`, `turbo`, or `product`)                           | -                          |
 | `VAULTSPEC_RAG_QDRANT_READY_TIMEOUT` | float   | `300`                                    | Seconds of no startup progress the supervisor tolerates (total wait is 4x this) | -                          |
@@ -189,6 +190,18 @@ to `1` for serial loading; higher values can increase CPU and storage pressure.
 The managed child translates this setting to Qdrant's
 `storage.performance.max_concurrent_collection_loads` and logs the applied value.
 It does not configure remote servers or alter shard and segment load concurrency.
+
+#### Supplying your own server binary
+
+`VAULTSPEC_RAG_QDRANT_BINARY` and `VAULTSPEC_RAG_QDRANT_BINARY_SHA256` are one setting in two halves. Set both to run a Qdrant binary you built or obtained yourself; set neither to use the managed install.
+
+- The path must be absolute and name a regular file.
+- The digest is the SHA256 of that file: 64 hexadecimal characters, in either letter case. Print it with `Get-FileHash -Algorithm SHA256 <path>` on Windows, or `sha256sum <path>` or `shasum -a 256 <path>` elsewhere.
+- The file is hashed and compared with the digest before every start, including restarts. A file that does not match is never run.
+
+Setting only one of the two is refused, for every command, before the command runs. The message names both variables and repeats the commands above. If you already export `VAULTSPEC_RAG_QDRANT_BINARY` from an earlier version, export the digest alongside it. The top-level `--help` and `--version` still answer while the refusal is in force.
+
+Both are read from the process environment only. A workspace file cannot name a binary for the service to run, and cannot vouch for one.
 
 ### Managed server provisioning
 

@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ..config._registry import entry
-from ..config._schema import comma_separated
+from ..config._schema import checked_setting, comma_separated
 from ..config._settings import collect_environment_problems, get_config, rag_default
 from ..config._types import EnvVar
 from ._config_fixtures import reset_config
@@ -191,6 +191,76 @@ def test_an_unusable_base_url_is_refused_at_construction(raw: str) -> None:
     assert EnvVar.QDRANT_RELEASE_BASE_URL.value in message
     assert "qdrant_release_base_url" in message
     assert _URL_SHAPE in message
+
+
+_URL_KEYS = ("qdrant_release_base_url", "hf_endpoint")
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "https://mirror\x00.example/qdrant",
+        "https://mirror\x01.example/qdrant",
+        "https://mirror\x7f.example/qdrant",
+        "https://mir\tror.example/qdrant",
+        "https://mirror.example/qd\x01rant",
+        "https://mirror.example:0/qdrant",
+        "https://mirror_.example/qdrant",
+        "https://-mirror.example/qdrant",
+    ],
+    ids=[
+        "nul-in-host",
+        "control-in-host",
+        "delete-in-host",
+        "tab-in-host",
+        "control-in-path",
+        "port-zero",
+        "underscore-in-host",
+        "leading-hyphen",
+    ],
+)
+@pytest.mark.parametrize("key", _URL_KEYS)
+def test_a_url_no_connection_could_be_opened_to_is_refused(key: str, raw: str) -> None:
+    """A host or port that could never reach a server is refused as a setting.
+
+    None of these could be connected to, so nothing would be fetched from
+    them; the point is where the failure lands. Refused here it names the
+    setting and the accepted shape. Left alone it would surface later as a
+    connection error that names neither.
+
+    Checked through the validation every source reaches, because a null
+    character cannot be placed in a process environment to drive it from
+    there. Two tests overlap on a bad host, so each has a case only it
+    catches. Mutations: with the character test removed, ``tab-in-host`` and
+    ``control-in-path`` failed DID NOT RAISE, the other control cases still
+    being refused by the host test; with the host test reduced to "a host is
+    present", ``underscore-in-host`` and ``leading-hyphen`` failed the same
+    way; with the port test removed, ``port-zero`` did. Restored after each,
+    all passed.
+    """
+    with pytest.raises(ValueError) as excinfo:
+        checked_setting(key, raw, None)
+
+    assert key in str(excinfo.value)
+    assert _URL_SHAPE in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "https://localhost/qdrant",
+        "https://127.0.0.1:8443/qdrant",
+        "https://[::1]:8443/qdrant",
+        "https://Mirror.Example:443/a/b/",
+    ],
+    ids=["localhost", "ipv4-literal", "ipv6-literal", "mixed-case-with-port"],
+)
+@pytest.mark.parametrize("key", _URL_KEYS)
+def test_a_url_a_connection_could_be_opened_to_is_still_admitted(
+    key: str, raw: str
+) -> None:
+    """Tightening the host test must not refuse an address literal or a port."""
+    assert checked_setting(key, raw, None) == raw.rstrip("/")
 
 
 @pytest.mark.usefixtures("clean_sources")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import math
 import re
 from dataclasses import dataclass
@@ -101,6 +102,23 @@ def comma_separated(raw: str) -> tuple[str, ...]:
     return tuple(token.strip().lower() for token in raw.split(",") if token.strip())
 
 
+_HOST_NAME = re.compile(
+    r"(?=.{1,253}\Z)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*"
+)
+
+
+def _names_a_host(host: str) -> bool:
+    """Return whether *host* is a host name or an address literal."""
+    if _HOST_NAME.fullmatch(host):
+        return True
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return True
+
+
 @dataclass(frozen=True, slots=True)
 class _HttpsUrlBound:
     """The admissible shape for a settings key naming a download source.
@@ -108,6 +126,12 @@ class _HttpsUrlBound:
     A source is fetched over TLS or not at all, so only ``https`` is admitted.
     Credentials are refused because the value is echoed in diagnostics, and a
     query or fragment because the consumer appends a path to the value.
+
+    The host has to be one a connection could be opened to: a host name or an
+    address literal, with no control character or space anywhere in the
+    value, and a port that is not zero. None of those could reach a server,
+    and refusing them here names the setting instead of leaving the operator
+    with a connection error that names nothing.
     """
 
     shape: str
@@ -118,18 +142,22 @@ class _HttpsUrlBound:
 
     def admits(self, value: object) -> bool:
         """Return whether *value* is an HTTPS URL a path can be appended to."""
-        if not isinstance(value, str) or any(char.isspace() for char in value.strip()):
+        if not isinstance(value, str):
+            return False
+        text = value.strip()
+        if any(char.isspace() or not char.isprintable() for char in text):
             return False
         try:
-            parts = urlsplit(value.strip())
+            parts = urlsplit(text)
             # Reading the port is what validates it: a non-numeric or
             # out-of-range one raises here rather than at the first request.
-            _ = parts.port
+            port = parts.port
         except ValueError:
             return False
         return (
             parts.scheme == "https"
-            and bool(parts.hostname)
+            and _names_a_host(parts.hostname or "")
+            and port != 0
             and parts.username is None
             and parts.password is None
             and not parts.query
@@ -143,12 +171,6 @@ class _HttpsUrlBound:
         first; ``admits`` is what establishes ``value`` is a ``str`` here.
         """
         return cast("str", value).strip().rstrip("/")
-
-
-_HOST_NAME = re.compile(
-    r"(?=.{1,253}\Z)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
-    r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*"
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,7 +205,47 @@ class _HostListBound:
         return frozenset(comma_separated(cast("str", value)))
 
 
-type _SettingBound = _NumericBound | _ChoiceBound | _HttpsUrlBound | _HostListBound
+@dataclass(frozen=True, slots=True)
+class _HexBound:
+    """The admissible shape for a settings key holding a hexadecimal id.
+
+    A digest, or the id of a commit: a fixed number of hexadecimal digits and
+    nothing else. The key is optional, so an absent value is admitted and
+    stays absent. Letter case is not significant in hexadecimal and the
+    common tools disagree about it, so either case is admitted and the value
+    is returned lower-cased, the form a computed digest takes.
+    """
+
+    shape: str
+    digits: int
+
+    def parse(self, raw: str) -> object:
+        """Return environment text unchanged; narrowing normalises it."""
+        return raw
+
+    def admits(self, value: object) -> bool:
+        """Return whether *value* is absent or exactly that many hex digits."""
+        if value is None:
+            return True
+        if not isinstance(value, str):
+            return False
+        text = value.strip().lower()
+        return len(text) == self.digits and all(
+            char in "0123456789abcdef" for char in text
+        )
+
+    def narrow(self, value: object) -> object:
+        """Return the value lower-cased, or ``None`` when none is declared.
+
+        Only reached through ``checked_setting``, which calls ``admits``
+        first; ``admits`` is what establishes a present ``value`` is a ``str``.
+        """
+        return None if value is None else cast("str", value).strip().lower()
+
+
+type _SettingBound = (
+    _NumericBound | _ChoiceBound | _HttpsUrlBound | _HostListBound | _HexBound
+)
 
 _POSITIVE_INT = _NumericBound("a positive integer", integral=True, minimum=1)
 _NON_NEGATIVE_INT = _NumericBound("a non-negative integer", integral=True, minimum=0)
@@ -229,6 +291,7 @@ _HTTPS_SOURCE_URL = _HttpsUrlBound(
 _DOWNLOAD_HOSTS = _HostListBound(
     "a comma-separated list of host names, each without a scheme, port or path"
 )
+_SHA256_DIGEST = _HexBound("a SHA256 digest of 64 hexadecimal characters", 64)
 
 
 def setting_rejection(
@@ -391,6 +454,7 @@ ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "qdrant_server": EnvVar.QDRANT_SERVER,
     "qdrant_port": EnvVar.QDRANT_PORT,
     "qdrant_binary": EnvVar.QDRANT_BINARY,
+    "qdrant_binary_sha256": EnvVar.QDRANT_BINARY_SHA256,
     "qdrant_storage_dir": EnvVar.QDRANT_STORAGE_DIR,
     # Managed qdrant binary provisioning: the consent switch and the source.
     "qdrant_auto_provision": EnvVar.QDRANT_AUTO_PROVISION,
@@ -554,4 +618,8 @@ SETTING_BOUNDS: dict[str, _SettingBound] = {
     "qdrant_download_hosts": _DOWNLOAD_HOSTS,
     # Model hub endpoint, held to the same shape as the binary's source.
     "hf_endpoint": _HTTPS_SOURCE_URL,
+    # The digest an operator declares for a binary they supply. A value that
+    # is not a digest could never match a hashed file, so it is refused here
+    # instead of surfacing as a mismatch at the first spawn.
+    "qdrant_binary_sha256": _SHA256_DIGEST,
 }

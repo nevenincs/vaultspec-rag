@@ -9,8 +9,9 @@ ways a child comes to exist.
 No mocks: every binary here is a real launcher on the real filesystem, the
 supervisor spawns it as a real subprocess, and "it never ran" is proven by a
 file the launcher would have written. A managed binary is stood in for by a
-launcher held to its own digest, the way an operator-registered install is,
-because no stand-in can hash to a release executable's committed digest.
+launcher held to its own digest, because no stand-in can hash to a release
+executable's committed digest; the check it then passes or fails is the same
+comparison.
 
 Every test here is a guard and has been observed failing for its intended
 reason; the mutation each one catches is named in its own docstring.
@@ -35,7 +36,12 @@ from ._ports import free_loopback_port
 
 pytestmark = [pytest.mark.unit]
 
-_MANAGED_SOURCES = (BinarySource.MANAGED_DOWNLOAD, BinarySource.MANAGED_OPERATOR)
+#: Every source a process can be created from, with the remedy its refusal
+#: must name. Neither has a way to run without a digest.
+_RUNNABLE_SOURCES = (
+    (BinarySource.MANAGED_DOWNLOAD, "vaultspec-rag server qdrant install --upgrade"),
+    (BinarySource.OPERATOR_SETTING, "VAULTSPEC_RAG_QDRANT_BINARY_SHA256"),
+)
 
 # Writes a file and exits. Whether that file exists afterwards is the whole
 # observation: it is the only trace a refused binary could leave if it ran.
@@ -71,7 +77,7 @@ _HARMLESS_TAIL = (
 
 
 def _held_to_its_own_digest(
-    launcher: Path, source: BinarySource = BinarySource.MANAGED_OPERATOR
+    launcher: Path, source: BinarySource = BinarySource.MANAGED_DOWNLOAD
 ) -> ResolvedBinary:
     """A managed binary whose expected digest is the launcher's digest now."""
     return ResolvedBinary(path=launcher, source=source, sha256=file_sha256(launcher))
@@ -94,17 +100,18 @@ def _marker_launcher(tmp_path: Path) -> tuple[Path, Path]:
     return launcher, marker
 
 
-class TestAManagedBinaryIsHashedBeforeItRuns:
-    """No managed binary runs on a digest that is wrong, empty, or absent."""
+class TestEveryBinaryIsHashedBeforeItRuns:
+    """No binary of any source runs on a digest that is wrong, empty, or absent."""
 
-    @pytest.mark.parametrize("source", _MANAGED_SOURCES)
+    @pytest.mark.parametrize(("source", "remedy"), _RUNNABLE_SOURCES)
     def test_a_binary_that_does_not_match_its_digest_never_runs(
-        self, source: BinarySource, tmp_path: Path
+        self, source: BinarySource, remedy: str, tmp_path: Path
     ) -> None:
         """Mutation it catches: dropping the check from ``spawn()``.
 
         The launcher then runs, no exception is raised, and this fails on the
-        missing ``QdrantBinaryError``.
+        missing ``QdrantBinaryError``. Exempting the operator source from the
+        comparison fails only that source's case, the same way.
         """
         launcher, marker = _marker_launcher(tmp_path)
         supervisor = _supervisor(
@@ -117,20 +124,21 @@ class TestAManagedBinaryIsHashedBeforeItRuns:
             assert supervisor.stop(timeout=10.0)
 
         assert refused.value.error == "qdrant_binary_unverified"
-        assert "vaultspec-rag server qdrant install --upgrade" in str(refused.value)
+        assert remedy in str(refused.value)
         assert supervisor.pid is None
         assert not marker.exists(), "a binary that failed its digest was run"
 
-    @pytest.mark.parametrize("source", _MANAGED_SOURCES)
+    @pytest.mark.parametrize(("source", "_remedy"), _RUNNABLE_SOURCES)
     def test_a_binary_with_no_digest_never_runs(
-        self, source: BinarySource, tmp_path: Path
+        self, source: BinarySource, _remedy: str, tmp_path: Path
     ) -> None:
         """An empty digest is a mismatch, not a reason to skip the check.
 
         Mutation it catches: returning early from the check when the expected
         digest is empty. That is the branch that let an install whose manifest
-        recorded no digest run unverified; with it restored the launcher runs
-        and this fails on the missing ``QdrantBinaryError``.
+        recorded no digest, and any operator binary at all, run unverified;
+        with it restored the launcher runs and this fails on the missing
+        ``QdrantBinaryError``.
         """
         launcher, marker = _marker_launcher(tmp_path)
         supervisor = _supervisor(ResolvedBinary(path=launcher, source=source), tmp_path)
@@ -144,10 +152,13 @@ class TestAManagedBinaryIsHashedBeforeItRuns:
         assert supervisor.pid is None
         assert not marker.exists(), "a binary with no digest was run"
 
-    def test_a_binary_that_matches_its_digest_runs(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(("source", "_remedy"), _RUNNABLE_SOURCES)
+    def test_a_binary_that_matches_its_digest_runs(
+        self, source: BinarySource, _remedy: str, tmp_path: Path
+    ) -> None:
         """The control: the refusals above are not a spawn that never works."""
         launcher, marker = _marker_launcher(tmp_path)
-        supervisor = _supervisor(_held_to_its_own_digest(launcher), tmp_path)
+        supervisor = _supervisor(_held_to_its_own_digest(launcher, source), tmp_path)
         try:
             supervisor.spawn()
             process = supervisor._proc
@@ -157,6 +168,7 @@ class TestAManagedBinaryIsHashedBeforeItRuns:
             assert supervisor.stop(timeout=10.0)
 
         assert marker.read_text(encoding="utf-8") == "ran"
+        assert supervisor.state().to_dict()["binary_source"] == str(source)
 
 
 @pytest.mark.usefixtures("isolated_singleton_dirs")
@@ -234,37 +246,20 @@ class TestEveryLaterSpawnIsHashedAgain:
         assert runs.read_text(encoding="utf-8") == "run\n"
 
 
-class TestAnOperatorSettingBinaryRunsUnpinnedAndSaysSo:
-    """The one source with no digest is still the file that was named."""
-
-    def test_it_runs_without_a_digest_and_reports_its_source(
-        self, tmp_path: Path
-    ) -> None:
-        launcher, marker = _marker_launcher(tmp_path)
-        supervisor = _supervisor(unpinned(launcher), tmp_path)
-        try:
-            supervisor.spawn()
-            process = supervisor._proc
-            assert process is not None
-            assert process.wait(timeout=30.0) == 0
-        finally:
-            assert supervisor.stop(timeout=10.0)
-
-        assert marker.read_text(encoding="utf-8") == "ran"
-        assert supervisor.state().to_dict()["binary_source"] == "env"
-        assert supervisor.binary_source.operator_supplied
+class TestAnOperatorBinaryIsStillTheFileThatWasNamed:
+    """An operator binary is refused by name when it stops being that file."""
 
     def test_a_file_swapped_for_a_link_after_it_was_named_is_refused(
         self, tmp_path: Path
     ) -> None:
         """What was named is what runs, at every spawn.
 
-        The link points at a working launcher, so a spawn that did not look
-        again would run it.
+        The link points at the very launcher whose digest was declared, so the
+        digest alone would pass it; only looking at the name again refuses it.
 
         Mutation it catches: skipping the shape check for the operator setting
-        inside the spawn check. The launcher then runs through the link and
-        this fails on the missing ``QdrantBinaryError``.
+        inside the spawn check. The refusal then comes from the hold instead
+        and this fails on the error-code assertion.
         """
         launcher, marker = _marker_launcher(tmp_path)
         supervisor = _supervisor(unpinned(launcher), tmp_path)
@@ -319,18 +314,19 @@ class TestAnAttachedSupervisorNeverSpawns:
 
 
 class TestTheSourceVocabulary:
-    def test_only_the_two_operator_sources_are_operator_supplied(self) -> None:
+    def test_only_the_operator_settings_source_is_operator_supplied(self) -> None:
         supplied = {source for source in BinarySource if source.operator_supplied}
-        assert supplied == {
-            BinarySource.OPERATOR_SETTING,
-            BinarySource.MANAGED_OPERATOR,
-        }
+        assert supplied == {BinarySource.OPERATOR_SETTING}
 
     def test_the_values_status_surfaces_print_are_stable(self) -> None:
+        """There is no source for a binary an operator put in the managed dir.
+
+        Mutation it catches: adding such a source back fails the equality
+        below, which is the only place the whole vocabulary is written out.
+        """
         assert {source.name: source.value for source in BinarySource} == {
             "OPERATOR_SETTING": "env",
             "MANAGED_DOWNLOAD": "provisioned",
-            "MANAGED_OPERATOR": "registered",
             "ATTACHED": "attached",
         }
 
@@ -424,8 +420,7 @@ class TestAProcessIsCreatedOnlyInsideTheHold:
             if isinstance(hold, ast.With)
             for node in hold.body
             if isinstance(node, ast.If)
-            and ast.unparse(node.test)
-            == "not held.unchanged(_expected_digest(resolved))"
+            and ast.unparse(node.test) == "not held.unchanged(resolved.sha256)"
         ]
         assert len(look_again) == 1
         steps = [ast.unparse(step) for step in look_again[0].body]

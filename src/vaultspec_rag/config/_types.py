@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from enum import StrEnum
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from vaultspec_core.env_values import parse_bool
 
@@ -196,6 +196,10 @@ class EnvVar(StrEnum):
     QDRANT_SERVER = "VAULTSPEC_RAG_QDRANT_SERVER"
     QDRANT_PORT = "VAULTSPEC_RAG_QDRANT_PORT"
     QDRANT_BINARY = "VAULTSPEC_RAG_QDRANT_BINARY"
+    # The SHA256 the operator declares for that binary. The two are one
+    # setting in two halves: a path with no digest would be a binary run
+    # unverified, and a digest with no path verifies nothing.
+    QDRANT_BINARY_SHA256 = "VAULTSPEC_RAG_QDRANT_BINARY_SHA256"
     QDRANT_STORAGE_DIR = "VAULTSPEC_RAG_QDRANT_STORAGE_DIR"
     # Where the managed qdrant binary comes from, and whether a host start
     # fetches it unasked. The digests the download is checked against are
@@ -270,6 +274,33 @@ class EnvVar(StrEnum):
     TEMP = "TEMP"
     TMP = "TMP"
     TMPDIR = "TMPDIR"
+
+
+class OperatorBinaryPairError(ValueError):
+    """Exactly one of the operator binary's path and digest is set.
+
+    Its own type so that the code resolving the binary can report this one
+    refusal as a fault of the binary configuration without relabelling every
+    other unusable setting as one. It is a ``ValueError`` like any other
+    settings refusal, so nothing that handles those sees a difference.
+    """
+
+
+class OperatorBinary(NamedTuple):
+    """A Qdrant binary the operator supplies, and the digest they declare for it.
+
+    The two travel together because neither is usable alone. The digest is
+    what the operator states the file to be; whoever runs the file hashes it
+    and compares.
+
+    Attributes:
+        path: The configured path, as written. Whether it names an absolute
+            regular file is judged where the binary is resolved.
+        sha256: The declared SHA256, as 64 lower-case hexadecimal characters.
+    """
+
+    path: str
+    sha256: str
 
 
 #: Default for ``EnvVar.STATUS_DIR``, declared beside the env var it defaults

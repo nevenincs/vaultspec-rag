@@ -28,12 +28,26 @@ from ._schema import (
     comma_separated,
     setting_rejection,
 )
-from ._types import STATUS_DIR_DEFAULT, VALID_PREPROCESS_MODES, EnvVar, PreprocessMode
+from ._types import (
+    STATUS_DIR_DEFAULT,
+    VALID_PREPROCESS_MODES,
+    EnvVar,
+    OperatorBinary,
+    OperatorBinaryPairError,
+    PreprocessMode,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
+
+#: The settings keys that are halves of the operator binary, and where each
+#: sits in the pair they are read through.
+_OPERATOR_BINARY_HALVES: dict[str, int] = {
+    "qdrant_binary": OperatorBinary._fields.index("path"),
+    "qdrant_binary_sha256": OperatorBinary._fields.index("sha256"),
+}
 
 
 class VaultSpecConfigWrapper:
@@ -90,6 +104,13 @@ class VaultSpecConfigWrapper:
         "local_only": False,
         "qdrant_port": 8765,
         "qdrant_binary": None,
+        # The SHA256 the operator declares for ``qdrant_binary``. Required
+        # with it and meaningless without it: the managed install is checked
+        # against digests compiled into this package, and a binary this
+        # package did not download has no such digest, so the operator
+        # supplies one or the binary is never run. Read both halves through
+        # ``qdrant_operator_binary``, which refuses one without the other.
+        "qdrant_binary_sha256": None,
         "qdrant_storage_dir": "~/.vaultspec-rag/qdrant-server/storage",
         # Managed qdrant binary provisioning. Starting the service on a host
         # is consent to fetch what the service needs, the binary as much as
@@ -688,6 +709,56 @@ class VaultSpecConfigWrapper:
         return str(self.qdrant_url or "") or f"http://127.0.0.1:{self.qdrant_port}"
 
     @property
+    def qdrant_operator_binary(self) -> OperatorBinary | None:
+        """Return the operator-supplied Qdrant binary and its declared digest.
+
+        The path and the digest are two halves of one setting, and this is
+        the one place the pairing is enforced. A path alone would be a binary
+        run with nothing to check it against; a digest alone checks nothing.
+        Either is refused, in one message that names both variables and says
+        how to produce the digest, because the operator who meets it has
+        usually set the path long ago and is seeing the second variable for
+        the first time.
+
+        The check runs at construction with every other unusable setting, and
+        again on each read: settings resolve from the live environment, so a
+        read is the only point that can vouch for the pair it returns.
+
+        Returns:
+            The path and its digest when both are set; ``None`` when neither
+            is, which selects the managed install.
+
+        Raises:
+            OperatorBinaryPairError: If exactly one of the two is set.
+            ValueError: If the digest is set and is not a digest.
+        """
+        path = self._resolve_rag_default("qdrant_binary")
+        digest = self._resolve_rag_default("qdrant_binary_sha256")
+        if path is None and digest is None:
+            return None
+        path_var = EnvVar.QDRANT_BINARY.value
+        digest_var = EnvVar.QDRANT_BINARY_SHA256.value
+        if digest is None:
+            raise OperatorBinaryPairError(
+                f"{path_var} and {digest_var} must be set together: {path_var} "
+                f"names a Qdrant binary but {digest_var} does not declare its "
+                "SHA256, and a binary is never run unverified. Set "
+                f"{digest_var} to the digest printed by 'Get-FileHash "
+                "-Algorithm SHA256 <path>' on Windows, or 'sha256sum <path>' "
+                f"or 'shasum -a 256 <path>' elsewhere; or unset {path_var} to "
+                "use the managed install."
+            )
+        if path is None:
+            raise OperatorBinaryPairError(
+                f"{path_var} and {digest_var} must be set together: "
+                f"{digest_var} declares a SHA256 but {path_var} names no "
+                f"Qdrant binary for it to verify. Set {path_var} to the "
+                f"absolute path of that binary, or unset {digest_var} to use "
+                "the managed install."
+            )
+        return OperatorBinary(path=str(path), sha256=str(digest))
+
+    @property
     def hf_cache_location(self) -> str:
         """Return where Hugging Face keeps its model cache, for reporting.
 
@@ -963,14 +1034,12 @@ class VaultSpecConfigWrapper:
         Raises:
             ValueError: If any setting is malformed or out of range.
         """
-        problems: list[str] = []
+        problems: dict[str, ValueError] = {}
 
         def record(exc: ValueError) -> None:
             # The relation checks re-resolve keys the sweep already visited, so
             # one bad value can surface twice. Report it once.
-            message = str(exc)
-            if message not in problems:
-                problems.append(message)
+            problems.setdefault(str(exc), exc)
 
         keys = [
             *SETTING_BOUNDS,
@@ -992,6 +1061,7 @@ class VaultSpecConfigWrapper:
             self._watch_retry_bounds,
             self._watch_policy_relations,
             lambda: self.document_chunk_overlap_chars,
+            lambda: self.qdrant_operator_binary,
             # The kill switch carries no settings key of its own, so the
             # per-key sweep above never reaches it. Resolving it here is what
             # puts a mistyped switch in the same collective report as every
@@ -1008,7 +1078,10 @@ class VaultSpecConfigWrapper:
         if not problems:
             return
         if len(problems) == 1:
-            raise ValueError(problems[0])
+            # The refusal itself, not a copy of its text: a caller that
+            # handles one kind of refusal apart from the rest tells them
+            # apart by type, and a copy would be a plain ValueError.
+            raise next(iter(problems.values()))
         listed = "\n".join(f"  - {problem}" for problem in problems)
         raise ValueError(f"{len(problems)} unusable settings:\n{listed}")
 
@@ -1135,6 +1208,7 @@ class VaultSpecConfigWrapper:
     local_only: bool
     qdrant_port: int
     qdrant_binary: str | None
+    qdrant_binary_sha256: str | None
     qdrant_storage_dir: str
     qdrant_auto_provision: bool
     qdrant_release_base_url: str
@@ -1260,6 +1334,15 @@ class VaultSpecConfigWrapper:
                 also missing from the base config.
             ValueError: If the resolved value is malformed or out of range.
         """
+        # The two halves of the operator binary are read through the pair, so
+        # no read of either key can hand back a path whose digest is missing.
+        # The generic resolution below would, for a configuration built
+        # before the environment changed.
+        half = _OPERATOR_BINARY_HALVES.get(name)
+        if half is not None:
+            pair = self.qdrant_operator_binary
+            return None if pair is None else pair[half]
+
         if name in self._RAG_DEFAULTS:
             return self._resolve_rag_default(name)
 

@@ -91,7 +91,7 @@ class HeldExecutable:
             return False
         return (held.st_dev, held.st_ino) == (named.st_dev, named.st_ino)
 
-    def unchanged(self, expected_sha256: str | None) -> bool:
+    def unchanged(self, expected_sha256: str) -> bool:
         """Whether a process just created from this hold ran the verified file.
 
         Called once the process exists. An exclusive hold answers by
@@ -101,15 +101,13 @@ class HeldExecutable:
         that still names the held file.
 
         Args:
-            expected_sha256: The digest the file was verified against, or
-                ``None`` when no digest applies and only the file's identity
-                can be confirmed.
+            expected_sha256: The digest the file was verified against.
         """
         if self.exclusive:
             return True
         if not self.inherited and not self.names_held_file():
             return False
-        return expected_sha256 is None or self.sha256() == expected_sha256
+        return self.sha256() == expected_sha256
 
 
 def _open_held(path: Path) -> int:
