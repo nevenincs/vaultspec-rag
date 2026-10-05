@@ -79,10 +79,8 @@ def _unit_vectors(texts: list[str], **_options: object) -> list[list[float]]:
 
 
 @pytest.fixture
-def forwardless_model(
-    unloaded_model: EmbeddingModel, monkeypatch: pytest.MonkeyPatch
-) -> EmbeddingModel:
-    """Real encoder state over local storage; only the device forward is replaced."""
+def local_model(unloaded_model: EmbeddingModel) -> EmbeddingModel:
+    """Real encoder state over local storage, with no forward available."""
     get_config(
         {
             "embedding_dimension": 2,
@@ -92,8 +90,22 @@ def forwardless_model(
             "index_reuse_enabled": False,
         }
     )
-    monkeypatch.setattr(unloaded_model, "encode_documents_on_device", _unit_vectors)
     return unloaded_model
+
+
+@pytest.fixture
+def forwardless_model(
+    local_model: EmbeddingModel, monkeypatch: pytest.MonkeyPatch
+) -> EmbeddingModel:
+    """The same model with only the device forward replaced.
+
+    The model is built without weights, so a real forward cannot run here, and
+    the case that takes this fixture needs points a real index pass stored. The
+    stand-in returns one fixed vector per text. Nothing asserts on a vector:
+    the assertions read which paths, content and counts the pass left behind.
+    """
+    monkeypatch.setattr(local_model, "encode_documents_on_device", _unit_vectors)
+    return local_model
 
 
 @pytest.mark.parametrize("target_name", [".env", ".git/config", "private/notes.md"])
@@ -362,12 +374,13 @@ def test_incremental_removes_points_of_document_replaced_by_link(
 
 
 def test_refused_source_is_reported_as_one_failed_file(
-    tmp_path: Path, forwardless_model: EmbeddingModel
+    tmp_path: Path, local_model: EmbeddingModel
 ) -> None:
     """A source refused before it is read carries a placeholder, not a digest.
 
     Handing the placeholder to the ledger raised on its digest shape and ended
-    the run; recording no digest reported the one file and finished.
+    the run; recording no digest reported the one file and finished. A refused
+    source has nothing to encode, so the model here has no forward at all.
     """
     _write_blob_rule(
         tmp_path,
@@ -377,7 +390,7 @@ def test_refused_source_is_reported_as_one_failed_file(
     (tmp_path / "manual.blob").write_bytes(b"longer than four bytes")
     with VaultStore(tmp_path, embedding_dim=2) as store:
         indexer = DocumentIndexer(
-            tmp_path, forwardless_model, store, content_policy=_policy("*.blob")
+            tmp_path, local_model, store, content_policy=_policy("*.blob")
         )
 
         outcome = indexer.full_index(

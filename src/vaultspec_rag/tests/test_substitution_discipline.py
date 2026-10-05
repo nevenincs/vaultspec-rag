@@ -200,6 +200,21 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "boundary - with_vectors false, with_payload true - are not otherwise "
         "observable from any value the scan returns",
     ),
+    "test_document_index_symlinks.py": (
+        1,
+        "the embedding model is deliberately constructed unloaded, so its "
+        "forward call is replaced with a fixed-vector stand-in; a real forward "
+        "needs loaded weights on an accelerator this tier does not have. One "
+        "case takes it: a document replaced by a link must lose the points a "
+        "real earlier pass stored for it, and storing them is the only thing "
+        "that reaches the forward. Discovery, the bound source reads, the "
+        "ledger and local storage stay real, and no assertion reads a vector. "
+        "Every link swap in the file is a real filesystem replacement, and the "
+        "case with nothing to encode runs with no forward at all. Mutation "
+        "proof: making the stand-in raise failed only that one case; lowering "
+        "this allowance to zero failed the count-growth assertion and raising "
+        "it to two failed the stale-site check; restoring one passed both",
+    ),
     "test_typesafe_search.py": (
         26,
         "search routing needs fixed candidate windows and forced provider failures "
