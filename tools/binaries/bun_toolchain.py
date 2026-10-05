@@ -14,8 +14,8 @@ from tools.binaries.bun_pins import (
 from tools.binaries.native import host_target_triple
 from tools.binaries.release_hosts import GITHUB_RELEASE_REDIRECT_HOSTS
 from tools.packaging.products import executable_filename
+from vaultspec_rag.qdrant_runtime._download import download_https
 from vaultspec_rag.qdrant_runtime._provision import (
-    download_https,
     extract_verified_archive,
     verify_native_binary,
 )

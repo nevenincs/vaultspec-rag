@@ -25,8 +25,8 @@ from tools.monitor.smoke import installed_browser, probe
 from tools.packaging.bundles import BundleSpec, verify_bundle
 from tools.packaging.checksums import parse_checksums, require
 from tools.packaging.products import MONITOR_EXECUTABLE, VAULTSPEC_RAG
+from vaultspec_rag.qdrant_runtime._download import download_https
 from vaultspec_rag.qdrant_runtime._provision import (
-    download_https,
     extract_verified_archive,
     file_sha256,
     verify_native_binary,

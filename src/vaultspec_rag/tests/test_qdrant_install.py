@@ -14,16 +14,12 @@ check is relaxed for the stand-in: it only has different expected values.
 
 from __future__ import annotations
 
-import hashlib
-import io
 import json
 import os
 import stat
 import sys
-import tarfile
 import threading
 import time
-import zipfile
 from dataclasses import replace
 from http import HTTPStatus
 from typing import TYPE_CHECKING
@@ -58,11 +54,19 @@ from ..qdrant_runtime._resolve import (
     qdrant_bin_dir,
 )
 from ._loopback_tls import (
-    LOOPBACK_HOST,
     LoopbackSources,
     StandInSource,
     send_bytes,
     trusted_loopback_sources,
+)
+from ._stand_in_release import (
+    ARCHIVE_SHAPES,
+    NEW_EXECUTABLE,
+    build_archive,
+    install_request,
+    release_archive,
+    sha256_hex,
+    working_files,
 )
 from .conftest import managed_env
 
@@ -74,38 +78,8 @@ if TYPE_CHECKING:
 
 pytestmark = [pytest.mark.unit]
 
-_NEW_EXECUTABLE = b"\x7fnew stand-in server\x00" * 512
 _PRIOR_EXECUTABLE = b"prior install, still runnable"
 _PRIOR_MANIFEST = json.dumps({"version": QDRANT_SERVER_VERSION, "note": "prior"})
-
-#: The two archive shapes upstream publishes, exercised on every platform.
-_ARCHIVE_SHAPES = ("stand-in-asset.zip", "stand-in-asset.tar.gz")
-
-
-def _sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-def _archive(asset: str, members: dict[str, bytes]) -> bytes:
-    """Build a release-shaped archive holding *members*, in *asset*'s format."""
-    buffer = io.BytesIO()
-    if asset.endswith(".zip"):
-        with zipfile.ZipFile(buffer, "w") as zf:
-            for name, payload in members.items():
-                zf.writestr(name, payload)
-    else:
-        with tarfile.open(fileobj=buffer, mode="w:gz") as tf:
-            for name, payload in members.items():
-                info = tarfile.TarInfo(name)
-                info.size = len(payload)
-                info.mode = 0o755
-                tf.addfile(info, io.BytesIO(payload))
-    return buffer.getvalue()
-
-
-def _release(asset: str, executable: bytes = _NEW_EXECUTABLE) -> bytes:
-    """An archive laid out as a release is: the executable under a directory."""
-    return _archive(asset, {f"release/{binary_filename()}": executable})
 
 
 @pytest.fixture
@@ -139,12 +113,6 @@ def _assert_prior_install_intact(version_dir: Path) -> None:
     assert manifest == _PRIOR_MANIFEST
 
 
-def _working_files(version_dir: Path) -> list[str]:
-    """Every file in *version_dir* other than an install's own two."""
-    keep = {binary_filename(), MANIFEST_FILENAME}
-    return sorted(p.name for p in version_dir.iterdir() if p.name not in keep)
-
-
 def _request(
     source: StandInSource,
     version_dir: Path,
@@ -152,28 +120,21 @@ def _request(
     asset: str,
     pinned_archive: bytes,
 ) -> _DownloadInstallRequest:
-    """A first-install request pinned to *pinned_archive* and the new executable.
-
-    A test that needs another pin, or a request that replaces an install,
-    derives it from this one, so the difference it is about stays visible.
-    """
-    return _DownloadInstallRequest(
-        url=source.url(f"/{asset}"),
-        redirect_hosts=frozenset({LOOPBACK_HOST}),
+    """A first-install request for *asset* as *source* serves it."""
+    return install_request(
+        source.url(f"/{asset}"),
+        version_dir,
         asset=asset,
-        archive_sha256=_sha256(pinned_archive),
-        executable_sha256=_sha256(_NEW_EXECUTABLE),
-        version_dir=version_dir,
-        previously="absent",
+        pinned_archive=pinned_archive,
     )
 
 
 class TestVerifiedInstall:
-    @pytest.mark.parametrize("asset", _ARCHIVE_SHAPES)
+    @pytest.mark.parametrize("asset", ARCHIVE_SHAPES)
     def test_a_verified_download_is_installed_and_recorded(
         self, sources: LoopbackSources, version_dir: Path, asset: str
     ) -> None:
-        archive = _release(asset)
+        archive = release_archive(asset)
         source = sources.serve(lambda handler: send_bytes(handler, archive))
 
         report = _download_and_install(
@@ -183,33 +144,33 @@ class TestVerifiedInstall:
         assert report.action == ProvisionAction.CREATED, report.message
         binary = version_dir / binary_filename()
         assert report.binary == binary
-        assert binary.read_bytes() == _NEW_EXECUTABLE
+        assert binary.read_bytes() == NEW_EXECUTABLE
         manifest = json.loads(
             (version_dir / MANIFEST_FILENAME).read_text(encoding="utf-8")
         )
         assert manifest["version"] == QDRANT_SERVER_VERSION
         assert manifest["asset"] == asset
-        assert manifest["asset_sha256"] == _sha256(archive)
-        assert manifest["binary_sha256"] == _sha256(_NEW_EXECUTABLE)
+        assert manifest["asset_sha256"] == sha256_hex(archive)
+        assert manifest["binary_sha256"] == sha256_hex(NEW_EXECUTABLE)
         assert manifest["source"] == "download"
-        assert _working_files(version_dir) == []
+        assert working_files(version_dir) == []
         if sys.platform != "win32":
             assert stat.S_IMODE(binary.stat().st_mode) == 0o700
 
     def test_a_verified_download_replaces_a_previous_install(
         self, sources: LoopbackSources, version_dir: Path
     ) -> None:
-        asset = _ARCHIVE_SHAPES[0]
+        asset = ARCHIVE_SHAPES[0]
         _seed_prior_install(version_dir)
-        archive = _release(asset)
+        archive = release_archive(asset)
         source = sources.serve(lambda handler: send_bytes(handler, archive))
 
         request = _request(source, version_dir, asset=asset, pinned_archive=archive)
         report = _download_and_install(replace(request, previously="stale"))
 
         assert report.action == ProvisionAction.UPDATED, report.message
-        assert (version_dir / binary_filename()).read_bytes() == _NEW_EXECUTABLE
-        assert _working_files(version_dir) == []
+        assert (version_dir / binary_filename()).read_bytes() == NEW_EXECUTABLE
+        assert working_files(version_dir) == []
 
 
 class TestFailureLeavesThePreviousInstall:
@@ -224,7 +185,7 @@ class TestFailureLeavesThePreviousInstall:
         the installed executable, as the handler it replaces did. Observed
         "the previous executable was removed". Restored; passes.
         """
-        asset = _ARCHIVE_SHAPES[0]
+        asset = ARCHIVE_SHAPES[0]
         _seed_prior_install(version_dir)
         source = sources.serve(
             lambda handler: send_bytes(
@@ -233,13 +194,15 @@ class TestFailureLeavesThePreviousInstall:
         )
 
         report = _download_and_install(
-            _request(source, version_dir, asset=asset, pinned_archive=_release(asset))
+            _request(
+                source, version_dir, asset=asset, pinned_archive=release_archive(asset)
+            )
         )
 
         assert report.action == ProvisionAction.FAILED
         assert "404" in report.message
         _assert_prior_install_intact(version_dir)
-        assert _working_files(version_dir) == []
+        assert working_files(version_dir) == []
 
     def test_an_archive_that_fails_its_digest(
         self, sources: LoopbackSources, version_dir: Path
@@ -254,16 +217,16 @@ class TestFailureLeavesThePreviousInstall:
         ``_stage_verified_executable``. Observed the action assertion fail
         (``updated`` where ``failed`` was required). Restored; passes.
         """
-        asset = _ARCHIVE_SHAPES[0]
+        asset = ARCHIVE_SHAPES[0]
         _seed_prior_install(version_dir)
-        served = _archive(
+        served = build_archive(
             asset,
-            {binary_filename(): _NEW_EXECUTABLE, "NOTICE": b"not in the pinned asset"},
+            {binary_filename(): NEW_EXECUTABLE, "NOTICE": b"not in the pinned asset"},
         )
         source = sources.serve(lambda handler: send_bytes(handler, served))
 
         request = _request(
-            source, version_dir, asset=asset, pinned_archive=_release(asset)
+            source, version_dir, asset=asset, pinned_archive=release_archive(asset)
         )
         report = _download_and_install(replace(request, previously="stale"))
 
@@ -274,9 +237,9 @@ class TestFailureLeavesThePreviousInstall:
         # change them.
         assert len(source.requests) == 1
         _assert_prior_install_intact(version_dir)
-        assert _working_files(version_dir) == []
+        assert working_files(version_dir) == []
 
-    @pytest.mark.parametrize("asset", _ARCHIVE_SHAPES)
+    @pytest.mark.parametrize("asset", ARCHIVE_SHAPES)
     @pytest.mark.parametrize(
         "members",
         [
@@ -295,7 +258,7 @@ class TestFailureLeavesThePreviousInstall:
         asset: str,
         members: dict[str, bytes],
     ) -> None:
-        archive = _archive(asset, members)
+        archive = build_archive(asset, members)
         _seed_prior_install(version_dir)
         source = sources.serve(lambda handler: send_bytes(handler, archive))
 
@@ -306,9 +269,9 @@ class TestFailureLeavesThePreviousInstall:
         assert report.action == ProvisionAction.FAILED
         assert "requires one regular" in report.message
         _assert_prior_install_intact(version_dir)
-        assert _working_files(version_dir) == []
+        assert working_files(version_dir) == []
 
-    @pytest.mark.parametrize("asset", _ARCHIVE_SHAPES)
+    @pytest.mark.parametrize("asset", ARCHIVE_SHAPES)
     def test_bytes_that_are_not_an_archive(
         self, sources: LoopbackSources, version_dir: Path, asset: str
     ) -> None:
@@ -322,7 +285,7 @@ class TestFailureLeavesThePreviousInstall:
 
         assert report.action == ProvisionAction.FAILED
         _assert_prior_install_intact(version_dir)
-        assert _working_files(version_dir) == []
+        assert working_files(version_dir) == []
 
     def test_an_executable_that_fails_its_digest(
         self, sources: LoopbackSources, version_dir: Path
@@ -337,16 +300,16 @@ class TestFailureLeavesThePreviousInstall:
         ``_stage_verified_executable``. Observed the action assertion fail
         (``updated`` where ``failed`` was required). Restored; passes.
         """
-        asset = _ARCHIVE_SHAPES[0]
+        asset = ARCHIVE_SHAPES[0]
         _seed_prior_install(version_dir)
-        archive = _release(asset)
+        archive = release_archive(asset)
         source = sources.serve(lambda handler: send_bytes(handler, archive))
 
         request = _request(source, version_dir, asset=asset, pinned_archive=archive)
         report = _download_and_install(
             replace(
                 request,
-                executable_sha256=_sha256(b"what the pin table says it should be"),
+                executable_sha256=sha256_hex(b"what the pin table says it should be"),
                 previously="stale",
             )
         )
@@ -355,18 +318,18 @@ class TestFailureLeavesThePreviousInstall:
         assert "SHA256 mismatch" in report.message
         assert binary_filename() in report.message
         _assert_prior_install_intact(version_dir)
-        assert _working_files(version_dir) == []
+        assert working_files(version_dir) == []
 
     def test_a_failure_with_nothing_installed_leaves_nothing(
         self, sources: LoopbackSources, version_dir: Path
     ) -> None:
-        asset = _ARCHIVE_SHAPES[0]
-        archive = _release(asset)
+        asset = ARCHIVE_SHAPES[0]
+        archive = release_archive(asset)
         source = sources.serve(lambda handler: send_bytes(handler, archive))
 
         request = _request(source, version_dir, asset=asset, pinned_archive=archive)
         report = _download_and_install(
-            replace(request, executable_sha256=_sha256(b"something else"))
+            replace(request, executable_sha256=sha256_hex(b"something else"))
         )
 
         assert report.action == ProvisionAction.FAILED
@@ -396,9 +359,9 @@ class TestInterrupt:
         assertion fail at every stage, listing the staging files left behind.
         Restored; passes.
         """
-        asset = _ARCHIVE_SHAPES[0]
+        asset = ARCHIVE_SHAPES[0]
         _seed_prior_install(version_dir)
-        archive = _release(asset)
+        archive = release_archive(asset)
         source = sources.serve(lambda handler: send_bytes(handler, archive))
 
         def interrupt_at_stage(line: str) -> None:
@@ -413,14 +376,14 @@ class TestInterrupt:
             _download_and_install(request)
 
         _assert_prior_install_intact(version_dir)
-        assert _working_files(version_dir) == []
+        assert working_files(version_dir) == []
 
 
 class TestInstalledName:
     def test_a_link_at_the_installed_name_is_replaced_not_written_through(
         self, sources: LoopbackSources, version_dir: Path, tmp_path: Path
     ) -> None:
-        asset = _ARCHIVE_SHAPES[0]
+        asset = ARCHIVE_SHAPES[0]
         outside = tmp_path / "outside-the-managed-dir.bin"
         outside.write_bytes(b"must not be overwritten")
         version_dir.mkdir(parents=True)
@@ -429,7 +392,7 @@ class TestInstalledName:
             os.symlink(outside, binary)
         except OSError:
             pytest.fail("Cannot create symlink - test requires symlink support")
-        archive = _release(asset)
+        archive = release_archive(asset)
         source = sources.serve(lambda handler: send_bytes(handler, archive))
 
         report = _download_and_install(
@@ -439,7 +402,7 @@ class TestInstalledName:
         assert report.action == ProvisionAction.CREATED, report.message
         assert outside.read_bytes() == b"must not be overwritten"
         assert not binary.is_symlink()
-        assert binary.read_bytes() == _NEW_EXECUTABLE
+        assert binary.read_bytes() == NEW_EXECUTABLE
 
     @pytest.mark.skipif(
         sys.platform != "win32",
@@ -457,9 +420,9 @@ class TestInstalledName:
         ``_replace_executable``. Observed the message assertion fail on the
         bare access-denied text. Restored; passes.
         """
-        asset = _ARCHIVE_SHAPES[0]
+        asset = ARCHIVE_SHAPES[0]
         binary = _seed_prior_install(version_dir)
-        archive = _release(asset)
+        archive = release_archive(asset)
         source = sources.serve(lambda handler: send_bytes(handler, archive))
 
         request = _request(source, version_dir, asset=asset, pinned_archive=archive)
@@ -469,7 +432,7 @@ class TestInstalledName:
         assert report.action == ProvisionAction.FAILED
         assert "vaultspec-rag server stop" in report.message
         _assert_prior_install_intact(version_dir)
-        assert _working_files(version_dir) == []
+        assert working_files(version_dir) == []
 
 
 class TestOperatorRegistration:
@@ -491,7 +454,7 @@ class TestOperatorRegistration:
         assert manifest["source"] == "operator"
         assert manifest["binary_sha256"] == file_sha256(binary)
         assert report.sha256 == manifest["binary_sha256"]
-        assert _working_files(version_dir) == []
+        assert working_files(version_dir) == []
 
     @pytest.mark.skipif(
         sys.platform != "win32",
@@ -510,24 +473,24 @@ class TestOperatorRegistration:
         assert report.action == ProvisionAction.FAILED
         assert "vaultspec-rag server stop" in report.message
         _assert_prior_install_intact(version_dir)
-        assert _working_files(version_dir) == []
+        assert working_files(version_dir) == []
 
 
 class TestArchiveExtraction:
-    @pytest.mark.parametrize("asset", _ARCHIVE_SHAPES)
+    @pytest.mark.parametrize("asset", ARCHIVE_SHAPES)
     def test_both_archive_shapes_extract_by_basename(
         self, tmp_path: Path, asset: str
     ) -> None:
         archive = tmp_path / asset
-        archive.write_bytes(_release(asset))
+        archive.write_bytes(release_archive(asset))
         dest = tmp_path / "out"
         dest.mkdir()
 
         binary, digest = extract_verified_archive(archive, file_sha256(archive), dest)
 
         assert binary == dest / binary_filename()
-        assert binary.read_bytes() == _NEW_EXECUTABLE
-        assert digest == _sha256(_NEW_EXECUTABLE)
+        assert binary.read_bytes() == NEW_EXECUTABLE
+        assert digest == sha256_hex(NEW_EXECUTABLE)
 
 
 _STAND_IN_EXECUTABLE = b"stand-in bytes that are not the release executable"
@@ -571,7 +534,7 @@ def _seed_self_attested_download(version_dir: Path, tmp_path: Path) -> bytes:
             "version": QDRANT_SERVER_VERSION,
             "asset": asset,
             "asset_sha256": QDRANT_ASSET_SHA256[asset],
-            "binary_sha256": _sha256(_STAND_IN_EXECUTABLE),
+            "binary_sha256": sha256_hex(_STAND_IN_EXECUTABLE),
             "source": "download",
         },
     )
@@ -641,7 +604,7 @@ class TestInstallState:
 
         assert report.action == ProvisionAction.UNCHANGED, report.message
         assert "operator-registered" in report.message
-        assert report.sha256 == _sha256(_OPERATOR_EXECUTABLE)
+        assert report.sha256 == sha256_hex(_OPERATOR_EXECUTABLE)
         assert mirror.requests == []
         assert binary.stat().st_mtime_ns == before
 
@@ -708,7 +671,7 @@ class TestInstallState:
         assert report.action == ProvisionAction.FAILED
         assert "SHA256 mismatch" in report.message
         assert (version_dir / binary_filename()).read_bytes() == installed
-        assert _working_files(version_dir) == []
+        assert working_files(version_dir) == []
 
     def test_an_upgrade_replaces_a_registered_install_with_the_pinned_release(
         self, sources: LoopbackSources, version_dir: Path, tmp_path: Path
@@ -745,7 +708,7 @@ class TestInstallState:
             "version": QDRANT_SERVER_VERSION,
             "asset": asset,
             "asset_sha256": QDRANT_ASSET_SHA256[asset],
-            "binary_sha256": _sha256(_STAND_IN_EXECUTABLE),
+            "binary_sha256": sha256_hex(_STAND_IN_EXECUTABLE),
             "source": "download",
         }
         _write_install(version_dir, {**manifest, field: value})
@@ -952,7 +915,7 @@ class TestProvisioningLock:
                     version_dir,
                     {
                         "version": QDRANT_SERVER_VERSION,
-                        "binary_sha256": _sha256(_STAND_IN_EXECUTABLE),
+                        "binary_sha256": sha256_hex(_STAND_IN_EXECUTABLE),
                         "source": MANIFEST_SOURCE_OPERATOR,
                     },
                 )

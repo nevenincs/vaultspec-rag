@@ -38,8 +38,8 @@ from vaultspec_rag.qdrant_runtime._constants import (
     QDRANT_ASSET_SHA256,
     QDRANT_EXECUTABLE_SHA256,
 )
+from vaultspec_rag.qdrant_runtime._download import download_https
 from vaultspec_rag.qdrant_runtime._provision import (
-    download_https,
     extract_verified_archive,
     file_sha256,
 )

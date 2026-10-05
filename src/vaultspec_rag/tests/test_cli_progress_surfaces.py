@@ -490,7 +490,7 @@ class TestQdrantProvisionProgress:
 
     def test_the_stream_reports_bytes_against_the_declared_total(self, tmp_path: Path):
         """A transfer reports how far along it is, not merely that it runs."""
-        from ..qdrant_runtime._provision import _stream_capped
+        from ..qdrant_runtime._download import _stream_capped
 
         payload = b"x" * (9 << 20)
         buffer = io.StringIO()
@@ -513,7 +513,7 @@ class TestQdrantProvisionProgress:
         self, tmp_path: Path
     ):
         """A response with no ``Content-Length`` must not invent one."""
-        from ..qdrant_runtime._provision import _stream_capped
+        from ..qdrant_runtime._download import _stream_capped
 
         payload = b"y" * (5 << 20)
         buffer = io.StringIO()
@@ -530,15 +530,15 @@ class TestQdrantProvisionProgress:
 
     def test_the_size_cap_still_refuses_an_oversized_stream(self, tmp_path: Path):
         """Reporting was added around the cap, not in place of it."""
-        from ..qdrant_runtime import _provision
+        from ..qdrant_runtime import _download
 
-        payload = b"z" * (_provision._MAX_DOWNLOAD_BYTES + 1)
+        payload = b"z" * (_download._MAX_DOWNLOAD_BYTES + 1)
         target = tmp_path / "staged.bin"
         with (
             target.open("wb") as out,
             pytest.raises(urllib.error.URLError, match="byte cap"),
         ):
-            _provision._stream_capped(
+            _download._stream_capped(
                 io.BytesIO(payload),
                 out,
                 declared=len(payload),

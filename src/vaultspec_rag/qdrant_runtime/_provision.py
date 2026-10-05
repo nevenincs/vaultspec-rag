@@ -11,41 +11,41 @@ written last. A failure or an interrupt at any stage removes this run's
 staging files and leaves a previous install exactly as it was. A repeat run
 against a verified install reports ``unchanged`` with zero network I/O; a
 digest mismatch is a hard failure.
+
+Space is checked before it is spent. A download whose archive and extracted
+executable cannot both fit on the managed directory's volume is refused
+before its first byte is read, and an extraction that cannot fit is refused
+before its first byte is written. A write that fails anyway, because the
+volume filled in between, is one failed outcome like any other.
 """
 
 from __future__ import annotations
 
 import contextlib
 import hashlib
-import http.client
 import logging
 import os
-import random
 import shutil
-import ssl
 import stat
 import sys
 import tarfile
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 import zipfile
 import zlib
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, cast
+from typing import IO, TYPE_CHECKING
 
 from .._atomic_write import (
     JsonWriteOptions,
     replace_atomically,
     write_json_atomically,
 )
-from .._backoff import jittered_backoff
 from .._rmtree import remove_tree
+from .._store_writes import classify_write_error, free_bytes
 from .._sync_vocabulary import ProvisionAction
 from .._units import human_bytes
 from ._constants import (
@@ -57,50 +57,30 @@ from ._constants import (
     QDRANT_SERVER_VERSION,
     ProvisionReport,
 )
+from ._download import (
+    DownloadError,
+    DownloadFailure,
+    DownloadLimits,
+    download_https,
+    no_progress,
+)
 
 if TYPE_CHECKING:
-    import io
     from collections.abc import Callable, Generator, Iterable
-    from http.client import HTTPMessage, HTTPResponse
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "ChecksumMismatchError",
     "clean_provisioned",
-    "download_https",
     "extract_verified_archive",
     "file_sha256",
     "provision",
     "provisioned_versions",
 ]
 
-_DOWNLOAD_CHUNK_BYTES = 1 << 20
-# Bounds one socket operation. A source that keeps trickling bytes never trips
-# it, which is what the whole-download limit below is for.
-_DOWNLOAD_TIMEOUT_SECONDS = 120.0
-# Bounds the whole transfer, across every attempt. Generous for a ~30 MB
-# archive on a slow link, and finite so a stalled source ends as a reported
-# failure rather than a command that never returns.
-_DOWNLOAD_DEADLINE_SECONDS = 900.0
-# A transient transport failure is tried this many times in all. A digest
-# mismatch is never among them: it is a verdict on the bytes, and asking again
-# cannot change it.
-_DOWNLOAD_ATTEMPTS = 3
-_RETRY_BASE_SECONDS = 0.5
-_RETRY_CAP_SECONDS = 4.0
-_RETRY_JITTER_FRACTION = 0.25
-# Statuses that say "not now" rather than "no": a timeout, a rate limit, or a
-# fault on the far side.
-_TRANSIENT_HTTP_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
-# The release archives are ~30 MB; cap the stream well above that so a
-# host-pinned-but-defective response cannot fill the disk before the
-# SHA256 check would reject it (defense in depth behind the host pin).
-_MAX_DOWNLOAD_BYTES = 256 << 20
-# Report every few chunks rather than every chunk: the reporter prints a plain
-# line per distinct activity off a terminal, so a per-megabyte tick would fill
-# a piped install log with a hundred near-identical lines.
-_DOWNLOAD_REPORT_BYTES = 4 << 20
+_COPY_CHUNK_BYTES = 1 << 20
+_DOWNLOAD_LIMITS = DownloadLimits()
 # Marks a file as one run's working copy. Nothing reads a file carrying it as
 # an install, so a run killed before it could clean up strands no executable.
 _STAGING_SUFFIX = ".staging"
@@ -110,8 +90,17 @@ _LOCK_FILENAME = "provision.lock"
 # A waiter outlasts the longest a holder can legitimately take: one whole
 # download plus its verification and extraction. A holder that dies releases
 # the lock with its process, so this is never spent waiting on a dead one.
-_LOCK_WAIT_SECONDS = _DOWNLOAD_DEADLINE_SECONDS + 60.0
+_LOCK_WAIT_SECONDS = _DOWNLOAD_LIMITS.deadline_seconds + 60.0
 _LOCK_POLL_SECONDS = 0.2
+# Kept free beyond what the install itself writes: the manifest, the
+# filesystem's own bookkeeping, and whatever else is writing to the volume
+# while this runs.
+_FREE_SPACE_RESERVE_BYTES = 32 << 20
+# How much larger than its archive the executable is assumed to be before the
+# archive is in hand to say exactly. The pinned Windows executable is 2.9
+# times its archive; a wrong guess here costs nothing but an early refusal,
+# because the exact size is checked again before extraction.
+_EXECUTABLE_BYTES_PER_ARCHIVE_BYTE = 4
 
 # Everything that can go wrong between creating the first staging file and the
 # manifest landing, and is an outcome to report rather than a defect to raise.
@@ -123,18 +112,7 @@ _INSTALL_FAILURES = (
     tarfile.TarError,
     zipfile.BadZipFile,
     zlib.error,
-    http.client.HTTPException,
 )
-
-
-def _no_progress(_line: str) -> None:
-    """Drop a progress line, for callers that asked for no reporting.
-
-    A no-op sink rather than a ``None`` check at each call site. Provisioning
-    always runs in a foreground command and never in the daemon, which only
-    resolves and verifies the binary; the commands that have a console pass a
-    sink of their own, and a caller with nothing to show passes none.
-    """
 
 
 class ChecksumMismatchError(RuntimeError):
@@ -153,23 +131,19 @@ class ChecksumMismatchError(RuntimeError):
         )
 
 
-@dataclass(frozen=True)
-class _DownloadInstallRequest:
-    url: str
-    redirect_hosts: frozenset[str]
-    asset: str
-    archive_sha256: str
-    executable_sha256: str
-    version_dir: Path
-    previously: str
-    on_progress: Callable[[str], None] = _no_progress
+class _InsufficientSpaceError(RuntimeError):
+    """The managed directory's volume cannot hold what an install would write.
+
+    Raised before the bytes in question are transferred or extracted, so
+    nothing has been written on its account.
+    """
 
 
 def _stream_sha256(handle: IO[bytes]) -> str:
     """Return the hex SHA256 of everything in *handle*, read from its start."""
     handle.seek(0)
     digest = hashlib.sha256()
-    while chunk := handle.read(_DOWNLOAD_CHUNK_BYTES):
+    while chunk := handle.read(_COPY_CHUNK_BYTES):
         digest.update(chunk)
     return digest.hexdigest()
 
@@ -188,292 +162,6 @@ def verify_native_binary(binary: Path, expected_sha256: str) -> None:
         or file_sha256(binary) != expected_sha256
     ):
         raise RuntimeError(f"Native executable pin mismatch: {binary}")
-
-
-class _RedirectRefusedError(urllib.error.URLError):
-    """A redirect left HTTPS or the hosts the caller allowed."""
-
-
-class _HostPinnedRedirect(urllib.request.HTTPRedirectHandler):
-    """Allow redirects only over HTTPS and only onto the hosts it was given.
-
-    The request that starts a download goes to a source its caller chose. A
-    redirect is chosen by whoever answered that request, so each hop is
-    checked here before it is followed.
-    """
-
-    def __init__(self, allowed_hosts: frozenset[str]) -> None:
-        self._allowed_hosts = allowed_hosts
-
-    def redirect_request(  # noqa: PLR0913 - stdlib redirect callback contract
-        self,
-        req: urllib.request.Request,
-        fp: IO[bytes],
-        code: int,
-        msg: str,
-        headers: HTTPMessage,
-        newurl: str,
-    ) -> urllib.request.Request | None:
-        """Reject redirect targets outside the pinned HTTPS host set."""
-        parsed = urllib.parse.urlparse(newurl)
-        # A redirect must stay HTTPS: a downgrade to http on an allowed
-        # host would still strip TLS, so reject it as firmly as a
-        # cross-host redirect.
-        if parsed.scheme != "https":
-            raise _RedirectRefusedError(
-                f"Redirect to non-HTTPS URL {newurl!r} rejected"
-            )
-        host = (parsed.hostname or "").lower()
-        if host not in self._allowed_hosts:
-            raise _RedirectRefusedError(
-                f"Redirect to disallowed host {host!r} rejected "
-                f"(allowed: {sorted(self._allowed_hosts)})"
-            )
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
-
-
-def _declared_length(headers: object) -> int:
-    """Read a response's ``Content-Length``, or 0 when it declares none."""
-    getter = getattr(headers, "get", None)
-    if getter is None:
-        return 0
-    try:
-        return max(0, int(getter("Content-Length") or 0))
-    except (TypeError, ValueError):
-        return 0
-
-
-def _download_line(written: int, declared: int) -> str:
-    """Render one line of download progress, with a total when one was declared."""
-    if declared:
-        return (
-            f"Downloading the Qdrant server: "
-            f"{human_bytes(written)} of {human_bytes(declared)}"
-        )
-    return f"Downloading the Qdrant server: {human_bytes(written)}"
-
-
-@dataclass(frozen=True)
-class _Deadline:
-    """A whole-operation time limit, kept with its length so a breach names it."""
-
-    expires_at: float
-    seconds: float
-
-    @classmethod
-    def starting_now(cls, seconds: float) -> _Deadline:
-        return cls(time.monotonic() + seconds, seconds)
-
-    def remaining(self) -> float:
-        return self.expires_at - time.monotonic()
-
-    def breach(self) -> urllib.error.URLError:
-        return urllib.error.URLError(
-            f"The download did not finish within its {self.seconds:g} second limit"
-        )
-
-
-def _stream_capped(
-    source: io.BufferedIOBase,
-    out: IO[bytes],
-    *,
-    declared: int,
-    on_progress: Callable[[str], None],
-    deadline: _Deadline | None = None,
-) -> int:
-    """Copy *source* into *out* under the size cap, reporting as it goes.
-
-    Split from the request handling so the cap and the reporting cadence can
-    be exercised over an ordinary binary stream rather than only over a live
-    HTTPS response.
-
-    Each read takes whatever one read of the underlying stream returns
-    instead of waiting for a full chunk. A full-chunk read keeps blocking for
-    as long as bytes keep arriving, however slowly, so the deadline could not
-    be checked until a megabyte had trickled in.
-
-    Args:
-        source: The readable stream to drain.
-        out: The staging file to write into.
-        declared: The size the response claimed, or 0 when it claimed none.
-        on_progress: Sink for byte-progress lines.
-        deadline: When the whole download must be over, if it is bounded.
-
-    Returns:
-        The number of bytes written.
-
-    Raises:
-        urllib.error.URLError: When the stream exceeds the download cap, or
-            runs past *deadline*.
-        ConnectionError: When the stream ends short of the size it declared.
-    """
-    written = 0
-    reported = 0
-    while chunk := source.read1(_DOWNLOAD_CHUNK_BYTES):
-        if deadline is not None and deadline.remaining() <= 0:
-            raise deadline.breach()
-        written += len(chunk)
-        if written > _MAX_DOWNLOAD_BYTES:
-            raise urllib.error.URLError(
-                f"Download exceeded the {_MAX_DOWNLOAD_BYTES} byte cap; "
-                "refusing to continue"
-            )
-        out.write(chunk)
-        if written - reported >= _DOWNLOAD_REPORT_BYTES:
-            reported = written
-            on_progress(_download_line(written, declared))
-    # A source that hangs up early ends the stream exactly as a complete body
-    # does. Named here, it is a transport failure worth another attempt; left
-    # to the digest check it would read as a replaced asset.
-    if declared and written < declared:
-        raise ConnectionError(f"The transfer ended after {written} of {declared} bytes")
-    # The final tick lands on the true size, so the last thing an operator
-    # reads is the transfer completing rather than stalling near the end.
-    if written != reported:
-        on_progress(_download_line(written, declared))
-    return written
-
-
-def _is_transient(exc: Exception) -> bool:
-    """Whether another attempt at the same request could plausibly succeed.
-
-    Only the transport is ever transient. A refusal this module raised itself
-    - a source that is not HTTPS, a redirect outside the allowed hosts, a
-    stream past the size cap or the deadline - carries a message rather than
-    an underlying error, and repeating the request cannot change it. Neither
-    can a certificate that does not verify.
-    """
-    if isinstance(exc, urllib.error.HTTPError):
-        return exc.code in _TRANSIENT_HTTP_STATUS
-    cause = exc.reason if isinstance(exc, urllib.error.URLError) else exc
-    if isinstance(cause, ssl.SSLCertVerificationError):
-        return False
-    return isinstance(
-        cause,
-        (TimeoutError, ConnectionError, ssl.SSLError, http.client.HTTPException),
-    ) or (isinstance(exc, urllib.error.URLError) and isinstance(cause, OSError))
-
-
-def _transport_detail(exc: Exception) -> str:
-    """Render a transport failure without the wrapper urllib prints around it."""
-    if isinstance(exc, urllib.error.URLError) and not isinstance(
-        exc, urllib.error.HTTPError
-    ):
-        return str(exc.reason)
-    return str(exc)
-
-
-def _retry_delay(exc: Exception, attempt: int, deadline: _Deadline) -> float | None:
-    """Return how long to wait before another attempt, or ``None`` to stop."""
-    if attempt + 1 >= _DOWNLOAD_ATTEMPTS or not _is_transient(exc):
-        return None
-    delay = jittered_backoff(
-        attempt,
-        base=_RETRY_BASE_SECONDS,
-        cap=_RETRY_CAP_SECONDS,
-        fraction=_RETRY_JITTER_FRACTION,
-        random_unit=random.random(),
-    )
-    # An attempt that could not start before the deadline is not worth the
-    # wait for it.
-    return delay if delay < deadline.remaining() else None
-
-
-def _fetch_once(
-    opener: urllib.request.OpenerDirector,
-    url: str,
-    out: IO[bytes],
-    deadline: _Deadline,
-    on_progress: Callable[[str], None],
-) -> None:
-    """Make one attempt at streaming *url* into *out*, from its first byte."""
-    remaining = deadline.remaining()
-    if remaining <= 0:
-        raise deadline.breach()
-    # Nothing of an earlier attempt is kept: the transfer starts the file over.
-    out.seek(0)
-    out.truncate()
-    # ``OpenerDirector.open`` is typed ``Any`` in typeshed (it dispatches
-    # across registered handlers); an HTTPS download always resolves to an
-    # ``HTTPResponse`` at runtime.
-    with cast(
-        "HTTPResponse",
-        opener.open(url, timeout=min(_DOWNLOAD_TIMEOUT_SECONDS, remaining)),
-    ) as resp:
-        _stream_capped(
-            resp,
-            out,
-            declared=_declared_length(resp.headers),
-            on_progress=on_progress,
-            deadline=deadline,
-        )
-
-
-def download_https(
-    url: str,
-    out: IO[bytes],
-    *,
-    redirect_hosts: frozenset[str],
-    on_progress: Callable[[str], None] = _no_progress,
-    deadline_seconds: float = _DOWNLOAD_DEADLINE_SECONDS,
-) -> None:
-    """Stream *url* into the open file *out* over HTTPS with pinned redirects.
-
-    The host *url* names is contacted whatever *redirect_hosts* says: it is
-    the source the caller chose. *redirect_hosts* bounds where that source may
-    redirect to, and every hop must stay HTTPS.
-
-    The caller opens *out* and owns what happens to it afterwards, because
-    that differs: the managed install streams into a staging file it created
-    exclusively and discards on any failure, while a build tool streams into
-    a file in a directory of its own.
-
-    A transient transport failure is retried a bounded number of times, each
-    attempt starting *out* over. Every attempt shares one deadline. A read
-    that stalls outright is cut by the socket timeout, so the transfer ends
-    no later than one socket timeout after the deadline.
-
-    Args:
-        url: The pinned release asset to fetch.
-        out: The open, seekable binary file to stream into.
-        redirect_hosts: Lower-cased host names a redirect may land on. It is
-            a required argument so each caller states the hosts it trusts
-            rather than inheriting another caller's.
-        on_progress: Sink for byte-progress lines, emitted every few
-            megabytes and once more on the final byte, and for a line per
-            retry.
-        deadline_seconds: How long the whole download may take.
-
-    Raises:
-        urllib.error.URLError: On connection failure, a non-HTTPS source,
-            a redirect that leaves HTTPS or *redirect_hosts*, or a transfer
-            that runs past the deadline.
-        OSError: On a transport failure that outlasted its retries.
-    """
-    if urllib.parse.urlparse(url).scheme != "https":
-        raise urllib.error.URLError(f"Refusing non-HTTPS download URL {url!r}")
-    opener = urllib.request.build_opener(_HostPinnedRedirect(redirect_hosts))
-    deadline = _Deadline.starting_now(deadline_seconds)
-    attempt = 0
-    # The loop has no bound of its own. The only way out besides success is
-    # the failure being raised, so no branch can fall through and return as
-    # if a failed final attempt had filled the file.
-    while True:
-        try:
-            _fetch_once(opener, url, out, deadline, on_progress)
-        except (OSError, http.client.HTTPException) as exc:
-            delay = _retry_delay(exc, attempt, deadline)
-            if delay is None:
-                raise
-            attempt += 1
-            logger.warning("download attempt %d of %s failed: %s", attempt, url, exc)
-            on_progress(
-                f"The download was interrupted ({_transport_detail(exc)}); "
-                f"retrying, attempt {attempt + 1} of {_DOWNLOAD_ATTEMPTS}..."
-            )
-            time.sleep(delay)
-        else:
-            return
 
 
 def _open_destination(path: Path) -> IO[bytes]:
@@ -510,6 +198,72 @@ def _open_staging(directory: Path, label: str) -> tuple[Path, IO[bytes]]:
         | getattr(os, "O_NOFOLLOW", 0)
     )
     return path, os.fdopen(os.open(path, flags, 0o600), "w+b")
+
+
+@dataclass(frozen=True)
+class _DownloadInstallRequest:
+    """One staged install: its source, its pins, and what bounds it.
+
+    Attributes:
+        limits: How long, how large and how persistent the download may be.
+        reserve_bytes: Free space the volume must keep beyond what the
+            install writes.
+        open_staging: Creates each staging file. The one point at which the
+            install opens a file it will write a transfer or an extraction
+            into.
+    """
+
+    url: str
+    redirect_hosts: frozenset[str]
+    asset: str
+    archive_sha256: str
+    executable_sha256: str
+    version_dir: Path
+    previously: str
+    on_progress: Callable[[str], None] = no_progress
+    limits: DownloadLimits = _DOWNLOAD_LIMITS
+    reserve_bytes: int = _FREE_SPACE_RESERVE_BYTES
+    open_staging: Callable[[Path, str], tuple[Path, IO[bytes]]] = _open_staging
+
+
+def _require_free_space(
+    request: _DownloadInstallRequest, *, archive_bytes: int, executable_bytes: int
+) -> None:
+    """Refuse an install step the managed directory's volume cannot hold.
+
+    The requirement is what the step is about to write plus the reserve. A
+    replaced install does not count towards it: the executable being replaced
+    stays where it is until the new one has been verified, so both exist at
+    once.
+
+    Raises:
+        _InsufficientSpaceError: When less is free than the step needs. The
+            message carries the shortfall.
+    """
+    free = free_bytes(request.version_dir)
+    if free is None:
+        # A volume that cannot be measured is not judged; a write that does
+        # not fit still fails as one outcome.
+        return
+    needed = archive_bytes + executable_bytes + request.reserve_bytes
+    if free >= needed:
+        return
+    parts = [
+        f"{human_bytes(size)} for {what}"
+        for size, what in (
+            (archive_bytes, "the archive"),
+            (executable_bytes, "the executable it holds"),
+            (request.reserve_bytes, "working room"),
+        )
+        if size
+    ]
+    raise _InsufficientSpaceError(
+        "Not enough free space to install the Qdrant server: the volume "
+        f"holding {request.version_dir} has {human_bytes(free)} free and the "
+        f"install needs {human_bytes(needed)} ({', '.join(parts)}). Free "
+        f"{human_bytes(needed - free)} more on that volume, then run the "
+        "command again."
+    )
 
 
 def _discard(paths: Iterable[Path]) -> None:
@@ -552,8 +306,12 @@ def _tar_member(tf: tarfile.TarFile, target_name: str) -> tarfile.TarInfo | None
 @contextmanager
 def _binary_member(
     archive: IO[bytes], archive_name: str, target_name: str
-) -> Generator[IO[bytes]]:
+) -> Generator[tuple[IO[bytes], int]]:
     """Yield a reader over the one regular executable member of *archive*.
+
+    The reader comes with the member's uncompressed size, as the archive
+    records it, so a caller can know what extraction will write before it
+    writes any of it.
 
     Handles both the Windows ``.zip`` (single ``qdrant.exe`` entry)
     and the Unix ``.tar.gz`` (single ``qdrant`` entry) shapes. Only
@@ -589,15 +347,15 @@ def _binary_member(
             if info is None:
                 raise invalid_member
             with zf.open(info) as source:
-                yield source
+                yield source, info.file_size
         return
     with tarfile.open(fileobj=archive, mode="r:gz") as tf:
         member = _tar_member(tf, target_name)
         source = tf.extractfile(member) if member is not None else None
-        if source is None:
+        if member is None or source is None:
             raise invalid_member
         with source:
-            yield source
+            yield source, member.size
 
 
 def _mark_executable(path: Path) -> None:
@@ -613,7 +371,7 @@ def extract_verified_archive(
     expected_sha256: str,
     dest_dir: Path,
     *,
-    on_progress: Callable[[str], None] = _no_progress,
+    on_progress: Callable[[str], None] = no_progress,
     binary_name: str | None = None,
 ) -> tuple[Path, str]:
     """Verify *archive* against *expected_sha256*, then extract.
@@ -652,10 +410,10 @@ def extract_verified_archive(
         if verified:
             on_progress("Extracting the Qdrant server...")
             with (
-                _binary_member(handle, archive.name, binary_name) as source,
+                _binary_member(handle, archive.name, binary_name) as (source, _),
                 _open_destination(binary) as out,
             ):
-                shutil.copyfileobj(source, out, _DOWNLOAD_CHUNK_BYTES)
+                shutil.copyfileobj(source, out, _COPY_CHUNK_BYTES)
     if not verified:
         # Removed only once the handle above is closed: an open file cannot
         # be unlinked on Windows.
@@ -679,13 +437,15 @@ def _replace_executable(staged: Path, target: Path) -> None:
     except PermissionError as exc:
         if sys.platform != "win32" or not target.exists():
             raise
-        # Windows refuses to replace a file a process is executing. That is
-        # the operator's own server in every ordinary case, so say what to do
-        # about it instead of surfacing an access-denied error.
+        # Windows refuses to replace a file another process holds open, which
+        # a running server does to its own executable. That is the cause in
+        # every ordinary case, so say what to do about it instead of
+        # surfacing an access-denied error.
         raise RuntimeError(
-            f"{target} is in use and cannot be replaced; a running Qdrant "
-            "server holds it open. Stop the service with "
-            "`vaultspec-rag server stop`, then run the install again."
+            f"{target} is held open by another process and cannot be "
+            "replaced; a running Qdrant server holds its executable this way. "
+            "Stop the service with `vaultspec-rag server stop`, then run the "
+            "install again."
         ) from exc
 
 
@@ -701,15 +461,31 @@ def _stage_verified_executable(
     installed: it is taken from the staged file itself, after the last byte
     was written to it.
 
+    Space is asked for twice, each time before the bytes it covers. Before
+    the first byte of the transfer, from the size the response declares and
+    an estimate of the executable inside it. Before the first byte of the
+    extraction, from the size the verified archive records for its member,
+    which is exact.
+
     Raises:
         ChecksumMismatchError: When the archive or the staged executable does
             not hash to its committed digest.
+        _InsufficientSpaceError: When the volume cannot hold the transfer or
+            the extraction.
     """
     from ._resolve import binary_filename
 
     name = binary_filename()
     on_progress = request.on_progress
-    archive_path, archive = _open_staging(request.version_dir, request.asset)
+
+    def admit(declared_bytes: int) -> None:
+        _require_free_space(
+            request,
+            archive_bytes=declared_bytes,
+            executable_bytes=declared_bytes * _EXECUTABLE_BYTES_PER_ARCHIVE_BYTE,
+        )
+
+    archive_path, archive = request.open_staging(request.version_dir, request.asset)
     staged.append(archive_path)
     with archive:
         logger.info("Downloading %s", request.url)
@@ -719,17 +495,21 @@ def _stage_verified_executable(
             archive,
             redirect_hosts=request.redirect_hosts,
             on_progress=on_progress,
+            limits=replace(request.limits, admit=admit),
         )
         on_progress("Verifying the Qdrant download checksum...")
         actual = _stream_sha256(archive)
         if actual.lower() != request.archive_sha256.lower():
             raise ChecksumMismatchError(request.asset, request.archive_sha256, actual)
         on_progress("Extracting the Qdrant server...")
-        with _binary_member(archive, request.asset, name) as source:
-            executable_path, executable = _open_staging(request.version_dir, name)
+        with _binary_member(archive, request.asset, name) as (source, size):
+            _require_free_space(request, archive_bytes=0, executable_bytes=size)
+            executable_path, executable = request.open_staging(
+                request.version_dir, name
+            )
             staged.append(executable_path)
             with executable:
-                shutil.copyfileobj(source, executable, _DOWNLOAD_CHUNK_BYTES)
+                shutil.copyfileobj(source, executable, _COPY_CHUNK_BYTES)
                 on_progress("Verifying the extracted Qdrant server...")
                 actual = _stream_sha256(executable)
     if actual.lower() != request.executable_sha256.lower():
@@ -929,7 +709,7 @@ def _register_operator_binary(
         # that it is a regular file, and a link swapped in after that check
         # must not be what gets registered.
         with staging, _open_without_following(binary) as source:
-            shutil.copyfileobj(source, staging, _DOWNLOAD_CHUNK_BYTES)
+            shutil.copyfileobj(source, staging, _COPY_CHUNK_BYTES)
             digest = _stream_sha256(staging)
         _replace_executable(staging_path, target)
         _write_manifest(
@@ -992,28 +772,79 @@ def _provision_operator_binary(registration: _OperatorRegistration) -> Provision
     )
 
 
-def _failure_message(exc: Exception) -> str:
-    """Describe a failed install, naming the setting that admits a mirror."""
-    if isinstance(exc, _RedirectRefusedError):
-        # Function-local: the build tools import this module in an interpreter
-        # that has no service configuration to import.
-        from ..config._types import EnvVar
+#: What an operator does about each way a download fails. ``{base}`` and
+#: ``{hosts}`` are the names of the two source settings, ``{asset}`` the
+#: release asset and ``{version}`` the pinned version.
+_DOWNLOAD_REMEDIES: dict[DownloadFailure, str] = {
+    DownloadFailure.BAD_SOURCE: "Set {base} to the https URL of a release source.",
+    DownloadFailure.REDIRECT_REFUSED: (
+        "A mirror that redirects to its own storage host needs that host "
+        "listed in {hosts}."
+    ),
+    DownloadFailure.BAD_REDIRECT: (
+        "Check that {base} names a release source whose redirects end at the file."
+    ),
+    DownloadFailure.UNTRUSTED_CERTIFICATE: (
+        "This host does not trust the certificate the source presented. For a "
+        "private mirror, add its certificate authority to the system trust "
+        "store or name its bundle in SSL_CERT_FILE, then run the command "
+        "again. Verification is never skipped."
+    ),
+    DownloadFailure.NOT_FOUND: (
+        "Check that {base} names a release source that publishes {asset} for "
+        "version {version}."
+    ),
+    DownloadFailure.REFUSED: (
+        "Check {base}, and any proxy or credentials between this host and the "
+        "source it names."
+    ),
+    DownloadFailure.UNAVAILABLE: (
+        "The source is failing or rate-limiting requests. Wait, then run the "
+        "command again; if it keeps happening, point {base} at another mirror "
+        "of the release."
+    ),
+    DownloadFailure.UNREACHABLE: (
+        "Check this host's network connection and proxy settings, and that "
+        "{base} names a source it can reach, then run the command again."
+    ),
+    DownloadFailure.TOO_SLOW: (
+        "Run the command again on a faster connection, or point {base} at a "
+        "nearer mirror of the release."
+    ),
+    DownloadFailure.TOO_LARGE: (
+        "The pinned archive is far smaller than that, so the source is not "
+        "serving the release asset. Check {base}."
+    ),
+}
 
+
+def _failure_message(exc: Exception, request: _DownloadInstallRequest) -> str:
+    """Describe a failed install and say what the operator can do about it."""
+    if classify_write_error(exc) == "unrecoverable":
         return (
-            f"{exc.reason}. A mirror that redirects to its own storage host "
-            f"needs that host listed in {EnvVar.QDRANT_DOWNLOAD_HOSTS.value}."
+            f"The volume holding {request.version_dir} ran out of space while "
+            f"the Qdrant server was being written ({exc}). Nothing was left "
+            "behind. Free space on that volume, then run the command again."
         )
-    if isinstance(
-        exc,
-        (
-            urllib.error.URLError,
-            http.client.HTTPException,
-            ConnectionError,
-            TimeoutError,
-        ),
-    ):
-        return f"Downloading the Qdrant server failed: {_transport_detail(exc)}"
-    return str(exc)
+    if not isinstance(exc, DownloadError):
+        return str(exc)
+    if exc.kind is DownloadFailure.WRITE_FAILED:
+        return (
+            f"{exc}. Check that {request.version_dir} is writable, then run "
+            "the command again."
+        )
+    # Function-local: the build tools import this module in an interpreter
+    # that has no service configuration to import.
+    from ..config._types import EnvVar
+
+    remedy = _DOWNLOAD_REMEDIES[exc.kind].format(
+        base=EnvVar.QDRANT_RELEASE_BASE_URL.value,
+        hosts=EnvVar.QDRANT_DOWNLOAD_HOSTS.value,
+        asset=request.asset,
+        version=QDRANT_SERVER_VERSION,
+    )
+    tried = f" after {exc.attempts} attempts" if exc.attempts > 1 else ""
+    return f"Downloading the Qdrant server failed{tried}: {exc}. {remedy}"
 
 
 def _download_and_install(request: _DownloadInstallRequest) -> ProvisionReport:
@@ -1048,7 +879,7 @@ def _download_and_install(request: _DownloadInstallRequest) -> ProvisionReport:
             asset=request.asset,
             url=request.url,
             sha256=request.archive_sha256,
-            message=_failure_message(exc),
+            message=_failure_message(exc, request),
         )
     finally:
         # Reached by an interrupt as well as by a failure, so a run stopped
@@ -1081,7 +912,7 @@ class _ProvisionRequest:
     version_dir: Path
     upgrade: bool = False
     binary: Path | None = None
-    on_progress: Callable[[str], None] = _no_progress
+    on_progress: Callable[[str], None] = no_progress
     platform: str | None = None
     machine: str | None = None
 
@@ -1260,7 +1091,7 @@ def provision(
     upgrade: bool = False,
     dry_run: bool = False,
     binary: Path | None = None,
-    on_progress: Callable[[str], None] = _no_progress,
+    on_progress: Callable[[str], None] = no_progress,
 ) -> ProvisionReport:
     """Provision the pinned qdrant server binary into the managed dir.
 

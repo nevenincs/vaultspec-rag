@@ -66,7 +66,7 @@ def substitute_qdrant_download(
         QDRANT_SERVER_VERSION,
         ProvisionReport,
     )
-    from ..qdrant_runtime._provision import _download_line, _no_progress
+    from ..qdrant_runtime._download import _download_line, no_progress
     from ..qdrant_runtime._resolve import binary_filename, qdrant_bin_dir
 
     calls: list[str] = []
@@ -81,7 +81,7 @@ def substitute_qdrant_download(
         # passing it" - a regression this exists to catch - into a TypeError,
         # which reports the wrong defect and passes through any assertion the
         # test actually makes.
-        on_progress: Callable[[str], None] = _no_progress,
+        on_progress: Callable[[str], None] = no_progress,
     ) -> ProvisionReport:
         del upgrade, dry_run, binary
         calls.append("provision")

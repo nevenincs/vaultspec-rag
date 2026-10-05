@@ -159,7 +159,7 @@ class TestLoopbackHttpHasOneOpener:
     #: That is a different threat from a loopback probe, and folding it into
     #: the no-redirect opener would delete a security control.
     _ALLOWED_OPENERS: ClassVar[dict[str, str]] = {
-        "_provision.py": "host-pinned redirects for the binary download"
+        "_download.py": "host-pinned redirects for the binary download"
     }
 
     def test_no_module_builds_its_own_opener(self) -> None:
