@@ -39,6 +39,8 @@ import threading
 from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING
 
+from ..config._types import EnvVar
+
 if TYPE_CHECKING:
     from collections.abc import Generator
     from multiprocessing.context import BaseContext
@@ -50,7 +52,7 @@ __all__ = ["die_with_parent", "spawn_pool"]
 _ORPHANED_EXIT_CODE = 3
 
 #: The interpreter's own switch for safe-path mode, read once at startup.
-_SAFE_PATH_VARIABLE = "PYTHONSAFEPATH"
+_SAFE_PATH_VARIABLE = EnvVar.PYTHON_SAFE_PATH.value
 
 
 class _WorkerImportPath:
