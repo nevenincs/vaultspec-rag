@@ -21,7 +21,12 @@ from ..qdrant_runtime._constants import (
     ProvisionReport,
 )
 from ..qdrant_runtime._provision import provisioned_versions
-from ..qdrant_runtime._resolve import probe_qdrant_endpoint, resolve_binary
+from ..qdrant_runtime._resolve import (
+    QdrantBinaryError,
+    probe_qdrant_endpoint,
+    resolve_binary,
+    verify_resolved_binary,
+)
 from ..serviceclient._discovery import read_service_status
 from ._app import JsonMode, server_qdrant_app
 from ._progress import StartupStatusReporter
@@ -130,9 +135,40 @@ def _service_qdrant_block() -> dict[str, Any]:
     return block
 
 
+def _active_binary_blocks() -> tuple[dict[str, object] | None, dict[str, str] | None]:
+    """Describe the binary a start would run, and why it may not, if so.
+
+    Status asks the same two questions a start does - what resolves, and does
+    it pass the check its source holds it to - so the view never shows a
+    binary as usable that a start would refuse. A refusal is reported, not
+    raised: an operator opens this view precisely when something is wrong.
+
+    Returns:
+        ``(active_binary, binary_error)``. The first is ``None`` when nothing
+        resolves; the second is ``None`` when what resolves may run.
+    """
+    try:
+        resolved = resolve_binary()
+    except QdrantBinaryError as exc:
+        return None, {"error": exc.error, "message": str(exc)}
+    if resolved is None:
+        return None, None
+    active: dict[str, object] = {
+        "path": str(resolved.path),
+        "source": str(resolved.source),
+        "operator_supplied": resolved.source.operator_supplied,
+        "version": resolved.version or None,
+    }
+    try:
+        verify_resolved_binary(resolved)
+    except QdrantBinaryError as exc:
+        return active, {"error": exc.error, "message": str(exc)}
+    return active, None
+
+
 def _qdrant_status_payload(port: int | None = None) -> dict[str, Any]:
     cfg = get_config()
-    resolved = resolve_binary()
+    active_binary, binary_error = _active_binary_blocks()
     service = _service_qdrant_block()
     service_port: object = service.get("qdrant_port")
     qdrant_port = int(
@@ -147,34 +183,47 @@ def _qdrant_status_payload(port: int | None = None) -> dict[str, Any]:
         "server_mode_default": bool(cfg.qdrant_server),
         "port": qdrant_port,
         "ready": probe_qdrant_endpoint(qdrant_port).ready,
-        "active_binary": (
-            {
-                "path": str(resolved.path),
-                "source": resolved.source,
-                "version": resolved.version or None,
-            }
-            if resolved is not None
-            else None
-        ),
+        "active_binary": active_binary,
+        "binary_error": binary_error,
         "provisioned": provisioned_versions(),
         "service": service,
     }
 
 
+def _source_label(active: dict[str, object]) -> str:
+    """Say where the active binary came from, in the resolver's own word.
+
+    An operator-supplied binary is named as such on every surface: no
+    committed pin vouches for it, so a reader must not take it for the
+    managed release.
+    """
+    source = str(active["source"])
+    if active.get("operator_supplied"):
+        return f"operator-supplied ({source})"
+    return f"managed download ({source})"
+
+
 def _print_qdrant_install_and_state(payload: dict[str, object]) -> None:
     active = payload["active_binary"]
+    refusal = payload["binary_error"]
     if isinstance(active, dict):
         active_binary = cast("dict[str, object]", active)
         _plain_line(f"Executable: {active_binary['path']}")
+        _plain_line(f"Source: {_source_label(active_binary)}")
+    elif isinstance(refusal, dict):
+        _plain_line("Executable: not usable")
     else:
         _plain_line("Executable: not installed")
         _print_next_action("vaultspec-rag server qdrant install")
+    if isinstance(refusal, dict):
+        # The refusal names its own remedy, and a start would only repeat it.
+        _plain_line(f"Detail: {cast('dict[str, object]', refusal)['message']}")
     _plain_line(address_line(payload["port"]))
     if payload["ready"]:
         _plain_line("Connection: accepting requests")
         return
     _plain_line("Connection: not accepting requests")
-    if isinstance(active, dict):
+    if isinstance(active, dict) and refusal is None:
         _print_next_action(server_start_command(qdrant=True))
 
 
@@ -209,11 +258,10 @@ def _print_qdrant_versions(provisioned: object) -> None:
             continue
         entry = cast("dict[str, object]", raw_entry)
         marker = " (current)" if entry.get("current") else ""
-        source = (
-            "downloaded release"
-            if entry.get("source") == "download"
-            else entry.get("source")
-        )
+        source = {
+            "download": "downloaded release",
+            "operator": "operator-supplied",
+        }.get(str(entry.get("source")), entry.get("source"))
         _plain_line(f"  {entry.get('version')} - {source}{marker}")
 
 

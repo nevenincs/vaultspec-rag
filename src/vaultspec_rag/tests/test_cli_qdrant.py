@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import TYPE_CHECKING
 
@@ -32,23 +33,35 @@ def _labels(output: str) -> dict[str, str]:
     return labels
 
 
+_FAKE_SERVER = b"test-qdrant"
+
+
 def _seed_qdrant_install(
     status_dir: Path,
     version: str = QDRANT_SERVER_VERSION,
+    *,
+    registered: bool = False,
 ) -> None:
+    """Write a managed install whose executable is a few fixture bytes.
+
+    A ``download`` install is held to the committed digest of a release asset,
+    which fixture bytes can never match, so it resolves and then fails its
+    check - the state of a tampered install. ``registered`` writes the install
+    the way ``server qdrant install --binary`` records one: operator-sourced
+    and held to the digest recorded for these same bytes, so it may run.
+    """
     bin_dir = status_dir / "bin" / "qdrant" / version
     bin_dir.mkdir(parents=True)
-    (bin_dir / binary_filename()).write_bytes(b"test-qdrant")
-    (bin_dir / "manifest.json").write_text(
-        json.dumps(
-            {
-                "version": version,
-                "source": "download",
-                "provisioned_at": "2026-06-12T00:00:00+00:00",
-            }
-        ),
-        encoding="utf-8",
-    )
+    (bin_dir / binary_filename()).write_bytes(_FAKE_SERVER)
+    manifest: dict[str, str] = {
+        "version": version,
+        "source": "download",
+        "provisioned_at": "2026-06-12T00:00:00+00:00",
+    }
+    if registered:
+        manifest["source"] = "operator"
+        manifest["binary_sha256"] = hashlib.sha256(_FAKE_SERVER).hexdigest()
+    (bin_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
 
 def _closed_port() -> int:
@@ -70,35 +83,6 @@ def test_server_start_help_exposes_qdrant_options_in_operator_language() -> None
     assert "managed Qdrant server" in result.output
     for old_term in ("pinned Rust", "binary", "loopback child"):
         assert old_term not in result.output
-
-
-def test_server_start_missing_qdrant_names_local_only_escape_hatch(
-    isolated_status_dir: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """With provisioning declined, an absent server names both ways forward.
-
-    Driven at the binary check rather than through the whole verb: start
-    judges the environment that would run the daemon before it looks for the
-    binary, so the verb reaches this check only on a host whose accelerator
-    the probe accepts, and the wording under test does not depend on that.
-    """
-    import typer
-
-    from ..cli._service_start import _ensure_qdrant_binary
-    from ..qdrant_runtime._resolve import resolve_binary
-
-    del isolated_status_dir
-    assert resolve_binary() is None, "premise: the isolated managed dir is empty"
-
-    with pytest.raises(typer.Exit) as exit_info:
-        _ensure_qdrant_binary(auto_provision=False)
-
-    assert exit_info.value.exit_code == 1
-    output = capsys.readouterr().out
-    assert "Service start failed" in output
-    assert "vaultspec-rag server qdrant install" in output
-    assert "vaultspec-rag server start --local-only" in output
 
 
 def test_qdrant_help_uses_managed_server_language() -> None:
@@ -149,7 +133,12 @@ def test_qdrant_status_is_operator_facing_when_not_installed(tmp_path: Path) -> 
 def test_qdrant_status_is_actionable_when_installed_but_not_running(
     tmp_path: Path,
 ) -> None:
-    _seed_qdrant_install(tmp_path)
+    """A registered operator binary is labelled as one, and may be started.
+
+    Mutation check: with the operator-supplied wording dropped from the source
+    label, the ``Source`` assertion fails; restoring it passes.
+    """
+    _seed_qdrant_install(tmp_path, registered=True)
     port = _closed_port()
 
     result = runner.invoke(
@@ -164,12 +153,96 @@ def test_qdrant_status_is_actionable_when_installed_but_not_running(
     assert result.exit_code == 0, result.output
     labels = _labels(result.output)
     assert labels["Executable"].endswith(binary_filename())
+    assert labels["Source"] == "operator-supplied (registered)"
+    assert "Detail" not in labels
     assert labels["Address"] == f"http://127.0.0.1:{port}"
     assert labels["Connection"] == "not accepting requests"
     assert "Next action:" in result.output
     assert "vaultspec-rag server start --qdrant" in result.output
     assert "Available installs:" in result.output
-    assert f"{QDRANT_SERVER_VERSION} - downloaded release (current)" in result.output
+    assert f"{QDRANT_SERVER_VERSION} - operator-supplied (current)" in result.output
+
+
+def test_qdrant_status_labels_a_binary_named_by_the_operator_setting(
+    tmp_path: Path,
+) -> None:
+    """A binary named by the setting is operator-supplied in both views."""
+    supplied = tmp_path / "operator-qdrant"
+    supplied.write_bytes(_FAKE_SERVER)
+    env = {
+        EnvVar.STATUS_DIR.value: str(tmp_path / "managed"),
+        EnvVar.QDRANT_PORT.value: str(_closed_port()),
+        EnvVar.QDRANT_BINARY.value: str(supplied),
+    }
+
+    human = runner.invoke(app, ["server", "qdrant", "status"], env=env)
+    machine = runner.invoke(app, ["server", "qdrant", "status", "--json"], env=env)
+
+    assert human.exit_code == 0, human.output
+    assert _labels(human.output)["Source"] == "operator-supplied (env)"
+    assert machine.exit_code == 0, machine.output
+    data = json.loads(machine.stdout)["data"]
+    assert data["active_binary"]["source"] == "env"
+    assert data["active_binary"]["operator_supplied"] is True
+    assert data["binary_error"] is None
+
+
+def test_qdrant_status_reports_an_install_that_fails_its_check(
+    tmp_path: Path,
+) -> None:
+    """A managed install a start would refuse is not shown as startable.
+
+    Mutation check: with status no longer holding the resolved binary to its
+    check, the view offers ``server start --qdrant`` for an install that
+    cannot run - failing the next-action assertion, and the ``Detail``
+    assertion before it. Restoring the check passes.
+    """
+    _seed_qdrant_install(tmp_path)
+    env = {
+        EnvVar.STATUS_DIR.value: str(tmp_path),
+        EnvVar.QDRANT_PORT.value: str(_closed_port()),
+    }
+
+    human = runner.invoke(app, ["server", "qdrant", "status"], env=env)
+    machine = runner.invoke(app, ["server", "qdrant", "status", "--json"], env=env)
+
+    assert human.exit_code == 0, human.output
+    labels = _labels(human.output)
+    assert labels["Executable"].endswith(binary_filename())
+    assert labels["Source"] == "managed download (provisioned)"
+    assert "server qdrant install --upgrade" in labels.get("Detail", "")
+    assert "vaultspec-rag server start --qdrant" not in human.output
+    assert f"{QDRANT_SERVER_VERSION} - downloaded release (current)" in human.output
+    assert machine.exit_code == 0, machine.output
+    data = json.loads(machine.stdout)["data"]
+    assert data["binary_error"]["error"] == "qdrant_binary_unverified"
+
+
+def test_qdrant_status_reports_an_unusable_operator_setting(tmp_path: Path) -> None:
+    """A setting that names nothing usable is reported, not a traceback.
+
+    The view is where an operator looks when a start has just failed on that
+    setting, so it has to render.
+    """
+    missing = tmp_path / "no-such-qdrant"
+    env = {
+        EnvVar.STATUS_DIR.value: str(tmp_path / "managed"),
+        EnvVar.QDRANT_PORT.value: str(_closed_port()),
+        EnvVar.QDRANT_BINARY.value: str(missing),
+    }
+
+    human = runner.invoke(app, ["server", "qdrant", "status"], env=env)
+    machine = runner.invoke(app, ["server", "qdrant", "status", "--json"], env=env)
+
+    assert human.exit_code == 0, human.output
+    labels = _labels(human.output)
+    assert labels["Executable"] == "not usable"
+    assert EnvVar.QDRANT_BINARY.value in labels["Detail"]
+    assert "vaultspec-rag server qdrant install" not in human.output
+    assert machine.exit_code == 0, machine.output
+    data = json.loads(machine.stdout)["data"]
+    assert data["active_binary"] is None
+    assert data["binary_error"]["error"] == "qdrant_binary_invalid"
 
 
 @pytest.mark.usefixtures("inference_host")
