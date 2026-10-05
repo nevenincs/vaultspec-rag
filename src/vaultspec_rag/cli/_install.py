@@ -18,6 +18,8 @@ from vaultspec_core.core.enums import (
 import vaultspec_rag.cli as _cli
 
 from ._app import JSON_OPTION_HELP, _global_target, app
+from ._progress import StartupStatusReporter
+from ._provision_progress import ReporterProvisionProgress
 from ._render import _plain, _render_install_report, _render_uninstall_report
 
 if TYPE_CHECKING:
@@ -541,28 +543,36 @@ def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
     if options.skip_qdrant:
         provision_skip.add("qdrant")
 
+    # The model and Qdrant fetches report through the same reporter the service
+    # verbs use, so an install shows the download it is waiting on. The live
+    # region opens only when provisioning first reports - after the questions
+    # above have been answered - and ``--json`` keeps it silent.
+    reporter = StartupStatusReporter(json_mode=options.json_output)
     try:
-        report = install_run(
-            path=effective_target,
-            upgrade=options.upgrade,
-            dry_run=options.dry_run,
-            force=options.force,
-            skip=set(options.skip),
-            configure_torch=options.configure_torch,
-            assume_yes=options.yes,
-            sync_after=options.sync_after,
-            confirm=confirm_fn,
-            provision=options.provision,
-            local_only=options.local_only,
-            provision_skip=provision_skip,
-            torch_group=options.torch_group,
-            install_mcp=options.install_mcp,
-            mode=options.mode,
-            repair_tool_torch=options.tool_repair,
-            # A multi-gigabyte download with no output reads as a hang, and a
-            # broker reading JSON must see one envelope and nothing else.
-            stream_repair=not options.json_output,
-        )
+        with ReporterProvisionProgress(reporter) as provision_progress:
+            report = install_run(
+                path=effective_target,
+                upgrade=options.upgrade,
+                dry_run=options.dry_run,
+                force=options.force,
+                skip=set(options.skip),
+                configure_torch=options.configure_torch,
+                assume_yes=options.yes,
+                sync_after=options.sync_after,
+                confirm=confirm_fn,
+                provision=options.provision,
+                local_only=options.local_only,
+                provision_skip=provision_skip,
+                torch_group=options.torch_group,
+                install_mcp=options.install_mcp,
+                mode=options.mode,
+                repair_tool_torch=options.tool_repair,
+                # A multi-gigabyte download with no output reads as a hang,
+                # and a broker reading JSON must see one envelope and nothing
+                # else.
+                stream_repair=not options.json_output,
+                provision_progress=provision_progress,
+            )
     except ParseError as exc:
         _report_command_failure(
             exc, prefix="Install failed", json_output=options.json_output

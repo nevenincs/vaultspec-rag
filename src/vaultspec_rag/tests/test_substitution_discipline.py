@@ -240,6 +240,19 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         'source-scan this replaced matched the literal watch_mode="server" '
         "and so passed while the verb really dispatched jobs mode",
     ),
+    "_model_cache_seed.py": (
+        1,
+        "points the hub's model cache location at a directory the test seeds "
+        "with snapshots the product's own completeness probe accepts. Whether "
+        "the configured models are cached is a fact about the host - all of "
+        "them on a workstation, none on a fresh runner - so a test of what a "
+        "command does when they are present, or when one is missing, would "
+        "otherwise assert whichever the machine happened to be, or download "
+        "gigabytes to find out. The hub reads its cache location from the "
+        "environment once, at import, so a test process cannot move it any "
+        "other way. Only the location is substituted: the probe, the offline "
+        "switch, the decision to fetch and the reporting run unchanged",
+    ),
     "_qdrant_provision_seam.py": (
         1,
         "no substitute source can be staged - the provisioner requires https "

@@ -9,8 +9,8 @@ the shared sync vocabulary (``created`` / ``updated`` / ``unchanged`` /
 
 This is a *front door*, not a rewrite: every step delegates to the
 backend that already knows how to provision its dependency (the torch
-configurator in :mod:`vaultspec_rag.torch_config`, the warmup
-snapshot-download path, and the Qdrant runtime provisioner in
+configurator in :mod:`vaultspec_rag.torch_config`, the model fetch in
+:mod:`._model_fetch`, and the Qdrant runtime provisioner in
 :mod:`vaultspec_rag.qdrant_runtime`). The orchestrator only sequences
 them, maps their heterogeneous outcomes onto the shared vocabulary, and
 surfaces the heterogeneity honestly - the torch step is two-phase (it
@@ -34,15 +34,17 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, TypedDict, Unpack
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict, Unpack
 
 from .._sync_vocabulary import ProvisionAction
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from contextlib import AbstractContextManager
     from pathlib import Path
 
     from ..qdrant_runtime._constants import ProvisionReport
+    from ._model_fetch import ModelRepoResult
     from ._models import ConfirmFn, InstallReport
 
 logger = logging.getLogger(__name__)
@@ -51,6 +53,32 @@ _CLIENT_SKIP = (
     "not needed by a client installation; the host installation that runs "
     "the service provides it"
 )
+
+#: Machine-readable reasons the Qdrant step failed for want of a binary. A
+#: binary that resolves but may not run carries the resolver's own code.
+QDRANT_MISSING = "qdrant_missing"
+QDRANT_PROVISION_FAILED = "qdrant_provision_failed"
+
+
+class ProvisionProgress(Protocol):
+    """Where the front door reports a fetch while it runs.
+
+    Defined here, by the code that reports, so the front door depends on no
+    console: a command supplies an implementation over whatever it prints to,
+    and a caller with nothing to print to supplies none.
+    """
+
+    def stage(self, label: str) -> None:
+        """Declare the activity now running."""
+
+    def download(self, heading: str) -> AbstractContextManager[type[Any] | None]:
+        """Report one model snapshot download for the duration of the block.
+
+        The block yields the progress-bar class to hand the hub, which is the
+        only seam the hub reports byte and file counts through, or ``None`` to
+        leave the hub's own reporting in place.
+        """
+        ...
 
 
 class _ProvisionOptions(TypedDict, total=False):
@@ -61,6 +89,7 @@ class _ProvisionOptions(TypedDict, total=False):
     assume_yes: bool
     sync_after: bool
     confirm: ConfirmFn | None
+    progress: ProvisionProgress | None
 
 
 @dataclass(frozen=True)
@@ -73,6 +102,7 @@ class _ProvisionRequest:
     assume_yes: bool = False
     sync_after: bool = False
     confirm: ConfirmFn | None = None
+    progress: ProvisionProgress | None = None
 
 
 @dataclass(frozen=True)
@@ -87,10 +117,15 @@ class _TorchProvisionRequest:
 
 
 __all__ = [
+    "QDRANT_MISSING",
+    "QDRANT_PROVISION_FAILED",
+    "ModelsStepResult",
     "ProvisionOutcome",
+    "ProvisionProgress",
     "ProvisionStep",
     "ProvisionStepResult",
     "client_skip",
+    "ensure_runtime_dependencies",
     "provision_dependencies",
     "provision_models",
     "provision_qdrant_binary",
@@ -126,12 +161,16 @@ class ProvisionStepResult:
             a ``created``/``updated`` torch step with
             ``sync_pending=True`` reads as "configured, sync pending",
             distinct from a fetched binary that is fully done.
+        code: A stable machine-readable reason for a ``FAILED`` step, for a
+            caller that must report the failure under its own name; empty
+            when the step has none.
     """
 
     step: ProvisionStep
     action: ProvisionAction
     detail: str = ""
     sync_pending: bool = False
+    code: str = ""
 
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-serialisable view of this step result."""
@@ -140,7 +179,20 @@ class ProvisionStepResult:
             "action": str(self.action),
             "detail": self.detail,
             "sync_pending": self.sync_pending,
+            "code": self.code,
         }
+
+
+@dataclass
+class ModelsStepResult(ProvisionStepResult):
+    """The model step's outcome, with what happened to each repository.
+
+    Attributes:
+        repos: One result per configured model repository, in inventory
+            order; empty when the step did not reach the cache at all.
+    """
+
+    repos: tuple[ModelRepoResult, ...] = ()
 
 
 @dataclass
@@ -238,6 +290,8 @@ def _provision_dependencies(request: _ProvisionRequest) -> ProvisionOutcome:
             torch. Off by default; the front door reports
             ``sync_pending`` regardless so the user knows the boundary.
         confirm: Optional confirmation callback for the torch step.
+        progress: Where the model and Qdrant fetches report while they run;
+            silent when omitted.
 
     Returns:
         A :class:`ProvisionOutcome` carrying one result per considered
@@ -252,6 +306,7 @@ def _provision_dependencies(request: _ProvisionRequest) -> ProvisionOutcome:
         assume_yes,
         sync_after,
         confirm,
+        progress,
     ) = (
         request.target,
         request.local_only,
@@ -261,6 +316,7 @@ def _provision_dependencies(request: _ProvisionRequest) -> ProvisionOutcome:
         request.assume_yes,
         request.sync_after,
         request.confirm,
+        request.progress,
     )
     skip = {s.lower() for s in (skip or set())}
     outcome = ProvisionOutcome(dry_run=dry_run)
@@ -281,14 +337,13 @@ def _provision_dependencies(request: _ProvisionRequest) -> ProvisionOutcome:
     )
 
     outcome.steps.append(
-        provision_models(
-            dry_run=dry_run,
-            skip=skip,
-        )
+        provision_models(dry_run=dry_run, skip=skip, progress=progress)
     )
 
     outcome.steps.append(
-        _provision_qdrant(dry_run=dry_run, skip=skip, local_only=local_only)
+        _provision_qdrant(
+            dry_run=dry_run, skip=skip, local_only=local_only, progress=progress
+        )
     )
 
     return outcome
@@ -444,96 +499,93 @@ def provision_models(
     *,
     dry_run: bool = False,
     skip: set[str] | None = None,
-) -> ProvisionStepResult:
-    """Ensure the configured embedding/reranker models are present.
+    progress: ProvisionProgress | None = None,
+) -> ModelsStepResult:
+    """Ensure the configured embedding and reranker models are cached.
 
-    Reuses the warmup snapshot-download path: for each configured repo
-    (dense, sparse, reranker) it checks the Hugging Face cache via
-    ``try_to_load_from_cache`` - the same idempotency probe the
-    ``server warmup`` verb uses - and downloads only the repos that are
-    absent. Idempotent: a fully-cached set reports ``unchanged`` with no
-    network; a download reports ``created``.
+    The model step of the front door, and the one way any command reaches the
+    model fetch: ``install``, ``server warmup``, and the preflight of
+    ``server start`` all call this. A client is answered ``skipped`` before
+    the cache is probed.
 
-    No GPU or model load happens here - this only fetches the snapshot
-    files, exactly like warmup's download loop, so it is safe to run in
-    a provisioning front door that must not touch the single GPU.
+    No model is constructed and no GPU is touched - only snapshot files are
+    fetched - so it is safe on a path that must not load torch.
 
     Args:
         dry_run: Report what would be fetched without touching the
             network.
         skip: When it contains ``"models"``, the step is opted out.
+        progress: Where to report the cache probe and each download while
+            they run; silent when omitted.
 
     Returns:
-        A :class:`ProvisionStepResult` in the shared sync vocabulary.
+        The step's outcome in the shared sync vocabulary, with one result per
+        configured repository when the cache was reached.
     """
     client = client_skip(ProvisionStep.MODELS)
     if client is not None:
-        return client
-    skip = {s.lower() for s in (skip or set())}
-    if ProvisionStep.MODELS in skip:
-        return ProvisionStepResult(
+        return ModelsStepResult(client.step, client.action, client.detail)
+    if ProvisionStep.MODELS in {s.lower() for s in (skip or set())}:
+        return ModelsStepResult(
             step=ProvisionStep.MODELS,
             action=ProvisionAction.SKIPPED,
             detail="model provisioning opted out",
         )
-    return _fetch_missing_models(dry_run=dry_run)
 
+    from ._model_fetch import fetch_models
 
-def _fetch_missing_models(*, dry_run: bool) -> ProvisionStepResult:
-    """Probe the cache for each configured repo and download the absent ones."""
-    try:
-        from huggingface_hub import (
-            snapshot_download,  # pyright: ignore[reportUnknownVariableType]  # huggingface_hub stubs partially unknown
-        )
-    except ImportError:
-        return ProvisionStepResult(
-            step=ProvisionStep.MODELS,
-            action=ProvisionAction.SKIPPED,
-            detail="huggingface_hub is not installed; cannot ensure models",
-        )
-
-    from .._sparse_profile import sparse_model_revision
-    from ..config._settings import configured_model_repos
-
-    repos = [repo for _label, repo in configured_model_repos()]
-
-    from .._model_cache import cached_snapshot_is_complete
-
-    missing = [repo for repo in repos if not cached_snapshot_is_complete(repo)]
-
-    if not missing:
-        return ProvisionStepResult(
-            step=ProvisionStep.MODELS,
-            action=ProvisionAction.UNCHANGED,
-            detail=f"all {len(repos)} model repos already cached",
-        )
-
-    if dry_run:
-        return ProvisionStepResult(
-            step=ProvisionStep.MODELS,
-            action=ProvisionAction.DRY_RUN,
-            detail=f"would download {len(missing)} missing model repo(s): "
-            + ", ".join(missing),
-        )
-
-    downloaded: list[str] = []
-    for repo in missing:
-        try:
-            snapshot_download(repo, revision=sparse_model_revision(repo), token=False)
-        except Exception as exc:
-            logger.error("model provisioning failed for %s: %s", repo, exc)
-            return ProvisionStepResult(
-                step=ProvisionStep.MODELS,
-                action=ProvisionAction.FAILED,
-                detail=f"failed to download {repo}: {exc}",
-            )
-        downloaded.append(repo)
-
-    return ProvisionStepResult(
+    fetched = fetch_models(dry_run=dry_run, progress=progress)
+    return ModelsStepResult(
         step=ProvisionStep.MODELS,
-        action=ProvisionAction.CREATED,
-        detail=f"downloaded {len(downloaded)} model repo(s): " + ", ".join(downloaded),
+        action=fetched.action,
+        detail=fetched.detail,
+        code=fetched.code,
+        repos=fetched.repos,
     )
+
+
+def ensure_runtime_dependencies(
+    *,
+    local_only: bool,
+    qdrant_auto_provision: bool,
+    progress: ProvisionProgress | None = None,
+) -> ProvisionOutcome:
+    """Fetch what a daemon needs and does not have, before it is spawned.
+
+    The narrower entry ``server start`` uses: the two fetch-and-go
+    dependencies, in the order the daemon needs them, through the same steps
+    ``install`` runs. Torch is not among them - the environment that runs the
+    daemon is judged, never changed, by a start. The sequence stops at the
+    first step that fails, so a host that cannot get its models is not also
+    sent to download a server it cannot use yet.
+
+    Args:
+        local_only: The on-disk store is selected, so no Qdrant server is
+            needed.
+        qdrant_auto_provision: Whether an absent Qdrant server may be
+            downloaded. Off, an absent server is a failure naming the install
+            command.
+        progress: Where the fetches report while they run; silent when
+            omitted.
+
+    Returns:
+        One result per step that ran, in order.
+    """
+    outcome = ProvisionOutcome()
+    models = provision_models(progress=progress)
+    outcome.steps.append(models)
+    if models.action == ProvisionAction.FAILED:
+        return outcome
+    outcome.steps.append(
+        _provision_qdrant(
+            dry_run=False,
+            skip=set(),
+            local_only=local_only,
+            auto_provision=qdrant_auto_provision,
+            progress=progress,
+        )
+    )
+    return outcome
 
 
 def _provision_qdrant(
@@ -541,12 +593,17 @@ def _provision_qdrant(
     dry_run: bool,
     skip: set[str],
     local_only: bool,
+    auto_provision: bool = True,
+    progress: ProvisionProgress | None = None,
 ) -> ProvisionStepResult:
-    """Delegate to the Qdrant runtime provisioner and map its action.
+    """Ensure a Qdrant server binary resolves and may run, fetching one if not.
 
-    Preserves the provisioner's verify-before-execute security contract
-    untouched. The provisioner already reports in the shared vocabulary,
-    so there is nothing to translate.
+    A binary that already resolves is checked against what its source holds it
+    to and left alone; that includes one the operator named, which is never
+    replaced by a download. Only when nothing resolves is the pinned release
+    provisioned, and only when ``auto_provision`` allows it. The provisioner's
+    verify-before-execute contract is untouched: it reports in the shared
+    vocabulary, so there is nothing to translate.
     """
     client = client_skip(ProvisionStep.QDRANT)
     if client is not None:
@@ -555,7 +612,8 @@ def _provision_qdrant(
         return ProvisionStepResult(
             step=ProvisionStep.QDRANT,
             action=ProvisionAction.SKIPPED,
-            detail="--local-only selected; using the on-disk store, no binary",
+            detail="the on-disk local-only store is selected; no Qdrant server "
+            "binary is needed",
         )
     if ProvisionStep.QDRANT in skip:
         return ProvisionStepResult(
@@ -563,8 +621,101 @@ def _provision_qdrant(
             action=ProvisionAction.SKIPPED,
             detail="qdrant binary provisioning opted out",
         )
+    present = _resolved_qdrant()
+    if present is not None:
+        return present
+    if not auto_provision:
+        return ProvisionStepResult(
+            step=ProvisionStep.QDRANT,
+            action=ProvisionAction.FAILED,
+            detail="the managed Qdrant server is not installed and automatic "
+            "download is switched off; run: vaultspec-rag server qdrant install",
+            code=QDRANT_MISSING,
+        )
+    return _download_qdrant(dry_run=dry_run, progress=progress)
 
-    report = provision_qdrant_binary(dry_run=dry_run)
+
+def _resolved_qdrant() -> ProvisionStepResult | None:
+    """Answer for a binary that already resolves, or ``None`` when none does.
+
+    The binary is held to its source's check here, in the foreground, so one
+    that may not run is refused where an operator sees the reason rather than
+    in the service log after the daemon has been spawned. An operator-supplied
+    binary is named as such in the detail: no committed pin vouches for it,
+    and that has to be visible wherever the outcome is shown.
+    """
+    from ..config._types import EnvVar
+    from ..qdrant_runtime._constants import BinarySource
+    from ..qdrant_runtime._resolve import (
+        QdrantBinaryError,
+        resolve_binary,
+        verify_resolved_binary,
+    )
+
+    try:
+        resolved = resolve_binary()
+        if resolved is None:
+            return None
+        verify_resolved_binary(resolved)
+    except QdrantBinaryError as exc:
+        return ProvisionStepResult(
+            step=ProvisionStep.QDRANT,
+            action=ProvisionAction.FAILED,
+            detail=str(exc),
+            code=exc.error,
+        )
+    if resolved.source is BinarySource.OPERATOR_SETTING:
+        detail = (
+            f"operator-supplied binary {resolved.path} (source: "
+            f"{resolved.source.value}, named by {EnvVar.QDRANT_BINARY.value}); "
+            "no checksum pin applies and it runs as named"
+        )
+    elif resolved.source.operator_supplied:
+        detail = (
+            f"operator-supplied binary {resolved.path} (source: "
+            f"{resolved.source.value}); verified against the digest recorded "
+            "when it was registered"
+        )
+    else:
+        detail = _qdrant_default_detail(ProvisionAction.UNCHANGED)
+    return ProvisionStepResult(
+        step=ProvisionStep.QDRANT,
+        action=ProvisionAction.UNCHANGED,
+        detail=detail,
+    )
+
+
+def _download_qdrant(
+    *, dry_run: bool, progress: ProvisionProgress | None
+) -> ProvisionStepResult:
+    """Provision the pinned release and confirm that it now resolves."""
+    from ..qdrant_runtime._resolve import resolve_binary
+
+    # A first-use provision downloads and verifies a native archive over the
+    # network, which is the longest stall a first start can hit. The stage line
+    # says it started; the provisioner's own lines carry the byte counts
+    # underneath it, so a slow link is distinguishable from a wedged one.
+    if progress is not None and not dry_run:
+        progress.stage("Downloading the Qdrant server (first use)...")
+    report = provision_qdrant_binary(
+        dry_run=dry_run, on_progress=None if progress is None else progress.stage
+    )
+    if report.action == ProvisionAction.FAILED:
+        return ProvisionStepResult(
+            step=ProvisionStep.QDRANT,
+            action=ProvisionAction.FAILED,
+            detail=report.message,
+            code=QDRANT_PROVISION_FAILED,
+        )
+    if report.action != ProvisionAction.DRY_RUN and resolve_binary() is None:
+        return ProvisionStepResult(
+            step=ProvisionStep.QDRANT,
+            action=ProvisionAction.FAILED,
+            detail="provisioning reported success but no Qdrant server binary "
+            "resolves afterwards; run: vaultspec-rag server qdrant install "
+            "--upgrade",
+            code=QDRANT_PROVISION_FAILED,
+        )
     return ProvisionStepResult(
         step=ProvisionStep.QDRANT,
         action=report.action,

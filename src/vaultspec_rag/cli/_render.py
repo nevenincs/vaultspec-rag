@@ -56,6 +56,7 @@ __all__ = [
     "_plain_line",
     "_print_next_action",
     "_render_install_report",
+    "_render_provisioning_outcome",
     "_render_uninstall_report",
     "_styled",
     "lifecycle_style",

@@ -1,10 +1,11 @@
 """``server start``: spawn, guard, and await the background search service.
 
-Owns the start path end to end: the qdrant-binary and machine-singleton
-preconditions, the GPU pre-flight of the daemon interpreter, the idempotent
-"already running" success, the spawn, and the health-wait that emits the
-terminal outcome. Every terminal branch converges on ``_start_success`` /
-``_fail_start`` so a broker in ``--json`` mode reads exactly one envelope.
+Owns the start path end to end: the idempotent "already running" success, the
+installation-role and machine-singleton preconditions, the GPU pre-flight of
+the daemon interpreter, the foreground fetch of the model files and the Qdrant
+server, the spawn, and the health-wait that emits the terminal outcome. Every
+terminal branch converges on ``_start_success`` / ``_fail_start`` so a broker
+in ``--json`` mode reads exactly one envelope.
 """
 
 from __future__ import annotations
@@ -21,6 +22,8 @@ from typer.core import TyperCommand, TyperOption
 if TYPE_CHECKING:
     import typer
     from typer._click import Context as ClickContext
+
+    from ..commands._provision import ProvisionStepResult
 
     # Click types ``Context.params`` as ``dict[str, Any]`` because the keys
     # and value types are only known once a command's options are parsed at
@@ -323,78 +326,6 @@ class _ServiceStartCommand(TyperCommand):
         )
 
 
-def _ensure_qdrant_binary(
-    *,
-    auto_provision: bool,
-    json_mode: bool = False,
-    progress: StartupStatusReporter | None = None,
-) -> None:
-    """Make sure a server-mode start has a Qdrant server to run, or fail.
-
-    Starting the service is the consent to fetch what it needs, so an absent
-    server is downloaded and verified here, in the foreground, where the
-    transfer and any failure are visible. With ``auto_provision`` off an absent
-    server prints the exact install command and exits non-zero instead.
-
-    A binary the operator named is never replaced by a download: a setting that
-    names something unusable is a failure in its own right, because falling
-    through would run a different server than the one asked for. Every outcome
-    that stops the start is one start envelope in ``--json`` mode.
-    """
-    from .._sync_vocabulary import ProvisionAction
-    from ..commands._provision import provision_qdrant_binary
-    from ..qdrant_runtime._resolve import QdrantBinaryError, resolve_binary
-
-    try:
-        resolved = resolve_binary()
-    except QdrantBinaryError as exc:
-        raise _fail_start(
-            json_mode,
-            error=exc.error,
-            message="Service start failed",
-            human_lines=(str(exc),),
-            detail=str(exc),
-        ) from exc
-    if resolved is not None:
-        return
-    if not auto_provision:
-        raise _fail_start(
-            json_mode,
-            error="qdrant_missing",
-            message="Service start failed",
-            human_lines=(
-                "Qdrant server mode needs the managed Qdrant server, "
-                "which is not installed.",
-                "Run: vaultspec-rag server qdrant install",
-                "(or re-run with --qdrant-auto-provision to download it now)",
-                "Local-only option: vaultspec-rag server start --local-only",
-            ),
-        )
-    # A first-use provision downloads and verifies a native archive over the
-    # network, which is the longest stall a first start can hit. The stage line
-    # says it started; the callback carries the byte counts underneath it, so a
-    # slow link is distinguishable from a wedged one.
-    if progress is not None:
-        progress.stage("Downloading the Qdrant server (first use)...")
-        report = provision_qdrant_binary(on_progress=progress.stage)
-    else:
-        report = provision_qdrant_binary()
-    if report.action == ProvisionAction.FAILED or resolve_binary() is None:
-        raise _fail_start(
-            json_mode,
-            error="qdrant_provision_failed",
-            message="Service start failed",
-            human_lines=(f"Qdrant install failed: {report.message}",),
-            detail=str(report.message),
-        )
-    if not json_mode:
-        _print_lifecycle_lines(
-            "Installed Qdrant server",
-            f"Version: {report.version}",
-            f"Install: {report.binary}",
-        )
-
-
 def _auto_provision_enabled(flag: bool | None) -> bool:
     """Whether this start may download a missing Qdrant server.
 
@@ -410,17 +341,65 @@ def _ensure_start_dependencies(
 ) -> None:
     """Fetch what the daemon needs and does not have, before it is spawned.
 
+    Starting the service is the consent to fetch what it needs, so the model
+    files and the Qdrant server are ensured here, in the foreground, through
+    the same provisioning front door ``install`` uses: the transfer and any
+    failure are visible, where a daemon fetching on its own shows only a
+    warm-up that never ends. The daemon still loads its models online-capable,
+    as the backstop for a start that did not come through this command.
+
     Server mode is the default backend, so the Qdrant server is ensured by
     default. ``--local-only`` (and an explicit ``--no-qdrant``) select the
-    on-disk store and never touch the server at all.
+    on-disk store and never touch the server at all. Every outcome that stops
+    the start is one start envelope in ``--json`` mode.
     """
-    if options.local_only or options.qdrant is False:
-        return
-    progress.stage("Checking the Qdrant server binary...")
-    _ensure_qdrant_binary(
-        auto_provision=_auto_provision_enabled(options.qdrant_auto_provision),
-        json_mode=options.json_mode,
-        progress=progress,
+    from .._sync_vocabulary import ProvisionAction
+    from ..commands._provision import ensure_runtime_dependencies
+    from ._provision_progress import ReporterProvisionProgress
+    from ._render import _render_provisioning_outcome
+
+    progress.stage("Checking the model files and the Qdrant server...")
+    with ReporterProvisionProgress(progress) as sink:
+        outcome = ensure_runtime_dependencies(
+            local_only=options.local_only or options.qdrant is False,
+            qdrant_auto_provision=_auto_provision_enabled(
+                options.qdrant_auto_provision
+            ),
+            progress=sink,
+        )
+    for step in outcome.steps:
+        if step.action == ProvisionAction.FAILED:
+            raise _fail_start_dependency(step, json_mode=options.json_mode)
+    if not options.json_mode:
+        _render_provisioning_outcome(outcome)
+
+
+def _fail_start_dependency(step: ProvisionStepResult, *, json_mode: bool) -> typer.Exit:
+    """Render the start failure for a dependency that could not be ensured.
+
+    The step's own code names the failure, so a broker tells a declined
+    download from a failed one from a binary that may not run. An absent
+    server with downloading switched off keeps the longer wording that names
+    every way forward; every other failure already carries its remedy.
+    """
+    from ..commands._provision import QDRANT_MISSING
+
+    human_lines: tuple[str, ...] = (step.detail,)
+    if step.code == QDRANT_MISSING:
+        human_lines = (
+            "Qdrant server mode needs the managed Qdrant server, "
+            "which is not installed.",
+            "Run: vaultspec-rag server qdrant install",
+            "(or re-run with --qdrant-auto-provision to download it now)",
+            "Local-only option: vaultspec-rag server start --local-only",
+        )
+    return _fail_start(
+        json_mode,
+        error=step.code or "dependency_unavailable",
+        message="Service start failed",
+        human_lines=human_lines,
+        detail=step.detail,
+        step=str(step.step),
     )
 
 

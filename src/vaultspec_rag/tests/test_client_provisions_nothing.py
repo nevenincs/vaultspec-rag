@@ -11,14 +11,18 @@ suite, so the client branch is exercised on a GPU workstation too. The
 provisioner's network half is replaced by a recording tripwire that is never
 supposed to be reached; it exists for the regressed run, which would otherwise
 download the pinned release and - on the start path - go on to spawn a daemon.
-What each test asserts is the real outcome: the report the command gives a
-client, and a managed directory with nothing new in it.
+The model cache is an empty directory the test owns, with the hub's offline
+switch set, so every model is missing and a regressed run fails loudly rather
+than fetching gigabytes. What each test asserts is the real outcome: the
+report the command gives a client, and a managed directory and a model cache
+with nothing new in them.
 """
 
 from __future__ import annotations
 
 import json
 import socket
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -27,11 +31,16 @@ from .._sync_vocabulary import ProvisionAction
 from ..commands._install import install_run
 from ..commands._provision import ProvisionStep
 from ..config._paths import read_persisted_local_only
+from ..config._settings import configured_model_repos
+from ..config._types import EnvVar
 from ..operator_state._installation import ComputeCapability
 from ._cli_helpers import app, runner
+from ._model_cache_seed import seed_model_cache
 from ._qdrant_provision_seam import substitute_qdrant_download
+from .conftest import managed_env
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("client_installation")]
@@ -51,10 +60,29 @@ def _tree(root: Path) -> list[str]:
     return sorted(path.relative_to(root).as_posix() for path in root.rglob("*"))
 
 
-def _free_port() -> int:
+@contextmanager
+def _occupied_port() -> Generator[int]:
+    """Hold a real listening socket and yield its port."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
+        sock.listen(1)
+        yield int(sock.getsockname()[1])
+
+
+@pytest.fixture(autouse=True)
+def empty_model_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> Generator[Path]:
+    """An empty model cache with the hub offline, for every test here.
+
+    Every configured model is missing from it, so a command that wrongly
+    reached the model fetch would have something to download - and, offline,
+    fails instead. Yields the cache directory so a test can assert nothing
+    appeared in it.
+    """
+    with managed_env(**{EnvVar.HF_HUB_OFFLINE.value: "1"}):
+        every_repo = [repo for _label, repo in configured_model_repos()]
+        yield seed_model_cache(monkeypatch, tmp_path / "hf-cache", missing=every_repo)
 
 
 def test_start_is_refused_before_anything_is_provisioned(
@@ -62,36 +90,35 @@ def test_start_is_refused_before_anything_is_provisioned(
     isolated_singleton_dirs: Path,
     tmp_path: Path,
 ) -> None:
-    """``server start`` judges the role before it looks for the binary.
+    """``server start`` judges the role before it does anything else.
 
-    The download is asked for explicitly, so the provisioner is what a start
-    that got past the role would reach next. Two things stand in its way: the
-    start command's own refusal, and the provisioning front door, which
-    declines to fetch for a client whoever asks.
+    The start is aimed at a port something else holds. The port guard is the
+    first thing after the role, and everything a start fetches or spawns comes
+    after the guard, so a client that is refused as a client - rather than for
+    the port - was judged before any of it. The occupied port is also what
+    keeps a regressed run from going on to spawn a daemon on this machine.
 
-    Mutation check: with the refusal removed from the start command alone,
-    this host's accelerator probe passes and the binary check runs; the front
-    door still fetches nothing, so the start fails as
-    ``qdrant_provision_failed`` and the error assertion catches it. With the
-    front door's client answer disabled as well, the tripwire is reached and
-    the ``calls`` assertion fails with ``['provision']``. Restoring both
+    Mutation check: with the refusal removed from the start command, or moved
+    after the dependency fetch, the start reaches the port guard first and
+    fails as ``port_in_use`` - failing the error assertion. Restoring it
     passes.
     """
     del isolated_singleton_dirs
     calls = substitute_qdrant_download(monkeypatch, succeeds=False)
     before = _tree(tmp_path)
 
-    result = runner.invoke(
-        app,
-        [
-            "server",
-            "start",
-            "--json",
-            "--qdrant-auto-provision",
-            "--port",
-            str(_free_port()),
-        ],
-    )
+    with _occupied_port() as port:
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "start",
+                "--json",
+                "--qdrant-auto-provision",
+                "--port",
+                str(port),
+            ],
+        )
 
     assert calls == [], "a client start reached the Qdrant provisioner"
     assert _tree(tmp_path) == before
@@ -106,6 +133,7 @@ def test_start_is_refused_before_anything_is_provisioned(
 def test_install_provisions_nothing_with_every_step_left_on(
     monkeypatch: pytest.MonkeyPatch,
     isolated_singleton_dirs: Path,
+    empty_model_cache: Path,
     tmp_path: Path,
 ) -> None:
     """``install`` with no opt-out at all still fetches nothing for a client.
@@ -115,7 +143,8 @@ def test_install_provisions_nothing_with_every_step_left_on(
 
     Mutation check: with the front door's client answer disabled, the Qdrant
     step reaches the tripwire - failing the ``calls`` assertion with
-    ``['provision']``. Restoring it passes.
+    ``['provision']`` - and the model step reports the offline failure in
+    place of the not-needed answer. Restoring it passes.
     """
     workspace = tmp_path / "client"
     workspace.mkdir()
@@ -135,23 +164,27 @@ def test_install_provisions_nothing_with_every_step_left_on(
         assert result.action == ProvisionAction.SKIPPED, result
         assert _NOT_NEEDED in result.detail, result
     assert _tree(isolated_singleton_dirs) == before
+    assert _tree(empty_model_cache) == []
     assert read_persisted_local_only() is None
 
 
-def test_warmup_reports_models_as_not_needed_and_fetches_none() -> None:
+def test_warmup_reports_models_as_not_needed_and_fetches_none(
+    empty_model_cache: Path,
+) -> None:
     """``server warmup`` answers a client before it loads anything.
 
-    The announcement line is what the fetch loop prints first, so its absence
-    is the evidence that no repository was probed or downloaded.
+    The announcement line is what the fetch prints first, so its absence is
+    the evidence that no repository was probed or downloaded.
 
-    Mutation check: with the client answer removed from the verb, this host
-    loads its accelerator and walks the model list - failing the not-needed
-    assertion. Restoring it passes.
+    Mutation check: with the front door's client answer disabled, this host
+    loads its accelerator and walks the model list, which is all missing with
+    the hub offline - failing the not-needed assertion. Restoring it passes.
     """
     result = runner.invoke(app, ["server", "warmup"])
 
     assert _NOT_NEEDED in result.output, result.output
     assert "Model warmup" not in result.output
+    assert _tree(empty_model_cache) == []
     assert result.exit_code == 0, result.output
 
 

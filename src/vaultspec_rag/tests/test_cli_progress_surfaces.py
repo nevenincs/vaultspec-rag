@@ -24,18 +24,17 @@ import contextlib
 import io
 import json
 import re
+import time
 import urllib.error
 import zipfile
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import pytest
-import typer
 from typer.testing import CliRunner
 
 from ..cli._core import _build_console
 from ..cli._hf_progress import SnapshotProgress
 from ..cli._progress import StartupStatusReporter
-from ._qdrant_provision_seam import substitute_qdrant_download
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -361,6 +360,60 @@ class TestModelWarmupProgress:
 
         assert buffer.getvalue() == ""
 
+    def test_the_provisioning_sink_reports_a_download_through_the_reporter(self):
+        """The sink every fetching command hands the front door carries the counts.
+
+        ``install``, ``server start`` and ``server warmup`` all report a model
+        download through this one object, so this is the path the hub's bars
+        actually take in production rather than a tracker built by hand.
+        """
+        from ..cli._provision_progress import ReporterProvisionProgress
+
+        buffer = io.StringIO()
+        reporter = _reporter(buffer, interactive=False)
+        with (
+            ReporterProvisionProgress(reporter) as sink,
+            sink.download("Downloading Dense (1/3)") as bar_class,
+        ):
+            assert bar_class is not None, "premise: tqdm ships with the hub"
+            transfer = _byte_bar(bar_class, desc="Downloading bytes")
+            _seed_totals([transfer], [3 * _MIB])
+            # The sink builds its tracker with the production emit interval,
+            # which exists so a per-chunk counter does not repaint per chunk.
+            # Constructing the bar reported once; the count has to arrive
+            # after that interval to be reported at all.
+            time.sleep(0.3)
+            transfer.update(_MIB)
+
+        plain = _plain(buffer.getvalue())
+        assert "Downloading Dense (1/3)..." in plain
+        assert "1.0 MiB of 3.0 MiB" in plain
+
+    def test_the_provisioning_sink_draws_nothing_until_it_reports(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """No live region opens before provisioning has something to say.
+
+        ``install`` asks its questions before it provisions, and a region
+        already animating would be drawn over the prompt. Entering the sink
+        therefore writes nothing, and the first report is what opens it.
+
+        Mutation check: with the region opened on entry, the terminal has
+        already been written to when the first assertion runs, and it fails;
+        restoring the lazy open passes.
+        """
+        from ..cli._provision_progress import ReporterProvisionProgress
+
+        monkeypatch.setenv("TERM", "xterm-256color")
+        buffer = io.StringIO()
+        reporter = _reporter(buffer, interactive=True)
+        with ReporterProvisionProgress(reporter) as sink:
+            assert buffer.getvalue() == "", "a live region opened before any report"
+            sink.stage("Checking the cache for Dense (1/3)")
+            assert _SPINNER_RE.search(buffer.getvalue()) is not None
+
+        assert "Checking the cache for Dense (1/3)" in _plain(buffer.getvalue())
+
 
 def _zip_archive(path: Path, member: str, payload: bytes) -> Path:
     """Write a one-member zip, the shape the Windows release asset has."""
@@ -511,19 +564,13 @@ class TestQdrantProvisionProgress:
         assert "Installing the managed Qdrant server" not in result.output
 
 
-@pytest.mark.usefixtures("inference_host")
-class TestStartPathProvisionProgress:
-    """The first-use provision a ``server start`` triggers on its own.
+class TestProvisionerIsReachedAtCallTime:
+    """The condition every interception of the Qdrant provisioner rests on.
 
-    The seam that carries provisioning progress and the reporter that renders
-    it each have their own coverage above. What is proven here is the wiring
-    between them on the start path, which is the only place a provision runs
-    unattended - and therefore the only place a silent one reads as a hung
-    start rather than as a command the operator chose to run.
-
-    Pinned to a host installation because only a host provisions: the lane
-    without the inference stack would otherwise be answered ``skipped`` and
-    never reach the provisioner these tests observe.
+    The wiring between a start and its provisioning progress is driven in the
+    start-provisioning module; what is held here is the one structural fact
+    that makes that drive, and every other substitution of the provisioner,
+    mean anything.
     """
 
     def test_the_provision_symbol_is_resolved_at_call_time(self):
@@ -542,66 +589,6 @@ class TestStartPathProvisionProgress:
 
         for module in (_service_start, _service_qdrant, front_door):
             assert not hasattr(module, "provision"), module.__name__
-
-    def test_provisioning_progress_reaches_the_operator(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        isolated_status_dir: Path,
-        capsys: pytest.CaptureFixture[str],
-    ):
-        """A first-use download reports its bytes through the start reporter."""
-        from ..cli._service_start import _ensure_qdrant_binary
-        from ..qdrant_runtime._resolve import resolve_binary
-
-        del isolated_status_dir
-        assert resolve_binary() is None, (
-            "premise: no binary may already resolve, or the guard returns "
-            "before it ever provisions"
-        )
-        calls = substitute_qdrant_download(monkeypatch, succeeds=True)
-
-        buffer = io.StringIO()
-        reporter = _reporter(buffer, interactive=False)
-        with reporter:
-            _ensure_qdrant_binary(auto_provision=True, progress=reporter)
-
-        assert calls == ["provision"], "the interception was never reached"
-        # Two sinks because production uses two: the byte-level progress goes to
-        # the reporter, and the completion line to the shared console. Reading
-        # each where it is actually written keeps the shared console untouched.
-        plain = _plain(buffer.getvalue())
-        assert "4.0 MiB of 31.0 MiB" in plain
-        assert "Verifying the Qdrant download checksum" in plain
-        assert "Installed Qdrant server" in _plain(capsys.readouterr().out)
-
-    def test_a_failed_provision_stays_one_envelope_in_json_mode(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        isolated_status_dir: Path,
-        capsys: pytest.CaptureFixture[str],
-    ):
-        """The broker channel carries the fault, and no progress beside it."""
-        from ..cli._service_start import _ensure_qdrant_binary
-        from ..qdrant_runtime._resolve import resolve_binary
-
-        del isolated_status_dir
-        assert resolve_binary() is None, "premise: nothing is installed yet"
-        calls = substitute_qdrant_download(monkeypatch, succeeds=False)
-
-        reporter = StartupStatusReporter(json_mode=True, interactive=False)
-        with reporter, pytest.raises(typer.Exit) as exit_info:
-            _ensure_qdrant_binary(
-                auto_provision=True, json_mode=True, progress=reporter
-            )
-
-        assert calls == ["provision"], "the interception was never reached"
-        assert exit_info.value.exit_code == 1
-        captured = capsys.readouterr()
-        payload = cast("dict[str, object]", json.loads(captured.out))
-        assert payload["ok"] is False
-        assert payload["error"] == "qdrant_provision_failed"
-        assert "Downloading the Qdrant server" not in captured.out
-        assert "Downloading the Qdrant server" not in captured.err
 
 
 class TestReconcileProgress:

@@ -1,15 +1,19 @@
 """What a host ``server start`` fetches before it spawns the daemon.
 
 Starting the service is the consent to fetch what it needs, so a host with no
-Qdrant server downloads one unless the operator switched that off. These tests
-drive the step that makes that decision - the options the command parsed, the
-configured switch, and the binary that resolves - without the accelerator
-probe that precedes it or the spawn that follows it.
+model files or no Qdrant server gets them in the foreground, unless the
+operator switched the server download off. These tests drive the step that
+does that - the options the command parsed, the configured switch, the model
+cache, and the binary that resolves - without the accelerator probe that
+precedes it or the spawn that follows it.
 
 Pinned to a host installation: only a host provisions, and the client side of
-every command has its own module. The provisioner's network half is the shared
-recording substitute, so "was a download attempted" is observable and a
-regressed run never reaches the network.
+every command has its own module. Two things are staged so the outcome does
+not depend on the machine. The model cache is a directory the test seeds, read
+by the product's own completeness probe, with the hub's offline switch set so
+nothing can be downloaded into it. The Qdrant provisioner's network half is
+the shared recording substitute, so "was a download attempted" is observable
+and a regressed run never reaches the network.
 """
 
 from __future__ import annotations
@@ -31,15 +35,18 @@ from ..cli._service_start import (
 from ..config._types import EnvVar
 from ..qdrant_runtime._resolve import resolve_binary
 from ._cli_helpers import app, runner
+from ._model_cache_seed import seed_model_cache
 from ._qdrant_provision_seam import substitute_qdrant_download
 from .conftest import managed_env
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("inference_host")]
 
 _SWITCH = EnvVar.QDRANT_AUTO_PROVISION.value
+_ABSENT_MODEL = "vaultspec-test/absent-reranker"
 
 
 def _options(
@@ -62,15 +69,20 @@ def _options(
     )
 
 
-def _quiet_reporter(*, json_mode: bool = False) -> StartupStatusReporter:
+def _reporter_into(
+    buffer: io.StringIO, *, json_mode: bool = False
+) -> StartupStatusReporter:
     return StartupStatusReporter(
         json_mode=json_mode,
-        console=_build_console(interactive=False, file=io.StringIO()),
+        console=_build_console(interactive=False, file=buffer),
         interactive=False,
+        static_interval_s=0.0,
     )
 
 
-def _exit_code_of(options: _ServiceStartOptions) -> int | None:
+def _exit_code_of(
+    options: _ServiceStartOptions, *, progress: io.StringIO | None = None
+) -> int | None:
     """Run the step and return the exit code it stopped with, if it stopped.
 
     Returned rather than expected through ``pytest.raises`` so a test can
@@ -78,8 +90,9 @@ def _exit_code_of(options: _ServiceStartOptions) -> int | None:
     step that wrongly went on to provision also does not exit, and the test
     should fail on the download it was written to forbid.
     """
+    buffer = io.StringIO() if progress is None else progress
     try:
-        with _quiet_reporter(json_mode=options.json_mode) as reporter:
+        with _reporter_into(buffer, json_mode=options.json_mode) as reporter:
             _ensure_start_dependencies(options, reporter)
     except typer.Exit as stopped:
         return stopped.exit_code
@@ -87,8 +100,26 @@ def _exit_code_of(options: _ServiceStartOptions) -> int | None:
 
 
 @pytest.fixture
-def empty_managed_dir(isolated_status_dir: Path) -> Path:
-    """An isolated managed directory in which no Qdrant server resolves."""
+def offline_hub() -> Generator[None]:
+    """Set the hub's offline switch, so no test here can start a download."""
+    with managed_env(**{EnvVar.HF_HUB_OFFLINE.value: "1"}):
+        yield
+
+
+@pytest.fixture
+def host_with_models(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    isolated_status_dir: Path,
+    offline_hub: None,
+) -> Path:
+    """A host whose models are all cached and whose managed directory is empty.
+
+    The state every Qdrant decision below starts from: the model step has
+    nothing to do, and no Qdrant server resolves.
+    """
+    del offline_hub
+    seed_model_cache(monkeypatch, tmp_path / "hf-cache")
     assert resolve_binary() is None, (
         "premise: nothing may already resolve, or the step returns before it "
         "decides anything"
@@ -122,7 +153,7 @@ class TestTheSwitch:
         assert "--no-qdrant-auto-provision" in flattened
 
 
-@pytest.mark.usefixtures("empty_managed_dir")
+@pytest.mark.usefixtures("host_with_models")
 class TestAHostStartWithNoServer:
     """The decision a start makes when no Qdrant server resolves."""
 
@@ -131,10 +162,11 @@ class TestAHostStartWithNoServer:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """No flag and no setting: the download happens.
+        """No flag and no setting: the download happens, and is reported.
 
         This is the default command on a machine that has never provisioned
-        anything, which used to stop and print an install command.
+        anything, which used to stop and print an install command. The outcome
+        is rendered in the words ``install`` uses for the same two steps.
         """
         calls = substitute_qdrant_download(monkeypatch, succeeds=True)
 
@@ -143,7 +175,30 @@ class TestAHostStartWithNoServer:
 
         assert calls == ["provision"]
         assert exit_code is None
-        assert "Installed Qdrant server" in capsys.readouterr().out
+        output = capsys.readouterr().out
+        assert "Models: already present" in output
+        assert "Qdrant binary: downloaded" in output
+
+    def test_download_progress_reaches_the_operator(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A first-use download reports its bytes through the start reporter.
+
+        The only place a provision runs unattended, and so the only place a
+        silent one reads as a hung start rather than as a command the operator
+        chose to run.
+        """
+        calls = substitute_qdrant_download(monkeypatch, succeeds=True)
+        progress = io.StringIO()
+
+        with managed_env(**{_SWITCH: None}):
+            exit_code = _exit_code_of(_options(), progress=progress)
+
+        assert calls == ["provision"], "the interception was never reached"
+        assert exit_code is None
+        reported = progress.getvalue()
+        assert "4.0 MiB of 31.0 MiB" in reported
+        assert "Verifying the Qdrant download checksum" in reported
 
     def test_the_setting_restores_the_install_instruction(
         self,
@@ -174,7 +229,7 @@ class TestAHostStartWithNoServer:
     ) -> None:
         """``--no-qdrant-auto-provision`` is one envelope and no download.
 
-        Mutation check: with the flag dropped on the way to the binary check,
+        Mutation check: with the flag dropped on the way to the front door,
         the allowing setting wins, the substitute is reached, and the
         ``calls`` assertion fails with ``['provision']``; restoring it passes.
         """
@@ -212,13 +267,14 @@ class TestAHostStartWithNoServer:
         self,
         monkeypatch: pytest.MonkeyPatch,
         selection: dict[str, bool],
-        empty_managed_dir: Path,
+        host_with_models: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """Neither opt-out fetches the server, and neither fails for lacking it.
 
-        Mutation check: with the on-disk selection ignored, both shapes reach
-        the substitute and fail the ``calls`` assertion with ``['provision']``;
-        restoring the early return passes.
+        Mutation check: with the on-disk selection not passed to the front
+        door, both shapes reach the substitute and fail the ``calls``
+        assertion with ``['provision']``; restoring it passes.
         """
         calls = substitute_qdrant_download(monkeypatch, succeeds=True)
 
@@ -227,7 +283,8 @@ class TestAHostStartWithNoServer:
 
         assert calls == [], "the on-disk store reached the Qdrant provisioner"
         assert exit_code is None
-        assert not any(empty_managed_dir.iterdir())
+        assert not any(host_with_models.iterdir())
+        assert "Qdrant binary: skipped" in capsys.readouterr().out
 
     def test_a_failed_download_is_one_envelope_and_no_progress_text(
         self,
@@ -252,28 +309,57 @@ class TestAHostStartWithNoServer:
         assert payload["error"] == "qdrant_provision_failed"
         data = cast("dict[str, object]", payload["data"])
         assert data["detail"] == "SHA256 mismatch for the release archive"
+        assert data["step"] == "qdrant"
         assert "Downloading the Qdrant server" not in captured.out
         assert "Downloading the Qdrant server" not in captured.err
 
 
+@pytest.mark.usefixtures("host_with_models")
 class TestAnOperatorNamedBinary:
     """A binary the operator named is used as named, or the start fails."""
+
+    def test_an_operator_binary_is_announced_and_nothing_is_downloaded(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """The console says the server is operator-supplied, not only the log.
+
+        No committed pin vouches for such a binary, so a start that uses one
+        has to say so where the operator is looking.
+
+        Mutation check: with the operator-supplied wording dropped from the
+        resolved binary's detail, the announcement assertion fails; restoring
+        it passes.
+        """
+        calls = substitute_qdrant_download(monkeypatch, succeeds=False)
+        supplied = tmp_path / "operator-qdrant"
+        supplied.write_bytes(b"operator supplied")
+
+        with managed_env(**{EnvVar.QDRANT_BINARY.value: str(supplied)}):
+            exit_code = _exit_code_of(_options())
+
+        assert calls == [], "an operator binary was replaced by a download"
+        assert exit_code is None
+        announced = " ".join(capsys.readouterr().out.split())
+        assert "operator-supplied binary" in announced
+        assert "source: env" in announced
+        assert EnvVar.QDRANT_BINARY.value in announced
 
     def test_an_unusable_setting_is_one_envelope_and_never_a_download(
         self,
         monkeypatch: pytest.MonkeyPatch,
-        isolated_status_dir: Path,
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """The operator asked for one server and must not silently get another.
 
-        Mutation check: with the refusal swallowed and treated as "nothing
-        resolved", the start goes on to provision, the substitute is reached,
-        and the ``calls`` assertion fails with ``['provision']``; restoring the
-        failure passes.
+        Mutation check: with the resolver's refusal swallowed and treated as
+        "nothing resolved", the start goes on to provision, the substitute is
+        reached, and the ``calls`` assertion fails with ``['provision']``;
+        restoring the failure passes.
         """
-        del isolated_status_dir
         calls = substitute_qdrant_download(monkeypatch, succeeds=False)
         missing = tmp_path / "no-such-qdrant"
 
@@ -288,3 +374,78 @@ class TestAnOperatorNamedBinary:
         data = cast("dict[str, object]", payload["data"])
         assert EnvVar.QDRANT_BINARY.value in str(data["detail"])
         assert str(missing) in str(data["detail"])
+
+    def test_a_managed_install_that_fails_its_digest_stops_the_start(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A tampered install fails on the console, before any daemon exists.
+
+        The daemon would refuse the same binary at spawn, but only in its log.
+        The substitute's successful run leaves an install whose executable
+        matches no committed digest, which is exactly the state under test.
+
+        Mutation check: with the foreground verification removed, the second
+        start accepts the install and exits cleanly, failing the exit-code
+        assertion; restoring it passes.
+        """
+        calls = substitute_qdrant_download(monkeypatch, succeeds=True)
+        with managed_env(**{_SWITCH: "1"}):
+            assert _exit_code_of(_options()) is None
+            assert resolve_binary() is not None, "premise: an install now resolves"
+            capsys.readouterr()
+
+            exit_code = _exit_code_of(_options(json_mode=True))
+
+        assert calls == ["provision"], "the unverified install was replaced unasked"
+        assert exit_code == 1
+        payload = cast("dict[str, object]", json.loads(capsys.readouterr().out))
+        assert payload["error"] == "qdrant_binary_unverified"
+        data = cast("dict[str, object]", payload["data"])
+        assert "server qdrant install --upgrade" in str(data["detail"])
+
+
+class TestModelsComeFirst:
+    """The model files are ensured before the server, and offline is loud."""
+
+    def test_a_missing_model_with_the_hub_offline_stops_the_start(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        isolated_status_dir: Path,
+        offline_hub: None,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Offline with a model missing stops the start, with the remedy.
+
+        A daemon spawned in this state would sit in its warm-up until the
+        start timed out. The missing repository is one that exists nowhere,
+        so nothing a regression did could fetch it. That the fetch attempts no
+        download offline is the model-fetch module's own guard; what is held
+        here is that the failure stops the sequence before the server.
+
+        Mutation check: with a failed model step no longer ending the
+        sequence, or with the model step moved after the Qdrant step, the
+        substitute is reached and the ``calls`` assertion fails with
+        ``['provision']``. Restoring each passes.
+        """
+        del isolated_status_dir, offline_hub
+        calls = substitute_qdrant_download(monkeypatch, succeeds=False)
+
+        with managed_env(**{EnvVar.RERANKER_MODEL.value: _ABSENT_MODEL, _SWITCH: "1"}):
+            seed_model_cache(
+                monkeypatch, tmp_path / "hf-cache", missing=[_ABSENT_MODEL]
+            )
+            exit_code = _exit_code_of(_options(json_mode=True))
+
+        assert calls == [], "the server was fetched for a host with no models"
+        assert exit_code == 1
+        payload = cast("dict[str, object]", json.loads(capsys.readouterr().out))
+        assert payload["error"] == "models_offline"
+        data = cast("dict[str, object]", payload["data"])
+        assert data["step"] == "models"
+        detail = str(data["detail"])
+        assert _ABSENT_MODEL in detail
+        assert EnvVar.HF_HUB_OFFLINE.value in detail
+        assert "vaultspec-rag server warmup" in detail

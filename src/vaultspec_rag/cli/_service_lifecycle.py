@@ -10,25 +10,14 @@ gone. ``cli.__init__`` registers the verb modules for their decorators.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
 
 import typer
 
-import vaultspec_rag.cli as _cli
-
-from .._model_cache import cached_snapshot_is_complete
-from .._sparse_profile import sparse_model_revision
-from ..config._settings import configured_model_repos, get_config
-from ..config._types import EnvVar
 from ._app import server_root_app
 from ._gpu_errors import _handle_gpu_error
 from ._progress import StartupStatusReporter
 from ._render import _emit_json, _plain
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 __all__ = [
     "_LifecycleFailure",
@@ -149,63 +138,6 @@ def _should_unlink_discovery_file(pid_alive: bool) -> bool:
     return not pid_alive
 
 
-def _warmup_failure_detail(repo_id: str, exc: Exception) -> str:
-    """Explain a failed model fetch as an operator-actionable line.
-
-    The cache location comes from the config rather than a default spelled
-    inline: an operator who set ``HF_HOME`` was previously sent to the
-    library's default directory to clean up a partial download that is not
-    there.
-    """
-    cache = get_config().hf_cache_location
-    return f"{repo_id} failed: {exc} (partial cache may remain in {cache})"
-
-
-@dataclass(frozen=True, slots=True)
-class _WarmupFetchRequest:
-    download: Callable[..., object]
-    progress: StartupStatusReporter
-    repo_id: str
-    label: str
-    position: int
-    total: int
-
-
-def _warmup_fetch_model(request: _WarmupFetchRequest) -> str:
-    """Fetch one model repo with live progress; return its result line.
-
-    The fetch is minutes long and its size is known to the hub, so the stage
-    names WHICH repo of how many is running and the tracker turns the hub's own
-    counters into bytes-of-bytes. Every failure is reported and none aborts the
-    remaining models: a warmup that stops at the first unavailable repo leaves the
-    operator re-running it to discover the next one.
-    """
-    from ._hf_progress import SnapshotProgress
-
-    download, progress, repo_id, label, position, total = (
-        request.download,
-        request.progress,
-        request.repo_id,
-        request.label,
-        request.position,
-        request.total,
-    )
-
-    heading = f"Downloading {label} ({position}/{total})"
-    progress.stage(f"{heading}...")
-    try:
-        with SnapshotProgress(progress.heartbeat, prefix=heading) as tracker:
-            download(
-                repo_id,
-                tqdm_class=tracker.tqdm_class,
-                revision=sparse_model_revision(repo_id),
-                token=False,
-            )
-    except Exception as exc:
-        return _warmup_failure_detail(repo_id, exc)
-    return f"{repo_id} downloaded"
-
-
 @server_root_app.command(
     "warmup",
     help=(
@@ -216,7 +148,9 @@ def _warmup_fetch_model(request: _WarmupFetchRequest) -> str:
 )
 def service_warmup() -> None:
     """Download GPU model files before they are needed."""
-    from ..commands._provision import ProvisionStep, client_skip
+    from .._sync_vocabulary import ProvisionAction
+    from ..commands._provision import ProvisionStep, client_skip, provision_models
+    from ._provision_progress import ReporterProvisionProgress
 
     # Asked before the accelerator is loaded: a client holds no model and has
     # no torch to load, and reporting that as a missing GPU build would send
@@ -233,41 +167,20 @@ def service_warmup() -> None:
     except (ImportError, RuntimeError) as exc:
         _handle_gpu_error(exc)
 
-    try:
-        from huggingface_hub import (
-            snapshot_download,  # pyright: ignore[reportUnknownVariableType]  # huggingface_hub stubs partially unknown
-        )
-    except ImportError:
-        _cli.console.print("Error: huggingface_hub is not installed.")
-        raise typer.Exit(code=1) from None
-
-    os.environ.setdefault(EnvVar.HF_HUB_DOWNLOAD_TIMEOUT, "300")
-
-    models = configured_model_repos()
-
     # No ``--json`` mode on this verb, so the reporter always speaks; it is the
     # only thing an operator sees during a multi-gigabyte, effectively
-    # unbounded download.
-    with StartupStatusReporter(json_mode=False) as progress:
-        progress.announce("Model warmup")
-        for position, (label, repo_id) in enumerate(models, start=1):
-            progress.stage(f"Checking the cache for {label} ({position}/{len(models)})")
-            if cached_snapshot_is_complete(repo_id):
-                _print_detail_line(label, f"{repo_id} cached")
-                continue
-            _print_detail_line(
-                label,
-                _warmup_fetch_model(
-                    _WarmupFetchRequest(
-                        # The hub ships partial stubs, so the imported symbol is
-                        # only partially typed; naming the shape this call site
-                        # actually uses is what keeps the strict gate honest.
-                        cast("Callable[..., object]", snapshot_download),
-                        progress,
-                        repo_id,
-                        label,
-                        position,
-                        len(models),
-                    )
-                ),
-            )
+    # unbounded download. The per-model lines are the verb's result, so they
+    # are printed once the fetch returns rather than through the reporter,
+    # whose lines are progress and leave stdout alone off a terminal.
+    with (
+        StartupStatusReporter(json_mode=False) as reporter,
+        ReporterProvisionProgress(reporter) as progress,
+    ):
+        reporter.announce("Model warmup")
+        result = provision_models(progress=progress)
+
+    for repo in result.repos:
+        _print_detail_line(repo.label, f"{repo.repo} {repo.detail}")
+    if result.action == ProvisionAction.FAILED:
+        _plain(f"Error: {result.detail}", soft_wrap=True)
+        raise typer.Exit(code=1)

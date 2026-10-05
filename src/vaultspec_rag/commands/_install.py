@@ -82,6 +82,7 @@ if TYPE_CHECKING:
     )
 
     from ._models import ConfirmFn
+    from ._provision import ProvisionProgress
 
 logger = logging.getLogger(__name__)
 
@@ -829,6 +830,9 @@ class _InstallRunRequest:
     mode: InstallMode | None = None
     repair_tool_torch: bool = True
     stream_repair: bool = False
+    #: Where the model and Qdrant fetches report while they run. A fetch of
+    #: several gigabytes with no output reads as a hang.
+    provision_progress: ProvisionProgress | None = None
     tool_torch_repair_outcome: ToolTorchRepairOutcome | None = None
 
 
@@ -849,6 +853,7 @@ class _InstallRunOptions(TypedDict, total=False):
     mode: InstallMode | None
     repair_tool_torch: bool
     stream_repair: bool
+    provision_progress: ProvisionProgress | None
 
 
 def install_run(
@@ -1301,6 +1306,7 @@ def _install_run_unchecked(request: _InstallRunRequest) -> InstallReport:
                 sync_after,
                 confirm,
                 host,
+                request.provision_progress,
             )
         )
 
@@ -1338,6 +1344,7 @@ class _ProvisioningRequest:
     sync_after: bool
     confirm: ConfirmFn | None
     host: bool
+    progress: ProvisionProgress | None = None
 
 
 def _run_provisioning(request: _ProvisioningRequest) -> None:
@@ -1375,6 +1382,7 @@ def _run_provisioning(request: _ProvisioningRequest) -> None:
         assume_yes=request.assume_yes,
         sync_after=request.sync_after,
         confirm=request.confirm,
+        progress=request.progress,
     )
     request.report.provision_outcome = outcome
     if not outcome.ok:
