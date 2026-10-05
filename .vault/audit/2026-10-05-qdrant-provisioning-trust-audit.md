@@ -5,7 +5,7 @@ tags:
 date: '2026-10-05'
 modified: '2026-10-05'
 body_schema: 'body-v2'
-body_hash: 'sha256:874674938d069a748f58781f9ac1dbbbf1912ff1f3b0953cfc17b8a5a6b3589b'
+body_hash: 'sha256:69098c659a9e03ea7bbe614a43f1d7b5218aa411dfa8cf3f079785fe0f549885'
 related:
   - "[[2026-06-12-qdrant-server-provisioning-adr]]"
   - "[[2026-06-13-provisioning-setup-adr]]"
@@ -54,6 +54,84 @@ The `.partial` staging file is opened without the no-follow guard the extraction
 ### stale-provisioning-prose | low | comments and a published phase say the daemon provisions
 
 `src/vaultspec_rag/server/_lifespan.py:463` and the `_no_progress` docstring in `src/vaultspec_rag/qdrant_runtime/_provision.py:70` describe daemon-side provisioning; `start_supervised_from_config` only resolves and raises. The resolution docstring promises a version-skew warning for a PATH binary that does not exist.
+
+### model-child-cwd-shadow | critical | a child interpreter started with a module flag imports the package from the working directory
+
+Hostile review, trust and supply chain, at `d0de3724`. The model download child is started as the interpreter with the module flag and no working directory at `src/vaultspec_rag/commands/_model_download.py:328`. That form puts the current directory first on the import path, so a `vaultspec_rag` package at the root of a cloned repository is imported and run as the operator on `install`, `server warmup`, or the first `server start`. Confirmed with a benign planted module using the exact command the parent builds. The same form starts the daemon (`src/vaultspec_rag/cli/_process.py:552`, marker at `src/vaultspec_rag/_process_probe.py:714`), which predates this plan, and the environment probe runs an inline script at `src/vaultspec_rag/operator_state/_environment_probe.py:70`, which puts the working directory on the path as well. The monitor bridge already starts its child in safe-path mode.
+
+### base-url-input-hygiene | low | the source URL validator admits a control character in the host and port zero
+
+Same review. `src/vaultspec_rag/config/_schema.py:119` accepts a NUL in the host and port 0. The setting is environment-only and digest-protected, so the effect is a confusing connect-time failure rather than a refusal that names the setting.
+
+Held under attack in the same review: userinfo, downgrade, query, fragment, and look-alike hosts in the base URL; cross-host, downgraded, trailing-dot, and literal-address redirects; certificate verification under the interpreter's verification-off variable and through a proxy; hostile archive member names, links, duplicates, and directory collisions; workspace files repointing any source setting; re-verification on restart and retry; the parent's handling of the download child's pipe. The archive and executable digests for the Windows and Linux x64 musl assets were re-derived from the official host and match.
+
+### start-ignores-persisted-backend | high | a plain server start ignores the persisted local-only choice and the backend environment
+
+Hostile review, client and command contract, at `d0de3724`. The start preflight decides whether a binary is needed from flags alone (`src/vaultspec_rag/cli/_service_start.py:366`), and the daemon is handed an explicit server-mode value rather than no value (`src/vaultspec_rag/cli/_service_start.py:1012`, `src/vaultspec_rag/cli/_process.py:401`). After `install --local-only`, a plain start fetches the binary and flips the backend to server mode, where the local index is not visible. An exported local-only variable, the server-mode variable set off, and a remote server URL are overridden the same way. The mechanism predates this plan; automatic provisioning changed its consequence from a refusal to an unrequested download. Confirmed by five runs.
+
+### doctor-demands-provisioning-from-client | high | readiness tells a client to provision what its install declines to provision
+
+Same review. Only the torch row of the readiness report asks the installation role (`src/vaultspec_rag/_readiness.py:356`); the model and binary rows do not (`src/vaultspec_rag/_readiness.py:374`, `src/vaultspec_rag/_readiness.py:454`). A client's `server doctor` reports both not ready and names `install`, which then reports them not needed. `server qdrant status` names the install verb to a client the same way (`src/vaultspec_rag/cli/_service_qdrant.py:217`). Nothing is downloaded. Confirmed.
+
+### cwd-executable-lookup-remains | high | three helper executables are still found by a search that takes the working directory first on stock Windows
+
+Same review. The daemon inherits the directory the start ran in (`src/vaultspec_rag/cli/_process.py:876`) and resolves the monitor by bare name on every start (`src/vaultspec_rag/monitor_process.py:44`); status resolves `nvidia-smi` the same way (`src/vaultspec_rag/operator_state/_hardware.py:40`), and the install repair resolves `uv` (`src/vaultspec_rag/commands/_tool_torch.py:366`, `src/vaultspec_rag/commands/_uv_sync.py:40`). This is the class `path-tier-cwd-exec` closed for the server binary only. Resolution confirmed; execution traced by reading. Predates this plan.
+
+### remedy-names-flag-the-verb-lacks | medium | a manifest-less install is absent to the resolver and unverified to the provisioner
+
+Same review. An executable with no manifest, which a kill between replace and manifest write leaves behind, is treated as absent at `src/vaultspec_rag/qdrant_runtime/_resolve.py:860` and as needing `--upgrade` at `src/vaultspec_rag/qdrant_runtime/_provision.py:597`. `server start` relays the upgrade text though it has no such flag, `install --upgrade` means something else, and status names a command that fails. None resolves and nothing is provisioned. Confirmed.
+
+### start-interrupt-no-envelope | medium | an interrupt during the foreground fetch ends a JSON start with no envelope
+
+Same review. The provisioning stage at `src/vaultspec_rag/cli/_service_start.py:340` has no interrupt handling, unlike the readiness wait at `src/vaultspec_rag/cli/_service_start.py:1306`; the outcome is empty output and exit 130 for start and for the install verb, and the interrupt takes effect only at the stall bound because the main thread sits in a blocking read. Confirmed with a simulated interrupt; a real console interrupt was not exercised.
+
+### host-role-from-unrelated-distribution | medium | one unrelated distribution makes an environment a host to every provisioning gate
+
+Same review. The role is the presence of one distribution (`src/vaultspec_rag/operator_state/_compute.py:52`). With that metadata present in a torch-free environment, warmup and the install verbs reached the network and wrote the backend marker, and only start refused. The mechanism is confirmed; a project that depends on that library itself and adds this package as a client is the plausible real case. A follow-on decision must settle whether provisioning gates on role alone or on role and capability.
+
+### help-misstatements-at-head | low | help text that is wrong or names a flag that does nothing
+
+Same review. The install verb's upgrade help describes a version change it does not perform; `install --skip-torch` has no effect; the tool-repair help says nothing is installed where the consented path runs a fetch; warmup still speaks of search-time latency; start's description never says it downloads model files or the server archive.
+
+### json-surface-inconsistencies | low | smaller envelope drift
+
+Same review. Next actions never reach a JSON envelope (`src/vaultspec_rag/cli/_service_lifecycle.py:76`); the install verb reports a generic failed code where start reports the provisioning code; a bad setting yields a different envelope schema; warmup has no JSON mode though start's remedy sends callers there; a client start creates the managed directory before the role gate; a failed install still writes the backend marker (`src/vaultspec_rag/commands/_install.py:1402`).
+
+Held under attack in the same review: every client command with the network blocked made no request and wrote nothing under the status, storage, or model directories; the MCP tools only forward; a host cannot skip verification through the client path; the host start matrix gave one envelope and exit 1 on every failure tried; both dry-run verbs made no request and no managed write; exit codes agree across the four provisioning verbs.
+
+### model-preflight-unbounded | high | a silent or trickling hub hangs the model size query forever in the parent
+
+Hostile review, failure and concurrency, at `d0de3724`. The free-space preflight asks the hub for file sizes in the parent with no timeout (`src/vaultspec_rag/commands/_model_fetch.py:331`) while holding the cache claim (`src/vaultspec_rag/commands/_model_fetch.py:248`). The progress floor and the killable child do not apply because no child exists yet. Against a hub that accepts and never answers the command sat for 846 seconds until killed, and an interrupt did not end it on Windows. Confirmed.
+
+### install-killed-after-replace-strands | high | a kill between the replace and the manifest leaves a pinned executable every later start refuses
+
+Same review; the same state as `remedy-names-flag-the-verb-lacks`, reached by a hard kill at `src/vaultspec_rag/qdrant_runtime/_provision.py:867`. The executable matches its committed digest, the manifest is absent, and the archive staging file remains because the sweep runs only inside a performed install (`src/vaultspec_rag/qdrant_runtime/_provision.py:1128`). Only the upgrade form of the install verb repairs it, by re-downloading a byte-identical file. The five earlier kill stages recover on the next attempt. Confirmed.
+
+### upgrade-remedy-crashes-on-unreadable-binary | medium | the remedy named for a binary that could not be held ends in a traceback
+
+Same review. A binary held by another reader is reported as unverified with the upgrade remedy (`src/vaultspec_rag/qdrant_runtime/_spawn_trust.py:104`), which is wrong for a transient hold, and running it raises an uncaught permission error because only one exception class is caught around the hash (`src/vaultspec_rag/qdrant_runtime/_provision.py:613`). Confirmed.
+
+### single-restart-burned-no-recovery-path | medium | a refused heartbeat restart is terminal for the daemon's lifetime and no surface names the way out
+
+Same review. A restart refused before any spawn still counts as the one restart (`src/vaultspec_rag/qdrant_runtime/_supervise.py:862`, `src/vaultspec_rag/server/_lifecycle.py:457`). Health names the status verb, status names a start that answers already running with exit 0, and nothing names stop then start. Confirmed for the supervisor; the operator chain is read, not run.
+
+### model-cache-fault-network-remedy | medium | an unusable model cache directory is reported as a network failure
+
+Same review. The classifier recognises only exhausted space among local errors (`src/vaultspec_rag/commands/_hub_failure.py:65`); a cache path whose parent is a file, or a permission error, takes the network remedy. Confirmed.
+
+### worst-case-wait-arithmetic | medium | bounded waits add up to hours and the model fetch has no whole-operation bound
+
+Same review. The cache-claim wait of an hour is applied per repository (`src/vaultspec_rag/commands/_model_fetch.py:224`), so three repositories can wait three hours; the download has only the progress floor, so a hub just above it holds the command for as long as the weights take; none of the waiting lines is visible in JSON mode. A second starter for the binary can wait about 31 minutes. A follow-on decision must settle whether the model fetch gets a whole-operation deadline.
+
+### start-path-tests-assert-a-substitute | medium | start-step tests stand on a double whose stated justification is no longer true
+
+Same review. `src/vaultspec_rag/tests/test_start_provisioning.py:289` replaces the provisioner and asserts a canned string, with a manifest shape the provisioner never writes (`src/vaultspec_rag/tests/_qdrant_provision_seam.py:98`); the seam's reason, that a local archive cannot be driven, is disproven by the install tests. No test interrupts between replace and manifest, kills a lock holder, or exercises an unreadable installed binary, a local cache fault, or a silent size query.
+
+### failure-surface-low | low | four smaller failure-path defects
+
+Same review. A base URL with an empty or over-long host label passes validation and crashes the download with an encoding error (`src/vaultspec_rag/qdrant_runtime/_download.py:679`). Filesystem faults under the managed directory end with no remedy, and a directory at the installed name is told to stop the service (`src/vaultspec_rag/qdrant_runtime/_provision.py:1045`, `src/vaultspec_rag/qdrant_runtime/_provision.py:437`). A body with no declared length cut by a clean close reads as a replaced upstream asset (`src/vaultspec_rag/qdrant_runtime/_download.py:482`). A filesystem that refuses the lock call would read as sixteen minutes of contention (`src/vaultspec_rag/_anchor_claim.py:399`; plausible, not reproduced).
+
+Held under attack in the same review: hard kills at five earlier install stages; two concurrent provisions; a hard-killed lock holder on Windows and Linux; an upgrade over a running child; the retry policy for each status class; a heartbeat restart over a changed, missing, or held binary never executing it; non-ASCII and very long paths; the download child dying with its parent; a killed cache-claim holder.
 
 ## Recommendations
 

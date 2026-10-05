@@ -5,7 +5,7 @@ tags:
 date: '2026-10-05'
 modified: '2026-10-05'
 body_schema: 'body-v2'
-body_hash: 'sha256:f2c2e8f338e16b82f5fdefcfd72d7fe610d36cd8cf09b8e0f41df5a779444f1f'
+body_hash: 'sha256:565abe9485bb06b447988e6c07e8358a199b488e3a27cb541ccc71f7f3fecdbb'
 related:
   - "[[2026-10-05-qdrant-provisioning-trust-audit]]"
   - "[[2026-06-12-qdrant-server-provisioning-adr]]"
@@ -140,6 +140,18 @@ A host installation that has never provisioned the managed Qdrant server cannot 
 
 - A model the operator names that is not a default has no manifest; it is fetched at the revision the operator gives, loaded without remote code, and reported as unverified on status and readiness.
 
+- Added after the hostile reviews. Provisioning of models and the binary runs only in an environment that can run the service: the judgement is the one `server start` makes of the interpreter that will run the daemon, covering installation role and accelerator capability together, and every provisioning surface, readiness row, and status remedy asks it. An environment that cannot run the service is told that, never to provision. Nothing is written - no directory, no backend marker - before that judgement.
+
+- The backend is decided once from the effective settings, with command flags as overrides, and the same decision drives the start preflight and the daemon's environment. A persisted or exported local-only choice, a server mode switched off, or a remote server address means no binary is fetched.
+
+- A version directory is judged by one classifier used by both the resolver and the provisioner. An install whose executable matches a committed digest is healthy whatever its manifest says or lacks, and the manifest is rewritten. Any other executable is refused and never overwritten without the upgrade form of the install verb.
+
+- The model fetch has a whole-operation deadline, a setting with a prefixed environment override, in addition to the progress floor; every network call it makes, including the size query, is bounded. Contention waits share one budget across repositories.
+
+- An interrupt during any foreground stage ends promptly in one interrupted outcome. Every remedy names a complete command that exists on that verb and repairs the condition it is shown for.
+
+- Helper executables the package runs are resolved from absolute locations and never by a search that can take the working directory; the daemon's working directory is fixed.
+
 ## Implementation
 
 We will make a host `server start` provision the pinned Qdrant binary by default, anchor its execution to committed executable digests, resolve it from an explicit operator setting or the managed install only, and read its source from settings.
@@ -151,6 +163,8 @@ We will make a host `server start` provision the pinned Qdrant binary by default
 - Hypothesis: the start preflight ensures models through the same front door `install` uses, while the daemon's own model loading stays online-capable as a backstop for starts that bypass the command.
 
 Outcome of the CUDA wheel index hypothesis: it fails. The index URL takes effect only by being written into a workspace file, is what the canonical-configuration check and the lockfile-derived torch version compare against, and is read by build tooling that cannot load settings. It stays a constant; an operator who needs a wheel mirror edits the index entry, which is classified as customised and never rewritten. The model hub endpoint hypothesis holds and is a setting published to the hub client at process start.
+
+Outcome of the daemon backstop hypothesis: replaced. The daemon's model load is cache-only and verifying, for the reason the daemon never downloads the binary: it holds the machine lock and has no console. A model that is absent or fails its check stops startup with the command that fetches or proves it. The start preflight ensures every model the daemon will load under the current settings.
 
 ## Rationale
 
