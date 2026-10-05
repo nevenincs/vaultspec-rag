@@ -9,23 +9,32 @@ whatever sink the command supplied.
 
 The model cache is a directory the test seeds and the product's own probe
 reads, with the hub's offline switch set, so no outcome depends on which
-weights the host holds and nothing can be downloaded. The download branch
-itself needs the network and is left to the accelerator tier.
+weights the host holds and nothing can be downloaded from the real hub.
+
+The download itself is driven for real, against a loopback stand-in hub. The
+hub client reads its endpoint and cache location once, at import, so that run
+happens in a fresh interpreter started with both in its environment; the fetch
+it executes is the shipped one, reporting through the CLI's own sink.
 """
 
 from __future__ import annotations
 
+import json
+import sys
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
+from .._model_cache import cached_snapshot_is_complete
 from .._sync_vocabulary import ProvisionAction
 from ..commands._install import install_run
 from ..commands._model_fetch import MODELS_OFFLINE
 from ..commands._provision import ProvisionStep, provision_models
 from ..config._settings import configured_model_repos
 from ..config._types import EnvVar
+from ._child_signal import CHILD_PROCESS_TIMEOUT_SECONDS
+from ._loopback_model_hub import LoopbackModelHub, loopback_model_hub
 from ._model_cache_seed import seed_model_cache
 from ._provision_fixtures import result_for
 from .conftest import managed_env
@@ -183,3 +192,105 @@ def test_install_reports_the_model_probe_through_the_sink_it_was_given(
         f"Checking the cache for {label} ({position}/{len(inventory)})"
         for position, (label, _repo) in enumerate(inventory, start=1)
     ]
+
+
+_DENSE_REPO = "vaultspec-test/dense"
+_RERANKER_REPO = "vaultspec-test/reranker"
+
+#: Run the shipped fetch through the CLI's own sink and print its outcome as
+#: the last line of stdout. Progress goes to stderr, where the reporter sends
+#: it off a terminal.
+_FETCH_IN_A_FRESH_INTERPRETER = """
+import json
+
+from vaultspec_rag.cli._progress import StartupStatusReporter
+from vaultspec_rag.cli._provision_progress import ReporterProvisionProgress
+from vaultspec_rag.commands._model_fetch import fetch_models
+
+reporter = StartupStatusReporter(json_mode=False, interactive=False)
+with ReporterProvisionProgress(reporter) as sink:
+    fetched = fetch_models(progress=sink)
+print(
+    json.dumps(
+        {
+            "action": str(fetched.action),
+            "detail": fetched.detail,
+            "code": fetched.code,
+            "repos": [
+                [repo.label, repo.repo, str(repo.action), repo.detail]
+                for repo in fetched.repos
+            ],
+        }
+    )
+)
+"""
+
+
+def _fetch_from(hub: LoopbackModelHub, cache: Path) -> tuple[dict[str, object], str]:
+    """Run the fetch in a fresh interpreter aimed at *hub*; return it and stderr."""
+    import subprocess
+
+    env = hub.child_environment(cache)
+    env[EnvVar.EMBEDDING_MODEL.value] = _DENSE_REPO
+    env[EnvVar.RERANKER_MODEL.value] = _RERANKER_REPO
+    env[EnvVar.SPARSE_ENABLED.value] = "0"
+    completed = subprocess.run(
+        [sys.executable, "-c", _FETCH_IN_A_FRESH_INTERPRETER],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=CHILD_PROCESS_TIMEOUT_SECONDS,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    outcome = cast(
+        "dict[str, object]", json.loads(completed.stdout.strip().splitlines()[-1])
+    )
+    return outcome, completed.stderr
+
+
+def test_missing_repos_are_downloaded_reported_and_then_left_alone(
+    tmp_path: Path,
+) -> None:
+    """Missing models are fetched from the hub, with progress, exactly once.
+
+    The whole branch the offline tests cannot reach: an empty cache, a hub
+    that answers, and the shipped fetch downloading through the shipped
+    client. The cache is then judged by the product's own completeness probe,
+    and a second run has to find it complete and ask the hub for nothing.
+
+    Mutation check: with the download call removed from the fetch, the
+    repositories are reported ``downloaded`` although nothing arrived - the
+    hub saw no file request and the first downloads assertion fails. With the
+    cache probe ignored on the second run, the hub is asked again and the
+    request-count assertion fails. Restoring each passes.
+    """
+    cache = tmp_path / "hub-cache"
+    with loopback_model_hub([_DENSE_REPO, _RERANKER_REPO]) as hub:
+        first, progress = _fetch_from(hub, cache)
+
+        assert hub.downloads_of(_DENSE_REPO).count("model.safetensors") == 1
+        assert hub.downloads_of(_RERANKER_REPO).count("model.safetensors") == 1
+        assert first["action"] == ProvisionAction.CREATED
+        assert first["code"] == ""
+        assert first["detail"] == (
+            f"downloaded 2 model repo(s): {_DENSE_REPO}, {_RERANKER_REPO}"
+        )
+        assert first["repos"] == [
+            ["Dense (Qwen3)", _DENSE_REPO, "created", "downloaded"],
+            ["Reranker (CrossEncoder)", _RERANKER_REPO, "created", "downloaded"],
+        ]
+        assert "Checking the cache for Dense (Qwen3) (1/2)" in progress
+        assert "Downloading Dense (Qwen3) (1/2)" in progress
+        assert "Downloading Reranker (CrossEncoder) (2/2)" in progress
+        assert cached_snapshot_is_complete(_DENSE_REPO, cache_dir=cache)
+        assert cached_snapshot_is_complete(_RERANKER_REPO, cache_dir=cache)
+
+        asked_so_far = len(hub.requests)
+        second, _progress = _fetch_from(hub, cache)
+
+        assert len(hub.requests) == asked_so_far, hub.requests[asked_so_far:]
+        assert second["action"] == ProvisionAction.UNCHANGED
+        assert second["detail"] == "all 2 model repos already cached"
