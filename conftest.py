@@ -208,32 +208,33 @@ def _capture_host_provisioned_qdrant() -> tuple[Path, Path] | None:
 
     ``pytest_configure`` replaces the status directory before session fixtures
     run. Resolve the production-managed install now, while the ambient config
-    still names it, and retain only its binary and manifest paths. The binary
-    is still re-verified from the copied manifest before execution.
+    still names it, and retain only its binary and manifest paths. Only a
+    downloaded install that passes the production pre-execution check is
+    captured, and the supervisor checks the mirrored copy again at every spawn.
     """
     from vaultspec_rag.qdrant_runtime._constants import (
         MANIFEST_FILENAME,
         QDRANT_SERVER_VERSION,
+        BinarySource,
     )
-    from vaultspec_rag.qdrant_runtime._provision import file_sha256
     from vaultspec_rag.qdrant_runtime._resolve import (
         QdrantBinaryError,
         resolve_binary,
+        verify_resolved_binary,
     )
 
     try:
         resolved = resolve_binary(QDRANT_SERVER_VERSION)
+        if resolved is None or resolved.source is not BinarySource.MANAGED_DOWNLOAD:
+            return None
+        verify_resolved_binary(resolved)
     except QdrantBinaryError:
-        # An ambient operator setting that names an unusable path is refused
-        # by resolution. It names no managed install either way, so there is
-        # nothing to capture - and collection must not die on it.
-        return None
-    if resolved is None or resolved.source != "provisioned" or not resolved.sha256:
+        # An ambient operator setting that names an unusable path, or an
+        # install that fails its digest, is refused. Neither is a managed
+        # install worth mirroring - and collection must not die on it.
         return None
     manifest = resolved.path.parent / MANIFEST_FILENAME
     if not manifest.is_file():
-        return None
-    if file_sha256(resolved.path).lower() != resolved.sha256.lower():
         return None
     return resolved.path, manifest
 

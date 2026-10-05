@@ -48,6 +48,7 @@ from ..config._types import EnvVar
 from ..logging_config import QDRANT_LOG_NAME
 from ._constants import (
     QDRANT_SERVER_VERSION,
+    BinarySource,
     QdrantRuntimeState,
 )
 from ._credential import (
@@ -67,6 +68,7 @@ if TYPE_CHECKING:
     from http.client import HTTPResponse
     from typing import BinaryIO
 
+    from ._constants import ResolvedBinary
     from ._resolve import QdrantIdentity
 
 logger = logging.getLogger(__name__)
@@ -361,7 +363,10 @@ class QdrantSupervisor:
     """Owns one loopback-bound qdrant child process.
 
     Attributes:
-        binary: The executable to spawn.
+        binary: The executable to spawn with the source that decides what it
+            is held to before each spawn, or ``None`` for a supervisor attached
+            to a server it did not spawn. Never a bare path: every binary a
+            supervisor can run carries the check it must pass.
         http_port: REST listener port (loopback).
         grpc_port: gRPC listener port (loopback); defaults to one
             below ``http_port`` so the pair never collides with the
@@ -375,7 +380,7 @@ class QdrantSupervisor:
 
     def __init__(
         self,
-        binary: Path,
+        binary: ResolvedBinary | None,
         **options: Unpack[_SupervisorOptions],
     ) -> None:
         config = _SupervisorConfig(**options)
@@ -418,7 +423,8 @@ class QdrantSupervisor:
         self._drain_thread: threading.Thread | None = None
         # Attached mode: this supervisor points at an already-running managed
         # Qdrant it did NOT spawn, so it must never terminate it on stop().
-        self._attached = False
+        # Having no binary is what attached means; the two cannot disagree.
+        self._attached = binary is None
         # The Windows kill-on-close job handle is deliberately held for
         # the supervisor's whole lifetime and never explicitly closed:
         # the OS kills the child exactly when the last handle closes
@@ -469,14 +475,26 @@ class QdrantSupervisor:
         return env
 
     def spawn(self) -> None:
-        """Start the qdrant child (without waiting for readiness).
+        """Verify the binary, then start the qdrant child (no readiness wait).
+
+        The first start, a heartbeat restart, and each recovery retry all come
+        through here, so the binary is checked before every one of them.
 
         Raises:
-            RuntimeError: If a child is already running.
-                Also raised while a previous child's output drain still owns
-                the rotating log sink.
+            RuntimeError: If this supervisor is attached and owns no binary,
+                a child is already running, or a previous child's output
+                drain still owns the rotating log sink. Its subclass
+                ``QdrantBinaryError`` when the binary fails its check.
             OSError: If the spawn itself fails.
         """
+        from ._resolve import verify_resolved_binary
+
+        binary = self.binary
+        if binary is None:
+            raise RuntimeError(
+                "this supervisor is attached to a qdrant server it did not "
+                "spawn and owns no binary; refusing to spawn one"
+            )
         if self.is_alive():
             raise RuntimeError(f"qdrant child pid={self.pid} is already running")
         if not self._join_output_drain(timeout=0.0):
@@ -501,9 +519,13 @@ class QdrantSupervisor:
         # retained in memory and reported as the cause, never lost behind an
         # opaque readiness timeout. The drain thread appends to the log file
         # with the same owner-only, no-symlink-follow protection as before.
+        #
+        # Verified as the last statement before the process is created: what
+        # held at resolution or at the previous spawn says nothing about now.
+        verify_resolved_binary(binary)
         if sys.platform == "win32":
             self._proc = subprocess.Popen(
-                [str(self.binary)],
+                [str(binary.path)],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -522,7 +544,7 @@ class QdrantSupervisor:
                 _win_assign_to_job(self._job_handle, self._proc)
         else:
             self._proc = subprocess.Popen(
-                [str(self.binary)],
+                [str(binary.path)],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -927,13 +949,10 @@ class QdrantSupervisor:
             logger.error("qdrant child with an unprotected data plane did not stop")
         return fault
 
-    def mark_attached(self) -> None:
-        """Mark this supervisor as attached to an externally-owned managed server.
-
-        Used when a healthy managed Qdrant is already serving the port: this
-        supervisor reuses it without spawning a child and must not terminate it.
-        """
-        self._attached = True
+    @property
+    def binary_source(self) -> BinarySource:
+        """The source of the binary this supervisor runs, for status surfaces."""
+        return self.binary.source if self.binary is not None else BinarySource.ATTACHED
 
     def is_alive(self) -> bool:
         """True while the managed server is running.
@@ -1007,6 +1026,10 @@ class QdrantSupervisor:
         readable by the binary that wrote it, which nothing else reports.
         Unlike the quarantine listing this is a held value, because the stamp
         it was derived from has already been rewritten by the open.
+
+        Carries the source of the binary the child was spawned from: an
+        operator-supplied binary runs without the committed pin, and that must
+        be readable from the running service, not only from its log.
         """
         return QdrantRuntimeState(
             mode="server",
@@ -1019,6 +1042,7 @@ class QdrantSupervisor:
             extra={
                 "quarantined": list_quarantined_collections(self.storage_dir),
                 "migrated_from": self.migrated_from,
+                "binary_source": str(self.binary_source),
             },
         )
 
@@ -1227,7 +1251,7 @@ def _attach_to_running(**options: Unpack[_SupervisorOptions]) -> QdrantSuperviso
         RuntimeError: When no credential is published for the server, an
             anonymous data request succeeds, or the credential is rejected.
     """
-    supervisor = QdrantSupervisor(Path("attached-qdrant"), **options)
+    supervisor = QdrantSupervisor(None, **options)
     api_key = server_api_key(supervisor.url)
     fault = (
         "its owner published no credential"
@@ -1241,34 +1265,64 @@ def _attach_to_running(**options: Unpack[_SupervisorOptions]) -> QdrantSuperviso
             "it so it starts with a credential, then retry; or run "
             f"local-only: {server_start_command(local_only=True)}"
         )
-    supervisor.mark_attached()
     set_active_supervisor(supervisor)
     return supervisor
 
 
-def start_supervised_from_config() -> QdrantSupervisor:
-    """Resolve, verify, spawn, and ready-wait the qdrant child per config.
+def _warn_when_operator_supplied(resolved: ResolvedBinary) -> None:
+    """Log that an operator-supplied binary runs outside the committed pin.
 
-    Resolution follows the operator setting > provisioned order. A
-    provisioned binary is re-hashed against its pinned digest before
-    execution so a tampered managed dir never runs. The started
+    The setting is called out harder when it shadows a managed install - the
+    case a planted setting would exploit.
+    """
+    if resolved.source is BinarySource.OPERATOR_SETTING:
+        from ._resolve import has_provisioned_binary
+
+        remedy = (
+            f"It is SHADOWING a managed install; unset "
+            f"{EnvVar.QDRANT_BINARY.value} to run the pinned binary."
+            if has_provisioned_binary(QDRANT_SERVER_VERSION)
+            else "Provision a pinned binary with: vaultspec-rag server qdrant install."
+        )
+        logger.warning(
+            "qdrant binary named by %s (%s) runs UNVERIFIED - no pinned-digest "
+            "check applies to an operator-supplied binary. %s",
+            EnvVar.QDRANT_BINARY.value,
+            resolved.path,
+            remedy,
+        )
+    elif resolved.source is BinarySource.MANAGED_OPERATOR:
+        logger.warning(
+            "qdrant binary at %s was registered by an operator; it is held to "
+            "the digest recorded at registration, not to the committed pin. "
+            "Install the pinned release with: vaultspec-rag server qdrant "
+            "install --upgrade",
+            resolved.path,
+        )
+
+
+def start_supervised_from_config() -> QdrantSupervisor:
+    """Resolve, spawn, and ready-wait the qdrant child per config.
+
+    Resolution follows the operator setting > managed install order. The
+    binary is verified inside every spawn the supervisor makes, so a tampered
+    managed dir never runs, at the first start or any later one. The started
     supervisor is installed as the process-wide active supervisor.
 
     Returns:
         The running, ready supervisor.
 
     Raises:
-        RuntimeError: When the operator binary setting names an unusable
-            path, when no binary is resolvable (the message names
-            the exact install command), when the provisioned binary
-            fails its pre-execution hash check, or when the server
-            does not become ready.
+        QdrantBinaryError: When the operator binary setting names an unusable
+            path, or the binary fails the check its source holds it to.
+        RuntimeError: When no binary is resolvable (the message names the
+            exact install command), or the server does not become ready.
     """
     from pathlib import Path
 
     from ..config._settings import get_config
-    from ._provision import file_sha256
     from ._resolve import (
+        QdrantBinaryError,
         decide_qdrant_action,
         probe_qdrant_endpoint,
         read_qdrant_identity,
@@ -1326,35 +1380,7 @@ def start_supervised_from_config() -> QdrantSupervisor:
             "available. Run: vaultspec-rag server qdrant install. "
             "Local-only option: vaultspec-rag server start --local-only"
         )
-    if resolved.source == "provisioned" and resolved.sha256:
-        actual = file_sha256(resolved.path)
-        if actual.lower() != resolved.sha256.lower():
-            raise RuntimeError(
-                f"Provisioned qdrant binary at {resolved.path} does not "
-                "match its pinned digest; refusing to execute. Re-run: "
-                "vaultspec-rag server qdrant install --upgrade"
-            )
-    elif resolved.source == "env":
-        # An operator-setting binary carries no pinned digest, so it runs
-        # UNVERIFIED. Make the bypass loud (it is otherwise silent), and call
-        # out when it is shadowing a managed install - the case a planted
-        # setting would exploit.
-        from ._resolve import has_provisioned_binary
-
-        shadowed = has_provisioned_binary(QDRANT_SERVER_VERSION)
-        remedy = (
-            f"It is SHADOWING a managed install; unset "
-            f"{EnvVar.QDRANT_BINARY.value} to run the pinned binary."
-            if shadowed
-            else "Provision a pinned binary with: vaultspec-rag server qdrant install."
-        )
-        logger.warning(
-            "qdrant binary resolved from %s (%s) runs UNVERIFIED - no "
-            "pinned-digest check applies to this source. %s",
-            resolved.source,
-            resolved.path,
-            remedy,
-        )
+    _warn_when_operator_supplied(resolved)
 
     # Judge the on-disk storage format against the binary about to open it.
     # The version gate on the attach path only fires when a server is already
@@ -1362,9 +1388,13 @@ def start_supervised_from_config() -> QdrantSupervisor:
     # this the first start on a newly pinned binary performs no version
     # comparison at all, and an incompatible-format abort is misread by the
     # load-failure parser as a run of independently corrupt collections.
+    #
+    # An operator-supplied binary of unknown version is not assumed to be the
+    # pinned release. Its empty version judges a data-bearing store as
+    # unverifiable: it still opens, and no load failure is blamed on a collection.
     store_format = judge_store_format(
         storage_dir,
-        spawning_version=resolved.version or QDRANT_SERVER_VERSION,
+        spawning_version=resolved.version,
         identity=identity,
     )
     if not store_format.may_spawn:
@@ -1385,7 +1415,7 @@ def start_supervised_from_config() -> QdrantSupervisor:
         )
 
     supervisor = QdrantSupervisor(
-        resolved.path,
+        resolved,
         http_port=qport,
         storage_dir=storage_dir,
         log_path=log_path,
@@ -1401,6 +1431,10 @@ def start_supervised_from_config() -> QdrantSupervisor:
     logger.info("Starting qdrant server (%s binary %s)", resolved.source, resolved.path)
     try:
         supervisor.start(auto_quarantine=store_format.may_auto_quarantine)
+    except QdrantBinaryError:
+        # A refused binary keeps its own type and code: the remedy is to
+        # repair the install, and the caller renders that, not a log to read.
+        raise
     except RuntimeError as exc:
         raise RuntimeError(
             f"{exc}. The qdrant server backing the default server mode "

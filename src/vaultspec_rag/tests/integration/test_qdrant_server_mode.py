@@ -27,6 +27,7 @@ from ...qdrant_runtime._constants import QDRANT_SERVER_VERSION
 from ...qdrant_runtime._resolve import resolve_binary
 from ...qdrant_runtime._supervise import QdrantSupervisor
 from .._config_fixtures import reset_config
+from .._fake_qdrant_binary import unpinned
 from .._ports import free_loopback_port
 from .._publication_assertions import published_content_identities
 from ..corpus import build_synthetic_vault
@@ -570,7 +571,7 @@ class TestSupervision:
         from ..._process_probe import pid_alive
 
         supervisor = QdrantSupervisor(
-            real_qdrant_binary,
+            unpinned(real_qdrant_binary),
             http_port=free_loopback_port(),
             grpc_port=free_loopback_port(),
             storage_dir=tmp_path / "storage",
@@ -594,7 +595,7 @@ class TestSupervision:
     ) -> None:
         """The heartbeat's single bounded restart brings the server back."""
         supervisor = QdrantSupervisor(
-            real_qdrant_binary,
+            unpinned(real_qdrant_binary),
             http_port=free_loopback_port(),
             grpc_port=free_loopback_port(),
             storage_dir=tmp_path / "storage",

@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from ..qdrant_runtime._supervise import QdrantSupervisor
+from ._fake_qdrant_binary import unpinned
 
 if TYPE_CHECKING:
     from typing import BinaryIO
@@ -52,7 +53,7 @@ class TestSupervisorOutputCapture:
     def test_drain_captures_to_ring_and_log(self, tmp_path: Path) -> None:
         log_path = tmp_path / "qdrant.log"
         sup = QdrantSupervisor(
-            tmp_path / "unused-binary",
+            unpinned(tmp_path / "unused-binary"),
             http_port=59991,
             storage_dir=tmp_path / "storage",
             log_path=log_path,
@@ -65,7 +66,7 @@ class TestSupervisorOutputCapture:
 
     def test_recent_output_ring_is_bounded(self, tmp_path: Path) -> None:
         sup = QdrantSupervisor(
-            tmp_path / "unused-binary",
+            unpinned(tmp_path / "unused-binary"),
             http_port=59992,
             storage_dir=tmp_path / "storage",
             log_path=None,
@@ -81,7 +82,7 @@ class TestSupervisorOutputCapture:
     ) -> None:
         log_path = tmp_path / "qdrant.log"
         sup = QdrantSupervisor(
-            tmp_path / "unused-binary",
+            unpinned(tmp_path / "unused-binary"),
             http_port=59994,
             storage_dir=tmp_path / "storage",
             log_path=log_path,
@@ -116,7 +117,7 @@ class TestSupervisorOutputCapture:
     ) -> None:
         log_path = tmp_path / "qdrant.log"
         sup = QdrantSupervisor(
-            tmp_path / "unused-binary",
+            unpinned(tmp_path / "unused-binary"),
             http_port=59989,
             storage_dir=tmp_path / "storage",
             log_path=log_path,
@@ -148,7 +149,7 @@ class TestSupervisorOutputCapture:
         oversized_backup = log_path.with_name("qdrant.log.1")
         oversized_backup.write_bytes(b"old-backup-" * 1000)
         sup = QdrantSupervisor(
-            tmp_path / "unused-binary",
+            unpinned(tmp_path / "unused-binary"),
             http_port=59995,
             storage_dir=tmp_path / "storage",
             log_path=log_path,
@@ -174,7 +175,7 @@ class TestSupervisorOutputCapture:
     ) -> None:
         log_path = tmp_path / "qdrant.log"
         sup = QdrantSupervisor(
-            tmp_path / "unused-binary",
+            unpinned(tmp_path / "unused-binary"),
             http_port=59996,
             storage_dir=tmp_path / "storage",
             log_path=log_path,
@@ -196,7 +197,9 @@ class TestSupervisorOutputCapture:
         log_path = tmp_path / "qdrant.log"
         release_path = tmp_path / "release-grandchild"
         supervisor = QdrantSupervisor(
-            Path(sys.executable),
+            # Resolved: an interpreter reached through a link is refused, as
+            # any operator-named binary reached through a link is.
+            unpinned(Path(sys.executable).resolve()),
             http_port=59990,
             storage_dir=tmp_path / "storage",
             log_path=log_path,
@@ -271,7 +274,7 @@ class TestSupervisorOutputCapture:
         log_path.with_name("qdrant.log.3").write_bytes(b"generation-three\n")
         log_path.with_name("qdrant.log.9").write_bytes(b"stale-generation\n")
         sup = QdrantSupervisor(
-            tmp_path / "unused-binary",
+            unpinned(tmp_path / "unused-binary"),
             http_port=59997,
             storage_dir=tmp_path / "storage",
             log_path=log_path,
@@ -304,7 +307,7 @@ class TestSupervisorOutputCapture:
         log_path.with_name("qdrant.log.1").write_bytes(b"generation-one\n")
         log_path.with_name("qdrant.log.4").write_bytes(b"stale-generation\n")
         sup = QdrantSupervisor(
-            tmp_path / "unused-binary",
+            unpinned(tmp_path / "unused-binary"),
             http_port=59999,
             storage_dir=tmp_path / "storage",
             log_path=log_path,
@@ -328,7 +331,7 @@ class TestSupervisorOutputCapture:
         # on every supported platform without a patched filesystem API.
         log_path.with_name("qdrant.log.1").mkdir()
         sup = QdrantSupervisor(
-            tmp_path / "unused-binary",
+            unpinned(tmp_path / "unused-binary"),
             http_port=59998,
             storage_dir=tmp_path / "storage",
             log_path=log_path,
@@ -351,7 +354,9 @@ class TestNonReadyChildDiagnosis:
         # be bounded by the supplied timeout (never the 300s default) and the
         # raised error must name the cause, not be silent.
         sup = QdrantSupervisor(
-            Path(sys.executable),
+            # Resolved: an interpreter reached through a link is refused, as
+            # any operator-named binary reached through a link is.
+            unpinned(Path(sys.executable).resolve()),
             http_port=59993,
             storage_dir=tmp_path / "storage",
             log_path=tmp_path / "qdrant.log",
@@ -402,7 +407,7 @@ class TestChildRunsInManagedDirectory:
             witness.chmod(0o700)
 
         sup = QdrantSupervisor(
-            witness,
+            unpinned(witness),
             http_port=59981,
             storage_dir=storage_dir,
             log_path=tmp_path / "qdrant.log",

@@ -28,7 +28,7 @@ from ..qdrant_runtime._supervise import (
     _quarantine_collection,
 )
 from ._config_fixtures import reset_config
-from ._fake_qdrant_binary import fake_qdrant_binary
+from ._fake_qdrant_binary import fake_qdrant_binary, unpinned
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -212,7 +212,7 @@ class TestBoundedRetry:
 
         binary = fake_qdrant_binary(tmp_path, _FAKE_CORRUPT_NAMED)
         sup = QdrantSupervisor(
-            binary,
+            unpinned(binary),
             http_port=8990,
             storage_dir=storage,
             log_path=tmp_path / "qdrant.log",
@@ -238,7 +238,7 @@ class TestBoundedRetry:
         _make_collection(storage, "r0000_vault_docs")
         binary = fake_qdrant_binary(tmp_path, _FAKE_CORRUPT_UNNAMED, name="unnamed")
         sup = QdrantSupervisor(
-            binary,
+            unpinned(binary),
             http_port=8992,
             storage_dir=storage,
             log_path=tmp_path / "qdrant.log",
@@ -272,7 +272,7 @@ class TestBoundedRetry:
         )
         binary = fake_qdrant_binary(tmp_path, source, name="sharing")
         sup = QdrantSupervisor(
-            binary,
+            unpinned(binary),
             http_port=8993,
             storage_dir=storage,
             log_path=tmp_path / "qdrant.log",
@@ -301,7 +301,7 @@ class TestBoundedRetry:
         binary, _manifest = required_host_provisioned_qdrant_source
         http_port, grpc_port = _free_loopback_ports()
         sup = QdrantSupervisor(
-            binary,
+            unpinned(binary),
             http_port=http_port,
             grpc_port=grpc_port,
             storage_dir=storage,
@@ -325,7 +325,7 @@ class TestBoundedRetry:
         _make_collection(storage, "r0000_vault_docs")
         binary = fake_qdrant_binary(tmp_path, _FAKE_CORRUPT_NAMED)
         sup = QdrantSupervisor(
-            binary,
+            unpinned(binary),
             http_port=8991,
             storage_dir=storage,
             log_path=tmp_path / "qdrant.log",

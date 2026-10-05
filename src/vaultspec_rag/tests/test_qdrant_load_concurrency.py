@@ -16,6 +16,7 @@ from ..config._settings import get_config
 from ..config._types import EnvVar
 from ..qdrant_runtime._supervise import QdrantSupervisor
 from ._config_fixtures import reset_config
+from ._fake_qdrant_binary import unpinned
 from ._scaffold import restore_env, set_env
 
 pytestmark = [pytest.mark.unit]
@@ -35,7 +36,9 @@ def test_managed_child_load_concurrency(raw: str | None, expected: str) -> None:
     reset_config()
     try:
         supervisor = QdrantSupervisor(
-            Path("qdrant"), http_port=6333, storage_dir=Path("unused-storage")
+            unpinned(Path("qdrant")),
+            http_port=6333,
+            storage_dir=Path("unused-storage"),
         )
         # Dropping the explicit native mapping or inheriting arbitrary QDRANT
         # overrides must fail this assertion. No process or storage is opened.
@@ -80,7 +83,9 @@ def test_explicit_load_concurrency_reaches_child() -> None:
     try:
         get_config({_SETTING: 4})
         supervisor = QdrantSupervisor(
-            Path("qdrant"), http_port=6333, storage_dir=Path("unused-storage")
+            unpinned(Path("qdrant")),
+            http_port=6333,
+            storage_dir=Path("unused-storage"),
         )
         assert supervisor._child_env()[_NATIVE_KEY] == "4"
     finally:

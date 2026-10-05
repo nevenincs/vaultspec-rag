@@ -35,7 +35,7 @@ from ..qdrant_runtime._credential import (
     write_managed_api_key,
 )
 from ..qdrant_runtime._supervise import QdrantSupervisor
-from ._fake_qdrant_binary import fake_qdrant_binary
+from ._fake_qdrant_binary import FAKE_SERVER, fake_qdrant_binary, unpinned
 from ._http_stubs import QuietHandler
 from ._ports import free_loopback_port
 from ._private_files import assert_private_file
@@ -50,50 +50,6 @@ _KEY_VARIABLE = "QDRANT__SERVICE__API_KEY"
 #: A 256-bit key in URL-safe base64, unpadded.
 _GENERATED_KEY_CHARS = 43
 _SUPERVISE_LOGGER = "vaultspec_rag.qdrant_runtime._supervise"
-
-# A server that becomes ready and answers the data plane by one policy, started
-# the way the real binary is: no arguments, everything from the environment the
-# supervisor built. ENFORCE decides whether it asks for the key it was given.
-#
-# It serves only while every process above it lives. The supervisor's child is
-# the launcher, not this interpreter - a shell on Windows, with the virtual
-# environment's own launcher beneath that - so terminating the child would
-# otherwise leave this process holding the port and the output pipe.
-_FAKE_SERVER = """
-import os
-from http.server import BaseHTTPRequestHandler, HTTPServer
-
-import psutil
-
-ENFORCE = {enforce}
-KEY = os.environ.get("QDRANT__SERVICE__API_KEY", "")
-PORT = int(os.environ["QDRANT__SERVICE__HTTP_PORT"])
-
-
-class Handler(BaseHTTPRequestHandler):
-    def log_message(self, format, *args):
-        pass
-
-    def do_GET(self):
-        refused = (
-            ENFORCE
-            and self.path == "/collections"
-            and self.headers.get("api-key") != KEY
-        )
-        body = b"{{}}"
-        self.send_response(401 if refused else 200)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-
-server = HTTPServer(("127.0.0.1", PORT), Handler)
-server.timeout = 0.1
-ancestors = psutil.Process().parents()
-print("listening", flush=True)
-while all(ancestor.is_running() for ancestor in ancestors):
-    server.handle_request()
-"""
 
 _COLLECTIONS_BODY = json.dumps(
     {"result": {"collections": []}, "status": "ok", "time": 0.0}
@@ -186,10 +142,14 @@ class TestTheChildDemandsAKey:
         # no credential at all: this is the reported defect. `.get` so the
         # failure lands on this assertion rather than on a lookup.
         first = QdrantSupervisor(
-            Path("qdrant"), http_port=6333, storage_dir=tmp_path / "a" / "storage"
+            unpinned(Path("qdrant")),
+            http_port=6333,
+            storage_dir=tmp_path / "a" / "storage",
         )
         second = QdrantSupervisor(
-            Path("qdrant"), http_port=6333, storage_dir=tmp_path / "b" / "storage"
+            unpinned(Path("qdrant")),
+            http_port=6333,
+            storage_dir=tmp_path / "b" / "storage",
         )
         first_key = first._child_env().get(_KEY_VARIABLE, "")
         second_key = second._child_env().get(_KEY_VARIABLE, "")
@@ -203,7 +163,7 @@ class TestTheChildDemandsAKey:
 
     def test_operator_key_is_adopted_instead_of_generated(self, tmp_path: Path) -> None:
         supervisor = QdrantSupervisor(
-            Path("qdrant"),
+            unpinned(Path("qdrant")),
             http_port=6333,
             storage_dir=tmp_path / "storage",
             api_key="operator-chosen-key",
@@ -217,7 +177,11 @@ class TestTheChildDemandsAKey:
         # or stale when the child is already listening.
         storage = tmp_path / "qdrant" / "storage"
         supervisor = QdrantSupervisor(
-            Path(sys.executable), http_port=free_loopback_port(), storage_dir=storage
+            # Resolved: an interpreter reached through a link is refused, as
+            # any operator-named binary reached through a link is.
+            unpinned(Path(sys.executable).resolve()),
+            http_port=free_loopback_port(),
+            storage_dir=storage,
         )
         supervisor.spawn()
         try:
@@ -407,7 +371,7 @@ class TestTheSupervisorRefusesAnUnprotectedChild:
         # start() and it returns normally, with the store open to every local
         # account and every health signal reading normal.
         supervisor = QdrantSupervisor(
-            fake_qdrant_binary(tmp_path, _FAKE_SERVER.format(enforce=False)),
+            unpinned(fake_qdrant_binary(tmp_path, FAKE_SERVER.format(enforce=False))),
             http_port=free_loopback_port(),
             storage_dir=tmp_path / "qdrant" / "storage",
             log_path=tmp_path / "qdrant.log",
@@ -436,7 +400,7 @@ class TestTheSupervisorRefusesAnUnprotectedChild:
         # presents that same key, so this fails if the key never reaches the
         # child or the supervisor probes with a different one.
         supervisor = QdrantSupervisor(
-            fake_qdrant_binary(tmp_path, _FAKE_SERVER.format(enforce=True)),
+            unpinned(fake_qdrant_binary(tmp_path, FAKE_SERVER.format(enforce=True))),
             http_port=free_loopback_port(),
             storage_dir=tmp_path / "qdrant" / "storage",
             log_path=tmp_path / "qdrant.log",
@@ -457,7 +421,7 @@ class TestTheSupervisorRefusesAnUnprotectedChild:
         # check from restart() and it reports this child restarted and leaves
         # it running.
         supervisor = QdrantSupervisor(
-            fake_qdrant_binary(tmp_path, _FAKE_SERVER.format(enforce=False)),
+            unpinned(fake_qdrant_binary(tmp_path, FAKE_SERVER.format(enforce=False))),
             http_port=free_loopback_port(),
             storage_dir=tmp_path / "qdrant" / "storage",
             log_path=tmp_path / "qdrant.log",

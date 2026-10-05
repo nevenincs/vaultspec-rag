@@ -27,6 +27,7 @@ from ..qdrant_runtime._constants import (
     QDRANT_ASSET_SHA256,
     QDRANT_EXECUTABLE_SHA256,
     QDRANT_SERVER_VERSION,
+    BinarySource,
 )
 from ..qdrant_runtime._provision import (
     ChecksumMismatchError,
@@ -271,30 +272,77 @@ class TestVerifiedExtraction:
 
 
 class TestPreExecDigestGuard:
-    """A tampered provisioned binary must be refused before execution."""
+    """A managed install that does not verify is refused by a real start."""
 
-    def test_corrupted_binary_refused_before_spawn(
-        self, isolated_status_dir: Path
-    ) -> None:
-        from ..config._settings import get_config
+    @staticmethod
+    def _refused_start() -> QdrantBinaryError:
         from ..qdrant_runtime._supervise import start_supervised_from_config
 
+        with (
+            managed_env(**{EnvVar.QDRANT_SERVER.value: "1"}),
+            pytest.raises(QdrantBinaryError) as refused,
+        ):
+            start_supervised_from_config()
+        return refused.value
+
+    def test_a_download_whose_executable_is_not_the_pinned_one_is_refused(
+        self, isolated_status_dir: Path
+    ) -> None:
+        """The manifest agreeing with the file is not what lets it run.
+
+        The seeded manifest records the seeded file's own digest, so a check
+        against the manifest passes. Only the committed digest refuses it.
+        """
+        _ = isolated_status_dir
+        binary = _seed_verified_install(qdrant_bin_dir())
+        manifest = json.loads(
+            (qdrant_bin_dir() / "manifest.json").read_text(encoding="utf-8")
+        )
+        assert manifest["binary_sha256"] == file_sha256(binary)
+
+        refused = self._refused_start()
+
+        assert refused.error == "qdrant_binary_unverified"
+        assert "the pinned digest of its release asset" in str(refused)
+        assert "vaultspec-rag server qdrant install --upgrade" in str(refused)
+
+    def test_a_manifest_that_records_no_digest_does_not_skip_the_check(
+        self, isolated_status_dir: Path
+    ) -> None:
+        """An install with nothing to compare against never runs.
+
+        Mutation it catches: skipping the comparison when no digest applies.
+        The start then goes on to execute the seeded file, which is not a
+        program, and this fails on an ``OSError`` in place of the refusal.
+        """
         _ = isolated_status_dir
         version_dir = qdrant_bin_dir()
-        binary = _seed_verified_install(version_dir)
-        # Tamper with the binary AFTER the manifest recorded its digest:
-        # the pre-execution re-hash must now mismatch and refuse to run.
-        binary.write_bytes(b"tampered-after-manifest")
+        version_dir.mkdir(parents=True)
+        (version_dir / binary_filename()).write_bytes(b"no-digest-recorded")
+        (version_dir / "manifest.json").write_text(
+            json.dumps({"version": QDRANT_SERVER_VERSION}), encoding="utf-8"
+        )
+        resolved = resolve_binary()
+        assert resolved is not None
+        assert resolved.sha256 == ""
 
-        os.environ[EnvVar.QDRANT_SERVER.value] = "1"
-        get_config(None)
-        reset_config()
-        try:
-            with pytest.raises(RuntimeError, match="pinned digest"):
-                start_supervised_from_config()
-        finally:
-            os.environ.pop(EnvVar.QDRANT_SERVER.value, None)
-            reset_config()
+        assert self._refused_start().error == "qdrant_binary_unverified"
+
+    def test_a_registered_binary_changed_after_registration_is_refused(
+        self, isolated_status_dir: Path, tmp_path: Path
+    ) -> None:
+        _ = isolated_status_dir
+        operator_binary = tmp_path / "operator-qdrant.bin"
+        operator_binary.write_bytes(b"operator-supplied")
+        report = provision(binary=operator_binary)
+        assert report.binary is not None
+        report.binary.write_bytes(b"changed-after-registration")
+
+        refused = self._refused_start()
+
+        assert refused.error == "qdrant_binary_unverified"
+        assert "the digest recorded when it was registered" in str(refused)
+        assert "--binary" in str(refused)
 
 
 class TestArchiveTraversal:
@@ -443,6 +491,61 @@ class TestResolution:
 
         assert resolved is not None
         assert resolved.sha256 == QDRANT_EXECUTABLE_SHA256[_GNU_ASSET]
+
+    def test_a_registered_install_resolves_as_its_own_source(
+        self, isolated_status_dir: Path, tmp_path: Path
+    ) -> None:
+        """Registered and downloaded installs never share a source label.
+
+        The version is unknown too: the directory says where the binary was
+        put, not what it is. Proven able to fail: reporting the directory's
+        version for every registered binary fails this on the empty-version
+        assertion below.
+        """
+        _ = isolated_status_dir
+        operator_binary = tmp_path / "operator-qdrant.bin"
+        operator_binary.write_bytes(b"operator-supplied")
+        report = provision(binary=operator_binary)
+        assert report.binary is not None
+
+        resolved = resolve_binary()
+
+        assert resolved is not None
+        assert resolved.source is BinarySource.MANAGED_OPERATOR
+        assert resolved.source.operator_supplied
+        assert resolved.sha256 == file_sha256(report.binary)
+        assert resolved.version == ""
+
+    def test_a_registered_pinned_release_executable_has_the_pinned_version(
+        self, isolated_status_dir: Path
+    ) -> None:
+        """An operator who registers the pinned release keeps its version.
+
+        The digest it is held to is one of the committed executable digests,
+        and the spawn check enforces that digest, so the version follows.
+        """
+        _ = isolated_status_dir
+        version_dir = qdrant_bin_dir()
+        version_dir.mkdir(parents=True)
+        (version_dir / binary_filename()).write_bytes(b"stand-in")
+        pinned = QDRANT_EXECUTABLE_SHA256[asset_for_platform()]
+        (version_dir / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "version": QDRANT_SERVER_VERSION,
+                    "source": "operator",
+                    "binary_sha256": pinned,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        resolved = resolve_binary()
+
+        assert resolved is not None
+        assert resolved.source is BinarySource.MANAGED_OPERATOR
+        assert resolved.sha256 == pinned
+        assert resolved.version == QDRANT_SERVER_VERSION
 
     def test_env_binary_wins_over_provisioned(
         self, isolated_status_dir: Path, tmp_path: Path

@@ -18,6 +18,7 @@ provisioning time.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
@@ -211,17 +212,46 @@ class ProvisionReport:
         }
 
 
+class BinarySource(StrEnum):
+    """Where a qdrant binary came from, which decides what it is held to.
+
+    The values are what status surfaces and envelopes print. A source says
+    what was checked before the binary ran, so two origins held to different
+    evidence never share a value.
+    """
+
+    #: Named by the operator binary setting. No pin applies and the file is
+    #: not hashed; it runs as named.
+    OPERATOR_SETTING = "env"
+    #: The managed install, downloaded. Held to the committed executable
+    #: digest of the asset its manifest names.
+    MANAGED_DOWNLOAD = "provisioned"
+    #: The managed install, registered from a binary an operator supplied.
+    #: Held to the digest recorded when it was registered.
+    MANAGED_OPERATOR = "registered"
+    #: A running server this process did not spawn. It names no binary and is
+    #: never executable; it exists so an attached supervisor reports a source
+    #: of its own instead of borrowing one.
+    ATTACHED = "attached"
+
+    @property
+    def operator_supplied(self) -> bool:
+        """Whether an operator, not the committed pin, vouches for the binary."""
+        return self in (BinarySource.OPERATOR_SETTING, BinarySource.MANAGED_OPERATOR)
+
+
 @dataclass
 class ResolvedBinary:
     """An executable qdrant binary plus where it came from.
 
     Attributes:
         path: Absolute path to the binary.
-        source: Resolution origin - ``"env"`` (the operator binary
-            setting) or ``"provisioned"`` (the managed bin dir).
-        version: The provisioned version when ``source`` is
-            ``"provisioned"``; empty otherwise (operator binaries are
-            trusted as-is).
+        source: Resolution origin, which selects the check the binary must
+            pass before it runs.
+        version: The server version the binary is known to be: the pinned
+            version for a downloaded install, and for a registered one only
+            when its recorded digest is a pinned release executable. Empty
+            when unknown, which is every other operator-supplied binary.
         sha256: The digest the executable must hash to before it may run.
             For a managed install this is never read from a downloaded
             install's own manifest; empty means no digest applies, and no
@@ -229,7 +259,7 @@ class ResolvedBinary:
     """
 
     path: Path
-    source: str
+    source: BinarySource
     version: str = ""
     sha256: str = ""
 

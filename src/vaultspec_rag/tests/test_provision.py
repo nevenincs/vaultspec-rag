@@ -137,12 +137,15 @@ def test_child_env_excludes_secrets_keeps_essentials() -> None:
     from pathlib import Path as _Path
 
     from ..qdrant_runtime._supervise import QdrantSupervisor
+    from ._fake_qdrant_binary import unpinned
 
     prev = os.environ.get("MY_FAKE_SECRET_TOKEN")
     os.environ["MY_FAKE_SECRET_TOKEN"] = "do-not-leak"
     try:
         sup = QdrantSupervisor(
-            _Path("qdrant"), http_port=6333, storage_dir=_Path("storage")
+            unpinned(_Path("qdrant")),
+            http_port=6333,
+            storage_dir=_Path("storage"),
         )
         env = sup._child_env()
         assert "MY_FAKE_SECRET_TOKEN" not in env

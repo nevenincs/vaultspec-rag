@@ -58,6 +58,7 @@ from ._constants import (
     QDRANT_ASSET_SHA256,
     QDRANT_EXECUTABLE_SHA256,
     QDRANT_SERVER_VERSION,
+    BinarySource,
     ResolvedBinary,
 )
 
@@ -65,6 +66,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "QDRANT_BINARY_INVALID",
+    "QDRANT_BINARY_UNVERIFIED",
     "QdrantBinaryError",
     "QdrantEndpointProbe",
     "QdrantIdentity",
@@ -84,6 +86,7 @@ __all__ = [
     "reap_qdrant_orphan",
     "resolve_binary",
     "verify_attachable",
+    "verify_resolved_binary",
     "write_qdrant_identity",
 ]
 
@@ -794,6 +797,8 @@ def decide_qdrant_action(
 #: Machine-readable code for an operator binary setting that names something
 #: other than an absolute path to a regular, non-link file.
 QDRANT_BINARY_INVALID = "qdrant_binary_invalid"
+#: Machine-readable code for a managed install that fails its digest check.
+QDRANT_BINARY_UNVERIFIED = "qdrant_binary_unverified"
 
 
 class QdrantBinaryError(RuntimeError):
@@ -823,6 +828,15 @@ def _operator_binary_fault(candidate: Path) -> str | None:
     return None
 
 
+def _operator_setting_refusal(candidate: Path, fault: str) -> QdrantBinaryError:
+    return QdrantBinaryError(
+        QDRANT_BINARY_INVALID,
+        f"{EnvVar.QDRANT_BINARY.value} names {candidate}, which {fault}. "
+        "It must name an absolute path to a regular file that is not a "
+        "link. Correct it, or unset it to use the managed qdrant server.",
+    )
+
+
 def _resolve_env_binary() -> ResolvedBinary | None:
     raw = get_config().qdrant_binary
     if not raw:
@@ -830,13 +844,8 @@ def _resolve_env_binary() -> ResolvedBinary | None:
     candidate = Path(raw).expanduser()
     fault = _operator_binary_fault(candidate)
     if fault is not None:
-        raise QdrantBinaryError(
-            QDRANT_BINARY_INVALID,
-            f"{EnvVar.QDRANT_BINARY.value} names {candidate}, which {fault}. "
-            "It must name an absolute path to a regular file that is not a "
-            "link. Correct it, or unset it to use the managed qdrant server.",
-        )
-    return ResolvedBinary(path=candidate, source="env")
+        raise _operator_setting_refusal(candidate, fault)
+    return ResolvedBinary(path=candidate, source=BinarySource.OPERATOR_SETTING)
 
 
 def _resolve_provisioned(version: str) -> ResolvedBinary | None:
@@ -859,12 +868,79 @@ def _resolve_provisioned(version: str) -> ResolvedBinary | None:
             version,
         )
         return None
+    expected = expected_executable_sha256(manifest)
+    if manifest.get("source") != MANIFEST_SOURCE_OPERATOR:
+        return ResolvedBinary(
+            path=binary,
+            source=BinarySource.MANAGED_DOWNLOAD,
+            version=recorded_version,
+            sha256=expected,
+        )
+    # The version directory says where a registered binary was put, not what
+    # it is. Its version is known only when the digest it is held to is one of
+    # the pinned release executables.
+    is_pinned_release = expected in QDRANT_EXECUTABLE_SHA256.values()
     return ResolvedBinary(
         path=binary,
-        source="provisioned",
-        version=recorded_version,
-        sha256=expected_executable_sha256(manifest),
+        source=BinarySource.MANAGED_OPERATOR,
+        version=recorded_version if is_pinned_release else "",
+        sha256=expected,
     )
+
+
+def verify_resolved_binary(resolved: ResolvedBinary) -> None:
+    """Check *resolved* against what its source holds it to, or refuse it.
+
+    The one check that stands between resolution and execution. The
+    supervisor runs it immediately before every spawn; a caller may also run
+    it earlier to fail where an operator can see the reason.
+
+    A managed install is always hashed. There is no branch that lets one run
+    unhashed: a digest that is missing or empty is a mismatch like any other,
+    because no file hashes to it. Only the operator setting runs without a
+    digest, and it is re-checked for the shape resolution required of it, so
+    a file swapped for a link or removed after resolution is refused too.
+
+    Raises:
+        QdrantBinaryError: When the binary may not run. The message names the
+            command that repairs a managed install.
+    """
+    if resolved.source is BinarySource.OPERATOR_SETTING:
+        fault = _operator_binary_fault(resolved.path)
+        if fault is not None:
+            raise _operator_setting_refusal(resolved.path, fault)
+        return
+    if resolved.source not in (
+        BinarySource.MANAGED_DOWNLOAD,
+        BinarySource.MANAGED_OPERATOR,
+    ):
+        raise QdrantBinaryError(
+            QDRANT_BINARY_UNVERIFIED,
+            f"A qdrant binary of source {resolved.source!r} is never executed.",
+        )
+    from ._provision import verify_native_binary
+
+    try:
+        verify_native_binary(resolved.path, resolved.sha256)
+    except RuntimeError as exc:
+        if resolved.source is BinarySource.MANAGED_OPERATOR:
+            held_to = "the digest recorded when it was registered"
+            remedy = (
+                "Register it again with: vaultspec-rag server qdrant install "
+                "--binary <path>, or replace it with the pinned release: "
+                "vaultspec-rag server qdrant install --upgrade"
+            )
+        else:
+            held_to = "the pinned digest of its release asset"
+            remedy = (
+                "Replace it with the pinned release: "
+                "vaultspec-rag server qdrant install --upgrade"
+            )
+        raise QdrantBinaryError(
+            QDRANT_BINARY_UNVERIFIED,
+            f"The managed qdrant binary at {resolved.path} does not match "
+            f"{held_to}; refusing to execute it. {remedy}",
+        ) from exc
 
 
 def has_provisioned_binary(version: str = QDRANT_SERVER_VERSION) -> bool:

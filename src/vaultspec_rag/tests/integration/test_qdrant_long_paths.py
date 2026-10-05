@@ -21,6 +21,7 @@ from ..._qdrant_server_client import open_server_client
 from ...config._types import EnvVar
 from ...qdrant_runtime._credential import read_managed_api_key
 from ...qdrant_runtime._supervise import QdrantSupervisor
+from .._fake_qdrant_binary import unpinned
 from ..conftest import managed_env
 from ._helpers import _get_ephemeral_qdrant_port, _resolve_host_provisioned_qdrant
 
@@ -47,7 +48,7 @@ def test_collection_create_succeeds_on_a_long_storage_path(tmp_path: Path) -> No
     assert len(str(storage)) >= 140
 
     supervisor = QdrantSupervisor(
-        binary,
+        unpinned(binary),
         http_port=_get_ephemeral_qdrant_port(),
         storage_dir=storage,
         log_path=tmp_path / "qdrant.log",
