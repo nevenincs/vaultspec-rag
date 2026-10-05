@@ -5,7 +5,7 @@ tags:
 date: '2026-10-05'
 modified: '2026-10-05'
 body_schema: 'body-v2'
-body_hash: 'sha256:ee25eb4c0bd2c01c09ae444147a3c5c60c9843ba42b774da8a9b7e46fc971073'
+body_hash: 'sha256:81f8455475606bd56d319115ea34a9e9fc1dbc8927f2281dae4c8f29a97affe1'
 related:
   - "[[2026-10-05-qdrant-provisioning-trust-plan]]"
 ---
@@ -226,6 +226,44 @@ related:
 - `S21` `M` `src/vaultspec_rag/tests/test_model_fetch.py`
 - `S21` `verify:` `pytest unit lane over 17 covering modules against da9944f1 plus the commit paths` -> `pass`
 - `S21` `verify:` `dev lint python, complexity, size, nesting, docs-cli; ruff format, ty, basedpyright` -> `pass`
+- `S15` `M` `.env.example`
+- `S15` `M` `docs/configuration.md`
+- `S15` `M` `src/vaultspec_rag/_readiness.py`
+- `S15` `M` `src/vaultspec_rag/config/_registry.py`
+- `S15` `M` `src/vaultspec_rag/config/_schema.py`
+- `S15` `M` `src/vaultspec_rag/config/_settings.py`
+- `S15` `M` `src/vaultspec_rag/config/_types.py`
+- `S15` `M` `src/vaultspec_rag/qdrant_runtime/_constants.py`
+- `S15` `M` `src/vaultspec_rag/qdrant_runtime/_executable_hold.py`
+- `S15` `M` `src/vaultspec_rag/qdrant_runtime/_resolve.py`
+- `S15` `M` `src/vaultspec_rag/qdrant_runtime/_spawn_trust.py`
+- `S15` `M` `src/vaultspec_rag/tests/_fake_qdrant_binary.py`
+- `S15` `M` `src/vaultspec_rag/tests/integration/test_qdrant_server_mode.py`
+- `S15` `A` `src/vaultspec_rag/tests/test_config_operator_binary.py`
+- `S15` `M` `src/vaultspec_rag/tests/test_config_sources.py`
+- `S15` `M` `src/vaultspec_rag/tests/test_qdrant_runtime.py`
+- `S15` `M` `src/vaultspec_rag/tests/test_qdrant_spawn_trust.py`
+- `S15` `M` `src/vaultspec_rag/tests/test_qdrant_store_format.py`
+- `S15` `M` `src/vaultspec_rag/tests/test_readiness.py`
+- `S15` `verify:` `pytest 34 modules in an export of the parent plus the 32 paths on Windows` -> `pass`
+- `S15` `by:` `vaultspec-high-executor`
+- `S16` `M` `src/vaultspec_rag/qdrant_runtime/_provision.py`
+- `S16` `M` `src/vaultspec_rag/tests/_stand_in_release.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_provision.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_qdrant_download_faults.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_qdrant_install.py`
+- `S16` `A` `src/vaultspec_rag/tests/test_qdrant_offline_install.py`
+- `S16` `verify:` `pytest 34 modules in an export of the parent plus the 32 paths on Windows` -> `pass`
+- `S16` `by:` `vaultspec-high-executor`
+- `S17` `M` `docs/cli.md`
+- `S17` `M` `src/vaultspec_rag/cli/_service_qdrant.py`
+- `S17` `M` `src/vaultspec_rag/commands/_provision.py`
+- `S17` `M` `src/vaultspec_rag/tests/_qdrant_provision_seam.py`
+- `S17` `M` `src/vaultspec_rag/tests/test_cli_qdrant.py`
+- `S17` `M` `src/vaultspec_rag/tests/test_client_provisions_nothing.py`
+- `S17` `M` `src/vaultspec_rag/tests/test_start_provisioning.py`
+- `S17` `verify:` `pytest 34 modules in an export of the parent plus the 32 paths on Windows` -> `pass`
+- `S17` `by:` `vaultspec-high-executor`
 
 ## Notes
 
@@ -248,3 +286,6 @@ related:
 - `S21` Commit da9944f1, binary half only; the model half is not yet committed. In the suite the mid-write disk failure is simulated with a constructed ENOSPC on a real staging file; outside the suite the install was run on a real 4 MiB tmpfs under WSL with the kernel's own ENOSPC. The commit message says Python 3.14 for the Linux run; it was 3.13.14. The after-body deadline-cut test has no failing run on Windows or Linux.
 - `S18` Commit d42cdcbe. The integration pytest entry needs a GPU loan WSL cannot have, so the two test functions were called directly with the arguments their fixtures supply; they have not run through pytest on any host.
 - `S21` Commit fb3d1962, model half. Each repository downloads in a child interpreter; the parent enforces a progress floor and kills the process tree on a breach. The native xet transport is not exercised in the unit tier; what is proven is the process kill. Out-of-space is staged by the hub declaring a size above the volume's real free space; a volume filling mid-transfer is covered only at the classification seam. No transfer against the real hub was run. The kill-descendants, kill, wait, confirm composition now exists twice, here and in the indexer's preprocess runner.
+- `S15` Commit 4b7f2ee0, one joint commit for the operator-route change across three layers because no intermediate state passes the gates. Verified in an export of HEAD plus the 32 paths on Windows and in WSL. The unconsumed-definitions guard was red at the parent on three helper functions from ff9dc50d, not on these paths. Two torch-dependent readiness tests fail in the torch-free WSL environment, as on the parent.
+- `S16` Commit 4b7f2ee0, one joint commit for the operator-route change across three layers because no intermediate state passes the gates. Verified in an export of HEAD plus the 32 paths on Windows and in WSL. The unconsumed-definitions guard was red at the parent on three helper functions from ff9dc50d, not on these paths. Two torch-dependent readiness tests fail in the torch-free WSL environment, as on the parent.
+- `S17` Commit 4b7f2ee0, one joint commit for the operator-route change across three layers because no intermediate state passes the gates. Verified in an export of HEAD plus the 32 paths on Windows and in WSL. The unconsumed-definitions guard was red at the parent on three helper functions from ff9dc50d, not on these paths. Two torch-dependent readiness tests fail in the torch-free WSL environment, as on the parent.

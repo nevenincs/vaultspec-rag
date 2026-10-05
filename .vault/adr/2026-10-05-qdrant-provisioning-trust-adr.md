@@ -5,7 +5,7 @@ tags:
 date: '2026-10-05'
 modified: '2026-10-05'
 body_schema: 'body-v2'
-body_hash: 'sha256:565abe9485bb06b447988e6c07e8358a199b488e3a27cb541ccc71f7f3fecdbb'
+body_hash: 'sha256:9dffc208cc4b7d0b8e8402b4bcb22f70b2b177d66ed00fa2c48190e5f1d5a60e'
 related:
   - "[[2026-10-05-qdrant-provisioning-trust-audit]]"
   - "[[2026-06-12-qdrant-server-provisioning-adr]]"
@@ -151,6 +151,8 @@ A host installation that has never provisioned the managed Qdrant server cannot 
 - An interrupt during any foreground stage ends promptly in one interrupted outcome. Every remedy names a complete command that exists on that verb and repairs the condition it is shown for.
 
 - Helper executables the package runs are resolved from absolute locations and never by a search that can take the working directory; the daemon's working directory is fixed.
+
+- Clarification of the two constraints above. Backend precedence is flag, then exported variable, then persisted marker, then default; a flag asking for the managed server overrides a persisted or exported local-only choice, the local-only flag wins when both are passed, and a remote server address is never overridden by a flag. An explicit backend flag on `install` is the operator naming the backend and is persisted whenever the installation role is host, whether or not the accelerator stack is usable yet. With no backend flag, a marker is written only when the can-run-the-service judgement passes and provisioning did not fail. A client never writes it.
 
 ## Implementation
 

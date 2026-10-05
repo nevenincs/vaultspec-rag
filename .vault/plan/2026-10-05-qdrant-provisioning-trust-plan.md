@@ -14,7 +14,7 @@ related:
   - '[[2026-10-05-qdrant-provisioning-trust-research]]'
 modified: '2026-10-05'
 body_schema: body-v2
-body_hash: 'sha256:80c88251f1473d8b5fbc42e7a9383c5b62350c72d2fb9d39472910c666a64196'
+body_hash: 'sha256:2dcffee5e166e0809439177246df6f74d4fa6fd97450332efc7407ee015eace4'
 ---
 
 # `qdrant-provisioning-trust` plan
@@ -45,9 +45,9 @@ Extended 2026-10-05. Basis: after eight Steps had closed, the user wrote that no
 - [x] `S12` - collapse model fetching to one implementation shared by install, server warmup, and the start preflight, and ensure models through it before the daemon spawns; `src/vaultspec_rag/commands/_provision.py, cli/_service_lifecycle.py and cli/_service_start.py`.
 - [x] `S13` - correct the daemon-provisioning prose and bring the installation, CLI, and backend guides in line with automatic host provisioning and the removed PATH tier; `src/vaultspec_rag/server/_lifespan.py and docs/`.
 - [x] `S14` - select the static musl asset for Linux x64 and verify an existing install against the committed executable digest of the asset its manifest names; `src/vaultspec_rag/qdrant_runtime/_resolve.py and _constants.py`.
-- [ ] `S15` - add the operator binary digest setting and resolve an operator binary only from the path and digest settings together, dropping the manifest-registered source; `src/vaultspec_rag/config/ and src/vaultspec_rag/qdrant_runtime/_resolve.py`.
-- [ ] `S16` - replace operator registration with an offline install from a local official archive verified against the committed archive and executable digests; `src/vaultspec_rag/qdrant_runtime/_provision.py`.
-- [ ] `S17` - replace the install verb's binary option with a local archive option and report an operator-claiming manifest as invalid with the two supported routes; `src/vaultspec_rag/cli/_service_qdrant.py and docs/`.
+- [x] `S15` - add the operator binary digest setting and resolve an operator binary only from the path and digest settings together, dropping the manifest-registered source; `src/vaultspec_rag/config/ and src/vaultspec_rag/qdrant_runtime/_resolve.py`.
+- [x] `S16` - replace operator registration with an offline install from a local official archive verified against the committed archive and executable digests; `src/vaultspec_rag/qdrant_runtime/_provision.py`.
+- [x] `S17` - replace the install verb's binary option with a local archive option and report an operator-claiming manifest as invalid with the two supported routes; `src/vaultspec_rag/cli/_service_qdrant.py and docs/`.
 - [x] `S18` - pass the verified path as the executable, hold the file against replacement between hashing and process creation where the platform allows, hash the managed install in readiness, and extract spawn trust out of the supervisor module; `src/vaultspec_rag/qdrant_runtime/ and src/vaultspec_rag/_readiness.py`.
 - [ ] `S19` - commit revisions for the default dense and reranker models with prefixed revision settings, used by every fetch and load, and report an unpinned operator model on status; `src/vaultspec_rag/config/, _sparse_profile.py, _model_cache.py and the model load and fetch sites`.
 - [x] `S20` - restore the two gates that are red on this branch: the monitor test typing and the undeclared substitution site; `src/vaultspec_rag/tests/test_monitor_inventory.py, test_monitor_browser.py, test_document_index_symlinks.py and test_substitution_discipline.py`.
