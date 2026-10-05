@@ -27,11 +27,17 @@ import pytest
 
 from ..qdrant_runtime import _spawn_trust, _supervise
 from ..qdrant_runtime._constants import BinarySource, ResolvedBinary
+from ..qdrant_runtime._managed_install import classify_managed_binary
 from ..qdrant_runtime._provision import file_sha256
 from ..qdrant_runtime._resolve import QdrantBinaryError
 from ..qdrant_runtime._spawn_trust import verify_resolved_binary
 from ..qdrant_runtime._supervise import QdrantSupervisor
-from ._fake_qdrant_binary import FAKE_SERVER, fake_qdrant_binary, unpinned
+from ._fake_qdrant_binary import (
+    FAKE_SERVER,
+    fake_qdrant_binary,
+    unpinned,
+    unreadable,
+)
 from ._ports import free_loopback_port
 
 pytestmark = [pytest.mark.unit]
@@ -169,6 +175,109 @@ class TestEveryBinaryIsHashedBeforeItRuns:
 
         assert marker.read_text(encoding="utf-8") == "ran"
         assert supervisor.state().to_dict()["binary_source"] == str(source)
+
+
+class TestARefusalSaysWhatIsActuallyWrong:
+    """A file that could not be read is not reported as one that failed.
+
+    A spawn can meet a binary hours after it was resolved, so what it finds is
+    judged again and the refusal names that: busy, gone, replaced by a link,
+    or holding other bytes. Each has a different remedy.
+    """
+
+    @pytest.mark.parametrize(("source", "_remedy"), _RUNNABLE_SOURCES)
+    def test_a_binary_that_cannot_be_read_is_busy_and_runs_once_it_can(
+        self, source: BinarySource, _remedy: str, tmp_path: Path
+    ) -> None:
+        """The launcher matches its digest throughout; only reading it fails.
+
+        Mutation it catches: wording a hold that could not be taken as a
+        failed digest. An operator is then told to replace a file that is
+        exactly what it should be, and each source fails on the code
+        assertion.
+        """
+        launcher, marker = _marker_launcher(tmp_path)
+        supervisor = _supervisor(_held_to_its_own_digest(launcher, source), tmp_path)
+        try:
+            with unreadable(launcher), pytest.raises(QdrantBinaryError) as busy:
+                supervisor.spawn()
+            ran_while_unreadable = marker.exists()
+            supervisor.spawn()
+            process = supervisor._proc
+            assert process is not None
+            assert process.wait(timeout=30.0) == 0
+        finally:
+            assert supervisor.stop(timeout=10.0)
+
+        assert busy.value.error == "qdrant_binary_busy"
+        assert str(launcher) in str(busy.value)
+        assert "Close whatever holds it" in str(busy.value)
+        assert "--upgrade" not in str(busy.value)
+        assert not ran_while_unreadable, "a binary nobody could hash was run"
+        assert marker.read_text(encoding="utf-8") == "ran"
+
+    def test_a_managed_binary_that_is_gone_is_refused_as_gone(
+        self, tmp_path: Path
+    ) -> None:
+        """Mutation it catches: treating every hold that fails as a busy file.
+
+        An operator is then told to close whatever holds a file that is not
+        there, and this fails on the code assertion.
+        """
+        launcher, _marker = _marker_launcher(tmp_path)
+        resolved = _held_to_its_own_digest(launcher)
+        launcher.unlink()
+
+        with pytest.raises(QdrantBinaryError) as refused:
+            verify_resolved_binary(resolved)
+
+        assert refused.value.error == "qdrant_binary_unverified"
+        assert "is no longer there" in str(refused.value)
+        assert "vaultspec-rag server qdrant install --upgrade" in str(refused.value)
+
+    def test_a_managed_binary_swapped_for_a_link_is_refused_as_a_link(
+        self, tmp_path: Path
+    ) -> None:
+        """The link leads to the launcher that verified, so only its shape fails.
+
+        Mutation it catches: reporting a hold that fails without asking what
+        is at the name now. The hold refuses a link the way it refuses a file
+        it cannot open, so the link is then reported busy - waiting for a file
+        that will never become readable - and this fails on the code
+        assertion.
+        """
+        launcher, marker = _marker_launcher(tmp_path)
+        resolved = _held_to_its_own_digest(launcher)
+        moved = launcher.with_name(f"moved-{launcher.name}")
+        launcher.rename(moved)
+        launcher.symlink_to(moved)
+
+        with pytest.raises(QdrantBinaryError) as refused:
+            verify_resolved_binary(resolved)
+
+        assert refused.value.error == "qdrant_binary_unverified"
+        assert "symbolic link" in str(refused.value)
+        assert not marker.exists()
+
+    def test_a_changed_managed_binary_is_refused_in_the_words_every_surface_uses(
+        self, tmp_path: Path
+    ) -> None:
+        """A restart and a status read describe one file the same way.
+
+        Mutation it catches: a sentence of the spawn check's own for a managed
+        binary that fails its digest. This fails on the equality below.
+        """
+        launcher, _marker = _marker_launcher(tmp_path)
+        resolved = _held_to_its_own_digest(launcher)
+        with launcher.open("ab") as stream:
+            stream.write(_HARMLESS_TAIL)
+
+        with pytest.raises(QdrantBinaryError) as refused:
+            verify_resolved_binary(resolved)
+
+        assert refused.value.error == "qdrant_binary_unverified"
+        assert str(refused.value) == classify_managed_binary(launcher).refusal
+        assert file_sha256(launcher) in str(refused.value)
 
 
 @pytest.mark.usefixtures("isolated_singleton_dirs")

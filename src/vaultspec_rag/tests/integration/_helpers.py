@@ -258,15 +258,16 @@ def _resolve_host_provisioned_qdrant() -> tuple[Path, Path] | None:
     Read against the host's real config (call this BEFORE any status-dir
     override), so the source is the genuine managed install under
     ``~/.vaultspec-rag/bin/qdrant/{version}/``. Returns ``(binary, manifest)`` or
-    ``None`` when no provisioned (pinned, manifest-backed) install exists.
+    ``None`` when the managed install is absent or has no manifest to copy.
     """
     from ...qdrant_runtime._constants import MANIFEST_FILENAME, QDRANT_SERVER_VERSION
     from ...qdrant_runtime._resolve import resolve_binary
 
     resolved = resolve_binary(QDRANT_SERVER_VERSION)
     if resolved is None or resolved.source != "provisioned":
-        # Only a provisioned (pinned, manifest-backed) binary is mirrorable with
-        # its verification intact; an operator-setting binary carries no manifest.
+        # Only the managed install verifies wherever it is copied to: it is
+        # held to a committed digest. An operator binary is held to a digest
+        # its operator declared in settings a mirror does not carry.
         return None
     manifest = resolved.path.parent / MANIFEST_FILENAME
     if not manifest.is_file():
@@ -283,9 +284,9 @@ def _mirror_managed_qdrant_binary(status_dir: Path, source: tuple[Path, Path]) -
     host's real provisioned install (binary plus its manifest, supplied by
     :func:`_resolve_host_provisioned_qdrant`) into the isolated dir.
 
-    The pinned-digest contract is preserved: the manifest is copied verbatim, so
-    the supervisor's pre-execution SHA256 re-hash still runs against the real
-    committed digest - the verification boundary is never weakened.
+    The pinned-digest contract is preserved: the copy is judged by its bytes
+    against the committed digests at resolution and again at every spawn, as
+    the original is. The manifest travels as the record of how it arrived.
     """
     from ...qdrant_runtime._constants import MANIFEST_FILENAME, QDRANT_SERVER_VERSION
     from ...qdrant_runtime._resolve import binary_filename

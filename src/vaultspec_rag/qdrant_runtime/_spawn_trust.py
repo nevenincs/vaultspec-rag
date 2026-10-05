@@ -12,6 +12,9 @@ because no file hashes to it. The managed install is held to a committed
 constant and an operator binary to the digest its operator declared. The
 operator binary is also re-checked for the shape resolution required of it,
 so a file swapped for a link or removed after resolution is refused by name.
+
+A file that cannot be read is not a file that failed: it is refused under its
+own code, with a remedy that does not ask for it to be replaced.
 """
 
 from __future__ import annotations
@@ -26,10 +29,13 @@ from .._win32 import WIN_CREATE_NEW_PROCESS_GROUP, WIN_CREATE_NO_WINDOW
 from ..config._types import EnvVar
 from ._constants import QDRANT_SERVER_VERSION, BinarySource, ResolvedBinary
 from ._executable_hold import HeldExecutable, held_executable
+from ._managed_install import InstallState, classify_managed_binary, unreadable_refusal
 from ._resolve import (
+    QDRANT_BINARY_BUSY,
     QDRANT_BINARY_UNVERIFIED,
     QdrantBinaryError,
     has_provisioned_binary,
+    managed_install_refusal,
     operator_binary_fault,
     operator_setting_refusal,
 )
@@ -68,6 +74,47 @@ def _refusal(resolved: ResolvedBinary, problem: str) -> QdrantBinaryError:
     )
 
 
+def _unreadable(resolved: ResolvedBinary, cause: OSError) -> QdrantBinaryError:
+    """Build the refusal for a binary that could not be opened or read.
+
+    Kept apart from a failed digest: nothing is known about a file that could
+    not be read, it may be exactly what it should be, and telling an operator
+    to replace it would be the wrong remedy for something usually gone a
+    moment later.
+    """
+    return QdrantBinaryError(
+        QDRANT_BINARY_BUSY, unreadable_refusal(resolved.path, cause)
+    )
+
+
+def _managed_binary_changed(
+    resolved: ResolvedBinary, cause: OSError | None
+) -> QdrantBinaryError:
+    """Refuse a managed binary that is no longer what resolution found.
+
+    Resolution judged the file moments or hours ago; a heartbeat restart meets
+    whatever is there now. The shared judgement is asked again so the refusal
+    says what a status read of the same file would say, not a second wording
+    of it.
+
+    Args:
+        resolved: The managed binary as it was resolved.
+        cause: Why it could not be held, or ``None`` when it was read and its
+            digest did not match.
+    """
+    install = classify_managed_binary(resolved.path)
+    refusal = managed_install_refusal(install)
+    if refusal is not None:
+        return refusal
+    if install.state is InstallState.ABSENT:
+        return _refusal(resolved, "is no longer there")
+    # It is the pinned release on this second look, so what failed a moment
+    # ago was the read, or a write that has since finished.
+    if cause is not None:
+        return _unreadable(resolved, cause)
+    return _refusal(resolved, "changed while it was being checked")
+
+
 @contextmanager
 def _verified(resolved: ResolvedBinary) -> Generator[HeldExecutable]:
     """Hold *resolved* open, proven to be what its source holds it to.
@@ -90,19 +137,21 @@ def _verified(resolved: ResolvedBinary) -> Generator[HeldExecutable]:
     with ExitStack() as stack:
         # Entered apart from the block below so that a failure to open the
         # file is told from a failure raised by whoever is using the hold.
+        managed = resolved.source is BinarySource.MANAGED_DOWNLOAD
         try:
             held = stack.enter_context(held_executable(resolved.path))
         except OSError as exc:
-            raise _refusal(
-                resolved, f"could not be held for verification ({exc})"
-            ) from exc
+            if managed:
+                raise _managed_binary_changed(resolved, exc) from exc
+            raise _unreadable(resolved, exc) from exc
         if held.sha256() != resolved.sha256:
-            held_to = (
-                f"the SHA256 declared in {EnvVar.QDRANT_BINARY_SHA256.value}"
-                if resolved.source is BinarySource.OPERATOR_SETTING
-                else "the pinned digest of its release asset"
+            if managed:
+                raise _managed_binary_changed(resolved, None)
+            raise _refusal(
+                resolved,
+                "does not match the SHA256 declared in "
+                f"{EnvVar.QDRANT_BINARY_SHA256.value}",
             )
-            raise _refusal(resolved, f"does not match {held_to}")
         yield held
 
 

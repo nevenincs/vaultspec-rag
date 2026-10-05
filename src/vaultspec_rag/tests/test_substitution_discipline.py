@@ -270,15 +270,15 @@ _ALLOWED: dict[str, tuple[int, str]] = {
     ),
     "_qdrant_provision_seam.py": (
         1,
-        "no substitute source can be staged - the provisioner requires https "
-        "on an allowed host and an archive matching a committed digest - and "
-        "the only real alternative is re-downloading the pinned release on "
-        "every run, which the suite's mirror-the-installed-binary design "
-        "exists to avoid. One site shared by every suite that must observe "
-        "whether a command reached the provisioner: the start path that "
-        "provisions unattended, and the commands a client installation must "
-        "never provision from, where the substitute is a tripwire that also "
-        "keeps a regressed run from downloading or going on to spawn a daemon",
+        "a recorder in front of the provisioner, for the commands that must "
+        "never reach it: everything a client installation runs, and a start "
+        "that is switched off, uses the on-disk store, or was given a binary "
+        "by its operator. That a call did not happen cannot be shown by "
+        "driving the call, and a regressed command must not go on to a "
+        "release source or spawn a daemon, so the recorder notes the call and "
+        "reports a failure. It stages no install: a start that is meant to "
+        "fetch the server runs the real provisioner against a stand-in "
+        "release served from a loopback source",
     ),
     # Reducing this bound to zero failed count growth; raising it to two failed
     # the declared-sites check; exact restoration passed.

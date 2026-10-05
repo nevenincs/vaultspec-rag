@@ -55,6 +55,7 @@ __all__ = [
     "send_then_reset",
     "send_trickle",
     "send_truncated",
+    "send_undelimited",
     "stay_silent",
     "trickle_headers",
     "trusted_loopback_sources",
@@ -352,6 +353,20 @@ def send_endless(
     while sent < total:
         handler.wfile.write(chunk[: total - sent])
         sent += len(chunk)
+    handler.close_connection = True
+
+
+def send_undelimited(handler: QuietHandler, body: bytes) -> None:
+    """Send *body* with no length and no chunk framing, then close in order.
+
+    The close of the connection is all that ends such a body, so a client
+    cannot tell from the transfer whether *body* was everything.
+    """
+    handler.send_response(HTTPStatus.OK)
+    handler.send_header("Connection", "close")
+    handler.end_headers()
+    handler.wfile.write(body)
+    handler.wfile.flush()
     handler.close_connection = True
 
 

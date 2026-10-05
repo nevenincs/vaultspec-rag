@@ -11,13 +11,8 @@ from typer.testing import CliRunner
 from ..cli import app
 from ..config._types import EnvVar
 from ..qdrant_runtime._constants import QDRANT_SERVER_VERSION
-from ..qdrant_runtime._resolve import binary_filename
 from ._loopback_tls import send_bytes, trusted_loopback_sources
-from ._qdrant_provision_seam import (
-    OPERATOR_REGISTERED,
-    operator_pair,
-    write_managed_install,
-)
+from ._qdrant_provision_seam import operator_pair, write_unpinned_install
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -42,21 +37,14 @@ _FAKE_SERVER = b"test-qdrant"
 
 
 def _seed_qdrant_install(
-    status_dir: Path,
-    version: str = QDRANT_SERVER_VERSION,
-    *,
-    registered: bool = False,
+    status_dir: Path, version: str = QDRANT_SERVER_VERSION
 ) -> None:
     """Write a managed install under *status_dir*, before any command reads it.
 
-    ``registered`` writes the install an earlier release recorded for a
-    binary an operator registered, which nothing accepts any longer.
+    Its executable is fixture bytes, so it is an install that is not the
+    pinned release, whatever its manifest claims.
     """
-    write_managed_install(
-        status_dir / "bin" / "qdrant" / version,
-        _FAKE_SERVER,
-        source=OPERATOR_REGISTERED if registered else "download",
-    )
+    write_unpinned_install(status_dir / "bin" / "qdrant" / version, _FAKE_SERVER)
 
 
 def _closed_port() -> int:
@@ -192,18 +180,21 @@ def test_qdrant_status_reports_an_operator_file_that_is_not_the_one_declared(
     assert data["binary_error"]["error"] == "qdrant_binary_unverified"
 
 
-def test_qdrant_status_reports_an_install_that_fails_its_check(
+def test_qdrant_status_reports_an_install_that_is_not_the_pinned_release(
     tmp_path: Path,
 ) -> None:
     """A managed install a start would refuse is not shown as startable.
 
-    The listing says the same thing in its own words: an install nothing
-    vouches for is not given the source its manifest claims.
+    Its executable hashes to no committed digest, so it is reported as
+    unusable whatever its manifest claims, with every way out named in full:
+    the pinned release installed over it, online or from a local archive, or
+    the two settings for an operator's own binary. The listing says the same
+    thing in its own words and does not give the install the source its
+    manifest claims.
 
-    Mutation check: with status no longer holding the resolved binary to its
-    check, the view carries no refusal and offers ``server start --qdrant``
-    for an install that cannot run - failing the ``Detail`` assertion.
-    Restoring the check passes.
+    Mutation check: with the resolver's refusal taken as "nothing installed",
+    the view reads ``not installed`` and offers a plain install, which would
+    refuse - failing the ``Executable`` assertion. Restoring it passes.
     """
     _seed_qdrant_install(tmp_path)
     env = {
@@ -216,58 +207,22 @@ def test_qdrant_status_reports_an_install_that_fails_its_check(
 
     assert human.exit_code == 0, human.output
     labels = _labels(human.output)
-    assert labels["Executable"].endswith(binary_filename())
-    assert labels["Source"] == "pinned release (provisioned)"
-    assert "server qdrant install --upgrade" in labels.get("Detail", "")
+    assert labels["Executable"] == "not usable"
+    detail = labels["Detail"]
+    assert "server qdrant install --upgrade" in detail
+    assert "server qdrant install --upgrade --archive <file>" in detail
+    assert EnvVar.QDRANT_BINARY.value in detail
+    assert EnvVar.QDRANT_BINARY_SHA256.value in detail
     assert "vaultspec-rag server start --qdrant" not in human.output
     assert f"{QDRANT_SERVER_VERSION} - not verified (current)" in human.output
     assert "downloaded release" not in human.output
-    assert machine.exit_code == 0, machine.output
-    data = json.loads(machine.stdout)["data"]
-    assert data["binary_error"]["error"] == "qdrant_binary_unverified"
-    assert data["provisioned"][0]["verified"] is False
-
-
-def test_qdrant_status_reports_an_operator_registered_install_as_invalid(
-    tmp_path: Path,
-) -> None:
-    """An install whose manifest claims an operator source is not honoured.
-
-    Earlier releases let an operator register a binary into the managed
-    directory, trusted on the manifest written beside it. Such an install is
-    reported as unusable, with both supported routes named: the two settings
-    for an operator's own binary, or the pinned release reinstalled, online
-    or from a local archive.
-
-    Mutation check: with the resolver's refusal taken as "nothing installed",
-    the view reads ``not installed`` and offers a plain install, which would
-    refuse - failing the ``Executable`` assertion. Restoring it passes.
-    """
-    _seed_qdrant_install(tmp_path, registered=True)
-    env = {
-        EnvVar.STATUS_DIR.value: str(tmp_path),
-        EnvVar.QDRANT_PORT.value: str(_closed_port()),
-    }
-
-    human = runner.invoke(app, ["server", "qdrant", "status"], env=env)
-    machine = runner.invoke(app, ["server", "qdrant", "status", "--json"], env=env)
-
-    assert human.exit_code == 0, human.output
-    labels = _labels(human.output)
-    assert labels["Executable"] == "not usable"
-    detail = labels["Detail"]
-    assert EnvVar.QDRANT_BINARY.value in detail
-    assert EnvVar.QDRANT_BINARY_SHA256.value in detail
-    assert "server qdrant install --upgrade --archive <file>" in detail
-    assert "vaultspec-rag server start --qdrant" not in human.output
-    assert f"{QDRANT_SERVER_VERSION} - not verified (current)" in human.output
-    assert "operator" not in human.output.split("Available installs:")[1].split("\n")[1]
     # The listing would give the same sentence as its reason; it is said once.
-    assert " ".join(human.output.split()).count("That is no longer supported") == 1
+    assert " ".join(human.output.split()).count("is not the pinned release") == 1
     assert machine.exit_code == 0, machine.output
     data = json.loads(machine.stdout)["data"]
     assert data["active_binary"] is None
-    assert data["binary_error"]["error"] == "qdrant_install_invalid"
+    assert data["binary_error"]["error"] == "qdrant_binary_unverified"
+    assert data["provisioned"][0]["verified"] is False
 
 
 def test_qdrant_status_reports_an_unusable_operator_setting(tmp_path: Path) -> None:

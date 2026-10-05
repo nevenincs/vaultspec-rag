@@ -8,16 +8,24 @@ extracted. The single executable member is extracted to a second staging
 file, hashed against the committed executable digest for the asset, and only
 then moved onto the installed name in one atomic replace; the manifest is
 written last. A failure or an interrupt at any stage removes this run's
-staging files and leaves a previous install exactly as it was. A repeat run
-against a verified install reports ``unchanged`` with zero network I/O; a
-digest mismatch is a hard failure.
+staging files and leaves a previous install exactly as it was. A digest
+mismatch is a hard failure.
+
+What is installed is judged by hashing the executable, never by reading the
+manifest. A run that finds the pinned executable already in place downloads
+nothing, whatever its manifest says or lacks, and writes the manifest again
+if it is missing or wrong; that is all a run killed between the replace and
+the manifest leaves to do. An executable that is anything else is neither
+run nor overwritten until the upgrade form asks for it.
 
 A host with no route to a release source installs the same archive from a
 local copy. That changes where the archive is read from and nothing else:
 the same two digests, the same staging, the same replace. The managed
 directory holds the pinned release only. A binary of the operator's own is
-never copied into it; it is named through the operator binary settings, and
-a manifest claiming such a binary is not honoured.
+never copied into it; it is named through the operator binary settings.
+
+Working files a killed run left behind are removed by the next run of any
+kind that can show no run is still using them, whether or not it installs.
 
 Space is checked before it is spent. A download whose archive and extracted
 executable cannot both fit on the managed directory's volume is refused
@@ -42,7 +50,6 @@ import zlib
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from enum import StrEnum
 from pathlib import Path
 from typing import IO, TYPE_CHECKING
 
@@ -59,7 +66,7 @@ from ._constants import (
     MANIFEST_FILENAME,
     MANIFEST_SOURCE_ARCHIVE,
     MANIFEST_SOURCE_DOWNLOAD,
-    MANIFEST_SOURCE_OPERATOR,
+    MANIFEST_SOURCE_UNRECORDED,
     QDRANT_ASSET_SHA256,
     QDRANT_EXECUTABLE_SHA256,
     QDRANT_SERVER_VERSION,
@@ -72,9 +79,10 @@ from ._download import (
     download_https,
     no_progress,
 )
+from ._managed_install import InstallState, ManagedInstall, classify_managed_binary
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Iterable, Mapping
+    from collections.abc import Callable, Generator, Iterable
 
 logger = logging.getLogger(__name__)
 
@@ -241,6 +249,39 @@ class _InstallRequest:
     open_staging: Callable[[Path, str], tuple[Path, IO[bytes]]] = _open_staging
 
 
+_INSTALL_COMMAND = "vaultspec-rag server qdrant install"
+
+
+def _install_command(request: _InstallRequest) -> str:
+    """Name the whole command that performs *request*.
+
+    A failure of this install is read by someone who may have run a
+    different command to get here: a start provisions on the way. So a remedy
+    names the command that does this install, in full, and never says to
+    repeat a command or add a flag to one.
+    """
+    command = _INSTALL_COMMAND
+    if request.previously != InstallState.ABSENT:
+        command += " --upgrade"
+    if request.local_archive is not None:
+        command += f' --archive "{request.local_archive}"'
+    return f"`{command}`"
+
+
+def _managed_directory_remedy(version_dir: Path, rerun: str) -> str:
+    """Say what to do when the managed directory itself cannot be written."""
+    # Function-local: the build tools import this module in an interpreter
+    # that has no service configuration to import.
+    from ..config._types import EnvVar
+
+    return (
+        f"Check that {version_dir} is a directory this user can create and "
+        "write, with no file standing where a directory belongs on the way "
+        f"to it, or point {EnvVar.STATUS_DIR.value} at a directory that is. "
+        f"Then run {rerun}."
+    )
+
+
 def _require_free_space(
     request: _InstallRequest, *, archive_bytes: int, executable_bytes: int
 ) -> None:
@@ -276,8 +317,8 @@ def _require_free_space(
         "Not enough free space to install the Qdrant server: the volume "
         f"holding {request.version_dir} has {human_bytes(free)} free and the "
         f"install needs {human_bytes(needed)} ({', '.join(parts)}). Free "
-        f"{human_bytes(needed - free)} more on that volume, then run the "
-        "command again."
+        f"{human_bytes(needed - free)} more on that volume, then run "
+        f"{_install_command(request)}."
     )
 
 
@@ -439,18 +480,24 @@ def extract_verified_archive(
     return binary, file_sha256(binary)
 
 
-def _replace_executable(staged: Path, target: Path) -> None:
+def _replace_executable(staged: Path, target: Path, *, rerun: str) -> None:
     """Move a verified staging file onto the installed name in one step.
 
+    Args:
+        rerun: The whole command that repeats this install, for the remedy.
+
     Raises:
-        RuntimeError: On Windows, when a process is running from *target*.
+        RuntimeError: On Windows, when another process holds *target* open.
         OSError: When the replace fails for any other reason.
     """
     _mark_executable(staged)
     try:
         replace_atomically(staged, target)
     except PermissionError as exc:
-        if sys.platform != "win32" or not target.exists():
+        # Only a file can be held open. A refusal over anything else - a
+        # directory at the installed name, a directory this user cannot write
+        # - is a fault of the managed directory and is reported as one.
+        if sys.platform != "win32" or not target.is_file():
             raise
         # Windows refuses to replace a file another process holds open, which
         # a running server does to its own executable. That is the cause in
@@ -458,9 +505,9 @@ def _replace_executable(staged: Path, target: Path) -> None:
         # surfacing an access-denied error.
         raise RuntimeError(
             f"{target} is held open by another process and cannot be "
-            "replaced; a running Qdrant server holds its executable this way. "
-            "Stop the service with `vaultspec-rag server stop`, then run the "
-            "install again."
+            "replaced. A running Qdrant server holds its executable this "
+            "way: stop the service with `vaultspec-rag server stop`. Any "
+            f"other program reading the file must close it. Then run {rerun}."
         ) from exc
 
 
@@ -487,7 +534,17 @@ def _verified_archive(
     """
     on_progress = request.on_progress
     if request.local_archive is not None:
-        with request.local_archive.open("rb") as archive:
+        try:
+            opened = request.local_archive.open("rb")
+        except OSError as exc:
+            # Named apart from a fault of the managed directory: this file is
+            # the operator's, and the remedy is theirs to apply to it.
+            raise RuntimeError(
+                f"The archive {request.local_archive} could not be opened "
+                f"({exc}). Check that it exists and that this user can read "
+                f"it, then run {_install_command(request)}."
+            ) from exc
+        with opened as archive:
             on_progress(
                 f"Verifying {request.local_archive} against the pinned checksum..."
             )
@@ -504,6 +561,12 @@ def _verified_archive(
             executable_bytes=declared_bytes * _EXECUTABLE_BYTES_PER_ARCHIVE_BYTE,
         )
 
+    def whole(received: IO[bytes]) -> bool:
+        # Asked only of a body nothing in the transfer says is complete. The
+        # digest is the one thing here that can tell a cut transfer from a
+        # finished one, so it is what answers.
+        return _stream_sha256(received).lower() == request.archive_sha256.lower()
+
     archive_path, archive = request.open_staging(request.version_dir, request.asset)
     staged.append(archive_path)
     with archive:
@@ -514,7 +577,7 @@ def _verified_archive(
             archive,
             redirect_hosts=request.redirect_hosts,
             on_progress=on_progress,
-            limits=replace(request.limits, admit=admit),
+            limits=replace(request.limits, admit=admit, whole=whole),
         )
         on_progress("Verifying the Qdrant download checksum...")
         actual = _stream_sha256(archive)
@@ -588,119 +651,37 @@ def _write_manifest(
     )
 
 
-class _InstallState(StrEnum):
-    """What the installed name holds, judged by hashing the executable."""
-
-    ABSENT = "absent"
-    #: A pinned release install whose executable matches the committed digest
-    #: of the asset its manifest names.
-    VERIFIED = "verified"
-    #: An executable is present and nothing vouches for it.
-    UNVERIFIED = "unverified"
+#: What a manifest may say of how a healthy install arrived. The last is what
+#: is written for one whose arrival nobody recorded.
+_RECORDED_SOURCES = frozenset(
+    {MANIFEST_SOURCE_DOWNLOAD, MANIFEST_SOURCE_ARCHIVE, MANIFEST_SOURCE_UNRECORDED}
+)
 
 
-@dataclass(frozen=True)
-class _ExistingInstall:
-    """The classified contents of a version dir.
+def _recorded_source(healthy: ManagedInstall) -> str | None:
+    """Return how *healthy*'s manifest says it arrived, or ``None``.
 
-    Attributes:
-        state: Whether an executable is present and whether it verified.
-        binary: The installed name, whether or not anything is there.
-        asset: The release asset a verified install was made from.
-        source: How a verified install got there, as its manifest records it.
-        problem: Why an unverified executable does not verify.
-        refusal: The whole message for an unverified install whose state has
-            a supported way out of its own; empty otherwise.
+    ``None`` means no manifest describes the install: there is none, or it
+    disagrees with the executable beside it about the version, the asset or
+    either digest, or it names a way of arriving that nothing writes. Such a
+    manifest changes nothing about whether the install is healthy - the
+    executable decided that - and is simply written again.
     """
+    from ._resolve import read_manifest
 
-    state: _InstallState
-    binary: Path
-    asset: str = ""
-    source: str = ""
-    problem: str = ""
-    refusal: str = ""
-
-
-def _manifest_fault(
-    manifest: Mapping[str, object], binary: Path
-) -> tuple[str, str] | None:
-    """Say why *manifest* cannot describe a pinned release install.
-
-    The managed directory holds pinned release installs and nothing else. A
-    manifest claiming any other source - a binary an operator supplied, as
-    older versions recorded, or anything unrecognised - is not honoured
-    whatever digest it carries, because whoever can write the manifest can
-    write that claim.
-
-    Returns:
-        ``None`` for a manifest that names a pinned release install, whose
-        executable is then still to be hashed. Otherwise the problem, and
-        with it the whole refusal message where the state has a supported
-        way out of its own (empty where it has not).
-    """
-    from ._resolve import expected_executable_sha256, operator_registration_refusal
-
-    recorded = str(manifest.get("version", ""))
-    if recorded != QDRANT_SERVER_VERSION:
-        return (
-            f"its manifest records version {recorded or '<none>'}, not the "
-            f"pinned {QDRANT_SERVER_VERSION}"
-        ), ""
-    source = str(manifest.get("source", ""))
-    if source == MANIFEST_SOURCE_OPERATOR:
-        return (
-            "its manifest claims an operator-supplied binary, which the "
-            "managed directory does not hold"
-        ), operator_registration_refusal(binary)
-    if source not in (MANIFEST_SOURCE_DOWNLOAD, MANIFEST_SOURCE_ARCHIVE):
-        return (
-            f"its manifest records the source {source or '<none>'!r}, which is "
-            "not a pinned release install"
-        ), ""
-    if not expected_executable_sha256(manifest):
-        return "its manifest names no pinned release asset", ""
-    return None
-
-
-def _existing_install(version_dir: Path) -> _ExistingInstall:
-    """Classify the current contents of *version_dir*.
-
-    The executable is hashed every time. A manifest records what was
-    installed, but it sits in the directory it would be vouching for, so on
-    its own it cannot tell an intact install from one whose executable was
-    replaced, and it is never where an expected digest comes from. The
-    resolver supplies that: the committed digest of the asset the manifest
-    names, and only for a manifest that records a pinned release install.
-    """
-    from ._resolve import binary_filename, expected_executable_sha256, read_manifest
-
-    binary = version_dir / binary_filename()
-
-    def unverified(problem: str, refusal: str = "") -> _ExistingInstall:
-        return _ExistingInstall(
-            _InstallState.UNVERIFIED, binary, problem=problem, refusal=refusal
-        )
-
-    if not binary.is_file():
-        return _ExistingInstall(_InstallState.ABSENT, binary)
-    manifest = read_manifest(version_dir)
+    manifest = read_manifest(healthy.binary.parent)
     if manifest is None:
-        return unverified("it has no readable manifest")
-    fault = _manifest_fault(manifest, binary)
-    if fault is not None:
-        return unverified(*fault)
-    try:
-        verify_native_binary(binary, expected_executable_sha256(manifest))
-    except RuntimeError:
-        return unverified(
-            "its executable does not match the committed digest of its release asset"
-        )
-    return _ExistingInstall(
-        _InstallState.VERIFIED,
-        binary,
-        asset=str(manifest.get("asset", "")),
-        source=str(manifest.get("source", "")),
-    )
+        return None
+    described = {
+        "version": QDRANT_SERVER_VERSION,
+        "asset": healthy.asset,
+        "asset_sha256": QDRANT_ASSET_SHA256.get(healthy.asset, ""),
+        "binary_sha256": healthy.sha256,
+    }
+    if any(manifest.get(field) != value for field, value in described.items()):
+        return None
+    source = manifest.get("source")
+    return source if isinstance(source, str) and source in _RECORDED_SOURCES else None
 
 
 def _asset_url(release_base_url: str, asset: str) -> str:
@@ -708,40 +689,80 @@ def _asset_url(release_base_url: str, asset: str) -> str:
     return f"{release_base_url}/v{QDRANT_SERVER_VERSION}/{asset}"
 
 
-def _settled_report(
-    existing: _ExistingInstall, *, upgrade: bool, release_base_url: str
-) -> ProvisionReport | None:
-    """Answer for an install this run must not write to, or ``None``.
+def _healthy_report(
+    healthy: ManagedInstall, request: _ProvisionRequest, release_base_url: str
+) -> ProvisionReport:
+    """Report a healthy install as one this run downloads nothing for."""
+    # An upgrade finds nothing to do here either: the executable already is
+    # the pinned one, and a version bump installs to a new directory.
+    return ProvisionReport(
+        action=ProvisionAction.UNCHANGED,
+        asset=healthy.asset,
+        url=_asset_url(release_base_url, healthy.asset),
+        binary=healthy.binary,
+        sha256=QDRANT_ASSET_SHA256.get(healthy.asset, ""),
+        message=(
+            "Install already matches the pin; nothing to upgrade."
+            if request.upgrade
+            else "Verified install already present; nothing to do."
+        ),
+    )
 
-    ``None`` means the run goes on to install: nothing is there, or
-    ``upgrade`` asked for whatever is there to be replaced.
+
+@dataclass(frozen=True)
+class _ManifestRepair:
+    """A healthy install whose manifest does not describe it.
+
+    What a run killed between the replace and the manifest leaves behind, and
+    what an install made under any older record looks like. Nothing is
+    downloaded for it: the executable is already the pinned one.
+
+    Attributes:
+        healthy: The install as it was judged.
+        settled: The report for this install had its manifest been in order.
     """
-    if existing.state is _InstallState.VERIFIED:
-        # An upgrade finds nothing to do here either: the executable already
-        # is the pinned one, and a version bump installs to a new directory.
-        return ProvisionReport(
-            action=ProvisionAction.UNCHANGED,
-            asset=existing.asset,
-            url=_asset_url(release_base_url, existing.asset),
-            binary=existing.binary,
-            sha256=QDRANT_ASSET_SHA256.get(existing.asset, ""),
+
+    healthy: ManagedInstall
+    settled: ProvisionReport
+
+
+def _repair_manifest(repair: _ManifestRepair) -> ProvisionReport:
+    """Write the manifest of a healthy install again, and report what was done.
+
+    Called only while holding the provisioning lock. How the executable
+    arrived is recorded as unrecorded, because nobody witnessed it.
+    """
+    healthy = repair.healthy
+    version_dir = healthy.binary.parent
+    try:
+        _write_manifest(
+            version_dir,
+            asset=healthy.asset,
+            asset_sha256=repair.settled.sha256,
+            binary_sha256=healthy.sha256,
+            source=MANIFEST_SOURCE_UNRECORDED,
+        )
+    except OSError as exc:
+        logger.error("qdrant manifest could not be rewritten: %s", exc)
+        return replace(
+            repair.settled,
+            action=ProvisionAction.FAILED,
+            url="",
             message=(
-                "Install already matches the pin; nothing to upgrade."
-                if upgrade
-                else "Verified install already present; nothing to do."
+                f"The Qdrant server at {healthy.binary} is the pinned release "
+                "and needs no download, but its manifest could not be written "
+                f"({exc}). "
+                + _managed_directory_remedy(version_dir, f"`{_INSTALL_COMMAND}`")
             ),
         )
-    if upgrade or existing.state is _InstallState.ABSENT:
-        return None
-    return ProvisionReport(
-        action=ProvisionAction.FAILED,
-        binary=existing.binary,
-        message=existing.refusal
-        or (
-            f"The Qdrant server at {existing.binary} cannot be trusted: "
-            f"{existing.problem}. Re-run with --upgrade to replace it with the "
-            "pinned release (add --archive <file> to install from a local copy "
-            f"of the release archive), or remove {existing.binary.parent}."
+    return replace(
+        repair.settled,
+        action=ProvisionAction.UPDATED,
+        url="",
+        message=(
+            "The installed Qdrant server already is the pinned release, so "
+            "nothing was downloaded. Its manifest was missing or did not "
+            "describe it, and has been written again."
         ),
     )
 
@@ -753,68 +774,73 @@ class _WrongArchiveError(RuntimeError):
     """
 
     def __init__(self, request: _InstallRequest, actual: str) -> None:
+        upgrade = "" if request.previously == InstallState.ABSENT else "--upgrade "
         super().__init__(
             f"{request.local_archive} is not the pinned Qdrant release archive "
             f"for this platform. Expected {request.asset} for version "
             f"{QDRANT_SERVER_VERSION}, SHA256 {request.archive_sha256}; this "
             f"file hashes to {actual}. Nothing was extracted from it. Fetch "
             f"that asset from {request.url} on a host that can reach it, and "
-            "pass the copy to --archive."
+            f"run `{_INSTALL_COMMAND} {upgrade}--archive <file>` with the copy."
         )
 
 
 def _offline_route(request: _InstallRequest) -> str:
     """Say how to install without reaching a release source at all."""
-    upgrade = "" if request.previously == _InstallState.ABSENT else "--upgrade "
+    upgrade = "" if request.previously == InstallState.ABSENT else "--upgrade "
     return (
         f" On a host with no route to a release source, copy {request.asset} "
-        "to it from one that has, and run `vaultspec-rag server qdrant install "
+        f"to it from one that has, and run `{_INSTALL_COMMAND} "
         f"{upgrade}--archive <file>`."
     )
 
 
 #: What an operator does about each way a download fails. ``{base}`` and
 #: ``{hosts}`` are the names of the two source settings, ``{asset}`` the
-#: release asset and ``{version}`` the pinned version.
+#: release asset, ``{version}`` the pinned version and ``{rerun}`` the whole
+#: command that repeats the install.
 _DOWNLOAD_REMEDIES: dict[DownloadFailure, str] = {
-    DownloadFailure.BAD_SOURCE: "Set {base} to the https URL of a release source.",
+    DownloadFailure.BAD_SOURCE: (
+        "Set {base} to the https URL of a release source, then run {rerun}."
+    ),
     DownloadFailure.REDIRECT_REFUSED: (
         "A mirror that redirects to its own storage host needs that host "
-        "listed in {hosts}."
+        "listed in {hosts}. Then run {rerun}."
     ),
     DownloadFailure.BAD_REDIRECT: (
-        "Check that {base} names a release source whose redirects end at the file."
+        "Check that {base} names a release source whose redirects end at the "
+        "file, then run {rerun}."
     ),
     DownloadFailure.UNTRUSTED_CERTIFICATE: (
         "This host does not trust the certificate the source presented. For a "
         "private mirror, add its certificate authority to the system trust "
-        "store or name its bundle in SSL_CERT_FILE, then run the command "
-        "again. Verification is never skipped."
+        "store or name its bundle in SSL_CERT_FILE, then run {rerun}. "
+        "Verification is never skipped."
     ),
     DownloadFailure.NOT_FOUND: (
         "Check that {base} names a release source that publishes {asset} for "
-        "version {version}."
+        "version {version}, then run {rerun}."
     ),
     DownloadFailure.REFUSED: (
         "Check {base}, and any proxy or credentials between this host and the "
-        "source it names."
+        "source it names, then run {rerun}."
     ),
     DownloadFailure.UNAVAILABLE: (
-        "The source is failing or rate-limiting requests. Wait, then run the "
-        "command again; if it keeps happening, point {base} at another mirror "
-        "of the release."
+        "The source is failing or rate-limiting requests. Wait, then run "
+        "{rerun}; if it keeps happening, point {base} at another mirror of "
+        "the release."
     ),
     DownloadFailure.UNREACHABLE: (
         "Check this host's network connection and proxy settings, and that "
-        "{base} names a source it can reach, then run the command again."
+        "{base} names a source it can reach, then run {rerun}."
     ),
     DownloadFailure.TOO_SLOW: (
-        "Run the command again on a faster connection, or point {base} at a "
-        "nearer mirror of the release."
+        "Run {rerun} on a faster connection, or point {base} at a nearer "
+        "mirror of the release."
     ),
     DownloadFailure.TOO_LARGE: (
         "The pinned archive is far smaller than that, so the source is not "
-        "serving the release asset. Check {base}."
+        "serving the release asset. Check {base}, then run {rerun}."
     ),
 }
 
@@ -830,21 +856,11 @@ _OFFLINE_ROUTE_APPLIES = frozenset(
 )
 
 
-def _failure_message(exc: Exception, request: _InstallRequest) -> str:
-    """Describe a failed install and say what the operator can do about it."""
-    if classify_write_error(exc) == "unrecoverable":
-        return (
-            f"The volume holding {request.version_dir} ran out of space while "
-            f"the Qdrant server was being written ({exc}). Nothing was left "
-            "behind. Free space on that volume, then run the command again."
-        )
-    if not isinstance(exc, DownloadError):
-        return str(exc)
+def _download_failure_message(exc: DownloadError, request: _InstallRequest) -> str:
+    """Describe a failed download and say what the operator can do about it."""
+    rerun = _install_command(request)
     if exc.kind is DownloadFailure.WRITE_FAILED:
-        return (
-            f"{exc}. Check that {request.version_dir} is writable, then run "
-            "the command again."
-        )
+        return f"{exc}. {_managed_directory_remedy(request.version_dir, rerun)}"
     # Function-local: the build tools import this module in an interpreter
     # that has no service configuration to import.
     from ..config._types import EnvVar
@@ -854,11 +870,43 @@ def _failure_message(exc: Exception, request: _InstallRequest) -> str:
         hosts=EnvVar.QDRANT_DOWNLOAD_HOSTS.value,
         asset=request.asset,
         version=QDRANT_SERVER_VERSION,
+        rerun=rerun,
     )
     if exc.kind in _OFFLINE_ROUTE_APPLIES:
         remedy += _offline_route(request)
     tried = f" after {exc.attempts} attempts" if exc.attempts > 1 else ""
     return f"Downloading the Qdrant server failed{tried}: {exc}. {remedy}"
+
+
+def _failure_message(exc: Exception, request: _InstallRequest) -> str:
+    """Describe a failed install and say what the operator can do about it."""
+    rerun = _install_command(request)
+    if classify_write_error(exc) == "unrecoverable":
+        return (
+            f"The volume holding {request.version_dir} ran out of space while "
+            f"the Qdrant server was being written ({exc}). Nothing was left "
+            f"behind. Free space on that volume, then run {rerun}."
+        )
+    if isinstance(exc, DownloadError):
+        return _download_failure_message(exc, request)
+    if isinstance(exc, ChecksumMismatchError) and request.local_archive is None:
+        from ..config._types import EnvVar
+
+        return (
+            f"{exc} Check that {EnvVar.QDRANT_RELEASE_BASE_URL.value} names "
+            f"an official source of the release, then run {rerun}. The "
+            "digests ship with vaultspec-rag and cannot be configured: a "
+            "source that keeps failing them is not serving this release."
+        )
+    if isinstance(exc, OSError):
+        # Whatever else the filesystem refused happened under the managed
+        # directory: the archive is the only file read from anywhere else,
+        # and a failure to open it is reported by name where it is opened.
+        return (
+            f"The Qdrant server could not be installed to {request.version_dir} "
+            f"({exc}). {_managed_directory_remedy(request.version_dir, rerun)}"
+        )
+    return str(exc)
 
 
 def _install(request: _InstallRequest) -> ProvisionReport:
@@ -868,9 +916,10 @@ def _install(request: _InstallRequest) -> ProvisionReport:
     written at the installed name until the staged executable has matched its
     committed digest, and the manifest is written only after the executable
     is in place. A failure before the replace therefore leaves a previous
-    install untouched. One after it leaves a verified executable whose
-    manifest may still describe its predecessor; that install is refused at
-    start until the install is run again, which fails closed.
+    install untouched. A run that dies after it leaves the pinned executable
+    in place with no manifest, or with its predecessor's. That install is
+    healthy, because its executable is what is judged, and the next run of
+    any kind writes the manifest again without downloading anything.
     """
     from ._resolve import binary_filename
 
@@ -882,7 +931,8 @@ def _install(request: _InstallRequest) -> ProvisionReport:
     try:
         request.version_dir.mkdir(parents=True, exist_ok=True)
         executable = _stage_verified_executable(request, staged)
-        _replace_executable(executable, target)
+        _replace_executable(executable, target, rerun=_install_command(request))
+        request.on_progress("Recording the installed Qdrant server...")
         _write_manifest(
             request.version_dir,
             asset=request.asset,
@@ -905,15 +955,15 @@ def _install(request: _InstallRequest) -> ProvisionReport:
         _discard(staged)
     action = (
         ProvisionAction.UPDATED
-        if request.previously != _InstallState.ABSENT
+        if request.previously != InstallState.ABSENT
         else ProvisionAction.CREATED
     )
     return ProvisionReport(
         action=action,
         asset=request.asset,
         url=url,
-        binary=target,
         sha256=request.archive_sha256,
+        binary=target,
     )
 
 
@@ -946,44 +996,65 @@ def _unusable_archive(archive: Path, version_dir: Path) -> str | None:
     the operator's copy must never be something an install can delete.
     """
     if not archive.is_file():
-        return f"{archive} is not an existing file."
+        return (
+            f"{archive} is not an existing file. Pass the path of a local "
+            f"copy of the release archive to `{_INSTALL_COMMAND} --archive "
+            "<file>`."
+        )
     managed = version_dir.parent.resolve()
     if archive.resolve().is_relative_to(managed):
         return (
             f"{archive} is inside the managed directory {managed}, which "
             "installs and cleanups write to. Keep the archive somewhere else "
-            "and pass that path."
+            f"and pass that path to `{_INSTALL_COMMAND} --archive <file>`."
         )
     return None
 
 
-def _plan(request: _ProvisionRequest) -> ProvisionReport | _InstallRequest:
+def _plan(
+    request: _ProvisionRequest,
+) -> ProvisionReport | _ManifestRepair | _InstallRequest:
     """Decide what a run must do, without doing any of it.
 
     Returns:
-        The report for a run with nothing to write - a healthy install, an
-        unverified one with no upgrade asked for, a platform with no release
-        asset, a local archive that cannot be used - or the install the run
-        must perform.
+        The report for a run with nothing to write - a healthy install, one
+        that is refused or unreadable with no upgrade asked for, an installed
+        name nothing can be written over, a platform with no release asset, a
+        local archive that cannot be used. Or the manifest a healthy install
+        still needs. Or the install the run must perform.
     """
     # Function-local, like the resolver: the build tools import this module in
     # an interpreter that has no service configuration to import.
     from ..config._settings import get_config
-    from ._resolve import UnsupportedPlatformError, asset_for_platform
+    from ._resolve import (
+        UnsupportedPlatformError,
+        asset_for_platform,
+        binary_filename,
+    )
 
     if request.archive is not None:
         unusable = _unusable_archive(request.archive, request.version_dir)
         if unusable is not None:
             return ProvisionReport(action=ProvisionAction.FAILED, message=unusable)
-    existing = _existing_install(request.version_dir)
+    existing = classify_managed_binary(request.version_dir / binary_filename())
     source = get_config()
-    settled = _settled_report(
-        existing,
-        upgrade=request.upgrade,
-        release_base_url=source.qdrant_release_base_url,
-    )
-    if settled is not None:
+    if existing.state is InstallState.HEALTHY:
+        settled = _healthy_report(existing, request, source.qdrant_release_base_url)
+        if _recorded_source(existing) is None:
+            return _ManifestRepair(existing, settled)
         return settled
+    # The upgrade form replaces a file that is not the pinned release, and
+    # one that cannot be read to find out. Nothing replaces something that is
+    # not a file, and nothing is replaced unasked.
+    replaceable = existing.state in (InstallState.REFUSED, InstallState.UNREADABLE)
+    if existing.state is InstallState.OBSTRUCTED or (
+        replaceable and not request.upgrade
+    ):
+        return ProvisionReport(
+            action=ProvisionAction.FAILED,
+            binary=existing.binary,
+            message=existing.refusal,
+        )
     try:
         asset = asset_for_platform(request.platform, request.machine)
     except UnsupportedPlatformError as exc:
@@ -1003,36 +1074,99 @@ def _plan(request: _ProvisionRequest) -> ProvisionReport | _InstallRequest:
     )
 
 
-def _preview(install: _InstallRequest) -> ProvisionReport:
-    """Say what *install* would do, touching neither the network nor the disk."""
+def _preview(planned: _ManifestRepair | _InstallRequest) -> ProvisionReport:
+    """Say what a run would write, touching neither the network nor the disk."""
     from ._resolve import binary_filename
 
-    local = install.local_archive
-    origin = f"download {install.asset} from {install.url}"
+    if isinstance(planned, _ManifestRepair):
+        return replace(
+            planned.settled,
+            message=(
+                "Verified install already present; nothing would be "
+                "downloaded. Its manifest is missing or does not describe it, "
+                "and a real run would write it again."
+            ),
+        )
+    local = planned.local_archive
+    origin = f"download {planned.asset} from {planned.url}"
     if local is not None:
-        origin = f"read {install.asset} from the local archive {local}"
+        origin = f"read {planned.asset} from the local archive {local}"
     return ProvisionReport(
         action=ProvisionAction.DRY_RUN,
-        asset=install.asset,
-        url="" if local is not None else install.url,
-        binary=install.version_dir / binary_filename(),
-        sha256=install.archive_sha256,
+        asset=planned.asset,
+        url="" if local is not None else planned.url,
+        binary=planned.version_dir / binary_filename(),
+        sha256=planned.archive_sha256,
         message=(
-            f"Would {origin}, verify SHA256 {install.archive_sha256}, and "
-            f"install to {install.version_dir}."
+            f"Would {origin}, verify SHA256 {planned.archive_sha256}, and "
+            f"install to {planned.version_dir}."
         ),
     )
 
 
-def _sweep_abandoned_staging(version_dir: Path) -> None:
+def _abandoned_staging(request: _ProvisionRequest) -> list[Path]:
+    """Return the working files in the version dir, less the caller's own file.
+
+    A file is a working file by its name alone, so an archive the caller
+    passed is never counted as one, wherever it is kept and whatever it is
+    called: the run that was handed an operator's file must not be the run
+    that deletes it.
+    """
+    try:
+        found = list(request.version_dir.glob(f".*{_STAGING_SUFFIX}"))
+    except OSError:
+        return []
+    if request.archive is None:
+        return found
+    spared = request.archive.resolve()
+    return [path for path in found if path.resolve() != spared]
+
+
+def _sweep_abandoned_staging(request: _ProvisionRequest) -> None:
     """Remove working files a killed run left behind.
 
     Called only while holding the provisioning lock. Every run that creates a
     staging file holds that lock for as long as the file exists, so one found
     now belongs to a run that is gone.
     """
-    if version_dir.is_dir():
-        _discard(version_dir.glob(f".*{_STAGING_SUFFIX}"))
+    _discard(_abandoned_staging(request))
+
+
+@contextmanager
+def _lock_held(descriptor: int) -> Generator[None]:
+    """Keep the provisioning lock, named for a waiter, for the block."""
+    from .._anchor_claim import record_claim_owner, release_anchor_claim
+
+    try:
+        # The record only lets a waiter name this process. The OS claim is
+        # what excludes, so a record that cannot be written costs a waiter
+        # the name and nothing else.
+        with contextlib.suppress(OSError):
+            record_claim_owner(descriptor)
+        yield
+    finally:
+        release_anchor_claim(descriptor, pid_record=True)
+
+
+def _sweep_if_unclaimed(request: _ProvisionRequest, lock_path: Path) -> None:
+    """Remove abandoned working files on behalf of a run that installs nothing.
+
+    A run with nothing to install has no reason to wait for the provisioning
+    lock, but a killed run's working files would otherwise sit there until
+    the next install, and an install may never come. So the lock is tried
+    once, without waiting. Held, the files are no longer anyone's and are
+    removed. Refused, a run is using them, or nothing can show that none is,
+    and they are left alone.
+    """
+    from .._anchor_claim import claim_anchor
+
+    if not _abandoned_staging(request):
+        return
+    claim = claim_anchor(lock_path, pid_record=True)
+    if claim.descriptor is None:
+        return
+    with _lock_held(claim.descriptor):
+        _sweep_abandoned_staging(request)
 
 
 def _run_exclusively(
@@ -1052,9 +1186,10 @@ def _run_exclusively(
     a running daemon holds for its whole life.
 
     A contender waits, saying once whom it waits for, and gives up after
-    *wait_seconds* with a failed report naming the holder.
+    *wait_seconds* with a failed report naming the holder. A lock that cannot
+    be attempted at all is not waited on: that fault is reported at once.
     """
-    from .._anchor_claim import claim_anchor, record_claim_owner, release_anchor_claim
+    from .._anchor_claim import claim_anchor
 
     started = time.monotonic()
     announced = False
@@ -1067,7 +1202,10 @@ def _run_exclusively(
                 action=ProvisionAction.FAILED,
                 message=(
                     f"Could not take the Qdrant provisioning lock at {lock_path}: "
-                    f"{claim.fault}"
+                    f"{claim.fault}. "
+                    + _managed_directory_remedy(
+                        lock_path.parent, f"`{_INSTALL_COMMAND}`"
+                    )
                 ),
             )
         holder = (
@@ -1080,7 +1218,7 @@ def _run_exclusively(
                 message=(
                     f"{holder[0].upper()}{holder[1:]} was still provisioning the "
                     f"Qdrant server after {wait_seconds:g} seconds. Wait for it "
-                    "to finish, then run the command again."
+                    f"to finish, then run `{_INSTALL_COMMAND}`."
                 ),
             )
         if not announced:
@@ -1095,15 +1233,8 @@ def _run_exclusively(
                 f"Waiting for {holder} to finish provisioning the Qdrant server..."
             )
         time.sleep(min(_LOCK_POLL_SECONDS, remaining))
-    try:
-        # The record only lets a waiter name this process. The OS claim is
-        # what excludes, so a record that cannot be written costs a waiter
-        # the name and nothing else.
-        with contextlib.suppress(OSError):
-            record_claim_owner(claim.descriptor)
+    with _lock_held(claim.descriptor):
         return work()
-    finally:
-        release_anchor_claim(claim.descriptor, pid_record=True)
 
 
 def provision(
@@ -1115,21 +1246,27 @@ def provision(
 ) -> ProvisionReport:
     """Provision the pinned qdrant server binary into the managed dir.
 
-    Idempotent: an install whose executable still hashes to the committed
-    digest of its asset reports ``unchanged`` with zero network I/O. One that
-    does not - its executable replaced, its manifest missing, naming no
-    pinned asset, or claiming a source other than a pinned release install -
-    requires ``upgrade=True`` to be replaced and reports ``failed`` otherwise,
-    so a manual modification is never silently overwritten and never
-    silently trusted.
+    Idempotent, and decided by the executable alone. One that hashes to a
+    committed digest of the pinned release is healthy whatever its manifest
+    says or lacks: the run downloads nothing, reports ``unchanged``, or
+    ``updated`` when it had to write the manifest again. One that hashes to
+    anything else requires ``upgrade=True`` to be replaced and reports
+    ``failed`` otherwise, so a manual modification is never silently
+    overwritten and never silently trusted. One that cannot be read reports
+    ``failed`` as unreadable, without proposing to replace a file that may be
+    perfectly good.
 
     The managed directory holds the pinned release and nothing else. A binary
     of the operator's own is not installed here: it is named through the
     operator binary settings and never copied.
 
+    Every failed report says what to do, naming whole commands. The command
+    that led here may not be the install verb, so no remedy says to repeat a
+    command or to add a flag to one.
+
     Args:
-        upgrade: Install the pinned release over an install that does not
-            verify.
+        upgrade: Install the pinned release over an executable that is not
+            it, or that cannot be read.
         dry_run: Report what would happen without touching the network
             or the filesystem.
         archive: A local copy of the official release archive to install from
@@ -1155,24 +1292,29 @@ def provision(
         on_progress=on_progress,
     )
     planned = _plan(request)
+    lock_path = request.version_dir.parent / _LOCK_FILENAME
     if isinstance(planned, ProvisionReport):
+        if not dry_run:
+            _sweep_if_unclaimed(request, lock_path)
         return planned
     if dry_run:
         return _preview(planned)
 
-    def install_now() -> ProvisionReport:
+    def act_now() -> ProvisionReport:
+        _sweep_abandoned_staging(request)
         # Another run may have finished this very install while this one
         # waited, so what to do is decided again now that nothing else can
         # change it.
         current = _plan(request)
         if isinstance(current, ProvisionReport):
             return current
-        _sweep_abandoned_staging(request.version_dir)
+        if isinstance(current, _ManifestRepair):
+            return _repair_manifest(current)
         return _install(current)
 
     return _run_exclusively(
-        request.version_dir.parent / _LOCK_FILENAME,
-        install_now,
+        lock_path,
+        act_now,
         wait_seconds=_LOCK_WAIT_SECONDS,
         on_progress=on_progress,
     )
@@ -1182,15 +1324,18 @@ def provisioned_versions() -> list[dict[str, object]]:
     """Enumerate provisioned versions in the managed bin dir (bounded).
 
     An entry says what its executable is only after hashing it. ``verified``
-    is true when the executable matched the committed digest of its asset in
-    this call, and only then is ``source`` the manifest's own record; for
-    anything else ``source`` is ``"unverified"`` and ``problem`` says why, so
+    is true when the executable matched a committed digest of the pinned
+    release in this call. Only then does ``source`` say how the install
+    arrived: its manifest's record when the manifest describes it, and
+    ``"unrecorded"`` when no manifest does. For anything else ``source`` is
+    ``"unverified"`` and ``problem`` is the whole refusal, with its remedy, so
     a listing never repeats a claim nothing vouches for. Only the pinned
     version can verify: no digest is committed for any other.
 
     Returns:
         One entry per version dir that contains a qdrant binary, newest
-        version string first, capped at 10 entries.
+        version string first, capped at 10 entries. Reading a listing never
+        raises for an executable that cannot be read.
     """
     from ._resolve import binary_filename, qdrant_bin_dir, read_manifest
 
@@ -1212,11 +1357,11 @@ def provisioned_versions() -> list[dict[str, object]]:
             "digest is committed for any other"
         )
         if current:
-            existing = _existing_install(child)
-            verified = existing.state is _InstallState.VERIFIED
-            problem = existing.refusal or existing.problem
+            existing = classify_managed_binary(binary)
+            verified = existing.state is InstallState.HEALTHY
+            problem = existing.refusal
             if verified:
-                source = existing.source
+                source = _recorded_source(existing) or MANIFEST_SOURCE_UNRECORDED
         entries.append(
             {
                 "version": child.name,

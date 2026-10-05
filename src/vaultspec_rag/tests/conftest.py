@@ -30,6 +30,7 @@ from ..config._settings import get_config
 from ..config._types import EnvVar
 from ..operator_state._installation import InstallRole
 from ..progress import NullProgressReporter
+from ._committed_pins import pin_table_drift
 from ._config_fixtures import reset_config as reset_rag_config
 from ._model_setup import ensure_model_snapshots, model_setup_timeout_seconds
 from ._operator_directory_guard import canonical_path
@@ -127,6 +128,24 @@ def rearm_machine_singleton_isolation(
         yield
     finally:
         _force_machine_singleton_test_paths(isolated_machine_singleton_dirs)
+
+
+@pytest.fixture(autouse=True)
+def committed_pins_outlive_every_test() -> Generator[None]:
+    """Fail the test that leaves a Qdrant pin table changed.
+
+    One declared seam lets a test hold the shipped code to a stand-in release
+    by writing its digests into the committed pin tables for a block. A
+    digest left behind would make every later test trust bytes no release
+    holds, and pass. So after each test both tables are compared with the
+    values the source file commits, and the test that changed them is the one
+    that fails.
+    """
+    yield
+    drift = pin_table_drift()
+    assert not drift, (
+        "this test left the committed Qdrant pin tables changed: " + "; ".join(drift)
+    )
 
 
 def _apply_env(values: Mapping[str, str | None]) -> None:

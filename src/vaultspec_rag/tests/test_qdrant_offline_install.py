@@ -193,7 +193,7 @@ class TestInstallFromALocalArchive:
         copy = _operator_copy(tmp_path / "carried", asset)
         request = _local_request(release_source, version_dir, copy, asset)
 
-        report = _install(replace(request, previously="verified"))
+        report = _install(replace(request, previously="healthy"))
 
         assert report.action == ProvisionAction.UPDATED, report.message
         assert (version_dir / binary_filename()).read_bytes() == NEW_EXECUTABLE
@@ -237,7 +237,7 @@ class TestInstallFromALocalArchive:
         request = replace(
             _local_request(release_source, version_dir, pinned, asset),
             local_archive=carried,
-            previously="verified",
+            previously="healthy",
             open_staging=recording,
         )
 
@@ -270,7 +270,7 @@ class TestInstallFromALocalArchive:
         request = replace(
             _local_request(release_source, version_dir, copy, asset),
             executable_sha256=sha256_hex(b"what the pin table says it should be"),
-            previously="verified",
+            previously="healthy",
         )
 
         report = _install(request)
@@ -294,7 +294,7 @@ class TestInstallFromALocalArchive:
         report = _install(
             replace(
                 _local_request(release_source, version_dir, garbage, asset),
-                previously="verified",
+                previously="healthy",
             )
         )
 
@@ -316,7 +316,7 @@ class TestInstallFromALocalArchive:
         request = _local_request(release_source, version_dir, copy, asset)
 
         with (version_dir / binary_filename()).open("rb"):
-            report = _install(replace(request, previously="verified"))
+            report = _install(replace(request, previously="healthy"))
 
         assert report.action == ProvisionAction.FAILED
         assert "vaultspec-rag server stop" in report.message
@@ -403,8 +403,11 @@ class TestProvisionFromALocalArchive:
         take for a working file left by a killed run, and remove.
 
         Mutation: removed the managed-directory test in ``_unusable_archive``.
-        Observed the existence assertion fail: the run had swept the
-        operator's file away before reading it. Restored; passes.
+        Observed the message assertion fail: the run went on to read the
+        file. Then, with that restored, made the cleanup of abandoned
+        working files stop sparing the caller's own archive. Observed the
+        existence assertion fail: the run that refused the file had also
+        deleted it. Restored after each; passes.
         """
         version_dir.mkdir(parents=True)
         copy = version_dir / ".carried-over.staging"

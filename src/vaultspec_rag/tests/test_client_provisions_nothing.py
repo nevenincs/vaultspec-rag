@@ -36,7 +36,7 @@ from ..config._types import EnvVar
 from ..operator_state._installation import ComputeCapability
 from ._cli_helpers import app, runner
 from ._model_cache_seed import seed_model_cache
-from ._qdrant_provision_seam import substitute_qdrant_download
+from ._qdrant_provision_seam import record_qdrant_provisioning
 from .conftest import managed_env
 
 if TYPE_CHECKING:
@@ -104,7 +104,7 @@ def test_start_is_refused_before_anything_is_provisioned(
     passes.
     """
     del isolated_singleton_dirs
-    calls = substitute_qdrant_download(monkeypatch, succeeds=False)
+    calls = record_qdrant_provisioning(monkeypatch)
     before = _tree(tmp_path)
 
     with _occupied_port() as port:
@@ -151,7 +151,7 @@ def test_install_provisions_nothing_with_every_step_left_on(
     (workspace / "pyproject.toml").write_text(
         PROJECT_ONLY, encoding="utf-8", newline=""
     )
-    calls = substitute_qdrant_download(monkeypatch, succeeds=False)
+    calls = record_qdrant_provisioning(monkeypatch)
     before = _tree(isolated_singleton_dirs)
 
     report = install_run(path=workspace, provision=True, assume_yes=True)
@@ -206,7 +206,7 @@ def test_qdrant_install_reports_skipped_and_writes_nothing(
     Qdrant entry, both shapes reach the tripwire - failing the ``calls``
     assertion with ``['provision']``. Restoring it passes.
     """
-    calls = substitute_qdrant_download(monkeypatch, succeeds=False)
+    calls = record_qdrant_provisioning(monkeypatch)
     argv = ["server", "qdrant", "install", "--json"]
     if from_a_local_archive:
         supplied = tmp_path / "release-archive"

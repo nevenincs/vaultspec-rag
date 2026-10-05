@@ -417,44 +417,16 @@ class TestQdrantDimension:
         assert qdrant.info["binary_error"] == "qdrant_binary_unverified"
         assert EnvVar.QDRANT_BINARY_SHA256.value in qdrant.detail
 
-    def test_an_operator_claiming_install_is_not_ready_and_names_both_routes(
-        self,
-    ) -> None:
-        from ..qdrant_runtime._constants import (
-            MANIFEST_FILENAME,
-            QDRANT_SERVER_VERSION,
-        )
-        from ..qdrant_runtime._resolve import binary_filename, qdrant_bin_dir
-
-        version_dir = qdrant_bin_dir()
-        version_dir.mkdir(parents=True)
-        (version_dir / binary_filename()).write_bytes(b"operator-registered")
-        (version_dir / MANIFEST_FILENAME).write_text(
-            json.dumps({"version": QDRANT_SERVER_VERSION, "source": "operator"}),
-            encoding="utf-8",
-        )
-
-        with managed_env(**_NO_OPERATOR_BINARY):
-            report = compute_readiness()
-
-        qdrant = report.dimension("qdrant")
-        assert qdrant is not None
-        assert qdrant.status == ReadinessStatus.NOT_READY
-        assert qdrant.info["binary_source"] == "invalid"
-        assert qdrant.info["binary_error"] == "qdrant_install_invalid"
-        assert EnvVar.QDRANT_BINARY_SHA256.value in qdrant.detail
-        assert "--archive <file>" in qdrant.detail
-
     @staticmethod
-    def _seed_install_that_is_not_the_pinned_release() -> Path:
+    def _seed_install_that_is_not_the_pinned_release(source: str = "download") -> Path:
         """Seed a managed install whose manifest is in order and whose bytes are not.
 
-        It resolves exactly as a real download does. Only hashing the
-        executable tells it from one.
+        The manifest says everything a provisioning run would have it say,
+        down to the committed digest of the release executable. Only hashing
+        the executable tells the install from a real one.
         """
         from ..qdrant_runtime._constants import (
             MANIFEST_FILENAME,
-            MANIFEST_SOURCE_DOWNLOAD,
             QDRANT_ASSET_SHA256,
             QDRANT_EXECUTABLE_SHA256,
             QDRANT_SERVER_VERSION,
@@ -477,21 +449,27 @@ class TestQdrantDimension:
                     "asset": asset,
                     "asset_sha256": QDRANT_ASSET_SHA256[asset],
                     "binary_sha256": QDRANT_EXECUTABLE_SHA256[asset],
-                    "source": MANIFEST_SOURCE_DOWNLOAD,
+                    "source": source,
                 }
             ),
             encoding="utf-8",
         )
         return binary
 
-    def test_an_install_that_fails_its_digest_is_not_ready(self) -> None:
-        """An install a start would refuse must not be reported usable.
+    @pytest.mark.parametrize("source", ["download", "archive", "operator"])
+    def test_an_install_that_is_not_the_pinned_release_is_not_ready(
+        self, source: str
+    ) -> None:
+        """An install a start would refuse is reported refused, with every remedy.
 
-        Mutation it catches: reporting on resolution alone, without the check
-        a spawn makes. The seeded install resolves, so the dimension then
-        reads ``READY`` and this fails on the status assertion.
+        Nothing resolves, so no binary is named as the one in use; the detail
+        carries the path and both ways to replace what is there.
+
+        Mutation it catches: reading a refused install as no install. The
+        operator is then told to provision over a file a provisioning run
+        refuses to overwrite, and this fails on the source assertion.
         """
-        binary = self._seed_install_that_is_not_the_pinned_release()
+        binary = self._seed_install_that_is_not_the_pinned_release(source)
 
         with managed_env(**_NO_OPERATOR_BINARY):
             report = compute_readiness()
@@ -499,13 +477,22 @@ class TestQdrantDimension:
         qdrant = report.dimension("qdrant")
         assert qdrant is not None
         assert qdrant.status == ReadinessStatus.NOT_READY
-        assert qdrant.info["binary_source"] == "provisioned"
-        assert qdrant.info["binary_path"] == str(binary)
+        assert qdrant.info["binary_source"] == "invalid"
+        assert qdrant.info["binary_path"] is None
         assert qdrant.info["binary_error"] == "qdrant_binary_unverified"
+        assert str(binary) in qdrant.detail
         assert "vaultspec-rag server qdrant install --upgrade" in qdrant.detail
+        assert "--archive <file>" in qdrant.detail
+        assert EnvVar.QDRANT_BINARY_SHA256.value in qdrant.detail
 
     @pytest.mark.usefixtures("local_only_env")
     def test_local_only_does_not_judge_a_binary_it_will_not_run(self) -> None:
+        """Nothing is looked for, so what a start would refuse is not reported.
+
+        Mutation it catches: dropping the answer local-only mode gets before
+        any binary is judged. The seeded file is then judged and refused, and
+        this fails on the source assertion.
+        """
         self._seed_install_that_is_not_the_pinned_release()
 
         with managed_env(**_NO_OPERATOR_BINARY):
@@ -513,18 +500,19 @@ class TestQdrantDimension:
 
         qdrant = report.dimension("qdrant")
         assert qdrant is not None
+        assert qdrant.info["binary_source"] == "not_needed"
         assert qdrant.status == ReadinessStatus.READY
         assert "binary_error" not in qdrant.info
 
     def test_a_check_that_does_not_finish_is_not_ready(self) -> None:
-        """Running out of time is not a pass.
+        """Running out of time is neither a pass nor an absent binary.
 
         A budget of nothing stands in for a file that cannot be read in time:
-        the check is never given the chance to finish.
+        the judgement is never given the chance to finish.
 
-        Mutation it catches: treating an unfinished check as no refusal. The
-        dimension then reads ``READY`` for an install nothing vouched for and
-        this fails on the status assertion.
+        Mutation it catches: reporting an unfinished judgement as nothing
+        installed. The operator is then told to provision what may already be
+        there, and this fails on the source assertion.
         """
         self._seed_install_that_is_not_the_pinned_release()
 
@@ -532,6 +520,7 @@ class TestQdrantDimension:
             qdrant = _qdrant_readiness(server_mode=True, verify_budget=0.0)
 
         assert qdrant.status == ReadinessStatus.NOT_READY
+        assert qdrant.info["binary_source"] == "unchecked"
         assert qdrant.info["binary_error"] == "qdrant_binary_unchecked"
         assert "could not be verified" in qdrant.detail
 

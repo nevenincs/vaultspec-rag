@@ -20,7 +20,10 @@ the conversation with the source:
   that says "not now", is tried again a bounded number of times, each attempt
   starting the file over. A refusal this module makes itself, a status that
   will not change, a certificate that does not verify, and a failure to write
-  what arrived are never retried.
+  what arrived are never retried. A body that only the close of the
+  connection ends cannot be told from one cut short by anything in the
+  transfer, so the caller is asked, and a body it does not recognise is
+  tried again as a cut transfer.
 
 Every failure leaves as one :class:`DownloadError` carrying which of those it
 was, so a caller can tell an operator what to do about it.
@@ -93,6 +96,11 @@ def _admit_any(_declared_bytes: int) -> None:
     """Admit a response of any declared size."""
 
 
+def _whole_unless_told(_received: IO[bytes]) -> bool:
+    """Take a body nothing delimits as complete, for a caller that cannot say."""
+    return True
+
+
 @dataclass(frozen=True)
 class DownloadLimits:
     """How long, how large and how persistent one download may be.
@@ -119,7 +127,15 @@ class DownloadLimits:
             the size each response declares (0 when it declares none) before
             the first body byte is read. Whatever it raises ends the download
             and is passed on unchanged, so it must not raise an ``OSError``,
-            which reads as a failed transfer.
+            which reads as a failed transfer, or a ``ValueError``, which
+            reads as a URL that cannot be fetched.
+        whole: The caller's answer to a question the transfer cannot settle.
+            A response that declares no length and is not chunked ends when
+            the connection closes, so a transfer cut short looks exactly like
+            one that finished. For such a body, and no other, this is called
+            with the file as received; ``False`` makes the attempt a cut
+            transfer, tried again like any other. A caller holding a digest
+            can tell; one that cannot leaves the default, which accepts it.
     """
 
     deadline_seconds: float = 900.0
@@ -129,6 +145,7 @@ class DownloadLimits:
     retry_base_seconds: float = 0.5
     retry_cap_seconds: float = 4.0
     admit: Callable[[int], None] = _admit_any
+    whole: Callable[[IO[bytes]], bool] = _whole_unless_told
 
 
 _DEFAULT_LIMITS = DownloadLimits()
@@ -591,12 +608,24 @@ def _fetch_once(opener: urllib.request.OpenerDirector, transfer: _Transfer) -> N
             )
         # The caller's last word before the first body byte is read.
         limits.admit(declared)
-        _stream_capped(
+        # Neither a length nor chunk framing: only the close of the
+        # connection ends this body, whether or not all of it was sent.
+        undelimited = not declared and not resp.chunked
+        received = _stream_capped(
             resp,
             out,
             declared=declared,
             on_progress=transfer.on_progress,
             bounds=_StreamBounds(limits.max_bytes, deadline),
+        )
+    if undelimited and not deadline.cut and not limits.whole(out):
+        # Left to the caller's digest check, a cut transfer would read as a
+        # replaced asset and never be tried again.
+        raise ConnectionError(
+            f"the source closed the connection after {received} bytes without "
+            "having said how many to expect, and what arrived is not the "
+            "expected file: either the transfer was cut short or the source "
+            "is serving a different file"
         )
     if deadline.cut:
         # A body with no declared length ends when the connection does, so
@@ -676,6 +705,15 @@ def download_https(
                 _fetch_once(opener, transfer)
             except DownloadError:
                 raise
+            except (ValueError, http.client.InvalidURL) as exc:
+                # A host no name can be made of - an empty or over-long
+                # label, a control character - is refused where the name is
+                # encoded, below anything that sorts failures. It is the URL
+                # that is wrong, and asking again cannot change it.
+                raise DownloadError(
+                    DownloadFailure.BAD_SOURCE,
+                    f"The source URL {url!r} cannot be fetched: {exc}",
+                ) from exc
             except (OSError, http.client.HTTPException) as exc:
                 if deadline.cut or deadline.remaining() <= 0:
                     # Whatever the hung-up read raised, the deadline is why.

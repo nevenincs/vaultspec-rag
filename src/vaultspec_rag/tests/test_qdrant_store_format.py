@@ -28,8 +28,7 @@ from ..cli._status_labels import (
 from ..config._types import EnvVar
 from ..operator_state._service import DegradationReason
 from ..qdrant_runtime._constants import (
-    MANIFEST_FILENAME,
-    MANIFEST_SOURCE_DOWNLOAD,
+    QDRANT_EXECUTABLE_SHA256,
     QDRANT_SERVER_VERSION,
     QdrantRuntimeState,
 )
@@ -37,8 +36,6 @@ from ..qdrant_runtime._provision import file_sha256
 from ..qdrant_runtime._resolve import (
     QdrantIdentity,
     asset_for_platform,
-    binary_filename,
-    qdrant_bin_dir,
 )
 from ..qdrant_runtime._store_format import (
     judge_store_format,
@@ -88,27 +85,23 @@ sys.exit(1)
 """
 
 
-def _seed_managed_download() -> Path:
-    """Seed a managed install whose manifest says it was downloaded.
+def _declared_as_the_pinned_release(directory: Path) -> dict[str, str]:
+    """Name a stand-in as the operator binary, declared to be the pinned release.
 
-    The executable is a stand-in, so it never verifies; it resolves, and it
-    resolves at the pinned version, which is all a pre-spawn judgement reads.
+    A binary resolves at the pinned version in two ways: the managed install,
+    which only the real release can be, and an operator binary whose declared
+    digest is a pinned executable's. The stand-in does not hash to what is
+    declared for it, so it would be refused at a spawn; it resolves, at the
+    pinned version, which is all a pre-spawn judgement reads.
     """
-    version_dir = qdrant_bin_dir()
-    version_dir.mkdir(parents=True, exist_ok=True)
-    binary = version_dir / binary_filename()
+    binary = directory / "declared-as-the-release.bin"
     binary.write_bytes(b"not-the-server")
-    (version_dir / MANIFEST_FILENAME).write_text(
-        json.dumps(
-            {
-                "version": QDRANT_SERVER_VERSION,
-                "asset": asset_for_platform(),
-                "source": MANIFEST_SOURCE_DOWNLOAD,
-            }
-        ),
-        encoding="utf-8",
-    )
-    return binary
+    return {
+        EnvVar.QDRANT_BINARY.value: str(binary),
+        EnvVar.QDRANT_BINARY_SHA256.value: QDRANT_EXECUTABLE_SHA256[
+            asset_for_platform()
+        ],
+    }
 
 
 def _identity_for(storage: Path, version: str) -> QdrantIdentity:
@@ -413,17 +406,15 @@ class TestSpawnGateRefusesBeforeSpawning:
         storage.mkdir(parents=True, exist_ok=True)
         _make_collection(storage, "r0abc_vault_docs")
         write_store_format(storage, "1.16.3")
-        # A downloaded managed install is the binary whose version is known to
-        # be the pin, so it is the one the gate can refuse on version grounds.
-        # The refusal precedes any spawn, so the stand-in is never run.
+        # The gate refuses on version grounds, so it needs a binary whose
+        # version is known to be the pin. The refusal precedes any spawn, so
+        # the stand-in is never hashed or run.
         _ = isolated_singleton_dirs
-        _seed_managed_download()
 
         with managed_env(
             **{
                 EnvVar.QDRANT_STORAGE_DIR.value: str(storage),
-                EnvVar.QDRANT_BINARY.value: None,
-                EnvVar.QDRANT_BINARY_SHA256.value: None,
+                **_declared_as_the_pinned_release(tmp_path),
                 EnvVar.QDRANT_PORT.value: str(free_loopback_port()),
             }
         ):

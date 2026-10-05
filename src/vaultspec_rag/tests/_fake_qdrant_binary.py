@@ -3,18 +3,24 @@
 The supervisor runs its binary with no arguments, so a test that needs the
 child to behave a particular way - abort on a named collection, serve without
 asking for a key - cannot hand it a script directly. This writes the script
-beside a launcher the supervisor can execute as-is.
+beside a launcher the supervisor can execute as-is, and stages the states a
+binary on disk can be met in.
 """
 
 from __future__ import annotations
 
+import os
 import sys
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
+
+import pytest
 
 from ..qdrant_runtime._constants import BinarySource, ResolvedBinary
 from ..qdrant_runtime._provision import file_sha256
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
     from pathlib import Path
 
 # A server that becomes ready and answers the data plane by one policy, started
@@ -76,6 +82,29 @@ def fake_qdrant_binary(tmp_path: Path, source: str, name: str = "fake_qdrant") -
     )
     launcher.chmod(0o755)
     return launcher
+
+
+@contextmanager
+def unreadable(path: Path) -> Generator[None]:
+    """Keep the file at *path* from being opened to be hashed, for the block.
+
+    On Windows another handle holds it open for writing, which the hold that
+    hashes a binary does not share with. Elsewhere its permissions deny its
+    owner any access, which stops everyone but the superuser - so a run as
+    the superuser fails here and does not pass having stopped nothing.
+    """
+    if sys.platform == "win32":
+        with path.open("r+b"):
+            yield
+        return
+    if os.geteuid() == 0:
+        pytest.fail("permissions do not stop the superuser reading a file")
+    mode = path.stat().st_mode
+    path.chmod(0)
+    try:
+        yield
+    finally:
+        path.chmod(mode)
 
 
 def unpinned(path: Path) -> ResolvedBinary:

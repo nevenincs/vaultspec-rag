@@ -44,6 +44,7 @@ if TYPE_CHECKING:
 
     from ..config._settings import VaultSpecConfigWrapper
     from ..qdrant_runtime._constants import ProvisionReport
+    from ..qdrant_runtime._resolve import QdrantBinaryError
     from ._model_fetch import ModelRepoResult
     from ._models import ConfirmFn, InstallReport
     from ._snapshot_progress import SnapshotCounts
@@ -660,7 +661,7 @@ def _provision_qdrant(
             action=ProvisionAction.SKIPPED,
             detail="qdrant binary provisioning opted out",
         )
-    present = _resolved_qdrant()
+    present = _resolved_qdrant(dry_run=dry_run)
     if present is not None:
         return present
     if not auto_provision:
@@ -674,7 +675,17 @@ def _provision_qdrant(
     return _download_qdrant(dry_run=dry_run, progress=progress)
 
 
-def _resolved_qdrant() -> ProvisionStepResult | None:
+def _refused_qdrant(exc: QdrantBinaryError) -> ProvisionStepResult:
+    """Pass a refusal of the resolved binary on whole, under its own code."""
+    return ProvisionStepResult(
+        step=ProvisionStep.QDRANT,
+        action=ProvisionAction.FAILED,
+        detail=str(exc),
+        code=exc.error,
+    )
+
+
+def _resolved_qdrant(*, dry_run: bool) -> ProvisionStepResult | None:
     """Answer for a binary that already resolves, or ``None`` when none does.
 
     The binary is held to its source's check here, in the foreground, so one
@@ -682,12 +693,18 @@ def _resolved_qdrant() -> ProvisionStepResult | None:
     in the service log after the daemon has been spawned. That covers every
     refusal resolution itself makes: an operator path without its digest, an
     operator file that is not the one declared, and a managed install whose
-    manifest claims a source the managed directory no longer accepts. The
-    refusal's own sentence names the supported routes and is passed on whole.
+    executable is not the pinned release, cannot be read, or is not a file.
+    The refusal's own sentence names the supported routes and is passed on
+    whole.
 
     An operator-supplied binary is named as such in the detail: the pin that
     vouches for it is the operator's, not this release's, and that has to be
     visible wherever the outcome is shown.
+
+    A managed install that resolves is still handed to the provisioner. It
+    downloads nothing for an executable that already is the pinned release,
+    and it is what writes a missing manifest again and removes the working
+    files of a run that was killed, so neither waits for someone to ask.
     """
     from ..config._types import EnvVar
     from ..qdrant_runtime._resolve import QdrantBinaryError, resolve_binary
@@ -699,25 +716,35 @@ def _resolved_qdrant() -> ProvisionStepResult | None:
             return None
         verify_resolved_binary(resolved)
     except QdrantBinaryError as exc:
+        return _refused_qdrant(exc)
+    if resolved.source.operator_supplied:
+        return ProvisionStepResult(
+            step=ProvisionStep.QDRANT,
+            action=ProvisionAction.UNCHANGED,
+            detail=(
+                f"operator-supplied binary {resolved.path} (source: "
+                f"{resolved.source.value}, named by {EnvVar.QDRANT_BINARY.value}); "
+                "verified against the digest declared in "
+                f"{EnvVar.QDRANT_BINARY_SHA256.value}"
+            ),
+        )
+    report = provision_qdrant_binary(dry_run=dry_run)
+    if report.action == ProvisionAction.FAILED:
         return ProvisionStepResult(
             step=ProvisionStep.QDRANT,
             action=ProvisionAction.FAILED,
-            detail=str(exc),
-            code=exc.error,
+            detail=report.message,
+            code=QDRANT_PROVISION_FAILED,
         )
-    if resolved.source.operator_supplied:
-        detail = (
-            f"operator-supplied binary {resolved.path} (source: "
-            f"{resolved.source.value}, named by {EnvVar.QDRANT_BINARY.value}); "
-            "verified against the digest declared in "
-            f"{EnvVar.QDRANT_BINARY_SHA256.value}"
-        )
-    else:
-        detail = _qdrant_default_detail(ProvisionAction.UNCHANGED)
+    settled = report.action in {ProvisionAction.UNCHANGED, ProvisionAction.DRY_RUN}
     return ProvisionStepResult(
         step=ProvisionStep.QDRANT,
-        action=ProvisionAction.UNCHANGED,
-        detail=detail,
+        action=ProvisionAction.UNCHANGED if settled else report.action,
+        detail=(
+            _qdrant_default_detail(ProvisionAction.UNCHANGED)
+            if settled
+            else report.message
+        ),
     )
 
 
@@ -725,7 +752,7 @@ def _download_qdrant(
     *, dry_run: bool, progress: ProvisionProgress | None
 ) -> ProvisionStepResult:
     """Provision the pinned release and confirm that it now resolves."""
-    from ..qdrant_runtime._resolve import resolve_binary
+    from ..qdrant_runtime._resolve import QdrantBinaryError, resolve_binary
 
     # A first-use provision downloads and verifies a native archive over the
     # network, which is the longest stall a first start can hit. The stage line
@@ -743,7 +770,13 @@ def _download_qdrant(
             detail=report.message,
             code=QDRANT_PROVISION_FAILED,
         )
-    if report.action != ProvisionAction.DRY_RUN and resolve_binary() is None:
+    try:
+        resolves = report.action == ProvisionAction.DRY_RUN or (
+            resolve_binary() is not None
+        )
+    except QdrantBinaryError as exc:
+        return _refused_qdrant(exc)
+    if not resolves:
         return ProvisionStepResult(
             step=ProvisionStep.QDRANT,
             action=ProvisionAction.FAILED,

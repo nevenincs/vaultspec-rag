@@ -1,24 +1,21 @@
-"""The one substitution of the Qdrant provisioner's network half.
+"""A recorder in front of the Qdrant provisioner, and the states a host is found in.
 
-Several suites need to know whether a command reached the provisioner at all -
-the start path that provisions unattended, and every command a client
-installation must never provision from - and none of them can be driven
-against the real one. The reason is recorded once, here, with the single site
-that acts on it.
+Several suites need to know whether a command reached the provisioner at all:
+every command a client installation must never provision from, and every
+start that must not fetch a server - one switched off, one using the on-disk
+store, one whose operator named a binary. For those the provisioner is
+replaced by a recorder that notes the call and reports a failure, so a
+regressed command shows up as a recorded call and can never go on to reach a
+release source or spawn a daemon.
 
-Why the provisioner cannot be driven for real: it refuses any source that is
-not https on an allowed host, and verifies the archive against a committed
-digest before extracting. A locally served archive therefore fails on the
-scheme, then the host, and could never match the digest anyway - the security
-design makes a substitute source unusable on purpose. The one real alternative
-is rejected on cost rather than on possibility: provisioning into an isolated
-managed directory would download the pinned release over the network on every
-run, which the integration helpers mirror an already-installed binary
-precisely to avoid.
+It is not used to stage a successful install. A whole provisioning call is
+driven for real against a stand-in release that a loopback source serves; see
+``_stand_in_release``.
 
 The same suites stage the states a command can find a host in - a managed
-install written by hand, a binary an operator names - and those are written
-here too, once, so every suite stages the same thing.
+install whose executable is not the pinned release, a binary an operator
+names - and those are written here too, once, so every suite stages the same
+thing.
 """
 
 from __future__ import annotations
@@ -37,9 +34,8 @@ if TYPE_CHECKING:
 
     import pytest
 
-#: What a manifest says of an install an operator registered. Earlier
-#: releases wrote it; nothing accepts it now.
-OPERATOR_REGISTERED = "operator"
+#: What the recorder reports in place of an install.
+RECORDED_FAILURE = "SHA256 mismatch for the release archive"
 
 
 def operator_pair(binary: Path) -> dict[str, str]:
@@ -56,16 +52,13 @@ def operator_pair(binary: Path) -> dict[str, str]:
     }
 
 
-def write_managed_install(
-    version_dir: Path, executable: bytes, *, source: str = "download"
-) -> Path:
-    """Write a managed install by hand: an executable and the manifest beside it.
+def write_unpinned_install(version_dir: Path, executable: bytes) -> Path:
+    """Write a managed install whose executable is not the pinned release.
 
-    A ``download`` install is held to the committed digest of a release
-    executable, which fixture bytes never match, so it resolves and then
-    fails its check - the state of a tampered install. An
-    ``OPERATOR_REGISTERED`` one carries the digest of these same bytes, the
-    way the removed registration recorded it, and is refused on its claim.
+    The executable is fixture bytes, which hash to no committed digest, with
+    a manifest beside it that claims a download. That is the state of a
+    tampered or corrupted install: what the manifest says changes nothing,
+    because an install is judged by its executable's bytes alone.
 
     Returns:
         The executable's path.
@@ -75,46 +68,31 @@ def write_managed_install(
     version_dir.mkdir(parents=True, exist_ok=True)
     target = version_dir / binary_filename()
     target.write_bytes(executable)
-    manifest = {"version": version_dir.name, "source": source}
-    if source == OPERATOR_REGISTERED:
-        manifest["binary_sha256"] = hashlib.sha256(executable).hexdigest()
+    manifest = {"version": version_dir.name, "source": "download"}
     (version_dir / MANIFEST_FILENAME).write_text(json.dumps(manifest), encoding="utf-8")
     return target
 
 
-def substitute_qdrant_download(
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    succeeds: bool,
-) -> list[str]:
-    """Replace the network half of provisioning, and nothing else.
+def record_qdrant_provisioning(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Replace the provisioner with a recorder that reports a failure.
 
-    The reported lines come from the shipped ``_download_line`` renderer
-    rather than from literals, so a change to how bytes are phrased travels
-    into the caller's assertions instead of stranding them. On success a real
-    binary and a real manifest are written into the isolated managed dir, so
-    it is the real ``resolve_binary`` that confirms the install afterwards. On
-    failure nothing is written and a ``failed`` report comes back, which is
-    also what keeps a regressed caller from going on to spawn a daemon.
-
-    The substitution binds to ``provision`` on the module that DEFINES it, and
-    it works only because every consumer imports that name INSIDE the function
+    The recorder binds to ``provision`` on the module that DEFINES it, and it
+    works only because every consumer imports that name INSIDE the function
     that calls it and so resolves it once per call. Moving such an import to
-    module scope would leave this interception inert while the real network
-    download ran; a call-time test at each consumer is what catches that. The
-    patch target must stay the defining module and match the consumers'
+    module scope would leave this interception inert while the real
+    provisioner ran; a call-time test at each consumer is what catches that.
+    The patch target must stay the defining module and match the consumers'
     import: patching a re-exporting package while a consumer imports from the
     definition (or the reverse) silently intercepts nothing.
 
     Returns:
-        A list appended to on each call, so a test can assert the interception
+        A list appended to on each call, so a test can assert the provisioner
         was reached - or, for a command that must not provision, that it never
         was.
     """
     from ..qdrant_runtime import _provision as _provision_module
     from ..qdrant_runtime._constants import ProvisionReport
-    from ..qdrant_runtime._download import _download_line, no_progress
-    from ..qdrant_runtime._resolve import qdrant_bin_dir
+    from ..qdrant_runtime._download import no_progress
 
     calls: list[str] = []
 
@@ -123,25 +101,16 @@ def substitute_qdrant_download(
         upgrade: bool = False,
         dry_run: bool = False,
         archive: Path | None = None,
-        # Defaulted exactly as the real signature defaults it. A substitute
+        # Defaulted exactly as the real signature defaults it. A recorder
         # that made the callback mandatory would turn "the caller stopped
-        # passing it" - a regression this exists to catch - into a TypeError,
-        # which reports the wrong defect and passes through any assertion the
-        # test actually makes.
+        # passing it" into a TypeError, which reports the wrong defect and
+        # passes through any assertion the test actually makes.
         on_progress: Callable[[str], None] = no_progress,
     ) -> ProvisionReport:
         del upgrade, dry_run, archive
         calls.append("provision")
         on_progress("Downloading the Qdrant server (release archive)...")
-        on_progress(_download_line(4 << 20, 31 << 20))
-        on_progress("Verifying the Qdrant download checksum...")
-        if not succeeds:
-            return ProvisionReport(
-                action=ProvisionAction.FAILED,
-                message="SHA256 mismatch for the release archive",
-            )
-        target = write_managed_install(qdrant_bin_dir(), b"not a real server")
-        return ProvisionReport(action=ProvisionAction.CREATED, binary=target)
+        return ProvisionReport(action=ProvisionAction.FAILED, message=RECORDED_FAILURE)
 
     monkeypatch.setattr(_provision_module, "provision", _provision)
     return calls

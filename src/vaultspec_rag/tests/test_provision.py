@@ -69,12 +69,14 @@ def consumer_workspace(tmp_path: Path) -> Path:
     return ws
 
 
-def test_has_provisioned_binary_reflects_managed_install(
+def test_a_manifest_does_not_make_a_managed_install(
     isolated_status_dir: Path,  # noqa: ARG001  # managed-dir isolation
 ) -> None:
-    # Helper that drives the "operator binary shadows a managed install"
-    # warning. It reports presence, not health: False with nothing in the
-    # managed dir, True once a pinned release install is recorded there.
+    # The helper behind the "operator binary shadows a managed install"
+    # warning. A managed install is an executable the committed pins vouch
+    # for, so a file that is not one stays unprovisioned however complete the
+    # record beside it. The positive half needs such an executable and is
+    # driven where a stand-in release is pinned.
     from ..qdrant_runtime._resolve import has_provisioned_binary
 
     assert has_provisioned_binary() is False
@@ -87,7 +89,7 @@ def test_has_provisioned_binary_reflects_managed_install(
         "source": MANIFEST_SOURCE_DOWNLOAD,
     }
     (version_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    assert has_provisioned_binary() is True
+    assert has_provisioned_binary() is False
 
 
 def test_clean_provisioned_skips_symlinked_version_dir(

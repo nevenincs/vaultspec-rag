@@ -64,6 +64,7 @@ from ._loopback_tls import (
     send_then_reset,
     send_trickle,
     send_truncated,
+    send_undelimited,
     stay_silent,
     trickle_headers,
     trusted_loopback_sources,
@@ -97,6 +98,8 @@ _QUICK = DownloadLimits(
 )
 
 _BASE_URL_SETTING = EnvVar.QDRANT_RELEASE_BASE_URL.value
+#: The whole command that repeats an install over an existing one.
+_UPGRADE_COMMAND = "`vaultspec-rag server qdrant install --upgrade`"
 _HOSTS_SETTING = EnvVar.QDRANT_DOWNLOAD_HOSTS.value
 
 
@@ -524,12 +527,10 @@ def _unresolvable(sources: LoopbackSources) -> tuple[str, Callable[[], int]]:
     return "https://qdrant-mirror.invalid/asset", lambda: 0
 
 
-_TRY_AGAIN = "then run the command again"
-
 _DEGRADED: dict[str, _Degraded] = {
     "connection refused": _Degraded(
         start=lambda sources: (sources.refused_url("/asset"), lambda: 0),
-        says=("after 3 attempts", "network connection", _BASE_URL_SETTING, _TRY_AGAIN),
+        says=("after 3 attempts", "network connection", _BASE_URL_SETTING),
         attempts=None,
         # A refused loopback connection takes a second or more to be reported
         # on Windows, so the stall limit must not get there first.
@@ -543,7 +544,7 @@ _DEGRADED: dict[str, _Degraded] = {
     ),
     "request read, then silent": _Degraded(
         start=_serving(stay_silent),
-        says=("stopped responding", "after 3 attempts", _TRY_AGAIN),
+        says=("stopped responding", "after 3 attempts"),
         attempts=3,
     ),
     "trickle slower than the deadline": _Degraded(
@@ -554,7 +555,7 @@ _DEGRADED: dict[str, _Degraded] = {
     ),
     "reset mid-body": _Degraded(
         start=_serving(lambda h: send_then_reset(h, _BODY[:4096], declared=len(_BODY))),
-        says=("connection to the source failed", "after 3 attempts", _TRY_AGAIN),
+        says=("connection to the source failed", "after 3 attempts"),
         attempts=3,
     ),
     "body shorter than declared": _Degraded(
@@ -654,7 +655,10 @@ class TestDegradedSource:
         Mutation: moved the staging cleanup in ``_install`` out
         of ``finally`` and onto the success path. Observed every condition
         fail on the working-file assertion, each listing the staging archive
-        it had left. Restored; passes.
+        it had left. Then, with that restored, reworded the remedy for an
+        unreachable source to end "then run the command again". Observed
+        the six conditions that carry it fail on the command assertion.
+        Restored after each; passes.
         """
         prior = _install_healthy(sources, version_dir, _PRIOR_EXECUTABLE)
         prior_manifest = (version_dir / MANIFEST_FILENAME).read_bytes()
@@ -664,7 +668,7 @@ class TestDegradedSource:
             install_request(
                 url, version_dir, asset=asset, pinned_archive=release_archive(asset)
             ),
-            previously="verified",
+            previously="healthy",
             limits=condition.limits,
         )
 
@@ -678,6 +682,11 @@ class TestDegradedSource:
         if condition.attempts is not None:
             assert seen() == condition.attempts
         assert elapsed < condition.within
+        # Whatever went wrong, the remedy names a whole command. This text
+        # is also read by someone who ran a start, where "the command" is
+        # not the install and "--upgrade" is not a flag.
+        assert _UPGRADE_COMMAND in report.message
+        assert "command again" not in report.message
         _assert_failed_cleanly(version_dir, prior, prior_manifest)
 
         _install_healthy(sources, version_dir, NEW_EXECUTABLE)
@@ -750,7 +759,7 @@ class TestFreeSpace:
                 asset=asset,
                 pinned_archive=archive,
             ),
-            previously="verified",
+            previously="healthy",
             limits=_QUICK,
             reserve_bytes=reserve,
         )
@@ -764,7 +773,7 @@ class TestFreeSpace:
         # else wrote to the volume between this test's reading and the
         # install's.
         assert abs(_named_shortfall(report.message) - (1 << 30)) < 256 << 20
-        assert "then run the command again" in report.message
+        assert f"then run {_UPGRADE_COMMAND}" in report.message
         assert len(source.requests) == 1
         _assert_failed_cleanly(version_dir, prior, prior_manifest)
 
@@ -806,7 +815,7 @@ class TestFreeSpace:
                 pinned_archive=archive,
             ),
             executable_sha256=sha256_hex(executable),
-            previously="verified",
+            previously="healthy",
             reserve_bytes=reserve,
             open_staging=recording,
         )
@@ -857,7 +866,7 @@ class TestFreeSpace:
                 asset=asset,
                 pinned_archive=archive,
             ),
-            previously="verified",
+            previously="healthy",
             limits=_QUICK,
             open_staging=_fills_up(stage, fail_after=fail_after),
         )
@@ -874,3 +883,124 @@ class TestFreeSpace:
 
         _install_healthy(sources, version_dir, NEW_EXECUTABLE)
         assert working_files(version_dir) == []
+
+
+class TestABodyNothingDelimits:
+    """A body with no length and no framing ends when the connection does."""
+
+    def test_a_cut_transfer_is_tried_again_and_the_whole_body_installed(
+        self, sources: LoopbackSources, version_dir: Path
+    ) -> None:
+        """A short body with no declared length is a cut transfer, not a verdict.
+
+        The source closes the connection in order after half the archive, and
+        declares no length, so nothing in the transfer says the body is
+        short. Only the digest can, and what it finds is retried as any cut
+        transfer is. The second answer is the whole archive.
+
+        Mutation: removed the question ``_fetch_once`` asks of an undelimited
+        body. Observed the action assertion fail (``failed`` where
+        ``created`` was required), on one request: the half archive went to
+        the digest check and was reported as a replaced upstream asset.
+        Restored; passes.
+        """
+        asset = ARCHIVE_SHAPES[0]
+        archive = release_archive(asset)
+        source = sources.serve(
+            _InOrder(
+                lambda handler: send_undelimited(handler, archive[: len(archive) // 2]),
+                lambda handler: send_undelimited(handler, archive),
+            )
+        )
+        lines: list[str] = []
+        request = replace(
+            install_request(
+                source.url(f"/{asset}"),
+                version_dir,
+                asset=asset,
+                pinned_archive=archive,
+            ),
+            limits=_QUICK,
+            on_progress=lines.append,
+        )
+
+        report = _install(request)
+
+        assert report.action == ProvisionAction.CREATED, report.message
+        assert len(source.requests) == 2
+        assert (version_dir / binary_filename()).read_bytes() == NEW_EXECUTABLE
+        assert sum("retrying" in line for line in lines) == 1
+        assert working_files(version_dir) == []
+
+    def test_a_source_that_never_sends_the_expected_file_is_not_called_a_replaced_asset(
+        self, sources: LoopbackSources, version_dir: Path
+    ) -> None:
+        """What cannot be told apart is reported as both things it could be.
+
+        Every answer is the same bytes, complete, and they are not the
+        archive. Without a length the client cannot know they were complete,
+        so the report says so instead of asserting that upstream changed.
+        """
+        asset = ARCHIVE_SHAPES[0]
+        source = sources.serve(
+            lambda handler: send_undelimited(handler, b"some other file entirely")
+        )
+        request = replace(
+            install_request(
+                source.url(f"/{asset}"),
+                version_dir,
+                asset=asset,
+                pinned_archive=release_archive(asset),
+            ),
+            limits=_QUICK,
+        )
+
+        report = _install(request)
+
+        assert report.action == ProvisionAction.FAILED
+        assert len(source.requests) == 3
+        assert "after 3 attempts" in report.message
+        assert "without having said how many to expect" in report.message
+        assert "cut short or the source is serving a different file" in report.message
+        assert "may have been replaced" not in report.message
+        assert "`vaultspec-rag server qdrant install`" in report.message
+        assert not (version_dir / binary_filename()).exists()
+        assert working_files(version_dir) == []
+
+    def test_a_caller_with_no_way_to_tell_is_handed_the_body_as_it_came(
+        self, sources: LoopbackSources
+    ) -> None:
+        """The transport decides nothing about content it was not asked about."""
+        source = sources.serve(lambda handler: send_undelimited(handler, _BODY))
+        out = io.BytesIO()
+
+        download_https(
+            source.url("/asset.bin"), out, redirect_hosts=_ALLOWED, limits=_QUICK
+        )
+
+        assert out.getvalue() == _BODY
+        assert len(source.requests) == 1
+
+
+class TestAHostNoNameCanBeMadeOf:
+    @pytest.mark.parametrize(
+        "host",
+        ["mirror..example", f"{'a' * 64}.example"],
+        ids=["an empty label", "a label over 63 characters"],
+    )
+    def test_it_is_a_bad_source_and_not_an_error_from_the_encoder(
+        self, host: str
+    ) -> None:
+        """A host that cannot be encoded is the URL's fault, said as such.
+
+        Nothing is contacted: the name fails before it is resolved.
+
+        Mutation: removed the handling of the encoder's refusal in
+        ``download_https``. Observed ``UnicodeError`` escape the call in both
+        cases. Restored; passes.
+        """
+        failure = _fetch(f"https://{host}/asset.bin")
+
+        assert failure.kind is DownloadFailure.BAD_SOURCE
+        assert failure.attempts == 1
+        assert host in str(failure)

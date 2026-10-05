@@ -44,18 +44,19 @@ excludes, and a read-only holder simply cannot publish its pid.
 
 Claims return ``HELD``, ``CONTENDED``, or ``UNAVAILABLE``. Existing-anchor
 observations add ``ABSENT`` and ``FREE`` without ever retaining a descriptor.
-``UNAVAILABLE`` is not an ownership answer: the anchor could not be opened, or
-the platform ships neither advisory-lock primitive, so it carries the
-coordination exception. A caller guarding something whose second holder would
-corrupt state raises that fault; a caller for which losing cross-process
-coordination costs less than refusing all work degrades and proceeds. Choosing
-between those here would be wrong in one direction or the other for every
-caller.
+``UNAVAILABLE`` is not an ownership answer: the anchor could not be opened, the
+platform ships neither advisory-lock primitive, or the lock call failed for a
+reason that is not another holder, so it carries the coordination exception. A
+caller guarding something whose second holder would corrupt state raises that
+fault; a caller for which losing cross-process coordination costs less than
+refusing all work degrades and proceeds. Choosing between those here would be
+wrong in one direction or the other for every caller.
 """
 
 from __future__ import annotations
 
 import contextlib
+import errno
 import json
 import os
 import sys
@@ -105,6 +106,16 @@ _OWNER_RECORD_WIDTH = 64
 # absent - which is the whole failure this exists to prevent.
 _OWNER_RECORD_WAIT_SECONDS = 1.0
 _OWNER_RECORD_POLL_SECONDS = 0.002
+
+# What a non-blocking lock call fails with when another holder has the lock.
+# ``flock`` reports would-block; the Windows byte-range call reports access
+# denied, as does a ``flock`` a network filesystem carries out as a record
+# lock; either may report a deadlock it detected. Every other failure - no
+# locks on this filesystem, a call it does not implement, an I/O error - says
+# nothing about a holder.
+_HELD_ELSEWHERE_ERRNOS = frozenset(
+    {errno.EAGAIN, errno.EWOULDBLOCK, errno.EACCES, errno.EDEADLK}
+)
 
 # Every hardware anchor's name carries this prefix, as a directory on Windows
 # and as a filename prefix where the anchors share a machine-wide directory.
@@ -351,6 +362,45 @@ def _recorded_owner(anchor: Path) -> int:
             return 0
 
 
+def _lock_refused_by_a_holder(refusal: OSError) -> bool:
+    """Whether a failed non-blocking lock call means another holder has the lock.
+
+    Reading every failure as a holder is the safe direction for exclusion and
+    the wrong one for the caller: a filesystem that carries no locks at all
+    would then look like a holder that never lets go, and a caller that waits
+    for a holder would wait out its whole bound on nobody.
+    """
+    return refusal.errno in _HELD_ELSEWHERE_ERRNOS
+
+
+def _refused_lock(
+    anchor: Path, descriptor: int, refusal: OSError, *, pid_record: bool
+) -> AnchorClaim:
+    """Close *descriptor* and say what a refused lock call on it amounts to.
+
+    Another holder is ``CONTENDED``, naming the recorded owner where one is
+    published. Any other refusal is ``UNAVAILABLE`` and carries the error: the
+    lock could not be attempted, which is not an answer about ownership.
+    Neither admits the caller.
+    """
+    held_elsewhere = _lock_refused_by_a_holder(refusal)
+    # Read before the descriptor is closed, so the record is the one the
+    # refusal was about. An owner record that vanished in between costs the
+    # caller the pid and nothing else.
+    holder = _recorded_owner(anchor) if held_elsewhere and pid_record else 0
+    with contextlib.suppress(OSError):
+        os.close(descriptor)
+    return AnchorClaim(
+        outcome=(
+            AnchorOutcome.CONTENDED if held_elsewhere else AnchorOutcome.UNAVAILABLE
+        ),
+        anchor=anchor,
+        descriptor=None,
+        holder_pid=holder,
+        fault=None if held_elsewhere else refusal,
+    )
+
+
 def claim_anchor(
     anchor: Path,
     *,
@@ -398,20 +448,8 @@ def claim_anchor(
         )
     try:
         lock_fd_exclusive(fd, offset=offset)
-    except OSError:
-        # A refused non-blocking lock call on a descriptor that opened cleanly
-        # is another holder in every practical case, and reading it as one is
-        # the safe direction: it refuses this caller rather than admitting it
-        # alongside a holder the call failed to name.
-        holder = _recorded_owner(anchor) if pid_record else 0
-        os.close(fd)
-        return AnchorClaim(
-            outcome=AnchorOutcome.CONTENDED,
-            anchor=anchor,
-            descriptor=None,
-            holder_pid=holder,
-            fault=None,
-        )
+    except OSError as exc:
+        return _refused_lock(anchor, fd, exc, pid_record=pid_record)
     except ImportError as exc:
         os.close(fd)
         return AnchorClaim(
@@ -469,19 +507,8 @@ def observe_existing_anchor(
         )
     try:
         lock_fd_exclusive(fd, offset=_PID_RECORD_LOCK_OFFSET if pid_record else 0)
-    except OSError:
-        # A refused non-blocking lock is fail-closed as a contender even when
-        # the owner record disappeared between lock refusal and this read.
-        holder = _recorded_owner(anchor) if pid_record else 0
-        with contextlib.suppress(OSError):
-            os.close(fd)
-        return AnchorClaim(
-            outcome=AnchorOutcome.CONTENDED,
-            anchor=anchor,
-            descriptor=None,
-            holder_pid=holder,
-            fault=None,
-        )
+    except OSError as exc:
+        return _refused_lock(anchor, fd, exc, pid_record=pid_record)
     except ImportError as exc:
         with contextlib.suppress(OSError):
             os.close(fd)

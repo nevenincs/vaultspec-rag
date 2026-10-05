@@ -4,9 +4,9 @@ Exercises real logic only: asset resolution tables, real SHA256
 verification against real archives built on disk, real provisioning
 state machines against a temp-isolated managed dir, and the
 pin-vs-lockfile guard parsed from the repository's actual ``uv.lock``.
-No network I/O happens anywhere in this module: the idempotency path
-is proven by pre-seeding a verified install, and the download leg has
-its own module.
+No network I/O happens anywhere in this module, so nothing here holds the
+pinned release: what is seeded at the managed install's name is a stand-in
+that resolution refuses, and the download leg has its own module.
 """
 
 from __future__ import annotations
@@ -29,6 +29,12 @@ from ..qdrant_runtime._constants import (
     QDRANT_EXECUTABLE_SHA256,
     QDRANT_SERVER_VERSION,
     BinarySource,
+    ResolvedBinary,
+)
+from ..qdrant_runtime._managed_install import (
+    InstallState,
+    ManagedInstall,
+    classify_managed_binary,
 )
 from ..qdrant_runtime._provision import (
     ChecksumMismatchError,
@@ -40,16 +46,16 @@ from ..qdrant_runtime._provision import (
 from ..qdrant_runtime._resolve import (
     QdrantBinaryError,
     UnsupportedPlatformError,
+    _managed_binary,
     asset_for_platform,
     binary_filename,
-    expected_executable_sha256,
     has_provisioned_binary,
-    operator_registration_refusal,
     qdrant_bin_dir,
     resolve_binary,
 )
 from ..qdrant_runtime._spawn_trust import verify_resolved_binary
 from ._config_fixtures import reset_config
+from ._fake_qdrant_binary import unreadable
 from .conftest import managed_env
 
 if TYPE_CHECKING:
@@ -155,98 +161,6 @@ class TestPinTable:
         pinned = [*QDRANT_ASSET_SHA256.values(), *QDRANT_EXECUTABLE_SHA256.values()]
         assert len(set(pinned)) == len(pinned)
 
-
-_GNU_ASSET = "qdrant-x86_64-unknown-linux-gnu.tar.gz"
-
-
-class TestExpectedExecutableDigest:
-    """Which digest a managed install's executable is held to.
-
-    The manifest sits beside the binary it describes, so it may only say
-    which asset of the pinned release was installed. The digest itself has to
-    come from the committed table, and nothing else the manifest says is
-    believed.
-    """
-
-    @pytest.mark.parametrize("source", ["download", "archive"])
-    @pytest.mark.parametrize("asset", sorted(QDRANT_EXECUTABLE_SHA256))
-    def test_the_pinned_release_is_held_to_the_committed_digest_of_its_asset(
-        self, asset: str, source: str
-    ) -> None:
-        """Fetched or unpacked from a local archive, the expectation is the pin.
-
-        Proven able to fail: returning the manifest's ``binary_sha256`` fails
-        this on the equality below, for every asset and both sources.
-        """
-        manifest = {
-            "source": source,
-            "asset": asset,
-            "binary_sha256": "f" * 64,
-        }
-        assert expected_executable_sha256(manifest) == QDRANT_EXECUTABLE_SHA256[asset]
-
-    def test_an_install_from_the_unselected_gnu_asset_keeps_its_own_digest(
-        self,
-    ) -> None:
-        """An install made while gnu was selected is compared to the gnu pin.
-
-        Proven able to fail: looking the digest up by the asset the running
-        platform selects, instead of the one the manifest names, fails this on
-        the equality below - no platform selects gnu.
-        """
-        assert (
-            expected_executable_sha256({"source": "download", "asset": _GNU_ASSET})
-            == QDRANT_EXECUTABLE_SHA256[_GNU_ASSET]
-        )
-
-    @pytest.mark.parametrize(
-        "manifest",
-        [
-            {"version": QDRANT_SERVER_VERSION},
-            {"source": "download"},
-            {"source": "download", "asset": ""},
-            {"source": "download", "asset": "qdrant-riscv64-unknown-linux.tar.gz"},
-            {"asset": "not-an-asset", "binary_sha256": "a" * 64},
-        ],
-    )
-    def test_no_digest_is_established_without_a_pinned_asset(
-        self, manifest: dict[str, object]
-    ) -> None:
-        """An asset outside the table never verifies; nothing stands in for it.
-
-        Proven able to fail: falling back to the running platform's digest for
-        an unknown asset fails this on the equality below.
-        """
-        assert expected_executable_sha256(manifest) == ""
-
-    @pytest.mark.parametrize(
-        "source",
-        ["operator", "Operator", "registered", "manual", "", None, "downloads"],
-    )
-    def test_no_other_source_is_honoured_whatever_else_the_manifest_says(
-        self, source: str | None
-    ) -> None:
-        """Only the two ways the pinned release arrives establish a digest.
-
-        Each manifest names a pinned asset and records a digest of its own.
-        Under the rule that let an operator registration vouch for itself,
-        the recorded digest came back for ``operator``; under a rule that
-        merely excluded that one word, every other spelling here would be
-        treated as a download and get the committed digest.
-
-        Proven able to fail: honouring the manifest's digest for an operator
-        source fails the ``operator`` case on the equality below; excluding
-        only that value instead of admitting only the two sources fails every
-        other case.
-        """
-        manifest: dict[str, object] = {
-            "asset": asset_for_platform(),
-            "binary_sha256": "b" * 64,
-        }
-        if source is not None:
-            manifest["source"] = source
-        assert expected_executable_sha256(manifest) == ""
-
     def test_pin_minor_matches_locked_client_minor(self) -> None:
         """The server pin must stay on the locked qdrant-client minor line.
 
@@ -267,6 +181,83 @@ class TestExpectedExecutableDigest:
             f"server pin {QDRANT_SERVER_VERSION} is off the locked "
             f"qdrant-client {client_major}.{client_minor}.x minor line"
         )
+
+
+#: The code each verdict that may not run is refused under.
+_REFUSED_UNDER = {
+    InstallState.REFUSED: "qdrant_binary_unverified",
+    InstallState.UNREADABLE: "qdrant_binary_busy",
+    InstallState.OBSTRUCTED: "qdrant_install_invalid",
+}
+
+
+class TestManagedInstallVerdict:
+    """What resolution makes of each verdict on the installed name.
+
+    No stand-in hashes to a committed digest, so a healthy verdict cannot be
+    produced from a file here. The verdicts are built directly; the tests of
+    the classifier produce each of them from real files, and the tests below
+    this class reach every unhealthy one through a real resolution.
+    """
+
+    @pytest.mark.parametrize("asset", sorted(QDRANT_EXECUTABLE_SHA256))
+    def test_a_healthy_install_resolves_held_to_the_digest_it_matched(
+        self, asset: str, tmp_path: Path
+    ) -> None:
+        """The digest carried to every spawn is the committed one it matched.
+
+        Run for every pinned asset, including the one no platform selects: an
+        install made from it stays the pinned release.
+
+        Mutation it catches: carrying the digest of the asset the running
+        platform selects. Every other asset then fails on the equality below.
+        """
+        binary = tmp_path / binary_filename()
+        committed = QDRANT_EXECUTABLE_SHA256[asset]
+
+        resolved = _managed_binary(
+            ManagedInstall(InstallState.HEALTHY, binary, asset=asset, sha256=committed)
+        )
+
+        assert resolved == ResolvedBinary(
+            path=binary,
+            source=BinarySource.MANAGED_DOWNLOAD,
+            version=QDRANT_SERVER_VERSION,
+            sha256=committed,
+        )
+
+    def test_an_absent_install_resolves_to_nothing(self, tmp_path: Path) -> None:
+        absent = ManagedInstall(InstallState.ABSENT, tmp_path / binary_filename())
+
+        assert _managed_binary(absent) is None
+
+    @pytest.mark.parametrize("state", sorted(_REFUSED_UNDER))
+    def test_an_unhealthy_install_is_refused_in_the_verdicts_own_words(
+        self, state: InstallState, tmp_path: Path
+    ) -> None:
+        """Each state has its own code, and the sentence is not rewritten.
+
+        Mutation it catches: dropping a state from the table of codes. That
+        state then resolves to nothing, as if no install were there, and this
+        fails on the missing ``QdrantBinaryError``.
+        """
+        verdict = ManagedInstall(
+            state, tmp_path / binary_filename(), refusal=f"the {state} sentence"
+        )
+
+        with pytest.raises(QdrantBinaryError) as refused:
+            _managed_binary(verdict)
+
+        assert refused.value.error == _REFUSED_UNDER[state]
+        assert str(refused.value) == verdict.refusal
+
+    def test_no_verdict_is_left_without_an_outcome(self) -> None:
+        """A state added to the classifier has to be given one here."""
+        assert set(InstallState) == {
+            InstallState.HEALTHY,
+            InstallState.ABSENT,
+            *_REFUSED_UNDER,
+        }
 
 
 def _build_binary_zip(directory: Path, payload: bytes) -> Path:
@@ -304,8 +295,41 @@ class TestVerifiedExtraction:
         )
 
 
+#: What a manifest beside the installed name can say. ``download`` and
+#: ``archive`` are what a provisioning run writes and ``operator`` is what an
+#: operator registration used to: each names the pinned version and records
+#: the digest the file really has. Nothing here is read to reach a verdict.
+_MANIFEST_KINDS = ("absent", "bare", "download", "archive", "operator")
+
+
+def _seed_stand_in(version_dir: Path, manifest: str = "download") -> Path:
+    """Put a file that is not the pinned release at the installed name.
+
+    The manifest beside it is as favourable as one can be made: it agrees
+    with the file in every respect, which is exactly what anyone able to
+    write the directory can arrange.
+    """
+    version_dir.mkdir(parents=True, exist_ok=True)
+    binary = version_dir / binary_filename()
+    binary.write_bytes(b"a stand-in for the release, " + manifest.encode())
+    if manifest == "absent":
+        return binary
+    recorded: dict[str, object] = {"version": QDRANT_SERVER_VERSION}
+    if manifest != "bare":
+        asset = "" if manifest == "operator" else asset_for_platform()
+        recorded.update(
+            asset=asset,
+            asset_sha256=QDRANT_ASSET_SHA256.get(asset, ""),
+            binary_sha256=file_sha256(binary),
+            source=manifest,
+            provisioned_at="2026-06-12T00:00:00+00:00",
+        )
+    (version_dir / "manifest.json").write_text(json.dumps(recorded), encoding="utf-8")
+    return binary
+
+
 class TestPreExecDigestGuard:
-    """A managed install that does not verify is refused by a real start."""
+    """A binary that does not verify is refused by a real start."""
 
     @staticmethod
     def _refused_start() -> QdrantBinaryError:
@@ -318,76 +342,35 @@ class TestPreExecDigestGuard:
             start_supervised_from_config()
         return refused.value
 
-    def test_a_download_whose_executable_is_not_the_pinned_one_is_refused(
-        self, isolated_status_dir: Path
+    @pytest.mark.parametrize("manifest", _MANIFEST_KINDS)
+    def test_a_file_that_is_not_the_pinned_release_never_starts(
+        self, manifest: str, isolated_status_dir: Path
     ) -> None:
-        """The manifest agreeing with the file is not what lets it run.
+        """What the manifest says, or lacks, does not let the file run.
 
-        The seeded manifest records the seeded file's own digest, so a check
-        against the manifest passes. Only the committed digest refuses it.
+        Where a manifest records a digest it is the file's true one, so a
+        check against the manifest passes in every such case. Only the
+        committed digests refuse it, and the refusal names what the file is
+        and every way to replace it.
+
+        Mutation it catches: resolving the file held to its own digest, as a
+        manifest that vouches for its binary would have it. The start then
+        goes on to execute the stand-in, which is not a program, and every
+        case fails on an ``OSError`` in place of the refusal.
         """
         _ = isolated_status_dir
-        binary = _seed_verified_install(qdrant_bin_dir())
-        manifest = json.loads(
-            (qdrant_bin_dir() / "manifest.json").read_text(encoding="utf-8")
-        )
-        assert manifest["binary_sha256"] == file_sha256(binary)
+        binary = _seed_stand_in(qdrant_bin_dir(), manifest)
 
         refused = self._refused_start()
 
         assert refused.error == "qdrant_binary_unverified"
-        assert "the pinned digest of its release asset" in str(refused)
-        assert "vaultspec-rag server qdrant install --upgrade" in str(refused)
-
-    def test_a_manifest_that_records_no_digest_does_not_skip_the_check(
-        self, isolated_status_dir: Path
-    ) -> None:
-        """An install with nothing to compare against never runs.
-
-        Mutation it catches: skipping the comparison when no digest applies.
-        The start then goes on to execute the seeded file, which is not a
-        program, and this fails on an ``OSError`` in place of the refusal.
-        """
-        _ = isolated_status_dir
-        version_dir = qdrant_bin_dir()
-        version_dir.mkdir(parents=True)
-        (version_dir / binary_filename()).write_bytes(b"no-digest-recorded")
-        (version_dir / "manifest.json").write_text(
-            json.dumps({"version": QDRANT_SERVER_VERSION}), encoding="utf-8"
-        )
-        resolved = resolve_binary()
-        assert resolved is not None
-        assert resolved.sha256 == ""
-
-        assert self._refused_start().error == "qdrant_binary_unverified"
-
-    def test_an_install_whose_manifest_claims_an_operator_put_it_there_is_refused(
-        self, isolated_status_dir: Path
-    ) -> None:
-        """The manifest vouching for its own binary is not honoured.
-
-        The manifest records the file's true digest, so everything it says is
-        consistent - which is exactly what anyone able to write the directory
-        can arrange. The start is refused as an invalid install, and the
-        refusal names both routes that replace it.
-
-        Mutation it catches: resolving such an install and holding it to the
-        digest its manifest records. The file matches that digest, so the
-        start then goes on to execute it and this fails on an ``OSError`` in
-        place of the refusal.
-        """
-        _ = isolated_status_dir
-        binary = _seed_operator_claiming_install(qdrant_bin_dir())
-
-        refused = self._refused_start()
-
-        assert refused.error == "qdrant_install_invalid"
         message = str(refused)
         assert str(binary) in message
-        assert EnvVar.QDRANT_BINARY.value in message
-        assert EnvVar.QDRANT_BINARY_SHA256.value in message
+        assert file_sha256(binary) in message
         assert "vaultspec-rag server qdrant install --upgrade" in message
         assert "--archive <file>" in message
+        assert EnvVar.QDRANT_BINARY.value in message
+        assert EnvVar.QDRANT_BINARY_SHA256.value in message
 
     def test_an_operator_binary_that_is_not_what_was_declared_is_refused(
         self, isolated_status_dir: Path, tmp_path: Path
@@ -440,24 +423,6 @@ class TestArchiveTraversal:
         assert not (tmp_path.parent / "escape").exists()
 
 
-def _seed_verified_install(version_dir: Path) -> Path:
-    """Pre-seed a managed dir exactly as a verified provision leaves it."""
-    version_dir.mkdir(parents=True, exist_ok=True)
-    binary = version_dir / binary_filename()
-    binary.write_bytes(b"preseeded-binary")
-    asset = asset_for_platform()
-    manifest = {
-        "version": QDRANT_SERVER_VERSION,
-        "asset": asset,
-        "asset_sha256": QDRANT_ASSET_SHA256[asset],
-        "binary_sha256": file_sha256(binary),
-        "source": "download",
-        "provisioned_at": "2026-06-12T00:00:00+00:00",
-    }
-    (version_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    return binary
-
-
 class TestProvision:
     def test_dry_run_writes_nothing(self, isolated_status_dir: Path) -> None:
         report = provision(dry_run=True)
@@ -481,109 +446,95 @@ class TestProvision:
         assert "--upgrade" in report.message
 
 
-def _seed_operator_claiming_install(version_dir: Path) -> Path:
-    """Seed the install an operator registration used to leave behind.
-
-    Internally consistent in every respect: the manifest names the pinned
-    version and records the digest the file really has.
-    """
-    version_dir.mkdir(parents=True, exist_ok=True)
-    binary = version_dir / binary_filename()
-    binary.write_bytes(b"operator-registered")
-    manifest = {
-        "version": QDRANT_SERVER_VERSION,
-        "asset": "",
-        "asset_sha256": "",
-        "binary_sha256": file_sha256(binary),
-        "source": "operator",
-        "provisioned_at": "2026-06-12T00:00:00+00:00",
-    }
-    (version_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    return binary
-
-
 class TestResolution:
-    def test_resolves_provisioned_install(self, isolated_status_dir: Path) -> None:
-        _ = isolated_status_dir
-        binary = _seed_verified_install(qdrant_bin_dir())
-
-        resolved = resolve_binary()
-
-        assert resolved is not None
-        assert resolved.path == binary
-        assert resolved.source == "provisioned"
-        assert resolved.version == QDRANT_SERVER_VERSION
-        # The seeded file is not the real server, so the expectation it is
-        # held to differs from its own hash: the digest comes from the pin
-        # table, not from the manifest written beside the file.
-        assert resolved.sha256 == QDRANT_EXECUTABLE_SHA256[asset_for_platform()]
-        assert resolved.sha256 != file_sha256(binary)
-
-    def test_resolves_an_install_made_from_the_gnu_asset_to_the_gnu_digest(
+    def test_an_empty_version_directory_resolves_to_nothing(
         self, isolated_status_dir: Path
     ) -> None:
         _ = isolated_status_dir
-        version_dir = qdrant_bin_dir()
-        _seed_verified_install(version_dir)
-        manifest_path = version_dir / "manifest.json"
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        manifest["asset"] = _GNU_ASSET
-        manifest["asset_sha256"] = QDRANT_ASSET_SHA256[_GNU_ASSET]
-        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        qdrant_bin_dir().mkdir(parents=True)
 
-        resolved = resolve_binary()
+        assert resolve_binary() is None
+        assert has_provisioned_binary() is False
 
-        assert resolved is not None
-        assert resolved.sha256 == QDRANT_EXECUTABLE_SHA256[_GNU_ASSET]
-
-    def test_an_install_made_from_a_local_archive_resolves_as_the_managed_install(
-        self, isolated_status_dir: Path
+    @pytest.mark.parametrize("manifest", _MANIFEST_KINDS)
+    def test_a_stand_in_is_refused_at_resolution_whatever_its_manifest_says(
+        self, manifest: str, isolated_status_dir: Path
     ) -> None:
-        """An offline install is the pinned release, held to the same digest."""
-        _ = isolated_status_dir
-        version_dir = qdrant_bin_dir()
-        _seed_verified_install(version_dir)
-        manifest_path = version_dir / "manifest.json"
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        manifest["source"] = "archive"
-        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        """It does not resolve, it is not an install, and the words are shared.
 
-        resolved = resolve_binary()
+        The sentence is the one the shared verdict on the same file carries,
+        so a start and a status read cannot describe one directory two ways.
 
-        assert resolved is not None
-        assert resolved.source is BinarySource.MANAGED_DOWNLOAD
-        assert resolved.version == QDRANT_SERVER_VERSION
-        assert resolved.sha256 == QDRANT_EXECUTABLE_SHA256[asset_for_platform()]
-
-    def test_an_operator_claiming_install_does_not_resolve(
-        self, isolated_status_dir: Path
-    ) -> None:
-        """It is refused at resolution, and is not a provisioned binary.
-
-        Proven able to fail: returning such an install as resolved fails this
+        Mutation it catches: treating a file with no manifest beside it as no
+        install at all. The ``absent`` case then resolves to nothing and fails
         on the missing ``QdrantBinaryError``.
         """
         _ = isolated_status_dir
-        binary = _seed_operator_claiming_install(qdrant_bin_dir())
+        binary = _seed_stand_in(qdrant_bin_dir(), manifest)
+
+        with pytest.raises(QdrantBinaryError) as refused:
+            resolve_binary()
+
+        assert refused.value.error == "qdrant_binary_unverified"
+        assert str(refused.value) == classify_managed_binary(binary).refusal
+        assert str(binary) in str(refused.value)
+        assert has_provisioned_binary() is False
+
+    def test_a_directory_at_the_installed_name_is_refused_as_an_invalid_install(
+        self, isolated_status_dir: Path
+    ) -> None:
+        """Nothing can be installed over it, so the remedy is to remove it."""
+        _ = isolated_status_dir
+        obstruction = qdrant_bin_dir() / binary_filename()
+        obstruction.mkdir(parents=True)
 
         with pytest.raises(QdrantBinaryError) as refused:
             resolve_binary()
 
         assert refused.value.error == "qdrant_install_invalid"
-        assert str(refused.value) == operator_registration_refusal(binary)
+        assert str(obstruction) in str(refused.value)
+        assert "Remove it" in str(refused.value)
+        assert "--upgrade" not in str(refused.value)
         assert has_provisioned_binary() is False
+
+    def test_an_install_that_cannot_be_read_is_busy_and_not_a_failed_digest(
+        self, isolated_status_dir: Path
+    ) -> None:
+        """Nothing is known about a file that was never read.
+
+        The same file is refused twice: while it cannot be read, as busy with
+        nothing said about replacing it, and once it can, for what it holds.
+
+        Mutation it catches: refusing an unreadable install under the code of
+        a failed digest. This fails on the first code assertion below.
+        """
+        _ = isolated_status_dir
+        binary = _seed_stand_in(qdrant_bin_dir())
+
+        with unreadable(binary), pytest.raises(QdrantBinaryError) as busy:
+            resolve_binary()
+        with pytest.raises(QdrantBinaryError) as refused:
+            resolve_binary()
+
+        assert busy.value.error == "qdrant_binary_busy"
+        assert "Close whatever holds it" in str(busy.value)
+        assert "--upgrade" not in str(busy.value)
+        assert refused.value.error == "qdrant_binary_unverified"
 
     def test_an_operator_binary_is_held_to_its_declared_digest(
         self, isolated_status_dir: Path, tmp_path: Path
     ) -> None:
         """Path and digest together name the binary; it outranks the install.
 
+        What sits at the managed install's name here would be refused if it
+        were consulted, so resolving at all shows it was not.
+
         The version is unknown: the operator said which bytes, not which
         release. Proven able to fail: reporting the pinned version for every
         operator binary fails this on the empty-version assertion below.
         """
         _ = isolated_status_dir
-        _seed_verified_install(qdrant_bin_dir())
+        _seed_stand_in(qdrant_bin_dir())
         operator_binary = tmp_path / "env-qdrant.bin"
         operator_binary.write_bytes(b"env-binary")
         declared = file_sha256(operator_binary)
@@ -625,21 +576,11 @@ class TestResolution:
             verify_resolved_binary(resolved)
         assert refused.value.error == "qdrant_binary_unverified"
 
-    def test_binary_without_manifest_is_not_provisioned(
-        self, isolated_status_dir: Path
-    ) -> None:
-        _ = isolated_status_dir
-        version_dir = qdrant_bin_dir()
-        version_dir.mkdir(parents=True)
-        (version_dir / binary_filename()).write_bytes(b"no-manifest")
-
-        assert resolve_binary() is None
-
     def test_provisioned_versions_lists_seeded_install(
         self, isolated_status_dir: Path
     ) -> None:
         _ = isolated_status_dir
-        _seed_verified_install(qdrant_bin_dir())
+        _seed_stand_in(qdrant_bin_dir())
 
         versions = provisioned_versions()
 
@@ -718,21 +659,21 @@ class TestOperatorBinarySetting:
     ) -> None:
         """A named binary that cannot be used is an error, not a fallback.
 
-        A managed install is present throughout, so a silent fall-through
-        would return it and this would fail with no exception raised. The
-        relative case runs with the working directory holding a real file of
-        that name: the working directory must not be able to choose the
+        A file sits at the managed install's name throughout, so a silent
+        fall-through would go on to judge it and refuse under another code.
+        The relative case runs with the working directory holding a real file
+        of that name: the working directory must not be able to choose the
         binary. Each case asserts its own fault phrase, so one check standing
         in for another does not pass.
 
         Proven able to fail, one mutation per branch: returning ``None``
-        instead of raising fails all four on the missing exception; dropping
-        the absolute-path check fails ``relative``; dropping the link check
-        fails ``link``; dropping the regular-file check fails ``directory``
-        and ``missing``.
+        instead of raising fails all four on the code assertion, with the
+        managed install's refusal in its place; dropping the absolute-path
+        check fails ``relative``; dropping the link check fails ``link``;
+        dropping the regular-file check fails ``directory`` and ``missing``.
         """
         _ = isolated_status_dir
-        _seed_verified_install(qdrant_bin_dir())
+        _seed_stand_in(qdrant_bin_dir())
         setting, fault = self._candidates(tmp_path)[shape]
         monkeypatch.chdir(tmp_path)
 
@@ -752,7 +693,7 @@ class TestOperatorBinarySetting:
         from ..qdrant_runtime._supervise import start_supervised_from_config
 
         _ = isolated_status_dir
-        _seed_verified_install(qdrant_bin_dir())
+        _seed_stand_in(qdrant_bin_dir())
 
         with (
             managed_env(
@@ -770,11 +711,12 @@ class TestOperatorBinarySetting:
     ) -> None:
         """A path with no digest, or a digest with no path, names no binary.
 
-        The path names a real, usable file and a managed install is present,
-        so both of the things a half pair could quietly become are available:
-        the named file run with nothing to hold it to, or the managed install
-        run in its place. Neither happens, and the refusal names both
-        settings so the operator can see which one is missing.
+        The path names a real, usable file and a file sits at the managed
+        install's name, so both of the things a half pair could quietly become
+        are available: the named file run with nothing to hold it to, or the
+        managed install consulted in its place. Neither happens, and the
+        refusal names both settings so the operator can see which one is
+        missing.
 
         The settings layer refuses half a pair on its own; what resolution
         adds is that the refusal reaches a caller as the binary error every
@@ -783,7 +725,7 @@ class TestOperatorBinarySetting:
         settings layer's own error escaping in place of the expected one.
         """
         _ = isolated_status_dir
-        _seed_verified_install(qdrant_bin_dir())
+        _seed_stand_in(qdrant_bin_dir())
         operator_binary = tmp_path / "operator-qdrant.bin"
         operator_binary.write_bytes(b"operator-binary")
         settings: dict[str, str | None] = {
@@ -833,7 +775,7 @@ class TestOperatorBinarySetting:
         error escaping.
         """
         _ = (isolated_status_dir, label)
-        _seed_verified_install(qdrant_bin_dir())
+        _seed_stand_in(qdrant_bin_dir())
         operator_binary = tmp_path / "operator-qdrant.bin"
         operator_binary.write_bytes(b"operator-binary")
         settings: dict[str, str | None] = {

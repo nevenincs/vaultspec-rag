@@ -164,7 +164,7 @@ class TestVerifiedInstall:
         source = sources.serve(lambda handler: send_bytes(handler, archive))
 
         request = _request(source, version_dir, asset=asset, pinned_archive=archive)
-        report = _install(replace(request, previously="stale"))
+        report = _install(replace(request, previously="refused"))
 
         assert report.action == ProvisionAction.UPDATED, report.message
         assert (version_dir / binary_filename()).read_bytes() == NEW_EXECUTABLE
@@ -226,7 +226,7 @@ class TestFailureLeavesThePreviousInstall:
         request = _request(
             source, version_dir, asset=asset, pinned_archive=release_archive(asset)
         )
-        report = _install(replace(request, previously="stale"))
+        report = _install(replace(request, previously="refused"))
 
         assert report.action == ProvisionAction.FAILED
         assert "SHA256 mismatch" in report.message
@@ -308,7 +308,7 @@ class TestFailureLeavesThePreviousInstall:
             replace(
                 request,
                 executable_sha256=sha256_hex(b"what the pin table says it should be"),
-                previously="stale",
+                previously="refused",
             )
         )
 
@@ -425,7 +425,7 @@ class TestInstalledName:
 
         request = _request(source, version_dir, asset=asset, pinned_archive=archive)
         with binary.open("rb"):
-            report = _install(replace(request, previously="stale"))
+            report = _install(replace(request, previously="refused"))
 
         assert report.action == ProvisionAction.FAILED
         assert "vaultspec-rag server stop" in report.message
@@ -553,57 +553,37 @@ _UNVERIFIED_SEEDS: dict[str, Callable[[Path, Path], bytes]] = {
 
 
 class TestInstallState:
-    """An install is called healthy only when its executable hashes right."""
+    """An executable that is not the pinned release is refused by its bytes.
 
-    def test_a_manifest_claiming_an_operator_binary_is_refused_with_both_routes(
-        self, sources: LoopbackSources, version_dir: Path, tmp_path: Path
-    ) -> None:
-        """The manifest's own word for where a binary came from buys nothing.
-
-        This manifest records the true digest of the file beside it, which is
-        all an operator registration ever had to show. The managed directory
-        holds the pinned release only, so the install is refused, and the
-        refusal names the two supported ways forward: the pinned release,
-        online or from a local archive, and the operator binary settings.
-
-        Mutation: made ``_manifest_fault`` stop judging the manifest's source.
-        Observed the settings assertion fail: the install was still refused,
-        by the resolver's own rule, but as one that names no release asset,
-        with no word of the operator route. Restored; passes.
-        """
-        installed = _seed_operator_claim(version_dir, tmp_path)
-        mirror = _mirror(sources)
-
-        with managed_env(
-            **{EnvVar.QDRANT_RELEASE_BASE_URL.value: mirror.url("/mirror")}
-        ):
-            report = provision()
-
-        assert report.action == ProvisionAction.FAILED
-        assert EnvVar.QDRANT_BINARY.value in report.message
-        assert EnvVar.QDRANT_BINARY_SHA256.value in report.message
-        assert "server qdrant install --upgrade" in report.message
-        assert "--archive <file>" in report.message
-        assert mirror.requests == []
-        assert (version_dir / binary_filename()).read_bytes() == installed
+    Every seed here is the same stand-in executable, which no committed
+    digest vouches for, under a different manifest. What a manifest says, or
+    whether there is one, changes nothing about the outcome. The other half
+    of the rule, that the pinned executable is healthy under any of these
+    manifests, needs an executable the pins vouch for and is driven where a
+    stand-in release can be pinned.
+    """
 
     @pytest.mark.parametrize("seed", _UNVERIFIED_SEEDS.values(), ids=_UNVERIFIED_SEEDS)
-    def test_an_install_that_does_not_verify_fails_and_names_the_upgrade(
+    def test_an_install_that_is_not_the_release_fails_and_names_both_ways_out(
         self,
         sources: LoopbackSources,
         version_dir: Path,
         tmp_path: Path,
         seed: Callable[[Path, Path], bytes],
     ) -> None:
-        """A plain run neither trusts nor overwrites an unverified executable.
+        """A plain run neither trusts nor overwrites such an executable.
 
         The first seed is the one a manifest-only check cannot see: its
-        manifest agrees with the pin table and with the file beside it.
+        manifest agrees with the pin table and with the file beside it. The
+        refusal is the same sentence for all of them, and it can be acted on
+        as written from whichever command showed it: the upgrade form in
+        full, online and from a local archive, and the two settings that
+        name a binary of the operator's own.
 
-        Mutation: made ``_existing_install`` skip hashing the executable.
-        Observed the first seed fail on the action (``unchanged`` where
-        ``failed`` was required); the others are refused on what their
-        manifests say before any hash is taken. Restored; passes.
+        Mutation: made ``_judge_content`` take any content for a pinned
+        executable. Observed every seed fail on the action (``updated``
+        where ``failed`` was required): the stand-in was accepted and its
+        manifest written again. Restored; passes.
         """
         installed = seed(version_dir, tmp_path)
         mirror = _mirror(sources)
@@ -614,12 +594,16 @@ class TestInstallState:
             report = provision()
 
         assert report.action == ProvisionAction.FAILED
-        assert "--upgrade" in report.message
+        assert "`vaultspec-rag server qdrant install --upgrade`" in report.message
+        assert "install --upgrade --archive <file>`" in report.message
+        assert EnvVar.QDRANT_BINARY.value in report.message
+        assert EnvVar.QDRANT_BINARY_SHA256.value in report.message
+        assert sha256_hex(installed) in report.message
         assert mirror.requests == []
         assert (version_dir / binary_filename()).read_bytes() == installed
 
     @pytest.mark.parametrize("seed", _UNVERIFIED_SEEDS.values(), ids=_UNVERIFIED_SEEDS)
-    def test_an_upgrade_re_downloads_an_install_that_does_not_verify(
+    def test_an_upgrade_re_downloads_an_install_that_is_not_the_release(
         self,
         sources: LoopbackSources,
         version_dir: Path,
@@ -634,9 +618,10 @@ class TestInstallState:
         download replacing a previous executable - is proven at the install
         itself, against an archive held to its own digests.
 
-        Mutation: made ``_existing_install`` skip hashing the executable.
-        Observed the first seed fail on the request log (``[]`` where the
-        asset path was required): the upgrade did nothing. Restored; passes.
+        Mutation: made ``_plan`` refuse a replaceable install even when the
+        upgrade was asked for. Observed every seed fail on the request log
+        (``[]`` where the asset path was required): the upgrade did nothing.
+        Restored; passes.
         """
         installed = seed(version_dir, tmp_path)
         mirror = _mirror(sources)
@@ -649,46 +634,9 @@ class TestInstallState:
         assert mirror.requests == [_asset_path()]
         assert report.action == ProvisionAction.FAILED
         assert "SHA256 mismatch" in report.message
+        assert "`vaultspec-rag server qdrant install --upgrade`" in report.message
         assert (version_dir / binary_filename()).read_bytes() == installed
         assert working_files(version_dir) == []
-
-    @pytest.mark.parametrize(
-        ("field", "value", "problem"),
-        [
-            ("asset", "qdrant-not-a-release.zip", "names no pinned release asset"),
-            ("version", "0.0.1", "records version 0.0.1"),
-            ("source", "mirror", "records the source 'mirror'"),
-        ],
-    )
-    def test_a_manifest_the_pin_table_does_not_cover_never_verifies(
-        self, version_dir: Path, field: str, value: str, problem: str
-    ) -> None:
-        """The manifest only selects a committed digest; it supplies none.
-
-        Each manifest is refused for the thing it actually gets wrong, so the
-        operator is told which.
-
-        Mutation: made ``_manifest_fault`` stop refusing a source it does not
-        recognise. Observed the source case fail on the problem assertion:
-        the install was still refused, by the resolver's rule, but described
-        as naming no pinned asset when the asset it names is pinned.
-        Restored; passes.
-        """
-        asset = asset_for_platform()
-        manifest = {
-            "version": QDRANT_SERVER_VERSION,
-            "asset": asset,
-            "asset_sha256": QDRANT_ASSET_SHA256[asset],
-            "binary_sha256": sha256_hex(_STAND_IN_EXECUTABLE),
-            "source": "download",
-        }
-        _write_install(version_dir, {**manifest, field: value})
-
-        report = provision()
-
-        assert report.action == ProvisionAction.FAILED
-        assert problem in report.message
-        assert "--upgrade" in report.message
 
 
 def _lock_path(version_dir: Path) -> Path:
@@ -861,10 +809,10 @@ class TestProvisioningLock:
 
         The same second look is what lets the second of two starts adopt the
         first one's install instead of downloading it again. That case needs
-        a verified install to appear, and only the release executable
-        verifies, so it is not staged here.
+        an executable the pins vouch for to appear, so it is driven where a
+        stand-in release can be pinned.
 
-        Mutation: made the locked step of ``provision`` use the plan made
+        Mutation: made the locked step of ``_provision`` use the plan made
         before the wait. Observed the request-log assertion fail: the asset
         was requested. Restored; passes.
         """
@@ -894,7 +842,7 @@ class TestProvisioningLock:
 
         assert mirror.requests == []
         assert [report.action for report in reports] == [ProvisionAction.FAILED]
-        assert "--upgrade" in reports[0].message
+        assert "`vaultspec-rag server qdrant install --upgrade`" in reports[0].message
         assert (version_dir / binary_filename()).read_bytes() == installed
 
     def test_a_run_removes_working_files_a_killed_run_left(

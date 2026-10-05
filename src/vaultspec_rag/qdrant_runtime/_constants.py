@@ -146,19 +146,17 @@ QDRANT_EXECUTABLE_SHA256: Final[dict[str, str]] = {
 #: Name of the provisioning manifest written next to the binary.
 MANIFEST_FILENAME: Final[str] = "manifest.json"
 
-#: The manifest's ``source`` values for the two ways the pinned release reaches
-#: the managed directory: fetched, or unpacked from a local copy of the same
-#: official archive. Both are held to the committed executable digest of the
-#: asset the manifest names, and the manifest is trusted for nothing else.
+#: The manifest's ``source`` values: how the pinned release reached the managed
+#: directory. Fetched; unpacked from a local copy of the same official archive;
+#: or not recorded, for an executable found to be the pinned release whose
+#: manifest was missing or wrong and had to be written afresh.
+#:
+#: The manifest is a record and nothing more. No verdict reads it: an install
+#: is the pinned release when its executable hashes to a committed digest, and
+#: is refused when it does not, whatever a manifest beside it says.
 MANIFEST_SOURCE_DOWNLOAD: Final = "download"
 MANIFEST_SOURCE_ARCHIVE: Final = "archive"
-
-#: What a manifest written by an operator registration says. Nothing writes it
-#: any more and nothing honours it: such an install vouched for itself from
-#: inside the directory it was protecting. The value is kept only so an install
-#: left behind by one can be told apart and reported with the routes that
-#: replace it.
-MANIFEST_SOURCE_OPERATOR: Final = "operator"
+MANIFEST_SOURCE_UNRECORDED: Final = "unrecorded"
 
 
 @dataclass
@@ -215,9 +213,9 @@ class BinarySource(StrEnum):
     #: operator declares for it, both from the process environment. Held to
     #: that declared digest. The committed pin does not apply.
     OPERATOR_SETTING = "env"
-    #: The managed install: the pinned release, fetched or unpacked from a
-    #: local copy of the official archive. Held to the committed executable
-    #: digest of the asset its manifest names.
+    #: The managed install: the pinned release, however it reached the managed
+    #: directory. Held to the committed executable digest its content was
+    #: found to match when it was resolved.
     MANAGED_DOWNLOAD = "provisioned"
     #: A running server this process did not spawn. It names no binary and is
     #: never executable; it exists so an attached supervisor reports a source
@@ -243,10 +241,10 @@ class ResolvedBinary:
             when the digest declared for it is a pinned release executable's,
             because a file that hashes to that digest is that release. Empty
             when unknown, which is every other operator binary.
-        sha256: The digest the executable must hash to before it may run: a
-            committed constant for the managed install, the operator's
-            declaration for an operator binary. Never read from a manifest.
-            Empty means none could be established, and no file hashes to it.
+        sha256: The digest the executable must hash to before it may run: the
+            committed constant its content matched for the managed install,
+            the operator's declaration for an operator binary. Never read from
+            a manifest. No file hashes to an empty one.
     """
 
     path: Path
