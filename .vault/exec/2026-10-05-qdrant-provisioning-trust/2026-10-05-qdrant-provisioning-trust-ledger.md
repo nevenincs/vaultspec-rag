@@ -5,7 +5,7 @@ tags:
 date: '2026-10-05'
 modified: '2026-10-06'
 body_schema: 'body-v2'
-body_hash: 'sha256:fac2eb85ff356cbf09346b33229eff2730fc743705bd3515dc110af13c5c5154'
+body_hash: 'sha256:9746d86f3ded96c8ac4223737783d9c46240ced74f7c69b47cad35e9cf28637d'
 related:
   - "[[2026-10-05-qdrant-provisioning-trust-plan]]"
 ---
@@ -487,6 +487,40 @@ related:
 - `S22` `verify:` `dev lint links, docs-conventions, citations, docs-cli, docs-version, markdown` -> `pass`
 - `S22` `verify:` `pytest unit docs and CLI modules (Windows)` -> `pass`
 - `S22` `by:` `claude`
+- `S13` `verify:` `ruff, ty and the start tests` -> `pass`
+- `S13` `by:` `claude`
+- `S12` `M` `src/vaultspec_rag/tests/integration/conftest.py`
+- `S12` `M` `src/vaultspec_rag/tests/test_model_setup.py`
+- `S12` `verify:` `pytest -m subprocess_gpu against a live service, 71 passed and 3 failed in code this work does not change` -> `fail`
+- `S12` `by:` `claude`
+- `S32` `M` `src/vaultspec_rag/qdrant_runtime/_child_tree.py`
+- `S32` `A` `src/vaultspec_rag/tests/test_pid_image.py`
+- `S32` `A` `src/vaultspec_rag/tests/test_qdrant_child_exit.py`
+- `S32` `verify:` `whole unit tier on Windows, 8025 passed and 16 skipped` -> `pass`
+- `S28` `M` `src/vaultspec_rag/_program_lookup.py`
+- `S28` `M` `src/vaultspec_rag/tests/test_program_lookup.py`
+- `S28` `M` `src/vaultspec_rag/tests/test_program_lookup_sites.py`
+- `S28` `M` `src/vaultspec_rag/tests/_operator_directory_guard.py`
+- `S28` `M` `src/vaultspec_rag/tests/test_operator_directory_guard.py`
+- `S28` `M` `src/vaultspec_rag/tests/_singleton_root_fixtures.py`
+- `S28` `A` `src/vaultspec_rag/tests/test_session_uv_environment.py`
+- `S28` `M` `conftest.py`
+- `S28` `M` `dev/runner.py`
+- `S28` `verify:` `whole unit tier on Windows, 8025 passed and 16 skipped` -> `pass`
+- `S28` `by:` `claude`
+- `S18` `M` `src/vaultspec_rag/qdrant_runtime/_managed_install.py`
+- `S18` `M` `src/vaultspec_rag/qdrant_runtime/_spawn_trust.py`
+- `S18` `M` `src/vaultspec_rag/qdrant_runtime/_provision.py`
+- `S18` `M` `src/vaultspec_rag/qdrant_runtime/_constants.py`
+- `S18` `M` `src/vaultspec_rag/_atomic_write.py`
+- `S18` `M` `src/vaultspec_rag/tests/_fake_qdrant_binary.py`
+- `S18` `M` `src/vaultspec_rag/tests/test_managed_install.py`
+- `S18` `M` `src/vaultspec_rag/tests/test_qdrant_install_recovery.py`
+- `S18` `M` `src/vaultspec_rag/tests/test_qdrant_runtime.py`
+- `S18` `M` `docs/provisioning.md`
+- `S18` `M` `CHANGELOG.md`
+- `S18` `verify:` `whole unit tier on Windows, 8025 passed and 16 skipped` -> `pass`
+- `S18` `by:` `claude`
 
 ## Notes
 
@@ -525,3 +559,8 @@ related:
 - `S30` Committed as 93acc847. Residual, stated in the install test: a read waiting on a silent release source is not woken by an interrupt, so the install verb answers when that read gives up, bounded by the 30 second stall limit. The top-level install command's own interrupt handling was not changed.
 - `S24` Committed as e5a563aa. No test stages a child whose descendants cannot be identified: nothing short of replacing the process probe produces that state, so that branch is covered by the type checkers and by reading, not by a run.
 - `S22` Committed as 732b69de, with the stop-envelope test correction in 1674b241. New guide docs/provisioning.md, completed from a draft left by a terminated worker and re-checked against the code at each marker. macOS statements are taken from the code and its comments; nothing was run on macOS.
+- `S13` Committed as 7c6eec5c after the plan closed: a docstring still said the daemon loads its models online-capable.
+- `S12` Committed as 05745ee7 after the plan closed. The live-service fixture still required the cache-only log lines this step removed, so every test that starts a service failed at setup; found by the subprocess GPU tier, which no unit run reaches. Two refusals of the check proven both ways.
+- `S32` Committed as fe673f9c and ed15acde after the plan closed, from the independent review. The image probe reads through psutil where /proc has none; the exit peek asks whether the platform has it and says what is given up where it does not. Neither POSIX branch ran on this host.
+- `S28` Committed as 7a17cb7d after the plan closed, from the independent review: PowerShell is taken from the operating system's directories. Also 741c7c20 and 3b616b71: a test session may launch uv run with no sync only on the environment its interpreter runs from, and a session from any other interpreter points uv's project environment into its temporary tree. Twenty-seven guard mutations recorded in the test docstrings; nothing ran off Windows.
+- `S18` Committed as 27cffa4c after the plan closed, from the independent review. The managed directory is listed wherever the executable is judged, before a process is created and again once it exists; anything no install wrote refuses the start under `qdrant_install_foreign_files.` Six mutations proven both ways. Proven against the real installed binary: status reported the refusal, start exited 1 with no server process, and a clean directory started in 38.6 seconds. Residual: a file written and removed between the two listings is not seen. The directory-cannot-be-listed case is skipped on Windows and first runs on Linux in continuous integration.
