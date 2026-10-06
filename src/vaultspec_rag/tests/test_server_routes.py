@@ -25,6 +25,8 @@ from ..server._utils import (
 )
 from ..service import ServiceRegistry
 from ._config_fixtures import reset_config
+from ._preprocess_approval import approve_preprocess_policy
+from .conftest import managed_env
 from .test_server import (
     _run,
 )
@@ -765,9 +767,8 @@ finally:
             encoding="utf-8",
         )
 
-    def _post_reindex(
-        self, root: Path, *, preprocess_mode: str | None
-    ) -> dict[str, object]:
+    @staticmethod
+    def _child_env(root: Path, preprocess_mode: str | None) -> dict[str, str]:
         env = os.environ.copy()
         env[EnvVar.STATUS_DIR.value] = str(root.parent / "status")
         env[EnvVar.QDRANT_STORAGE_DIR.value] = str(root.parent / "qdrant" / "storage")
@@ -777,6 +778,18 @@ finally:
             env.pop(EnvVar.PREPROCESS.value, None)
         else:
             env[EnvVar.PREPROCESS.value] = preprocess_mode
+        return env
+
+    @staticmethod
+    def _approve(root: Path) -> None:
+        """Approve the root in the status dir the child service reads."""
+        with managed_env(**{EnvVar.STATUS_DIR.value: str(root.parent / "status")}):
+            approve_preprocess_policy(root)
+
+    def _post_reindex(
+        self, root: Path, *, preprocess_mode: str | None
+    ) -> dict[str, object]:
+        env = self._child_env(root, preprocess_mode)
         completed = subprocess.run(
             [sys.executable, "-c", self._CHILD_ROUTE, str(root)],
             cwd=Path(__file__).resolve().parents[3],
@@ -797,9 +810,30 @@ finally:
         assert result["status_code"] == 200
         return cast("dict[str, object]", result["body"])
 
-    def test_reindex_reports_hooks_will_run_under_default_mode(
+    def test_reindex_reports_approved_hooks_will_run_under_default_mode(
         self, tmp_path: Path
     ) -> None:
+        root = tmp_path / "proj"
+        self._write_config(root)
+        self._approve(root)
+        data = self._post_reindex(root, preprocess_mode=None)
+        assert data["status"] == "queued"
+        pre = cast("dict[str, object]", data["preprocess"])
+        assert pre["config_present"] is True
+        assert pre["rule_count"] == 1
+        assert pre["mode"] == "default"
+        assert pre["hooks"] == "active"
+        assert pre["hooks_will_run"] is True
+        assert pre["remediation"] is None
+
+    def test_reindex_tells_a_client_an_unapproved_root_will_not_run_hooks(
+        self, tmp_path: Path
+    ) -> None:
+        """A client that cannot approve must still learn why nothing ran.
+
+        The job is queued as usual; the pre-flight block is what keeps the
+        withheld hooks from reading as a successful no-op.
+        """
         root = tmp_path / "proj"
         self._write_config(root)
         data = self._post_reindex(root, preprocess_mode=None)
@@ -808,18 +842,22 @@ finally:
         assert pre["config_present"] is True
         assert pre["rule_count"] == 1
         assert pre["mode"] == "default"
-        assert pre["hooks_will_run"] is True
+        assert pre["hooks"] == "unapproved"
+        assert pre["hooks_will_run"] is False
+        assert "vaultspec-rag preprocess approve" in str(pre["remediation"])
 
     def test_reindex_reports_hooks_skipped_when_mode_off(self, tmp_path: Path) -> None:
         root = tmp_path / "proj"
         self._write_config(root)
+        self._approve(root)
         data = self._post_reindex(root, preprocess_mode="off")
         pre = cast("dict[str, object]", data["preprocess"])
         # The count is still reported (the config's own), but the kill switch
-        # means hooks will not run.
+        # means hooks will not run, approved or not.
         assert pre["config_present"] is True
         assert pre["rule_count"] == 1
         assert pre["mode"] == "off"
+        assert pre["hooks"] == "disabled"
         assert pre["hooks_will_run"] is False
 
     def test_reindex_reports_no_config_present(self, tmp_path: Path) -> None:
@@ -829,6 +867,7 @@ finally:
         pre = cast("dict[str, object]", data["preprocess"])
         assert pre["config_present"] is False
         assert pre["rule_count"] == 0
+        assert pre["hooks"] == "none"
         assert pre["hooks_will_run"] is False
 
 

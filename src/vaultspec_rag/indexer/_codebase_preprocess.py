@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING
 
 from ..job_control import NO_RUN_CONTROL
 from . import _chunk_worker, _preprocess_glue
-from ._resolved_policy import preprocess_stale_note
 
 if TYPE_CHECKING:
     import pathlib
@@ -83,12 +82,16 @@ class CodebasePreprocessMixin:
             _preprocess_glue.prep_rule_count(self._prep_ctx),
         )
 
-    def _mark_preprocess_stale(self, rel_path: str) -> None:
+    def _mark_preprocess_stale(
+        self,
+        rel_path: str,
+        policy: ResolvedIndexPolicy,
+    ) -> None:
         """Surface disabled transform work once without changing membership."""
         if rel_path in self._prep_stale_paths:
             return
         self._prep_stale_paths.add(rel_path)
-        self._prep_skips.append(preprocess_stale_note(rel_path))
+        self._prep_skips.append(policy.stale_note(rel_path))
 
     def _partition_disabled_paths(
         self,
@@ -100,7 +103,7 @@ class CodebasePreprocessMixin:
         for path in paths:
             rel = str(path.relative_to(self.root_dir)).replace("\\", "/")
             if policy.transform_disabled(rel):
-                self._mark_preprocess_stale(rel)
+                self._mark_preprocess_stale(rel, policy)
                 continue
             executable.append(path)
         return executable

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime
+import hashlib
 import logging
 import math
 import tomllib
@@ -35,6 +36,7 @@ import pathspec
 from .._job_errors import JobErrorKind
 from ..operator_state._features import PreprocessHookState
 from ._content_policy import ContentKind
+from ._preprocess_approval import policy_is_approved
 
 if TYPE_CHECKING:
     import pathlib
@@ -56,6 +58,7 @@ __all__ = [
     "PreprocessContext",
     "PreprocessPolicyError",
     "PreprocessRule",
+    "config_hook_state",
     "hook_state",
     "load_preprocess_rules",
     "root_hook_state",
@@ -162,20 +165,25 @@ class PreprocessConfig:
     :meth:`match` is a deterministic first-match scan.
     """
 
-    __slots__ = ("_compiled", "_schema_version")
+    __slots__ = ("_compiled", "_policy_digest", "_schema_version")
 
     def __init__(
         self,
         rules: list[PreprocessRule],
         schema_version: int = SUPPORTED_CONFIG_VERSION,
+        policy_digest: str | None = None,
     ) -> None:
         """Compile and order the given rules.
 
         Args:
             rules: Validated rules in source-file order.
             schema_version: Declared policy schema version.
+            policy_digest: Digest of the policy file bytes these rules were
+                parsed from, or ``None`` for a config that was not read from
+                a file.
         """
         self._schema_version = schema_version
+        self._policy_digest = policy_digest
         owners: dict[str, ContentKind] = {}
         for rule in rules:
             existing = owners.setdefault(rule.pattern, rule.target)
@@ -205,6 +213,24 @@ class PreprocessConfig:
         """Return the declared root policy schema version."""
         return self._schema_version
 
+    @property
+    def policy_digest(self) -> str | None:
+        """Return the digest an operator approval of these rules must name.
+
+        Taken over the bytes the rules were parsed from, so the rules a run
+        executes and the policy its approval is checked against cannot be two
+        different readings of the file.
+        """
+        return self._policy_digest
+
+    def approved_for(self, root: pathlib.Path) -> bool:
+        """Whether the operator approved exactly this policy for *root*.
+
+        A config without rules has nothing to approve, so it never reads the
+        approval store.
+        """
+        return bool(self._compiled) and policy_is_approved(root, self._policy_digest)
+
     def match(self, rel_path: str) -> PreprocessRule | None:
         """Return the highest-precedence rule whose pattern matches.
 
@@ -223,7 +249,7 @@ class PreprocessConfig:
 
     def __reduce__(
         self,
-    ) -> tuple[type[PreprocessConfig], tuple[list[PreprocessRule], int]]:
+    ) -> tuple[type[PreprocessConfig], tuple[list[PreprocessRule], int, str | None]]:
         """Pickle by re-running the constructor over the picklable rules.
 
         The compiled ``pathspec`` matchers are rebuilt on unpickle rather than
@@ -231,7 +257,10 @@ class PreprocessConfig:
         so it can cross the spawn boundary without depending on ``pathspec``
         internals being picklable.
         """
-        return (PreprocessConfig, (self.rules, self.schema_version))
+        return (
+            PreprocessConfig,
+            (self.rules, self.schema_version, self.policy_digest),
+        )
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -273,8 +302,9 @@ def load_preprocess_rules(
     ``preprocess check`` CLI verb.
 
     Resolution always retains valid rules, including when execution is switched
-    off.  The kill switch is enforced only while materializing worker context,
-    so routing and ownership remain available to discovery and reconciliation.
+    off or the root's policy is not approved.  Both are enforced only while
+    materializing worker context, so routing and ownership remain available to
+    discovery and reconciliation.
 
     Args:
         root_dir: The project root to resolve the config from.
@@ -342,9 +372,11 @@ def load_preprocess_rules(
         rule = _resolve_rule(raw_rule, order, strict=strict)
         if rule is not None:
             rules.append(rule)
-    resolved = PreprocessConfig(rules, schema_version=version)
-
-    return resolved
+    return PreprocessConfig(
+        rules,
+        schema_version=version,
+        policy_digest=f"sha256:{hashlib.sha256(raw).hexdigest()}",
+    )
 
 
 class _RuleRejectedError(Exception):
@@ -652,15 +684,34 @@ def resolve_timeout(
     return min(float(timeout_raw), _MAX_PREPROCESS_TIMEOUT_S)
 
 
-def hook_state(rule_count: int, mode: str) -> PreprocessHookState:
-    """Whether a root's preprocessing hooks run, from its rules and the mode.
+def hook_state(rule_count: int, mode: str, *, approved: bool) -> PreprocessHookState:
+    """Whether a root's preprocessing hooks run.
 
-    This is the only derivation of "hooks will run": rules run for any root
-    except under the ``off`` kill switch, and a root without rules runs nothing.
+    This is the only derivation of "hooks will run": a root's rules run when
+    the ``off`` kill switch is not thrown and the operator has approved the
+    root's current policy, and a root without rules runs nothing. The kill
+    switch is reported ahead of a missing approval because approving cannot
+    make a switched-off service run anything.
     """
     if rule_count == 0:
         return PreprocessHookState.NONE
-    return PreprocessHookState.DISABLED if mode == "off" else PreprocessHookState.ACTIVE
+    if mode == "off":
+        return PreprocessHookState.DISABLED
+    return PreprocessHookState.ACTIVE if approved else PreprocessHookState.UNAPPROVED
+
+
+def config_hook_state(
+    root: pathlib.Path,
+    config: PreprocessConfig,
+    mode: str,
+) -> PreprocessHookState:
+    """Resolve the hook state of *root* for one already-loaded *config*.
+
+    Approval is checked against the digest *config* carries, so a caller that
+    goes on to run a rule from this same object runs exactly what was
+    approved.
+    """
+    return hook_state(len(config.rules), mode, approved=config.approved_for(root))
 
 
 def root_hook_state(root: pathlib.Path, mode: str) -> tuple[PreprocessHookState, int]:
@@ -669,12 +720,13 @@ def root_hook_state(root: pathlib.Path, mode: str) -> tuple[PreprocessHookState,
     Reads only the root's own config file - never the tree - and never raises:
     a malformed config degrades to ``INVALID_CONFIG`` with no rules, which is
     what indexing does with it too. The count is the config's own, not a
-    mode-gated zero, so a switched-off rule set still says how many it holds.
+    gated zero, so a switched-off or unapproved rule set still says how many
+    it holds.
     """
     if not (root / PREPROCESS_CONFIG_FILENAME).is_file():
         return PreprocessHookState.NONE, 0
     try:
-        rule_count = len(load_preprocess_rules(root, strict=True).rules)
+        config = load_preprocess_rules(root, strict=True)
     except PreprocessConfigError:
         return PreprocessHookState.INVALID_CONFIG, 0
-    return hook_state(rule_count, mode), rule_count
+    return config_hook_state(root, config, mode), len(config.rules)

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ...progress import NullProgressReporter
+from .._preprocess_approval import approve_preprocess_policy
 from ._helpers import (
     _content_kind_indexers,
     _document_policy,
@@ -118,6 +119,7 @@ def test_extracted_document_preserves_native_metadata_without_code_points(
         'on_error = "fail"\n',
         encoding="utf-8",
     )
+    approve_preprocess_policy(tmp_path)
     source = tmp_path / "annual.record"
     source.write_bytes(b"\x00\x81 source bytes consumed only by the extractor")
     policy = _document_policy("*.record")
