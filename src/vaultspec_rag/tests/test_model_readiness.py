@@ -24,6 +24,8 @@ import pytest
 from .._model_pins import DENSE_MODEL_ID, DENSE_MODEL_REVISION, committed_manifest
 from .._readiness import ReadinessStatus, compute_readiness
 from ..config._types import EnvVar
+from ..operator_state._installation import ComputeCapability
+from ..operator_state._models import ComputeReport
 from ._config_fixtures import reset_config
 from ._model_cache_seed import (
     ORDINARY_FILES,
@@ -66,7 +68,17 @@ def clean_models() -> Iterator[None]:
 
 
 def _models(*, verify: bool) -> DependencyReadiness:
-    node = compute_readiness(verify_models=verify).dimension("models")
+    """The models row a host is given, whatever this lane has installed.
+
+    A client needs no model files and its cache is not probed, so the row is
+    asked for with a host's verdict handed in, the way a caller that probed
+    out of process hands it. Without that the accelerator-free lane would
+    assert the client's answer instead.
+    """
+    node = compute_readiness(
+        verify_models=verify,
+        compute=ComputeReport(capability=ComputeCapability.READY),
+    ).dimension("models")
     assert node is not None
     return node
 
