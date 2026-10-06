@@ -189,6 +189,14 @@ Follow-up to `linux-run-replaced-the-windows-environment`, decided and landed in
 
 The merge gate runs the full suites when a pull request is opened or marked ready, or when a user applies the full-run label; a push to a ready pull request runs the light lint alone and the gate passes on it. The Linux lane for this work is therefore the labelled run on the head commit and nothing else.
 
+### store-tests-at-their-limits-on-one-linux-runner | medium | three store-heavy tests run at about nine tenths of their time limits on the slower Linux runner
+
+Seen across four full runs of this work's pull request and one of the default branch. The Linux suites are served by two runners. On the workstation's container runner `test_incremental_route_reconciliation.py::test_more_than_one_batch_reconciles_only_affected_paths` takes about 40 seconds; on the server runner it takes 238 to 270 seconds against a 300 second timeout, with `test_vault_payload_batching.py` at 140 to 205 seconds and `test_content_route_migration.py` near 100 seconds under a 60 second no-progress rule. A different one of these, or a test with a one second wait, failed in each of three runs and all passed in the others; none is touched by this work, and the default branch's own run on that runner shows the same durations. Two explanations were tested and withdrawn: bounding the suite to four workers left the durations unchanged and lengthened the job, and setting the numeric library to one thread or to twenty-four made no difference to the test's duration on the workstation. What is slow on that runner was not established. Until the tests are made lighter or that runner faster, a full run that lands on it passes by a thin margin.
+
+### windows-lane-held-by-a-stale-admission-configuration | info | the Windows suite could not start until the fleet's admission authority was redeployed
+
+Two full runs spent an hour in the workstation's admission hook and failed without running a test: the deployed admission configuration still probed a scheduled task the fleet's repository had already stopped managing. The operator authorised a redeploy from the fleet's own command; the next Windows job was admitted in three seconds and the suite passed.
+
 ### vaultspec-core-lookups-landed | info | both working-directory lookups owned by vaultspec-core are fixed there
 
 Resolves `owned-by-vaultspec-core`. The rendered MCP entry now launches the interpreter in safe-path mode and executable lookup no longer takes the working directory; merged in that project as `57258a86`, with both of its issues closed.
