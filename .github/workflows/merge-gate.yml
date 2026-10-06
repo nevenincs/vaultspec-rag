@@ -271,6 +271,13 @@ jobs:
         python-version: ["3.13", "3.14"]
     env:
       CI_EXEC_BUDGET_MINUTES: 45
+      # Four workers, as on Windows. The store-heavy tests carry deadlines of
+      # their own, and on the slower Linux runner, with one worker per core,
+      # several of them ran at or past those deadlines and a different one
+      # failed from run to run. Measured there, this bound takes a third to a
+      # half off all of them but the slowest, which it leaves where it was,
+      # and adds about six minutes to the job.
+      PYTEST_XDIST_AUTO_NUM_WORKERS: "4"
       # `.python-version` pins the dev interpreter to the floor, and uv reads
       # it in preference to whatever actions/setup-python put on PATH. Without
       # this the 3.14 leg would silently sync and test 3.13 — a green matrix
