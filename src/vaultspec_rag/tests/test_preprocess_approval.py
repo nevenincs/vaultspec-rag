@@ -15,7 +15,7 @@ from ..indexer._preprocess_approval import (
     read_approval,
     revoke_approval,
 )
-from .test_loopback_http_security import _assert_private_file
+from ._private_files import assert_private_file
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -169,11 +169,11 @@ def test_the_store_is_written_owner_only(tmp_path: Path) -> None:
     owner-only assertion; restoring it passes.
     """
     approve_policy(_root(tmp_path), _DIGEST, approved_at=_WHEN)
-    _assert_private_file(approval_store_path())
+    assert_private_file(approval_store_path())
 
     # Rewriting an existing store keeps it private.
     approve_policy(_root(tmp_path, "second"), _DIGEST, approved_at=_WHEN)
-    _assert_private_file(approval_store_path())
+    assert_private_file(approval_store_path())
 
 
 def test_an_unreadable_store_is_not_rewritten_as_empty(tmp_path: Path) -> None:
