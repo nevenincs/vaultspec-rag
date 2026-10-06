@@ -252,7 +252,7 @@ def test_offline_verification_omits_disabled_reranker_marker(
 ) -> None:
     """Effective disabled-reranker config requires only the dense marker."""
     log_path = tmp_path / "service.log"
-    log_path.write_text("EmbeddingModel cache-only mode: True\n", encoding="utf-8")
+    log_path.write_text("EmbeddingModel loaded\n", encoding="utf-8")
     with _service_env(
         tmp_path / "service-env",
         env_overrides={EnvVar.RERANKER_ENABLED.value: "0"},
@@ -263,8 +263,45 @@ def test_offline_verification_omits_disabled_reranker_marker(
         )
         detail = _verify_offline_service_startup(log_path, [])
 
-    assert "EmbeddingModel cache-only mode: True" in detail
-    assert "(cache-only=True)" not in detail
+    assert "EmbeddingModel loaded" in detail
+    assert "Shared CrossEncoder loaded on" not in detail
+
+
+@pytest.mark.parametrize(
+    ("written", "finding"),
+    [
+        ("Uvicorn running\n", "missing_markers=['EmbeddingModel loaded']"),
+        (
+            "EmbeddingModel loaded\nretrying https://hub.invalid/api/models\n",
+            "endpoint_seen=True",
+        ),
+    ],
+    ids=["no model reported loaded", "the hub was named"],
+)
+def test_offline_verification_refuses_what_does_not_prove_it(
+    tmp_path: Path, written: str, finding: str
+) -> None:
+    """A service log passes only with the load reported and the hub unnamed.
+
+    Mutation: made the check ignore missing markers. Observed the first case
+    fail on the missing ``AssertionError``. Then made it ignore the endpoint.
+    Observed the second case fail the same way. Restored after each; passes.
+    """
+    log_path = tmp_path / "service.log"
+    log_path.write_text(written, encoding="utf-8")
+    with (
+        _service_env(
+            tmp_path / "service-env",
+            env_overrides={
+                EnvVar.RERANKER_ENABLED.value: "0",
+                HF_ENDPOINT_ENV: "https://hub.invalid",
+            },
+        ),
+        pytest.raises(AssertionError) as refused,
+    ):
+        _verify_offline_service_startup(log_path, [])
+
+    assert finding in str(refused.value)
 
 
 def test_persistent_metadata_failure_cannot_hang_model_fixture(
