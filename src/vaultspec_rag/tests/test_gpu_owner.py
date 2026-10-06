@@ -273,7 +273,9 @@ def test_load_accelerator_asks_for_ownership_before_anything_else(
         load_accelerator()
 
 
-@pytest.mark.usefixtures("isolated_singleton_dirs")
+# A start judges the installation before it looks at who owns the GPU, so the
+# ownership refusal is only reached as a host that can serve.
+@pytest.mark.usefixtures("isolated_singleton_dirs", "inference_host")
 def test_server_start_refuses_in_seconds_when_another_process_owns_the_gpu(
     gpu_owner_anchor: Path, tmp_path: Path
 ) -> None:
