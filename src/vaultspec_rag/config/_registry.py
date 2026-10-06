@@ -62,6 +62,7 @@ PACKAGE: Final = "vaultspec-rag"
 _EXTERNAL: Final = frozenset(
     {
         EnvVar.HF_HOME,
+        EnvVar.HF_HUB_CACHE,
         EnvVar.HF_ENDPOINT,
         EnvVar.HF_HUB_OFFLINE,
         EnvVar.HF_HUB_DOWNLOAD_TIMEOUT,
@@ -194,6 +195,13 @@ _DESCRIPTIONS: Final[Mapping[EnvVar, str]] = {
     EnvVar.HF_HOME: (
         "Hugging Face cache location, honoured by huggingface_hub. Reported "
         "on status surfaces so an operator can see where models will land."
+    ),
+    EnvVar.HF_HUB_CACHE: (
+        "Directory the Hugging Face hub client keeps model snapshots in, "
+        "honoured by huggingface_hub in place of the one under HF_HOME. A "
+        "relative value is made absolute before the service is started, "
+        "because the service does not run in the directory it was started "
+        "from."
     ),
     EnvVar.QDRANT_BINARY: (
         "Absolute path to a Qdrant server binary the operator supplies, used "

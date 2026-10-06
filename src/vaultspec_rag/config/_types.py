@@ -265,6 +265,7 @@ class EnvVar(StrEnum):
     # Third-party env vars this codebase reads or sets - defined here so
     # the string literal lives in exactly one place.
     HF_HOME = "HF_HOME"
+    HF_HUB_CACHE = "HF_HUB_CACHE"
     HF_ENDPOINT = "HF_ENDPOINT"
     HF_HUB_OFFLINE = "HF_HUB_OFFLINE"
     HF_HUB_DOWNLOAD_TIMEOUT = "HF_HUB_DOWNLOAD_TIMEOUT"

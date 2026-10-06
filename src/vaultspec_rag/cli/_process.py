@@ -415,6 +415,7 @@ _DIRECTORY_VARIABLES: Final = (
     EnvVar.STATUS_DIR,
     EnvVar.QDRANT_STORAGE_DIR,
     EnvVar.HF_HOME,
+    EnvVar.HF_HUB_CACHE,
     EnvVar.UV_CACHE_DIR,
     EnvVar.UV_TOOL_DIR,
     EnvVar.TEMP,

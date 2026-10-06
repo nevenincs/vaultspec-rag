@@ -304,6 +304,7 @@ def test_a_relative_directory_setting_means_one_place_to_both_processes(
         EnvVar.STATUS_DIR,
         EnvVar.QDRANT_STORAGE_DIR,
         EnvVar.HF_HOME,
+        EnvVar.HF_HUB_CACHE,
         EnvVar.UV_CACHE_DIR,
         EnvVar.UV_TOOL_DIR,
         EnvVar.TEMP,

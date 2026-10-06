@@ -485,6 +485,7 @@ vaultspec-rag downloads its dense, sparse, and reranker model files through the 
 | Variable                         | Type    | Controls                                                                                          |
 | -------------------------------- | ------- | ------------------------------------------------------------------------------------------------- |
 | `HF_HOME`                        | path    | Hub cache root. Read directly when reporting cache location; falls back to `~/.cache/huggingface` |
+| `HF_HUB_CACHE`                   | path    | Directory the model snapshots are kept in, in place of the one under `HF_HOME`                    |
 | `HF_ENDPOINT`                    | string  | Hub endpoint. `VAULTSPEC_RAG_HF_ENDPOINT` overwrites it at process start when set                 |
 | `HF_HUB_DOWNLOAD_TIMEOUT`        | integer | Hub client's per-read timeout in seconds. vaultspec-rag does not set it; the default is `10`      |
 | `HF_HUB_OFFLINE`                 | boolean | Offline mode; no model is fetched from the Hub                                                    |
