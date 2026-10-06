@@ -23,6 +23,7 @@ from typer.testing import CliRunner
 
 from ...cli import app
 from .._ports import free_loopback_port
+from ..test_service_stop_port import _witness_environment, _write_witness_module
 from ._helpers import (
     _service_env,
     _wait_for_exit,
@@ -60,29 +61,32 @@ def _json_envelopes(output: str) -> list[dict[str, object]]:
     return envelopes
 
 
-def _spawn_reap_witness(port: int) -> subprocess.Popen[bytes]:
-    """Spawn a harmless sleeper whose command line carries the launch witness.
+def _spawn_reap_witness(port: int, module_root: Path) -> subprocess.Popen[bytes]:
+    """Spawn a harmless sleeper launched the way the daemon is launched.
 
-    The witness tokens ride as trailing argv to ``-c``, so the process
-    enumerates with the daemon's launch signature without importing the daemon
-    or touching a GPU. It sleeps far longer than one host-wide command-line
-    sweep costs, because a process that exits mid-sweep is dropped from the
-    enumeration and the test would then be asserting against an empty match.
-    Spawned into its own group or session, as the real detached daemon is, so
-    the reap's termination cannot cascade back into this test process.
+    The reap recognises a server by how it was started: the interpreter
+    running the server module. A program handed to ``-c`` is not that, however
+    many of the daemon's tokens trail it, and is rightly left alone. So the
+    witness IS a module launch, of a stand-in server module that only sleeps:
+    it enumerates with the daemon's launch signature without importing the
+    daemon or touching a GPU. It outlives one host-wide command-line sweep
+    several times over, because a process that exits mid-sweep is dropped from
+    the enumeration and the test would then be asserting against an empty
+    match. Spawned into its own group or session, as the real detached daemon
+    is, so the reap's termination cannot cascade back into this test process.
     """
-    argv = [
-        sys.executable,
-        "-c",
-        "import time; time.sleep(600)",
-        "-m",
-        "vaultspec_rag.server",
-        "--port",
-        str(port),
-    ]
+    argv = [sys.executable, "-m", "vaultspec_rag.server", "--port", str(port)]
+    env = _witness_environment(module_root)
     if sys.platform == "win32":
-        return subprocess.Popen(argv, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
-    return subprocess.Popen(argv, start_new_session=True)
+        return subprocess.Popen(
+            argv,
+            env=env,
+            stdout=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+        )
+    return subprocess.Popen(
+        argv, env=env, stdout=subprocess.DEVNULL, start_new_session=True
+    )
 
 
 def _witness_tree(launcher_pid: int, port: int, timeout: float = 10.0) -> set[int]:
@@ -220,7 +224,9 @@ class TestOrphanReapStructuredStop:
         # parent.
         port = free_loopback_port()
         with _service_env(tmp_path):
-            witness = _spawn_reap_witness(port)
+            witness = _spawn_reap_witness(
+                port, _write_witness_module(tmp_path / "witness")
+            )
             spawned: set[int] = set()
             try:
                 spawned = _witness_tree(witness.pid, port)
