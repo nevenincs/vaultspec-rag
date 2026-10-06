@@ -33,6 +33,7 @@ from ..indexer._source_file import SourceIdentityError
 from ..job_control import NO_RUN_CONTROL
 from ..progress import NullProgressReporter
 from ..store_runtime import VaultStore
+from ._preprocess_approval import approve_preprocess_policy
 from .test_live_checkpoint_resilience import unloaded_model
 
 if TYPE_CHECKING:
@@ -387,6 +388,9 @@ def test_refused_source_is_reported_as_one_failed_file(
         f"{shlex.quote(sys.executable)} -c pass {{path}}",
         extra="max_source_bytes = 4\n",
     )
+    # Approved, so the source is refused for its size and not for a withheld
+    # approval.
+    approve_preprocess_policy(tmp_path)
     (tmp_path / "manual.blob").write_bytes(b"longer than four bytes")
     with VaultStore(tmp_path, embedding_dim=2) as store:
         indexer = DocumentIndexer(
