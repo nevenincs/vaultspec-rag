@@ -336,6 +336,166 @@ class TestProjectRootWireContract:
             )
 
 
+class TestCodeFileAdmission:
+    """Code-file retrieval returns admitted source and nothing else.
+
+    Every case runs through MCP discovery, the transport, and the production
+    route, and reads an ordinary source file alongside the refusal so a denial
+    cannot come from a workspace the route rejects wholesale.
+    """
+
+    _SOURCE = "print('hello')\n"
+
+    def _project(self, tmp_path: Path) -> Path:
+        root = _workspace(tmp_path / "project").resolve()
+        (root / "src").mkdir()
+        (root / "src" / "main.py").write_text(self._SOURCE, encoding="utf-8")
+        return root
+
+    @staticmethod
+    def _read(root: Path, path: str) -> str:
+        from ..mcp._tools import get_code_file
+
+        return asyncio.run(get_code_file(path, project_root=str(root)))
+
+    @pytest.mark.parametrize(
+        "secret_path",
+        [
+            ".npmrc",
+            ".pypirc",
+            ".netrc",
+            ".ssh/id_rsa",
+            ".aws/credentials",
+            ".kube/config",
+        ],
+    )
+    def test_credential_location_is_denied_by_name_and_through_an_alias(
+        self,
+        tmp_path: Path,
+        service_routes: int,
+        secret_path: str,
+    ) -> None:
+        """A credential location is refused under its own name and an admitted one.
+
+        Mutation proof: authorizing the requested spelling instead of the
+        canonical path served the secret through ``alias.py`` and failed the
+        second denial with DID NOT RAISE; restoring it passed all six cases.
+        """
+        from ._cli_helpers import _running_service_record
+
+        root = self._project(tmp_path)
+        secret = root / secret_path
+        secret.parent.mkdir(exist_ok=True)
+        secret.write_text("protected fixture content\n", encoding="utf-8")
+        (root / "alias.py").symlink_to(secret)
+
+        with _running_service_record(tmp_path / "status", service_routes):
+            with pytest.raises(ValueError, match=r"^access denied$"):
+                self._read(root, secret_path)
+            with pytest.raises(ValueError, match=r"^access denied$"):
+                self._read(root, "alias.py")
+            assert self._read(root, "src/main.py") == self._SOURCE
+
+    def test_hidden_source_is_denied(
+        self,
+        tmp_path: Path,
+        service_routes: int,
+    ) -> None:
+        """A dot-prefixed component refuses a path the index would admit.
+
+        The fixture is Python under a hidden directory, so admission alone
+        accepts it and only the hidden-component rule stands in the way.
+
+        Mutation proof: removing the hidden-component rule returned the file
+        and failed with DID NOT RAISE; restoring it passed.
+        """
+        from ._cli_helpers import _running_service_record
+
+        root = self._project(tmp_path)
+        (root / ".tools").mkdir()
+        (root / ".tools" / "run.py").write_text(self._SOURCE, encoding="utf-8")
+
+        with _running_service_record(tmp_path / "status", service_routes):
+            with pytest.raises(ValueError, match=r"^access denied$"):
+                self._read(root, ".tools/run.py")
+            assert self._read(root, "src/main.py") == self._SOURCE
+
+    @pytest.mark.parametrize(
+        "unadmitted_path",
+        ["settings.toml", "notes.txt", "README.md", "build/generated.py"],
+    )
+    def test_content_the_index_does_not_admit_is_denied(
+        self,
+        tmp_path: Path,
+        service_routes: int,
+        unadmitted_path: str,
+    ) -> None:
+        """Only a path the resolved index policy admits as code is returned.
+
+        No fixture is hidden or sensitively named, so the name rules pass
+        every one and only admission refuses them: three by the source
+        profile, and ``build/generated.py`` by the workspace's own ignore file.
+
+        Mutation proof: removing the admission check returned the file and
+        failed with DID NOT RAISE; restoring it passed all four cases.
+        """
+        from ._cli_helpers import _running_service_record
+
+        root = self._project(tmp_path)
+        (root / ".gitignore").write_text("build/\n", encoding="utf-8")
+        target = root / unadmitted_path
+        target.parent.mkdir(exist_ok=True)
+        target.write_text("ordinary fixture content\n", encoding="utf-8")
+
+        with _running_service_record(tmp_path / "status", service_routes):
+            with pytest.raises(ValueError, match=r"^access denied$"):
+                self._read(root, unadmitted_path)
+            assert self._read(root, "src/main.py") == self._SOURCE
+
+    def test_non_regular_source_is_denied(
+        self,
+        tmp_path: Path,
+        service_routes: int,
+    ) -> None:
+        """A source-named directory is refused with the same generic denial.
+
+        This pins the response, not the reader: a plain open of a directory
+        also fails. Mutation proof: removing the mapping of a failed bound
+        read to the denial surfaced the reader's own message, which names the
+        absolute path, and failed the exact match; restoring it passed.
+        """
+        from ._cli_helpers import _running_service_record
+
+        root = self._project(tmp_path)
+        (root / "package.py").mkdir()
+
+        with _running_service_record(tmp_path / "status", service_routes):
+            with pytest.raises(ValueError, match=r"^access denied$"):
+                self._read(root, "package.py")
+            assert self._read(root, "src/main.py") == self._SOURCE
+
+    def test_refusal_does_not_reveal_whether_the_path_exists(
+        self,
+        tmp_path: Path,
+        service_routes: int,
+    ) -> None:
+        """An absent credential path is denied; only admitted names report absence.
+
+        Mutation proof: testing existence before the name rules answered the
+        absent ``.netrc`` with not-found and failed the exact denial match;
+        restoring the order passed.
+        """
+        from ._cli_helpers import _running_service_record
+
+        root = self._project(tmp_path)
+
+        with _running_service_record(tmp_path / "status", service_routes):
+            with pytest.raises(ValueError, match=r"^access denied$"):
+                self._read(root, ".netrc")
+            with pytest.raises(ValueError, match=r"^File 'src/absent\.py' not found$"):
+                self._read(root, "src/absent.py")
+
+
 class _EmptyBody404Handler(QuietHandler):
     """A server that answers every request with a bodyless 404."""
 

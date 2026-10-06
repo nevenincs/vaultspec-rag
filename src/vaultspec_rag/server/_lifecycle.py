@@ -154,7 +154,7 @@ def _daemon_discovery_snapshot(
     """Build one complete discovery view from daemon-owned live state.
 
     ``phase_detail`` is an optional human-readable description of the current
-    cold-start stage (provisioning the qdrant server, loading models, warming)
+    cold-start stage (starting the qdrant server, loading models, warming)
     that the CLI start spinner renders so a minutes-long warm-up shows visible
     progress instead of a static wait. It is advisory only: the coarse ``phase``
     (``warming``/``running``) remains the authoritative machine-readable state,
@@ -259,7 +259,7 @@ class _DiscoveryPublisher:
         publications stay best-effort (``require=False``).
 
         ``detail`` is a human-readable description of the current warm-up stage
-        (e.g. "provisioning the qdrant server", "loading models") that the CLI
+        (e.g. "starting the qdrant server", "loading models") that the CLI
         start spinner renders. It is carried on every subsequent publication -
         including heartbeats - until the next ``publish_phase`` changes it, so a
         stage set here stays visible while that stage runs.
@@ -443,8 +443,10 @@ def _qdrant_liveness_tick() -> None:
     """Check the supervised qdrant child; one bounded auto-restart.
 
     Runs synchronously inside the heartbeat's worker thread. A dead
-    child gets exactly one restart attempt for the daemon's lifetime;
-    after that the dead state surfaces as ``degraded`` through the
+    child gets exactly one restart that starts a process for the daemon's
+    lifetime; an attempt refused before any process existed does not spend
+    it, and is retried on later ticks up to the supervisor's own bound.
+    After that the dead state surfaces as ``degraded`` through the
     health payload and the runtime-state block until an operator
     intervenes. There is deliberately no background sweeper - this
     rides the existing heartbeat cadence.
@@ -454,13 +456,14 @@ def _qdrant_liveness_tick() -> None:
     supervisor = _supervise.active_supervisor()
     if supervisor is None or supervisor.is_alive():
         return
-    if supervisor.restart_count >= 1:
+    if supervisor.restart_exhausted:
         log_event(
             logger,
             "service.lifecycle",
             "qdrant_dead",
             severity=logging.WARNING,
             restarts=supervisor.restart_count,
+            refused_restarts=supervisor.refused_restarts,
         )
         return
     log_event(
@@ -681,8 +684,7 @@ def _storage_maintenance_tick_sync() -> None:
     """
     from datetime import UTC, datetime
 
-    from qdrant_client import QdrantClient
-
+    from .._qdrant_server_client import open_server_client
     from ..config._settings import get_config
     from ..storage_reclamation import MaintenanceCycleRequest, run_maintenance_cycle
 
@@ -708,8 +710,8 @@ def _storage_maintenance_tick_sync() -> None:
     # under one guard. A failure outside it leaves the record running forever
     # with no thread behind it, and the next hourly cycle adds another.
     try:
-        client = QdrantClient(
-            url=cfg.effective_qdrant_url, timeout=_QDRANT_CLIENT_OP_TIMEOUT_SECONDS
+        client = open_server_client(
+            cfg.effective_qdrant_url, timeout=_QDRANT_CLIENT_OP_TIMEOUT_SECONDS
         )
         now = datetime.now(UTC)
         try:
@@ -781,8 +783,7 @@ def _storage_survey_warm_sync() -> None:
     stamps advance, nothing is reclaimed, the GPU is never touched. Skips
     silently outside server mode.
     """
-    from qdrant_client import QdrantClient
-
+    from .._qdrant_server_client import open_server_client
     from ..config._settings import get_config
     from ..storage_survey_ops import gather_survey, server_storage_collections_dir
 
@@ -790,7 +791,7 @@ def _storage_survey_warm_sync() -> None:
     if not cfg.effective_server_mode():
         return
     url = cfg.effective_qdrant_url
-    client = QdrantClient(url=url, timeout=_QDRANT_CLIENT_OP_TIMEOUT_SECONDS)
+    client = open_server_client(url, timeout=_QDRANT_CLIENT_OP_TIMEOUT_SECONDS)
     try:
         surveys = gather_survey(client, server_storage_collections_dir())
     finally:

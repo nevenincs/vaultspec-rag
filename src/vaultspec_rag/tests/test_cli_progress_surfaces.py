@@ -29,13 +29,16 @@ import zipfile
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import pytest
-import typer
 from typer.testing import CliRunner
 
-from .._sync_vocabulary import ProvisionAction
 from ..cli._core import _build_console
-from ..cli._hf_progress import SnapshotProgress
 from ..cli._progress import StartupStatusReporter
+from ..cli._provision_progress import ReporterProvisionProgress
+from ..commands._snapshot_progress import (
+    SnapshotBars,
+    SnapshotCounts,
+    progress_line,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -126,7 +129,7 @@ def _seed_totals(bars: list[_ByteBar], totals: list[int]) -> None:
 
 
 def _drive_snapshot_bars(
-    tracker: SnapshotProgress,
+    tracker: SnapshotBars,
     *,
     transfer_total: int = 3 * _MIB,
     reconstruct_total: int = 3 * _MIB,
@@ -153,8 +156,15 @@ def _drive_snapshot_bars(
     )
 
 
-class TestModelWarmupProgress:
-    """``server warmup``: the hub's own counters, rendered as one line."""
+class TestModelDownloadProgress:
+    """A model download: the hub's own counters, counted in one place and shown
+    in another.
+
+    The bars are built and counted in the process that downloads; the command
+    that started it only receives the counts and renders them. Both halves are
+    driven here - the counting with the hub's real bar factory, the rendering
+    through the sink every fetching command hands the provisioning front door.
+    """
 
     def test_a_terminal_gets_a_painted_frame_carrying_both_counts(
         self, monkeypatch: pytest.MonkeyPatch
@@ -169,13 +179,9 @@ class TestModelWarmupProgress:
         monkeypatch.setenv("TERM", "xterm-256color")
         buffer = io.StringIO()
         reporter = _reporter(buffer, interactive=True)
-        with (
-            reporter,
-            SnapshotProgress(
-                reporter.heartbeat, prefix="Downloading Dense (1/3)", min_interval_s=0.0
-            ) as tracker,
-        ):
-            _drive_snapshot_bars(tracker)
+        with SnapshotBars() as bars, ReporterProvisionProgress(reporter) as sink:
+            _drive_snapshot_bars(bars)
+            sink.downloading("Downloading Dense (1/3)", bars.counts())
 
         rendered = buffer.getvalue()
         plain = _plain(rendered)
@@ -187,16 +193,14 @@ class TestModelWarmupProgress:
         """Off a terminal the counts still land, with no frame around them."""
         buffer = io.StringIO()
         reporter = _reporter(buffer, interactive=False)
-        with (
-            reporter,
-            SnapshotProgress(
-                reporter.heartbeat, prefix="Downloading Dense (1/3)", min_interval_s=0.0
-            ) as tracker,
-        ):
-            _drive_snapshot_bars(tracker)
+        with SnapshotBars() as bars, ReporterProvisionProgress(reporter) as sink:
+            _drive_snapshot_bars(bars)
+            sink.downloading("Downloading Dense (1/3)", bars.counts())
 
         rendered = buffer.getvalue()
-        assert "1.0 MiB of 3.0 MiB" in _plain(rendered)
+        assert "Downloading Dense (1/3): 3/3 files, 1.0 MiB of 3.0 MiB" in _plain(
+            rendered
+        )
         assert _SPINNER_RE.search(rendered) is None
 
     def test_the_denominator_takes_the_smaller_declared_total(self):
@@ -208,46 +212,44 @@ class TestModelWarmupProgress:
         grew. This is the assertion that catches a future ``max`` or ``sum``
         over the two byte bars.
         """
-        buffer = io.StringIO()
-        reporter = _reporter(buffer, interactive=False)
-        with (
-            reporter,
-            SnapshotProgress(
-                reporter.heartbeat, prefix="Downloading", min_interval_s=0.0
-            ) as tracker,
-        ):
+        with SnapshotBars() as bars:
             _drive_snapshot_bars(
-                tracker, transfer_total=8 * _MIB, reconstruct_total=3 * _MIB
+                bars, transfer_total=8 * _MIB, reconstruct_total=3 * _MIB
             )
+            counts = bars.counts()
 
-        plain = _plain(buffer.getvalue())
-        assert "of 3.0 MiB" in plain
-        assert "8.0 MiB" not in plain
-        assert "11.0 MiB" not in plain
+        assert counts == SnapshotCounts(
+            files_done=3, files_total=3, bytes_done=_MIB, bytes_total=3 * _MIB
+        )
+        line = progress_line("Downloading", counts)
+        assert "of 3.0 MiB" in line
+        assert "8.0 MiB" not in line
+        assert "11.0 MiB" not in line
 
-    def test_a_whole_download_writes_nothing_to_the_real_streams(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
-        """tqdm's own frames never reach the terminal the reporter owns.
+    def test_bytes_past_the_declared_size_are_shown_without_a_denominator(self):
+        """A count above the declared size is never shown as a fraction of it."""
+        line = progress_line(
+            "Downloading", SnapshotCounts(bytes_done=5 * _MIB, bytes_total=0)
+        )
+
+        assert line == "Downloading: 5.0 MiB"
+        assert progress_line("Downloading", SnapshotCounts()) == "Downloading..."
+
+    def test_a_whole_download_writes_nothing_to_the_real_streams(self):
+        """tqdm's own frames never reach a stream somebody else owns.
 
         End-to-end over all three bars. Two mechanisms defend this - the bars
         are pointed at a throwaway buffer AND their draw method is replaced -
         so removing either one alone leaves this green; the single-bar case
         below is the one that binds to the buffer.
         """
-        monkeypatch.setenv("TERM", "xterm-256color")
-        buffer = io.StringIO()
         out, err = io.StringIO(), io.StringIO()
-        reporter = _reporter(buffer, interactive=True)
         with (
             contextlib.redirect_stdout(out),
             contextlib.redirect_stderr(err),
-            reporter,
-            SnapshotProgress(
-                reporter.heartbeat, prefix="Downloading", min_interval_s=0.0
-            ) as tracker,
+            SnapshotBars() as bars,
         ):
-            _drive_snapshot_bars(tracker)
+            _drive_snapshot_bars(bars)
 
         assert out.getvalue() == ""
         assert err.getvalue() == ""
@@ -258,22 +260,17 @@ class TestModelWarmupProgress:
         Deliberately one bar at position zero: that is the only shape in which
         tqdm's close writes to its stream directly rather than through the
         replaced draw method, so it is the case that proves the bars are
-        pointed away from the real terminal. Adding a second bar renumbers the
+        pointed away from the real streams. Adding a second bar renumbers the
         positions and the write stops happening, which would make this test
         stop testing anything.
         """
-        buffer = io.StringIO()
         out, err = io.StringIO(), io.StringIO()
-        reporter = _reporter(buffer, interactive=False)
         with (
             contextlib.redirect_stdout(out),
             contextlib.redirect_stderr(err),
-            reporter,
-            SnapshotProgress(
-                reporter.heartbeat, prefix="Downloading", min_interval_s=0.0
-            ) as tracker,
+            SnapshotBars() as bars,
         ):
-            bar_class = tracker.tqdm_class
+            bar_class = bars.tqdm_class
             assert bar_class is not None
             bar = _byte_bar(bar_class, desc="Downloading bytes")
             _seed_totals([bar], [3 * _MIB])
@@ -282,63 +279,15 @@ class TestModelWarmupProgress:
         assert out.getvalue() == ""
         assert err.getvalue() == ""
 
-    def test_the_emit_rate_limit_drops_ticks_inside_the_interval(self):
-        """A per-chunk counter must not repaint the region per chunk."""
-        buffer = io.StringIO()
-        clock = _Clock()
-        reporter = _reporter(buffer, interactive=False)
-        with (
-            reporter,
-            SnapshotProgress(
-                reporter.heartbeat, prefix="Downloading", min_interval_s=5.0, now=clock
-            ) as tracker,
-        ):
-            _drive_snapshot_bars(tracker)
-
-        # Everything after the first emission falls inside one interval, so the
-        # counts never advance past their opening values.
-        assert _plain(buffer.getvalue()).count("Downloading") == 1
-
-    def test_finishing_silences_further_reports(self):
-        """A report attempted after the block must not reach the console.
-
-        The hub abandons its byte bars without closing them, so tqdm's
-        finaliser closes them later - during interpreter shutdown, when the
-        console's own modules are already gone, and the report raises from
-        there. Leaving the block has to make that callback inert. The refresh
-        is invoked directly, which is what the finaliser does and what makes
-        this fail if the silencing is removed.
-        """
-        buffer = io.StringIO()
-        reporter = _reporter(buffer, interactive=False)
-        with reporter:
-            with SnapshotProgress(
-                reporter.heartbeat, prefix="Downloading", min_interval_s=0.0
-            ) as tracker:
-                bar_class = tracker.tqdm_class
-                assert bar_class is not None
-                bar = _byte_bar(bar_class, desc="Downloading bytes")
-                _seed_totals([bar], [4 * _MIB])
-                bar.update(_MIB)
-            before = buffer.getvalue()
-            assert "Downloading" in _plain(before), "premise: it reported while open"
-            tracker.refresh()
-
-        assert buffer.getvalue() == before
-
     def test_finishing_closes_every_bar_it_tracked(self):
         """The bars are closed on the way out, not left to the finaliser.
 
-        Closing here is the half of the defence that removes the shutdown
-        callback entirely rather than merely making it quiet, so it is
-        asserted separately from the silencing above.
+        The hub abandons its byte bars without closing them, so tqdm's
+        finaliser would close them during interpreter shutdown, when the
+        modules a bar draws with are already gone.
         """
-        buffer = io.StringIO()
-        reporter = _reporter(buffer, interactive=False)
-        with SnapshotProgress(
-            reporter.heartbeat, prefix="Downloading", min_interval_s=0.0
-        ) as tracker:
-            bar_class = tracker.tqdm_class
+        with SnapshotBars() as bars:
+            bar_class = bars.tqdm_class
             assert bar_class is not None
             bar = _byte_bar(bar_class, desc="Downloading bytes")
             assert not bar.disable, "premise: the bar counts while open"
@@ -351,15 +300,35 @@ class TestModelWarmupProgress:
         """A machine-readable caller owes stdout exactly one envelope."""
         buffer = io.StringIO()
         reporter = _reporter(buffer, interactive=False, json_mode=True)
-        with (
-            reporter,
-            SnapshotProgress(
-                reporter.heartbeat, prefix="Downloading", min_interval_s=0.0
-            ) as tracker,
-        ):
-            _drive_snapshot_bars(tracker)
+        with SnapshotBars() as bars, ReporterProvisionProgress(reporter) as sink:
+            _drive_snapshot_bars(bars)
+            sink.stage("Downloading Dense (1/3)...")
+            sink.downloading("Downloading Dense (1/3)", bars.counts())
 
         assert buffer.getvalue() == ""
+
+    def test_the_provisioning_sink_draws_nothing_until_it_reports(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """No live region opens before provisioning has something to say.
+
+        ``install`` asks its questions before it provisions, and a region
+        already animating would be drawn over the prompt. Entering the sink
+        therefore writes nothing, and the first report is what opens it.
+
+        Mutation check: with the region opened on entry, the terminal has
+        already been written to when the first assertion runs, and it fails;
+        restoring the lazy open passes.
+        """
+        monkeypatch.setenv("TERM", "xterm-256color")
+        buffer = io.StringIO()
+        reporter = _reporter(buffer, interactive=True)
+        with ReporterProvisionProgress(reporter) as sink:
+            assert buffer.getvalue() == "", "a live region opened before any report"
+            sink.stage("Checking the cache for Dense (1/3)")
+            assert _SPINNER_RE.search(buffer.getvalue()) is not None
+
+        assert "Checking the cache for Dense (1/3)" in _plain(buffer.getvalue())
 
 
 def _zip_archive(path: Path, member: str, payload: bytes) -> Path:
@@ -437,7 +406,7 @@ class TestQdrantProvisionProgress:
 
     def test_the_stream_reports_bytes_against_the_declared_total(self, tmp_path: Path):
         """A transfer reports how far along it is, not merely that it runs."""
-        from ..qdrant_runtime._provision import _stream_capped
+        from ..qdrant_runtime._download import _stream_capped
 
         payload = b"x" * (9 << 20)
         buffer = io.StringIO()
@@ -460,7 +429,7 @@ class TestQdrantProvisionProgress:
         self, tmp_path: Path
     ):
         """A response with no ``Content-Length`` must not invent one."""
-        from ..qdrant_runtime._provision import _stream_capped
+        from ..qdrant_runtime._download import _stream_capped
 
         payload = b"y" * (5 << 20)
         buffer = io.StringIO()
@@ -477,15 +446,15 @@ class TestQdrantProvisionProgress:
 
     def test_the_size_cap_still_refuses_an_oversized_stream(self, tmp_path: Path):
         """Reporting was added around the cap, not in place of it."""
-        from ..qdrant_runtime import _provision
+        from ..qdrant_runtime import _download
 
-        payload = b"z" * (_provision._MAX_DOWNLOAD_BYTES + 1)
+        payload = b"z" * (_download._MAX_DOWNLOAD_BYTES + 1)
         target = tmp_path / "staged.bin"
         with (
             target.open("wb") as out,
             pytest.raises(urllib.error.URLError, match="byte cap"),
         ):
-            _provision._stream_capped(
+            _download._stream_capped(
                 io.BytesIO(payload),
                 out,
                 declared=len(payload),
@@ -511,179 +480,31 @@ class TestQdrantProvisionProgress:
         assert "Installing the managed Qdrant server" not in result.output
 
 
-class TestStartPathProvisionProgress:
-    """The first-use provision a ``server start`` triggers on its own.
+class TestProvisionerIsReachedAtCallTime:
+    """The condition every interception of the Qdrant provisioner rests on.
 
-    The seam that carries provisioning progress and the reporter that renders
-    it each have their own coverage above. What is proven here is the wiring
-    between them on the start path, which is the only place a provision runs
-    unattended - and therefore the only place a silent one reads as a hung
-    start rather than as a command the operator chose to run.
+    The wiring between a start and its provisioning progress is driven in the
+    start-provisioning module; what is held here is the one structural fact
+    that makes that drive, and every other substitution of the provisioner,
+    mean anything.
     """
 
-    @staticmethod
-    def _substitute_download(
-        monkeypatch: pytest.MonkeyPatch,
-        *,
-        succeeds: bool,
-    ) -> list[str]:
-        """Replace the network half of provisioning, and nothing else.
-
-        The reported lines come from the shipped ``_download_line`` renderer
-        rather than from literals, so a change to how bytes are phrased travels
-        into this test instead of stranding it. On success a real binary and a
-        real manifest are written into the isolated managed dir, so it is the
-        real ``resolve_binary`` that confirms the install afterwards.
-
-        The substitution binds to ``provision`` on the module that DEFINES it,
-        and it works only because ``_ensure_qdrant_binary`` imports that name
-        INSIDE the function and so resolves it once per call. Moving that
-        import to module scope would leave this interception inert while the
-        real network download ran; the call-time test below is what catches
-        that, and it must not be deleted as redundant. The patch target must
-        stay the defining module and match the consumer's import: patching a
-        re-exporting package while the consumer imports from the definition
-        (or the reverse) silently intercepts nothing.
-
-        Returns:
-            A list appended to on each call, so a test can assert the
-            interception was actually reached.
-
-        Why this one stays, having asked whether it could be driven for real:
-        the provisioner refuses any source that is not https on a host in the
-        pinned allow-list, and verifies the archive against a committed digest
-        before extracting. A locally served archive therefore fails on the
-        scheme, then the host, and could never match the digest anyway - the
-        security design makes a substitute source unusable on purpose.
-
-        That leaves one real alternative, and it is rejected on cost rather
-        than on possibility: provisioning into an isolated managed dir would
-        download the pinned release over the network on every run. The
-        integration helpers mirror an already-installed binary precisely to
-        avoid that, so a test that re-downloaded each time would cut against
-        the design it sits in. What is asserted here is the progress the
-        operator sees; only the trigger is the test's.
-        """
-        from ..qdrant_runtime import _provision as _provision_module
-        from ..qdrant_runtime._constants import (
-            MANIFEST_FILENAME,
-            QDRANT_SERVER_VERSION,
-            ProvisionReport,
-        )
-        from ..qdrant_runtime._provision import _download_line, _no_progress
-        from ..qdrant_runtime._resolve import binary_filename, qdrant_bin_dir
-
-        calls: list[str] = []
-
-        def _provision(
-            *,
-            upgrade: bool = False,
-            dry_run: bool = False,
-            binary: Path | None = None,
-            # Defaulted exactly as the real signature defaults it. A substitute
-            # that made the callback mandatory would turn "the caller stopped
-            # passing it" - the regression this exists to catch - into a
-            # TypeError, which reports the wrong defect and passes through any
-            # assertion the test actually makes.
-            on_progress: Callable[[str], None] = _no_progress,
-        ) -> ProvisionReport:
-            del upgrade, dry_run, binary
-            calls.append("provision")
-            on_progress("Downloading the Qdrant server (release archive)...")
-            on_progress(_download_line(4 << 20, 31 << 20))
-            on_progress("Verifying the Qdrant download checksum...")
-            if not succeeds:
-                return ProvisionReport(
-                    action=ProvisionAction.FAILED,
-                    message="SHA256 mismatch for the release archive",
-                )
-            version_dir = qdrant_bin_dir()
-            version_dir.mkdir(parents=True, exist_ok=True)
-            target = version_dir / binary_filename()
-            target.write_bytes(b"not a real server")
-            (version_dir / MANIFEST_FILENAME).write_text(
-                json.dumps(
-                    {"version": QDRANT_SERVER_VERSION, "binary_sha256": "00" * 32}
-                ),
-                encoding="utf-8",
-            )
-            return ProvisionReport(action=ProvisionAction.CREATED, binary=target)
-
-        monkeypatch.setattr(_provision_module, "provision", _provision)
-        return calls
-
     def test_the_provision_symbol_is_resolved_at_call_time(self):
-        """The start module must not bind ``provision`` at import.
+        """No module between a command and the provisioner binds it at import.
 
         Its own reason to exist: a module-scope import would pull the qdrant
         runtime onto the CLI import path. Its reason to live HERE: it is also
         the single condition every interception of that symbol depends on, and
         an interception that has gone inert reports success while the real
-        download runs against the operator's machine.
+        download runs against the operator's machine. The start command
+        reaches the provisioner through the provisioning front door, so both
+        hops are held to it.
         """
-        from ..cli import _service_start
+        from ..cli import _service_qdrant, _service_start
+        from ..commands import _provision as front_door
 
-        assert not hasattr(_service_start, "provision")
-
-    def test_provisioning_progress_reaches_the_operator(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        isolated_status_dir: Path,
-        capsys: pytest.CaptureFixture[str],
-    ):
-        """A first-use download reports its bytes through the start reporter."""
-        from ..cli._service_start import _ensure_qdrant_binary
-        from ..qdrant_runtime._resolve import resolve_binary
-
-        del isolated_status_dir
-        assert resolve_binary() is None, (
-            "premise: no binary may already resolve, or the guard returns "
-            "before it ever provisions"
-        )
-        calls = self._substitute_download(monkeypatch, succeeds=True)
-
-        buffer = io.StringIO()
-        reporter = _reporter(buffer, interactive=False)
-        with reporter:
-            _ensure_qdrant_binary(auto_provision=True, progress=reporter)
-
-        assert calls == ["provision"], "the interception was never reached"
-        # Two sinks because production uses two: the byte-level progress goes to
-        # the reporter, and the completion line to the shared console. Reading
-        # each where it is actually written keeps the shared console untouched.
-        plain = _plain(buffer.getvalue())
-        assert "4.0 MiB of 31.0 MiB" in plain
-        assert "Verifying the Qdrant download checksum" in plain
-        assert "Installed Qdrant server" in _plain(capsys.readouterr().out)
-
-    def test_a_failed_provision_stays_one_envelope_in_json_mode(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        isolated_status_dir: Path,
-        capsys: pytest.CaptureFixture[str],
-    ):
-        """The broker channel carries the fault, and no progress beside it."""
-        from ..cli._service_start import _ensure_qdrant_binary
-        from ..qdrant_runtime._resolve import resolve_binary
-
-        del isolated_status_dir
-        assert resolve_binary() is None, "premise: nothing is installed yet"
-        calls = self._substitute_download(monkeypatch, succeeds=False)
-
-        reporter = StartupStatusReporter(json_mode=True, interactive=False)
-        with reporter, pytest.raises(typer.Exit) as exit_info:
-            _ensure_qdrant_binary(
-                auto_provision=True, json_mode=True, progress=reporter
-            )
-
-        assert calls == ["provision"], "the interception was never reached"
-        assert exit_info.value.exit_code == 1
-        captured = capsys.readouterr()
-        payload = cast("dict[str, object]", json.loads(captured.out))
-        assert payload["ok"] is False
-        assert payload["error"] == "qdrant_provision_failed"
-        assert "Downloading the Qdrant server" not in captured.out
-        assert "Downloading the Qdrant server" not in captured.err
+        for module in (_service_start, _service_qdrant, front_door):
+            assert not hasattr(module, "provision"), module.__name__
 
 
 class TestReconcileProgress:

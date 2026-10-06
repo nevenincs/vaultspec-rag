@@ -1,0 +1,566 @@
+---
+tags:
+  - '#exec'
+  - '#qdrant-provisioning-trust'
+date: '2026-10-05'
+modified: '2026-10-06'
+body_schema: 'body-v2'
+body_hash: 'sha256:9746d86f3ded96c8ac4223737783d9c46240ced74f7c69b47cad35e9cf28637d'
+related:
+  - "[[2026-10-05-qdrant-provisioning-trust-plan]]"
+---
+
+# `qdrant-provisioning-trust` ledger
+
+## Changes
+
+- `S06` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S06` `M` `src/vaultspec_rag/cli/_service_lifecycle.py`
+- `S06` `M` `src/vaultspec_rag/cli/_service_qdrant.py`
+- `S06` `M` `src/vaultspec_rag/commands/_install.py`
+- `S06` `M` `src/vaultspec_rag/commands/_provision.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_cli_progress_surfaces.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_cli_qdrant.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_install_client_role.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S06` `A` `src/vaultspec_rag/tests/_qdrant_provision_seam.py`
+- `S06` `A` `src/vaultspec_rag/tests/test_client_provisions_nothing.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_provision.py`
+- `S06` `verify:` `pytest unit lane over 15 covering modules` -> `pass`
+- `S06` `verify:` `dev lint python` -> `pass`
+- `S06` `by:` `vaultspec-high-executor`
+- `S09` `M` `.env.example`
+- `S09` `M` `docs/configuration.md`
+- `S09` `M` `src/vaultspec_rag/config/_registry.py`
+- `S09` `M` `src/vaultspec_rag/config/_schema.py`
+- `S09` `M` `src/vaultspec_rag/config/_settings.py`
+- `S09` `M` `src/vaultspec_rag/config/_types.py`
+- `S09` `M` `src/vaultspec_rag/tests/test_config_backend.py`
+- `S09` `A` `src/vaultspec_rag/tests/test_config_sources.py`
+- `S09` `verify:` `pytest over HEAD plus the seventeen joint-commit files` -> `pass`
+- `S09` `verify:` `ruff, ty, basedpyright on the committed paths` -> `pass`
+- `S09` `by:` `vaultspec-high-executor`
+- `S01` `M` `src/vaultspec_rag/qdrant_runtime/_constants.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_qdrant_runtime.py`
+- `S01` `M` `tools/qdrant_pin_digests.py`
+- `S01` `verify:` `pytest test_qdrant_runtime.py test_process_probe_vocabulary_guards.py` -> `pass`
+- `S01` `by:` `vaultspec-high-executor`
+- `S14` `M` `src/vaultspec_rag/qdrant_runtime/_constants.py`
+- `S14` `M` `src/vaultspec_rag/qdrant_runtime/_resolve.py`
+- `S14` `M` `src/vaultspec_rag/qdrant_runtime/_supervise.py`
+- `S14` `M` `src/vaultspec_rag/tests/test_process_probe_vocabulary_guards.py`
+- `S14` `M` `src/vaultspec_rag/tests/test_qdrant_runtime.py`
+- `S14` `verify:` `pytest test_qdrant_runtime.py test_process_probe_vocabulary_guards.py test_readiness.py` -> `pass`
+- `S14` `by:` `vaultspec-high-executor`
+- `S02` `M` `conftest.py`
+- `S02` `M` `src/vaultspec_rag/_readiness.py`
+- `S02` `M` `src/vaultspec_rag/qdrant_runtime/_constants.py`
+- `S02` `M` `src/vaultspec_rag/qdrant_runtime/_resolve.py`
+- `S02` `M` `src/vaultspec_rag/qdrant_runtime/_supervise.py`
+- `S02` `M` `src/vaultspec_rag/tests/integration/_helpers.py`
+- `S02` `M` `src/vaultspec_rag/tests/integration/test_qdrant_server_mode.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_qdrant_runtime.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_readiness.py`
+- `S02` `verify:` `pytest on 7 covering files` -> `pass`
+- `S02` `by:` `vaultspec-high-executor`
+- `S08` `M` `conftest.py`
+- `S08` `M` `src/vaultspec_rag/qdrant_runtime/_constants.py`
+- `S08` `M` `src/vaultspec_rag/qdrant_runtime/_resolve.py`
+- `S08` `M` `src/vaultspec_rag/qdrant_runtime/_supervise.py`
+- `S08` `M` `src/vaultspec_rag/tests/_fake_qdrant_binary.py`
+- `S08` `M` `src/vaultspec_rag/tests/integration/_helpers.py`
+- `S08` `M` `src/vaultspec_rag/tests/integration/test_qdrant_long_paths.py`
+- `S08` `M` `src/vaultspec_rag/tests/integration/test_qdrant_server_mode.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_provision.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_qdrant_credential.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_qdrant_load_concurrency.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_qdrant_runtime.py`
+- `S08` `A` `src/vaultspec_rag/tests/test_qdrant_spawn_trust.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_qdrant_store_format.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_qdrant_store_resilience.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_qdrant_supervise.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_qdrant_supervise_diagnostics.py`
+- `S08` `verify:` `pytest on 12 covering files excluding two superseded TestProvision cases` -> `pass`
+- `S08` `by:` `vaultspec-high-executor`
+- `S07` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S07` `A` `src/vaultspec_rag/tests/test_start_provisioning.py`
+- `S07` `M` `docs/cli.md`
+- `S07` `M` `src/vaultspec_rag/cli/_service_qdrant.py`
+- `S07` `M` `src/vaultspec_rag/tests/test_cli_qdrant.py`
+- `S07` `verify:` `pytest unit lane in an exported tree` -> `pass`
+- `S07` `by:` `vaultspec-high-executor`
+- `S12` `M` `src/vaultspec_rag/cli/_install.py`
+- `S12` `A` `src/vaultspec_rag/cli/_provision_progress.py`
+- `S12` `M` `src/vaultspec_rag/cli/_render.py`
+- `S12` `M` `src/vaultspec_rag/cli/_service_lifecycle.py`
+- `S12` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S12` `M` `src/vaultspec_rag/commands/_install.py`
+- `S12` `A` `src/vaultspec_rag/commands/_model_fetch.py`
+- `S12` `M` `src/vaultspec_rag/commands/_provision.py`
+- `S12` `A` `src/vaultspec_rag/tests/_model_cache_seed.py`
+- `S12` `M` `src/vaultspec_rag/tests/test_cli_progress_surfaces.py`
+- `S12` `M` `src/vaultspec_rag/tests/test_client_provisions_nothing.py`
+- `S12` `A` `src/vaultspec_rag/tests/test_model_fetch.py`
+- `S12` `M` `src/vaultspec_rag/tests/test_start_provisioning.py`
+- `S12` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S12` `verify:` `pytest unit lane over 22 covering modules` -> `pass`
+- `S12` `verify:` `dev lint python, complexity, size, nesting, docs-cli` -> `pass`
+- `S12` `by:` `vaultspec-high-executor`
+- `S03` `M` `src/vaultspec_rag/qdrant_runtime/_provision.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_qdrant_download.py`
+- `S03` `A` `src/vaultspec_rag/tests/test_qdrant_install.py`
+- `S03` `M` `tools/binaries/bun_toolchain.py`
+- `S03` `M` `tools/monitor/acquire.py`
+- `S03` `verify:` `pytest covering unit files` -> `pass`
+- `S03` `by:` `vaultspec-high-executor`
+- `S04` `M` `src/vaultspec_rag/qdrant_runtime/_provision.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_provision.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_qdrant_install.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_qdrant_runtime.py`
+- `S04` `verify:` `pytest covering unit files` -> `pass`
+- `S04` `by:` `vaultspec-high-executor`
+- `S05` `M` `src/vaultspec_rag/qdrant_runtime/_provision.py`
+- `S05` `M` `src/vaultspec_rag/tests/_loopback_tls.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_qdrant_download.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_qdrant_install.py`
+- `S05` `verify:` `pytest covering unit files` -> `pass`
+- `S05` `by:` `vaultspec-high-executor`
+- `S10` `M` `src/vaultspec_rag/qdrant_runtime/_provision.py`
+- `S10` `A` `src/vaultspec_rag/tests/_loopback_tls.py`
+- `S10` `A` `src/vaultspec_rag/tests/test_qdrant_download.py`
+- `S10` `A` `tools/binaries/release_hosts.py`
+- `S10` `M` `tools/binaries/bun_toolchain.py`
+- `S10` `M` `tools/monitor/acquire.py`
+- `S10` `M` `src/vaultspec_rag/qdrant_runtime/_constants.py`
+- `S10` `M` `tools/qdrant_pin_digests.py`
+- `S10` `M` `src/vaultspec_rag/tests/test_qdrant_runtime.py`
+- `S10` `M` `pyproject.toml`
+- `S10` `M` `uv.lock`
+- `S10` `verify:` `pytest over HEAD plus the joint-commit files` -> `pass`
+- `S10` `by:` `vaultspec-high-executor`
+- `S11` `M` `.env.example`
+- `S11` `M` `docs/configuration.md`
+- `S11` `M` `src/vaultspec_rag/cli/_app.py`
+- `S11` `M` `src/vaultspec_rag/config/_registry.py`
+- `S11` `M` `src/vaultspec_rag/config/_schema.py`
+- `S11` `M` `src/vaultspec_rag/config/_settings.py`
+- `S11` `M` `src/vaultspec_rag/config/_types.py`
+- `S11` `M` `src/vaultspec_rag/server/_main.py`
+- `S11` `A` `src/vaultspec_rag/tests/test_model_hub_endpoint.py`
+- `S11` `M` `src/vaultspec_rag/torch_config/_index.py`
+- `S11` `verify:` `pytest over the exported commit, 21 covering modules plus both tools suites` -> `pass`
+- `S11` `verify:` `ruff, ty, basedpyright on the eight python paths` -> `pass`
+- `S11` `by:` `vaultspec-high-executor`
+- `S13` `M` `CHANGELOG.md`
+- `S13` `M` `README.md`
+- `S13` `M` `dev/warm_models.py`
+- `S13` `M` `docs/architecture.md`
+- `S13` `M` `docs/backends.md`
+- `S13` `M` `docs/cli.md`
+- `S13` `M` `docs/getting-started.md`
+- `S13` `M` `docs/glossary.md`
+- `S13` `M` `docs/installation.md`
+- `S13` `M` `docs/service-mode.md`
+- `S13` `M` `src/vaultspec_rag/cli/_service_lifecycle.py`
+- `S13` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S13` `M` `src/vaultspec_rag/server/_lifecycle.py`
+- `S13` `M` `src/vaultspec_rag/server/_lifespan.py`
+- `S13` `A` `src/vaultspec_rag/tests/_loopback_model_hub.py`
+- `S13` `M` `src/vaultspec_rag/tests/test_model_fetch.py`
+- `S13` `M` `src/vaultspec_rag/tests/test_service_lifecycle_helpers.py`
+- `S13` `verify:` `dev lint docs-cli, links, docs-conventions, citations, docs-version, markdown, python` -> `pass`
+- `S13` `verify:` `pytest unit lane, 333 tests` -> `pass`
+- `S13` `by:` `vaultspec-high-executor`
+- `S20` `M` `src/vaultspec_rag/tests/test_document_index_symlinks.py`
+- `S20` `M` `src/vaultspec_rag/tests/test_monitor_inventory.py`
+- `S20` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S20` `verify:` `dev lint python, type, type-strict at commit time` -> `pass`
+- `S20` `verify:` `pytest test_document_index_symlinks.py test_substitution_discipline.py` -> `pass`
+- `S20` `by:` `vaultspec-high-executor`
+- `S18` `M` `conftest.py`
+- `S18` `M` `src/vaultspec_rag/_readiness.py`
+- `S18` `M` `src/vaultspec_rag/_win32.py`
+- `S18` `M` `src/vaultspec_rag/cli/_service_qdrant.py`
+- `S18` `M` `src/vaultspec_rag/commands/_provision.py`
+- `S18` `A` `src/vaultspec_rag/qdrant_runtime/_executable_hold.py`
+- `S18` `M` `src/vaultspec_rag/qdrant_runtime/_resolve.py`
+- `S18` `A` `src/vaultspec_rag/qdrant_runtime/_spawn_trust.py`
+- `S18` `M` `src/vaultspec_rag/qdrant_runtime/_supervise.py`
+- `S18` `A` `src/vaultspec_rag/tests/test_qdrant_executable_hold.py`
+- `S18` `M` `src/vaultspec_rag/tests/test_qdrant_spawn_trust.py`
+- `S18` `M` `src/vaultspec_rag/tests/test_readiness.py`
+- `S18` `verify:` `pytest 371 covering unit tests in an export of the parent plus the 12 commit paths` -> `pass`
+- `S18` `verify:` `ruff, ty, basedpyright on the 12 paths` -> `pass`
+- `S18` `by:` `vaultspec-high-executor`
+- `S21` `A` `src/vaultspec_rag/qdrant_runtime/_download.py`
+- `S21` `M` `src/vaultspec_rag/qdrant_runtime/_provision.py`
+- `S21` `M` `src/vaultspec_rag/tests/_loopback_tls.py`
+- `S21` `M` `src/vaultspec_rag/tests/_qdrant_provision_seam.py`
+- `S21` `A` `src/vaultspec_rag/tests/_stand_in_release.py`
+- `S21` `M` `src/vaultspec_rag/tests/test_cli_progress_surfaces.py`
+- `S21` `M` `src/vaultspec_rag/tests/test_process_probe_os_guards.py`
+- `S21` `M` `src/vaultspec_rag/tests/test_qdrant_download.py`
+- `S21` `A` `src/vaultspec_rag/tests/test_qdrant_download_faults.py`
+- `S21` `M` `src/vaultspec_rag/tests/test_qdrant_install.py`
+- `S21` `M` `tools/binaries/bun_toolchain.py`
+- `S21` `M` `tools/monitor/acquire.py`
+- `S21` `M` `tools/qdrant_pin_digests.py`
+- `S21` `verify:` `pytest table-driven network and disk conditions for the binary downloader` -> `pass`
+- `S21` `by:` `vaultspec-high-executor`
+- `S18` `A` `src/vaultspec_rag/tests/integration/test_qdrant_descriptor_child_witnesses.py`
+- `S18` `verify:` `two witness tests called directly in WSL against the real binary` -> `pass`
+- `S21` `D` `src/vaultspec_rag/cli/_hf_progress.py`
+- `S21` `M` `src/vaultspec_rag/cli/_install.py`
+- `S21` `M` `src/vaultspec_rag/cli/_provision_progress.py`
+- `S21` `M` `src/vaultspec_rag/cli/_service_lifecycle.py`
+- `S21` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S21` `A` `src/vaultspec_rag/commands/_hub_failure.py`
+- `S21` `A` `src/vaultspec_rag/commands/_model_download.py`
+- `S21` `A` `src/vaultspec_rag/commands/_model_download_child.py`
+- `S21` `M` `src/vaultspec_rag/commands/_model_fetch.py`
+- `S21` `M` `src/vaultspec_rag/commands/_provision.py`
+- `S21` `A` `src/vaultspec_rag/commands/_snapshot_progress.py`
+- `S21` `M` `src/vaultspec_rag/tests/_loopback_model_hub.py`
+- `S21` `M` `src/vaultspec_rag/tests/test_cli_progress_lifetime.py`
+- `S21` `M` `src/vaultspec_rag/tests/test_client_provisions_nothing.py`
+- `S21` `M` `src/vaultspec_rag/tests/test_model_fetch.py`
+- `S21` `verify:` `pytest unit lane over 17 covering modules against da9944f1 plus the commit paths` -> `pass`
+- `S21` `verify:` `dev lint python, complexity, size, nesting, docs-cli; ruff format, ty, basedpyright` -> `pass`
+- `S15` `M` `.env.example`
+- `S15` `M` `docs/configuration.md`
+- `S15` `M` `src/vaultspec_rag/_readiness.py`
+- `S15` `M` `src/vaultspec_rag/config/_registry.py`
+- `S15` `M` `src/vaultspec_rag/config/_schema.py`
+- `S15` `M` `src/vaultspec_rag/config/_settings.py`
+- `S15` `M` `src/vaultspec_rag/config/_types.py`
+- `S15` `M` `src/vaultspec_rag/qdrant_runtime/_constants.py`
+- `S15` `M` `src/vaultspec_rag/qdrant_runtime/_executable_hold.py`
+- `S15` `M` `src/vaultspec_rag/qdrant_runtime/_resolve.py`
+- `S15` `M` `src/vaultspec_rag/qdrant_runtime/_spawn_trust.py`
+- `S15` `M` `src/vaultspec_rag/tests/_fake_qdrant_binary.py`
+- `S15` `M` `src/vaultspec_rag/tests/integration/test_qdrant_server_mode.py`
+- `S15` `A` `src/vaultspec_rag/tests/test_config_operator_binary.py`
+- `S15` `M` `src/vaultspec_rag/tests/test_config_sources.py`
+- `S15` `M` `src/vaultspec_rag/tests/test_qdrant_runtime.py`
+- `S15` `M` `src/vaultspec_rag/tests/test_qdrant_spawn_trust.py`
+- `S15` `M` `src/vaultspec_rag/tests/test_qdrant_store_format.py`
+- `S15` `M` `src/vaultspec_rag/tests/test_readiness.py`
+- `S15` `verify:` `pytest 34 modules in an export of the parent plus the 32 paths on Windows` -> `pass`
+- `S15` `by:` `vaultspec-high-executor`
+- `S16` `M` `src/vaultspec_rag/qdrant_runtime/_provision.py`
+- `S16` `M` `src/vaultspec_rag/tests/_stand_in_release.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_provision.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_qdrant_download_faults.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_qdrant_install.py`
+- `S16` `A` `src/vaultspec_rag/tests/test_qdrant_offline_install.py`
+- `S16` `verify:` `pytest 34 modules in an export of the parent plus the 32 paths on Windows` -> `pass`
+- `S16` `by:` `vaultspec-high-executor`
+- `S17` `M` `docs/cli.md`
+- `S17` `M` `src/vaultspec_rag/cli/_service_qdrant.py`
+- `S17` `M` `src/vaultspec_rag/commands/_provision.py`
+- `S17` `M` `src/vaultspec_rag/tests/_qdrant_provision_seam.py`
+- `S17` `M` `src/vaultspec_rag/tests/test_cli_qdrant.py`
+- `S17` `M` `src/vaultspec_rag/tests/test_client_provisions_nothing.py`
+- `S17` `M` `src/vaultspec_rag/tests/test_start_provisioning.py`
+- `S17` `verify:` `pytest 34 modules in an export of the parent plus the 32 paths on Windows` -> `pass`
+- `S17` `by:` `vaultspec-high-executor`
+- `S25` `M` `src/vaultspec_rag/_process_probe.py`
+- `S25` `A` `src/vaultspec_rag/_python_child.py`
+- `S25` `M` `src/vaultspec_rag/cli/_process.py`
+- `S25` `M` `src/vaultspec_rag/commands/_model_download.py`
+- `S25` `M` `src/vaultspec_rag/indexer/_pool_guard.py`
+- `S25` `M` `src/vaultspec_rag/indexer/_preprocess_entry.py`
+- `S25` `M` `src/vaultspec_rag/indexer/_preprocess_runner.py`
+- `S25` `M` `src/vaultspec_rag/operator_state/_environment_probe.py`
+- `S25` `A` `src/vaultspec_rag/tests/test_model_download_child_shadowing.py`
+- `S25` `A` `src/vaultspec_rag/tests/test_python_child.py`
+- `S25` `A` `src/vaultspec_rag/tests/test_python_child_shadowing.py`
+- `S25` `A` `src/vaultspec_rag/tests/test_python_child_spawn_sites.py`
+- `S25` `A` `src/vaultspec_rag/tests/test_server_launch_shapes.py`
+- `S25` `verify:` `dev lint python, type, type-strict, size, complexity; 239 unit tests in an export of HEAD plus the commit paths` -> `pass`
+- `S25` `by:` `vaultspec-high-executor`
+- `S26` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S26` `M` `src/vaultspec_rag/commands/_provision.py`
+- `S26` `M` `src/vaultspec_rag/tests/test_cli_service_watch.py`
+- `S26` `A` `src/vaultspec_rag/tests/test_start_backend_decision.py`
+- `S26` `M` `src/vaultspec_rag/tests/test_start_provisioning.py`
+- `S26` `verify:` `pytest 201 tests and dev lint python, type, type-strict, size, complexity, nesting, docs-cli in an export of HEAD plus the 5 paths` -> `pass`
+- `S26` `by:` `vaultspec-high-executor`
+- `S28` `M` `.env.example`
+- `S28` `M` `src/vaultspec_rag/_process_probe.py`
+- `S28` `A` `src/vaultspec_rag/_program_lookup.py`
+- `S28` `M` `src/vaultspec_rag/_win32.py`
+- `S28` `M` `src/vaultspec_rag/cli/_process.py`
+- `S28` `M` `src/vaultspec_rag/commands/_mcp_topology.py`
+- `S28` `M` `src/vaultspec_rag/commands/_tool_torch.py`
+- `S28` `M` `src/vaultspec_rag/commands/_uv_sync.py`
+- `S28` `M` `src/vaultspec_rag/config/_registry.py`
+- `S28` `M` `src/vaultspec_rag/config/_types.py`
+- `S28` `M` `src/vaultspec_rag/monitor_process.py`
+- `S28` `M` `src/vaultspec_rag/operator_state/_hardware.py`
+- `S28` `M` `src/vaultspec_rag/qdrant_runtime/_resolve.py`
+- `S28` `A` `src/vaultspec_rag/tests/_planted_programs.py`
+- `S28` `M` `src/vaultspec_rag/tests/integration/test_daemon_survives_shell_exit.py`
+- `S28` `A` `src/vaultspec_rag/tests/test_program_lookup.py`
+- `S28` `A` `src/vaultspec_rag/tests/test_program_lookup_sites.py`
+- `S28` `M` `src/vaultspec_rag/tests/test_python_child_spawn_sites.py`
+- `S28` `A` `src/vaultspec_rag/tests/test_service_working_directory.py`
+- `S28` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S28` `M` `src/vaultspec_rag/tests/test_tool_torch_repair.py`
+- `S28` `verify:` `pytest every unit test covering the changed files plus the whole-tree guards` -> `pass`
+- `S28` `verify:` `dev lint python, type, type-strict, size, complexity, nesting, absolute-imports` -> `pass`
+- `S28` `by:` `orchestrator`
+- `S31` `M` `src/vaultspec_rag/commands/_hub_failure.py`
+- `S31` `M` `src/vaultspec_rag/commands/_model_download.py`
+- `S31` `M` `src/vaultspec_rag/commands/_model_download_child.py`
+- `S31` `M` `src/vaultspec_rag/commands/_model_fetch.py`
+- `S31` `M` `src/vaultspec_rag/tests/test_model_fetch.py`
+- `S31` `verify:` `pytest ten covering modules in an export of the parent plus the five paths` -> `pass`
+- `S31` `by:` `vaultspec-high-executor`
+- `S29` `M` `src/vaultspec_rag/_anchor_claim.py`
+- `S29` `M` `src/vaultspec_rag/_readiness.py`
+- `S29` `M` `src/vaultspec_rag/commands/_provision.py`
+- `S29` `M` `src/vaultspec_rag/qdrant_runtime/_constants.py`
+- `S29` `M` `src/vaultspec_rag/qdrant_runtime/_download.py`
+- `S29` `A` `src/vaultspec_rag/qdrant_runtime/_managed_install.py`
+- `S29` `M` `src/vaultspec_rag/qdrant_runtime/_provision.py`
+- `S29` `M` `src/vaultspec_rag/qdrant_runtime/_resolve.py`
+- `S29` `M` `src/vaultspec_rag/qdrant_runtime/_spawn_trust.py`
+- `S29` `A` `src/vaultspec_rag/tests/_committed_pins.py`
+- `S29` `M` `src/vaultspec_rag/tests/_fake_qdrant_binary.py`
+- `S29` `M` `src/vaultspec_rag/tests/_loopback_tls.py`
+- `S29` `A` `src/vaultspec_rag/tests/_provisioning_child.py`
+- `S29` `M` `src/vaultspec_rag/tests/_qdrant_provision_seam.py`
+- `S29` `M` `src/vaultspec_rag/tests/_stand_in_release.py`
+- `S29` `M` `src/vaultspec_rag/tests/conftest.py`
+- `S29` `M` `src/vaultspec_rag/tests/integration/_helpers.py`
+- `S29` `A` `src/vaultspec_rag/tests/test_anchor_claim_refusals.py`
+- `S29` `M` `src/vaultspec_rag/tests/test_cli_qdrant.py`
+- `S29` `M` `src/vaultspec_rag/tests/test_client_provisions_nothing.py`
+- `S29` `A` `src/vaultspec_rag/tests/test_managed_install.py`
+- `S29` `A` `src/vaultspec_rag/tests/test_pin_table_writers.py`
+- `S29` `M` `src/vaultspec_rag/tests/test_provision.py`
+- `S29` `M` `src/vaultspec_rag/tests/test_qdrant_download_faults.py`
+- `S29` `M` `src/vaultspec_rag/tests/test_qdrant_install.py`
+- `S29` `A` `src/vaultspec_rag/tests/test_qdrant_install_recovery.py`
+- `S29` `M` `src/vaultspec_rag/tests/test_qdrant_offline_install.py`
+- `S29` `M` `src/vaultspec_rag/tests/test_qdrant_runtime.py`
+- `S29` `M` `src/vaultspec_rag/tests/test_qdrant_spawn_trust.py`
+- `S29` `M` `src/vaultspec_rag/tests/test_qdrant_store_format.py`
+- `S29` `M` `src/vaultspec_rag/tests/test_readiness.py`
+- `S29` `M` `src/vaultspec_rag/tests/test_start_provisioning.py`
+- `S29` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S29` `verify:` `pytest unit qdrant and start modules (Windows)` -> `pass`
+- `S29` `verify:` `ruff, ty, basedpyright, dev lint` -> `pass`
+- `S29` `by:` `claude`
+- `S19` `M` `.env.example`
+- `S19` `M` `docs/configuration.md`
+- `S19` `A` `src/vaultspec_rag/_model_pins.py`
+- `S19` `M` `src/vaultspec_rag/_sparse_profile.py`
+- `S19` `M` `src/vaultspec_rag/config/_registry.py`
+- `S19` `M` `src/vaultspec_rag/config/_schema.py`
+- `S19` `M` `src/vaultspec_rag/config/_settings.py`
+- `S19` `M` `src/vaultspec_rag/config/_types.py`
+- `S19` `M` `src/vaultspec_rag/search/_options.py`
+- `S19` `M` `src/vaultspec_rag/tests/test_config_backend.py`
+- `S19` `A` `src/vaultspec_rag/tests/test_model_pins.py`
+- `S19` `verify:` `pytest unit model modules (Windows 237 passed, Linux 234 passed 3 skipped)` -> `pass`
+- `S19` `by:` `claude`
+- `S23` `M` `src/vaultspec_rag/_model_cache.py`
+- `S23` `M` `src/vaultspec_rag/_readiness.py`
+- `S23` `M` `src/vaultspec_rag/_sparse_encoder.py`
+- `S23` `A` `src/vaultspec_rag/_verified_import.py`
+- `S23` `M` `src/vaultspec_rag/api.py`
+- `S23` `M` `src/vaultspec_rag/cli/_service_doctor.py`
+- `S23` `M` `src/vaultspec_rag/commands/_model_fetch.py`
+- `S23` `M` `src/vaultspec_rag/embeddings.py`
+- `S23` `M` `src/vaultspec_rag/search/_searcher.py`
+- `S23` `M` `src/vaultspec_rag/server/_lifespan.py`
+- `S23` `M` `src/vaultspec_rag/service.py`
+- `S23` `M` `src/vaultspec_rag/tests/_loopback_model_hub.py`
+- `S23` `M` `src/vaultspec_rag/tests/_model_cache_seed.py`
+- `S23` `A` `src/vaultspec_rag/tests/_model_fetch_child.py`
+- `S23` `M` `src/vaultspec_rag/tests/_model_setup.py`
+- `S23` `M` `src/vaultspec_rag/tests/benchmarks/bench_document_index_resilience.py`
+- `S23` `M` `src/vaultspec_rag/tests/benchmarks/bench_large_index_resilience.py`
+- `S23` `M` `src/vaultspec_rag/tests/conftest.py`
+- `S23` `M` `src/vaultspec_rag/tests/integration/test_server_doctor_route.py`
+- `S23` `M` `src/vaultspec_rag/tests/test_adr_regression.py`
+- `S23` `M` `src/vaultspec_rag/tests/test_client_provisions_nothing.py`
+- `S23` `M` `src/vaultspec_rag/tests/test_config_backend.py`
+- `S23` `M` `src/vaultspec_rag/tests/test_model_fetch.py`
+- `S23` `A` `src/vaultspec_rag/tests/test_model_fetch_checked.py`
+- `S23` `A` `src/vaultspec_rag/tests/test_model_pins.py`
+- `S23` `A` `src/vaultspec_rag/tests/test_model_readiness.py`
+- `S23` `M` `src/vaultspec_rag/tests/test_model_setup.py`
+- `S23` `A` `src/vaultspec_rag/tests/test_model_snapshot.py`
+- `S23` `M` `src/vaultspec_rag/tests/test_server_doctor.py`
+- `S23` `A` `src/vaultspec_rag/tests/test_verified_import.py`
+- `S23` `verify:` `pytest unit whole tier in six chunks (Windows)` -> `pass`
+- `S23` `verify:` `six break-and-restore proofs` -> `pass`
+- `S23` `by:` `claude`
+- `S27` `M` `docs/cli.md`
+- `S27` `M` `src/vaultspec_rag/_readiness.py`
+- `S27` `M` `src/vaultspec_rag/cli/_install.py`
+- `S27` `M` `src/vaultspec_rag/cli/_render.py`
+- `S27` `M` `src/vaultspec_rag/cli/_service_lifecycle.py`
+- `S27` `M` `src/vaultspec_rag/cli/_service_qdrant.py`
+- `S27` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S27` `M` `src/vaultspec_rag/cli/_service_status.py`
+- `S27` `A` `src/vaultspec_rag/commands/_backend_choice.py`
+- `S27` `M` `src/vaultspec_rag/commands/_install.py`
+- `S27` `M` `src/vaultspec_rag/commands/_provision.py`
+- `S27` `M` `src/vaultspec_rag/logging_config.py`
+- `S27` `A` `src/vaultspec_rag/operator_state/_service_environment.py`
+- `S27` `M` `src/vaultspec_rag/serviceclient/_discovery.py`
+- `S27` `M` `src/vaultspec_rag/tests/conftest.py`
+- `S27` `M` `src/vaultspec_rag/tests/test_cli.py`
+- `S27` `M` `src/vaultspec_rag/tests/test_cli_qdrant.py`
+- `S27` `M` `src/vaultspec_rag/tests/test_cli_server_start.py`
+- `S27` `M` `src/vaultspec_rag/tests/test_cli_service_watch.py`
+- `S27` `M` `src/vaultspec_rag/tests/test_machine_discovery_resolution.py`
+- `S27` `A` `src/vaultspec_rag/tests/test_provisioning_gate.py`
+- `S27` `M` `src/vaultspec_rag/tests/test_readiness.py`
+- `S27` `A` `src/vaultspec_rag/tests/test_readiness_service_environment.py`
+- `S27` `M` `src/vaultspec_rag/tests/test_service_discovery_schema.py`
+- `S27` `A` `src/vaultspec_rag/tests/test_service_environment.py`
+- `S27` `M` `src/vaultspec_rag/tests/test_start_backend_decision.py`
+- `S27` `M` `src/vaultspec_rag/tests/test_start_provisioning.py`
+- `S27` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S27` `verify:` `pytest unit whole tier in six chunks (Windows)` -> `pass`
+- `S27` `verify:` `pytest unit CLI, service, start, install, readiness, qdrant modules (Linux)` -> `pass`
+- `S27` `verify:` `eight break-and-restore proofs` -> `pass`
+- `S27` `by:` `claude`
+- `S32` `M` `src/vaultspec_rag/_operator_commands.py`
+- `S32` `M` `src/vaultspec_rag/_process_probe.py`
+- `S32` `M` `src/vaultspec_rag/_readiness.py`
+- `S32` `M` `src/vaultspec_rag/_win32.py`
+- `S32` `M` `src/vaultspec_rag/cli/_status_labels.py`
+- `S32` `A` `src/vaultspec_rag/qdrant_runtime/_child_tree.py`
+- `S32` `M` `src/vaultspec_rag/qdrant_runtime/_constants.py`
+- `S32` `M` `src/vaultspec_rag/qdrant_runtime/_supervise.py`
+- `S32` `M` `src/vaultspec_rag/server/_lifecycle.py`
+- `S32` `M` `src/vaultspec_rag/server/_lifespan.py`
+- `S32` `M` `src/vaultspec_rag/tests/_fake_qdrant_binary.py`
+- `S32` `M` `src/vaultspec_rag/tests/test_cli_service_status.py`
+- `S32` `M` `src/vaultspec_rag/tests/test_process_probe_os_guards.py`
+- `S32` `A` `src/vaultspec_rag/tests/test_qdrant_restart_accounting.py`
+- `S32` `A` `src/vaultspec_rag/tests/test_qdrant_tree_stop.py`
+- `S32` `verify:` `pytest unit supervisor, status, readiness, process modules (Windows 669 passed, Linux 696 passed)` -> `pass`
+- `S32` `verify:` `eleven break-and-restore proofs across both platforms` -> `pass`
+- `S32` `by:` `claude`
+- `S31` `M` `.env.example`
+- `S31` `M` `docs/configuration.md`
+- `S31` `M` `src/vaultspec_rag/config/_schema.py`
+- `S31` `M` `src/vaultspec_rag/config/_settings.py`
+- `S31` `M` `src/vaultspec_rag/config/_types.py`
+- `S31` `A` `src/vaultspec_rag/tests/test_model_fetch_bounds.py`
+- `S31` `verify:` `pytest unit model fetch, settings and docs modules (Windows 470 passed, Linux 139 passed)` -> `pass`
+- `S31` `verify:` `three break-and-restore proofs` -> `pass`
+- `S31` `by:` `claude`
+- `S30` `M` `docs/cli.md`
+- `S30` `M` `src/vaultspec_rag/cli/_service_lifecycle.py`
+- `S30` `M` `src/vaultspec_rag/cli/_service_qdrant.py`
+- `S30` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S30` `A` `src/vaultspec_rag/tests/test_cli_interrupted_fetch.py`
+- `S30` `verify:` `pytest unit lifecycle CLI modules (Windows 428 passed, Linux 69 passed)` -> `pass`
+- `S30` `verify:` `four break-and-restore proofs` -> `pass`
+- `S30` `by:` `claude`
+- `S24` `M` `src/vaultspec_rag/_process_probe.py`
+- `S24` `M` `src/vaultspec_rag/commands/_model_download.py`
+- `S24` `M` `src/vaultspec_rag/indexer/_preprocess_runner.py`
+- `S24` `M` `src/vaultspec_rag/tests/test_model_fetch.py`
+- `S24` `M` `src/vaultspec_rag/tests/test_process_probe_os_guards.py`
+- `S24` `verify:` `pytest unit preprocess, process-probe, model-fetch modules (Windows 331 passed, Linux 311 passed)` -> `pass`
+- `S24` `verify:` `two break-and-restore proofs` -> `pass`
+- `S24` `by:` `claude`
+- `S22` `M` `CHANGELOG.md`
+- `S22` `M` `README.md`
+- `S22` `M` `docs/backends.md`
+- `S22` `M` `docs/cli.md`
+- `S22` `M` `docs/installation.md`
+- `S22` `A` `docs/provisioning.md`
+- `S22` `M` `src/vaultspec_rag/cli/_install.py`
+- `S22` `M` `src/vaultspec_rag/cli/_service_lifecycle.py`
+- `S22` `M` `src/vaultspec_rag/cli/_service_qdrant.py`
+- `S22` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S22` `verify:` `dev lint links, docs-conventions, citations, docs-cli, docs-version, markdown` -> `pass`
+- `S22` `verify:` `pytest unit docs and CLI modules (Windows)` -> `pass`
+- `S22` `by:` `claude`
+- `S13` `verify:` `ruff, ty and the start tests` -> `pass`
+- `S13` `by:` `claude`
+- `S12` `M` `src/vaultspec_rag/tests/integration/conftest.py`
+- `S12` `M` `src/vaultspec_rag/tests/test_model_setup.py`
+- `S12` `verify:` `pytest -m subprocess_gpu against a live service, 71 passed and 3 failed in code this work does not change` -> `fail`
+- `S12` `by:` `claude`
+- `S32` `M` `src/vaultspec_rag/qdrant_runtime/_child_tree.py`
+- `S32` `A` `src/vaultspec_rag/tests/test_pid_image.py`
+- `S32` `A` `src/vaultspec_rag/tests/test_qdrant_child_exit.py`
+- `S32` `verify:` `whole unit tier on Windows, 8025 passed and 16 skipped` -> `pass`
+- `S28` `M` `src/vaultspec_rag/_program_lookup.py`
+- `S28` `M` `src/vaultspec_rag/tests/test_program_lookup.py`
+- `S28` `M` `src/vaultspec_rag/tests/test_program_lookup_sites.py`
+- `S28` `M` `src/vaultspec_rag/tests/_operator_directory_guard.py`
+- `S28` `M` `src/vaultspec_rag/tests/test_operator_directory_guard.py`
+- `S28` `M` `src/vaultspec_rag/tests/_singleton_root_fixtures.py`
+- `S28` `A` `src/vaultspec_rag/tests/test_session_uv_environment.py`
+- `S28` `M` `conftest.py`
+- `S28` `M` `dev/runner.py`
+- `S28` `verify:` `whole unit tier on Windows, 8025 passed and 16 skipped` -> `pass`
+- `S28` `by:` `claude`
+- `S18` `M` `src/vaultspec_rag/qdrant_runtime/_managed_install.py`
+- `S18` `M` `src/vaultspec_rag/qdrant_runtime/_spawn_trust.py`
+- `S18` `M` `src/vaultspec_rag/qdrant_runtime/_provision.py`
+- `S18` `M` `src/vaultspec_rag/qdrant_runtime/_constants.py`
+- `S18` `M` `src/vaultspec_rag/_atomic_write.py`
+- `S18` `M` `src/vaultspec_rag/tests/_fake_qdrant_binary.py`
+- `S18` `M` `src/vaultspec_rag/tests/test_managed_install.py`
+- `S18` `M` `src/vaultspec_rag/tests/test_qdrant_install_recovery.py`
+- `S18` `M` `src/vaultspec_rag/tests/test_qdrant_runtime.py`
+- `S18` `M` `docs/provisioning.md`
+- `S18` `M` `CHANGELOG.md`
+- `S18` `verify:` `whole unit tier on Windows, 8025 passed and 16 skipped` -> `pass`
+- `S18` `by:` `claude`
+
+## Notes
+
+- `S06` Commits bed82805 and 5c754e91. The 5c754e91 message states 28 tests in `test_provision.py;` the true count is 24. GPU and integration tiers not run: resident service stopped.
+- `S09` Commit e605fc13, shared with the S10 downloader half and the S07 reader half because the declared-but-unread settings guards forbid landing settings without their readers. Tree-wide lint type is red on `tests/test_monitor_inventory.py,` which predates this plan.
+- `S01` Commit a2a61208. All six archive digests reproduced from the pinned host; executable digests derived three ways with identical results. No binary executed.
+- `S14` Commit c414417b.
+- `S02` Commit 71727554. A set-but-unusable operator setting raises rather than falling through to the managed install.
+- `S08` Commit aeda6411. Two TestProvision cases were red only against the then-uncommitted install-state change and were removed in ab883647. Integration supervisor call sites type-check but were not executed: resident service stopped.
+- `S07` Commits e605fc13 (joint, reader half) and 544f095a (status label). The start-time console announcement of an operator-supplied binary landed with S12 in 3676b615, where the start's binary decision moved into the provisioning front door.
+- `S12` Commit 3676b615. server warmup now exits 1 when a model could not be fetched or is missing offline. The download-success branch of the model fetch had no unit coverage at this commit.
+- `S03` Commit 4aece36e.
+- `S04` Commit ab883647.
+- `S05` Commit a9d17cb8. One live Windows-asset provision exercised the retry and deadline path against the real release.
+- `S10` Commits e605fc13 (joint, downloader half), a4352938 (constants deleted, pin tool repointed), 981ba9e4 (superseded download guard tests retired), 2b4760de (cryptography declared for the loopback HTTPS tests; lock format left at revision 3).
+- `S11` Commit 3a964232. The CUDA wheel index keeps its constant: an override would be persisted in a workspace file and would break the canonical-configuration check and the lockfile-derived torch version. The commit message's wide-run sentence describes base 59d99d82, three commits earlier; the landed commit was verified separately. HTTP daemon ordering is pinned by a source-order test, not by starting the daemon.
+- `S13` Commits b2fa5e50 and 560c6c52 (loopback hub coverage of the real model download; `dev/warm_models.py` repointed at the front door). The guide still says server qdrant install --binary registers an operator binary, true at this commit and rewritten when that option is removed.
+- `S20` Commits a44ebf9d and 3d50a180. One declared substitution remains in `test_document_index_symlinks.py:` the device forward on a model built without weights, because the unit tier has no accelerator. The 31 monitor cases could not be re-confirmed after commit because a peer's in-progress move left the CLI unimportable.
+- `S18` Commit 9cf219fa. Live proof in isolated temp dirs on Windows and WSL Linux: pinned archive provisioned from the official host, real 1.19.0 binary started through the supervisor, restarted, stopped. The branch for platforms with no descriptor execution (macOS, BSD, Linux without proc) has not been run on any host; it cannot see a swap-and-swap-back. On Linux a descriptor-created process has the descriptor number as its kernel short name. One load flake seen once in three drain-timing tests, not reproduced in two isolated reruns.
+- `S21` Commit da9944f1, binary half only; the model half is not yet committed. In the suite the mid-write disk failure is simulated with a constructed ENOSPC on a real staging file; outside the suite the install was run on a real 4 MiB tmpfs under WSL with the kernel's own ENOSPC. The commit message says Python 3.14 for the Linux run; it was 3.13.14. The after-body deadline-cut test has no failing run on Windows or Linux.
+- `S18` Commit d42cdcbe. The integration pytest entry needs a GPU loan WSL cannot have, so the two test functions were called directly with the arguments their fixtures supply; they have not run through pytest on any host.
+- `S21` Commit fb3d1962, model half. Each repository downloads in a child interpreter; the parent enforces a progress floor and kills the process tree on a breach. The native xet transport is not exercised in the unit tier; what is proven is the process kill. Out-of-space is staged by the hub declaring a size above the volume's real free space; a volume filling mid-transfer is covered only at the classification seam. No transfer against the real hub was run. The kill-descendants, kill, wait, confirm composition now exists twice, here and in the indexer's preprocess runner.
+- `S15` Commit 4b7f2ee0, one joint commit for the operator-route change across three layers because no intermediate state passes the gates. Verified in an export of HEAD plus the 32 paths on Windows and in WSL. The unconsumed-definitions guard was red at the parent on three helper functions from ff9dc50d, not on these paths. Two torch-dependent readiness tests fail in the torch-free WSL environment, as on the parent.
+- `S16` Commit 4b7f2ee0, one joint commit for the operator-route change across three layers because no intermediate state passes the gates. Verified in an export of HEAD plus the 32 paths on Windows and in WSL. The unconsumed-definitions guard was red at the parent on three helper functions from ff9dc50d, not on these paths. Two torch-dependent readiness tests fail in the torch-free WSL environment, as on the parent.
+- `S17` Commit 4b7f2ee0, one joint commit for the operator-route change across three layers because no intermediate state passes the gates. Verified in an export of HEAD plus the 32 paths on Windows and in WSL. The unconsumed-definitions guard was red at the parent on three helper functions from ff9dc50d, not on these paths. Two torch-dependent readiness tests fail in the torch-free WSL environment, as on the parent.
+- `S25` Commits ff9dc50d (helper), e79b761f (model download child), 37c77b15 (daemon launch, environment probe, preprocess runner, pool guard, recognisers), 79b61667 (source guard, model child test). ff9dc50d left the unconsumed-definitions guard red until 37c77b15 landed the consumers. A parent started with the ignore-environment flag and not in safe-path mode is refused a worker pool. The MCP server entry is rendered by another repository and still starts the module from the workspace directory; not changed here.
+- `S26` Commit 9a80b406. Precedence is flag, exported variable, saved choice, default; the remote address is orthogonal. `cli/_process.py` needed no change: fourteen combinations are driven through the decision, the daemon environment, and a real child interpreter. No start that spawns a real daemon was run.
+- `S28` Commit 9ee5bd95. Begun by a worker that was terminated mid-step; the uncommitted files were read in full, the taskkill site and the search-path declarations were added, and every guard was mutation-proven afterwards against a hashed snapshot. A relative `HF_HUB_CACHE` is not rewritten. The four monitor lifecycle integration cases error at setup for want of a compiled monitor, as before. Not run: the integration tier, macOS, a real resident service.
+- `S31` Commit d5a72983, part of this Step only: every hub request including the size query is now the killable download process's and carries a timeout, and the stop no longer walks a process's ancestry. Still open in this Step: the whole-operation deadline setting, one contention budget across repositories, local cache fault classification, and replacing the substituted start-step tests. Written by a worker that was terminated before committing; the files were byte-identical to its verified copy and were re-run once before commit.
+- `S29` Committed as f3e831a6. Integrated from a terminated worker's tree by three-way merge; eight cross-lane tests repaired in the same commit.
+- `S19` Committed as 960027fd together with S23. Pinned commits: Qwen/Qwen3-Embedding-0.6B at 97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3, BAAI/bge-reranker-v2-m3 at 953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e. The sparse model has no revision setting.
+- `S23` Committed as 960027fd together with S19. Six guards proven to fail when broken and pass when restored: digest comparison, extra file, file added during load, pickle-only weights, missing shard, source digest. Residual stated in the module: off Windows a writer to the model cache can replace a file between the hash and the loader's read; weights are safetensors only and the executed source is the hashed buffer. GPU tier not run: no model was loaded on a device in this session.
+- `S27` Committed as bc1f583c. Integrated from a terminated worker's draft by three-way merge. Added the doctor readiness tests the draft lacked. Eight guards proven both ways. install --skip-torch removed. Tests that reached host behaviour without pinning a host were pinned, so the accelerator-free lane asserts the same branch.
+- `S32` Committed as 864e0b97. Also fixes a defect found during this work: stop() ended only the supervised process, so a server started by an operator's launcher outlived it. The orphan reap at startup is unchanged: it acts on the recorded pid only and refuses a process whose image is not qdrant, so a launcher's orphan is refused rather than half-killed. macOS not run; the group path relies on os.waitid, present there from Python 3.13.
+- `S31` Committed as 0e5893e9; the size query moved into the download child earlier, in d5a72983. New setting `VAULTSPEC_RAG_MODEL_FETCH_DEADLINE_SECONDS,` default 14400. The start-step tests were already driven against the real provisioner in f3e831a6.
+- `S30` Committed as 93acc847. Residual, stated in the install test: a read waiting on a silent release source is not woken by an interrupt, so the install verb answers when that read gives up, bounded by the 30 second stall limit. The top-level install command's own interrupt handling was not changed.
+- `S24` Committed as e5a563aa. No test stages a child whose descendants cannot be identified: nothing short of replacing the process probe produces that state, so that branch is covered by the type checkers and by reading, not by a run.
+- `S22` Committed as 732b69de, with the stop-envelope test correction in 1674b241. New guide docs/provisioning.md, completed from a draft left by a terminated worker and re-checked against the code at each marker. macOS statements are taken from the code and its comments; nothing was run on macOS.
+- `S13` Committed as 7c6eec5c after the plan closed: a docstring still said the daemon loads its models online-capable.
+- `S12` Committed as 05745ee7 after the plan closed. The live-service fixture still required the cache-only log lines this step removed, so every test that starts a service failed at setup; found by the subprocess GPU tier, which no unit run reaches. Two refusals of the check proven both ways.
+- `S32` Committed as fe673f9c and ed15acde after the plan closed, from the independent review. The image probe reads through psutil where /proc has none; the exit peek asks whether the platform has it and says what is given up where it does not. Neither POSIX branch ran on this host.
+- `S28` Committed as 7a17cb7d after the plan closed, from the independent review: PowerShell is taken from the operating system's directories. Also 741c7c20 and 3b616b71: a test session may launch uv run with no sync only on the environment its interpreter runs from, and a session from any other interpreter points uv's project environment into its temporary tree. Twenty-seven guard mutations recorded in the test docstrings; nothing ran off Windows.
+- `S18` Committed as 27cffa4c after the plan closed, from the independent review. The managed directory is listed wherever the executable is judged, before a process is created and again once it exists; anything no install wrote refuses the start under `qdrant_install_foreign_files.` Six mutations proven both ways. Proven against the real installed binary: status reported the refusal, start exited 1 with no server process, and a clean directory started in 38.6 seconds. Residual: a file written and removed between the two listings is not seen. The directory-cannot-be-listed case is skipped on Windows and first runs on Linux in continuous integration.

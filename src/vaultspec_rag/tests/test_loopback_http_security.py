@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from typing import TYPE_CHECKING
 
 import pytest
@@ -15,6 +14,7 @@ from ..server import ServerRouteRuntime, create_http_app
 from ..service import ServiceRegistry
 from ..serviceclient._discovery import _merge_service_status, _replace_service_status
 from ..serviceclient._transport import _do_http_call, _try_http_health
+from ._private_files import assert_private_file
 from ._production_service import SERVICE_TOKEN, production_service, publish_discovery
 
 if TYPE_CHECKING:
@@ -244,43 +244,6 @@ def test_wire_clients_use_only_matching_discovery(isolated_status_dir: Path) -> 
         assert restored is not None and "jobs" in restored
 
 
-def _assert_private_file(path: Path) -> None:
-    # Disabling private creation failed the DACL assertions for both publishers
-    # and replacement of a public file; restoration passed.
-    if sys.platform != "win32":
-        assert path.stat().st_mode & 0o777 == 0o600
-        assert path.stat().st_uid == os.getuid()
-        return
-    import ctypes
-    from ctypes import wintypes
-
-    from .._win32 import _anchor_acl_api, _current_user_sid
-
-    api, kernel32 = _anchor_acl_api()
-    api.ConvertSecurityDescriptorToStringSecurityDescriptorW.argtypes = (
-        ctypes.c_void_p,
-        wintypes.DWORD,
-        wintypes.DWORD,
-        ctypes.POINTER(ctypes.c_wchar_p),
-        ctypes.c_void_p,
-    )
-    api.ConvertSecurityDescriptorToStringSecurityDescriptorW.restype = wintypes.BOOL
-    descriptor = ctypes.c_void_p()
-    text = ctypes.c_wchar_p()
-    try:
-        result = api.GetNamedSecurityInfoW(
-            str(path), 1, 4, None, None, None, None, ctypes.byref(descriptor)
-        )
-        assert result == 0
-        assert api.ConvertSecurityDescriptorToStringSecurityDescriptorW(
-            descriptor, 1, 4, ctypes.byref(text), None
-        )
-        assert text.value == f"D:P(A;;FA;;;{_current_user_sid(api, kernel32)})"
-    finally:
-        kernel32.LocalFree(text)
-        kernel32.LocalFree(descriptor)
-
-
 def test_private_json_replacement_protects_existing_public_files(
     tmp_path: Path,
 ) -> None:
@@ -292,7 +255,7 @@ def test_private_json_replacement_protects_existing_public_files(
         path, {"service_token": _TOKEN}, JsonWriteOptions(private=True)
     )
     assert json.loads(path.read_text(encoding="utf-8")) == {"service_token": _TOKEN}
-    _assert_private_file(path)
+    assert_private_file(path)
     assert list(directory.iterdir()) == [path]
 
 
@@ -306,13 +269,13 @@ def test_both_discovery_publications_are_private(isolated_status_dir: Path) -> N
 
     payload = {"pid": os.getpid(), "port": 8765, "service_token": _TOKEN}
     _merge_service_status(payload)
-    _assert_private_file(isolated_status_dir / "service.json")
+    assert_private_file(isolated_status_dir / "service.json")
     _replace_service_status(payload)
-    _assert_private_file(isolated_status_dir / "service.json")
+    assert_private_file(isolated_status_dir / "service.json")
     lease, _ = acquire_machine_lock_lease()
     assert lease is not None
     try:
         publish_machine_discovery(lease, payload)
-        _assert_private_file(machine_discovery_path())
+        assert_private_file(machine_discovery_path())
     finally:
         release_machine_lock_lease(lease)

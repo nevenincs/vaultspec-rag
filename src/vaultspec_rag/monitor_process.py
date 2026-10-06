@@ -7,7 +7,6 @@ import logging
 import math
 import os
 import queue
-import shutil
 import signal
 import subprocess
 import sys
@@ -15,6 +14,7 @@ import threading
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import cast
+from urllib.parse import urlsplit
 
 from ._atomic_write import write_json_atomically
 from ._ports import next_available_port
@@ -25,6 +25,7 @@ from ._process_probe import (
     send_signal,
     wait_for_exit,
 )
+from ._program_lookup import Where, find_program
 from .config._settings import managed_status_dir
 from .config._types import EnvVar
 from .serviceclient._discovery import status_write_lock
@@ -40,7 +41,13 @@ def _resolve_monitor_executable() -> Path:
         if not executable.is_absolute():
             raise RuntimeError("The monitor executable override must be absolute.")
     else:
-        installed = shutil.which("vaultspec-rag-monitor")
+        # The monitor ships in the same archive as this package's commands and
+        # is otherwise put on PATH by the operator. It is started on every
+        # service start, so it is never looked for in the directory that start
+        # was typed in.
+        installed = find_program(
+            "vaultspec-rag-monitor", Where.INSTALLATION, Where.SEARCH_PATH
+        )
         if installed is None:
             raise RuntimeError(
                 "The compiled vaultspec-rag-monitor executable is required. "
@@ -51,6 +58,27 @@ def _resolve_monitor_executable() -> Path:
     if not executable.is_file():
         raise RuntimeError(f"The compiled monitor executable is missing: {executable}")
     return executable
+
+
+def _access_link_port(link: str) -> int:
+    """Return the port of a loopback link carrying a capability, else zero.
+
+    A monitor that reports a bare port enforces no caller credential, so its
+    line must never be accepted as readiness.
+    """
+    try:
+        parts = urlsplit(link)
+        port = parts.port
+    except ValueError:
+        return 0
+    if (
+        parts.scheme != "http"
+        or parts.hostname != "127.0.0.1"
+        or port is None
+        or not parts.fragment
+    ):
+        return 0
+    return port
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,17 +166,21 @@ class MonitorProcess:
         self.backend_port = backend_port
         self.process: subprocess.Popen[str] | None = None
         self.identity: MonitorIdentity | None = None
+        self.access: str | None = None
         self.reader: threading.Thread | None = None
 
     def discovery_fields(self) -> dict[str, object]:
         identity = self.identity
         if identity is None or self.process is None or self.process.poll() is not None:
             return {}
-        return {
+        fields: dict[str, object] = {
             "monitor_port": identity.port,
             "monitor_pid": identity.pid,
             "monitor_start_time": identity.start_time,
         }
+        if self.access is not None:
+            fields["monitor_url"] = self.access
+        return fields
 
     def start(self, *, timeout: float = 30) -> None:
         if self.process is not None and self.process.poll() is None:
@@ -189,7 +221,7 @@ class MonitorProcess:
                 os.getpid(), owner_start, process.pid, child_start
             )
             self._publish_identity()
-            ready: queue.Queue[int] = queue.Queue()
+            ready: queue.Queue[str] = queue.Queue()
             self.reader = threading.Thread(
                 target=self._read_output,
                 args=(ready,),
@@ -198,12 +230,16 @@ class MonitorProcess:
             )
             self.reader.start()
             try:
-                port = ready.get(timeout=timeout)
+                access = ready.get(timeout=timeout)
             except queue.Empty as exc:
                 raise RuntimeError("The monitor did not become ready in time.") from exc
-            if port <= self.backend_port or port > 65535 or process.poll() is not None:
+            if not access or process.poll() is not None:
                 raise RuntimeError("The monitor exited before becoming ready.")
+            port = _access_link_port(access)
+            if port <= self.backend_port:
+                raise RuntimeError("The monitor reported no usable access link.")
             self.identity = replace(self.identity, port=port)
+            self.access = access
             self._publish_identity()
         except BaseException:
             if not self.stop():
@@ -217,18 +253,19 @@ class MonitorProcess:
         with status_write_lock(path):
             write_json_atomically(path, asdict(self.identity))
 
-    def _read_output(self, ready: queue.Queue[int]) -> None:
+    def _read_output(self, ready: queue.Queue[str]) -> None:
         process = self.process
         if process is None or process.stdout is None:
             return
         try:
             for line in process.stdout:
+                # The readiness line carries the capability and is never logged.
                 if line.startswith(_READY_PREFIX):
-                    ready.put(int(line.removeprefix(_READY_PREFIX).strip()))
+                    ready.put(line.removeprefix(_READY_PREFIX).strip())
                 else:
                     logger.info("monitor: %s", line.rstrip()[:4096])
         finally:
-            ready.put(0)
+            ready.put("")
 
     def stop(self) -> bool:
         process = self.process
@@ -253,5 +290,6 @@ class MonitorProcess:
             if _read_identity(path) == self.identity:
                 path.unlink(missing_ok=True)
         self.identity = None
+        self.access = None
         self.process = None
         return True

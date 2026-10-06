@@ -27,10 +27,34 @@ def test_no_module_signals_a_process_directly() -> None:
     # `os.kill` is how a refused kill gets swallowed. Routing every signal
     # through `send_signal` is what makes PermissionError a reportable outcome
     # instead of a silent pass, so a new raw call re-opens the original defect.
-    found = find_offenders(lambda n: is_attr_call(n, "os", "kill"))
+    # A group signal carries a second hazard: it is addressed by a number that
+    # can come to name another program's group, so the one sender of it states
+    # when that number may be trusted.
+    found = find_offenders(
+        lambda n: is_attr_call(n, "os", "kill") or is_attr_call(n, "os", "killpg")
+    )
     assert not found, (
-        f"raw os.kill outside _process_probe at {found}; "
-        "use _process_probe.send_signal so a refused signal is reported"
+        f"raw os.kill or os.killpg outside _process_probe at {found}; "
+        "use _process_probe.send_signal or send_group_signal so a refused "
+        "signal is reported"
+    )
+
+
+def test_no_module_composes_its_own_child_tree_teardown() -> None:
+    # Two modules each witnessed a child's descendants, killed them, killed
+    # the child and waited, and the two had drifted: one opened its
+    # confirmation window before a slow ancestry walk and so reported
+    # survivors it had never waited for, the other said nothing when the
+    # descendants could not be identified. The one teardown is the only
+    # caller of the descendant kill.
+    found = find_offenders(
+        lambda n: (
+            isinstance(n.func, ast.Name) and n.func.id == "kill_process_descendants"
+        )
+    )
+    assert not found, (
+        f"a child-tree teardown composed outside _process_probe at {found}; "
+        "use kill_child_tree"
     )
 
 
@@ -75,12 +99,15 @@ def test_no_module_redeclares_the_kernel32_job_object_calls() -> None:
                 "CreateJobObjectW",
                 "SetInformationJobObject",
                 "AssignProcessToJobObject",
+                "TerminateJobObject",
+                "QueryInformationJobObject",
             }
         )
     )
     assert not found, (
         f"direct kernel32 Job Object calls outside _win32 at {found}; "
-        "use create_kill_on_close_job / assign_process_to_job instead"
+        "use create_kill_on_close_job / assign_process_to_job / terminate_job "
+        "/ job_member_count instead"
     )
 
 
@@ -159,7 +186,7 @@ class TestLoopbackHttpHasOneOpener:
     #: That is a different threat from a loopback probe, and folding it into
     #: the no-redirect opener would delete a security control.
     _ALLOWED_OPENERS: ClassVar[dict[str, str]] = {
-        "_provision.py": "host-pinned redirects for the binary download"
+        "_download.py": "host-pinned redirects for the binary download"
     }
 
     def test_no_module_builds_its_own_opener(self) -> None:

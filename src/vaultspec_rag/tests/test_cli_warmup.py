@@ -20,11 +20,15 @@ class TestServiceWarmup:
         result = runner.invoke(app, ["server", "warmup"])
         assert result.exit_code == 0
 
-    def test_warmup_reports_cached_models(self):
-        """All three models should report as cached in test environment."""
+    def test_warmup_reports_verified_models(self):
+        """All three default models are in the cache and pass their check.
+
+        A pinned model that is present is reported as verified, not merely as
+        cached: every file was compared with its committed digest.
+        """
         result = runner.invoke(app, ["server", "warmup"])
         assert result.exit_code == 0
-        assert "cached" in result.output
+        assert result.output.count(" verified") == 3, result.output
         assert "Dense (Qwen3)" in result.output
         assert "Sparse (SPARSEUP)" in result.output
         assert "Reranker (CrossEncoder)" in result.output

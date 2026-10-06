@@ -86,6 +86,8 @@ def test_vite_monitor_listener_and_admission(
     restoring loopback passes. Bypassing admission fails the peer assertion.
     Removing upgrade admission fails the remote WebSocket assertion;
     restoring admission passes while local HMR still upgrades.
+    Admitting every loopback caller fails the 401 assertion, and dropping the
+    plugin's announcement fails the access-link assertion; restoring each passes.
     """
     node = shutil.which("node")
     assert node is not None
@@ -97,8 +99,11 @@ def test_vite_monitor_listener_and_admission(
         "import { createServer, preview } from 'vite';"
         "const {mode,wildcard}=JSON.parse(process.argv[1]);"
         "const settings={port:0,strictPort:true,...(wildcard?{host:'0.0.0.0'}:{})};"
-        "const runtime=mode==='dev'?await createServer({server:settings}):"
-        "await preview({preview:settings});"
+        "const lines=[];const customLogger={info:line=>lines.push(line),warn(){},"
+        "warnOnce(){},error:line=>console.error(line),clearScreen(){},"
+        "hasErrorLogged:()=>false,hasWarned:false};"
+        "const runtime=mode==='dev'?await createServer({customLogger,server:settings}):"
+        "await preview({customLogger,preview:settings});"
         "try {if(mode==='dev')await runtime.listen();"
         "const {address,port}=runtime.httpServer.address();"
         "assert.equal(address,wildcard?'0.0.0.0':'127.0.0.1','listener address');"
@@ -111,7 +116,14 @@ def test_vite_monitor_listener_and_admission(
         "resolve();});});}"
         "const base='http://127.0.0.1:'+port;"
         "assert.equal((await fetch(base+'/')).status,200);"
-        "assert.equal((await fetch(base+'/api/monitor/health')).status,503);"
+        # The owner learns the capability only from the server's own log line.
+        "const link=lines.map(line=>/http:\\/\\/127\\.0\\.0\\.1:\\d+\\/#capability="
+        "[\\w-]{43}/.exec(line)?.[0]).find(Boolean);"
+        "assert.ok(link,'announced access link');"
+        "assert.equal(new URL(link).port,String(port));"
+        "const headers={authorization:'Bearer '+new URL(link).hash.slice(12)};"
+        "assert.equal((await fetch(base+'/api/monitor/health')).status,401);"
+        "assert.equal((await fetch(base+'/api/monitor/health',{headers})).status,503);"
         "for(const path of ['/','/index.html','/api/monitor/health']){"
         "const status=await new Promise((resolve,reject)=>{"
         "const call=request(base+path,{localAddress:'127.0.0.2',"

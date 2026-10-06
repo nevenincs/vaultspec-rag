@@ -21,8 +21,11 @@ from vaultspec_core.config import (
 
 from ..._process_probe import pid_alive
 from ...config._settings import get_config
+from ...config._types import EnvVar
+from ...qdrant_runtime._credential import read_managed_api_key
 from ...serviceclient._transport import _try_http_health
 from .._config_fixtures import reset_config as reset_rag_config
+from .._fake_qdrant_binary import unpinned
 from .._ports import free_loopback_port
 
 if TYPE_CHECKING:
@@ -120,20 +123,40 @@ def serve_qdrant(binary: Path, root: Path) -> Generator[QdrantSupervisor]:
     and teardown live in one place. The stop runs from a ``finally``: a test
     that fails mid-body would otherwise leave a real server process and its
     storage behind for the rest of the session.
+
+    The served child's key is exported as the configured key for as long as it
+    runs, so a store or client built through the production constructor
+    authenticates to it. A caller serving a second child inside the first's
+    lifetime builds its clients of the first before serving the second.
     """
     from ...qdrant_runtime._supervise import QdrantSupervisor as _Supervisor
 
     supervisor = _Supervisor(
-        binary,
+        unpinned(binary),
         http_port=free_loopback_port(),
         grpc_port=free_loopback_port(),
         storage_dir=root / "storage",
         log_path=root / "qdrant.log",
     )
     supervisor.start(timeout=get_config().qdrant_ready_timeout_seconds)
+    key_var = EnvVar.QDRANT_API_KEY.value
+    prior_key = os.environ.get(key_var)
     try:
+        # The served child demands the key it published. It is addressed
+        # through the URL knob on an ephemeral port rather than as the managed
+        # endpoint, so its key reaches stores and clients the way an
+        # operator's does: as the configured key.
+        api_key = read_managed_api_key(supervisor.storage_dir)
+        assert api_key, "a served qdrant must publish its credential"
+        os.environ[key_var] = api_key
+        reset_rag_config()
         yield supervisor
     finally:
+        if prior_key is None:
+            os.environ.pop(key_var, None)
+        else:
+            os.environ[key_var] = prior_key
+        reset_rag_config()
         supervisor.stop()
 
 
@@ -235,15 +258,16 @@ def _resolve_host_provisioned_qdrant() -> tuple[Path, Path] | None:
     Read against the host's real config (call this BEFORE any status-dir
     override), so the source is the genuine managed install under
     ``~/.vaultspec-rag/bin/qdrant/{version}/``. Returns ``(binary, manifest)`` or
-    ``None`` when no provisioned (pinned, manifest-backed) install exists.
+    ``None`` when the managed install is absent or has no manifest to copy.
     """
     from ...qdrant_runtime._constants import MANIFEST_FILENAME, QDRANT_SERVER_VERSION
     from ...qdrant_runtime._resolve import resolve_binary
 
     resolved = resolve_binary(QDRANT_SERVER_VERSION)
     if resolved is None or resolved.source != "provisioned":
-        # Only a provisioned (pinned, manifest-backed) binary is mirrorable with
-        # its verification intact; an env/PATH binary carries no manifest.
+        # Only the managed install verifies wherever it is copied to: it is
+        # held to a committed digest. An operator binary is held to a digest
+        # its operator declared in settings a mirror does not carry.
         return None
     manifest = resolved.path.parent / MANIFEST_FILENAME
     if not manifest.is_file():
@@ -260,9 +284,9 @@ def _mirror_managed_qdrant_binary(status_dir: Path, source: tuple[Path, Path]) -
     host's real provisioned install (binary plus its manifest, supplied by
     :func:`_resolve_host_provisioned_qdrant`) into the isolated dir.
 
-    The pinned-digest contract is preserved: the manifest is copied verbatim, so
-    the supervisor's pre-execution SHA256 re-hash still runs against the real
-    committed digest - the verification boundary is never weakened.
+    The pinned-digest contract is preserved: the copy is judged by its bytes
+    against the committed digests at resolution and again at every spawn, as
+    the original is. The manifest travels as the record of how it arrived.
     """
     from ...qdrant_runtime._constants import MANIFEST_FILENAME, QDRANT_SERVER_VERSION
     from ...qdrant_runtime._resolve import binary_filename

@@ -282,7 +282,6 @@ class ServiceRegistry(
 
     def _load_model(self, model_name: str | None = None) -> None:
         """Load the shared embedding model after admission is already held."""
-        from .config._types import hf_cache_only
         from .embeddings import EmbeddingModel
         from .memory_probe import sample_resident_accelerator_baseline
 
@@ -291,11 +290,7 @@ class ServiceRegistry(
         with self._lock:
             if self._model is not None:
                 return
-            local_files_only = hf_cache_only()
-            self._model = EmbeddingModel(
-                model_name=model_name,
-                local_files_only=local_files_only,
-            )
+            self._model = EmbeddingModel(model_name=model_name)
             reranker_loaded = (
                 self._gpu_residency_recipe.restore_reranker
                 if self._gpu_residency_recipe is not None
@@ -306,7 +301,6 @@ class ServiceRegistry(
                 restore_model=True,
                 restore_reranker=reranker_loaded,
             )
-            logger.info("EmbeddingModel cache-only mode: %s", local_files_only)
             logger.info("EmbeddingModel loaded")
             # The indexing budget subtracts the resident-model baseline;
             # record it while the freshly-loaded stack is idle so ceilings
@@ -366,12 +360,10 @@ class ServiceRegistry(
             if self._reranker is not None:
                 return self._reranker
             from .config._settings import get_config
-            from .config._types import hf_cache_only
             from .embeddings import load_reranker
 
             cfg = get_config()
-            local_files_only = hf_cache_only()
-            self._reranker = load_reranker(local_files_only=local_files_only)
+            self._reranker = load_reranker()
             with self._lock:
                 model_name = (
                     self._gpu_residency_recipe.model_name
@@ -384,10 +376,9 @@ class ServiceRegistry(
                     restore_reranker=True,
                 )
             logger.info(
-                "Shared CrossEncoder loaded on %s: %s (cache-only=%s)",
+                "Shared CrossEncoder loaded on %s: %s",
                 str(getattr(self._reranker, "device", "unknown")),
                 cfg.reranker_model,
-                local_files_only,
             )
             # The reranker loads lazily and outside the GPU lock; re-sample
             # the resident baseline so a late load raises it rather than

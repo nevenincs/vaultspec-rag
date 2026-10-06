@@ -64,7 +64,10 @@ if TYPE_CHECKING:
     help=(
         "Report readiness across two axes: installed dependencies (torch, "
         "models, qdrant binary) and the live service (a running daemon's "
-        "health). A dead daemon is reported as not ready."
+        "health). A dead daemon is reported as not ready. Each pinned "
+        "model's cached files are hashed against the digests compiled into "
+        "this tool, which reads several gigabytes and takes a few seconds; "
+        "a model with no such digests is reported as unpinned."
     ),
 )
 def service_doctor(
@@ -95,7 +98,13 @@ def service_doctor(
     compute = probe_interpreter(interpreter, ProbeDepth.VERIFY).compute
     # The holders that matter are the ones holding the environment the
     # service would run in, which is not necessarily this command's own.
-    report = get_readiness(holders_root=environment_root(interpreter), compute=compute)
+    # The deep check: this is the one command that proves the model cache
+    # without starting the service, so it pays for hashing it.
+    report = get_readiness(
+        holders_root=environment_root(interpreter),
+        compute=compute,
+        verify_models=True,
+    )
     service = _live_service_axis()
     mode = _mode_floor_axis(_resolve_doctor_target(ctx))
     overall_ready, status = _overall_readiness(report, service)

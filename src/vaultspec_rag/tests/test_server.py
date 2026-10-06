@@ -640,7 +640,7 @@ class TestVaultBoundaryValidation:
 
 
 class TestSensitiveFileDenyList:
-    """SEC-002: _is_sensitive_path blocks sensitive file patterns."""
+    """SEC-002: _is_sensitive_path blocks hidden and sensitive-named paths."""
 
     @pytest.mark.parametrize(
         "path",
@@ -656,12 +656,25 @@ class TestSensitiveFileDenyList:
             "tls/server.key",
             "service.json",
             ".vaultspec-rag/service.json",
-            # Nested sensitive dirs
+            # Hidden components at any depth
             "vendor/.git/objects/pack",
             "sub/dir/.vaultspec-rag/data",
+            "src/.cache/module.py",
+            # Hidden locations no pattern names
+            ".npmrc",
+            ".pypirc",
+            ".netrc",
+            ".ssh/id_rsa",
+            ".aws/credentials",
+            ".kube/config",
+            ".github/workflows/ci.yml",
+            ".vault/adr/test.md",
             # Mid-name matches for credentials/secrets patterns
             "my-credentials-backup.txt",
             "app.secrets.yaml",
+            # Case aliases of a pattern
+            "tls/SERVER.PEM",
+            "src/Secrets.py",
         ],
     )
     def test_sensitive_paths_blocked(self, path: str) -> None:
@@ -672,14 +685,15 @@ class TestSensitiveFileDenyList:
         [
             "src/main.py",
             "README.md",
-            ".vault/adr/test.md",
             "docs/environment.md",
             "config/settings.toml",
             "src/services/auth.py",
             # Edge cases that should NOT be blocked
             "src/service.py",
             "envconfig.toml",
-            ".github/workflows/ci.yml",
+            # Relative navigation is not a hidden name
+            "./main.py",
+            "src/../main.py",
         ],
     )
     def test_safe_paths_allowed(self, path: str) -> None:

@@ -27,8 +27,16 @@ from ..cli._status_labels import (
 )
 from ..config._types import EnvVar
 from ..operator_state._service import DegradationReason
-from ..qdrant_runtime._constants import QdrantRuntimeState
-from ..qdrant_runtime._resolve import QdrantIdentity
+from ..qdrant_runtime._constants import (
+    QDRANT_EXECUTABLE_SHA256,
+    QDRANT_SERVER_VERSION,
+    QdrantRuntimeState,
+)
+from ..qdrant_runtime._provision import file_sha256
+from ..qdrant_runtime._resolve import (
+    QdrantIdentity,
+    asset_for_platform,
+)
 from ..qdrant_runtime._store_format import (
     judge_store_format,
     list_quarantined_collections,
@@ -46,6 +54,7 @@ from ..server._lifespan import (
 )
 from ..store_schema import CONFORMING, NONCONFORMING, UNVERIFIABLE
 from ._config_fixtures import reset_config
+from ._fake_qdrant_binary import fake_qdrant_binary, unpinned
 from ._ports import free_loopback_port
 from ._quiesce_helpers import running_quiesce_snapshot
 from .conftest import managed_env
@@ -64,6 +73,35 @@ def _make_collection(storage: Path, name: str) -> Path:
     col.mkdir(parents=True, exist_ok=True)
     (col / "segment.bin").write_bytes(b"data")
     return col
+
+
+# A child that names the store's one collection beside a load-failure marker
+# and exits: the output that makes the recovery path blame that collection.
+_DIES_NAMING_A_COLLECTION = """
+import sys
+
+print("panicked: cannot load collection r0abc_vault_docs: corrupt segment", flush=True)
+sys.exit(1)
+"""
+
+
+def _declared_as_the_pinned_release(directory: Path) -> dict[str, str]:
+    """Name a stand-in as the operator binary, declared to be the pinned release.
+
+    A binary resolves at the pinned version in two ways: the managed install,
+    which only the real release can be, and an operator binary whose declared
+    digest is a pinned executable's. The stand-in does not hash to what is
+    declared for it, so it would be refused at a spawn; it resolves, at the
+    pinned version, which is all a pre-spawn judgement reads.
+    """
+    binary = directory / "declared-as-the-release.bin"
+    binary.write_bytes(b"not-the-server")
+    return {
+        EnvVar.QDRANT_BINARY.value: str(binary),
+        EnvVar.QDRANT_BINARY_SHA256.value: QDRANT_EXECUTABLE_SHA256[
+            asset_for_platform()
+        ],
+    }
 
 
 def _identity_for(storage: Path, version: str) -> QdrantIdentity:
@@ -364,23 +402,68 @@ class TestSpawnGateRefusesBeforeSpawning:
         still in the active set and no quarantine directory was created, so a
         refusal that fired only after touching the store would still fail.
         """
-        _ = isolated_singleton_dirs
         storage = tmp_path / "qdrant" / "storage"
         storage.mkdir(parents=True, exist_ok=True)
         _make_collection(storage, "r0abc_vault_docs")
         write_store_format(storage, "1.16.3")
-        binary = tmp_path / "qdrant-stub"
-        binary.write_text("", encoding="utf-8")
+        # The gate refuses on version grounds, so it needs a binary whose
+        # version is known to be the pin. The refusal precedes any spawn, so
+        # the stand-in is never hashed or run.
+        _ = isolated_singleton_dirs
 
         with managed_env(
             **{
                 EnvVar.QDRANT_STORAGE_DIR.value: str(storage),
-                EnvVar.QDRANT_BINARY.value: str(binary),
+                **_declared_as_the_pinned_release(tmp_path),
                 EnvVar.QDRANT_PORT.value: str(free_loopback_port()),
             }
         ):
             reset_config()
             with pytest.raises(RuntimeError, match="skips at least one minor version"):
+                start_supervised_from_config()
+        reset_config()
+
+        assert (storage / "collections" / "r0abc_vault_docs").is_dir()
+        assert not (storage / "quarantine").exists()
+
+    def test_an_operator_binary_is_not_assumed_to_be_the_pinned_version(
+        self,
+        tmp_path: Path,
+        isolated_singleton_dirs: Path,
+    ) -> None:
+        """A load failure under a binary of unknown version blames no collection.
+
+        The store was last opened by the pinned version. A binary named by the
+        operator settings, whose declared digest is not a pinned release
+        executable's, is of unknown version, so the store is unverifiable
+        for it: it may open, but a dying child that names a collection must
+        not have that collection moved aside on the guess that the store and
+        the binary agree.
+
+        Mutation it catches: passing the pinned version to the judgement when
+        the binary's own is unknown. The store then reads as opened by this
+        same version, the retry loop is allowed to quarantine, and the
+        collection assertion below fails.
+        """
+        _ = isolated_singleton_dirs
+        storage = tmp_path / "qdrant" / "storage"
+        storage.mkdir(parents=True, exist_ok=True)
+        _make_collection(storage, "r0abc_vault_docs")
+        write_store_format(storage, QDRANT_SERVER_VERSION)
+        binary = fake_qdrant_binary(tmp_path, _DIES_NAMING_A_COLLECTION)
+
+        with managed_env(
+            **{
+                EnvVar.QDRANT_STORAGE_DIR.value: str(storage),
+                EnvVar.QDRANT_BINARY.value: str(binary),
+                # Not a pinned release executable's digest, so the binary's
+                # version stays unknown - which is what this test is about.
+                EnvVar.QDRANT_BINARY_SHA256.value: file_sha256(binary),
+                EnvVar.QDRANT_PORT.value: str(free_loopback_port()),
+            }
+        ):
+            reset_config()
+            with pytest.raises(RuntimeError, match="failed to become ready"):
                 start_supervised_from_config()
         reset_config()
 
@@ -511,7 +594,7 @@ class TestRuntimeStateCarriesQuarantine:
             parents=True
         )
         supervisor = QdrantSupervisor(
-            tmp_path / "qdrant-stub",
+            unpinned(tmp_path / "qdrant-stub"),
             http_port=6333,
             storage_dir=storage,
             log_path=tmp_path / "qdrant.log",
@@ -765,7 +848,7 @@ class TestRuntimeStateCarriesTheMigration:
         production however well it tests in isolation.
         """
         supervisor = QdrantSupervisor(
-            tmp_path / "qdrant-stub",
+            unpinned(tmp_path / "qdrant-stub"),
             http_port=6333,
             storage_dir=tmp_path / "storage",
             log_path=tmp_path / "qdrant.log",
@@ -779,7 +862,7 @@ class TestRuntimeStateCarriesTheMigration:
 
     def test_state_reports_no_migration_by_default(self, tmp_path: Path) -> None:
         supervisor = QdrantSupervisor(
-            tmp_path / "qdrant-stub",
+            unpinned(tmp_path / "qdrant-stub"),
             http_port=6333,
             storage_dir=tmp_path / "storage",
             log_path=tmp_path / "qdrant.log",

@@ -1,8 +1,12 @@
 """Out-of-process runner for ``entry_point`` preprocess rules (#185 follow-up).
 
-Invoked as a subprocess::
+Invoked as a subprocess, by the path of this file::
 
-    python -m vaultspec_rag.indexer._preprocess_entry "<mod>:<callable>" <path>
+    python -P .../indexer/_preprocess_entry.py "<mod>:<callable>" <path>
+
+The child's import path starts with the project root, which is how the
+callable's module is found. This file is named by path so that the same
+import path cannot also decide which runner is run.
 
 It imports the referenced callable, calls it with the source path, and prints the
 returned object as one JSON document on stdout - the exact same contract a

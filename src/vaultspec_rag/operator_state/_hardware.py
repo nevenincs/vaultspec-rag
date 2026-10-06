@@ -3,8 +3,9 @@
 The answer is about hardware alone, so it can be reported next to an
 environment that cannot use it - the case that matters most: a workstation
 with a capable GPU and a CPU-only torch build. ``nvidia-smi`` ships with the
-NVIDIA driver rather than with this product, so it is resolved from ``PATH``
-and run with arguments only, never through a shell. It can hang on a wedged
+NVIDIA driver rather than with this product, so it is looked for where a
+driver puts it and run by absolute path with arguments only, never through a
+shell and never from the working directory. It can hang on a wedged
 driver, so every read is bounded, and a read that does not answer is
 ``UNKNOWN``, never a claim that the GPU is missing.
 """
@@ -12,12 +13,12 @@ driver, so every read is bounded, and a read that does not answer is
 from __future__ import annotations
 
 import platform
-import shutil
 import subprocess
 import sys
 from functools import cache
 from typing import TYPE_CHECKING
 
+from .._program_lookup import Where, find_program
 from ._installation import HardwarePresence
 from ._models import HardwareReading
 
@@ -37,7 +38,10 @@ def read_hardware() -> HardwareReading:
     The hardware does not change under a running process, and the read costs
     a driver round trip, so the first answer is kept.
     """
-    nvidia_smi = shutil.which("nvidia-smi")
+    # The driver installs its tool into the operating system's own directory
+    # on Windows and onto PATH elsewhere. ``status`` reads this from whatever
+    # directory it is typed in, so that directory is never one of the places.
+    nvidia_smi = find_program("nvidia-smi", Where.SYSTEM, Where.SEARCH_PATH)
     return query_hardware(
         (nvidia_smi,) if nvidia_smi else None,
         platform_name=sys.platform,

@@ -9,7 +9,7 @@ Default acceptance command (root and report path must live under the OS temp
 directory, never a bare drive-root or project-adjacent folder)::
 
     uv run python -m vaultspec_rag.tests.benchmarks.bench_large_index_resilience \
-        --root "%TEMP%/vaultspec-rag-acceptance/large-code" --clean --local-files-only \
+        --root "%TEMP%/vaultspec-rag-acceptance/large-code" --clean \
         --json "%TEMP%/vaultspec-rag-acceptance/large-code-report.json"
 
 The default 83,624-file corpus produces exactly three chunks per file through
@@ -63,7 +63,6 @@ if TYPE_CHECKING:
         chunks_per_file: int
         expected_chunks: int | None
         clean: bool
-        local_files_only: bool
         prepare_only: bool
         admission_only: bool
         sample_interval: float
@@ -479,7 +478,6 @@ class AcceptanceRequest:
     spec: CorpusSpec
     expected_chunks: int
     clean: bool
-    local_files_only: bool
     sample_interval_seconds: float
 
 
@@ -494,7 +492,7 @@ def run_acceptance(request: AcceptanceRequest) -> AcceptanceReport:
     cfg = get_config()
     preflight = validate_acceptance_admission(resolved, request.spec)
 
-    model = EmbeddingModel(local_files_only=request.local_files_only)
+    model = EmbeddingModel()
     store = VaultStore(resolved)
     try:
         indexer = CodebaseIndexer(resolved, model, store)
@@ -572,7 +570,6 @@ def _parser() -> argparse.ArgumentParser:
         help="Required published chunk floor (defaults to files * chunks-per-file).",
     )
     parser.add_argument("--clean", action="store_true")
-    parser.add_argument("--local-files-only", action="store_true")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--prepare-only", action="store_true")
     mode.add_argument("--admission-only", action="store_true")
@@ -614,7 +611,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 spec=spec,
                 expected_chunks=expected_chunks,
                 clean=args.clean,
-                local_files_only=args.local_files_only,
                 sample_interval_seconds=args.sample_interval,
             )
         )

@@ -170,28 +170,142 @@ class TestEmbeddingModelLoadArguments:
             )
         )
 
+    @staticmethod
+    def _literal_keywords(call: ast.Call) -> dict[str, object]:
+        """Return the call's keywords whose values are plain literals."""
+        found: dict[str, object] = {}
+        for keyword in call.keywords:
+            if keyword.arg is None:
+                continue
+            try:
+                found[keyword.arg] = ast.literal_eval(keyword.value)
+            except ValueError:
+                continue
+        return found
+
     def test_sparse_model_requires_pinned_safetensors(self):
-        """2026-09-30: safetensors=False failed its assertion; restored passed."""
+        """The sparse model loads the reviewed code and safetensors, offline.
+
+        The intent is unchanged: only the pinned implementation is trusted
+        for the default model, and its weights are safetensors. How it is
+        held changed. The model used to be loaded by name with the library
+        trusted to fetch and run the repository's code at a pinned commit;
+        the library runs a copy from a cache of its own without comparing
+        it, so the commit pinned nothing about what executed. The code is
+        now imported from the verified snapshot by this package, and the
+        model is built from that snapshot directory with nothing fetched.
+
+        So this asserts the replacement: the model class comes from the
+        verified import, the loader is given a directory and told to stay
+        local, safetensors is forced, and the library is not asked to run
+        repository code. The tests of the verified import hold what the old
+        ``revision`` and ``code_revision`` arguments were there for.
+
+        2026-09-30: safetensors=False failed its assertion; restored passed.
+        Mutations for the rest: with ``local_files_only`` dropped from the
+        model load it failed on that assertion; with the model class taken
+        from ``AutoModel`` again it failed on the loader assertion; restored
+        after each, it passed.
+        """
         import inspect
         import textwrap
 
         from .._sparse_encoder import SparseModelAdapter
 
         tree = ast.parse(textwrap.dedent(inspect.getsource(SparseModelAdapter)))
-        calls = [
+        loads = [
             node
             for node in ast.walk(tree)
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "from_pretrained"
-            and isinstance(node.func.value, ast.Name)
-            and node.func.value.id == "loader"
         ]
-        kwargs = {kw.arg: kw.value for kw in calls[0].keywords}
-        assert ast.literal_eval(kwargs["trust_remote_code"]) is True
-        assert ast.literal_eval(kwargs["use_safetensors"]) is True
-        assert "revision" in kwargs and "code_revision" in kwargs
-        assert "local_files_only" in kwargs
+        model_load = next(
+            call
+            for call in loads
+            if isinstance(call.func, ast.Attribute)
+            and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == "loader"
+        )
+        keywords = self._literal_keywords(model_load)
+        assert keywords.get("use_safetensors") is True
+        assert keywords.get("local_files_only") is True
+        assert "trust_remote_code" not in keywords
+        assert "revision" not in keywords and "code_revision" not in keywords
+        for call in loads:
+            assert self._literal_keywords(call).get("local_files_only") is True
+
+        source = ast.unparse(tree)
+        assert "reviewed_model_class(snapshot)" in source
+        assert "AutoModel" not in source
+
+    def test_dense_and_reranker_load_safetensors_from_a_local_directory(self):
+        """Neither model is built from a name, a pickle, or repository code.
+
+        Each constructor is handed the checked snapshot directory and told to
+        stay local, so no file is fetched after the check; the library is
+        told not to run repository code; and the weights are safetensors or
+        the load fails. Asserted on the source because building these models
+        needs the accelerator.
+
+        Mutations: with ``use_safetensors`` removed from the dense model's
+        keyword table it failed on the dense assertion; with it removed from
+        the reranker's it failed on the reranker assertion; with
+        ``local_files_only`` taken from a caller's argument instead of fixed
+        it failed on the local-only assertion. Restored after each, it passed.
+        """
+        import inspect
+        import textwrap
+
+        from .. import embeddings
+
+        tree = ast.parse(textwrap.dedent(inspect.getsource(embeddings)))
+        built: dict[str, list[ast.Call]] = {
+            "SentenceTransformer": [],
+            "CrossEncoder": [],
+        }
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in built
+            ):
+                built[node.func.id].append(node)
+        assert all(built.values()), built
+        constructions = [call for calls in built.values() for call in calls]
+        for call in constructions:
+            keywords = self._literal_keywords(call)
+            assert keywords.get("local_files_only") is True, ast.unparse(call)
+            assert keywords.get("trust_remote_code") is False, ast.unparse(call)
+            assert "revision" not in keywords
+
+        def forces_safetensors(table: ast.AST) -> bool:
+            return isinstance(table, ast.Dict) and any(
+                isinstance(key, ast.Constant)
+                and key.value == "use_safetensors"
+                and isinstance(value, ast.Constant)
+                and value.value is True
+                for key, value in zip(table.keys, table.values, strict=True)
+            )
+
+        reranker = built["CrossEncoder"][0]
+        reranker_table = next(
+            kw.value for kw in reranker.keywords if kw.arg == "model_kwargs"
+        )
+        assert forces_safetensors(reranker_table), "reranker"
+
+        # The dense model's keyword table is built before the call, because
+        # an attention setting is added to it conditionally.
+        dense_tables = [
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "model_kwargs"
+            and node.value is not None
+        ]
+        assert len(dense_tables) == 1
+        assert forces_safetensors(dense_tables[0]), "dense"
 
 
 def _constructs(path: Path, class_name: str) -> bool:

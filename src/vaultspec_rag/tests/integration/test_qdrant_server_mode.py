@@ -27,6 +27,7 @@ from ...qdrant_runtime._constants import QDRANT_SERVER_VERSION
 from ...qdrant_runtime._resolve import resolve_binary
 from ...qdrant_runtime._supervise import QdrantSupervisor
 from .._config_fixtures import reset_config
+from .._fake_qdrant_binary import unpinned
 from .._ports import free_loopback_port
 from .._publication_assertions import published_content_identities
 from ..corpus import build_synthetic_vault
@@ -570,7 +571,7 @@ class TestSupervision:
         from ..._process_probe import pid_alive
 
         supervisor = QdrantSupervisor(
-            real_qdrant_binary,
+            unpinned(real_qdrant_binary),
             http_port=free_loopback_port(),
             grpc_port=free_loopback_port(),
             storage_dir=tmp_path / "storage",
@@ -594,7 +595,7 @@ class TestSupervision:
     ) -> None:
         """The heartbeat's single bounded restart brings the server back."""
         supervisor = QdrantSupervisor(
-            real_qdrant_binary,
+            unpinned(real_qdrant_binary),
             http_port=free_loopback_port(),
             grpc_port=free_loopback_port(),
             storage_dir=tmp_path / "storage",
@@ -700,9 +701,9 @@ class TestServerFirstStartupSelection:
     ) -> None:
         """The default server backend with no binary aborts actionably.
 
-        Server mode is the default; with the managed dir empty, no
-        operator binary, and ``qdrant`` absent from ``PATH``,
-        ``start_supervised_from_config`` (the call the lifespan wraps)
+        Server mode is the default; with the managed dir empty and no
+        operator binary, nothing resolves - ``PATH`` is never consulted -
+        and ``start_supervised_from_config`` (the call the lifespan wraps)
         raises a ``RuntimeError`` that names the install command. The
         service lifespan turns this into the startup abort that also
         names ``--local-only``; here we prove the underlying loud failure
@@ -712,13 +713,15 @@ class TestServerFirstStartupSelection:
 
         prev_status = os.environ.get(EnvVar.STATUS_DIR.value)
         prev_binary = os.environ.get(EnvVar.QDRANT_BINARY.value)
+        prev_digest = os.environ.get(EnvVar.QDRANT_BINARY_SHA256.value)
         prev_local = os.environ.get(EnvVar.LOCAL_ONLY.value)
         prev_port = os.environ.get(EnvVar.QDRANT_PORT.value)
         # Isolate the managed dir to an empty tmp so nothing is
-        # provisioned, point the operator-binary knob at a path that does
-        # not exist, and keep server mode the default (no local-only).
+        # provisioned, clear both operator-binary knobs so no ambient pair
+        # resolves, and keep server mode the default (no local-only).
         os.environ[EnvVar.STATUS_DIR.value] = str(tmp_path)
-        os.environ[EnvVar.QDRANT_BINARY.value] = str(tmp_path / "does-not-exist")
+        os.environ.pop(EnvVar.QDRANT_BINARY.value, None)
+        os.environ.pop(EnvVar.QDRANT_BINARY_SHA256.value, None)
         os.environ.pop(EnvVar.LOCAL_ONLY.value, None)
         # The port must be isolated too, or this test asserts nothing on a
         # host that happens to run qdrant. The supervisor checks the port
@@ -728,11 +731,7 @@ class TestServerFirstStartupSelection:
         os.environ[EnvVar.QDRANT_PORT.value] = str(_get_ephemeral_qdrant_port())
         reset_config()
         try:
-            if resolve_binary() is not None:
-                pytest.fail(
-                    "a qdrant binary resolved on PATH; this host cannot "
-                    "exercise the missing-binary loud-failure contract"
-                )
+            assert resolve_binary() is None
             with pytest.raises(RuntimeError) as exc_info:
                 start_supervised_from_config()
             message = str(exc_info.value)
@@ -747,6 +746,8 @@ class TestServerFirstStartupSelection:
                 os.environ.pop(EnvVar.QDRANT_BINARY.value, None)
             else:
                 os.environ[EnvVar.QDRANT_BINARY.value] = prev_binary
+            if prev_digest is not None:
+                os.environ[EnvVar.QDRANT_BINARY_SHA256.value] = prev_digest
             if prev_local is not None:
                 os.environ[EnvVar.LOCAL_ONLY.value] = prev_local
             if prev_port is None:

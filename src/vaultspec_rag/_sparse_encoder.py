@@ -1,10 +1,20 @@
-"""Pinned upstream sparse inference with CPU preparation separated from forward."""
+"""Pinned upstream sparse inference with CPU preparation separated from forward.
+
+The sparse model's repository ships the Python that builds it. That file is
+the one piece of a default model this package executes, so it is handled
+apart from everything else: it is read once from the verified snapshot,
+checked against its committed digest, and imported from that same buffer.
+The model library's own route for repository code is never used, because it
+imports a copy from a cache of its own without comparing it to the snapshot.
+"""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol, cast
 
-from ._sparse_profile import SPARSE_MODEL_ID, SPARSE_VOCAB_SIZE, sparse_model_revision
+from ._model_pins import committed_manifest
+from ._sparse_profile import SPARSE_MODEL_ID, SPARSE_MODEL_REVISION, SPARSE_VOCAB_SIZE
+from ._verified_import import import_verified_source
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -12,6 +22,12 @@ if TYPE_CHECKING:
     from torch import Tensor
 
     from ._gpu import AcceleratorContext
+    from ._model_cache import VerifiedSnapshot
+
+#: The file in the sparse model's repository that defines the model, and the
+#: class in it this package constructs.
+_MODEL_SOURCE = "modeling_splade.py"
+_MODEL_CLASS = "SpladeModel"
 
 
 class _UpstreamSparseModel(Protocol):
@@ -29,30 +45,82 @@ class _PretrainedLoader(Protocol):
     def from_pretrained(self, model_id: str, **kwargs: object) -> object: ...
 
 
+def require_reviewed_sparse_model(model_id: str) -> None:
+    """Refuse any sparse repository but the reviewed one.
+
+    Raises:
+        ValueError: If *model_id* is not the reviewed sparse model. Raised
+            before anything is fetched, so naming another repository never
+            downloads it.
+    """
+    if model_id != SPARSE_MODEL_ID:
+        raise ValueError(
+            f"Unsupported sparse model {model_id!r}; use {SPARSE_MODEL_ID}"
+        )
+
+
+def class_from_verified_source(
+    snapshot: VerifiedSnapshot, *, source: str, expected_sha256: str, name: str
+) -> object:
+    """Return class *name* from a source file in *snapshot*, verified first.
+
+    The file is read through the handle the snapshot check holds, so the
+    bytes hashed here are bytes of the file that check hashed, and the buffer
+    hashed here is the buffer executed. The model library's machinery for
+    repository code is not entered at all.
+
+    Args:
+        snapshot: A snapshot that passed its check and is still held.
+        source: The source file, relative to the snapshot.
+        expected_sha256: The digest committed for that file.
+        name: The class to return from it.
+
+    Raises:
+        UnverifiedSourceError: If the source does not match its digest.
+            Nothing from it has run.
+    """
+    module = import_verified_source(
+        snapshot.read(source),
+        expected_sha256=expected_sha256,
+        filename=str(snapshot.directory / source),
+    )
+    return vars(module)[name]
+
+
+def reviewed_model_class(snapshot: VerifiedSnapshot) -> object:
+    """Import the sparse model's class from the verified snapshot."""
+    manifest = committed_manifest(SPARSE_MODEL_ID, SPARSE_MODEL_REVISION)
+    if manifest is None:
+        raise RuntimeError(f"no file digests are committed for {SPARSE_MODEL_ID}")
+    return class_from_verified_source(
+        snapshot,
+        source=_MODEL_SOURCE,
+        expected_sha256=manifest[_MODEL_SOURCE],
+        name=_MODEL_CLASS,
+    )
+
+
 class SparseModelAdapter:
     """Keep the reviewed model's preprocessing, pooling and vocabulary folding."""
 
     def __init__(
-        self, model_id: str, *, accelerator: AcceleratorContext, local_files_only: bool
+        self,
+        model_id: str,
+        *,
+        snapshot: VerifiedSnapshot,
+        accelerator: AcceleratorContext,
     ) -> None:
         torch = accelerator.torch
-        from transformers import AutoModel, AutoTokenizer
+        from transformers import AutoTokenizer
 
-        if model_id != SPARSE_MODEL_ID:
-            raise ValueError(
-                f"Unsupported sparse model {model_id!r}; use {SPARSE_MODEL_ID}"
-            )
-        revision = sparse_model_revision(model_id)
-        loader = cast("_PretrainedLoader", AutoModel)
+        require_reviewed_sparse_model(model_id)
+        directory = str(snapshot.directory)
+        loader = cast("_PretrainedLoader", reviewed_model_class(snapshot))
         model = cast(
             "_UpstreamSparseModel",
             loader.from_pretrained(
-                model_id,
-                revision=revision,
-                code_revision=revision,
-                trust_remote_code=True,
-                token=False,
-                local_files_only=local_files_only,
+                directory,
+                local_files_only=True,
                 use_safetensors=True,
                 dtype=torch.float32,
                 attn_implementation="sdpa",
@@ -61,9 +129,7 @@ class SparseModelAdapter:
         model.to(accelerator.device).eval()
         self._model = model
         tokenizer_loader = cast("_PretrainedLoader", AutoTokenizer)
-        tokenizer = tokenizer_loader.from_pretrained(
-            model_id, revision=revision, local_files_only=local_files_only, token=False
-        )
+        tokenizer = tokenizer_loader.from_pretrained(directory, local_files_only=True)
         # The pinned upstream convenience API lazily loads an unpinned tokenizer.
         # Supply the reviewed tokenizer before using its preprocessing seam.
         tokenizer_attribute = "_tokenizer"

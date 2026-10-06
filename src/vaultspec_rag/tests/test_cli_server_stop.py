@@ -327,6 +327,10 @@ class TestStopThatDidNotStop:
         # A refused kill and a stubborn one need different operator actions, so
         # they are different error codes rather than one "stop failed".
         assert env["error"] == "terminate_permission_denied"
+        # The command that ends the process by hand is this platform's own,
+        # so it is asserted for what it names rather than how it is spelled.
+        (by_hand,) = env["data"].pop("next_actions")
+        assert "4242" in by_hand
         assert env["data"] == {"pid": 4242, "signal_denied": True, "port": 8766}
 
     def test_timeout_envelope_is_a_distinct_error(
@@ -338,6 +342,8 @@ class TestStopThatDidNotStop:
         assert exc.exit_code == 1
         env = json.loads(capsys.readouterr().out)
         assert env["error"] == "terminate_timeout"
+        (by_hand,) = env["data"].pop("next_actions")
+        assert "4242" in by_hand
         assert env["data"] == {"pid": 4242, "signal_denied": False}
 
     def test_human_mode_exits_one_and_names_the_remedy(

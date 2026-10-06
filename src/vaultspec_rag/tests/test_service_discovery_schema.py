@@ -88,6 +88,10 @@ def status_dir(tmp_path: Path) -> Iterator[Path]:
     }
     os.environ[status_key] = str(tmp_path / "status")
     os.environ[storage_key] = str(tmp_path / "qdrant" / "storage")
+    # Some tests here place a file or a lock beside the status file by hand,
+    # standing in for an earlier service; looking the file up creates
+    # nothing, so the directory that service would have made is made here.
+    (tmp_path / "status").mkdir()
     reset_config()
     try:
         yield tmp_path / "status"

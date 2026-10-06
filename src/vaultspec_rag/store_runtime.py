@@ -396,7 +396,7 @@ class VaultStore(
         """Open the managed Qdrant server client and set the server-mode fields."""
         import pathlib as _pathlib
 
-        from qdrant_client import QdrantClient as _QdrantClient
+        from ._qdrant_server_client import open_server_client
 
         self.db_path = qdrant_url
         self._lock_helper = None
@@ -408,9 +408,6 @@ class VaultStore(
         )
         self._storage_probe_path = _pathlib.Path(qdrant_storage_dir).expanduser()
         try:
-            qdrant_api_key = _typed_optional_setting(
-                cfg.qdrant_api_key, str, "qdrant_api_key"
-            )
             store_operation_timeout_seconds = _typed_setting(
                 cfg.store_operation_timeout_seconds,
                 float,
@@ -420,10 +417,8 @@ class VaultStore(
             # stalling on a full-disk WAL blocks the upsert socket
             # forever, freezing the job at completed=0 with no error
             # ever raised while the GPU keeps burning upstream.
-            self._client = _QdrantClient(
-                url=qdrant_url,
-                api_key=qdrant_api_key,
-                timeout=math.ceil(store_operation_timeout_seconds),
+            self._client = open_server_client(
+                qdrant_url, timeout=math.ceil(store_operation_timeout_seconds)
             )
         except Exception as exc:
             logger.error(

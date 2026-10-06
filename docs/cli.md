@@ -171,7 +171,7 @@ vaultspec-rag clean
 
 ## install
 
-Set up vaultspec-rag in a workspace. Creates the required workspace folders, installs bundled rules and integration files, and syncs the files used by supported tools. By default, install also provisions the external dependencies the server-first default needs - the embedding/reranker models and the pinned Qdrant server binary - and ensures the optional MCP extra so the agent-facing MCP search surface can run, and asks before changing PyTorch package configuration. Use --local-only for the minimal local backend (skips the binary), the finer --skip-torch/--skip-models/--skip-qdrant flags for partial opt-out, --no-mcp for a CLI-only workspace without the mcp dependency, and --no-provision to set up the workspace only; use --yes or --no-torch-config for non-interactive runs.
+Set up vaultspec-rag in a workspace. Creates the required workspace folders, installs bundled rules and integration files, and syncs the files used by supported tools. By default, install also provisions the external dependencies the server-first default needs - the embedding/reranker models and the pinned Qdrant server binary - and ensures the optional MCP extra so the agent-facing MCP search surface can run, and asks before changing PyTorch package configuration. Use --local-only for the minimal local backend (skips the binary), the finer --skip-models/--skip-qdrant flags for partial opt-out, --no-mcp for a CLI-only workspace without the mcp dependency, and --no-provision to set up the workspace only; use --yes or --no-torch-config for non-interactive runs. The model files and the Qdrant server are each checked against digests compiled into vaultspec-rag before they are used. A client installation is given neither, and a host that cannot run the service yet gets them from server start once it can. Exits non-zero when a step it was asked to run failed.
 
 ```bash
 vaultspec-rag install
@@ -199,7 +199,6 @@ None.
 | `--provision`, `--no-provision` | boolean | no | on | Provision external dependencies (models and the Qdrant server binary) after enrollment. On by default; --no-provision sets up the workspace only. |
 | `--mcp`, `--no-mcp` | boolean | no | on | Enroll the agent-facing MCP search surface and reconcile its optional dependency at RAG's existing project placement. On by default; --no-mcp sets up a CLI-only workspace without the mcp dependency (and, on Windows, without pywin32). |
 | `--local-only` | boolean | no | off | Use the on-disk store instead of the supervised Qdrant server: skips the Qdrant binary download and persists the local backend so `server start` honours it. The minimal / CI / air-gapped alternative to the server-first default. |
-| `--skip-torch` | boolean | no | off | Skip the PyTorch provisioning step (finer than --local-only). |
 | `--skip-models` | boolean | no | off | Skip the embedding/reranker model provisioning step. |
 | `--skip-qdrant` | boolean | no | off | Skip the Qdrant server binary provisioning step. |
 | `--json` | boolean | no | off | Emit JSON for scripts instead of human text. |
@@ -258,7 +257,7 @@ None.
 
 ## server doctor
 
-Report readiness across two axes: installed dependencies (torch, models, qdrant binary) and the live service (a running daemon's health). A dead daemon is reported as not ready.
+Report readiness across two axes: installed dependencies (torch, models, qdrant binary) and the live service (a running daemon's health). A dead daemon is reported as not ready. Each pinned model's cached files are hashed against the digests compiled into this tool, which reads several gigabytes and takes a few seconds; a model with no such digests is reported as unpinned.
 
 ```bash
 vaultspec-rag server doctor
@@ -295,7 +294,7 @@ None.
 
 ## server warmup
 
-Download GPU model files before they are needed. Run once before the first index to avoid model download latency at search time.
+Fetch and check the model files the service loads. Each default model is downloaded from the Hugging Face Hub, or the mirror the hub endpoint setting names, at a pinned commit, and every file is compared with a SHA256 digest compiled into vaultspec-rag. A model that is already cached and passes costs no download; one you named yourself is reported as unpinned. A client installation needs no models and is told so. Exits non-zero when a model could not be fetched, fails its check, or is missing while the hub is in offline mode.
 
 ```bash
 vaultspec-rag server warmup
@@ -307,7 +306,9 @@ None.
 
 ### Options
 
-None.
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `--json` | boolean | no | off | Emit JSON for scripts instead of human text. |
 
 ## server jobs
 
@@ -473,13 +474,15 @@ None.
 
 ## server start
 
-Start the background search service. Defaults to the managed Qdrant server backend (server mode); pass --local-only for the on-disk store. Waits until it is ready and records how the CLI can reach it.
+Start the background search service. Defaults to the managed Qdrant server backend (server mode); pass --local-only for the on-disk store. Before the service is started, a host installation fetches what it needs and does not have: the model files, each checked against digests compiled into vaultspec-rag, and the managed Qdrant server, unless that download is switched off. A client installation is refused and fetches nothing. A fetch that fails stops the start with its cause and its remedy. Waits until the service is ready and records how the CLI can reach it.
 
 Also starts the managed browser monitor. Its port begins at the actual
 backend port plus one and increments until free: `--port 9000` first
-tries monitor port 9001. Human output prints `Monitor: http://127.0.0.1:<port>`;
-JSON includes `data.monitor_port` and `data.monitor_url` when recorded.
-An already-running response redisplays the recorded assignment.
+tries monitor port 9001. Human output prints the monitor's access link as
+`Monitor: http://127.0.0.1:<port>/#capability=<secret>`; JSON includes
+`data.monitor_port` and `data.monitor_url` when recorded. The link is a
+credential: the monitor operates the service only for a caller presenting
+its capability. An already-running response redisplays the recorded link.
 
 Requires the compiled `vaultspec-rag-monitor` command on PATH or its
 absolute path in `VAULTSPEC_RAG_MONITOR_BINARY`. Startup does not compile
@@ -509,8 +512,8 @@ None.
 | `--update-delay-ms` | int | no | - | Delay before indexing a burst of file changes, in milliseconds. |
 | `--repeat-update-delay-s` | float | no | - | Minimum wait before automatically updating a project again, in seconds. |
 | `--local-only` | boolean | no | off | Use the on-disk local store instead of the default managed Qdrant server. This is the first-class opt-out for CI, offline, and small-project hosts. |
-| `--qdrant`, `--no-qdrant` | boolean | no | - | Explicitly opt in to (or out of) the managed Qdrant server. Server mode is already the default, so --qdrant is redundant; use --local-only to select the on-disk store. Unset leaves the current Qdrant setting unchanged. |
-| `--qdrant-auto-provision` | boolean | no | off | Download the managed Qdrant server if it is missing. Without this flag, start prints the install command. |
+| `--qdrant`, `--no-qdrant` | boolean | no | - | Select the managed Qdrant server for this start, or decline it. --qdrant overrides a saved or exported local-only choice for this run without rewriting it; --local-only still wins when both are given. Unset leaves the current setting in force. |
+| `--qdrant-auto-provision`, `--no-qdrant-auto-provision` | boolean | no | - | Download and verify the managed Qdrant server when it is missing (default: enabled). With --no-qdrant-auto-provision, start prints the install command instead. Unset leaves the VAULTSPEC_RAG_QDRANT_AUTO_PROVISION setting in force. |
 | `--no-preprocess` | boolean | no | off | Kill switch: the service loads no document-preprocessing rules for any root (forwards VAULTSPEC_RAG_PREPROCESS=off). |
 | `--json` | boolean | no | off | Emit one structured JSON outcome. An already-running owned service is the success `already_running` (exit 0), so a supervising broker can attach rather than treating it as a fault. |
 
@@ -796,7 +799,7 @@ vaultspec-rag server updates timing
 
 ## server qdrant install
 
-Download and verify the managed Qdrant server. If the requested version is already installed, nothing is downloaded.
+Install the managed Qdrant server under the service directory. The release archive is downloaded from the configured release source, and the archive and the executable inside it are each compared with a SHA256 digest compiled into vaultspec-rag before anything is installed. An install that already passes its check costs no download. A client installation, and a host that cannot run the service yet, need no server and are told so. Exits non-zero when the install failed; a previous install is left as it was.
 
 ```bash
 vaultspec-rag server qdrant install
@@ -810,9 +813,9 @@ None.
 
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `--upgrade` | boolean | no | off | Replace an installed Qdrant server when the managed version changed. |
+| `--upgrade` | boolean | no | off | Replace an installed Qdrant server that fails its check. An install that passes is left alone. |
 | `--dry-run` | boolean | no | off | Preview the version, release package, download, install path, and digest without downloading or writing anything. |
-| `--binary` | path | no | - | Register an operator-supplied Qdrant executable instead of downloading the managed release. |
+| `--archive` | path | no | - | Install from a local copy of the release package instead of downloading it, for a host with no route to the release source. The file passes the same checksum checks as a download, is read where it lies, and no request is made. |
 | `--json` | boolean | no | off | Emit JSON for scripts instead of human text. |
 
 ## server qdrant status

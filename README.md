@@ -114,7 +114,8 @@ vaultspec-rag install --no-torch-config
 
 Setup connects your AI assistant and creates the `.vault/` folder for decision records.
 The first run also downloads the models and Qdrant, the index server; later
-repositories reuse them. `--no-torch-config` leaves the repository's own PyTorch
+repositories reuse them. If either is still missing when you start the service,
+`server start` downloads it then. `--no-torch-config` leaves the repository's own PyTorch
 settings alone, because the host carries its own.
 
 Start the service and check it:
@@ -254,7 +255,8 @@ in the repository's assistant configuration. Your assistant can then call these 
 
 - `search_codebase`, `search_vault`, `search_documents`, and `search_combined` search by
   meaning.
-- `get_code_file` reads a file, and `get_index_status` reports index health.
+- `get_code_file` reads an indexable source file, and `get_index_status` reports index
+  health.
 - Four `reindex_*` tools rebuild indexes, and `clean_documents` and `clean_all` delete
   them.
 
@@ -364,6 +366,7 @@ go deeper.
 | ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
 | [Getting started](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/getting-started.md)       | Install, index, and run a first search, step by step.    |
 | [Installation](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/installation.md)             | Every install route, upgrades, removal, and fixes.       |
+| [Provisioning](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/provisioning.md)             | What is downloaded, how it is checked, and offline use.  |
 | [Writing queries](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/query-craft.md)           | Phrase a query, and narrow the results with filters.     |
 | [Worked searches](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/examples.md)              | Real queries and what they return.                       |
 | [Search and index](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/search-and-index.md)     | Every search option, and rebuilding or cleaning indexes. |

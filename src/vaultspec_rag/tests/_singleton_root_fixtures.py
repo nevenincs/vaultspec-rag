@@ -4,7 +4,8 @@ The pytest session owns a temporary root holding its isolated status dir,
 Qdrant storage and per-participant basetemp. Naming that pair and reclaiming
 it - this run's at teardown, a killed run's leftovers at startup - is the test
 session's own housekeeping, so it lives beside the tests rather than in the
-module that enforces containment.
+module that enforces containment. So does deciding whether uv's project
+environment has to be moved into that root for the session's duration.
 """
 
 from __future__ import annotations
@@ -60,6 +61,42 @@ def singleton_child_names(worker: str | None) -> tuple[str, str]:
     """
     suffix = f"-{worker}" if worker else ""
     return f"machine-singleton{suffix}", f"pytest-temp{suffix}"
+
+
+def uv_project_environment_redirect(
+    *,
+    prefix: str | PathLike[str],
+    rootdir: str | PathLike[str],
+    configured: str | None,
+    scratch: str | PathLike[str],
+) -> Path | None:
+    """Return where a session must point uv's project environment, if anywhere.
+
+    The session's audit hook judges the uv launches this process makes and
+    sees none of the launches its children make. A child that runs uv in the
+    checkout creates or replaces the checkout's ``.venv`` unless that
+    environment is usable to it, and the only one known to be is the one this
+    session is running from. So a session running from any other interpreter
+    names an environment under its own temporary tree, which every descendant
+    inherits.
+
+    Args:
+        prefix: The environment the session's interpreter runs from.
+        rootdir: The checkout the session is collecting.
+        configured: What the environment already names as uv's project
+            environment, if anything.
+        scratch: The session's own temporary tree.
+
+    Returns:
+        The environment path to export, or ``None`` to leave the variable as
+        it is: an operator who named one is taken at their word, and a session
+        running from the checkout's own environment changes nothing.
+    """
+    if configured:
+        return None
+    if canonical_path(prefix) == canonical_path(Path(rootdir) / ".venv"):
+        return None
+    return Path(scratch) / "uv-project-environment"
 
 
 def reclaim_singleton_paths(

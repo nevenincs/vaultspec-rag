@@ -62,6 +62,8 @@ PACKAGE: Final = "vaultspec-rag"
 _EXTERNAL: Final = frozenset(
     {
         EnvVar.HF_HOME,
+        EnvVar.HF_HUB_CACHE,
+        EnvVar.HF_ENDPOINT,
         EnvVar.HF_HUB_OFFLINE,
         EnvVar.HF_HUB_DOWNLOAD_TIMEOUT,
         EnvVar.HF_DEACTIVATE_ASYNC_LOAD,
@@ -74,6 +76,9 @@ _EXTERNAL: Final = frozenset(
         EnvVar.UV_CACHE_DIR,
         EnvVar.UV_TOOL_DIR,
         EnvVar.VIRTUAL_ENV,
+        EnvVar.PYTHON_SAFE_PATH,
+        EnvVar.PATH,
+        EnvVar.PATHEXT,
         EnvVar.TEMP,
         EnvVar.TMP,
         EnvVar.TMPDIR,
@@ -95,6 +100,15 @@ _SECRETS: Final = frozenset(
 #: there as a project dependency. The Qdrant key is deliberately absent - it
 #: addresses an operator's own deployment, which repository content has no
 #: business naming.
+#:
+#: No setting belongs here, and the framework refuses to build a non-secret
+#: entry marked eligible. That refusal is load-bearing for the download-source
+#: settings in particular: where the managed Qdrant binary is fetched from,
+#: and which hosts a redirect may reach, must come from the operator's own
+#: environment, because a cloned repository that could name them would be
+#: choosing the server a host downloads an executable from. For the same
+#: reason no entry is declared persistable, which is what would let a
+#: workspace's project store supply one.
 _WORKSPACE_DOTENV: Final = frozenset(
     {
         EnvVar.TYPESAFE_API_KEY,
@@ -182,15 +196,47 @@ _DESCRIPTIONS: Final[Mapping[EnvVar, str]] = {
         "Hugging Face cache location, honoured by huggingface_hub. Reported "
         "on status surfaces so an operator can see where models will land."
     ),
+    EnvVar.HF_HUB_CACHE: (
+        "Directory the Hugging Face hub client keeps model snapshots in, "
+        "honoured by huggingface_hub in place of the one under HF_HOME. A "
+        "relative value is made absolute before the service is started, "
+        "because the service does not run in the directory it was started "
+        "from."
+    ),
+    EnvVar.QDRANT_BINARY: (
+        "Absolute path to a Qdrant server binary the operator supplies, used "
+        "in place of the managed install. Refused unless "
+        "VAULTSPEC_RAG_QDRANT_BINARY_SHA256 declares its digest: the file is "
+        "hashed and compared before every start, and never run unverified."
+    ),
+    EnvVar.QDRANT_BINARY_SHA256: (
+        "The SHA256 of the binary VAULTSPEC_RAG_QDRANT_BINARY names, as 64 "
+        "hexadecimal characters in either letter case. Required with that "
+        "variable and refused without it."
+    ),
+    EnvVar.RAG_HF_ENDPOINT: (
+        "The model hub every model is downloaded from, as an https URL with "
+        "a host and no credentials, query or fragment. Exported to "
+        "HF_ENDPOINT when the process starts, where it outranks a value "
+        "already there; unset or blank exports nothing and leaves the hub "
+        "client's own configuration in force."
+    ),
+    EnvVar.HF_ENDPOINT: (
+        "Hugging Face Hub endpoint, read by huggingface_hub once, when it is "
+        "first imported. Overwritten at process start when this package's "
+        "own endpoint variable is set, and otherwise left exactly as the "
+        "operator set it."
+    ),
     EnvVar.HF_HUB_OFFLINE: (
-        "Hugging Face Hub offline switch. A true word makes model loads "
-        "cache-only; a word the shared vocabulary does not recognise reads as "
+        "Hugging Face Hub offline switch. A true word stops every model "
+        "fetch; a word the shared vocabulary does not recognise reads as "
         "online, because the owning library, not this package, has authority "
-        "over its own value."
+        "over its own value. A model load reads the cache only either way."
     ),
     EnvVar.HF_HUB_DOWNLOAD_TIMEOUT: (
-        "Per-request download timeout, honoured by huggingface_hub. Named "
-        "here so the literal lives in one place."
+        "The per-read download timeout honoured by huggingface_hub: seconds "
+        "with no data before it abandons one attempt. Never set by this "
+        "package; named in the remedy a failed model fetch prints."
     ),
     EnvVar.TRANSFORMERS_OFFLINE: (
         "Transformers offline switch, read alongside the Hub's own and under "
@@ -203,6 +249,13 @@ _DESCRIPTIONS: Final[Mapping[EnvVar, str]] = {
     EnvVar.VIRTUAL_ENV: (
         "The active virtual environment, set by the tool that activated it. "
         "Read to report which environment a command is running from."
+    ),
+    EnvVar.PYTHON_SAFE_PATH: (
+        "The Python interpreter's safe-path switch, which keeps the working "
+        "directory off a process's import path. Set by this package in its "
+        "own environment while an indexing worker pool is open, so a pool "
+        "worker does not import from the directory the command was run in, "
+        "and put back as it was when the pool closes."
     ),
     EnvVar.HF_DEACTIVATE_ASYNC_LOAD: (
         "Transformers switch turning off the parallel weight-materialising "
@@ -233,6 +286,17 @@ _DESCRIPTIONS: Final[Mapping[EnvVar, str]] = {
     ),
     EnvVar.UV_TOOL_DIR: (
         "uv's tool-install location, read for the same classification."
+    ),
+    EnvVar.PATH: (
+        "The program search path. Read to find a helper program this package "
+        "runs but does not ship, such as uv or the graphics driver's query "
+        "tool. Only its absolute entries are searched: an empty or relative "
+        "entry means the working directory, which is never a place a program "
+        "is run from."
+    ),
+    EnvVar.PATHEXT: (
+        "The extensions a program name may carry on Windows, read alongside "
+        "the search path when a helper program is looked for."
     ),
     EnvVar.TEMP: (
         "The operating system's temporary directory, read to decide whether "

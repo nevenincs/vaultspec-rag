@@ -16,7 +16,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, cast
 
-from ._sparse_profile import SPARSE_DOCUMENT_MAX_LENGTH, SPARSE_MODEL_ID
+from ._sparse_profile import SPARSE_DOCUMENT_MAX_LENGTH
 from .config._types import EnvVar
 from .job_control import timed_gpu_lock
 
@@ -423,7 +423,7 @@ def _check_rag_deps() -> AcceleratorContext:
     return accelerator
 
 
-def load_reranker(*, local_files_only: bool) -> CrossEncoder:
+def load_reranker() -> CrossEncoder:
     """Construct the configured CrossEncoder reranker on the accelerator.
 
     The one construction path for the reranker. It loads in half precision,
@@ -432,29 +432,38 @@ def load_reranker(*, local_files_only: bool) -> CrossEncoder:
     scores by thousandths, too little to reorder a ranking. The sigmoid
     activation keeps scores in ``[0, 1]``.
 
-    Args:
-        local_files_only: Load from the local Hugging Face cache without
-            remote metadata requests.
+    The weights come from the model cache and are checked before they are
+    read. Nothing is downloaded here, whenever this first runs.
 
     Raises:
         ImportError: If the GPU inference dependencies are not installed.
         RuntimeError: If no supported accelerator is available.
+        ModelSnapshotError: If the cache holds no snapshot of the reranker
+            that passes its check. The text names the command to run.
     """
     from sentence_transformers import CrossEncoder
 
-    from .config._settings import get_config
+    from ._model_cache import loadable_snapshot
+    from .config._settings import get_config, reranker_model_repo
 
     accelerator = _check_rag_deps()
     torch = accelerator.torch
     cfg = get_config()
-    return CrossEncoder(
-        str(cfg.reranker_model),
-        device=accelerator.device,
-        activation_fn=torch.nn.Sigmoid(),
-        max_length=int(cfg.reranker_max_length),
-        local_files_only=local_files_only,
-        model_kwargs={"torch_dtype": torch.float16},
-    )
+    model = reranker_model_repo()
+    # Constructed from the checked directory and inside the block that holds
+    # its files, so what is read is what was checked. Returned only after the
+    # block ends, which is where a file added during the load is caught.
+    with loadable_snapshot(model.repo, revision=model.revision) as snapshot:
+        reranker = CrossEncoder(
+            str(snapshot.directory),
+            device=accelerator.device,
+            activation_fn=torch.nn.Sigmoid(),
+            max_length=int(cfg.reranker_max_length),
+            local_files_only=True,
+            trust_remote_code=False,
+            model_kwargs={"torch_dtype": torch.float16, "use_safetensors": True},
+        )
+    return reranker
 
 
 def _sparse_tensor_to_results(
@@ -543,8 +552,6 @@ class EmbeddingModel:
     Sparse: the pinned ModernBERT sparse adapter (GPU-native learned sparse)
 
     Attributes:
-        MODEL_NAME: Default dense embedding model ID.
-        SPARSE_MODEL_NAME: Default sparse embedding model ID.
         DEFAULT_DIMENSION: Embedding dimension for Qwen3-Embedding-0.6B.
         DEFAULT_BATCH_SIZE: Default encoding batch size.
         MAX_EMBED_CHARS: Maximum characters per document to embed.
@@ -552,8 +559,6 @@ class EmbeddingModel:
         sparse_dimension: Actual sparse-model output dimension.
     """
 
-    MODEL_NAME = "Qwen/Qwen3-Embedding-0.6B"
-    SPARSE_MODEL_NAME = SPARSE_MODEL_ID
     DEFAULT_DIMENSION = 1024
     DEFAULT_BATCH_SIZE = 64
     MAX_EMBED_CHARS = 8000
@@ -585,14 +590,17 @@ class EmbeddingModel:
 
     @staticmethod
     def _load_dense_model(
-        dense_name: str,
+        directory: str,
         model_kwargs: dict[str, object],
         cfg: object,
         *,
         device: str,
-        local_files_only: bool,
+        pinned: bool,
     ) -> SentenceTransformer:
         """Construct the dense SentenceTransformer for the configured backend.
+
+        *directory* is a snapshot that has already passed its check, and the
+        model is built from it and from nothing fetched afterwards.
 
         The default backend is ``torch``. When ``dense_backend == "onnx"`` the
         model is loaded with the ONNX backend on ``CUDAExecutionProvider`` using
@@ -604,11 +612,22 @@ class EmbeddingModel:
         experimental and opt-in: selecting it requires
         ``sentence-transformers[onnx-gpu]`` in an onnxruntime-compatible CUDA
         environment.
+
+        The ONNX backend is not attempted for a *pinned* model. A pinned
+        snapshot holds exactly the files of the pinned release, which include
+        no ONNX graph, and a graph produced or placed locally would be a file
+        no committed digest covers.
         """
         from sentence_transformers import SentenceTransformer
 
         backend = str(getattr(cfg, "dense_backend", "torch") or "torch").lower()
-        if backend == "onnx" and device == "cuda":
+        if backend == "onnx" and pinned:
+            logger.warning(
+                "The ONNX dense backend is not used with a pinned model, whose "
+                "release contains no ONNX graph to verify; using the torch "
+                "backend."
+            )
+        elif backend == "onnx" and device == "cuda":
             onnx_file = str(getattr(cfg, "dense_onnx_file", "onnx/model_O4.onnx"))
             try:
                 try:
@@ -623,9 +642,10 @@ class EmbeddingModel:
                 except Exception as exc:  # onnxruntime optional / preload varies
                     logger.debug("onnxruntime preload skipped: %s", exc)
                 model = SentenceTransformer(
-                    dense_name,
+                    directory,
                     backend="onnx",
-                    local_files_only=local_files_only,
+                    local_files_only=True,
+                    trust_remote_code=False,
                     model_kwargs={
                         "provider": "CUDAExecutionProvider",
                         "file_name": onnx_file,
@@ -645,46 +665,42 @@ class EmbeddingModel:
                 return model
 
         return SentenceTransformer(
-            dense_name,
+            directory,
             device=device,
-            local_files_only=local_files_only,
+            local_files_only=True,
+            trust_remote_code=False,
             model_kwargs=model_kwargs,
             processor_kwargs={"padding_side": "left"},
         )
 
-    def __init__(
-        self,
-        model_name: str | None = None,
-        *,
-        local_files_only: bool = False,
-    ) -> None:
+    def __init__(self, model_name: str | None = None) -> None:
         """Load dense and sparse models onto GPU.
+
+        Both come from the model cache and are checked before they are read.
+        Nothing is downloaded here.
 
         Args:
             model_name: Override the dense embedding model name.
-                Defaults to the config value or MODEL_NAME.
-            local_files_only: Load both models from the local Hugging Face
-                cache without issuing remote metadata requests. The default
-                remains online-capable for normal product construction.
+                Defaults to the configured model.
 
         Raises:
             ImportError: If sentence-transformers or torch not installed.
             RuntimeError: If no CUDA GPU is available.
+            ModelSnapshotError: If the cache holds no snapshot of a model
+                that passes its check. The text names the command to run.
         """
         accelerator = _check_rag_deps()
         torch = accelerator.torch
         self._accelerator = accelerator
         self._device = accelerator.device
 
-        from .config._settings import get_config
+        from ._model_cache import loadable_snapshot
+        from .config._settings import dense_model_repo, get_config, sparse_model_repo
 
         cfg = get_config()
-        dense_name = model_name or cfg.embedding_model
-        sparse_name = (
-            cfg.sparse_model
-            if hasattr(cfg, "sparse_model") and cfg.sparse_model
-            else self.SPARSE_MODEL_NAME
-        )
+        dense = dense_model_repo(model_name)
+        dense_name = dense.repo
+        sparse_name = sparse_model_repo().repo
         os.environ.setdefault(EnvVar.DISABLE_SAFETENSORS_CONVERSION, "1")
 
         logger.info(
@@ -692,8 +708,12 @@ class EmbeddingModel:
             cfg.hf_cache_location,
         )
 
+        # Weights are read from safetensors only. A pickle weight file is
+        # executable content from whatever endpoint served it, so a model
+        # that offers nothing else is refused instead of unpickled.
         model_kwargs: dict[str, object] = {
             "torch_dtype": torch.float16,
+            "use_safetensors": True,
         }
         # Probe for flash_attention_2 before loading to avoid double model load
         try:
@@ -709,13 +729,19 @@ class EmbeddingModel:
             logger.info("flash_attention_2 not available, using default attention")
 
         t0 = time.perf_counter()
-        self._dense_model = self._load_dense_model(
-            dense_name,
-            model_kwargs,
-            cfg,
-            device=accelerator.device,
-            local_files_only=local_files_only,
-        )
+        # Built from the checked directory, inside the block that holds its
+        # files. Leaving the block is where a file added during the load is
+        # caught, so nothing below runs on a model built from a snapshot that
+        # changed underneath it.
+        with loadable_snapshot(dense.repo, revision=dense.revision) as snapshot:
+            dense_model = self._load_dense_model(
+                str(snapshot.directory),
+                model_kwargs,
+                cfg,
+                device=accelerator.device,
+                pinned=dense.pinned,
+            )
+        self._dense_model = dense_model
         # Cap the model's advertised max sequence length so the
         # processor truncates aggressively and the model never
         # allocates attention buffers for the 32 k context window.
@@ -752,7 +778,7 @@ class EmbeddingModel:
             self.sparse_dimension = None
             logger.info("Sparse model not loaded: sparse vectors are disabled")
         else:
-            self._load_sparse_model(sparse_name, local_files_only=local_files_only)
+            self._load_sparse_model(sparse_name)
 
         self._init_encode_state(cfg)
 
@@ -808,21 +834,22 @@ class EmbeddingModel:
             )
         return self._sparse_model
 
-    def _load_sparse_model(
-        self,
-        sparse_name: str,
-        *,
-        local_files_only: bool,
-    ) -> None:
+    def _load_sparse_model(self, sparse_name: str) -> None:
         """Load the pinned sparse adapter and record its output width."""
-        from ._sparse_encoder import SparseModelAdapter
+        from ._model_cache import loadable_snapshot
+        from ._sparse_encoder import SparseModelAdapter, require_reviewed_sparse_model
+        from .config._settings import sparse_model_repo
 
+        # Refused before the cache is consulted: another sparse repository
+        # is refused for what it is, not for being absent.
+        require_reviewed_sparse_model(sparse_name)
+        model = sparse_model_repo()
         t0 = time.perf_counter()
-        self._sparse_model = SparseModelAdapter(
-            sparse_name,
-            accelerator=self._accelerator,
-            local_files_only=local_files_only,
-        )
+        with loadable_snapshot(model.repo, revision=model.revision) as snapshot:
+            adapter = SparseModelAdapter(
+                sparse_name, snapshot=snapshot, accelerator=self._accelerator
+            )
+        self._sparse_model = adapter
         self.sparse_dimension = self._sparse_model.get_embedding_dimension()
         logger.info(
             "Sparse model loaded in %.2fs (dimension=%d)",

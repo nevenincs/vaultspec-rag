@@ -19,6 +19,7 @@ from ..operator_state._installation import ComputeCapability, InstallRole
 from ..operator_state._models import ComputeReport
 from ..operator_state._provisioning import ToolReceiptVerdict
 from ..operator_state._topology import RuntimeEnvKind
+from ._planted_programs import plant_marking_program
 
 pytestmark = [pytest.mark.unit]
 
@@ -198,11 +199,13 @@ def test_a_repair_aimed_at_another_environment_is_refused(
             raise AssertionError("a foreign target must be refused before uv runs")
 
     monkeypatch.setattr(_tool_torch, "subprocess", _NoSubprocess)
-
-    def _uv_on_path(_name: str) -> str:
-        return "uv"
-
-    monkeypatch.setattr(_tool_torch.shutil, "which", _uv_on_path)
+    # A real uv for the real lookup to find, in the one directory the search
+    # path names. It is never run: the refusal comes first, and the subprocess
+    # double fails the test if it does not.
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    plant_marking_program(tools, "uv")
+    monkeypatch.setenv("PATH", str(tools))
     other = tmp_path / "another-env"
     (other / "Scripts").mkdir(parents=True)
 

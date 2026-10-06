@@ -28,8 +28,9 @@ from vaultspec_core.config import (
 from ..config._settings import VaultSpecConfigWrapper as VaultSpecConfig
 from ..config._settings import get_config
 from ..config._types import EnvVar
-from ..operator_state._installation import InstallRole
+from ..operator_state._installation import ComputeCapability, InstallRole
 from ..progress import NullProgressReporter
+from ._committed_pins import pin_table_drift
 from ._config_fixtures import reset_config as reset_rag_config
 from ._model_setup import ensure_model_snapshots, model_setup_timeout_seconds
 from ._operator_directory_guard import canonical_path
@@ -129,6 +130,24 @@ def rearm_machine_singleton_isolation(
         _force_machine_singleton_test_paths(isolated_machine_singleton_dirs)
 
 
+@pytest.fixture(autouse=True)
+def committed_pins_outlive_every_test() -> Generator[None]:
+    """Fail the test that leaves a Qdrant pin table changed.
+
+    One declared seam lets a test hold the shipped code to a stand-in release
+    by writing its digests into the committed pin tables for a block. A
+    digest left behind would make every later test trust bytes no release
+    holds, and pass. So after each test both tables are compared with the
+    values the source file commits, and the test that changed them is the one
+    that fails.
+    """
+    yield
+    drift = pin_table_drift()
+    assert not drift, (
+        "this test left the committed Qdrant pin tables changed: " + "; ".join(drift)
+    )
+
+
 def _apply_env(values: Mapping[str, str | None]) -> None:
     """Set or unset *values* and clear both configuration caches."""
     for key, value in values.items():
@@ -198,7 +217,7 @@ def isolated_singleton_dirs(tmp_path: Path) -> Generator[Path]:
         yield status_dir
 
 
-def _pin_install_role(monkeypatch: pytest.MonkeyPatch, role: InstallRole) -> None:
+def pin_install_role(monkeypatch: pytest.MonkeyPatch, role: InstallRole) -> None:
     """Substitute the one reading of this installation's role.
 
     The role comes from which distributions the running interpreter holds, and
@@ -213,21 +232,64 @@ def _pin_install_role(monkeypatch: pytest.MonkeyPatch, role: InstallRole) -> Non
     monkeypatch.setattr(_compute, "installed_role", lambda: (role, True))
 
 
+def pin_daemon_capability(
+    monkeypatch: pytest.MonkeyPatch, capability: ComputeCapability
+) -> None:
+    """Substitute what the interpreter that would run the daemon can do.
+
+    Whether an environment can run the service is asked of a child of that
+    interpreter, which imports torch and wakes the driver. The answer is a
+    fact about the machine: a workstation with a GPU says it is ready and an
+    accelerator-free runner says it is a client, so a test of what a command
+    does for a host that can serve, or for one that cannot yet, would assert
+    whichever the machine happened to be - and pay seconds per test to find
+    out. Only the child's answer is replaced. The judgement made of it, and
+    everything each command does with that judgement, run unchanged; the
+    child itself is exercised against this machine's real environment in the
+    environment-probe and service-environment tests.
+    """
+    from ..operator_state import _environment_probe
+    from ..operator_state._compute import ProbeDepth
+    from ..operator_state._environment_probe import InterpreterFacts
+    from ..operator_state._models import ComputeReport
+
+    def answer(
+        interpreter: str,
+        depth: ProbeDepth = ProbeDepth.METADATA,
+        *,
+        timeout: float | None = None,
+    ) -> InterpreterFacts:
+        del depth, timeout
+        return InterpreterFacts(
+            interpreter=interpreter,
+            role=InstallRole.HOST,
+            mcp_adapter=True,
+            executable=interpreter,
+            prefix="",
+            compute=ComputeReport(capability=capability),
+        )
+
+    monkeypatch.setattr(_environment_probe, "probe_interpreter", answer)
+
+
 @pytest.fixture
 def inference_host(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make this installation read as an inference host.
+    """Make this installation read as an inference host that can serve.
 
     The accelerator-free lane runs without the ``gpu`` extra, so a test of a
     host-only path pins the role or it would silently exercise the client
-    branch there instead.
+    branch there instead. The capability is pinned with it, because the model
+    and Qdrant steps are gated on both: a host whose accelerator is not
+    usable is a different state, staged by ``pin_daemon_capability`` alone.
     """
-    _pin_install_role(monkeypatch, InstallRole.HOST)
+    pin_install_role(monkeypatch, InstallRole.HOST)
+    pin_daemon_capability(monkeypatch, ComputeCapability.READY)
 
 
 @pytest.fixture
 def client_installation(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make this installation read as a client, whatever this env holds."""
-    _pin_install_role(monkeypatch, InstallRole.CLIENT)
+    pin_install_role(monkeypatch, InstallRole.CLIENT)
 
 
 @pytest.fixture(autouse=True)
@@ -378,7 +440,7 @@ def embedding_model() -> EmbeddingModel:
         (str(cfg.embedding_model), str(cfg.sparse_model)),
         timeout_seconds=model_setup_timeout_seconds(),
     )
-    return EmbeddingModel(local_files_only=True)
+    return EmbeddingModel()
 
 
 @pytest.fixture(scope="session")

@@ -610,7 +610,11 @@ async def get_code_file(
     path: str,
     project_root: str | None = None,
 ) -> str:
-    """Retrieve the full content of a source file by path."""
+    """Retrieve the full content of a source file by path.
+
+    Only files the code index admits are returned. Hidden paths, ignored
+    paths, and non-source files are refused with "access denied".
+    """
     port = _require_port()
     res = await _delegate(
         partial(

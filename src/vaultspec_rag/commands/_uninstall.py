@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import stat
 import tempfile
 from contextvars import Context
 from dataclasses import dataclass
@@ -16,7 +17,7 @@ from vaultspec_core.core.mcps import (
     mcp_uninstall,
 )
 
-from .._rmtree import remove_tree
+from .._plain_directory import link_kind, open_plain_directory
 from .._workspace_layout import (
     VAULT_DATA_DIR,
     WORKSPACE_DIR,
@@ -35,7 +36,11 @@ from ._mode import resolve_rag_mode
 from ._models import UninstallReport
 from ._skip import validate_rag_skip
 from ._torch_flow import _run_torch_config_uninstall
-from ._workspace import _init_core_context, _resolve_target
+from ._workspace import (
+    _init_core_context,
+    _require_plain_workspace,
+    _resolve_target,
+)
 
 if TYPE_CHECKING:
     from vaultspec_core.core.types import SyncResult
@@ -72,24 +77,26 @@ def _remove_candidates(
     # ``seed_builtins`` would write, derived from the same package tree
     # via ``list_builtins``. A new bundled file is then seeded and
     # removed by one source of truth and can never be orphaned.
-    vaultspec_dir = target / WORKSPACE_DIR
     candidates = [
-        vaultspec_dir / rel
+        WORKSPACE_DIR / rel
         for rel in list_builtins()
         if not (skip_mcp and rel.startswith("mcps/"))
     ]
-    for src_file in candidates:
-        if not src_file.exists():
-            continue
-        rel = str(src_file.relative_to(target)).replace("\\", "/")
-        if not dry_run:
-            try:
-                src_file.unlink()
-            except OSError as exc:
-                logger.warning("Failed to remove %s: %s", rel, exc)
-                report.warnings.append(f"failed to remove {rel}: {exc}")
+    for candidate in candidates:
+        # Each file is removed through its held parent, so the entry unlinked
+        # is the one beneath the directories just proven real.
+        with open_plain_directory(target, candidate.parent) as directory:
+            if directory is None or directory.lstat(candidate.name) is None:
                 continue
-        report.removed.append(rel)
+            rel = candidate.as_posix()
+            if not dry_run:
+                try:
+                    directory.unlink(candidate.name)
+                except OSError as exc:
+                    logger.warning("Failed to remove %s: %s", rel, exc)
+                    report.warnings.append(f"failed to remove {rel}: {exc}")
+                    continue
+            report.removed.append(rel)
 
 
 #: Obsolete runtime sentinels older installs may have left in the project
@@ -116,53 +123,67 @@ def _remove_obsolete_sentinels(
                 continue
         report.removed.append(name)
     for relative in _OBSOLETE_SENTINEL_DIRS:
-        sentinel_dir = target / relative
-        if not sentinel_dir.is_dir() or sentinel_dir.is_symlink():
-            continue
-        rel = relative.as_posix()
-        if not dry_run:
-            try:
-                remove_tree(sentinel_dir)
-            except OSError as exc:
-                logger.warning("Failed to remove %s: %s", rel, exc)
-                report.warnings.append(f"failed to remove {rel}: {exc}")
+        with open_plain_directory(target, relative.parent) as directory:
+            metadata = directory.lstat(relative.name) if directory else None
+            if (
+                directory is None
+                or metadata is None
+                or not stat.S_ISDIR(metadata.st_mode)
+                or link_kind(metadata) is not None
+            ):
                 continue
-        report.removed.append(rel)
+            rel = relative.as_posix()
+            if not dry_run:
+                try:
+                    directory.remove_tree(relative.name)
+                except OSError as exc:
+                    logger.warning("Failed to remove %s: %s", rel, exc)
+                    report.warnings.append(f"failed to remove {rel}: {exc}")
+                    continue
+            report.removed.append(rel)
 
 
 def _remove_data_dir(target: Path, dry_run: bool, report: UninstallReport) -> None:
     data_dir = target / VAULT_DATA_DIR
-    if data_dir.is_symlink():
-        msg = (
-            f"refusing to --remove-data: {data_dir} is a symlink. "
-            f"Resolve the symlink manually and re-run uninstall."
-        )
-        logger.warning(msg)
-        report.warnings.append(msg)
-    elif data_dir.is_dir():
-        if not dry_run:
-            try:
-                remove_tree(data_dir)
-            except OSError as exc:
-                logger.warning("Failed to remove %s: %s", data_dir, exc)
-                report.warnings.append(f"failed to remove .vault/data: {exc}")
+    # The tree is removed through its held parent: a check of ``data`` alone
+    # says nothing about a linked ``.vault`` above it, and a path-based delete
+    # would follow that link to whatever ordinary directory it names.
+    with open_plain_directory(target, VAULT_DATA_DIR.parent) as vault:
+        metadata = vault.lstat(VAULT_DATA_DIR.name) if vault else None
+        if vault is None or metadata is None:
+            return
+        link = link_kind(metadata)
+        if link is not None:
+            msg = (
+                f"refusing to --remove-data: {data_dir} is a {link}. "
+                f"Resolve the {link} manually and re-run uninstall."
+            )
+            logger.warning(msg)
+            report.warnings.append(msg)
+        elif stat.S_ISDIR(metadata.st_mode):
+            if not dry_run:
+                try:
+                    vault.remove_tree(VAULT_DATA_DIR.name)
+                except OSError as exc:
+                    logger.warning("Failed to remove %s: %s", data_dir, exc)
+                    report.warnings.append(f"failed to remove .vault/data: {exc}")
+                else:
+                    report.data_removed = True
             else:
                 report.data_removed = True
-        else:
-            report.data_removed = True
-            # Preview the concrete target so --force operators see exactly what
-            # --remove-data will delete (resolved path + size).
-            try:
-                size_bytes = sum(
-                    f.stat().st_size for f in data_dir.rglob("*") if f.is_file()
-                )
-                logger.info(
-                    "Would remove %s (%.1f MB) with --remove-data",
-                    data_dir.resolve(),
-                    size_bytes / 1_000_000,
-                )
-            except OSError as exc:
-                logger.debug("could not size %s for preview: %s", data_dir, exc)
+                # Preview the concrete target so --force operators see exactly
+                # what --remove-data will delete (resolved path + size).
+                try:
+                    size_bytes = sum(
+                        f.stat().st_size for f in data_dir.rglob("*") if f.is_file()
+                    )
+                    logger.info(
+                        "Would remove %s (%.1f MB) with --remove-data",
+                        data_dir.resolve(),
+                        size_bytes / 1_000_000,
+                    )
+                except OSError as exc:
+                    logger.debug("could not size %s for preview: %s", data_dir, exc)
 
 
 def _run_mcp_cleanup(
@@ -423,6 +444,10 @@ def _uninstall_run(request: _UninstallRequest) -> UninstallReport:
             message = LINKED_NODES_NOT_REMOVABLE
             record_mcp_failure(report, message)
             return report
+
+    # Checked whatever was skipped: the MCP preflight above covers only the
+    # nodes an MCP transition touches, and a skipped one covers none.
+    _require_plain_workspace(target)
 
     if not (target / WORKSPACE_DIR).is_dir():
         # No ``.vaultspec/`` means rag was never installed at this

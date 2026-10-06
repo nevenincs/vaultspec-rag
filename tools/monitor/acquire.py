@@ -12,6 +12,7 @@ from typing import cast
 
 from tools.binaries.build_pyapp import check_platform_floor
 from tools.binaries.native import host_target_triple
+from tools.binaries.release_hosts import GITHUB_RELEASE_REDIRECT_HOSTS
 from tools.monitor.offline import probe_offline
 from tools.monitor.pins import (
     ROOT,
@@ -24,12 +25,22 @@ from tools.monitor.smoke import installed_browser, probe
 from tools.packaging.bundles import BundleSpec, verify_bundle
 from tools.packaging.checksums import parse_checksums, require
 from tools.packaging.products import MONITOR_EXECUTABLE, VAULTSPEC_RAG
+from vaultspec_rag.qdrant_runtime._download import download_https
 from vaultspec_rag.qdrant_runtime._provision import (
-    _download,
     extract_verified_archive,
     file_sha256,
     verify_native_binary,
 )
+
+
+def _fetch(url: str, destination: Path) -> None:
+    """Download one GitHub-hosted file into this run's scratch directory.
+
+    A source on the API host is contacted like any other: the redirect set
+    bounds only where an answer may send the request on.
+    """
+    with destination.open("wb") as out:
+        download_https(url, out, redirect_hosts=GITHUB_RELEASE_REDIRECT_HOSTS)
 
 
 def extract_delivery(
@@ -79,7 +90,7 @@ def extract_delivery(
 
 def latest_tag(directory: Path) -> str:
     metadata = directory / "latest.json"
-    _download(
+    _fetch(
         "https://api.github.com/repos/nevenincs/vaultspec-rag/releases/latest", metadata
     )
     if metadata.stat().st_size > 1 << 20:
@@ -108,13 +119,13 @@ def acquire(
         base = VAULTSPEC_RAG.release_base_url(version)
         sums = directory / "SHA256SUMS"
         # Live checksums add coverage; the committed catalog supplies authority.
-        _download(base + "/SHA256SUMS", sums)
+        _fetch(base + "/SHA256SUMS", sums)
         digests = parse_checksums(
             sums.read_text(encoding="utf-8", newline=""), require_unique=True
         )
         if require(digests, archive.name) != pins.targets[target].archive_sha256:
             raise PinError("Live SHA256SUMS differs from the reviewed archive pin")
-        _download(base + "/" + archive.name, archive)
+        _fetch(base + "/" + archive.name, archive)
         extracted = directory / "extracted"
         extract_delivery(archive, spec, pins, extracted)
         # Keep backend bootstrappers outside the shell-only process placement.

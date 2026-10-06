@@ -15,6 +15,7 @@ standalone tool and no-install routes.
 - [Core variables](#core-variables) - every variable resolved through the standard chain, grouped by what it affects
 - [Config-only keys](#config-only-keys) - settings with no environment variable
 - [Hugging Face cache](#hugging-face-cache) - the third-party variables that govern model downloads
+- [Download sources](#download-sources) - where the server binary, the models and the CUDA wheels come from
 - [Renamed and removed variables](#renamed-and-removed-variables) - old names and what replaced them
 - [Tuning for memory and speed](#tuning-for-memory-and-speed) - task guidance rather than reference
 - [Examples](#examples)
@@ -170,24 +171,55 @@ The tables in this section list every `VAULTSPEC_RAG_*` variable resolved throug
 
 These variables choose between the supervised Qdrant server (the default) and the on-disk store. They also configure a remote or managed server.
 
-| Variable                             | Type    | Default                                  | Controls                                                                        | CLI flag                   |
-| ------------------------------------ | ------- | ---------------------------------------- | ------------------------------------------------------------------------------- | -------------------------- |
-| `VAULTSPEC_RAG_QDRANT_SERVER`        | boolean | `1` (true)                               | Server-first default backend                                                    | `--qdrant` / `--no-qdrant` |
-| `VAULTSPEC_RAG_LOCAL_ONLY`           | boolean | `0` (false)                              | On-disk store opt-out; overrides the server default                             | `--local-only`             |
-| `VAULTSPEC_RAG_QDRANT_PORT`          | integer | `8765`                                   | Managed server HTTP port (gRPC binds one below)                                 | -                          |
-| `VAULTSPEC_RAG_QDRANT_URL`           | string  | none                                     | Remote or managed server URL; selects server mode in the store                  | -                          |
-| `VAULTSPEC_RAG_QDRANT_API_KEY`       | string  | none                                     | Remote server API key                                                           | -                          |
-| `VAULTSPEC_RAG_QDRANT_BINARY`        | string  | none                                     | Operator-supplied binary path (air-gapped escape hatch)                         | -                          |
-| `VAULTSPEC_RAG_QDRANT_STORAGE_DIR`   | string  | `~/.vaultspec-rag/qdrant-server/storage` | Shared multi-root server storage                                                | -                          |
-| `VAULTSPEC_RAG_QDRANT_QUANTIZATION`  | string  | none                                     | Vector quantization (`scalar`, `turbo`, or `product`)                           | -                          |
-| `VAULTSPEC_RAG_QDRANT_READY_TIMEOUT` | float   | `300`                                    | Seconds of no startup progress the supervisor tolerates (total wait is 4x this) | -                          |
-| `VAULTSPEC_RAG_QDRANT_COLLECTION_LOAD_CONCURRENCY` | integer | `2` | Maximum collections loading concurrently during managed server startup; positive integer | - |
+| Variable                                           | Type    | Default                                  | Controls                                                                                 | CLI flag                   |
+| -------------------------------------------------- | ------- | ---------------------------------------- | ---------------------------------------------------------------------------------------- | -------------------------- |
+| `VAULTSPEC_RAG_QDRANT_SERVER`                      | boolean | `1` (true)                               | Server-first default backend                                                             | `--qdrant` / `--no-qdrant` |
+| `VAULTSPEC_RAG_LOCAL_ONLY`                         | boolean | `0` (false)                              | On-disk store opt-out; overrides the server default                                      | `--local-only`             |
+| `VAULTSPEC_RAG_QDRANT_PORT`                        | integer | `8765`                                   | Managed server HTTP port (gRPC binds one below)                                          | -                          |
+| `VAULTSPEC_RAG_QDRANT_URL`                         | string  | none                                     | Remote or managed server URL; selects server mode in the store                           | -                          |
+| `VAULTSPEC_RAG_QDRANT_API_KEY`                     | string  | none                                     | Server API key; a managed server uses it in place of a generated one                     | -                          |
+| `VAULTSPEC_RAG_QDRANT_BINARY`                      | string  | none                                     | Absolute path to a binary you supply; requires the digest below                          | -                          |
+| `VAULTSPEC_RAG_QDRANT_BINARY_SHA256`               | string  | none                                     | SHA256 of that binary; required with the path                                            | -                          |
+| `VAULTSPEC_RAG_QDRANT_STORAGE_DIR`                 | string  | `~/.vaultspec-rag/qdrant-server/storage` | Shared multi-root server storage                                                         | -                          |
+| `VAULTSPEC_RAG_QDRANT_QUANTIZATION`                | string  | none                                     | Vector quantization (`scalar`, `turbo`, or `product`)                                    | -                          |
+| `VAULTSPEC_RAG_QDRANT_READY_TIMEOUT`               | float   | `300`                                    | Seconds of no startup progress the supervisor tolerates (total wait is 4x this)          | -                          |
+| `VAULTSPEC_RAG_QDRANT_COLLECTION_LOAD_CONCURRENCY` | integer | `2`                                      | Maximum collections loading concurrently during managed server startup; positive integer | -                          |
 
 Collection load concurrency takes effect on the next managed Qdrant start. Set it
 to `1` for serial loading; higher values can increase CPU and storage pressure.
 The managed child translates this setting to Qdrant's
 `storage.performance.max_concurrent_collection_loads` and logs the applied value.
 It does not configure remote servers or alter shard and segment load concurrency.
+
+#### Supplying your own server binary
+
+`VAULTSPEC_RAG_QDRANT_BINARY` and `VAULTSPEC_RAG_QDRANT_BINARY_SHA256` are one setting in two halves. Set both to run a Qdrant binary you built or obtained yourself; set neither to use the managed install.
+
+- The path must be absolute and name a regular file.
+- The digest is the SHA256 of that file: 64 hexadecimal characters, in either letter case. Print it with `Get-FileHash -Algorithm SHA256 <path>` on Windows, or `sha256sum <path>` or `shasum -a 256 <path>` elsewhere.
+- The file is hashed and compared with the digest before every start, including restarts. A file that does not match is never run.
+
+Setting only one of the two is refused, for every command, before the command runs. The message names both variables and repeats the commands above. If you already export `VAULTSPEC_RAG_QDRANT_BINARY` from an earlier version, export the digest alongside it. The top-level `--help` and `--version` still answer while the refusal is in force.
+
+Both are read from the process environment only. A workspace file cannot name a binary for the service to run, and cannot vouch for one.
+
+### Managed server provisioning
+
+These variables decide whether a host `server start` fetches the pinned Qdrant server binary when none is installed, and where it fetches it from. They do not apply to a client installation, which never downloads a binary, or to `--local-only`, which needs none.
+
+| Variable                                | Type    | Default                                                                         | Controls                                                                                                    | CLI flag                                                 |
+| --------------------------------------- | ------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `VAULTSPEC_RAG_QDRANT_AUTO_PROVISION`   | boolean | `1` (true)                                                                      | Download the pinned binary on `server start` when none resolves; `0` fails with the install command instead | `--qdrant-auto-provision` / `--no-qdrant-auto-provision` |
+| `VAULTSPEC_RAG_QDRANT_RELEASE_BASE_URL` | string  | `https://github.com/qdrant/qdrant/releases/download`                            | Release base URL; the archive is fetched from `{base}/v{version}/{asset}`                                   | -                                                        |
+| `VAULTSPEC_RAG_QDRANT_DOWNLOAD_HOSTS`   | string  | `github.com,release-assets.githubusercontent.com,objects.githubusercontent.com` | Hosts a download redirect may land on                                                                       | -                                                        |
+
+**Mirrors.** Point `VAULTSPEC_RAG_QDRANT_RELEASE_BASE_URL` at a mirror that keeps the upstream path layout, so that `{base}/v{version}/{asset}` resolves. The value must be an `https` URL with a host. It may carry a port and a path prefix; it may not carry credentials, a query, or a fragment. A trailing slash is ignored.
+
+**Host list syntax.** `VAULTSPEC_RAG_QDRANT_DOWNLOAD_HOSTS` is a comma-separated list of host names. Whitespace around an entry is ignored and case does not matter. Each entry is a bare host name: an entry with a scheme, a port, a path, or a wildcard is rejected, and so is a list with no entries. The base URL's own host always serves the first request, whatever the list says; the list names the hosts that request may be redirected to. A mirror that redirects to its own storage host needs that host listed. Setting the list replaces the default rather than adding to it.
+
+**What a mirror cannot change.** The download is checked against SHA256 digests compiled into vaultspec-rag. No variable overrides a digest, so a mirror changes where the bytes come from and never which bytes are accepted.
+
+**Where these are read from.** The process environment only. Like every setting on this page, none of the three is read from a workspace `.env` or any other file in a project, so a cloned repository cannot choose the server a host downloads an executable from. A value that fails the rules above is rejected at startup with the other unusable settings, before any download begins.
 
 ### Project and data locations
 
@@ -237,19 +269,64 @@ A transient store-write failure (disk pressure, a write-ahead-log stall) is retr
 
 The stored vectors belong to the model that produced them. After changing any model here, reindex. If the dense width disagrees with the dense model, the store rejects the first upsert rather than writing silently.
 
-The public ModernBERT SPARSEUP model uses a pinned revision shared by inference,
-provisioning and warmup. Set `VAULTSPEC_RAG_SPARSE_ENABLED=0` for dense-only search
+Set `VAULTSPEC_RAG_SPARSE_ENABLED=0` for dense-only search
 and rebuild indexes afterwards. The sparse adapter supports only
 `Linkup-Platform/linkup-sparseup-embed-v1`; another sparse repository is refused.
 Dense encoding and reranking still require
 `[gpu]` and a supported accelerator.
 
-| Variable                            | Type    | Default                                    | Controls                                       | CLI flag |
-| ----------------------------------- | ------- | ------------------------------------------ | ---------------------------------------------- | -------- |
-| `VAULTSPEC_RAG_EMBEDDING_MODEL`     | string  | `Qwen/Qwen3-Embedding-0.6B`                | Dense embedding model id                       | -        |
-| `VAULTSPEC_RAG_EMBEDDING_DIMENSION` | integer | `1024`                                     | Dense vector width; must match the dense model | -        |
-| `VAULTSPEC_RAG_SPARSE_MODEL`        | string  | `Linkup-Platform/linkup-sparseup-embed-v1` | SPARSEUP sparse model id                       | -        |
-| `VAULTSPEC_RAG_RERANKER_MODEL`      | string  | `BAAI/bge-reranker-v2-m3`                  | CrossEncoder reranker model id                 | -        |
+| Variable                                 | Type    | Default                                    | Controls                                                        | CLI flag |
+| ---------------------------------------- | ------- | ------------------------------------------ | --------------------------------------------------------------- | -------- |
+| `VAULTSPEC_RAG_EMBEDDING_MODEL`          | string  | `Qwen/Qwen3-Embedding-0.6B`                | Dense embedding model id                                        | -        |
+| `VAULTSPEC_RAG_EMBEDDING_MODEL_REVISION` | string  | none                                       | Commit of the dense model; unset uses the compiled-in commit    | -        |
+| `VAULTSPEC_RAG_EMBEDDING_DIMENSION`      | integer | `1024`                                     | Dense vector width; must match the dense model                  | -        |
+| `VAULTSPEC_RAG_SPARSE_MODEL`             | string  | `Linkup-Platform/linkup-sparseup-embed-v1` | SPARSEUP sparse model id                                        | -        |
+| `VAULTSPEC_RAG_RERANKER_MODEL`           | string  | `BAAI/bge-reranker-v2-m3`                  | CrossEncoder reranker model id                                  | -        |
+| `VAULTSPEC_RAG_RERANKER_MODEL_REVISION`  | string  | none                                       | Commit of the reranker model; unset uses the compiled-in commit | -        |
+
+#### Pinned models and what is verified
+
+Each default model is pinned twice: to a commit of its repository, and to the SHA256 of every file that commit holds. Both are compiled into vaultspec-rag. The commit says which snapshot is asked for. The digests are what make the answer checkable: a commit is a name the hub resolves, and the hub can be a mirror you configured, so the commit alone says nothing about the bytes that arrive.
+
+A default model's snapshot is used only when it matches those digests file for file. A missing file, a file that should not be there, and a file with different content are each refused, and the file is named. The check runs when the models are fetched (`install`, `server start`, `server warmup`) and again every time a model is loaded. It reads every byte, about 4 GB for the three default models, and takes a few seconds.
+
+| What you configure                           | Commit used              | Reported as | Checked against                      |
+| -------------------------------------------- | ------------------------ | ----------- | ------------------------------------ |
+| Nothing                                      | The compiled-in commit   | pinned      | The compiled-in digest of every file |
+| A revision variable set to another commit    | That commit              | unpinned    | Its file set and weight format only  |
+| A model variable naming another repository   | The hub's default branch | unpinned    | Its file set and weight format only  |
+| Another repository and its revision variable | That commit              | unpinned    | Its file set and weight format only  |
+
+**Unset is the pinned state.** The two revision variables default to none, and none means the compiled-in commit for a default model. Setting one moves the model to a commit that no compiled-in digest describes, so the model is then reported as unpinned everywhere it is listed. A revision must be a full commit id of 40 hexadecimal characters. A branch or tag name is rejected at startup, because a name that moves would unpin a model while appearing to pin it.
+
+**The sparse model has no revision variable.** Its repository ships the code that builds the model, and vaultspec-rag runs that code. The code is covered by the compiled-in digests and is loaded from the very bytes that were checked. A commit the environment could change would select code no digest covers, so there is no setting for it.
+
+**Weights are safetensors only, for every model.** A model that ships its weights only in a pickle format is refused with that reason, because loading a pickle file runs code from whatever served it. No model is given permission to run code from its repository.
+
+**An unpinned model still works.** It is fetched, checked for a configuration file, a tokenizer and safetensors weights, and loaded. Once cached it is not refreshed by a later start. What it lacks is any check of its content, and `server doctor`, `install`, `server start` and `server warmup` say so wherever they list it.
+
+**Proving the cache without starting the service.** `vaultspec-rag server doctor` hashes each pinned model's snapshot and reports the result. A failed check names the model and the file. `vaultspec-rag server warmup` repairs it: a file that fails is downloaded again once. If it still fails, the hub is not serving the pinned release; check `VAULTSPEC_RAG_HF_ENDPOINT`.
+
+**A model load never downloads.** Models are fetched by `install`, by `server warmup`, and by the check `server start` runs before it launches the service. The service, and every other process that loads a model, reads the cache only. When a model is absent or fails its check, the load stops with one message: the model, what is wrong with it, and what to run. That is `vaultspec-rag server warmup` for a model or file that is missing, `server warmup` and then `vaultspec-rag server doctor` for a file that fails its digest, and `server doctor` alone, after removing the file, for a file that does not belong. The dense model, the sparse model and the reranker all fail this way, whenever each first loads.
+
+**While a model loads** on Windows, every file of its snapshot is held open against writing, deleting and renaming from before it is hashed until the load has finished. Other platforms offer no such hold: a process that can write the model cache could replace a file between the check and the load. Because weights are safetensors and the sparse model's code is loaded from the checked bytes, such a replacement could change a model's numbers but could not run code.
+
+**The ONNX dense backend** is not used with a pinned model. The pinned release contains no ONNX graph, and a graph made or placed locally would be a file no digest covers. With `VAULTSPEC_RAG_DENSE_BACKEND=onnx` and the default dense model, vaultspec-rag logs a warning and uses the torch backend.
+
+### Model download source
+
+| Variable                                     | Type   | Default                  | Controls                                                            | CLI flag |
+| -------------------------------------------- | ------ | ------------------------ | ------------------------------------------------------------------- | -------- |
+| `VAULTSPEC_RAG_HF_ENDPOINT`                  | string | `https://huggingface.co` | Model hub the dense, sparse and reranker models are downloaded from | -        |
+| `VAULTSPEC_RAG_MODEL_FETCH_DEADLINE_SECONDS` | float  | `14400`                  | Longest one model fetch may take, every repository together         | -        |
+
+Set this to download models from a hub mirror. The value must be an `https` URL with a host. It may carry a port and a path prefix; it may not carry credentials, a query, or a fragment. A mirror must keep the hub's path layout.
+
+**Set it before the process starts.** The Hugging Face Hub client reads its endpoint once, when it is first loaded, so vaultspec-rag exports this value to `HF_ENDPOINT` at the start of every process: the CLI, the stdio MCP server, and the resident service. The resident service inherits it from the command that starts it. Changing the variable in a shell does not move a service that is already running; restart it from the intended environment.
+
+**Precedence.** `VAULTSPEC_RAG_HF_ENDPOINT` wins when it is set. Otherwise an `HF_ENDPOINT` you set yourself is left exactly as it is, and the Hub client judges it by its own rules. With neither set, the Hub client's default applies, which is the same `https://huggingface.co`. An unset or blank `VAULTSPEC_RAG_HF_ENDPOINT` exports nothing.
+
+Like every setting on this page, it is read from the process environment only, never from a workspace `.env`.
 
 ### Embedding and reranking
 
@@ -408,9 +485,11 @@ vaultspec-rag downloads its dense, sparse, and reranker model files through the 
 | Variable                         | Type    | Controls                                                                                          |
 | -------------------------------- | ------- | ------------------------------------------------------------------------------------------------- |
 | `HF_HOME`                        | path    | Hub cache root. Read directly when reporting cache location; falls back to `~/.cache/huggingface` |
-| `HF_HUB_DOWNLOAD_TIMEOUT`        | integer | Per-file download timeout. The service defaults it to `300` when unset                            |
-| `HF_HUB_OFFLINE`                 | boolean | Cache-only mode; no network access to the Hub                                                     |
-| `TRANSFORMERS_OFFLINE`           | boolean | Cache-only model loading for Transformers                                                         |
+| `HF_HUB_CACHE`                   | path    | Directory the model snapshots are kept in, in place of the one under `HF_HOME`                    |
+| `HF_ENDPOINT`                    | string  | Hub endpoint. `VAULTSPEC_RAG_HF_ENDPOINT` overwrites it at process start when set                 |
+| `HF_HUB_DOWNLOAD_TIMEOUT`        | integer | Hub client's per-read timeout in seconds. vaultspec-rag does not set it; the default is `10`      |
+| `HF_HUB_OFFLINE`                 | boolean | Offline mode; no model is fetched from the Hub                                                    |
+| `TRANSFORMERS_OFFLINE`           | boolean | Transformers' offline switch; same effect                                                         |
 | `DISABLE_SAFETENSORS_CONVERSION` | boolean | Skip on-the-fly safetensors conversion                                                            |
 
 All default models download publicly, without account setup. To omit sparse
@@ -419,9 +498,25 @@ rebuild existing indexes. The service still needs `[gpu]` and a supported GPU.
 
 `HF_HOME` sets where model files are cached, and defaults to `~/.cache/huggingface`. Set it to a persistent location before the first download.
 
-`HF_HUB_OFFLINE` is the authoritative offline switch; vaultspec-rag also honours `TRANSFORMERS_OFFLINE`, and when either is set to `1`, `true`, `yes`, or `on` it loads every model cache-only. See the [Hugging Face environment variable reference](https://huggingface.co/docs/huggingface_hub/en/package_reference/environment_variables).
+`HF_HUB_DOWNLOAD_TIMEOUT` is the Hub client's per-read timeout: the seconds it waits with no data arriving before it abandons one download attempt. It is not a budget for a whole file. vaultspec-rag does not set it, so the client's default of `10` applies. The client retries a file up to five more times and starts that count again whenever data arrives, so a hub that goes silent fails a file after about a minute. Raise it for a link that pauses for longer than that.
+
+`HF_HUB_OFFLINE` is the authoritative offline switch; vaultspec-rag also honours `TRANSFORMERS_OFFLINE`. When either is set to `1`, `true`, `yes`, or `on`, `install`, `server start` and `server warmup` fetch no model and report what the cache lacks. Loading a model never fetches one, whether or not they are set. See the [Hugging Face environment variable reference](https://huggingface.co/docs/huggingface_hub/en/package_reference/environment_variables).
 
 Searches additionally quiet the Hub and Transformers loggers by defaulting `HF_HUB_DISABLE_PROGRESS_BARS`, `TRANSFORMERS_NO_ADVISORY_WARNINGS`, and `TRANSFORMERS_VERBOSITY` when they are unset. Set them yourself to keep the library output.
+
+`HF_ENDPOINT` is the Hub client's own endpoint variable. Setting it directly still works. `VAULTSPEC_RAG_HF_ENDPOINT` outranks it; see [Model download source](#model-download-source).
+
+## Download sources
+
+vaultspec-rag downloads three things on its own. This table says where each one comes from and what moves it.
+
+| What                           | Default source                                       | How to change it                                                                                                                                   |
+| ------------------------------ | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Managed Qdrant server binary   | `https://github.com/qdrant/qdrant/releases/download` | `VAULTSPEC_RAG_QDRANT_RELEASE_BASE_URL` and `VAULTSPEC_RAG_QDRANT_DOWNLOAD_HOSTS`; see [Managed server provisioning](#managed-server-provisioning) |
+| Dense, sparse, reranker models | `https://huggingface.co`                             | `VAULTSPEC_RAG_HF_ENDPOINT`; see [Model download source](#model-download-source)                                                                   |
+| CUDA build of PyTorch          | `https://download.pytorch.org/whl/cu130`             | No variable; edit the index entry in your own `pyproject.toml`                                                                                     |
+
+**The CUDA wheel index has no variable, on purpose.** `vaultspec-rag install` writes that index into a project's `pyproject.toml` as a `[[tool.uv.index]]` entry named `pytorch-cu130`, and `uv` reads the file from then on. The URL is therefore a value committed to a repository, not a setting of the running process, and an environment variable could not make it consistent across the people and jobs that share the file. To use a wheel mirror, change the `url` of that entry by hand. vaultspec-rag then treats the block as customised and never rewrites or removes it. The [installation guide](installation.md) shows the entry.
 
 ## Renamed and removed variables
 

@@ -22,6 +22,14 @@ for those cases: removing the ``subprocess.Popen`` branch from the guard's
 audit hook and running them alone failed all three refusals - the sync with
 ``DID NOT RAISE``, the other two with the ``NotADirectoryError`` the launch
 reached instead - and restoring it passed all four.
+
+The cases for ``uv run`` and the other project verbs keep that idiom in both
+directions. A launch the guard must let through is still started in a
+directory that does not exist, so what it proves is the error the operating
+system raises once the guard has stood aside: an ``OSError``, which the
+refusal is not. That error is ``NotADirectoryError`` on Windows, where each
+mutation recorded below was run, and ``FileNotFoundError`` elsewhere. Each
+case records the mutation it was seen to fail under.
 """
 
 from __future__ import annotations
@@ -30,6 +38,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import uuid
 from pathlib import Path
 
@@ -37,10 +46,20 @@ import pytest
 
 from ._operator_directory_guard import (
     OperatorDirectoryWriteError,
+    _command_words,
+    _discovered_environment,
     guarded_operator_roots,
 )
 
 pytestmark = pytest.mark.unit
+
+#: uv's own name for where a project's environment lives.
+_PROJECT_ENVIRONMENT = "UV_PROJECT_ENVIRONMENT"
+
+#: Program text whose one double quote leaves a joined Windows command line
+#: with an odd number of them, which is what a quote-pairing splitter cannot
+#: read. The dev harness's capability probe is text of this kind.
+_QUOTED_PROGRAM = "value = '\"'"
 
 
 @pytest.fixture
@@ -225,3 +244,417 @@ def test_a_sync_inside_the_temporary_tree_is_not_refused(tmp_path: Path) -> None
         check=False,
     )
     assert completed.returncode != 0
+
+
+def _run_through_uv(*options: str) -> list[str]:
+    """Return a ``uv run`` launch of a child that would do nothing."""
+    return [_uv(), "run", *options, "python", "-c", _QUOTED_PROGRAM]
+
+
+def test_a_run_outside_the_temporary_tree_is_refused(
+    foreign_environment: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``uv run --no-sync`` is refused on a project no test created.
+
+    ``--no-sync`` does not make the launch harmless: uv creates or replaces
+    the project's environment before it reads the flag.
+
+    Mutation: with the hook's ``run`` branch disabled the launch reached the
+    operating system and failed here with ``NotADirectoryError`` in place of
+    the refusal; restored, it passed.
+    """
+    monkeypatch.delenv(_PROJECT_ENVIRONMENT, raising=False)
+    with pytest.raises(
+        OperatorDirectoryWriteError, match=re.escape("refusing uv run on")
+    ):
+        subprocess.run(
+            _run_through_uv("--no-sync"), cwd=foreign_environment.parent, check=False
+        )
+    assert not foreign_environment.parent.exists()
+
+
+def test_a_run_into_an_environment_under_the_temporary_tree_is_not_refused(
+    foreign_environment: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An environment of the test's own takes the launch off the project's.
+
+    The same launch as the refused one, so it reaches an operating system
+    that cannot start it in a directory that does not exist.
+
+    Mutation: with the hook ignoring ``UV_PROJECT_ENVIRONMENT`` this raised
+    the refusal for the starting directory in place of the launch error;
+    restored, it passed.
+    """
+    monkeypatch.setenv(_PROJECT_ENVIRONMENT, str(tmp_path / "environment"))
+    with pytest.raises(OSError):
+        subprocess.run(
+            _run_through_uv("--no-sync"), cwd=foreign_environment.parent, check=False
+        )
+    assert not foreign_environment.parent.exists()
+
+
+@pytest.mark.parametrize("option", ["--no-project", "--isolated"])
+def test_a_run_that_uses_no_project_environment_is_not_refused(
+    option: str, foreign_environment: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A launch told to leave the project's environment alone has no target.
+
+    Mutation: with both options emptied out of the hook, both cases raised
+    the refusal in place of the launch error; restored, both passed.
+    """
+    monkeypatch.delenv(_PROJECT_ENVIRONMENT, raising=False)
+    with pytest.raises(OSError):
+        subprocess.run(
+            _run_through_uv("--no-sync", option),
+            cwd=foreign_environment.parent,
+            check=False,
+        )
+    assert not foreign_environment.parent.exists()
+
+
+@pytest.mark.parametrize("option", ["--project", "--directory"])
+def test_a_run_on_a_project_under_the_temporary_tree_is_not_refused(
+    option: str,
+    foreign_environment: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A launch is judged on the project it names, not on where it starts.
+
+    Mutation: with the hook judging the starting directory whatever project
+    is named, both cases raised the refusal in place of the launch error;
+    restored, both passed.
+    """
+    monkeypatch.delenv(_PROJECT_ENVIRONMENT, raising=False)
+    with pytest.raises(OSError):
+        subprocess.run(
+            _run_through_uv("--no-sync", option, str(tmp_path)),
+            cwd=foreign_environment.parent,
+            check=False,
+        )
+    assert not foreign_environment.parent.exists()
+
+
+def test_a_project_named_by_the_command_does_not_stand_in_for_uvs(
+    foreign_environment: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An option of the program being run is not read as uv's own.
+
+    uv still acts on the directory the launch starts in, whatever project
+    the program it runs was pointed at.
+
+    Mutation: with every word after ``run`` read as uv's own, the launch was
+    judged on the program's project, let through, and failed here with
+    ``NotADirectoryError``; restored, it passed.
+    """
+    monkeypatch.delenv(_PROJECT_ENVIRONMENT, raising=False)
+    with pytest.raises(
+        OperatorDirectoryWriteError, match=re.escape("refusing uv run on")
+    ):
+        subprocess.run(
+            [*_run_through_uv("--no-sync"), "--project", str(tmp_path)],
+            cwd=foreign_environment.parent,
+            check=False,
+        )
+    assert not foreign_environment.parent.exists()
+
+
+def test_a_run_on_the_interpreters_own_environment_is_not_refused(
+    foreign_environment: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``uv run --no-sync`` may use the environment this session runs from.
+
+    That is the one environment outside the temporary tree uv is known to
+    find usable, and the flag keeps it from installing anything into it.
+
+    Mutation: with the hook recognising no environment as the interpreter's
+    own, this raised the refusal naming ``sys.prefix`` in place of the launch
+    error; restored, it passed.
+    """
+    monkeypatch.setenv(_PROJECT_ENVIRONMENT, sys.prefix)
+    with pytest.raises(OSError):
+        subprocess.run(
+            _run_through_uv("--no-sync"), cwd=foreign_environment.parent, check=False
+        )
+    assert not foreign_environment.parent.exists()
+
+
+def test_a_syncing_run_on_the_interpreters_own_environment_is_refused(
+    foreign_environment: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without ``--no-sync`` the same launch would install into it.
+
+    Mutation: with the flag no longer required, and separately with the
+    hook's ``run`` branch disabled, the launch was let through and failed
+    here with ``NotADirectoryError``; restored, it passed.
+    """
+    monkeypatch.setenv(_PROJECT_ENVIRONMENT, sys.prefix)
+    with pytest.raises(
+        OperatorDirectoryWriteError, match=re.escape("refusing uv run on")
+    ):
+        subprocess.run(_run_through_uv(), cwd=foreign_environment.parent, check=False)
+    assert not foreign_environment.parent.exists()
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [("lock",), ("add", "requests"), ("remove", "requests"), ("venv",)],
+    ids=["lock", "add", "remove", "venv"],
+)
+def test_a_project_verb_outside_the_temporary_tree_is_refused(
+    arguments: tuple[str, ...],
+    foreign_environment: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every verb that writes a project or its environment is judged.
+
+    Mutation: with the file-writing verbs cut back to ``sync``, the lock, add
+    and remove cases were let through and failed with ``NotADirectoryError``;
+    with the ``venv`` branch disabled the venv case did. Restored, all four
+    passed.
+    """
+    monkeypatch.delenv(_PROJECT_ENVIRONMENT, raising=False)
+    with pytest.raises(
+        OperatorDirectoryWriteError,
+        match=re.escape(f"refusing uv {arguments[0]} on"),
+    ):
+        subprocess.run([_uv(), *arguments], cwd=foreign_environment.parent, check=False)
+    assert not foreign_environment.parent.exists()
+
+
+def test_a_project_verb_is_judged_on_its_project_as_well_as_its_environment(
+    foreign_environment: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Moving the environment does not move the files a sync writes.
+
+    The lockfile stays in the project, so a project no test created is
+    refused even when its environment is one a test did create.
+
+    Mutation: with a stated environment standing in for the project, the
+    sync was let through and failed here with ``NotADirectoryError``;
+    restored, it passed.
+    """
+    monkeypatch.setenv(_PROJECT_ENVIRONMENT, str(tmp_path / "environment"))
+    with pytest.raises(
+        OperatorDirectoryWriteError, match=re.escape("refusing uv sync on")
+    ):
+        subprocess.run([_uv(), "sync"], cwd=foreign_environment.parent, check=False)
+    assert not foreign_environment.parent.exists()
+
+
+def test_a_sync_into_a_foreign_environment_is_refused(
+    foreign_environment: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A project under the temporary tree cannot carry a launch elsewhere.
+
+    Mutation: with the project the only thing judged, and separately with
+    the hook ignoring ``UV_PROJECT_ENVIRONMENT``, the sync was let through
+    and failed here with ``NotADirectoryError``; restored, it passed.
+    """
+    monkeypatch.setenv(_PROJECT_ENVIRONMENT, str(foreign_environment))
+    with pytest.raises(
+        OperatorDirectoryWriteError,
+        match=re.escape(f"refusing uv sync on {foreign_environment}"),
+    ):
+        subprocess.run(
+            [_uv(), "sync", "--project", str(tmp_path)],
+            cwd=foreign_environment.parent,
+            check=False,
+        )
+    assert not foreign_environment.parent.exists()
+
+
+def test_a_run_handed_to_a_foreign_active_environment_is_refused(
+    foreign_environment: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``--active`` puts the launch on ``VIRTUAL_ENV`` ahead of anything else.
+
+    Mutation: with the option ignored the launch was judged on the
+    environment under the temporary tree, let through, and failed here with
+    ``NotADirectoryError``; restored, it passed.
+    """
+    monkeypatch.setenv(_PROJECT_ENVIRONMENT, str(tmp_path / "environment"))
+    monkeypatch.setenv("VIRTUAL_ENV", str(foreign_environment))
+    with pytest.raises(
+        OperatorDirectoryWriteError,
+        match=re.escape(f"refusing uv run on {foreign_environment}"),
+    ):
+        subprocess.run(
+            _run_through_uv("--no-sync", "--active"),
+            cwd=foreign_environment.parent,
+            check=False,
+        )
+    assert not foreign_environment.parent.exists()
+
+
+def test_a_project_named_past_an_option_the_guard_cannot_read_is_refused(
+    foreign_environment: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A launch is not let through on a reading of it that may be wrong.
+
+    ``--with`` takes a value, which the guard reads as the start of the
+    command. The project named after it is uv's own, and not the session's.
+
+    Mutation: with a project named after the options ended trusted to be the
+    command's, the launch was let through as one on the interpreter's own
+    environment and failed here with ``NotADirectoryError``; restored, it
+    passed.
+    """
+    monkeypatch.setenv(_PROJECT_ENVIRONMENT, sys.prefix)
+    with pytest.raises(
+        OperatorDirectoryWriteError, match=re.escape("refusing uv run on")
+    ):
+        subprocess.run(
+            _run_through_uv(
+                "--no-sync", "--with", "requests", "--project", str(foreign_environment)
+            ),
+            cwd=foreign_environment.parent,
+            check=False,
+        )
+    assert not foreign_environment.parent.exists()
+
+
+def test_options_ahead_of_the_verb_do_not_hide_a_run(
+    foreign_environment: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """uv's own options may come first, and one of them may take a value.
+
+    Mutation: with a word after an option taken for the verb unless it names
+    a judged one, ``never`` was read as the verb, the launch went unjudged
+    and failed here with ``NotADirectoryError``; restored, it passed.
+    """
+    monkeypatch.delenv(_PROJECT_ENVIRONMENT, raising=False)
+    launch = _run_through_uv("--no-sync")
+    with pytest.raises(
+        OperatorDirectoryWriteError, match=re.escape("refusing uv run on")
+    ):
+        subprocess.run(
+            [launch[0], "--quiet", "--color", "never", *launch[1:]],
+            cwd=foreign_environment.parent,
+            check=False,
+        )
+    assert not foreign_environment.parent.exists()
+
+
+def test_a_dry_run_flag_of_the_command_does_not_excuse_a_run(
+    foreign_environment: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``uv run`` has no dry run; the flag is the program's, and uv still acts.
+
+    Mutation: with ``--dry-run`` excusing every verb the launch was let
+    through and failed here with ``NotADirectoryError``; restored, it passed.
+    """
+    monkeypatch.delenv(_PROJECT_ENVIRONMENT, raising=False)
+    with pytest.raises(
+        OperatorDirectoryWriteError, match=re.escape("refusing uv run on")
+    ):
+        subprocess.run(
+            [*_run_through_uv("--no-sync"), "--dry-run"],
+            cwd=foreign_environment.parent,
+            check=False,
+        )
+    assert not foreign_environment.parent.exists()
+
+
+def test_an_environment_created_at_a_foreign_path_is_refused(
+    foreign_environment: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``uv venv`` is refused on a path that may be the one it creates.
+
+    ``--seed`` takes no value, so the word after it is the path; the guard
+    cannot know that of every option, and judges the word as one.
+
+    Mutation: with the words that may be the path left unjudged, and
+    separately with the ``venv`` branch disabled, the launch was let through
+    and failed here with ``NotADirectoryError``; restored, it passed.
+    """
+    monkeypatch.delenv(_PROJECT_ENVIRONMENT, raising=False)
+    with pytest.raises(
+        OperatorDirectoryWriteError,
+        match=re.escape(f"refusing uv venv on {foreign_environment}"),
+    ):
+        subprocess.run(
+            [
+                _uv(),
+                "venv",
+                "--project",
+                str(tmp_path),
+                "--seed",
+                str(foreign_environment),
+            ],
+            cwd=foreign_environment.parent,
+            check=False,
+        )
+    assert not foreign_environment.parent.exists()
+
+
+def test_an_environment_created_under_the_temporary_tree_is_not_refused(
+    foreign_environment: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``uv venv`` is judged on the path it is given, not on where it starts.
+
+    Mutation: with every word that is not an option taken for the path,
+    ``3.13`` was judged as a directory beside the launch and this raised the
+    refusal in place of the launch error; restored, it passed.
+    """
+    monkeypatch.delenv(_PROJECT_ENVIRONMENT, raising=False)
+    with pytest.raises(OSError):
+        subprocess.run(
+            [_uv(), "venv", "--python", "3.13", str(tmp_path / "environment")],
+            cwd=foreign_environment.parent,
+            check=False,
+        )
+    assert not foreign_environment.parent.exists()
+
+
+def test_a_command_line_carrying_program_text_is_read_back_whole() -> None:
+    """A launch is judged whatever its arguments contain.
+
+    Windows audits the joined command line, so the guard has to split what
+    the launcher joined. Quotes, backslashes and a trailing backslash are the
+    shapes that joining escapes.
+
+    Mutation: splitting on whitespace alone, and separately reading an
+    escaped quote as the end of a quoted stretch, each failed this equality
+    at the program text; restored, it passed.
+    """
+    launch = [
+        "uv",
+        "run",
+        "--no-sync",
+        "python",
+        "-c",
+        'import json\nprint(json.dumps({"cuda": False}), \'"\')\n',
+        "C:\\some where\\",
+        "",
+        'ends\\\\"',
+    ]
+    assert _command_words(subprocess.list2cmdline(launch)) == launch
+
+
+def test_the_environment_uv_finds_is_the_nearest_projects(tmp_path: Path) -> None:
+    """uv's project is the nearest directory above the launch with a manifest.
+
+    Mutation: looking only in the starting directory failed the first
+    assertion with no environment found, and taking the outermost project
+    failed the second with the outer one; restored, it passed.
+    """
+    outer = tmp_path / "outer"
+    nested = outer / "packages" / "nested"
+    (nested / "src").mkdir(parents=True)
+    (outer / "pyproject.toml").write_text("", encoding="utf-8")
+
+    assert _discovered_environment(str(nested / "src")) == str(outer / ".venv")
+
+    (nested / "pyproject.toml").write_text("", encoding="utf-8")
+    assert _discovered_environment(str(nested / "src")) == str(nested / ".venv")
+    assert _discovered_environment(str(outer)) == str(outer / ".venv")
+
+
+def test_no_project_above_a_launch_means_no_environment(tmp_path: Path) -> None:
+    """A directory under no project has no environment to be this session's.
+
+    Mutation: falling back to a ``.venv`` beside the launch returned that
+    path here; restored, it passed.
+    """
+    assert _discovered_environment(str(tmp_path)) is None

@@ -3,12 +3,13 @@ tags:
   - '#adr'
   - '#security-hardening'
 date: 2026-04-04
-modified: '2026-07-27'
-body_hash: 'sha256:e27066774ec5f2c4d3dfd604d79c9170d2df21c621e6ad7c0316acf277a51dd5'
+modified: '2026-10-04'
+body_hash: 'sha256:802264953267b77faadbfb52d923f1c08b5efb5ad0a338609a71905a84c7427d'
 related:
   - '[[2026-04-04-security-hardening-research]]'
   - '[[2026-04-02-service-graph-code-review-audit]]'
   - '[[2026-04-02-service-graph-adr]]'
+  - '[[2026-10-04-code-file-admission-adr]]'
 ---
 
 # `security-hardening` adr: defense-in-depth for MCP service | (**status:** `accepted`)
@@ -71,6 +72,10 @@ Define `_SENSITIVE_PATTERNS` as a module-level tuple of glob patterns:
 `service.json`, `.vaultspec-rag/*`. Check the relative path (forward-slash
 normalized) against each pattern using `fnmatch.fnmatch`. Return a generic
 `ValueError("access denied")` without revealing which pattern matched.
+
+#### D2 replacement (2026-10-04)
+
+D2 is replaced by `2026-10-04-code-file-admission-adr`. The tool no longer returns every contained path that misses a deny-list: it returns only a path the index admits as code, and refuses hidden components and sensitive names on top of that admission. The generic `access denied` response is retained. The deny-list text above and the D2 entries under Rationale and Consequences are kept as the replaced record. D1, D3 and D4 are unaffected.
 
 ### D3: Health endpoint information reduction
 

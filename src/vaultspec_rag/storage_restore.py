@@ -82,38 +82,9 @@ def _open_member_descriptor(member: str | Path, dir_fd: int | None) -> int:
             member, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dir_fd
         )
 
-    import ctypes
-    import msvcrt
-    from ctypes import wintypes
+    from ._win32 import open_without_following
 
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.CreateFileW.argtypes = (
-        wintypes.LPCWSTR,
-        wintypes.DWORD,
-        wintypes.DWORD,
-        wintypes.LPVOID,
-        wintypes.DWORD,
-        wintypes.DWORD,
-        wintypes.HANDLE,
-    )
-    kernel32.CreateFileW.restype = wintypes.HANDLE
-    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
-    kernel32.CloseHandle.restype = wintypes.BOOL
-    # OPEN_EXISTING with FILE_FLAG_OPEN_REPARSE_POINT opens the link itself.
-    # Share reads and writes, but keep the usual protection against deletion.
-    handle = cast(
-        "int | None",
-        kernel32.CreateFileW(
-            os.fspath(member), 0x80000000, 3, None, 3, 0x00200000, None
-        ),
-    )
-    if handle is None or handle == ctypes.c_void_p(-1).value:
-        raise ctypes.WinError(ctypes.get_last_error())
-    try:
-        return msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
-    except BaseException:
-        kernel32.CloseHandle(handle)
-        raise
+    return open_without_following(os.fspath(member))
 
 
 def _open_archive_file(path: Path) -> BinaryIO:
