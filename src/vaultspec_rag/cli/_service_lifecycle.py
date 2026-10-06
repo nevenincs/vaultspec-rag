@@ -150,10 +150,15 @@ _WARMUP_VERB = "vaultspec-rag server warmup"
 @server_root_app.command(
     "warmup",
     help=(
-        "Download GPU model files before they are needed. "
-        "Run once before the first index to avoid model download latency at "
-        "search time. Exits non-zero when a model could not be downloaded, or "
-        "is missing while the Hugging Face Hub is in offline mode."
+        "Fetch and check the model files the service loads. Each default "
+        "model is downloaded from the Hugging Face Hub, or the mirror the "
+        "hub endpoint setting names, at a pinned commit, and every file is "
+        "compared with a SHA256 digest compiled into vaultspec-rag. A model "
+        "that is already cached and passes costs no download; one you named "
+        "yourself is reported as unpinned. A client installation needs no "
+        "models and is told so. Exits non-zero when a model could not be "
+        "fetched, fails its check, or is missing while the hub is in offline "
+        "mode."
     ),
 )
 def service_warmup(json_mode: JsonMode = False) -> None:

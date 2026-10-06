@@ -366,6 +366,7 @@ go deeper.
 | ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
 | [Getting started](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/getting-started.md)       | Install, index, and run a first search, step by step.    |
 | [Installation](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/installation.md)             | Every install route, upgrades, removal, and fixes.       |
+| [Provisioning](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/provisioning.md)             | What is downloaded, how it is checked, and offline use.  |
 | [Writing queries](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/query-craft.md)           | Phrase a query, and narrow the results with filters.     |
 | [Worked searches](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/examples.md)              | Real queries and what they return.                       |
 | [Search and index](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/search-and-index.md)     | Every search option, and rebuilding or cleaning indexes. |

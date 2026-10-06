@@ -15,10 +15,40 @@
   Transformers 5.3 or newer within version 5.
 - A `qdrant` executable on `PATH` or in the working directory is no longer used
   as the managed server. Name your own executable with
-  `VAULTSPEC_RAG_QDRANT_BINARY=<absolute path>`, or register it with
-  `vaultspec-rag server qdrant install --binary <path>`. A setting that names
-  anything other than an absolute path to a regular file now stops
-  `server start` instead of being skipped.
+  `VAULTSPEC_RAG_QDRANT_BINARY=<absolute path>` and declare its digest with
+  `VAULTSPEC_RAG_QDRANT_BINARY_SHA256`. The two are only accepted together, and
+  the file is hashed and compared before every launch. A path without its
+  digest, or one that is not an absolute path to a regular file, now stops
+  `server start` instead of being skipped. If you already export the path,
+  export the digest alongside it.
+- `vaultspec-rag server qdrant install --binary` is removed, and an executable
+  registered with it no longer runs. The managed directory holds the pinned
+  release only. A host with no route to the release source installs the
+  official archive from a local file with
+  `vaultspec-rag server qdrant install --archive <file>`.
+- The default models are pinned to commits, and every file is compared with a
+  SHA256 digest compiled into vaultspec-rag after it is fetched and before
+  every load. A snapshot that does not match is refused as
+  `models_unverified`; `vaultspec-rag server warmup` fetches the pinned files
+  again. Weights load from `safetensors` only, and no code from a model
+  repository is run that the check did not read. A model you name yourself is
+  reported as `unpinned`.
+- The service no longer downloads a model while it loads one. It reads the
+  cache only, and an absent or failing model stops the load with the command
+  that repairs it. `server start` fetches missing models before it starts the
+  service; a service started another way needs `server warmup` first.
+- `install --skip-torch` is removed. It skipped a step the command never ran;
+  use `--no-torch-config`.
+- `install`, `server warmup` and `server qdrant install` fetch nothing for a
+  host whose PyTorch build cannot use a GPU yet. They report the step as
+  skipped, with the reason, and `server start` fetches it once the environment
+  is ready. `install` records server mode as the chosen backend only after a
+  run that could provision and did.
+- A failed `server qdrant install --json` reports `qdrant_provision_failed` as
+  its `error`, where it reported the word `failed`.
+- `server status` offers `vaultspec-rag server stop` as the next action for a
+  dead vector server, where it offered `server qdrant status`, and names the
+  start that follows.
 - A host `server start` downloads the pinned Qdrant server, and any missing
   model files, when they are not installed. Starting the service is the consent
   to fetch what it needs. `--qdrant-auto-provision` is now a pair with
@@ -57,6 +87,29 @@
 - Each provisioning step in `install --json` carries a `code`: a stable
   machine-readable reason when the step failed, empty otherwise.
   `server start --json` reports the same codes as its `error`.
+- A [provisioning guide](docs/provisioning.md) says what is fetched, from
+  where, how it is checked, where it is kept, how long a fetch can take, and
+  what each failure means.
+- `server warmup` takes `--json` and reports one result per model repository.
+- Pressing Ctrl+C during a foreground fetch ends `server start`,
+  `server warmup` and `server qdrant install` with one outcome that says what
+  was and was not done. Failed lifecycle outcomes carry their next actions in
+  the `--json` document too.
+- A model fetch has a time allowed for all of it,
+  `VAULTSPEC_RAG_MODEL_FETCH_DEADLINE_SECONDS`, four hours by default, and
+  waits one allowance for another fetch into the same cache instead of one per
+  repository. A model cache that cannot be written is reported as
+  `models_cache_unusable`, not as an unreachable hub.
+- Stopping the service ends every process the Qdrant executable started, so a
+  server behind a launcher script cannot outlive the stop.
+- A restart of a dead Qdrant server that was refused before any process
+  started no longer uses up the service's one automatic restart. `server doctor` and `server status` report a dead server with why its restart
+  started nothing.
+- Child interpreters never import from the working directory, helper programs
+  are run from absolute locations, and the service runs in its own managed
+  directory, so a project checkout cannot shadow what the service executes.
+- A relative `HF_HUB_CACHE` is made absolute before the service is started,
+  like the other directory settings.
 
 ## [0.5.3](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.5.2...vaultspec-rag-v0.5.3) (2026-09-29)
 

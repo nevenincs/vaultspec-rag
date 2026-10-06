@@ -341,7 +341,12 @@ class _InstallCommand(TyperCommand):
         "--skip-models/--skip-qdrant flags for partial opt-out, "
         "--no-mcp for a CLI-only workspace without the mcp dependency, and "
         "--no-provision to set up the workspace only; use --yes or "
-        "--no-torch-config for non-interactive runs."
+        "--no-torch-config for non-interactive runs. The model files and the "
+        "Qdrant server are each checked against digests compiled into "
+        "vaultspec-rag before they are used. A client installation is given "
+        "neither, and a host that cannot run the service yet gets them from "
+        "server start once it can. Exits non-zero when a step it was asked "
+        "to run failed."
     ),
 )
 def handle_install() -> None:

@@ -268,10 +268,11 @@ class _ServiceStartCommand(TyperCommand):
                     default=None,
                     is_flag=True,
                     help=(
-                        "Explicitly opt in to (or out of) the managed Qdrant server. "
-                        "Server mode is already the default, so --qdrant is redundant; "
-                        "use --local-only to select the on-disk store. Unset leaves "
-                        "the current Qdrant setting unchanged."
+                        "Select the managed Qdrant server for this start, or "
+                        "decline it. --qdrant overrides a saved or exported "
+                        "local-only choice for this run without rewriting it; "
+                        "--local-only still wins when both are given. Unset "
+                        "leaves the current setting in force."
                     ),
                 ),
                 TyperOption(
@@ -936,7 +937,13 @@ def _spawn_prepared_service(request: _PreparedServiceRequest) -> int:
     help=(
         "Start the background search service. Defaults to the managed Qdrant "
         "server backend (server mode); pass --local-only for the on-disk store. "
-        "Waits until it is ready and records how the CLI can reach it."
+        "Before the service is started, a host installation fetches what it "
+        "needs and does not have: the model files, each checked against "
+        "digests compiled into vaultspec-rag, and the managed Qdrant server, "
+        "unless that download is switched off. A client installation is "
+        "refused and fetches nothing. A fetch that fails stops the start "
+        "with its cause and its remedy. Waits until the service is ready and "
+        "records how the CLI can reach it."
     ),
 )
 def service_start() -> None:

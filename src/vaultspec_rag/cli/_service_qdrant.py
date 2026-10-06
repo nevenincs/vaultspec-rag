@@ -93,8 +93,14 @@ def _render_install_report(report: ProvisionReport, archive: Path | None) -> Non
 @server_qdrant_app.command(
     "install",
     help=(
-        "Download and verify the managed Qdrant server. If the requested "
-        "version is already installed, nothing is downloaded."
+        "Install the managed Qdrant server under the service directory. The "
+        "release archive is downloaded from the configured release source, "
+        "and the archive and the executable inside it are each compared with "
+        "a SHA256 digest compiled into vaultspec-rag before anything is "
+        "installed. An install that already passes its check costs no "
+        "download. A client installation, and a host that cannot run the "
+        "service yet, need no server and are told so. Exits non-zero when "
+        "the install failed; a previous install is left as it was."
     ),
 )
 def qdrant_install(
@@ -102,7 +108,10 @@ def qdrant_install(
         bool,
         typer.Option(
             "--upgrade",
-            help="Replace an installed Qdrant server when the managed version changed.",
+            help=(
+                "Replace an installed Qdrant server that fails its check. An "
+                "install that passes is left alone."
+            ),
         ),
     ] = False,
     dry_run: Annotated[

@@ -118,6 +118,11 @@ a ModernBERT SPARSEUP model pinned to revision
 `08314498d4f6a3a205b930ab9f27001404ea94b8`. Downloads require no account setup.
 Repository setup, `server warmup`, and `server doctor` share that revision.
 
+Each default model is pinned to one commit, and every file is compared with a digest
+compiled into vaultspec-rag after it is downloaded and before it is loaded. The
+[provisioning guide](provisioning.md#the-model-files) describes the check, what an
+unpinned model is, and how to run without a network.
+
 Set `VAULTSPEC_RAG_SPARSE_ENABLED=0` to use dense vectors only and reduce GPU
 memory usage. Provisioning, warmup and readiness then omit the sparse model.
 Rebuild existing indexes after changing the model or this toggle.
@@ -708,6 +713,11 @@ missing then stops the command, and `server start --json` reports it as
 `models_offline`. Unset the offline switch and run `vaultspec-rag server warmup`, or copy
 a complete model cache onto the machine.
 
+A model that is in the cache and fails its check is reported as `models_unverified`,
+with the file at fault. The service never loads such a model. The
+[provisioning guide](provisioning.md#when-provisioning-fails) lists every failure code,
+what it means, and what to do.
+
 ### The GPU runs out of memory
 
 Exhausting GPU memory is a runtime concern rather than an install one. See
@@ -1014,6 +1024,8 @@ vaultspec-rag anymore.
   filters do.
 - The [service guide](service-mode.md) answers how to run, observe, and control the
   service.
+- [Provisioning](provisioning.md) answers what is downloaded, how it is checked, and
+  how to run without a network.
 - [Backends](backends.md) answers when to choose the local-only backend over the managed
   Qdrant server.
 - [Storage maintenance](storage-maintenance.md) answers how to inspect and reclaim index
