@@ -22,6 +22,22 @@ Elsewhere
     its exit is observed without releasing its pid, and while that pid is held
     the group's number cannot belong to anything else. Every signal here is
     sent inside that window.
+
+Where an exit cannot be observed without reaping
+    Observing an exit and leaving the pid held needs a wait that keeps the
+    child waitable, and not every platform has one. Without it an exit is
+    learned by reaping, so the window closes the moment the leader is seen to
+    have exited, and the group is signalled only while the leader has not
+    been reaped.
+
+    That still prevents a signal to a number this process is known to have
+    released. It no longer ends a member that outlives a reaped leader: a
+    server whose launcher exited before the stop and was seen to, or one that
+    ignores the request after its launcher obeyed it. Such a member is left
+    running, and the stop reports that it did not converge and names what it
+    could not end. One race also stays open that the held pid closes: a
+    liveness check on another thread may reap the leader between the check
+    made here and the signal that follows it.
 """
 
 from __future__ import annotations
@@ -62,18 +78,29 @@ _JOB_GRACE_SECONDS = 2.0
 _POLL_SECONDS = 0.05
 
 
+def _exit_is_peekable() -> bool:
+    """Return whether a child's exit can be observed here without reaping it."""
+    return all(
+        hasattr(os, name)
+        for name in ("waitid", "P_PID", "WEXITED", "WNOHANG", "WNOWAIT")
+    )
+
+
 def exited(proc: subprocess.Popen[bytes]) -> bool:
-    """Return whether *proc* has exited, without releasing its pid.
+    """Return whether *proc* has exited, without releasing its pid where it can.
 
     The liveness question the supervisor asks between a spawn and a stop. On
     POSIX an ordinary poll would reap the child, and its group could then no
-    longer be signalled safely; see the module docstring.
+    longer be signalled safely; see the module docstring, which also says what
+    is given up on a platform where the exit can only be learned by reaping.
     """
     if proc.returncode is not None:
         return True
     if sys.platform == "win32":
         # The process handle keeps the pid from being reused, and a job is
         # addressed by handle, so reaping costs nothing here.
+        return proc.poll() is not None
+    if not _exit_is_peekable():
         return proc.poll() is not None
     try:
         status = os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
@@ -146,9 +173,11 @@ def _end_job(proc: subprocess.Popen[bytes], job: int | None, *, timeout: float) 
 def _other_members(group: int) -> list[int] | None:
     """Return the live processes in *group* other than its leader.
 
-    Asked only while the leader's pid is held, so every process found is one
-    the leader's tree started. ``None`` when the process table could not be
-    read, which is not the same as finding nobody.
+    While the leader's pid is held, every process found is one the leader's
+    tree started. Asked after the leader was reaped, the answer is only fit
+    to report: the number may by then name another program's group. ``None``
+    when the process table could not be read, which is not the same as
+    finding nobody.
     """
     if sys.platform == "win32":
         return []
@@ -181,14 +210,40 @@ def _holds_within(check: Callable[[], bool], seconds: float) -> bool:
     return True
 
 
+def _left_unsignalled(proc: subprocess.Popen[bytes]) -> bool:
+    """Report on a group whose leader was reaped before it was dealt with.
+
+    Reached only where an exit cannot be observed without reaping. The
+    group's number is no longer this child's to signal, so what is still
+    running under it is named and left alone; the answer is whether nothing
+    is.
+    """
+    members = _other_members(proc.pid)
+    if members == []:
+        return True
+    logger.error(
+        "qdrant pid=%d was reaped before the processes it started were ended, "
+        "and its process group can no longer be signalled safely; still "
+        "running: %s",
+        proc.pid,
+        "unknown, the group could not be listed"
+        if members is None
+        else ", ".join(str(pid) for pid in members),
+    )
+    return False
+
+
 def _end_group(proc: subprocess.Popen[bytes], *, timeout: float) -> bool:
     """Ask the child's process group to stop, kill what remains, then reap."""
     if sys.platform == "win32":
         return False
     if proc.returncode is not None:
-        # Reaped by an earlier call, which dealt with the group before it
-        # released the pid. The number may be someone else's by now.
-        return True
+        # Where the exit was observed with the pid held, this child was
+        # reaped by an earlier call, which dealt with the group before it
+        # released the pid. The number may be someone else's by now. Where
+        # observing reaps, a liveness check reaps as easily as an earlier
+        # call, so the group may never have been asked to stop.
+        return _exit_is_peekable() or _left_unsignalled(proc)
     group = proc.pid
 
     def settled() -> bool:
@@ -199,6 +254,10 @@ def _end_group(proc: subprocess.Popen[bytes], *, timeout: float) -> bool:
     # have left a server behind, and that server has not been asked yet.
     send_group_signal(group, signal.SIGTERM)
     if not _holds_within(settled, timeout):
+        if proc.returncode is not None:
+            # Seeing the leader exit reaped it, and what it started is still
+            # there: the kill that would end it has no safe address left.
+            return _left_unsignalled(proc)
         logger.warning(
             "qdrant pid=%d or a process it started did not stop in %.0fs; killing",
             proc.pid,
@@ -210,8 +269,14 @@ def _end_group(proc: subprocess.Popen[bytes], *, timeout: float) -> bool:
         logger.error("qdrant pid=%d survived kill", proc.pid)
         return False
     survivors = _other_members(group)
-    # The pid is released only here, after the last signal to its group.
+    # A pid held until now is released only here, and one that seeing the
+    # exit released has had no signal sent to its group since.
     proc.wait()
+    return _none_survived(proc, survivors)
+
+
+def _none_survived(proc: subprocess.Popen[bytes], survivors: list[int] | None) -> bool:
+    """Report what was found in the group once its leader was seen to exit."""
     if survivors is None:
         # Reached only after the group was killed, which no member can
         # refuse, so what could not be listed has been ended all the same.
