@@ -18,6 +18,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import cast
 
+from .._python_child import inline_command
 from ._compute import ProbeDepth
 from ._installation import ComputeCapability, InstallRole
 from ._models import ComputeReport
@@ -67,7 +68,7 @@ def probe_interpreter(
     )
     try:
         proc = subprocess.run(
-            [interpreter, "-c", _PROBE_SCRIPT, depth.value],
+            inline_command(interpreter, _PROBE_SCRIPT, depth.value),
             capture_output=True,
             text=True,
             encoding="utf-8",

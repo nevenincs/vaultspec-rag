@@ -79,6 +79,7 @@ Both views carry the same payload. "Presence" says when a field is absent.
 | `monitor_port`         | integer | live managed monitor | Actual frontend port allocated upward from the backend port plus one.                                                                        |
 | `monitor_pid`          | integer | live managed monitor | PID of the daemon-owned frontend process.                                                                                                    |
 | `monitor_start_time`   | float   | live managed monitor | Epoch seconds identifying that frontend process incarnation.                                                                                 |
+| `monitor_url`          | string  | live managed monitor | Loopback access link whose fragment carries the monitor's caller capability. A credential, like `service_token`.                             |
 
 The `qdrant_*` fields are absent in local-only mode and when pointed at a remote Qdrant. Treat absent and null alike.
 

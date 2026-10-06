@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import cast
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
+from urllib.request import Request
 
 from tools.binaries.build_pyapp import glibc_version, required_symbol_versions
 from tools.binaries.native import host_target_triple
@@ -98,9 +99,9 @@ def output_line(process: subprocess.Popen[str]) -> str:
         ) from exc
 
 
-def get(url: str) -> tuple[int, str, bytes]:
+def get(url: str, headers: dict[str, str] | None = None) -> tuple[int, str, bytes]:
     try:
-        response = LOOPBACK_OPENER.open(url, timeout=10)
+        response = LOOPBACK_OPENER.open(Request(url, headers=headers or {}), timeout=10)
     except HTTPError as error:
         response = error
     with response:
@@ -184,7 +185,7 @@ def browser_probe(url: str, executable: Path, directory: Path) -> None:
                     process.wait(timeout=10)
 
 
-def probe_assets(url: str, expected: dict[str, object]) -> int:
+def probe_assets(url: str, bearer: dict[str, str], expected: dict[str, object]) -> int:
     status, content_type, content = get(url + "/monitor.json")
     if status != 200 or not content_type.startswith("application/json"):
         raise RuntimeError("The monitor returned no build/asset identity")
@@ -208,7 +209,7 @@ def probe_assets(url: str, expected: dict[str, object]) -> int:
     status, _, html = get(url + "/")
     if status != 200 or html != get(url + "/index.html")[2]:
         raise RuntimeError("The delivered root is not the embedded index.html")
-    status, _, unavailable = get(url + "/api/monitor/health")
+    status, _, unavailable = get(url + "/api/monitor/health", bearer)
     payload = json.loads(unavailable)
     if (
         status != 503
@@ -218,24 +219,17 @@ def probe_assets(url: str, expected: dict[str, object]) -> int:
         raise RuntimeError(
             "Offline startup did not preserve backend-unavailable semantics"
         )
+    # Loopback reachability alone must not operate the bridge.
+    if get(url + "/api/monitor/health")[0] != 401:
+        raise RuntimeError("The delivered bridge admitted a caller without its link")
     # A foreign Origin must not reach any local service capability.
-    from urllib.request import Request
-
-    request = Request(
-        url + "/api/monitor/health", headers={"Origin": "http://foreign.invalid"}
-    )
-    try:
-        with LOOPBACK_OPENER.open(request, timeout=10) as response:
-            status = response.status
-    except HTTPError as error:
-        status = error.code
-        error.close()
-    if status != 403:
+    foreign = {**bearer, "Origin": "http://foreign.invalid"}
+    if get(url + "/api/monitor/health", foreign)[0] != 403:
         raise RuntimeError("The delivered bridge admitted a foreign origin")
     return len(assets)
 
 
-def probe_request_bounds(url: str) -> None:
+def probe_request_bounds(url: str, bearer: dict[str, str]) -> None:
     """Exercise the shared operation allowlist and request limit in native bytes."""
     target = urlsplit(url)
     if target.hostname is None:
@@ -256,7 +250,7 @@ def probe_request_bounds(url: str) -> None:
         )
         try:
             connection.request(
-                "POST", route, body, {"Content-Type": "application/json"}
+                "POST", route, body, {"Content-Type": "application/json", **bearer}
             )
             try:
                 response = connection.getresponse()
@@ -270,12 +264,13 @@ def probe_request_bounds(url: str) -> None:
             connection.close()
 
 
-def partial_request(port: int) -> socket.socket:
+def partial_request(port: int, bearer: dict[str, str]) -> socket.socket:
     connection = socket.create_connection(("127.0.0.1", port), timeout=5)
     connection.sendall(
         b"POST /api/monitor/lifecycle/start HTTP/1.1\r\n"
         b"Host: 127.0.0.1\r\nContent-Type: application/json\r\n"
-        b"Content-Length: 12\r\n\r\n{"
+        + "".join(f"{name}: {value}\r\n" for name, value in bearer.items()).encode()
+        + b"Content-Length: 12\r\n\r\n{"
     )
     return connection
 
@@ -311,24 +306,29 @@ def exercise_monitor(
     prefix = "vaultspec.monitor.ready "
     if not ready.startswith(prefix):
         raise RuntimeError(f"The monitor readiness protocol failed: {ready}")
-    port = int(ready.removeprefix(prefix))
+    access = urlsplit(ready.removeprefix(prefix))
+    port = access.port
+    capability = access.fragment.removeprefix("capability=")
+    if access.hostname != "127.0.0.1" or port is None or len(capability) < 43:
+        raise RuntimeError("The monitor reported no loopback access link")
     if port <= starting_port:
         raise RuntimeError("Managed monitor did not allocate upward")
     url = f"http://127.0.0.1:{port}"
-    count = probe_assets(url, metadata)
-    probe_request_bounds(url)
-    partial_request(port).close()
+    bearer = {"Authorization": f"Bearer {capability}"}
+    count = probe_assets(url, bearer, metadata)
+    probe_request_bounds(url, bearer)
+    partial_request(port, bearer).close()
     if get(url + "/monitor.json")[0] != 200:
         raise RuntimeError("The monitor did not recover from client cancellation")
     if browser:
-        browser_probe(url, browser, directory)
+        browser_probe(access.geturl(), browser, directory)
     if (directory / "autoloaded").exists() or (directory / "status").exists():
         raise RuntimeError(
             "Shell startup loaded ambient config or created service state"
         )
     if process.stdin is None:
         raise RuntimeError("The managed monitor has no parent pipe")
-    with partial_request(port):
+    with partial_request(port, bearer):
         process.stdin.close()
         process.wait(timeout=5)
     if process.returncode:

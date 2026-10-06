@@ -112,9 +112,9 @@ class InspectedSource:
     source_bytes: int
 
 
-def _rejected_code(reason: AdmissionReason) -> ClassifiedContent:
-    """Return a non-admitted code disposition for one probe outcome."""
-    return ClassifiedContent(AdmissionDisposition(ContentKind.CODE, False, reason))
+def _rejected(kind: ContentKind, reason: AdmissionReason) -> ClassifiedContent:
+    """Return a non-admitted disposition of *kind* for one probe outcome."""
+    return ClassifiedContent(AdmissionDisposition(kind, False, reason))
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,6 +153,33 @@ class CodeScopedPreflight:
 
 
 type CodeExecutionPreflight = CodeIndexPreflight | CodeScopedPreflight
+
+
+def validate_admitted_sources(
+    root: pathlib.Path,
+    policy: ResolvedIndexPolicy,
+    files: tuple[pathlib.Path, ...],
+    kind: ContentKind,
+    *,
+    run_control: RunControl = NO_RUN_CONTROL,
+) -> None:
+    """Verify a full preflight lists only canonical in-root sources owned by *kind*.
+
+    Admission is decided on the name, so each listed name must still be the
+    file itself: a link swapped in since the walk would carry in a target that
+    was never classified.
+    """
+    label = f"{kind.value} index preflight"
+    if any(not path.resolve().is_relative_to(root) for path in files):
+        raise ValueError(f"{label} contains a path outside its root")
+    for path in files:
+        run_control.checkpoint()
+        if path.resolve() != path:
+            raise ValueError(f"{label} contains a non-canonical source")
+        rel = path.relative_to(root).as_posix()
+        disposition = policy.classify(rel).disposition
+        if not (disposition.admitted and disposition.kind is kind):
+            raise ValueError(f"{label} contains a path not admitted as {kind.value}")
 
 
 class CodeContentDiscovery:
@@ -277,20 +304,12 @@ class CodeContentDiscovery:
         """Verify a full scan's policy identity and admitted paths before mutation."""
         if preflight.scan.policy_fingerprint != preflight.policy.fingerprints.snapshot:
             raise ValueError("code index preflight policy fingerprint is inconsistent")
-        root = preflight.root_dir
-        if any(
-            not path.resolve().is_relative_to(root) for path in preflight.scan.files
-        ):
-            raise ValueError("code index preflight contains a path outside its root")
-        for path in preflight.scan.files:
-            if path.resolve() != path:
-                raise ValueError("code index preflight contains a non-canonical source")
-            rel = path.relative_to(root).as_posix()
-            disposition = preflight.policy.classify(rel).disposition
-            if not (disposition.admitted and disposition.kind is ContentKind.CODE):
-                raise ValueError(
-                    "code index preflight contains a path not admitted as code"
-                )
+        validate_admitted_sources(
+            preflight.root_dir,
+            preflight.policy,
+            preflight.scan.files,
+            ContentKind.CODE,
+        )
 
     def accept_preflight(
         self,
@@ -384,32 +403,49 @@ class CodeContentDiscovery:
         """
         classified = policy.classify(rel_path)
         disposition = classified.disposition
-        if not (disposition.admitted and disposition.kind is ContentKind.CODE):
+        kind = disposition.kind
+        if not disposition.admitted or kind is None:
             return InspectedSource(classified, 0)
-        # A matched transform expands the indexable set past the raw-code size
-        # and binary limits, so those two checks are skipped - but the file is
-        # still measured, because it is still admitted.
-        transformed = self.has_transform(policy, rel_path)
+        # Admission is decided on the name, so the name must be the file itself:
+        # a link would carry an unclassified target in under an admitted alias.
         try:
             source_bytes = source_file_stat(path, self.root_dir).st_size
-            if not transformed:
-                if source_bytes > _MAX_FILE_SIZE:
-                    return InspectedSource(
-                        _rejected_code(AdmissionReason.SOURCE_TOO_LARGE),
-                        0,
-                    )
-                with open_source_file(path, self.root_dir) as stream:
-                    if _is_binary(stream):
-                        return InspectedSource(
-                            _rejected_code(AdmissionReason.SOURCE_BINARY),
-                            0,
-                        )
+            refusal = (
+                self._raw_code_refusal(path, rel_path, policy, source_bytes)
+                if kind is ContentKind.CODE
+                else None
+            )
         except OSError:
             return InspectedSource(
-                _rejected_code(AdmissionReason.SOURCE_PROBE_FAILED),
-                0,
+                _rejected(kind, AdmissionReason.SOURCE_PROBE_FAILED), 0
             )
-        return InspectedSource(classified, source_bytes)
+        if refusal is not None:
+            return InspectedSource(_rejected(kind, refusal), 0)
+        # Only code breadth is measured here; a document is admitted unmeasured.
+        return InspectedSource(
+            classified, source_bytes if kind is ContentKind.CODE else 0
+        )
+
+    def _raw_code_refusal(
+        self,
+        path: pathlib.Path,
+        rel_path: str,
+        policy: ResolvedIndexPolicy,
+        source_bytes: int,
+    ) -> AdmissionReason | None:
+        """Return why raw code is refused on size or content, if it is.
+
+        A matched transform expands the indexable set past the raw-code size
+        and binary limits, so neither check applies to a transformed file.
+        """
+        if self.has_transform(policy, rel_path):
+            return None
+        if source_bytes > _MAX_FILE_SIZE:
+            return AdmissionReason.SOURCE_TOO_LARGE
+        with open_source_file(path, self.root_dir) as stream:
+            if _is_binary(stream):
+                return AdmissionReason.SOURCE_BINARY
+        return None
 
     def scan_content(
         self,

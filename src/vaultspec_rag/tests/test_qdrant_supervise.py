@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ..qdrant_runtime._supervise import _READY_CEILING_MULTIPLE, QdrantSupervisor
+from ._fake_qdrant_binary import unpinned
 from ._http_stubs import QuietHandler
 from ._ports import free_loopback_port
 
@@ -103,7 +104,7 @@ def _supervised_child(
     alone can outlast a two-second window on a loaded Windows host.
     """
     supervisor = QdrantSupervisor(
-        Path(sys.executable),
+        unpinned(Path(sys.executable)),
         http_port=http_port,
         storage_dir=tmp_path / "storage",
         log_path=tmp_path / "qdrant.log",

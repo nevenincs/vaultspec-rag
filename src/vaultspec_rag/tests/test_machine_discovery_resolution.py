@@ -58,6 +58,10 @@ def isolated_machine_dir(tmp_path: Path) -> Iterator[Path]:
     previous = {k: os.environ.get(k) for k in (storage_key, status_key)}
     os.environ[storage_key] = str(tmp_path / "qdrant-server" / "storage")
     os.environ[status_key] = str(tmp_path / "status")
+    # The tests here write the status file by hand, standing in for a service
+    # that ran; looking the file up creates nothing, so the directory a
+    # service would have made is made here.
+    (tmp_path / "status").mkdir()
     reset_config()
     try:
         yield tmp_path

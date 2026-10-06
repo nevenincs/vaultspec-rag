@@ -14,30 +14,74 @@ import typer
 
 from .._operator_commands import server_start_command
 from .._sync_vocabulary import ProvisionAction
+from ..commands._provision import (
+    QDRANT_PROVISION_FAILED,
+    ProvisionStep,
+    managed_server_unneeded,
+    provision_qdrant_binary,
+    unable_skip,
+)
 from ..config._settings import get_config
+from ..operator_state._service_environment import judge_service_environment
 from ..qdrant_runtime._constants import (
     QDRANT_SERVER_VERSION,
     ProvisionReport,
 )
-from ..qdrant_runtime._provision import provision, provisioned_versions
-from ..qdrant_runtime._resolve import probe_qdrant_endpoint, resolve_binary
+from ..qdrant_runtime._provision import provisioned_versions
+from ..qdrant_runtime._resolve import (
+    QdrantBinaryError,
+    probe_qdrant_endpoint,
+    resolve_binary,
+)
+from ..qdrant_runtime._spawn_trust import verify_resolved_binary
 from ..serviceclient._discovery import read_service_status
 from ._app import JsonMode, server_qdrant_app
+from ._process import _resolve_daemon_interpreter
 from ._progress import StartupStatusReporter
 from ._render import _emit_json, _plain_line, _print_next_action, address_line
+from ._service_lifecycle import _fail_lifecycle, _LifecycleFailure
 
 
 def _action_label(action: object) -> str:
     return str(action).replace("_", " ")
 
 
-def _render_install_report(report: ProvisionReport) -> None:
+#: Where an install's bytes came from, as the report says it.
+_SOURCE_DOWNLOAD = "download"
+_SOURCE_ARCHIVE = "archive"
+
+#: The install verb as an envelope names it, and as an operator runs it.
+_INSTALL_COMMAND = "server.qdrant.install"
+_INSTALL_VERB = "vaultspec-rag server qdrant install"
+
+
+def _install_source(report: ProvisionReport, archive: Path | None) -> str | None:
+    """Say which source a run read, or would read, or ``None`` when it read none.
+
+    Only a run that installs or previews an install has a source. One that
+    found a healthy install, declined, or failed before reading anything did
+    not use the archive it was handed, and saying it did would be a claim
+    about bytes nobody looked at.
+    """
+    if report.action not in {
+        ProvisionAction.CREATED,
+        ProvisionAction.UPDATED,
+        ProvisionAction.DRY_RUN,
+    }:
+        return None
+    return _SOURCE_ARCHIVE if archive is not None else _SOURCE_DOWNLOAD
+
+
+def _render_install_report(report: ProvisionReport, archive: Path | None) -> None:
     _plain_line(f"Action: {_action_label(report.action)}")
     _plain_line(f"Version: {report.version}")
     if report.asset:
         _plain_line(f"Release package: {report.asset}")
-    if report.url:
-        _plain_line(f"Download: {report.url}")
+    source = _install_source(report, archive)
+    if source == _SOURCE_ARCHIVE:
+        _plain_line(f"Source: local archive {archive} (no request was made)")
+    elif source == _SOURCE_DOWNLOAD:
+        _plain_line(f"Source: download from {report.url}")
     if report.binary is not None:
         _plain_line(f"Install: {report.binary}")
     if report.sha256:
@@ -49,8 +93,14 @@ def _render_install_report(report: ProvisionReport) -> None:
 @server_qdrant_app.command(
     "install",
     help=(
-        "Download and verify the managed Qdrant server. If the requested "
-        "version is already installed, nothing is downloaded."
+        "Install the managed Qdrant server under the service directory. The "
+        "release archive is downloaded from the configured release source, "
+        "and the archive and the executable inside it are each compared with "
+        "a SHA256 digest compiled into vaultspec-rag before anything is "
+        "installed. An install that already passes its check costs no "
+        "download. A client installation, and a host that cannot run the "
+        "service yet, need no server and are told so. Exits non-zero when "
+        "the install failed; a previous install is left as it was."
     ),
 )
 def qdrant_install(
@@ -58,7 +108,10 @@ def qdrant_install(
         bool,
         typer.Option(
             "--upgrade",
-            help="Replace an installed Qdrant server when the managed version changed.",
+            help=(
+                "Replace an installed Qdrant server that fails its check. An "
+                "install that passes is left alone."
+            ),
         ),
     ] = False,
     dry_run: Annotated[
@@ -71,13 +124,15 @@ def qdrant_install(
             ),
         ),
     ] = False,
-    binary: Annotated[
+    archive: Annotated[
         Path | None,
         typer.Option(
-            "--binary",
+            "--archive",
             help=(
-                "Register an operator-supplied Qdrant executable instead of "
-                "downloading the managed release."
+                "Install from a local copy of the release package instead of "
+                "downloading it, for a host with no route to the release "
+                "source. The file passes the same checksum checks as a "
+                "download, is read where it lies, and no request is made."
             ),
         ),
     ] = None,
@@ -88,30 +143,56 @@ def qdrant_install(
     # none of which said anything before this. The report is rendered after the
     # block so the terminal outcome never has to share a line with a live
     # region, and ``--json`` keeps the reporter silent so exactly one envelope
-    # reaches stdout.
-    with StartupStatusReporter(json_mode=json_mode) as progress:
-        progress.announce("Installing the managed Qdrant server...")
-        report = provision(
-            upgrade=upgrade,
-            dry_run=dry_run,
-            binary=binary,
-            on_progress=progress.stage,
-        )
+    # reaches stdout. An environment that cannot run the service gets a
+    # ``skipped`` report from the front door, with the reason, which is the
+    # outcome ``install`` gives it.
+    try:
+        with StartupStatusReporter(json_mode=json_mode) as progress:
+            progress.announce("Installing the managed Qdrant server...")
+            # The judgement starts an interpreter and imports torch in it,
+            # which takes seconds; saying so keeps the wait from reading as a
+            # hang.
+            progress.stage("Checking that this environment can run the service...")
+            environment = judge_service_environment(_resolve_daemon_interpreter())
+            report = provision_qdrant_binary(
+                upgrade=upgrade,
+                dry_run=dry_run,
+                archive=archive,
+                on_progress=progress.stage,
+                environment=environment,
+            )
+    except KeyboardInterrupt:
+        # An install replaces the executable in one step at its very end, so
+        # a run stopped before that has installed nothing; the working files
+        # it left are removed by the next run.
+        raise _fail_lifecycle(
+            json_mode,
+            _LifecycleFailure(
+                command=_INSTALL_COMMAND,
+                error="interrupted",
+                message="Qdrant server install interrupted",
+                human_lines=(
+                    "Nothing was installed; an install that was already there "
+                    "is untouched.",
+                ),
+                next_actions=(_INSTALL_VERB,),
+            ),
+        ) from None
     failed = report.action == ProvisionAction.FAILED
 
     if json_mode:
         _emit_json(
             not failed,
-            "server.qdrant.install",
-            data=report.to_dict(),
+            _INSTALL_COMMAND,
+            data={**report.to_dict(), "source": _install_source(report, archive)},
             **(
-                {"error": str(report.action), "message": report.message}
+                {"error": QDRANT_PROVISION_FAILED, "message": report.message}
                 if failed
                 else {}
             ),
         )
     else:
-        _render_install_report(report)
+        _render_install_report(report, archive)
     if failed:
         raise typer.Exit(code=1)
 
@@ -128,9 +209,63 @@ def _service_qdrant_block() -> dict[str, Any]:
     return block
 
 
+def _active_binary_blocks() -> tuple[dict[str, object] | None, dict[str, str] | None]:
+    """Describe the binary a start would run, and why it may not, if so.
+
+    Status asks the same two questions a start does - what resolves, and does
+    it pass the check its source holds it to - so the view never shows a
+    binary as usable that a start would refuse. A refusal is reported, not
+    raised: an operator opens this view precisely when something is wrong.
+
+    Returns:
+        ``(active_binary, binary_error)``. The first is ``None`` when nothing
+        resolves; the second is ``None`` when what resolves may run.
+    """
+    try:
+        resolved = resolve_binary()
+    except QdrantBinaryError as exc:
+        return None, {"error": exc.error, "message": str(exc)}
+    if resolved is None:
+        return None, None
+    active: dict[str, object] = {
+        "path": str(resolved.path),
+        "source": str(resolved.source),
+        "operator_supplied": resolved.source.operator_supplied,
+        "version": resolved.version or None,
+    }
+    try:
+        verify_resolved_binary(resolved)
+    except QdrantBinaryError as exc:
+        return active, {"error": exc.error, "message": str(exc)}
+    return active, None
+
+
+def _server_unneeded() -> str | None:
+    """Say why nothing here needs a managed Qdrant server, or ``None``.
+
+    Status names the install command for a missing server, so it asks what
+    the install command itself asks before fetching one: can this environment
+    run the service, and does the selected backend run a server at all. An
+    environment or a backend with no use for the server is told that, and is
+    not sent to a command that would decline.
+
+    The capability is read from installed versions only. This is a status
+    view, and the deeper check costs the seconds of a torch import.
+    """
+    from ..operator_state._compute import ProbeDepth
+
+    environment = judge_service_environment(
+        _resolve_daemon_interpreter(), ProbeDepth.METADATA
+    )
+    unable = unable_skip(ProvisionStep.QDRANT, environment)
+    if unable is not None:
+        return unable.detail
+    return managed_server_unneeded(get_config())
+
+
 def _qdrant_status_payload(port: int | None = None) -> dict[str, Any]:
     cfg = get_config()
-    resolved = resolve_binary()
+    active_binary, binary_error = _active_binary_blocks()
     service = _service_qdrant_block()
     service_port: object = service.get("qdrant_port")
     qdrant_port = int(
@@ -145,35 +280,68 @@ def _qdrant_status_payload(port: int | None = None) -> dict[str, Any]:
         "server_mode_default": bool(cfg.qdrant_server),
         "port": qdrant_port,
         "ready": probe_qdrant_endpoint(qdrant_port).ready,
-        "active_binary": (
-            {
-                "path": str(resolved.path),
-                "source": resolved.source,
-                "version": resolved.version or None,
-            }
-            if resolved is not None
-            else None
-        ),
+        "active_binary": active_binary,
+        "binary_error": binary_error,
+        "server_unneeded": _server_unneeded(),
         "provisioned": provisioned_versions(),
         "service": service,
     }
 
 
-def _print_qdrant_install_and_state(payload: dict[str, object]) -> None:
+def _source_label(active: dict[str, object]) -> str:
+    """Say where the active binary came from, in the resolver's own word.
+
+    An operator-supplied binary is named as such on every surface: the digest
+    it is held to is the operator's own declaration, so a reader must not
+    take it for the pinned release. The managed install is the pinned release
+    however it arrived, by download or from a local archive.
+    """
+    source = str(active["source"])
+    if active.get("operator_supplied"):
+        return f"operator-supplied ({source})"
+    return f"pinned release ({source})"
+
+
+def _print_qdrant_install_and_state(payload: dict[str, object]) -> str:
+    """Print the executable and connection lines; return the refusal printed.
+
+    Returns:
+        The refusal's sentence when the binary a start would run is refused,
+        empty otherwise, so a later section does not print it again.
+    """
     active = payload["active_binary"]
+    refusal = payload["binary_error"]
+    unneeded = payload["server_unneeded"]
+    detail = (
+        str(cast("dict[str, object]", refusal)["message"])
+        if isinstance(refusal, dict)
+        else ""
+    )
     if isinstance(active, dict):
         active_binary = cast("dict[str, object]", active)
         _plain_line(f"Executable: {active_binary['path']}")
+        _plain_line(f"Source: {_source_label(active_binary)}")
+    elif detail:
+        _plain_line("Executable: not usable")
     else:
         _plain_line("Executable: not installed")
-        _print_next_action("vaultspec-rag server qdrant install")
+        if not unneeded:
+            _print_next_action(_INSTALL_VERB)
+    if unneeded:
+        # Said in place of a command: neither installing the server nor
+        # starting the service is a next step here.
+        _plain_line(f"Not needed here: {unneeded}")
+    if detail:
+        # The refusal names its own remedy, and a start would only repeat it.
+        _plain_line(f"Detail: {detail}")
     _plain_line(address_line(payload["port"]))
     if payload["ready"]:
         _plain_line("Connection: accepting requests")
-        return
+        return detail
     _plain_line("Connection: not accepting requests")
-    if isinstance(active, dict):
+    if isinstance(active, dict) and refusal is None and not unneeded:
         _print_next_action(server_start_command(qdrant=True))
+    return detail
 
 
 def _print_qdrant_process(service: object) -> None:
@@ -197,7 +365,7 @@ def _print_qdrant_process(service: object) -> None:
     _plain_line(f"Process port: {service_block.get('qdrant_port', 'not reported')}")
 
 
-def _print_qdrant_versions(provisioned: object) -> None:
+def _print_qdrant_versions(provisioned: object, *, already_said: str) -> None:
     if not (isinstance(provisioned, list) and provisioned):
         _plain_line("Available installs: none")
         return
@@ -207,12 +375,20 @@ def _print_qdrant_versions(provisioned: object) -> None:
             continue
         entry = cast("dict[str, object]", raw_entry)
         marker = " (current)" if entry.get("current") else ""
-        source = (
-            "downloaded release"
-            if entry.get("source") == "download"
-            else entry.get("source")
-        )
+        source = {
+            _SOURCE_DOWNLOAD: "downloaded release",
+            _SOURCE_ARCHIVE: "release installed from a local archive",
+            "unverified": "not verified",
+        }.get(str(entry.get("source")), entry.get("source"))
         _plain_line(f"  {entry.get('version')} - {source}{marker}")
+        # An install nothing vouches for says why, so the listing never
+        # leaves an operator to guess what is wrong with it. The active
+        # install's refusal can be the very same sentence, already printed
+        # above as the detail, and is said once.
+        problem = entry.get("problem")
+        unexplained = not entry.get("verified", True) and problem != already_said
+        if unexplained and isinstance(problem, str) and problem:
+            _plain_line(f"    {problem}")
 
 
 @server_qdrant_app.command(
@@ -240,9 +416,9 @@ def qdrant_status(
 
     _plain_line("Qdrant storage service")
     _plain_line(f"Managed version: {payload['pinned_version']}")
-    _print_qdrant_install_and_state(payload)
+    refused = _print_qdrant_install_and_state(payload)
     _print_qdrant_process(payload["service"])
-    _print_qdrant_versions(payload["provisioned"])
+    _print_qdrant_versions(payload["provisioned"], already_said=refused)
 
 
 @server_qdrant_app.command(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import functools
 import json
 import logging
 import os
@@ -19,7 +20,7 @@ from ..job_control import NO_RUN_CONTROL
 from ..store_runtime import StorageGeometryError
 from . import _chunk_worker, _preprocess_glue, _stat_gate
 from ._checkpoint_common import PublicationExecution
-from ._content_discovery import CodeContentDiscovery
+from ._content_discovery import CodeContentDiscovery, validate_admitted_sources
 from ._content_policy import ContentKind, RootContentPolicy
 from ._document_checkpoint import (
     DocumentRunCheckpoint,
@@ -28,6 +29,7 @@ from ._document_checkpoint import (
 )
 from ._document_file import DocumentFileMetadata
 from ._file_state import FileStateKind
+from ._generation_lifecycle import CodeGenerationLifecycle
 from ._index_lifecycle import (
     IndexLifecycleRequest,
     incremental_mode,
@@ -47,6 +49,7 @@ from ._run_ledger_models import (
 from ._run_policy import RunPolicy
 from ._scan_cache import MembershipScanCache
 from ._slicing import iter_weighted_document_slices
+from ._source_file import source_file_stat
 from ._streaming import (
     _SliceWriter,
     encode_and_upsert_document_slice,
@@ -303,7 +306,10 @@ class DocumentIndexer:
         # Resident between runs; every acquire/retain pair runs under
         # ``self._writer_lock``, which is the serialization the cache's
         # single-threaded contract relies on.
-        self._stat_gate_cache = _stat_gate.StatEvidenceStore(self._stat_gate_path)
+        self._stat_gate_cache = _stat_gate.StatEvidenceStore(
+            self._stat_gate_path,
+            digest=functools.partial(_stat_gate.file_digest, root_dir=self.root_dir),
+        )
         # Bounded-staleness cache of the document discovery walk, keyed by
         # policy fingerprint. Scoped runs bypass discovery and invalidate it,
         # because the events they carry are membership truth a cached walk
@@ -392,6 +398,17 @@ class DocumentIndexer:
     def _ignored_directory(policy: ResolvedIndexPolicy, rel_path: str) -> bool:
         return policy.classify(rel_path).disposition.reason.value == "ignored"
 
+    def _is_canonical_source(self, path: pathlib.Path) -> bool:
+        """Return whether *path* is a regular file reached through no link.
+
+        Admission is decided on the name; a link smuggles in an unclassified object.
+        """
+        try:
+            source_file_stat(path, self.root_dir)
+        except OSError:
+            return False
+        return True
+
     def _discover(
         self,
         policy: ResolvedIndexPolicy,
@@ -418,8 +435,13 @@ class DocumentIndexer:
                 run_control.checkpoint()
                 rel = f"{prefix}{name}"
                 disposition = policy.classify(rel).disposition
-                if disposition.admitted and disposition.kind is ContentKind.DOCUMENT:
-                    discovered.append(pathlib.Path(directory) / name)
+                if not (
+                    disposition.admitted and disposition.kind is ContentKind.DOCUMENT
+                ):
+                    continue
+                path = pathlib.Path(directory) / name
+                if self._is_canonical_source(path):
+                    discovered.append(path)
             run_control.checkpoint()
         result = tuple(sorted(discovered, key=lambda path: path.as_posix()))
         self._discover_cache.put(fingerprint, result)
@@ -497,19 +519,13 @@ class DocumentIndexer:
         if isinstance(authority, DocumentIndexPreflight):
             if changed_paths is not None:
                 raise ValueError("full document preflight cannot authorize scoped work")
-            if any(
-                not path.resolve().is_relative_to(self.root_dir)
-                for path in authority.files
-            ):
-                raise ValueError("document preflight contains a path outside its root")
-            for path in authority.files:
-                run_control.checkpoint()
-                rel = path.relative_to(self.root_dir).as_posix()
-                disposition = authority.policy.classify(rel).disposition
-                if not (
-                    disposition.admitted and disposition.kind is ContentKind.DOCUMENT
-                ):
-                    raise ValueError("document preflight contains a non-document path")
+            validate_admitted_sources(
+                self.root_dir,
+                authority.policy,
+                authority.files,
+                ContentKind.DOCUMENT,
+                run_control=run_control,
+            )
             return authority.policy, authority.files
         if changed_paths is None:
             raise ValueError("scoped document preflight requires changed paths")
@@ -601,7 +617,10 @@ class DocumentIndexer:
                 result.rel_path,
                 FileStateKind.EXTRACT_RETRYABLE,
                 reason,
-                content_hash=result.content_hash,
+                # A source refused before it was read carries no digest.
+                content_hash=CodeGenerationLifecycle.checkpoint_content_hash(
+                    result.content_hash
+                ),
             )
             return None, 0, f"{result.rel_path}: {reason}"
         from ..config._settings import get_config
@@ -1003,7 +1022,7 @@ class DocumentIndexer:
             path = self.root_dir / pathlib.PurePosixPath(rel)
             disposition = request.policy.classify(rel).disposition
             admitted = disposition.admitted and disposition.kind is ContentKind.DOCUMENT
-            if not path.is_file() or not admitted:
+            if not admitted or not self._is_canonical_source(path):
                 old = current.pop(rel, None)
                 if old is not None:
                     execute_store_mutation(

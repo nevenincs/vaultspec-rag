@@ -38,7 +38,8 @@ from typing import IO, TYPE_CHECKING, Literal, cast
 
 from pydantic import ValidationError
 
-from .._process_probe import kill_process_descendants, process_lineage, wait_for_exit
+from .._process_probe import kill_child_tree
+from .._python_child import script_command
 from ._hook_sandbox import curated_child_env, default_popen_handle
 from ._preprocess_schema import (
     PREPROCESS_INVOCATION_ENV,
@@ -56,8 +57,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: Module path of the out-of-process entry-point runner (#185 follow-up).
-_ENTRY_RUNNER_MODULE = "vaultspec_rag.indexer._preprocess_entry"
+#: The out-of-process entry-point runner, named by its file rather than by its
+#: module path. The child runs with the project root on its import path so a
+#: hook can import its own modules, and a module path would be resolved there
+#: first: a project shipping a directory under this package's name would then
+#: supply the runner as well as the hook.
+_ENTRY_RUNNER_FILE = pathlib.Path(__file__).with_name("_preprocess_entry.py")
 
 #: Raw stdout is captured up to this multiple of the emitted-text cap, leaving
 #: headroom for JSON structure while bounding peak memory so a runaway extractor
@@ -66,6 +71,9 @@ _STDOUT_CAP_MULTIPLIER = 4
 _MIN_STDOUT_CAP = 1024 * 1024
 #: Hard ceiling on captured stderr so a flooding child cannot OOM us either.
 _STDERR_CAP = 64 * 1024
+#: How long a killed preprocessor tree, and then its pipe readers, are each
+#: given to be gone before cleanup reports that they are not.
+_CLEANUP_SECONDS = 5.0
 
 #: Hard ceiling on a batch invocation's wall-clock budget. The per-file
 #: ``timeout_s`` the author declared scales with the manifest size, but never
@@ -169,13 +177,9 @@ def _build_argv(rule: PreprocessRule, source_path: pathlib.Path) -> list[str]:
     same isolation and timeout guarantees as the command form (#185 follow-up).
     """
     if rule.entry_point is not None:
-        return [
-            sys.executable,
-            "-m",
-            _ENTRY_RUNNER_MODULE,
-            rule.entry_point,
-            str(source_path),
-        ]
+        return script_command(
+            sys.executable, _ENTRY_RUNNER_FILE, rule.entry_point, str(source_path)
+        )
     if rule.command is not None:
         path_str = str(source_path)
         tokens = shlex.split(rule.command, posix=True)
@@ -336,39 +340,34 @@ def _terminate_and_join(
     threads: tuple[threading.Thread, ...],
     stopped: threading.Event,
 ) -> None:
-    """Stop readers, kill witnessed descendants first, then reap the owned child."""
+    """Stop readers, kill the child's whole tree, and say what could not be shown.
+
+    Three things are reported rather than left unsaid: a process that
+    survived the kill, a running child whose descendants could not be
+    identified, and a child that had already exited while a reader was still
+    waiting on a pipe - which means something it started holds that pipe, and
+    nothing is left to say what.
+    """
     pending_readers = sum(thread.is_alive() for thread in threads)
     stopped.set()
-    deadline = time.monotonic() + 5.0
     cleanup_error: Exception | None = None
-    descendants = ()
+    if handle.poll() is not None and pending_readers:
+        cleanup_error = ProcessLookupError(
+            "parent exited before descendant witness; "
+            f"pending_pipe_readers={pending_readers}, descendant_count=unknown"
+        )
     try:
-        if handle.poll() is None:
-            lineage = process_lineage(handle.pid)
-            if not lineage or lineage[0].pid != handle.pid:
-                raise ProcessLookupError("preprocessor parent identity is unreadable")
-            descendants = kill_process_descendants(lineage[0])
-        elif pending_readers:
-            raise ProcessLookupError(
-                "parent exited before descendant witness; "
-                f"pending_pipe_readers={pending_readers}, descendant_count=unknown"
+        killed = kill_child_tree(handle, confirm_seconds=_CLEANUP_SECONDS)
+        if killed.survivors:
+            raise RuntimeError(
+                f"preprocessor processes {list(killed.survivors)} survived cleanup"
             )
-    except Exception as exc:
-        cleanup_error = exc
+        if not killed.witnessed and cleanup_error is None:
+            cleanup_error = ProcessLookupError(
+                "preprocessor parent identity is unreadable"
+            )
     finally:
-        try:
-            if handle.poll() is None:
-                handle.kill()
-            handle.wait(timeout=max(0.0, deadline - time.monotonic()))
-            for descendant in descendants:
-                if not wait_for_exit(
-                    descendant.pid, timeout=max(0.0, deadline - time.monotonic())
-                ):
-                    raise RuntimeError(
-                        f"preprocessor descendant {descendant.pid} survived cleanup"
-                    )
-        finally:
-            _stop_readers(threads, deadline)
+        _stop_readers(threads, time.monotonic() + _CLEANUP_SECONDS)
     if cleanup_error is not None:
         raise cleanup_error
 
@@ -423,7 +422,7 @@ def _drain_child(
         _wait_for_child(handle, deadline, checkpoint)
         _join_readers(
             threads,
-            deadline if deadline is not None else time.monotonic() + 5.0,
+            deadline if deadline is not None else time.monotonic() + _CLEANUP_SECONDS,
             errors,
             checkpoint,
         )

@@ -1020,6 +1020,7 @@ def get_readiness(
     *,
     holders_root: str | pathlib.Path | None = None,
     compute: ComputeReport | None = None,
+    verify_models: bool = False,
 ) -> dict[str, Any]:
     """Return a bounded, read-only dependency-readiness snapshot.
 
@@ -1042,6 +1043,9 @@ def get_readiness(
             pay.
         compute: The compute verdict a torch-free caller probed out of
             process; ``None`` classifies this process's own environment.
+        verify_models: Hash each pinned model's snapshot against its
+            committed digests, instead of only listing its files. It reads
+            gigabytes and costs seconds, which a polled route must not pay.
 
     Returns:
         The JSON-serialisable :meth:`ReadinessReport.to_dict` view: a
@@ -1056,7 +1060,9 @@ def get_readiness(
     """
     from ._readiness import compute_readiness
 
-    return compute_readiness(holders_root=holders_root, compute=compute).to_dict()
+    return compute_readiness(
+        holders_root=holders_root, compute=compute, verify_models=verify_models
+    ).to_dict()
 
 
 class _WatcherState(TypedDict):

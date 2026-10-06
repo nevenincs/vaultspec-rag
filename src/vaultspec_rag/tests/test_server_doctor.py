@@ -71,7 +71,16 @@ def test_doctor_json_envelope_carries_both_axes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """With no discovery file the envelope carries the dependency snapshot
-    verbatim and a not-started live-service axis."""
+    verbatim and a not-started live-service axis.
+
+    The snapshot is the deep one: the health command checks each model's
+    snapshot as a load would, hashing a pinned model's files, where a polled
+    surface only lists them. The two depths word the model row differently
+    whether or not the models are cached, so the comparison below tells them
+    apart on any host. Mutation: with the command asking for the cheap
+    snapshot, this failed on the dependencies comparison; restored, it
+    passed.
+    """
     _ = isolated_status_dir
     # The mode-and-floor axis is read from the CWD's workspace declaration, so
     # without an isolated CWD this asserts the exit code of whichever workspace
@@ -87,7 +96,7 @@ def test_doctor_json_envelope_carries_both_axes(
     assert envelope["command"] == "server doctor"
     data = envelope["data"]
     # The installed-dependency snapshot is preserved verbatim and labelled.
-    snapshot = get_readiness()
+    snapshot = get_readiness(verify_models=True)
     assert data["dependencies"] == snapshot["dependencies"]
     assert data["dependencies_ready"] == bool(snapshot["ready"])
     assert data["server_mode"] == bool(snapshot["server_mode"])

@@ -30,7 +30,7 @@ from __future__ import annotations
 import ctypes
 import logging
 import sys
-from typing import Final
+from typing import Final, cast
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,11 @@ __all__ = [
     "assign_process_to_job",
     "create_kill_on_close_job",
     "grant_every_account_access",
+    "job_member_count",
+    "open_without_following",
     "program_data_directory",
+    "system_directory",
+    "terminate_job",
 ]
 
 #: ``FOLDERID_ProgramData`` (``KnownFolders.h``).
@@ -95,9 +99,24 @@ _SHARED_ANCHOR_DIRECTORY_SDDL: Final = (
 #: ``ERROR_ACCESS_DENIED`` (``winerror.h``).
 _ERROR_ACCESS_DENIED: Final = 5
 
+#: ``MAX_PATH`` (``minwindef.h``): the first size offered for a path buffer.
+_MAX_PATH: Final = 260
+
+#: ``GENERIC_READ``, ``FILE_SHARE_READ``, ``FILE_SHARE_READ | FILE_SHARE_WRITE``
+#: and ``OPEN_EXISTING`` (``winnt.h``, ``fileapi.h``).
+_GENERIC_READ: Final = 0x80000000
+_FILE_SHARE_READ: Final = 0x00000001
+_FILE_SHARE_READ_WRITE: Final = 0x00000003
+_OPEN_EXISTING: Final = 3
+
+#: Open a link as the link, and allow the node opened to be a directory.
+_FILE_FLAG_OPEN_REPARSE_POINT: Final = 0x00200000
+_FILE_FLAG_BACKUP_SEMANTICS: Final = 0x02000000
+
 #: Job Object constants (``winnt.h``).
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: Final = 0x2000
 _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION: Final = 9
+_JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION: Final = 1
 
 
 def create_kill_on_close_job(*, purpose: str) -> int | None:
@@ -188,6 +207,80 @@ def create_kill_on_close_job(*, purpose: str) -> int | None:
         kernel32.CloseHandle(job)
         return None
     return int(job)
+
+
+def terminate_job(job: int | None, *, purpose: str) -> bool:
+    """End every process that is a member of *job*, and keep the job.
+
+    A member's descendants are members too, so this ends a tree that
+    terminating its first process would leave running. The job itself
+    survives: a process assigned to it afterwards is governed as before.
+
+    Returns whether the request was accepted; a refusal is logged, never
+    raised, and ``False`` is also the answer off-Windows or with no job.
+    """
+    if sys.platform != "win32" or job is None:
+        return False
+    from ctypes import wintypes
+
+    from ._process_probe import win_kernel32
+
+    kernel32 = win_kernel32()
+    kernel32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
+    kernel32.TerminateJobObject.restype = wintypes.BOOL
+    if kernel32.TerminateJobObject(job, 1):
+        return True
+    logger.error(
+        "TerminateJobObject failed for the %s job; processes it holds may "
+        "still be running",
+        purpose,
+    )
+    return False
+
+
+def job_member_count(job: int | None) -> int | None:
+    """Return how many live processes *job* holds.
+
+    ``None`` when there is no job or it cannot be queried, which a caller
+    must not read as empty.
+    """
+    if sys.platform != "win32" or job is None:
+        return None
+    from ctypes import wintypes
+
+    from ._process_probe import win_kernel32
+
+    class _BasicAccounting(ctypes.Structure):
+        _fields_ = [
+            ("TotalUserTime", wintypes.LARGE_INTEGER),
+            ("TotalKernelTime", wintypes.LARGE_INTEGER),
+            ("ThisPeriodTotalUserTime", wintypes.LARGE_INTEGER),
+            ("ThisPeriodTotalKernelTime", wintypes.LARGE_INTEGER),
+            ("TotalPageFaultCount", wintypes.DWORD),
+            ("TotalProcesses", wintypes.DWORD),
+            ("ActiveProcesses", wintypes.DWORD),
+            ("TotalTerminatedProcesses", wintypes.DWORD),
+        ]
+
+    kernel32 = win_kernel32()
+    kernel32.QueryInformationJobObject.argtypes = (
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+    )
+    kernel32.QueryInformationJobObject.restype = wintypes.BOOL
+    info = _BasicAccounting()
+    if not kernel32.QueryInformationJobObject(
+        job,
+        _JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION,
+        ctypes.byref(info),
+        ctypes.sizeof(info),
+        None,
+    ):
+        return None
+    return int(cast("int", info.ActiveProcesses))
 
 
 class _AclHeader(ctypes.Structure):
@@ -384,6 +477,58 @@ def create_private_file(path: str) -> int:
             raise
     finally:
         kernel32.LocalFree(descriptor)
+
+
+def open_without_following(
+    path: str, *, directory: bool = False, share_write: bool = True
+) -> int:
+    """Open the node at *path* itself for reading, never what a link names.
+
+    A link is opened as the link, so the caller can examine what is really at
+    the name. The handle shares reads and writes but not deletion: for as long
+    as the returned descriptor stays open the node cannot be renamed, replaced
+    or removed, which is what lets a caller rely on what it examined.
+
+    Windows opens a directory only when asked to, so *directory* must be set
+    for one; it is left off for a file so that open keeps its ordinary access
+    checks.
+
+    With *share_write* off the handle shares reads only, so the content cannot
+    be rewritten in place either. That is for a caller relying on what it read
+    and not only on which node it read; the open then fails while another
+    process holds the file open for writing.
+    """
+    import msvcrt
+    import os
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.argtypes = (
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    )
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    flags = _FILE_FLAG_OPEN_REPARSE_POINT
+    if directory:
+        flags |= _FILE_FLAG_BACKUP_SEMANTICS
+    share = _FILE_SHARE_READ_WRITE if share_write else _FILE_SHARE_READ
+    handle = kernel32.CreateFileW(
+        path, _GENERIC_READ, share, None, _OPEN_EXISTING, flags, None
+    )
+    if handle is None or handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        return msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+    except BaseException:
+        kernel32.CloseHandle(handle)
+        raise
 
 
 def _read_acl_aces(api: ctypes.WinDLL, acl: ctypes.c_void_p) -> tuple[int, list[bytes]]:
@@ -598,6 +743,38 @@ def program_data_directory() -> str:
         return resolved.value
     finally:
         ole32.CoTaskMemFree(resolved)
+
+
+def system_directory() -> str:
+    """Return the Windows system directory as the kernel records it.
+
+    Where the operating system keeps its own programs. Asked of the kernel
+    rather than read from ``SystemRoot`` for the reason the ProgramData
+    directory is: the directory an operating-system tool is run from must not
+    be one assignment away from being somewhere else.
+
+    Raises:
+        OSError: Off Windows, or when the kernel returns no path.
+    """
+    if sys.platform != "win32":
+        raise OSError("the system directory exists only on Windows")
+    from ctypes import wintypes
+
+    # A private library handle, so these declarations cannot collide with any
+    # other module's use of the process-global ``ctypes.windll`` cache.
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetSystemDirectoryW.argtypes = (wintypes.LPWSTR, wintypes.UINT)
+    kernel32.GetSystemDirectoryW.restype = wintypes.UINT
+    capacity = _MAX_PATH
+    while True:
+        buffer = ctypes.create_unicode_buffer(capacity)
+        needed = int(kernel32.GetSystemDirectoryW(buffer, capacity))
+        if needed == 0:
+            raise ctypes.WinError(ctypes.get_last_error())
+        if needed < capacity:
+            return buffer.value
+        # A longer path reports the size it needs, terminator included.
+        capacity = needed
 
 
 def assign_process_to_job(

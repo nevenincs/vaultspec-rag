@@ -33,9 +33,9 @@ related:
   - '[[2026-07-24-worktree-index-reuse-adr]]'
   - '[[2026-07-29-encode-batch-adaptivity-adr]]'
   - '[[2026-06-30-qdrant-store-resilience-adr]]'
-modified: '2026-10-03'
+modified: '2026-10-04'
 body_schema: body-v2
-body_hash: 'sha256:36ae6f146788b2f0d1dfa64aff3b02196d8097da49a63d03efb77d3335bbd0bc'
+body_hash: 'sha256:8efd8bc1c04b635247d3f041e80b71025b2e505ad3e4e35fe4733e92e2c1779e'
 ---
 
 # `resident-service-recovery` plan
@@ -127,7 +127,7 @@ S42 follows a confirmed live managed TUI scoped CODE failure caused by external 
 - [x] `S06` - Report collection model or geometry incompatibility as terminal explicit-rebuild refusal and report the actual configured backend in service capabilities; `src/vaultspec_rag/store_runtime.py and capabilities.py, storage identity and service capability CPU regressions`.
 - [x] `S07` - Require rebuild observation and generation creation after structural scope refusal so an in-flight or resumed older full sweep cannot erase lost scope; `watcher_retry_policy.py rebuild certification and real-ledger watcher rebuild reconciliation regressions`.
 - [x] `S08` - Prove lifecycle target identity and process incarnation across stop, reclaim and reaping, preserve successor discovery during cleanup, and retain unknown machine presence on probe faults; `src/vaultspec_rag/_process_probe.py, _machine_lock.py, cli/_process.py, cli/_service_stop.py, cli/_service_start.py, cli/_status_render.py, serviceclient/_discovery.py and focused CPU lifecycle, machine presence, discovery cleanup and compatibility tests`.
-- [ ] `S09` - Prevent CI resident restart while a dependent native attempt is active and roll out the corrected admission runtime after that attempt releases; `isolated ci-fleet resident, protected task compilation and fleet.yml probe declaration, engine/supervisor grant and preparation readiness, runtime/server wiring and affected CPU tests, resident-service ADR refinement and trusted idle local authority deployment`.
+- [ ] `S09` - Roll out the admission runtime without CI control of the resident service once the host is idle; `ci-fleet admission runtime with resident-service control and resident scheduled-task declarations removed, affected CPU tests, and trusted idle local authority deployment`.
 - [x] `S10` - Preserve canonical weighted-stream framing while resuming committed segment gaps, with real-ledger interrupted-run regressions and guarded boundary rejection; `indexer/_consumer_pipeline.py, _run_checkpoint.py, _slicing.py and _streaming_types.py as needed, focused CPU weighted stream and real-ledger resume tests`.
 - [x] `S11` - Allow vector-free cross-kind route reconciliation against an old-model origin without weakening destination evidence or vector conformance; `indexer/_route_migration.py, store_catalog.py and store_ingest.py plus collection owner only as needed, CPU real-Qdrant and ledger migration and strict conformance regressions`.
 - [x] `S12` - Recover desired-running paused jobs after aborted quiesce, let unstarted capacity waiters acknowledge control, and preserve operator pause intent during global unwind; `job_manager quiesce recovery, attempt capacity admission and desired-state/capability owner, _service_residency.py and service_quiesce.py recovery failure ordering, focused real-component CPU control regressions`.
@@ -179,7 +179,7 @@ For S06 and S07, the supervisor owns S06 capability/collection projections and t
 
 For S08, the recovery worker owns lifecycle identity, machine presence and stop/start/status discovery cleanup paths and their CPU regressions. The supervisor owns live lifecycle operations, admission maintenance, Git/vault mutations, and final verification. S04 deployment loads S08 before publication repairs resume.
 
-S09 runs in an isolated ci-fleet worktree. The watcher worker owns resident.py, protected task compilation in config.py, the shared engine/server/supervisor/runtime readiness wiring, fleet.yml probe-task declarations, and affected CPU tests. The supervisor owns the resident-service ADR refinement, runtime deployment, shared metadata and Git operations, and admission maintenance. S08 and S09 may run concurrently with disjoint repositories. No active native attempt is interrupted; authority deployment and resident start wait for its release.
+S09 runs in the ci-fleet repository. It was rescoped on 2026-10-05 on the user's direction that CI must not stop, start or probe the resident service through operating-system scheduled tasks: the fleet's resident-service control, its admission wiring and its scheduled-task declarations are removed rather than corrected, so no resident restart remains to prevent. What remains is deploying the admission runtime without that control. S08 and S09 may run concurrently with disjoint repositories. No active native attempt is interrupted; authority deployment waits for its release.
 
 For S10, the recovery worker owns resumed weighted-stream framing and checkpoint selection plus their CPU tests. S10 may run concurrently with S09 in disjoint repositories and S04 observation of existing admitted jobs. The supervisor owns all lifecycle, job-control, Git/vault and shared verification actions. Process-only mutation checks never change checkout source bytes. Deployment of S10 waits for controlled checkpoint settlement and then resumes jobs against its committed source.
 

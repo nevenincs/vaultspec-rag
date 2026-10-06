@@ -26,7 +26,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypedDict, Unpack, cast
+from typing import TYPE_CHECKING, Final, Literal, TypedDict, Unpack, cast
 
 from vaultspec_core.config import VAULTSPEC_TARGET_DIR, child_environment
 
@@ -49,6 +49,7 @@ from .._process_probe import (
     server_launch_port,
     wait_for_exit,
 )
+from .._python_child import module_command
 from .._win32 import (
     WIN_CREATE_BREAKAWAY_FROM_JOB,
     WIN_CREATE_NEW_PROCESS_GROUP,
@@ -402,7 +403,65 @@ def _build_service_child_env(request: _ServiceChildEnvRequest) -> dict[str, str]
         env[EnvVar.LOCAL_ONLY.value] = "1" if local_only else "0"
     if preprocess_mode == "off":
         env[EnvVar.PREPROCESS.value] = "off"
+    _anchor_relative_directories(env)
     return env
+
+
+#: Variables that name a directory, and whose reader takes a relative value
+#: against its own working directory. The data directory, the on-disk store
+#: directory and the log file are not among them: each is relative to a root
+#: or to the status directory by definition, wherever the reader runs.
+_DIRECTORY_VARIABLES: Final = (
+    EnvVar.STATUS_DIR,
+    EnvVar.QDRANT_STORAGE_DIR,
+    EnvVar.HF_HOME,
+    EnvVar.HF_HUB_CACHE,
+    EnvVar.UV_CACHE_DIR,
+    EnvVar.UV_TOOL_DIR,
+    EnvVar.TEMP,
+    EnvVar.TMP,
+    EnvVar.TMPDIR,
+)
+
+
+def _anchor_relative_directories(env: dict[str, str]) -> None:
+    """Rewrite each relative directory setting in *env* to the path it names here.
+
+    The service does not run in the directory it was started from. A setting
+    given as a relative path means a place under that directory to the command
+    starting the service, and would mean a different place to the service:
+    the two would then disagree about where the service's own discovery file
+    is, and the start would wait for one that is never written where it is
+    looking. Made absolute here, the value means one place to both.
+
+    A value led by ``~`` is left alone; its reader expands it against the
+    home directory, which is the same for both.
+    """
+    names = {variable.value.upper() for variable in _DIRECTORY_VARIABLES}
+    for name, value in list(env.items()):
+        relative = value.strip() and not value.startswith("~")
+        if name.upper() in names and relative and not os.path.isabs(value):
+            env[name] = os.path.abspath(value)
+
+
+def _service_working_directory() -> Path:
+    """Return the directory the resident service runs in.
+
+    The managed status directory, as an absolute path, and never the
+    directory the start was typed in. A process resolves bare program names
+    and relative paths against its working directory, and reads a project's
+    private settings store from it, so a service left in a project checkout
+    takes all three from whichever checkout it happened to be started in. On
+    Windows it also holds that directory open, so the checkout cannot be
+    renamed or removed while the service runs.
+    """
+    from ..config._settings import managed_status_dir
+
+    directory = managed_status_dir().resolve()
+    # The start has normally created it for the log. A spawn into a directory
+    # that is not there fails as a refused detach, which names the wrong cause.
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
 
 
 # The flag VALUES are Win32 API facts held once in .._win32. What belongs here
@@ -518,6 +577,29 @@ def _spawn_service(
     )
 
 
+def _service_launch_command(
+    interpreter: str, port: int, launch_token: str
+) -> list[str]:
+    """Return the command line that starts the resident service on *port*.
+
+    The service is started from wherever the operator happens to be, which is
+    usually a project checkout, so it runs with that directory off its import
+    path. The mode is inherited by the worker pools it creates, which is what
+    keeps a checkout from handing code to an indexing worker either.
+
+    The port and the launch token are how every later command finds this
+    process again, so the shape here is the one the launch recognisers read.
+    """
+    return module_command(
+        interpreter,
+        SERVER_LAUNCH_MARKER[1],
+        "--port",
+        str(port),
+        "--launch-token",
+        launch_token,
+    )
+
+
 def _spawn_service_request(request: _ServiceSpawnRequest) -> int:
     """Spawn the RAG service as a detached background process.
 
@@ -547,23 +629,16 @@ def _spawn_service_request(request: _ServiceSpawnRequest) -> int:
     launch_token = uuid.uuid4().hex
     if deadline is not None and deadline <= time.monotonic():
         raise TimeoutError("service spawn received no remaining startup budget")
-    interpreter = _resolve_daemon_interpreter()
-    cmd = [
-        interpreter,
-        *SERVER_LAUNCH_MARKER,
-        "--port",
-        str(port),
-        "--launch-token",
-        launch_token,
-    ]
+    cmd = _service_launch_command(_resolve_daemon_interpreter(), port, launch_token)
     env = _build_service_child_env(request.child_env)
+    working_directory = _service_working_directory()
     # Owner-only log, refusing a pre-planted symlink at the path where the
     # platform offers O_NOFOLLOW (local log-tamper / redirect hardening).
     _log_flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
     log_fd = os.open(log_path, _log_flags, 0o600)
     try:
         if sys.platform == "win32":
-            proc = _spawn_windows(cmd, env, log_fd)
+            proc = _spawn_windows(cmd, env, log_fd, cwd=working_directory)
         else:
             proc = subprocess.Popen(
                 cmd,
@@ -571,6 +646,7 @@ def _spawn_service_request(request: _ServiceSpawnRequest) -> int:
                 stdout=log_fd,
                 stderr=subprocess.STDOUT,
                 env=env,
+                cwd=working_directory,
                 start_new_session=True,
             )
     finally:
@@ -877,6 +953,8 @@ def _spawn_windows(
     cmd: list[str],
     env: dict[str, str],
     log_fd: int,
+    *,
+    cwd: Path,
 ) -> subprocess.Popen[bytes]:
     """Spawn the daemon on Windows, detaching it from the launching shell.
 
@@ -897,6 +975,7 @@ def _spawn_windows(
             stdout=log_fd,
             stderr=subprocess.STDOUT,
             env=env,
+            cwd=cwd,
             creationflags=WIN_DAEMON_SPAWN_FLAGS,
         )
     except OSError as breakaway_exc:
@@ -914,6 +993,7 @@ def _spawn_windows(
             stdout=log_fd,
             stderr=subprocess.STDOUT,
             env=env,
+            cwd=cwd,
             creationflags=WIN_DAEMON_DETACHED_FLAGS,
         )
     except OSError as detached_exc:

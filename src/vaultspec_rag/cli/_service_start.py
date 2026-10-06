@@ -1,10 +1,11 @@
 """``server start``: spawn, guard, and await the background search service.
 
-Owns the start path end to end: the qdrant-binary and machine-singleton
-preconditions, the GPU pre-flight of the daemon interpreter, the idempotent
-"already running" success, the spawn, and the health-wait that emits the
-terminal outcome. Every terminal branch converges on ``_start_success`` /
-``_fail_start`` so a broker in ``--json`` mode reads exactly one envelope.
+Owns the start path end to end: the idempotent "already running" success, the
+installation-role and machine-singleton preconditions, the GPU pre-flight of
+the daemon interpreter, the foreground fetch of the model files and the Qdrant
+server, the spawn, and the health-wait that emits the terminal outcome. Every
+terminal branch converges on ``_start_success`` / ``_fail_start`` so a broker
+in ``--json`` mode reads exactly one envelope.
 """
 
 from __future__ import annotations
@@ -22,6 +23,9 @@ if TYPE_CHECKING:
     import typer
     from typer._click import Context as ClickContext
 
+    from ..commands._provision import BackendDecision, ProvisionStepResult
+    from ..operator_state._service_environment import ServiceEnvironment
+
     # Click types ``Context.params`` as ``dict[str, Any]`` because the keys
     # and value types are only known once a command's options are parsed at
     # runtime. This TypedDict is the producer-side cast target for
@@ -35,7 +39,7 @@ if TYPE_CHECKING:
         repeat_update_delay_s: float | None
         local_only: bool
         qdrant: bool | None
-        qdrant_auto_provision: bool
+        qdrant_auto_provision: bool | None
         no_preprocess: bool
         json: bool
 
@@ -50,6 +54,7 @@ from .._ports import port_is_available
 from .._process_probe import pid_alive
 from ..config._settings import get_config
 from ..config._types import EnvVar
+from ..operator_state._installation import ComputeCapability
 from ..operator_state._provisioning import cuda_remediation
 from ..operator_state._topology import (
     RuntimeEnvKind,
@@ -126,8 +131,9 @@ class _PreparedServiceRequest:
     updates: bool | None
     update_delay_ms: int | None
     repeat_update_delay_s: float | None
-    qdrant: bool | None
-    local_only: bool
+    #: The one backend decision of this start. The spawn hands the daemon
+    #: what a flag decided from it and nothing else.
+    backend: BackendDecision
     preprocess_forward: Literal["off"] | None
     json_mode: bool
     #: The workspace this invocation resolved. The daemon never opens a
@@ -139,9 +145,11 @@ class _PreparedServiceRequest:
 #: Everything the start wait must cover BEYOND the qdrant readiness budget:
 #: the daemon interpreter's own import, resolving and re-verifying the server
 #: binary, and the embedding and reranker model load. The model load is the
-#: large term - on a cold host it fetches weights, where the hub's own
-#: per-file download budget is itself 300 seconds - and the accelerator
-#: preflight that precedes the timer is already allowed 60 on its own.
+#: large term. This command fetches missing weights before the timer starts,
+#: so the daemon normally loads from the cache, but a file that vanished in
+#: between is fetched by the daemon itself, and that fetch is bounded only by
+#: the size of the file and the speed of the link. The accelerator preflight
+#: that precedes the timer is already allowed 60 on its own.
 _START_OVERHEAD_ALLOWANCE_SECONDS = 300.0
 
 
@@ -197,7 +205,9 @@ class _ServiceStartOptions:
     repeat_update_delay_s: float | None
     local_only: bool
     qdrant: bool | None
-    qdrant_auto_provision: bool
+    #: ``None`` when neither spelling of the flag was passed, which leaves the
+    #: configured switch in force.
+    qdrant_auto_provision: bool | None
     no_preprocess: bool
     json_mode: bool
 
@@ -258,19 +268,23 @@ class _ServiceStartCommand(TyperCommand):
                     default=None,
                     is_flag=True,
                     help=(
-                        "Explicitly opt in to (or out of) the managed Qdrant server. "
-                        "Server mode is already the default, so --qdrant is redundant; "
-                        "use --local-only to select the on-disk store. Unset leaves "
-                        "the current Qdrant setting unchanged."
+                        "Select the managed Qdrant server for this start, or "
+                        "decline it. --qdrant overrides a saved or exported "
+                        "local-only choice for this run without rewriting it; "
+                        "--local-only still wins when both are given. Unset "
+                        "leaves the current setting in force."
                     ),
                 ),
                 TyperOption(
-                    param_decls=["--qdrant-auto-provision"],
-                    default=False,
+                    param_decls=["--qdrant-auto-provision/--no-qdrant-auto-provision"],
+                    default=None,
                     is_flag=True,
                     help=(
-                        "Download the managed Qdrant server if it is missing. "
-                        "Without this flag, start prints the install command."
+                        "Download and verify the managed Qdrant server when it "
+                        "is missing (default: enabled). With "
+                        "--no-qdrant-auto-provision, start prints the install "
+                        "command instead. Unset leaves the "
+                        f"{EnvVar.QDRANT_AUTO_PROVISION.value} setting in force."
                     ),
                 ),
                 TyperOption(
@@ -317,62 +331,109 @@ class _ServiceStartCommand(TyperCommand):
         )
 
 
-def _ensure_qdrant_binary(
-    *,
-    auto_provision: bool,
-    json_mode: bool = False,
-    progress: StartupStatusReporter | None = None,
-) -> None:
-    """Fail fast (or provision with consent) before a server-mode start.
+def _auto_provision_enabled(flag: bool | None) -> bool:
+    """Whether this start may download a missing Qdrant server.
 
-    Server mode is the default backend, so this guard runs by default and
-    only ``--local-only`` (or an explicit ``--no-qdrant``) skips it. Never
-    downloads silently: an absent executable without ``auto_provision`` prints
-    the exact install command and exits non-zero. In ``--json`` mode the absent/
-    failed outcomes are emitted as start envelopes so a broker reads one document.
+    Either spelling of the flag decides it for this run; neither leaves the
+    configured switch in force.
+    """
+    return get_config().qdrant_auto_provision if flag is None else flag
+
+
+def _ensure_start_dependencies(
+    options: _ServiceStartOptions,
+    backend: BackendDecision,
+    environment: ServiceEnvironment,
+    progress: StartupStatusReporter,
+) -> None:
+    """Fetch what the daemon needs and does not have, before it is spawned.
+
+    Starting the service is the consent to fetch what it needs, so the model
+    files and the Qdrant server are ensured here, in the foreground, through
+    the same provisioning front door ``install`` uses: the transfer and any
+    failure are visible, where a fetch inside the daemon would show only a
+    warm-up that never ends. The daemon does not fetch a model at all: it
+    loads each one from the cache alone, after checking what the cache holds,
+    and a model that is missing or fails that check stops the load with the
+    command to run. A service started any other way therefore has only the
+    models ``install`` or ``server warmup`` already fetched.
+
+    The Qdrant server is ensured only when *backend* says the daemon will run
+    one. The on-disk store and a server that is already running elsewhere
+    never touch it at all. Every outcome that stops the start is one start
+    envelope in ``--json`` mode.
+
+    *environment* is the judgement this start already made of the interpreter
+    that will run the daemon. Both steps answer to it, so nothing is probed a
+    second time and nothing is fetched for an environment the start itself
+    would have refused.
     """
     from .._sync_vocabulary import ProvisionAction
-    from ..qdrant_runtime._provision import provision
-    from ..qdrant_runtime._resolve import resolve_binary
+    from ..commands._provision import ensure_runtime_dependencies
+    from ._provision_progress import ReporterProvisionProgress
+    from ._render import _render_provisioning_outcome
 
-    if resolve_binary() is not None:
-        return
-    if not auto_provision:
+    progress.stage("Checking the model files and the Qdrant server...")
+    try:
+        with ReporterProvisionProgress(progress) as sink:
+            outcome = ensure_runtime_dependencies(
+                environment=environment,
+                server_unneeded=backend.server_unneeded,
+                qdrant_auto_provision=_auto_provision_enabled(
+                    options.qdrant_auto_provision
+                ),
+                progress=sink,
+            )
+    except KeyboardInterrupt:
+        # Nothing has been spawned yet, which is the difference from an
+        # interrupt of the wait for readiness: there is no daemon carrying
+        # on, and the next start resumes the fetch from the files it kept.
         raise _fail_start(
-            json_mode,
-            error="qdrant_missing",
-            message="Service start failed",
+            options.json_mode,
+            error="start_interrupted",
+            message="Service start interrupted",
             human_lines=(
-                "Qdrant server mode needs the managed Qdrant server, "
-                "which is not installed.",
-                "Run: vaultspec-rag server qdrant install",
-                "(or re-run with --qdrant-auto-provision to consent to the download)",
-                "Local-only option: vaultspec-rag server start --local-only",
+                "Stopped while fetching what the service needs; "
+                "no service was started.",
+                "Files that finished downloading are kept.",
             ),
+            next_actions=(server_start_command(),),
+            started=False,
+        ) from None
+    for step in outcome.steps:
+        if step.action == ProvisionAction.FAILED:
+            raise _fail_start_dependency(step, json_mode=options.json_mode)
+    if not options.json_mode:
+        _render_provisioning_outcome(outcome)
+
+
+def _fail_start_dependency(step: ProvisionStepResult, *, json_mode: bool) -> typer.Exit:
+    """Render the start failure for a dependency that could not be ensured.
+
+    The step's own code names the failure, so a broker tells a declined
+    download from a failed one from a binary that may not run. An absent
+    server with downloading switched off keeps the longer wording that names
+    every way forward; every other failure already carries its remedy.
+    """
+    from ..commands._provision import QDRANT_MISSING
+
+    human_lines: tuple[str, ...] = (step.detail,)
+    if step.code == QDRANT_MISSING:
+        human_lines = (
+            "Qdrant server mode needs the managed Qdrant server, "
+            "which is not installed.",
+            "Run: vaultspec-rag server qdrant install",
+            "(or re-run with --qdrant-auto-provision to download it now)",
+            "Local-only option: vaultspec-rag server start --local-only",
         )
-    # A first-use provision downloads and verifies a native archive over the
-    # network, which is the longest stall a first start can hit. The stage line
-    # says it started; the callback carries the byte counts underneath it, so a
-    # slow link is distinguishable from a wedged one.
-    if progress is not None:
-        progress.stage("Downloading the Qdrant server (first use)...")
-        report = provision(on_progress=progress.stage)
-    else:
-        report = provision()
-    if report.action == ProvisionAction.FAILED or resolve_binary() is None:
-        raise _fail_start(
-            json_mode,
-            error="qdrant_provision_failed",
-            message="Service start failed",
-            human_lines=(f"Qdrant install failed: {report.message}",),
-            detail=str(report.message),
-        )
-    if not json_mode:
-        _print_lifecycle_lines(
-            "Installed Qdrant server",
-            f"Version: {report.version}",
-            f"Install: {report.binary}",
-        )
+    return _fail_start(
+        json_mode,
+        error=step.code or "dependency_unavailable",
+        message="Service start failed",
+        human_lines=human_lines,
+        detail=step.detail,
+        step=str(step.step),
+    )
 
 
 def _health_service_pid(health: dict[str, object], fallback_pid: int) -> int:
@@ -505,10 +566,16 @@ def _start_success(
     data.setdefault("typesafe", None)
     discovery = read_service_status()
     monitor_port = discovery.get("monitor_port") if discovery is not None else None
-    if isinstance(monitor_port, int) and monitor_port > 0:
+    monitor_url = discovery.get("monitor_url") if discovery is not None else None
+    if (
+        isinstance(monitor_port, int)
+        and monitor_port > 0
+        and isinstance(monitor_url, str)
+        and monitor_url
+    ):
         data["monitor_port"] = monitor_port
-        data["monitor_url"] = f"http://127.0.0.1:{monitor_port}"
-        human_lines = (*human_lines, f"Monitor: {data['monitor_url']}")
+        data["monitor_url"] = monitor_url
+        human_lines = (*human_lines, f"Monitor: {monitor_url}")
     _lifecycle_success(
         json_mode,
         command=_START_COMMAND,
@@ -546,7 +613,9 @@ def _fail_start(
     )
 
 
-def _preflight_daemon_accelerator(interpreter: str, *, json_mode: bool) -> None:
+def _preflight_daemon_accelerator(
+    interpreter: str, *, json_mode: bool
+) -> ServiceEnvironment:
     """Fail fast if the daemon interpreter cannot run the GPU-only service.
 
     The daemon inherits this interpreter and is GPU-only, so a missing /
@@ -554,43 +623,64 @@ def _preflight_daemon_accelerator(interpreter: str, *, json_mode: bool) -> None:
     model-load crash. The service does not provision its own python environment.
     A check that could not finish is logged and allowed to proceed, leaving the
     spawn-and-detect path as the backstop.
-    """
-    from ..operator_state._compute import ProbeDepth
-    from ..operator_state._environment_probe import probe_interpreter
-    from ..operator_state._installation import ComputeCapability
 
-    compute = probe_interpreter(interpreter, ProbeDepth.VERIFY).compute
-    capability = compute.capability
-    if capability is ComputeCapability.READY:
-        return
-    reason = capability.label + (f" ({compute.detail})" if compute.detail else "")
-    if capability.blocks_start:
-        kind = classify_environment(environment_root(interpreter))
-        next_actions: tuple[str, ...]
-        if capability.fixed_by_torch_reinstall:
-            next_actions = cuda_remediation(interpreter, env_kind=kind).steps
-        else:
-            remediation = capability.remediation
-            if remediation is None:
-                raise AssertionError(f"{capability} blocks a start without a remedy")
-            next_actions = (remediation,)
-        raise _fail_start(
-            json_mode,
-            error="service_env_no_gpu",
-            message="Service start failed",
-            human_lines=(
-                f"Service interpreter: {interpreter} ({kind.label})",
-                f"That environment cannot run the GPU-only service: {reason}.",
-                "The service runs in the environment that launches it and does "
-                "not provision its own python.",
-            ),
-            next_actions=next_actions,
-            detail=reason,
+    Returns:
+        The judgement, for the dependency step that follows: it fetches for
+        the environment this start accepted and asks nothing a second time.
+    """
+    from ..operator_state._service_environment import judge_service_environment
+
+    environment = judge_service_environment(interpreter)
+    if not environment.can_run_service:
+        raise _fail_unusable_environment(
+            interpreter,
+            environment.capability,
+            environment.reason,
+            json_mode=json_mode,
         )
-    logger.warning(
-        "daemon torch pre-flight inconclusive for %s (%s); proceeding",
-        interpreter,
-        reason,
+    if environment.capability is not ComputeCapability.READY:
+        logger.warning(
+            "daemon torch pre-flight inconclusive for %s (%s); proceeding",
+            interpreter,
+            environment.reason,
+        )
+    return environment
+
+
+def _fail_unusable_environment(
+    interpreter: str,
+    capability: ComputeCapability,
+    reason: str,
+    *,
+    json_mode: bool,
+) -> typer.Exit:
+    """Render the refusal for an environment that cannot run the service.
+
+    One renderer for both halves of the judgement - the installation role
+    read in this process and the capability the daemon interpreter reports -
+    so a client is told the same thing whichever of them refuses it.
+    """
+    kind = classify_environment(environment_root(interpreter))
+    next_actions: tuple[str, ...]
+    if capability.fixed_by_torch_reinstall:
+        next_actions = cuda_remediation(interpreter, env_kind=kind).steps
+    else:
+        remediation = capability.remediation
+        if remediation is None:
+            raise AssertionError(f"{capability} blocks a start without a remedy")
+        next_actions = (remediation,)
+    return _fail_start(
+        json_mode,
+        error="service_env_no_gpu",
+        message="Service start failed",
+        human_lines=(
+            f"Service interpreter: {interpreter} ({kind.label})",
+            f"That environment cannot run the GPU-only service: {reason}.",
+            "The service runs in the environment that launches it and does "
+            "not provision its own python.",
+        ),
+        next_actions=next_actions,
+        detail=reason,
     )
 
 
@@ -824,8 +914,8 @@ def _spawn_prepared_service(request: _PreparedServiceRequest) -> int:
             watch=request.updates,
             watch_debounce_ms=request.update_delay_ms,
             watch_cooldown_s=request.repeat_update_delay_s,
-            qdrant=request.qdrant,
-            local_only=request.local_only,
+            qdrant=request.backend.qdrant,
+            local_only=request.backend.local_only,
             preprocess_mode=request.preprocess_forward,
             root=request.root,
         )
@@ -850,7 +940,13 @@ def _spawn_prepared_service(request: _PreparedServiceRequest) -> int:
     help=(
         "Start the background search service. Defaults to the managed Qdrant "
         "server backend (server mode); pass --local-only for the on-disk store. "
-        "Waits until it is ready and records how the CLI can reach it."
+        "Before the service is started, a host installation fetches what it "
+        "needs and does not have: the model files, each checked against "
+        "digests compiled into vaultspec-rag, and the managed Qdrant server, "
+        "unless that download is switched off. A client installation is "
+        "refused and fetches nothing. A fetch that fails stops the start "
+        "with its cause and its remedy. Waits until the service is ready and "
+        "records how the CLI can reach it."
     ),
 )
 def service_start() -> None:
@@ -859,6 +955,8 @@ def service_start() -> None:
 
 def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None:
     """Start the background search service from parsed command options."""
+    from ..commands._provision import decide_backend
+
     json_mode = options.json_mode
     preprocess_forward: Literal["off"] | None = "off" if options.no_preprocess else None
     with StartupStatusReporter(json_mode=json_mode) as progress:
@@ -895,20 +993,28 @@ def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None
         if _attach_warming_service(json_mode):
             return
 
+        # Everything from here on starts a daemon, so the environment that
+        # would run it is judged before anything is fetched or written for
+        # it. The judgement comes ahead of the port and machine guards, whose
+        # probes can create a lock file, and ahead of the binary check. A
+        # client or a host whose torch cannot serve is refused with nothing
+        # provisioned and nothing written.
+        interpreter = _resolve_daemon_interpreter()
+        env_warnings = _ephemeral_env_warning(interpreter)
+        if env_warnings and not json_mode:
+            _print_lifecycle_lines(*env_warnings)
+        # A client is answered from the distributions this environment holds,
+        # at no cost. A host is asked in a child of the daemon interpreter,
+        # which imports torch there: the single longest pre-spawn stall (its
+        # own timeout is 60s).
+        progress.stage("Checking accelerator support in the service environment...")
+        environment = _preflight_daemon_accelerator(interpreter, json_mode=json_mode)
+
         progress.stage("Checking the port and machine singleton...")
         _guard_start_preconditions(options.port, json_mode)
 
-        # Server mode is the default backend, so the qdrant-binary guard runs
-        # by default. --local-only (and an explicit --no-qdrant) select the
-        # on-disk store and skip it, so a default start fails fast on a missing
-        # binary while the local opt-out never touches the server.
-        if not options.local_only and options.qdrant is not False:
-            progress.stage("Checking the Qdrant server binary...")
-            _ensure_qdrant_binary(
-                auto_provision=options.qdrant_auto_provision,
-                json_mode=json_mode,
-                progress=progress,
-            )
+        backend = decide_backend(local_only=options.local_only, qdrant=options.qdrant)
+        _ensure_start_dependencies(options, backend, environment, progress)
 
         resolved_root = _global_target(ctx) or Path.cwd()
 
@@ -920,14 +1026,11 @@ def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None
             _print_preprocess_start_notice(resolved_root, effective_mode)
 
         log_path = _log_file()
-        interpreter = _resolve_daemon_interpreter()
-        env_warnings = _ephemeral_env_warning(interpreter)
-        if env_warnings and not json_mode:
-            _print_lifecycle_lines(*env_warnings)
-        # This probe spawns the daemon interpreter and imports torch in it,
-        # which is the single longest pre-spawn stall (its own timeout is 60s).
-        progress.stage("Checking accelerator support in the service environment...")
-        _preflight_daemon_accelerator(interpreter, json_mode=json_mode)
+        # The daemon's log is the first thing this command writes into the
+        # managed directory, so this is where the directory is created: after
+        # every refusal, and not as a side effect of having looked for a
+        # service that might already be running.
+        log_path.parent.mkdir(parents=True, exist_ok=True)
         t0 = time.perf_counter()
         progress.stage("Launching the service process...")
         start_request = _PreparedServiceRequest(
@@ -936,8 +1039,7 @@ def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None
             updates=options.updates,
             update_delay_ms=options.update_delay_ms,
             repeat_update_delay_s=options.repeat_update_delay_s,
-            qdrant=options.qdrant,
-            local_only=options.local_only,
+            backend=backend,
             preprocess_forward=preprocess_forward,
             json_mode=json_mode,
             root=resolved_root,
@@ -1059,7 +1161,7 @@ def _startup_phase_label(health: dict[str, object] | None) -> str:
     Once the daemon serves, its own ``/health`` status is authoritative; before
     the port binds, the ``warming`` phase stamped in the discovery file
     distinguishes model loading from a daemon that never came up. When the
-    daemon has stamped a granular cold-start ``phase_detail`` (provisioning the
+    daemon has stamped a granular cold-start ``phase_detail`` (starting the
     qdrant server, loading models, loading the reranker), that is shown verbatim
     so a minutes-long warm-up reports which stage is running.
     """
@@ -1251,7 +1353,7 @@ def _await_service_ready(request: _ServiceReadinessRequest) -> None:
         ) from None
 
     # Report the last phase the daemon published rather than a bare "not ready":
-    # a timeout that names the stage it died on (provisioning, model load, never
+    # a timeout that names the stage it died on (qdrant start, model load, never
     # answered at all) is the difference between a diagnosis and a mystery.
     raise _fail_start(
         request.json_mode,

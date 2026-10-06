@@ -22,8 +22,8 @@ def test_first_download_progress_leaves_no_closed_stream_exit_callback() -> None
         import io
         import sys
         from vaultspec_rag.cli._core import _build_console
-        from vaultspec_rag.cli._hf_progress import SnapshotProgress
         from vaultspec_rag.cli._progress import StartupStatusReporter
+        from vaultspec_rag.commands._snapshot_progress import SnapshotBars
 
         assert 'tqdm' not in sys.modules, 'premise: first download import'
         capture = io.StringIO()
@@ -33,7 +33,7 @@ def test_first_download_progress_leaves_no_closed_stream_exit_callback() -> None
         )
         with contextlib.redirect_stdout(capture), reporter:
             reporter.stage('Downloading lifetime witness')
-            with SnapshotProgress(reporter.heartbeat, prefix='Downloading') as tracker:
+            with SnapshotBars() as tracker:
                 bar_class = tracker.tqdm_class
                 assert bar_class is not None
                 bar = bar_class(total=1024, unit='B')

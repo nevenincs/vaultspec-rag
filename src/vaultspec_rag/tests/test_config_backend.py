@@ -366,11 +366,15 @@ def test_every_ranged_setting_rejects_a_malformed_environment_value() -> None:
     # A sweep, so a knob added later cannot quietly opt out of coercion.
     # Mutation: returning the default instead of raising in _coerce_env's
     # except branch fails on the first key in the table.
+    #
+    # The probe carries inner whitespace because it has to be unusable under
+    # every shape the table declares: a single bare word is not a number or a
+    # choice, but it is a well-formed host name, and a host list would admit it.
     assert SETTING_BOUNDS, "expected the settings table to declare numeric ranges"
     for key, bound in SETTING_BOUNDS.items():
         env_var = ENV_OVERRIDE_MAP.get(key)
         assert env_var is not None, f"{key} declares a range but no env var"
-        prev = set_env(env_var, "notavalue")
+        prev = set_env(env_var, "not a value")
         try:
             reset_config()
             with pytest.raises(ValueError) as excinfo:
@@ -558,8 +562,8 @@ class TestConfiguredModelRepos:
             cfg = get_config()
             assert cfg.sparse_enabled is True
             repos = configured_model_repos()
-            labels = [label for label, _repo in repos]
-            values = [repo for _label, repo in repos]
+            labels = [model.label for model in repos]
+            values = [model.repo for model in repos]
             assert labels == [
                 "Dense (Qwen3)",
                 "Sparse (SPARSEUP)",
@@ -579,8 +583,8 @@ class TestConfiguredModelRepos:
             cfg = get_config()
             assert cfg.sparse_enabled is False
             repos = configured_model_repos()
-            labels = [label for label, _repo in repos]
-            values = [repo for _label, repo in repos]
+            labels = [model.label for model in repos]
+            values = [model.repo for model in repos]
             # The sparse label and repo are gone entirely, not merely blanked -
             # a dense-only inventory must never mention the sparse repo at all.
             assert labels == ["Dense (Qwen3)", "Reranker (CrossEncoder)"]

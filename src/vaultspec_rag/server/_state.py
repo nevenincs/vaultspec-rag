@@ -36,7 +36,6 @@ from ..config._paths import SERVICE_STATUS_FILENAME
 __all__ = [
     "_HEARTBEAT_INTERVAL_SECONDS",
     "_MAX_QUERY_LEN",
-    "_SENSITIVE_DIRS",
     "_SENSITIVE_PATTERNS",
     "SurveySnapshot",
     "_daemon_log_capture",
@@ -120,19 +119,15 @@ _HEARTBEAT_INTERVAL_SECONDS = 15
 
 _MAX_QUERY_LEN = 10_000  # characters; prevents accidental OOM on huge queries
 
+# Lowercase filename globs refused even where the index admits the path. Hidden
+# names need no entry: every dot-prefixed path component is refused outright,
+# because credential and tool-configuration locations cannot be enumerated.
 _SENSITIVE_PATTERNS: tuple[str, ...] = (
-    ".env",
-    ".env.*",
     "*.pem",
     "*.key",
     "*credentials*",
     "*secrets*",
     SERVICE_STATUS_FILENAME,
-)
-
-_SENSITIVE_DIRS: tuple[str, ...] = (
-    ".git",
-    ".vaultspec-rag",
 )
 
 # Shutdown bookkeeping; reassigned by _record_shutdown / lifespan.

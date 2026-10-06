@@ -7,7 +7,6 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, Unpack
-from urllib.parse import urlsplit
 
 from . import store_schema
 from ._store_models import root_collection_prefix
@@ -240,25 +239,15 @@ def _is_managed_backend(client: QdrantClient) -> bool:
     authorize maintenance against an external or reassigned endpoint.
     """
     from .config._settings import get_config
+    from .qdrant_runtime._credential import is_managed_endpoint
 
-    cfg = get_config()
     options = client.init_options
     url = options.get("url")
     if not isinstance(url, str) or options.get("prefer_grpc") or options.get("prefix"):
         return False
-    try:
-        endpoints = (urlsplit(url), urlsplit(cfg.effective_qdrant_url))
-        return all(
-            endpoint.scheme == "http"
-            and endpoint.hostname in {"127.0.0.1", "localhost"}
-            and endpoint.port == cfg.qdrant_port
-            and endpoint.path in {"", "/"}
-            and not endpoint.query
-            and not endpoint.fragment
-            for endpoint in endpoints
-        )
-    except ValueError:
-        return False
+    return is_managed_endpoint(url) and is_managed_endpoint(
+        get_config().effective_qdrant_url
+    )
 
 
 def read_geometry(

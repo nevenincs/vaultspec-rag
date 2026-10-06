@@ -2,9 +2,11 @@
 
 Exercises the real ASGI route through ``starlette.testclient.TestClient`` (NOT
 a mock) built from ``_routes.ROUTES`` with a known ``_SERVICE_TOKEN``: 401
-without the token, 200 with it, and a body identical to the snapshot the
-``server doctor`` CLI verb renders - both adapters read ``get_readiness`` so
-the bounded snapshot is the same in both surfaces. No mocks/skips.
+without the token, 200 with it, and a body identical to the bounded snapshot
+``get_readiness`` returns. The ``server doctor`` CLI verb reads the same
+function and asks it to check the models in depth, which a polled route does
+not, so the two surfaces differ in the model row's depth and in nothing else.
+No mocks/skips.
 """
 
 from __future__ import annotations

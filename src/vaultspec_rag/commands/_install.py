@@ -31,7 +31,6 @@ from vaultspec_core.core.workspace_mode import (
     read_package_declaration,
 )
 
-from .._sync_vocabulary import ProvisionAction
 from .._workspace_layout import (
     MCP_OWNERSHIP_MANIFEST,
     PROVIDERS_MANIFEST,
@@ -71,6 +70,7 @@ from ._torch_flow import TorchInstallOptions, _run_torch_config_install
 from ._workspace import (
     _ensure_workspace_dirs,
     _init_core_context,
+    _require_plain_workspace,
     _resolve_target,
 )
 
@@ -82,15 +82,11 @@ if TYPE_CHECKING:
     )
 
     from ._models import ConfirmFn
+    from ._provision import ProvisionProgress
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_PROJECT_MCP_PROVIDERS = (Tool.CLAUDE, Tool.CODEX)
-
-_CLIENT_SKIP = (
-    "not needed by a client installation; the host installation that runs "
-    "the service provides it"
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -834,6 +830,9 @@ class _InstallRunRequest:
     mode: InstallMode | None = None
     repair_tool_torch: bool = True
     stream_repair: bool = False
+    #: Where the model and Qdrant fetches report while they run. A fetch of
+    #: several gigabytes with no output reads as a hang.
+    provision_progress: ProvisionProgress | None = None
     tool_torch_repair_outcome: ToolTorchRepairOutcome | None = None
 
 
@@ -854,6 +853,7 @@ class _InstallRunOptions(TypedDict, total=False):
     mode: InstallMode | None
     repair_tool_torch: bool
     stream_repair: bool
+    provision_progress: ProvisionProgress | None
 
 
 def install_run(
@@ -903,10 +903,13 @@ def _refused_report(
 def _install_run(request: _InstallRunRequest) -> InstallReport:
     """Run install behind one required-node topology transaction."""
     skip_tokens = request.skip or set()
+    target = _resolve_target(request.path, bootstrap=False)
     if "mcp" in skip_tokens:
+        # Skipping MCP skips the required-node transaction below, never the
+        # question of whether this workspace's directories stay inside it.
+        _require_plain_workspace(target)
         return _install_run_unchecked(replace(request, skip=skip_tokens))
 
-    target = _resolve_target(request.path, bootstrap=False)
     action = (
         "dry_run" if request.dry_run else ("upgrade" if request.upgrade else "install")
     )
@@ -930,6 +933,10 @@ def _install_run(request: _InstallRunRequest) -> InstallReport:
         message = LINKED_NODES_NOT_REMOVABLE
         record_mcp_failure(failure, message)
         return failure
+    # The preflight above proves only the required MCP nodes. ``.vault`` and
+    # the rule and skill sources are not among them, and are written all the
+    # same.
+    _require_plain_workspace(target)
 
     def run() -> InstallReport:
         return _install_run_unchecked(
@@ -1299,30 +1306,11 @@ def _install_run_unchecked(request: _InstallRunRequest) -> InstallReport:
                 sync_after,
                 confirm,
                 host,
+                request.provision_progress,
             )
         )
 
     return report
-
-
-def _persist_runtime_selection(report: InstallReport, local_only: bool) -> None:
-    """Write the local-only runtime marker, degrading to a warning on error.
-
-    A persisted runtime hint must never crash setup, so an OSError on the
-    write is logged and surfaced as a recoverable warning naming the
-    runtime escape hatches, rather than raised.
-    """
-    from ..config._paths import persist_local_only
-
-    try:
-        persist_local_only(local_only)
-    except OSError as exc:
-        logger.error("failed to persist local-only selection: %s", exc)
-        report.warnings.append(
-            f"could not persist the local-only selection: {exc}; "
-            f"pass --local-only on `server start` or set "
-            f"VAULTSPEC_RAG_LOCAL_ONLY to select the local backend."
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1336,15 +1324,18 @@ class _ProvisioningRequest:
     sync_after: bool
     confirm: ConfirmFn | None
     host: bool
+    progress: ProvisionProgress | None = None
 
 
 def _run_provisioning(request: _ProvisioningRequest) -> None:
     """Run the provisioning front door and attach its outcome to the report.
 
-    A client installation provisions nothing. It loads no models and never
-    starts the service, and the backend selection this step persists is read by
-    the host installation's ``server start``, so a client writing it would
-    override the host's choice. Every step is reported skipped with that reason.
+    The model files and the Qdrant server are fetched only for an environment
+    that can run the service, and that is judged here once, for both steps
+    and for the backend choice. A client is answered ``skipped`` for each. A
+    host whose accelerator stack is not usable yet - the state this command
+    itself leaves a project in until its torch configuration is synced - is
+    answered ``skipped`` with the reason and told that a start fetches them.
 
     Torch is already configured by the enrollment torch step above (its
     honest two-phase state lives on ``report.torch_config_action`` and the
@@ -1356,22 +1347,9 @@ def _run_provisioning(request: _ProvisioningRequest) -> None:
     surfaced as a warning rather than raised, because enrollment already
     succeeded and provisioning is the recoverable, re-runnable phase.
     """
-    from ._provision import (
-        ProvisionOutcome,
-        ProvisionStep,
-        ProvisionStepResult,
-        provision_dependencies,
-    )
-
-    if not request.host:
-        request.report.provision_outcome = ProvisionOutcome(
-            steps=[
-                ProvisionStepResult(step, ProvisionAction.SKIPPED, _CLIENT_SKIP)
-                for step in ProvisionStep
-            ],
-            dry_run=request.dry_run,
-        )
-        return
+    from ..operator_state._service_environment import judge_service_environment
+    from ._backend_choice import save_backend_choice
+    from ._provision import provision_dependencies
 
     # The enrollment torch step already ran (and is reported on its own
     # report fields); fold "torch" into the front door's skip set so its
@@ -1379,6 +1357,13 @@ def _run_provisioning(request: _ProvisioningRequest) -> None:
     skip = set(request.provision_skip or set())
     skip.add("torch")
 
+    # The tool-environment check at the head of the run has usually probed
+    # this interpreter already, and its verdict is carried on the report so
+    # that nothing asks a second time.
+    repair = request.report.tool_torch_repair
+    environment = judge_service_environment(
+        probed=None if repair is None else repair.capability
+    )
     outcome = provision_dependencies(
         request.target,
         local_only=request.local_only,
@@ -1388,6 +1373,8 @@ def _run_provisioning(request: _ProvisioningRequest) -> None:
         assume_yes=request.assume_yes,
         sync_after=request.sync_after,
         confirm=request.confirm,
+        progress=request.progress,
+        environment=environment,
     )
     request.report.provision_outcome = outcome
     if not outcome.ok:
@@ -1396,16 +1383,7 @@ def _run_provisioning(request: _ProvisioningRequest) -> None:
             request.report.warnings.append(
                 f"provisioning step {result.step} failed: {result.detail}"
             )
-
-    # Persist the local-only runtime selection so the resident service
-    # honours the chosen backend on a later ``server start`` without the
-    # operator re-passing ``--local-only``. Only the setup path reaches here,
-    # so a plain enrollment-only call never writes runtime state, and a
-    # preview must not touch disk. The explicit choice is persisted either way
-    # (``False`` records a deliberate server-mode selection) so the marker is
-    # unambiguous; env / flag still override it at resolution time.
-    if not request.dry_run:
-        _persist_runtime_selection(request.report, request.local_only)
+    outcome.backend = save_backend_choice(request, outcome, environment)
 
 
 def _rollback_seeded(base_dir: Path, seeded: list[str], report: InstallReport) -> None:

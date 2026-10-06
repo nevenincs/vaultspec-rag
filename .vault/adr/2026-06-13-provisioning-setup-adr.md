@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#provisioning-setup'
 date: '2026-06-13'
-modified: '2026-09-23'
-body_hash: 'sha256:bb7b74ecee30d45c6495606e54660f04d74b9bc9c8adeeb9bdaffbf530051df8'
+modified: '2026-10-05'
+body_hash: 'sha256:4fcc0513fe8192f936c290e32ce05bad65a83e08602907c2d3444041f1d285d8'
 related:
   - "[[2026-06-13-server-first-default-adr]]"
   - "[[2026-06-12-qdrant-server-provisioning-research]]"
@@ -73,6 +73,8 @@ preserves a first-class local-only path.
   users.
 - Depends on the supervised-server and server-first-default decisions, both accepted
   and exercised. The torch and model provisioning paths are pre-existing and stable.
+
+2026-10-05 authorized refinement: `2026-10-05-qdrant-provisioning-trust-adr` overrides the clause above that forbids provisioning the Qdrant binary without the setup invocation or an explicit consent flag. On a host installation, invoking `server start` is also consent, matching model weights; a client installation still provisions nothing. The single front door, the shared vocabulary, idempotence, and dry-run support are unchanged and now also cover the start preflight.
 
 ## Implementation
 

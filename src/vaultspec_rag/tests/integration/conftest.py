@@ -240,18 +240,26 @@ def _resolve_startup_budget(startup_budget: float | None) -> float:
 
 
 def _verify_offline_service_startup(log_path: Path, stages: list[str]) -> str:
-    """Prove local-only constructors ran without the configured HF endpoint."""
+    """Prove the models loaded in this service and the hub was never named.
+
+    The service loads every model from the cache alone, whatever its
+    environment says, so there is no mode for it to report. What is checked
+    is that each model's load ran to its end in this process, with the hub
+    switched off around it, and that the hub's address appears nowhere in
+    what the service wrote: a request made anyway would name it in a retry
+    or a failure.
+    """
     output = _service_output(log_path)
-    expected_markers = ["EmbeddingModel cache-only mode: True"]
+    expected_markers = ["EmbeddingModel loaded"]
     if bool(get_config().reranker_enabled):
-        expected_markers.append("(cache-only=True)")
+        expected_markers.append("Shared CrossEncoder loaded on")
     missing_markers = [marker for marker in expected_markers if marker not in output]
     hf_endpoint = (os.environ.get(HF_ENDPOINT_ENV) or "https://huggingface.co").rstrip(
         "/"
     )
     if missing_markers or hf_endpoint in output:
         raise AssertionError(
-            "Service did not prove cache-only startup without Hugging Face "
+            "Service did not prove its models loaded without Hugging Face "
             f"metadata access; missing_markers={missing_markers!r}, "
             f"endpoint_seen={hf_endpoint in output}, endpoint={hf_endpoint!r}\n"
             f"Startup stages:\n{'\n'.join(stages)}\nService output:\n"

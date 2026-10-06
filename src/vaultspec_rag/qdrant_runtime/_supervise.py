@@ -18,8 +18,6 @@ import json
 import logging
 import os
 import re
-import signal
-import subprocess
 import sys
 import threading
 import time
@@ -37,19 +35,23 @@ from .._loopback_http import (
 )
 from .._managed_log_sink import RawRotatingLogSink
 from .._operator_commands import server_start_command
-from .._win32 import (
-    WIN_CREATE_NEW_PROCESS_GROUP,
-    WIN_CREATE_NO_WINDOW,
-    assign_process_to_job,
-    create_kill_on_close_job,
-)
+from .._win32 import assign_process_to_job, create_kill_on_close_job
 from ..config._settings import managed_status_dir, rag_default
 from ..config._types import EnvVar
 from ..logging_config import QDRANT_LOG_NAME
+from ._child_tree import end_tree, exited
 from ._constants import (
     QDRANT_SERVER_VERSION,
+    BinarySource,
     QdrantRuntimeState,
 )
+from ._credential import (
+    data_plane_auth_fault,
+    generate_api_key,
+    server_api_key,
+    write_managed_api_key,
+)
+from ._spawn_trust import spawn_verified, warn_when_operator_supplied
 from ._store_format import (
     QUARANTINE_DIRNAME,
     judge_store_format,
@@ -58,9 +60,11 @@ from ._store_format import (
 )
 
 if TYPE_CHECKING:
+    import subprocess
     from http.client import HTTPResponse
     from typing import BinaryIO
 
+    from ._constants import ResolvedBinary
     from ._resolve import QdrantIdentity
 
 logger = logging.getLogger(__name__)
@@ -82,6 +86,11 @@ __all__ = [
 # of holding the machine singleton lock indefinitely.
 _REAP_BUDGET_DEFAULT_SECONDS = 30.0
 _STOP_TIMEOUT_SECONDS = 10.0
+#: How many restart attempts in a row may be refused before any process is
+#: started, before the server is left for an operator. Each is one heartbeat
+#: apart and hashes the binary, so the bound is what keeps a binary that stays
+#: unusable from being hashed for as long as the daemon runs.
+_MAX_REFUSED_RESTARTS = 5
 # How many of the child's most-recent output lines to retain in memory so a
 # non-ready exit can be reported with its cause (a Rust panic, a bind error, a
 # storage-lock error) instead of an opaque timeout.
@@ -108,6 +117,7 @@ class _SupervisorOptions(TypedDict, total=False):
     log_max_bytes: int
     log_backup_count: int
     migrated_from: str
+    api_key: str
 
 
 @dataclass(frozen=True)
@@ -119,6 +129,7 @@ class _SupervisorConfig:
     log_max_bytes: int = _MANAGED_LOG_MAX_BYTES_DEFAULT
     log_backup_count: int = _MANAGED_LOG_BACKUP_COUNT_DEFAULT
     migrated_from: str = ""
+    api_key: str = ""
 
 
 # Recovery bound: how many collections may be quarantined within one supervised
@@ -353,21 +364,28 @@ class QdrantSupervisor:
     """Owns one loopback-bound qdrant child process.
 
     Attributes:
-        binary: The executable to spawn.
+        binary: The executable to spawn with the source that decides what it
+            is held to before each spawn, or ``None`` for a supervisor attached
+            to a server it did not spawn. Never a bare path: every binary a
+            supervisor can run carries the check it must pass.
         http_port: REST listener port (loopback).
         grpc_port: gRPC listener port (loopback); defaults to one
             below ``http_port`` so the pair never collides with the
             RAG service's own port one above.
         storage_dir: Shared multi-root storage directory.
         log_path: File qdrant stdout/stderr is appended to.
-        restart_count: Heartbeat-initiated restarts performed so far.
+        restart_count: Heartbeat-initiated restarts that started a process.
+        refused_restarts: Consecutive restart attempts refused before any
+            process was started.
+        restart_refusal: Why the latest such attempt was refused; empty when
+            the latest attempt started a process.
         migrated_from: The server version that wrote this store, when opening
             it carries the store across a version change; empty otherwise.
     """
 
     def __init__(
         self,
-        binary: Path,
+        binary: ResolvedBinary | None,
         **options: Unpack[_SupervisorOptions],
     ) -> None:
         config = _SupervisorConfig(**options)
@@ -387,11 +405,17 @@ class QdrantSupervisor:
         # that it was carried across a change. The pre-spawn judgement is the
         # only witness, and it is needed for as long as this daemon runs.
         self.migrated_from = config.migrated_from
+        # One key for this supervisor's whole lifetime, restarts included:
+        # stores hold long-lived clients, and a key that changed on restart
+        # would strand every one of them.
+        self._api_key = config.api_key or generate_api_key()
         if self.log_max_bytes <= 0:
             raise ValueError("log_max_bytes must be positive")
         if self.log_backup_count < 0:
             raise ValueError("log_backup_count must be non-negative")
         self.restart_count = 0
+        self.refused_restarts = 0
+        self.restart_refusal = ""
         self._proc: subprocess.Popen[bytes] | None = None
         # Most-recent child output lines, filled by the drain thread, so a
         # non-ready exit reports its cause instead of an opaque timeout.
@@ -406,7 +430,8 @@ class QdrantSupervisor:
         self._drain_thread: threading.Thread | None = None
         # Attached mode: this supervisor points at an already-running managed
         # Qdrant it did NOT spawn, so it must never terminate it on stop().
-        self._attached = False
+        # Having no binary is what attached means; the two cannot disagree.
+        self._attached = binary is None
         # The Windows kill-on-close job handle is deliberately held for
         # the supervisor's whole lifetime and never explicitly closed:
         # the OS kills the child exactly when the last handle closes
@@ -430,7 +455,9 @@ class QdrantSupervisor:
 
         # Least privilege: pass only OS-operation variables plus the QDRANT__*
         # knobs, never the daemon's full environment, so any secrets the daemon
-        # holds (cloud creds, tokens) are not exposed to the qdrant child.
+        # holds (cloud creds, tokens) are not exposed to the qdrant child. The
+        # one secret it does get is its own: the key it must demand of every
+        # caller, on REST and gRPC alike.
         env = {
             key: value
             for key, value in os.environ.items()
@@ -441,6 +468,7 @@ class QdrantSupervisor:
                 "QDRANT__SERVICE__HOST": "127.0.0.1",
                 "QDRANT__SERVICE__HTTP_PORT": str(self.http_port),
                 "QDRANT__SERVICE__GRPC_PORT": str(self.grpc_port),
+                "QDRANT__SERVICE__API_KEY": self._api_key,
                 "QDRANT__STORAGE__STORAGE_PATH": _qdrant_child_path(self.storage_dir),
                 "QDRANT__STORAGE__SNAPSHOTS_PATH": _qdrant_child_path(
                     self.storage_dir.parent / "snapshots"
@@ -454,14 +482,24 @@ class QdrantSupervisor:
         return env
 
     def spawn(self) -> None:
-        """Start the qdrant child (without waiting for readiness).
+        """Verify the binary, then start the qdrant child (no readiness wait).
+
+        The first start, a heartbeat restart, and each recovery retry all come
+        through here, so the binary is checked before every one of them.
 
         Raises:
-            RuntimeError: If a child is already running.
-                Also raised while a previous child's output drain still owns
-                the rotating log sink.
+            RuntimeError: If this supervisor is attached and owns no binary,
+                a child is already running, or a previous child's output
+                drain still owns the rotating log sink. Its subclass
+                ``QdrantBinaryError`` when the binary fails its check.
             OSError: If the spawn itself fails.
         """
+        binary = self.binary
+        if binary is None:
+            raise RuntimeError(
+                "this supervisor is attached to a qdrant server it did not "
+                "spawn and owns no binary; refusing to spawn one"
+            )
         if self.is_alive():
             raise RuntimeError(f"qdrant child pid={self.pid} is already running")
         if not self._join_output_drain(timeout=0.0):
@@ -472,6 +510,9 @@ class QdrantSupervisor:
         child_env = self._child_env()
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         (self.storage_dir.parent / "snapshots").mkdir(parents=True, exist_ok=True)
+        # Published before the child exists, so there is never a listening
+        # server whose key its own clients cannot find.
+        write_managed_api_key(self.storage_dir, self._api_key)
         if self.log_path is not None:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
         self._recent_output.clear()
@@ -483,38 +524,15 @@ class QdrantSupervisor:
         # retained in memory and reported as the cause, never lost behind an
         # opaque readiness timeout. The drain thread appends to the log file
         # with the same owner-only, no-symlink-follow protection as before.
+        #
+        # The binary is checked inside this call, as the process is created:
+        # what held at resolution or at the previous spawn says nothing now.
+        self._proc = spawn_verified(binary, env=child_env, cwd=self.storage_dir.parent)
         if sys.platform == "win32":
-            self._proc = subprocess.Popen(
-                [str(self.binary)],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                env=child_env,
-                # Pin the child's working directory to the managed qdrant dir:
-                # the binary writes runtime markers (.qdrant-initialized) into
-                # its cwd, which must never be the service's start directory.
-                cwd=str(self.storage_dir.parent),
-                text=False,
-                bufsize=0,
-                creationflags=(WIN_CREATE_NEW_PROCESS_GROUP | WIN_CREATE_NO_WINDOW),
-            )
             if self._job_handle is None:
                 self._job_handle = _win_kill_on_close_job()
             if self._job_handle is not None:
                 _win_assign_to_job(self._job_handle, self._proc)
-        else:
-            self._proc = subprocess.Popen(
-                [str(self.binary)],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                env=child_env,
-                # Same managed-cwd pin as the Windows branch above.
-                cwd=str(self.storage_dir.parent),
-                text=False,
-                bufsize=0,
-                start_new_session=True,
-            )
         self._start_output_drain()
         logger.info(
             "qdrant child spawned: pid=%d http=%d grpc=%d storage=%s "
@@ -767,7 +785,8 @@ class QdrantSupervisor:
 
         Raises:
             RuntimeError: If the server does not become ready and no corrupt
-                collection can be recovered (the child is terminated first).
+                collection can be recovered, or becomes ready without
+                demanding its key (the child is terminated first).
         """
         if timeout is None:
             timeout = ready_timeout_seconds()
@@ -775,6 +794,13 @@ class QdrantSupervisor:
         while True:
             self.spawn()
             if self.wait_ready(timeout):
+                fault = self._refuse_unprotected_data_plane()
+                if fault is not None:
+                    raise RuntimeError(
+                        f"qdrant server on port {self.http_port} became ready "
+                        f"but {fault}; refusing to serve the store through it. "
+                        f"See {self.log_path}."
+                    )
                 return
             # Distinguish a dead child (a real load abort) from a still-alive one
             # (a readiness timeout on a healthy-but-slow store). Only a dead child
@@ -832,7 +858,15 @@ class QdrantSupervisor:
             )
 
     def restart(self, timeout: float | None = None) -> bool:
-        """One supervised restart attempt; increments the counter.
+        """One supervised restart attempt.
+
+        A restart is counted when it creates a process. An attempt that is
+        refused before that - the previous child would not stop, the binary
+        could not be read or failed its check, the process could not be
+        created - started nothing, so it is counted apart and its reason is
+        kept for the surfaces that report a dead server. What stops a read is
+        usually gone a moment later, and an attempt that spent the one
+        restart on it would leave the server down for the daemon's lifetime.
 
         Args:
             timeout: Seconds of no observable progress to tolerate while
@@ -844,18 +878,22 @@ class QdrantSupervisor:
         """
         if timeout is None:
             timeout = ready_timeout_seconds()
-        self.restart_count += 1
         if not self.stop():
-            logger.error(
-                "qdrant restart refused: prior child or output drain did not converge"
+            self._restart_refused(
+                "the previous qdrant process or its output drain did not stop"
             )
             return False
         try:
             self.spawn()
-        except (OSError, RuntimeError):
-            logger.exception("qdrant restart spawn failed")
+        except (OSError, RuntimeError) as exc:
+            self._restart_refused(str(exc))
             return False
+        self.restart_count += 1
+        self.refused_restarts = 0
+        self.restart_refusal = ""
         ready = self.wait_ready(timeout)
+        if ready and self._refuse_unprotected_data_plane() is not None:
+            return False
         if ready:
             from ._constants import QDRANT_SERVER_VERSION
             from ._resolve import write_qdrant_identity
@@ -878,13 +916,54 @@ class QdrantSupervisor:
                 return False
         return ready
 
-    def mark_attached(self) -> None:
-        """Mark this supervisor as attached to an externally-owned managed server.
+    def _restart_refused(self, reason: str) -> None:
+        """Record a restart attempt that created no process."""
+        self.refused_restarts += 1
+        self.restart_refusal = reason
+        logger.error(
+            "qdrant restart refused before any process was started "
+            "(attempt %d of %d): %s",
+            self.refused_restarts,
+            _MAX_REFUSED_RESTARTS,
+            reason,
+        )
 
-        Used when a healthy managed Qdrant is already serving the port: this
-        supervisor reuses it without spawning a child and must not terminate it.
+    @property
+    def restart_exhausted(self) -> bool:
+        """Whether no further automatic restart will be attempted.
+
+        One restart that started a process is the whole allowance. Attempts
+        refused before any process existed are retried, a bounded number of
+        times in a row, so a binary that stays unusable is not hashed on
+        every heartbeat for ever.
         """
-        self._attached = True
+        return self.restart_count >= 1 or self.refused_restarts >= _MAX_REFUSED_RESTARTS
+
+    def _refuse_unprotected_data_plane(self) -> str | None:
+        """Stop a ready child whose data plane is not behind this key.
+
+        Readiness says the server answers; it does not say the server is
+        asking for the key. A binary that ignores the setting would otherwise
+        serve every local account while each health signal read normal.
+
+        Returns:
+            The fault, after the child has been stopped; ``None`` when an
+            anonymous data request is refused and the key is accepted.
+        """
+        fault = data_plane_auth_fault(self.url, self._api_key)
+        if fault is None:
+            return None
+        logger.error(
+            "qdrant child pid=%s is ready but %s; stopping it", self.pid, fault
+        )
+        if not self.stop():
+            logger.error("qdrant child with an unprotected data plane did not stop")
+        return fault
+
+    @property
+    def binary_source(self) -> BinarySource:
+        """The source of the binary this supervisor runs, for status surfaces."""
+        return self.binary.source if self.binary is not None else BinarySource.ATTACHED
 
     def is_alive(self) -> bool:
         """True while the managed server is running.
@@ -894,39 +973,23 @@ class QdrantSupervisor:
         """
         if self._attached:
             return self._ready_probe()
-        return self._proc is not None and self._proc.poll() is None
+        return self._proc is not None and not exited(self._proc)
 
     def stop(self, timeout: float = _STOP_TIMEOUT_SECONDS) -> bool:
-        """Terminate the child and report confirmed child and drain convergence.
+        """End the child's whole process tree and report confirmed convergence.
 
-        Idempotent; safe to call with no child running. A drain that does not
+        True only when the child, every process it started, and the output
+        drain are all gone. Idempotent; safe to call with no child running,
+        and for a child that already exited. A drain that does not
         reach EOF within the bounded join remains referenced so no replacement
         child can acquire a second rotating-log sink concurrently.
         """
         proc = self._proc
-        child_stopped = proc is None or proc.poll() is not None
-        if proc is not None and proc.poll() is None:
-            try:
-                if sys.platform == "win32":
-                    proc.terminate()
-                else:
-                    proc.send_signal(signal.SIGTERM)
-            except OSError as exc:
-                logger.debug("qdrant terminate signal failed: %s", exc)
-            try:
-                proc.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                logger.warning(
-                    "qdrant pid=%d did not exit in %.0fs; killing",
-                    proc.pid,
-                    timeout,
-                )
-                proc.kill()
-                try:
-                    proc.wait(timeout=5.0)
-                except subprocess.TimeoutExpired:
-                    logger.error("qdrant pid=%d survived kill", proc.pid)
-            child_stopped = proc.poll() is not None
+        # The child and whatever it started: a binary an operator named may
+        # be a launcher, and the server it started must not outlive a stop.
+        child_stopped = proc is None or end_tree(
+            proc, self._job_handle, timeout=timeout
+        )
         # The child's exit closes the output pipe, so the drain thread sees EOF
         # and finishes; join it (bounded) so the log handle is flushed/closed.
         drain_stopped = self._join_output_drain(timeout=_DRAIN_JOIN_TIMEOUT_SECONDS)
@@ -958,6 +1021,14 @@ class QdrantSupervisor:
         readable by the binary that wrote it, which nothing else reports.
         Unlike the quarantine listing this is a held value, because the stamp
         it was derived from has already been rewritten by the open.
+
+        Carries the source of the binary the child was spawned from: an
+        operator-supplied binary runs without the committed pin, and that must
+        be readable from the running service, not only from its log.
+
+        Carries why the latest restart attempt started nothing, when one did
+        not: a dead server whose restart was refused is otherwise reported
+        with no cause outside the service log.
         """
         return QdrantRuntimeState(
             mode="server",
@@ -970,6 +1041,8 @@ class QdrantSupervisor:
             extra={
                 "quarantined": list_quarantined_collections(self.storage_dir),
                 "migrated_from": self.migrated_from,
+                "binary_source": str(self.binary_source),
+                "restart_refusal": self.restart_refusal,
             },
         )
 
@@ -1166,28 +1239,58 @@ def _reap_orphan_before_spawn(
     logger.info("Reaped qdrant orphan pid %d; proceeding to spawn", target)
 
 
-def start_supervised_from_config() -> QdrantSupervisor:
-    """Resolve, verify, spawn, and ready-wait the qdrant child per config.
+def _attach_to_running(**options: Unpack[_SupervisorOptions]) -> QdrantSupervisor:
+    """Adopt the running managed server, once this process can authenticate to it.
 
-    Resolution follows the env-var > provisioned > PATH order. A
-    provisioned binary is re-hashed against its manifest digest before
-    execution so a tampered managed dir never runs. The started
+    The owner published the key this process will present. A running server
+    that asks for none, or for a different one, is not attached to: every
+    store opened against it would be open to the whole host or refused on its
+    first request.
+
+    Raises:
+        RuntimeError: When no credential is published for the server, an
+            anonymous data request succeeds, or the credential is rejected.
+    """
+    supervisor = QdrantSupervisor(None, **options)
+    api_key = server_api_key(supervisor.url)
+    fault = (
+        "its owner published no credential"
+        if api_key is None
+        else data_plane_auth_fault(supervisor.url, api_key)
+    )
+    if fault is not None:
+        raise RuntimeError(
+            "refusing to attach to the managed qdrant on port "
+            f"{supervisor.http_port}: {fault}. Restart the service that owns "
+            "it so it starts with a credential, then retry; or run "
+            f"local-only: {server_start_command(local_only=True)}"
+        )
+    set_active_supervisor(supervisor)
+    return supervisor
+
+
+def start_supervised_from_config() -> QdrantSupervisor:
+    """Resolve, spawn, and ready-wait the qdrant child per config.
+
+    Resolution follows the operator setting > managed install order. The
+    binary is verified inside every spawn the supervisor makes, so a tampered
+    managed dir never runs, at the first start or any later one. The started
     supervisor is installed as the process-wide active supervisor.
 
     Returns:
         The running, ready supervisor.
 
     Raises:
-        RuntimeError: When no binary is resolvable (the message names
-            the exact install command), when the provisioned binary
-            fails its pre-execution hash check, or when the server
-            does not become ready.
+        QdrantBinaryError: When the operator binary setting names an unusable
+            path, or the binary fails the check its source holds it to.
+        RuntimeError: When no binary is resolvable (the message names the
+            exact install command), or the server does not become ready.
     """
     from pathlib import Path
 
     from ..config._settings import get_config
-    from ._provision import file_sha256
     from ._resolve import (
+        QdrantBinaryError,
         decide_qdrant_action,
         probe_qdrant_endpoint,
         read_qdrant_identity,
@@ -1219,17 +1322,13 @@ def start_supervised_from_config() -> QdrantSupervisor:
         logger.info(
             "Attaching to the running managed qdrant on port %d: %s", qport, reason
         )
-        supervisor = QdrantSupervisor(
-            Path("attached-qdrant"),
+        return _attach_to_running(
             http_port=qport,
             storage_dir=storage_dir,
             log_path=log_path,
             log_max_bytes=log_max_bytes,
             log_backup_count=log_backup_count,
         )
-        supervisor.mark_attached()
-        set_active_supervisor(supervisor)
-        return supervisor
     if action == "refuse":
         raise RuntimeError(
             f"refusing to start qdrant on port {qport}: {reason}. Stop or fix "
@@ -1249,37 +1348,7 @@ def start_supervised_from_config() -> QdrantSupervisor:
             "available. Run: vaultspec-rag server qdrant install. "
             "Local-only option: vaultspec-rag server start --local-only"
         )
-    if resolved.source == "provisioned" and resolved.sha256:
-        actual = file_sha256(resolved.path)
-        if actual.lower() != resolved.sha256.lower():
-            raise RuntimeError(
-                f"Provisioned qdrant binary at {resolved.path} does not "
-                "match its manifest digest; refusing to execute. Re-run: "
-                "vaultspec-rag server qdrant install --upgrade"
-            )
-    elif resolved.source in ("env", "path"):
-        # An env-var or PATH binary carries no pinned digest, so it runs
-        # UNVERIFIED. Make the bypass loud (it is otherwise silent), and call
-        # out when it is shadowing a verified provisioned install - the case a
-        # PATH/env plant would exploit.
-        from ..config._types import EnvVar
-        from ._resolve import has_provisioned_binary
-
-        shadowed = has_provisioned_binary(QDRANT_SERVER_VERSION)
-        remedy = (
-            f"It is SHADOWING a verified provisioned install; unset "
-            f"{EnvVar.QDRANT_BINARY.value} or remove qdrant from PATH to run the "
-            "pinned binary."
-            if shadowed
-            else "Provision a pinned binary with: vaultspec-rag server qdrant install."
-        )
-        logger.warning(
-            "qdrant binary resolved from %s (%s) runs UNVERIFIED - no "
-            "pinned-digest check applies to this source. %s",
-            resolved.source,
-            resolved.path,
-            remedy,
-        )
+    warn_when_operator_supplied(resolved)
 
     # Judge the on-disk storage format against the binary about to open it.
     # The version gate on the attach path only fires when a server is already
@@ -1287,9 +1356,13 @@ def start_supervised_from_config() -> QdrantSupervisor:
     # this the first start on a newly pinned binary performs no version
     # comparison at all, and an incompatible-format abort is misread by the
     # load-failure parser as a run of independently corrupt collections.
+    #
+    # An operator-supplied binary of unknown version is not assumed to be the
+    # pinned release. Its empty version judges a data-bearing store as
+    # unverifiable: it still opens, and no load failure is blamed on a collection.
     store_format = judge_store_format(
         storage_dir,
-        spawning_version=resolved.version or QDRANT_SERVER_VERSION,
+        spawning_version=resolved.version,
         identity=identity,
     )
     if not store_format.may_spawn:
@@ -1310,7 +1383,7 @@ def start_supervised_from_config() -> QdrantSupervisor:
         )
 
     supervisor = QdrantSupervisor(
-        resolved.path,
+        resolved,
         http_port=qport,
         storage_dir=storage_dir,
         log_path=log_path,
@@ -1319,10 +1392,17 @@ def start_supervised_from_config() -> QdrantSupervisor:
         migrated_from=(
             store_format.stored_version if store_format.migrates_store else ""
         ),
+        # An operator-configured key is adopted so the one value they set is
+        # the one the child demands; unset, the supervisor generates its own.
+        api_key=cfg.qdrant_api_key or "",
     )
     logger.info("Starting qdrant server (%s binary %s)", resolved.source, resolved.path)
     try:
         supervisor.start(auto_quarantine=store_format.may_auto_quarantine)
+    except QdrantBinaryError:
+        # A refused binary keeps its own type and code: the remedy is to
+        # repair the install, and the caller renders that, not a log to read.
+        raise
     except RuntimeError as exc:
         raise RuntimeError(
             f"{exc}. The qdrant server backing the default server mode "

@@ -114,10 +114,11 @@ def test_a_client_provisions_nothing_and_keeps_the_host_backend_choice(
     installation's ``server start`` reads, so a client persisting its own run's
     choice would silently switch the host's storage backend.
 
-    Mutation check: removing the client branch from provisioning runs the front
-    door and persists this run's ``local_only=True`` over the host's ``False``,
-    failing the marker assertion; restoring the branch passes. ``local_only``
-    and the models opt-out also keep that mutated run off the network.
+    Mutation check: persisting the backend choice whatever the role writes this
+    run's ``local_only=True`` over the host's ``False``, failing the marker
+    assertion; restoring the host condition passes. ``local_only`` and the
+    models opt-out keep a run that lost the front door's client answer off the
+    network; the run with every step left on has its own test.
     """
     _ = isolated_status_dir
     persist_local_only(False)

@@ -114,7 +114,7 @@ def _effective_source_limit(
 def _stream_source(
     path: pathlib.Path,
     *,
-    root_dir: pathlib.Path | None = None,
+    root_dir: pathlib.Path,
     max_source_bytes: int | None,
     retain_bytes: bool,
     run_control: RunControl = NO_RUN_CONTROL,
@@ -124,10 +124,7 @@ def _stream_source(
     retained = bytearray() if retain_bytes else None
     total = 0
     try:
-        source = (
-            path.open("rb") if root_dir is None else open_source_file(path, root_dir)
-        )
-        with source as stream:
+        with open_source_file(path, root_dir) as stream:
             while block := stream.read(_SOURCE_READ_BLOCK_BYTES):
                 run_control.checkpoint()
                 total += len(block)
@@ -459,6 +456,7 @@ class _RawDocumentRequest:
     """One raw document read, identity, and decoding contract."""
 
     path: pathlib.Path
+    root_dir: pathlib.Path
     rel_path: str
     content_hash: str
     source_limit: int | None
@@ -483,6 +481,7 @@ class _RawDocumentFallback:
     """Fallback stream request before an extractor is available or succeeds."""
 
     path: pathlib.Path
+    root_dir: pathlib.Path
     rel_path: str
     expected_hash: str | None
     source_limit: int | None
@@ -562,6 +561,7 @@ def _document_chunks_from_text(
 def _validated_text_identity(
     path: pathlib.Path,
     *,
+    root_dir: pathlib.Path,
     max_source_bytes: int | None,
     execution_policy: ChunkExecutionPolicy,
     run_control: RunControl,
@@ -573,7 +573,7 @@ def _validated_text_identity(
     )
     total = 0
     try:
-        with path.open("rb") as stream:
+        with open_source_file(path, root_dir) as stream:
             while block := stream.read(_SOURCE_READ_BLOCK_BYTES):
                 run_control.checkpoint()
                 total += len(block)
@@ -620,7 +620,7 @@ def _iter_raw_document_chunks(
     total = 0
     ordinal = 0
     pending_cr = ""
-    with request.path.open("rb") as stream:
+    with open_source_file(request.path, request.root_dir) as stream:
         while block := stream.read(_SOURCE_READ_BLOCK_BYTES):
             request.run_control.checkpoint()
             total += len(block)
@@ -792,12 +792,22 @@ def _raw_document_stream(
     fallback: _RawDocumentFallback,
 ) -> DocumentFileChunkStreamResult:
     """Validate raw decoding, then return a bounded second-pass chunk stream."""
-    content_hash, decodable = _validated_text_identity(
-        fallback.path,
-        max_source_bytes=fallback.source_limit,
-        execution_policy=fallback.execution_policy,
-        run_control=fallback.run_control,
-    )
+    try:
+        content_hash, decodable = _validated_text_identity(
+            fallback.path,
+            root_dir=fallback.root_dir,
+            max_source_bytes=fallback.source_limit,
+            execution_policy=fallback.execution_policy,
+            run_control=fallback.run_control,
+        )
+    except SourceIdentityError as exc:
+        return DocumentFileChunkStreamResult(
+            fallback.rel_path,
+            "unpublished",
+            (),
+            preprocess_status="skipped",
+            preprocess_reason=str(exc),
+        )
     if fallback.expected_hash is not None and content_hash != fallback.expected_hash:
         raise RuntimeError(
             f"document source changed during fallback: {fallback.rel_path}"
@@ -806,6 +816,7 @@ def _raw_document_stream(
         return DocumentFileChunkStreamResult(fallback.rel_path, content_hash, ())
     request = _RawDocumentRequest(
         path=fallback.path,
+        root_dir=fallback.root_dir,
         rel_path=fallback.rel_path,
         content_hash=content_hash,
         source_limit=fallback.source_limit,
@@ -834,6 +845,7 @@ def stream_document_and_hash_file(
         return _raw_document_stream(
             _RawDocumentFallback(
                 path=path,
+                root_dir=root_dir,
                 rel_path=rel_path,
                 expected_hash=None,
                 source_limit=source_limit,
@@ -844,6 +856,7 @@ def stream_document_and_hash_file(
     try:
         content_hash, _raw = _stream_source(
             path,
+            root_dir=root_dir,
             max_source_bytes=source_limit,
             retain_bytes=False,
             run_control=options.run_control,
@@ -890,6 +903,7 @@ def stream_document_and_hash_file(
     return _raw_document_stream(
         _RawDocumentFallback(
             path=path,
+            root_dir=root_dir,
             rel_path=rel_path,
             expected_hash=content_hash,
             source_limit=source_limit,

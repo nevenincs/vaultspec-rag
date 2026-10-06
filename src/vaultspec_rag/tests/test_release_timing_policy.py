@@ -61,9 +61,12 @@ def test_release_qdrant_clients_override_the_short_transport_default() -> None:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     real_server_clients: list[ast.expr | None] = []
     for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
-        if not isinstance(call.func, ast.Name) or call.func.id != "QdrantClient":
+        if not isinstance(call.func, ast.Name) or call.func.id != "open_server_client":
             continue
-        url = next((item.value for item in call.keywords if item.arg == "url"), None)
+        # The server client is built by the one production constructor, which
+        # takes the URL positionally. Matching the raw client class here would
+        # find nothing and the count below would be the only thing failing.
+        url = call.args[0] if call.args else None
         if not (
             isinstance(url, ast.Attribute)
             and isinstance(url.value, ast.Name)

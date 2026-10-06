@@ -110,13 +110,12 @@ def _run_storage_op[T](
     proves the server is up, so it must never be answered with "start the
     service"; everything else in the class is an answer that never came.
     """
-    from qdrant_client import QdrantClient
-
+    from .._qdrant_server_client import open_server_client
     from .._qdrant_transport import SERVER_REFUSALS, TRANSPORT_FAILURES
     from ..storage_restore import ArchiveIntegrityError
 
     url = _resolve_server_url(command, json_mode)
-    client = QdrantClient(url=url)
+    client = open_server_client(url)
     try:
         return fn(client)
     except ArchiveIntegrityError as exc:
@@ -996,6 +995,7 @@ def storage_migrate(
     """Copy a root's namespaced collections between the local and server stores."""
     from qdrant_client import QdrantClient
 
+    from .._qdrant_server_client import open_server_client
     from ..storage_migration import migrate_collections
 
     _require_yes_for_json(_MIGRATE_CMD, json_mode, yes)
@@ -1026,7 +1026,7 @@ def storage_migrate(
         path=str(local_path),
         force_disable_check_same_thread=sqlite3.threadsafety == 3,
     )
-    server = QdrantClient(url=url)
+    server = open_server_client(url)
     src, dst = (local, server) if to_server else (server, local)
     preview = dry_run or not yes
     # A real migrate copies every point of every collection across two

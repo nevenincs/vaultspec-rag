@@ -5,7 +5,7 @@ tags:
 date: '2026-10-04'
 modified: '2026-10-04'
 body_schema: 'body-v2'
-body_hash: 'sha256:2087a7eefc93fd7b32b775ac17c9b0d006f393c09eea83069e247767dc3c8fdf'
+body_hash: 'sha256:9ff0a2e8c1dc734efc2d17c05c765bdcc39ffbb1e1b766807867e9f489962532'
 related:
   - "[[2026-10-04-monitor-access-reference]]"
   - "[[2026-09-30-monitor-browser-adr]]"
@@ -34,7 +34,7 @@ The user's 2026-10-04 instruction explicitly requests fixing this validated vuln
 
 The monitor has no direct remote mode. Packaged, managed, Vite dev and preview listeners bind 127.0.0.1. Every monitor HTTP request and WebSocket upgrade, including assets and metadata, requires an exact admitted loopback socket peer and a localhost, .localhost, 127.0.0.1 or [::1] authority, with matching Origin when present. Reject Tailnet peers and authorities even under a wildcard development override. Forwarded and Tailscale identity headers grant no authority.
 
-Credential-free reads and existing controls remain available to local operators through the canonical local owner. Bounded forwarding, token redaction, cancellation, strict development ports, managed allocation and shutdown remain unchanged. Remote use requires an authenticated tunnel terminating at loopback; exposing the monitor through an unauthenticated reverse proxy or Tailscale Serve is unsupported. Future direct remote support requires application authentication and separate authorization for destructive actions.
+Reads and existing controls remain available to the local owner through the canonical local owner. The credential-free part of this commitment is reversed by `2026-10-04-monitor-capability-adr`: loopback admission is still required and no longer sufficient, and every bridge call also presents the monitor capability from the owner's access link. Bounded forwarding, token redaction, cancellation, strict development ports, managed allocation and shutdown remain unchanged. Remote use requires an authenticated tunnel terminating at loopback; exposing the monitor through an unauthenticated reverse proxy or Tailscale Serve is unsupported. Future direct remote support requires application authentication and separate authorization for destructive actions.
 
 This is a scoped reversal of the wildcard/Tailnet network policy in `2026-09-30-monitor-browser-adr`, `2026-09-30-monitor-tooling-adr` and `2026-10-02-monitor-delivery-adr`, plus the inherited network policy in `2026-10-02-monitor-lifecycle-adr`. Reconcile their current policy wording to this loopback boundary while preserving historical authorization and their other commitments. These broader records remain accepted within the exception.
 
@@ -48,4 +48,4 @@ The shared middleware is the narrowest authority boundary for credential injecti
 
 ## Consequences
 
-Direct Tailnet and Tailscale Serve access stops working. Local browsers and local proxy aliases retain automatic service access. Authorization basis: the user's explicit security-fix request and supplied loopback remediation. Acceptance records the authorized boundary, not completion of verification. Reconsider direct remote mode only with an authenticated application/session design and distinct destructive authorization.
+Direct Tailnet and Tailscale Serve access stops working. Local browsers and local proxy aliases retain service access through the owner's access link under `2026-10-04-monitor-capability-adr`. Authorization basis: the user's explicit security-fix request and supplied loopback remediation. Acceptance records the authorized boundary, not completion of verification. Reconsider direct remote mode only with an authenticated application/session design and distinct destructive authorization.

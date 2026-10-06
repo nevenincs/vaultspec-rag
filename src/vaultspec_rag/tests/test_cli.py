@@ -273,6 +273,9 @@ class TestHelpCleanup:
         assert "watcher" not in out
         assert "VAULTSPEC_RAG_WATCH_ENABLED" not in result.output
 
+    # A start judges the installation before it looks at the port, so the
+    # port guard is only reached as a host that can serve.
+    @pytest.mark.usefixtures("inference_host")
     def test_server_start_port_in_use_gives_next_actions(self, tmp_path: Path):
         import socket
 
@@ -302,6 +305,7 @@ class TestHelpCleanup:
         assert "vaultspec-rag server start --port <free-port>" in result.output
         assert "Traceback" not in result.output
 
+    @pytest.mark.usefixtures("inference_host")
     def test_server_start_update_options_parse_before_port_guard(self, tmp_path: Path):
         import socket
 
@@ -383,7 +387,9 @@ class TestHelpCleanup:
         assert result.exit_code == 0, result.output
         assert "Set up vaultspec-rag in a workspace" in result.output
         assert "Emit JSON for scripts" in result.output
-        assert "use --yes or --no-torch-config" in result.output
+        # The help is wrapped to the terminal, so the sentence is read with
+        # its line breaks folded.
+        assert "use --yes or --no-torch-config" in " ".join(result.output.split())
         for forbidden in (
             "Torch-config gating",
             "MCP source files",

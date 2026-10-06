@@ -200,6 +200,21 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "boundary - with_vectors false, with_payload true - are not otherwise "
         "observable from any value the scan returns",
     ),
+    "test_document_index_symlinks.py": (
+        1,
+        "the embedding model is deliberately constructed unloaded, so its "
+        "forward call is replaced with a fixed-vector stand-in; a real forward "
+        "needs loaded weights on an accelerator this tier does not have. One "
+        "case takes it: a document replaced by a link must lose the points a "
+        "real earlier pass stored for it, and storing them is the only thing "
+        "that reaches the forward. Discovery, the bound source reads, the "
+        "ledger and local storage stay real, and no assertion reads a vector. "
+        "Every link swap in the file is a real filesystem replacement, and the "
+        "case with nothing to encode runs with no forward at all. Mutation "
+        "proof: making the stand-in raise failed only that one case; lowering "
+        "this allowance to zero failed the count-growth assertion and raising "
+        "it to two failed the stale-site check; restoring one passed both",
+    ),
     "test_typesafe_search.py": (
         26,
         "search routing needs fixed candidate windows and forced provider failures "
@@ -240,13 +255,42 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         'source-scan this replaced matched the literal watch_mode="server" '
         "and so passed while the verb really dispatched jobs mode",
     ),
-    "test_cli_progress_surfaces.py": (
+    "_model_cache_seed.py": (
         1,
-        "no substitute source can be staged - the provisioner requires https "
-        "on a pinned host and an archive matching a committed digest - and "
-        "the only real alternative is re-downloading the pinned release on "
-        "every run, which the suite's mirror-the-installed-binary design "
-        "exists to avoid",
+        "points the hub's model cache location at a directory the test seeds "
+        "with snapshots the product's own completeness probe accepts. Whether "
+        "the configured models are cached is a fact about the host - all of "
+        "them on a workstation, none on a fresh runner - so a test of what a "
+        "command does when they are present, or when one is missing, would "
+        "otherwise assert whichever the machine happened to be, or download "
+        "gigabytes to find out. The hub reads its cache location from the "
+        "environment once, at import, so a test process cannot move it any "
+        "other way. Only the location is substituted: the probe, the offline "
+        "switch, the decision to fetch and the reporting run unchanged",
+    ),
+    "_qdrant_provision_seam.py": (
+        1,
+        "a recorder in front of the provisioner, for the commands that must "
+        "never reach it: everything a client installation runs, and a start "
+        "that is switched off, uses the on-disk store, or was given a binary "
+        "by its operator. That a call did not happen cannot be shown by "
+        "driving the call, and a regressed command must not go on to a "
+        "release source or spawn a daemon, so the recorder notes the call and "
+        "reports a failure. It stages no install: a start that is meant to "
+        "fetch the server runs the real provisioner against a stand-in "
+        "release served from a loopback source",
+    ),
+    # Reducing this bound to zero failed count growth; raising it to two failed
+    # the declared-sites check; exact restoration passed.
+    "test_program_lookup_sites.py": (
+        1,
+        "points the running program's recorded location at a temporary "
+        "directory, because the lookup finds what ships beside this "
+        "installation's own programs by asking where the running program is, "
+        "and that cannot be anywhere but the real environment without building "
+        "a second installation; planting a monitor in the real one would "
+        "change the machine the tests run on. The lookup, the planted file, "
+        "the search path and the resolution under test are all real",
     ),
     "test_publication_scaling.py": (
         1,
@@ -539,7 +583,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "be",
     ),
     "conftest.py": (
-        3,
+        4,
         "install's torch and provisioning steps and the release-mismatch advice "
         "all branch on whether this is a host or a client installation, and the "
         "role is read from the distributions the running interpreter holds. The "
@@ -547,7 +591,13 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "always does, and the suite can neither add nor remove the inference "
         "stack in the shared interpreter, so each lane would otherwise reach "
         "only one side of every branch. Only the role reading is substituted; "
-        "every consumer of it runs unchanged. Separately, both machine "
+        "every consumer of it runs unchanged. The same holds for what the "
+        "interpreter that would run the daemon can do: that is asked of a "
+        "child which imports torch, a workstation answers ready and an "
+        "accelerator-free runner answers otherwise, and the model and Qdrant "
+        "steps are gated on the answer, so a test of either side pins the "
+        "child's answer alone while the judgement made of it and every "
+        "command that acts on it run unchanged. Separately, both machine "
         "hardware anchors are pointed at private files for every test, "
         "because the machine's own anchors may be held by a live service, a "
         "test must never contend for them, and an ownership claim outlives "
@@ -571,7 +621,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "never runs",
     ),
     "test_tool_torch_repair.py": (
-        28,
+        27,
         "the persistent uv tool interpreter and machine singleton cannot be "
         "safely forced through a CUDA repair during a test: that would install "
         "packages into the developer's own tool environment, which is how a "

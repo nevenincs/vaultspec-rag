@@ -33,8 +33,10 @@ vaultspec-rag server start
 vaultspec-rag index
 ```
 
-`server start` waits until the service is ready. `index` prints IDs
-for the jobs it submits. Indexing continues after the command returns.
+`server start` first downloads any model files or the Qdrant index server that
+the repository setup did not already fetch, showing the transfer, and then waits
+until the service is ready. `index` prints IDs for the jobs it submits. Indexing
+continues after the command returns.
 
 Open the live job view:
 

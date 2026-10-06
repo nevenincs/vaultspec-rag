@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { access, open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
@@ -17,6 +18,9 @@ const checkout =
 type LifecycleVerb = "status" | "start" | "stop";
 let lifecyclePython: string | undefined;
 class InvalidRequestError extends Error {}
+// Loopback is shared by every local account, so the launching owner alone
+// receives this per-process secret.
+const capability = randomBytes(32).toString("base64url");
 
 type Connection = { port: number; token: string };
 
@@ -50,6 +54,24 @@ function localRequest(request: IncomingMessage): boolean {
   } catch {
     return false;
   }
+}
+
+function digest(value: string): Buffer {
+  return createHash("sha256").update(value).digest();
+}
+
+function authorized(request: IncomingMessage): boolean {
+  const header = request.headers.authorization;
+  return (
+    typeof header === "string" &&
+    header.startsWith("Bearer ") &&
+    timingSafeEqual(digest(header.slice(7)), digest(capability))
+  );
+}
+
+/** A fragment never reaches a server, a referrer or another loopback port. */
+export function monitorAccess(port: number): string {
+  return `http://127.0.0.1:${port}/#capability=${capability}`;
 }
 
 async function connection(): Promise<Connection> {
@@ -194,7 +216,12 @@ function redact(value: unknown): unknown {
     Object.entries(value)
       .filter(
         ([key]) =>
-          !["service_token", "token", "borrower_capability"].includes(key),
+          ![
+            "service_token",
+            "token",
+            "borrower_capability",
+            "monitor_url",
+          ].includes(key),
       )
       .map(([key, entry]) => [key, redact(entry)]),
   );
@@ -492,9 +519,18 @@ export function monitorMiddleware(
     });
     return;
   }
-  if (request.url?.startsWith(`${prefix}/`)) {
-    void forward(request, response);
-  } else {
+  if (!request.url?.startsWith(`${prefix}/`)) {
     next();
+    return;
   }
+  if (!authorized(request)) {
+    response.setHeader("WWW-Authenticate", "Bearer");
+    reply(response, 401, {
+      ok: false,
+      message:
+        "The monitor requires its access link. Open the address reported by `vaultspec-rag server start`, or printed by a monitor you launched directly.",
+    });
+    return;
+  }
+  void forward(request, response);
 }

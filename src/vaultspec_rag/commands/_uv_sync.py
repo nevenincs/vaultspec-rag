@@ -5,6 +5,8 @@ from __future__ import annotations
 import subprocess
 from typing import TYPE_CHECKING
 
+from .._program_lookup import Where, find_program
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -35,9 +37,20 @@ def _run_uv_sync_torch(*, target: Path, report: InstallReport) -> None:
     resolution (Windows ``CreateProcess`` only auto-tries ``.exe``, which
     makes ``.cmd`` / ``.bat`` stubs unreliable cross-platform).
     """
+    # uv is the operator's own installation, so it is found on PATH. A bare
+    # name would be looked for in the working directory first on Windows, and
+    # this runs inside the project being installed into.
+    uv = find_program("uv", Where.SEARCH_PATH)
+    if uv is None:
+        report.torch_sync_action = "uv-not-found"
+        report.warnings.append(
+            "--sync requested but `uv` is not on PATH; "
+            "run `uv sync --reinstall-package torch` manually"
+        )
+        return
     try:
         proc = subprocess.run(
-            ["uv", "sync", "--reinstall-package", "torch"],
+            [uv, "sync", "--reinstall-package", "torch"],
             cwd=str(target),
             check=False,
             capture_output=True,
@@ -56,13 +69,6 @@ def _run_uv_sync_torch(*, target: Path, report: InstallReport) -> None:
             f"uv sync --reinstall-package torch did not finish within "
             f"{UV_SYNC_TIMEOUT_SECONDS:.0f}s; run it yourself and check the "
             "network or index it is waiting on"
-        )
-        return
-    except FileNotFoundError:
-        report.torch_sync_action = "uv-not-found"
-        report.warnings.append(
-            "--sync requested but `uv` is not on PATH; "
-            "run `uv sync --reinstall-package torch` manually"
         )
         return
     except OSError as exc:

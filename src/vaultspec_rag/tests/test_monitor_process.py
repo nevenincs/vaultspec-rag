@@ -23,6 +23,7 @@ from ..config._types import EnvVar
 from ..monitor_process import (
     MonitorIdentity,
     MonitorProcess,
+    _access_link_port,
     _resolve_monitor_executable,
     stop_recorded_monitor,
 )
@@ -130,6 +131,33 @@ def test_monitor_requires_installed_compiled_command() -> None:
         pytest.raises(RuntimeError, match=r"compiled .* executable is required"),
     ):
         _resolve_monitor_executable()
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "",
+        "5421",
+        "http://127.0.0.1:5421/",
+        "http://127.0.0.1/#capability=owner",
+        "http://127.0.0.1:99999/#capability=owner",
+        "https://127.0.0.1:5421/#capability=owner",
+        "http://localhost:5421/#capability=owner",
+        "http://192.0.2.1:5421/#capability=owner",
+    ],
+)
+def test_readiness_without_a_loopback_access_link_is_refused(line: str) -> None:
+    """Dropping the fragment requirement failed the capability-free link case
+    (exit 1); restoring it passed every case (exit 0).
+
+    A bare port is the readiness line of a monitor that authenticates no
+    caller, so the supervisor must not publish it as a started monitor.
+    """
+    assert _access_link_port(line) == 0
+
+
+def test_readiness_access_link_reports_its_port() -> None:
+    assert _access_link_port("http://127.0.0.1:5421/#capability=owner") == 5421
 
 
 def test_monitor_port_exhaustion_is_a_start_failure(

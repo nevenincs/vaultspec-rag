@@ -230,7 +230,7 @@ def log_event(
 def _resolve_status_dir(status_dir: Path | None) -> Path:
     """Resolve the service status directory for the log reader.
 
-    Mirrors the CLI's ``_status_dir`` / the daemon's
+    Mirrors the CLI's ``_log_file`` / the daemon's
     ``_resolve_log_path`` resolution (``cfg.status_dir`` with env-var
     and CLI overrides) so the reader walks the same directory the
     daemon rotates into. An explicit *status_dir* (used by tests)

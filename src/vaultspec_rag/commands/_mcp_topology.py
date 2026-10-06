@@ -18,6 +18,8 @@ from vaultspec_core.core.types import (
 )
 
 from .._atomic_write import replace_atomically
+from .._plain_directory import require_plain_parents
+from .._program_lookup import Where, find_program
 from .._workspace_layout import (
     MCP_OWNERSHIP_MANIFEST,
     PROVIDERS_MANIFEST,
@@ -561,7 +563,7 @@ def inspect_required_mcp_topology(target: Path) -> RequiredMcpTopology:
         if linked is not None:
             captured.append(linked)
     for lock_path in transaction_paths[len(required) :]:
-        _validate_plain_parents(root, lock_path)
+        require_plain_parents(root, lock_path)
         lock_snapshot = file_snapshot(lock_path)
         if lock_snapshot.kind not in {
             SnapshotKind.ABSENT,
@@ -594,7 +596,7 @@ def _capture_required_node(
     lifecycle: LifecycleTransactionInventory,
     seen_targets: dict[str, Path],
 ) -> tuple[NodeSnapshot, _FileIdentity | None, _RequiredLink | None]:
-    _validate_plain_parents(root, path)
+    require_plain_parents(root, path)
     snapshot = file_snapshot(path)
     if snapshot.kind is SnapshotKind.FILE:
         identity = _regular_identity(path)
@@ -639,7 +641,7 @@ def _capture_required_link(
         raise OSError(
             f"unsafe required MCP topology at {path}: relative link escapes the project"
         )
-    _validate_plain_parents(root, linked_target)
+    require_plain_parents(root, linked_target)
     target_snapshot = file_snapshot(linked_target)
     if target_snapshot.kind is not SnapshotKind.FILE:
         raise OSError(
@@ -681,7 +683,7 @@ def _capture_required_link(
 def _discover_mcp_sources(root: Path) -> tuple[Path, ...]:
     """Enumerate the exact direct ``*.json`` source set used by Core."""
     directory = root / WORKSPACE_MCPS
-    _validate_plain_parents(root, directory / "source.json")
+    require_plain_parents(root, directory / "source.json")
     snapshot = file_snapshot(directory)
     if snapshot.kind is SnapshotKind.ABSENT:
         return ()
@@ -708,22 +710,6 @@ def _is_within(root: Path, path: Path) -> bool:
         ) == _normalized(root)
     except ValueError:
         return False
-
-
-def _validate_plain_parents(root: Path, path: Path) -> None:
-    """Reject linked, junction, or non-directory containers below the root."""
-    relative = Path(os.path.relpath(path, root))
-    current = root
-    for part in relative.parts[:-1]:
-        current /= part
-        snapshot = file_snapshot(current)
-        if snapshot.kind is SnapshotKind.ABSENT:
-            return
-        if snapshot.kind is not SnapshotKind.DIRECTORY:
-            raise OSError(
-                f"unsafe required MCP topology at {path}: container {current} is "
-                f"{snapshot.kind.name.lower()}"
-            )
 
 
 def _regular_payload(snapshot: NodeSnapshot, path: Path) -> bytes:
@@ -885,8 +871,15 @@ def _restore_junction(path: Path, target: str) -> None:
         f"New-Item -ItemType Junction -Path $env:{EnvVar.RAG_JUNCTION_PATH.value} "
         f"-Target $env:{EnvVar.RAG_JUNCTION_TARGET.value} | Out-Null"
     )
+    # An operating-system program, taken from the operating system's own
+    # directories and run by absolute path. This runs in the project being
+    # installed into, where a bare name would be looked for first, and a
+    # same-named program earlier on PATH must not be what answers either.
+    powershell = find_program("powershell.exe", Where.SYSTEM)
+    if powershell is None:
+        raise OSError(f"cannot restore the junction at {path}: no powershell.exe")
     completed = subprocess.run(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
+        [powershell, "-NoProfile", "-NonInteractive", "-Command", command],
         check=False,
         capture_output=True,
         env=environment,

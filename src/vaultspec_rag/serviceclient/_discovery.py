@@ -122,7 +122,6 @@ __all__ = [
     "_discovery_timestamp",
     "_merge_service_status",
     "_replace_service_status",
-    "_status_dir",
     "_status_file",
     "read_service_status",
     "resolve_machine_service",
@@ -143,33 +142,21 @@ def _discovery_timestamp() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def _status_dir() -> Path:
-    """Return the global service status directory, creating it if needed.
-
-    Resolved via ``cfg.status_dir`` (which checks CLI override, then
-    ``VAULTSPEC_RAG_STATUS_DIR`` env var, then default ``~/.vaultspec-rag/``).
-
-    Returns:
-        Path to the service status directory.
-    """
-
-    from ..config._settings import managed_status_dir
-
-    d = managed_status_dir()
-
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
 def _status_file() -> Path:
     """Return the path to the service status JSON file.
+
+    Resolving the path creates nothing. Most callers only look for a service
+    that may be running, and a command that is refused before it starts one
+    must leave no directory behind for having looked. The functions below
+    that write the file create its directory themselves.
 
     Returns:
         Path to ``{status_dir}/service.json``.
     """
     from ..config._paths import SERVICE_STATUS_FILENAME
+    from ..config._settings import managed_status_dir
 
-    return _status_dir() / SERVICE_STATUS_FILENAME
+    return managed_status_dir() / SERVICE_STATUS_FILENAME
 
 
 def _try_lock_fd(fd: int) -> bool:
@@ -294,6 +281,12 @@ def _merge_service_status(
     on the same port, its pid and first timestamp win over the late parent.
     """
     path = path or _status_file()
+    if not require_existing:
+        # A merge that may create the file may have to create its directory,
+        # and before the lock rather than inside it: the lock file is a
+        # sibling opened with O_CREAT. A merge that requires the file leaves
+        # an absent directory absent and fails as the missing file it is.
+        path.parent.mkdir(parents=True, exist_ok=True)
     with status_write_lock(path, timeout=timeout):
         try:
             raw: object = json.loads(path.read_text(encoding="utf-8"))

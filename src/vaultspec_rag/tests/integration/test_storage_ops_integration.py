@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..._qdrant_server_client import open_server_client
 from ..._store_models import root_collection_prefix
 from ..._sync_vocabulary import ProvisionAction
 from ...qdrant_runtime._provision import provision
@@ -63,9 +64,8 @@ def _qdrant_binary() -> Path:  # pyright: ignore[reportUnusedFunction]
 
 def _drop_all_collections(url: str) -> None:
     """Remove every collection on the server, whoever created it."""
-    from qdrant_client import QdrantClient
 
-    client = QdrantClient(url=url)
+    client = open_server_client(url)
     try:
         for collection in client.get_collections().collections:
             client.delete_collection(collection.name)
@@ -129,9 +129,8 @@ def test_survey_classifies_live_orphaned_unknown(
     ops_qdrant: QdrantSupervisor,
     tmp_path: Path,
 ) -> None:
-    from qdrant_client import QdrantClient
 
-    client = QdrantClient(url=ops_qdrant.url)
+    client = open_server_client(ops_qdrant.url)
     try:
         live_root = tmp_path / "live"
         live_root.mkdir()
@@ -163,9 +162,8 @@ def test_delete_refuses_unknown_then_prune_keeps_it(
     ops_qdrant: QdrantSupervisor,
     tmp_path: Path,
 ) -> None:
-    from qdrant_client import QdrantClient
 
-    client = QdrantClient(url=ops_qdrant.url)
+    client = open_server_client(ops_qdrant.url)
     try:
         gone_root = tmp_path / "gone2"
         gone_root.mkdir()
@@ -205,9 +203,8 @@ def test_prune_removes_only_orphaned_never_live_or_unknown(
     """The out-of-scope-protection invariant: with live, orphaned, and unknown
     namespaces all present, prune removes only the orphaned one - the live and
     unknown namespaces survive untouched."""
-    from qdrant_client import QdrantClient
 
-    client = QdrantClient(url=ops_qdrant.url)
+    client = open_server_client(ops_qdrant.url)
     try:
         live_root = tmp_path / "live"
         gone_root = tmp_path / "gone"
@@ -248,8 +245,6 @@ def test_ensure_table_records_manifest_and_survey_shows_live(
     """Opening a server-mode store and ensuring its table records the root in
     the manifest, so a subsequent survey classifies it live (not unknown)."""
 
-    from qdrant_client import QdrantClient
-
     from ..._store_models import root_collection_prefix
     from ...config._types import EnvVar
     from ...storage_manifest import load_manifest
@@ -272,7 +267,7 @@ def test_ensure_table_records_manifest_and_survey_shows_live(
         prefix = root_collection_prefix(root)
         assert prefix in load_manifest(), "ensure_table must record the manifest"
 
-        client = QdrantClient(url=ops_qdrant.url)
+        client = open_server_client(ops_qdrant.url)
         try:
             surveys = {s.prefix: s for s in gather_survey(client)}
             assert surveys[prefix].status == "live"
@@ -291,9 +286,8 @@ def test_ensure_table_records_manifest_and_survey_shows_live(
 def test_migrate_remaps_name_and_copies_points(
     ops_qdrant: QdrantSupervisor,
 ) -> None:
-    from qdrant_client import QdrantClient
 
-    client = QdrantClient(url=ops_qdrant.url)
+    client = open_server_client(ops_qdrant.url)
     try:
         _make_collection(client, "vault_docs")  # bare local-style source
         name_map = {"vault_docs": "rdeadbeefcafe_vault_docs"}
@@ -333,11 +327,10 @@ def test_reconcile_drops_stale_manifest_against_live_server(
 ) -> None:
     """Reconcile drops a manifest entry whose root and data are both gone, and
     keeps an orphan whose collections still exist, against the real server."""
-    from qdrant_client import QdrantClient
 
     from ...storage_manifest import load_manifest, reconcile_manifest
 
-    client = QdrantClient(url=ops_qdrant.url)
+    client = open_server_client(ops_qdrant.url)
     try:
         # stale: root gone, no backing collection.
         stale_root = tmp_path / "stale"
@@ -378,11 +371,10 @@ def test_migrate_then_rekey_manifest_records_new_backend(
 ) -> None:
     """After a server->server name-remap migrate, re-keying the manifest stamps
     the new backend so a later survey attributes the moved data correctly."""
-    from qdrant_client import QdrantClient
 
     from ...storage_manifest import load_manifest, record_root, rekey_prefix
 
-    client = QdrantClient(url=ops_qdrant.url)
+    client = open_server_client(ops_qdrant.url)
     try:
         root = tmp_path / "movable"
         root.mkdir()
@@ -414,9 +406,8 @@ def test_delete_rejects_noncanonical_prefix_even_with_allow_unknown(
     """H1: a non-canonical / empty prefix is refused before any deletion, even
     with allow_unknown, so a crafted prefix can never startswith-match and wipe
     foreign roots."""
-    from qdrant_client import QdrantClient
 
-    client = QdrantClient(url=ops_qdrant.url)
+    client = open_server_client(ops_qdrant.url)
     try:
         _make_collection(client, "raaaaaaaaaaaa_vault_docs")
         _make_collection(client, "rbbbbbbbbbbbb_vault_docs")
@@ -436,9 +427,9 @@ def test_migrate_copies_multiple_pages(
     ops_qdrant: QdrantSupervisor,
 ) -> None:
     """M6: migrate pages through more points than one batch and count-verifies."""
-    from qdrant_client import QdrantClient, models
+    from qdrant_client import models
 
-    client = QdrantClient(url=ops_qdrant.url)
+    client = open_server_client(ops_qdrant.url)
     try:
         src = "raaaaaaaaaaaa_vault_docs"
         client.create_collection(
@@ -553,11 +544,10 @@ def test_reconcile_reclaims_bytes_and_preserves_data(
     tmp_path: Path,
 ) -> None:
     """The whole value proposition, proven against the real optimizer."""
-    from qdrant_client import QdrantClient
 
     from ...storage_reconciliation import reconcile_collections
 
-    client = QdrantClient(url=ops_qdrant.url, timeout=600)
+    client = open_server_client(ops_qdrant.url, timeout=600)
     try:
         prefix = record_root(tmp_path, backend="server").prefix
         name = f"{prefix}codebase_docs"
@@ -597,11 +587,10 @@ def test_reconcile_is_idempotent_on_a_converged_backend(
     tmp_path: Path,
 ) -> None:
     """A converged backend selects nothing, so the cycle stops doing work."""
-    from qdrant_client import QdrantClient
 
     from ...storage_reconciliation import reconcile_collections
 
-    client = QdrantClient(url=ops_qdrant.url, timeout=600)
+    client = open_server_client(ops_qdrant.url, timeout=600)
     try:
         prefix = record_root(tmp_path, backend="server").prefix
         name = f"{prefix}vault_docs"
@@ -661,11 +650,9 @@ def test_unwaited_reconcile_never_reports_a_reclaim_figure(
     """
     import time
 
-    from qdrant_client import QdrantClient
-
     from ...storage_reconciliation import reconcile_collections
 
-    client = QdrantClient(url=ops_qdrant.url, timeout=600)
+    client = open_server_client(ops_qdrant.url, timeout=600)
     try:
         prefix = record_root(tmp_path, backend="server").prefix
         name = f"{prefix}codebase_docs"
@@ -724,11 +711,10 @@ def test_reconcile_dry_run_changes_nothing(
     ops_qdrant: QdrantSupervisor,
     tmp_path: Path,
 ) -> None:
-    from qdrant_client import QdrantClient
 
     from ...storage_reconciliation import read_geometry, reconcile_collections
 
-    client = QdrantClient(url=ops_qdrant.url, timeout=600)
+    client = open_server_client(ops_qdrant.url, timeout=600)
     try:
         prefix = record_root(tmp_path, backend="server").prefix
         name = f"{prefix}vault_docs"
@@ -766,11 +752,10 @@ def test_reconcile_cap_defers_remaining_collections(
     convergence over a collection carrying real points, where the wait
     itself is the subject, keeps the shipped defaults.
     """
-    from qdrant_client import QdrantClient
 
     from ...storage_reconciliation import reconcile_collections
 
-    client = QdrantClient(url=ops_qdrant.url, timeout=600)
+    client = open_server_client(ops_qdrant.url, timeout=600)
     try:
         storage = ops_qdrant.storage_dir / "collections"
         prefix = record_root(tmp_path, backend="server").prefix
@@ -823,8 +808,6 @@ def test_reconcile_requires_valid_manifest_attribution(
     """
     import json
 
-    from qdrant_client import QdrantClient
-
     from ...storage_manifest import manifest_path, remove_prefix
     from ...storage_reconciliation import read_geometry, reconcile_collections
     from ...store_schema import SERVER_SEGMENT_NUMBER
@@ -855,7 +838,7 @@ def test_reconcile_requires_valid_manifest_attribution(
             document["roots"]["rNOTHEX000000_"] = document["roots"].pop(foreign_prefix)
         path.write_text(json.dumps(document), encoding="utf-8")
 
-    with closing(QdrantClient(url=ops_qdrant.url)) as client:
+    with closing(open_server_client(ops_qdrant.url)) as client:
         for name in (control, foreign):
             _make_legacy_collection(client, name, segments=6, points=1)
         assert [e.collection for e in read_geometry(client, None)] == [control]
@@ -890,7 +873,6 @@ def test_reconcile_requires_exact_names_and_preserves_attributed_generations(
     Prefix-only discovery admitted both unknown names and failed the exact
     candidate-list assertion. Restored attribution passed for both root states.
     """
-    from qdrant_client import QdrantClient
 
     from ..._store_models import generation_code_collection
     from ...storage_manifest import record_collection_identity
@@ -914,7 +896,7 @@ def test_reconcile_requires_exact_names_and_preserves_attributed_generations(
     if root_status == "orphaned":
         root.rmdir()
 
-    with closing(QdrantClient(url=ops_qdrant.url)) as client:
+    with closing(open_server_client(ops_qdrant.url)) as client:
         for name in (base, generation, *unknown_names):
             _make_legacy_collection(client, name, segments=6)
         assert [e.collection for e in read_geometry(client, None)] == [base, generation]
@@ -951,7 +933,6 @@ def test_reconcile_revalidates_attribution_before_update(
     six to two and failed the unchanged-target assertion. Restoring it passed
     for removed, reclassified and corrupt manifest state.
     """
-    from qdrant_client import QdrantClient
 
     from ...storage_manifest import manifest_path, remove_prefix
     from ...storage_reconciliation import read_geometry, reconcile_collections
@@ -969,7 +950,7 @@ def test_reconcile_revalidates_attribution_before_update(
         else:
             manifest_path().write_text("{", encoding="utf-8")
 
-    with closing(QdrantClient(url=ops_qdrant.url)) as client:
+    with closing(open_server_client(ops_qdrant.url)) as client:
         _make_legacy_collection(client, name, segments=6)
         assert [e.collection for e in read_geometry(client, None)] == [name]
         batch = reconcile_collections(
@@ -997,12 +978,11 @@ def test_direct_reconcile_rejects_unknown_collection(
     Removing its attribution check changed the target from six to two and
     failed the unchanged-target assertion. Restored enforcement passed.
     """
-    from qdrant_client import QdrantClient
 
     from ...storage_reconciliation import GeometryEntry, reconcile_collection
 
     name = f"{_UNKNOWN_PREFIX}vault_docs"
-    with closing(QdrantClient(url=ops_qdrant.url)) as client:
+    with closing(open_server_client(ops_qdrant.url)) as client:
         _make_legacy_collection(client, name, segments=6)
         entry = GeometryEntry(name, segment_target=6, segments=6, footprint_bytes=None)
         result = reconcile_collection(
@@ -1024,8 +1004,6 @@ def test_maintenance_reconcile_leaves_foreign_geometry_untouched(
     """The scheduled cycle inherits ownership enforcement at the shared boundary."""
     from datetime import UTC, datetime
 
-    from qdrant_client import QdrantClient
-
     from ...storage_reclamation import (
         MaintenanceCycleRequest,
         ReclaimPolicy,
@@ -1036,7 +1014,7 @@ def test_maintenance_reconcile_leaves_foreign_geometry_untouched(
     prefix = record_root(tmp_path, backend="server").prefix
     owned = f"{prefix}vault_docs"
     foreign = f"{_UNKNOWN_PREFIX}vault_docs"
-    with closing(QdrantClient(url=ops_qdrant.url)) as client:
+    with closing(open_server_client(ops_qdrant.url)) as client:
         for name in (owned, foreign):
             _make_legacy_collection(client, name, segments=6)
         result = run_maintenance_cycle(
@@ -1074,7 +1052,6 @@ def test_reconcile_refuses_manifest_from_another_backend(
     Accepting every backend admitted the foreign server's name and failed its
     empty-discovery assertion. Restored backend enforcement passed.
     """
-    from qdrant_client import QdrantClient
 
     from ...storage_reconciliation import (
         read_geometry,
@@ -1085,9 +1062,9 @@ def test_reconcile_refuses_manifest_from_another_backend(
     prefix = record_root(tmp_path, backend="server").prefix
     name = f"{prefix}vault_docs"
     with (
-        closing(QdrantClient(url=ops_qdrant.url)) as managed,
+        closing(open_server_client(ops_qdrant.url)) as managed,
         contextmanager(serve_qdrant)(_qdrant_binary, tmp_path / "external") as external,
-        closing(QdrantClient(url=external.url)) as foreign,
+        closing(open_server_client(external.url)) as foreign,
     ):
         for client in (managed, foreign):
             _make_legacy_collection(client, name, segments=6)
@@ -1127,15 +1104,13 @@ def test_archive_manifest_carries_identity_from_the_real_manifest(
     """
     import json
 
-    from qdrant_client import QdrantClient
-
     from ...storage_archive import (
         archive_prefix,
     )
     from ...storage_manifest import record_collection_identity, snapshot_manifest_path
     from ...store_schema import STORAGE_SCHEMA_VERSION, CollectionIdentity
 
-    client = QdrantClient(url=ops_qdrant.url, timeout=600)
+    client = open_server_client(ops_qdrant.url, timeout=600)
     try:
         root = tmp_path / "archived"
         root.mkdir()
@@ -1193,14 +1168,14 @@ def test_archive_rejects_a_real_write_after_its_first_snapshot(
     snapshots. Removing the completed-archive verification makes
     `archive_prefix` return instead of raising.
     """
-    from qdrant_client import QdrantClient, models
+    from qdrant_client import models
 
     from ...storage_archive import (
         archive_prefix,
     )
 
-    client = QdrantClient(url=ops_qdrant.url, timeout=30)
-    writer = QdrantClient(url=ops_qdrant.url, timeout=30)
+    client = open_server_client(ops_qdrant.url, timeout=30)
+    writer = open_server_client(ops_qdrant.url, timeout=30)
     thread: threading.Thread | None = None
     try:
         root = tmp_path / "archive-race"
@@ -1271,7 +1246,6 @@ def test_completed_archive_rejects_a_missing_real_snapshot(
     removes that snapshot before re-running the verifier. Removing the
     snapshot-file check makes the guard return successfully.
     """
-    from qdrant_client import QdrantClient
 
     from ...storage_archive import (
         _verify_completed_archive,
@@ -1279,7 +1253,7 @@ def test_completed_archive_rejects_a_missing_real_snapshot(
     )
     from ...storage_manifest import snapshot_manifest_path
 
-    client = QdrantClient(url=ops_qdrant.url, timeout=30)
+    client = open_server_client(ops_qdrant.url, timeout=30)
     try:
         root = tmp_path / "archive-artifact"
         root.mkdir()
@@ -1321,13 +1295,12 @@ def test_real_migrate_then_carry_stamps_the_remapped_target(
     are keyed by collection name and the names differ across the move - the
     failure this closes is a record carried under a key nothing looks up.
     """
-    from qdrant_client import QdrantClient
 
     from ...storage_identity import load_identity, record_identity
     from ...storage_migration import carry_migrated_identity
     from ...store_schema import STORAGE_SCHEMA_VERSION, CollectionIdentity
 
-    client = QdrantClient(url=ops_qdrant.url)
+    client = open_server_client(ops_qdrant.url)
     try:
         root = tmp_path / "moved"
         local_dir = root / ".vaultspec-rag" / "qdrant"

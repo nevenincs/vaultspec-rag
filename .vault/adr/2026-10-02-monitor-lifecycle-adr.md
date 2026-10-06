@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-04'
 body_schema: 'body-v2'
-body_hash: 'sha256:ee206e93399453e925f277ad7af7865de1b76a36f526bbb620ee276e5ee077d6'
+body_hash: 'sha256:54e4ae6baee4976e6c7473749c4bcac3776c113b9bb7e5f6dca3bfdc125d6115'
 related:
   - "[[2026-10-02-monitor-lifecycle-reference]]"
   - "[[2026-09-30-monitor-browser-adr]]"
@@ -49,7 +49,7 @@ Installed release bundles supply the compiled command under monitor-delivery. Th
 
 The HTTP daemon constructs one torch-free Python supervisor, starts it after singleton acquisition, publishes its assignment, and stops it during rollback/shutdown. Canonical CLI stop also performs verified orphan cleanup and fails if the frontend survives. Canonical start output reports the assigned monitor URL.
 
-Consumer contract for the delivery session: invoke the compiled command with `--managed --port STARTING_PORT`, from user scratch rather than a checkout. Supply the actual backend port via `VAULTSPEC_RAG_PORT`, the scratch directory via `VAULTSPEC_RAG_STATUS_DIR`, and the initialized owner's absolute interpreter via `VAULTSPEC_RAG_MONITOR_PYTHON`. The child emits exactly `vaultspec.monitor.ready ACTUAL_PORT` followed by a newline after binding, keeps stdin open for the parent's ownership pipe, and exits within five seconds of EOF. The parent supervises the executable directly rather than a compiler or package-runner wrapper. Matching flag spelling is an implementation detail to reconcile with the producer before binary integration verification.
+Consumer contract for the delivery session: invoke the compiled command with `--managed --port STARTING_PORT`, from user scratch rather than a checkout. Supply the actual backend port via `VAULTSPEC_RAG_PORT`, the scratch directory via `VAULTSPEC_RAG_STATUS_DIR`, and the initialized owner's absolute interpreter via `VAULTSPEC_RAG_MONITOR_PYTHON`. The child emits exactly `vaultspec.monitor.ready ACCESS_LINK` followed by a newline after binding, where the link names the loopback address and actual port and carries the caller capability under `2026-10-04-monitor-capability-adr`; a bare port is refused as readiness. It keeps stdin open for the parent's ownership pipe, and exits within five seconds of EOF. The parent supervises the executable directly rather than a compiler or package-runner wrapper. Matching flag spelling is an implementation detail to reconcile with the producer before binary integration verification.
 
 Positive launch/HTTP/parent-death verification requires the real compiled executable. Keep those checks explicit and report their pending prerequisite until delivery provides it; prototype Vite evidence does not establish delivered-binary correctness.
 

@@ -204,10 +204,7 @@ class VaultSearcher:
             reranker: Optional pre-loaded ``CrossEncoder`` shared
                 across searchers (avoids ~560 MB VRAM per instance).
                 When ``None``, the searcher loads its own on first
-                use.
-            local_files_only: Load a lazy reranker from the local Hugging Face
-                cache without remote metadata requests. Normal product
-                construction remains online-capable by default.
+                use, from the model cache only.
         """
         from ..config._settings import get_config
 
@@ -231,7 +228,6 @@ class VaultSearcher:
         self._reranker_model_name: str = cfg.reranker_model
         self._sparse_enabled: bool = cfg.sparse_enabled
         self._reranker = settings.reranker
-        self._local_files_only = settings.local_files_only
         self._reranker_lock = threading.Lock()
 
     def _vault_docs_prefix(self) -> str:
@@ -269,6 +265,8 @@ class VaultSearcher:
 
         Raises:
             RuntimeError: If no CUDA GPU is available.
+            ModelSnapshotError: If the model cache holds no snapshot of the
+                reranker that passes its check.
         """
         if self._reranker is not None:
             return self._reranker
@@ -284,7 +282,7 @@ class VaultSearcher:
             # unserialised load races and crashes the process. The lock is
             # released before the forward pass in ``_rerank`` re-acquires it.
             with self._gpu_section():
-                self._reranker = load_reranker(local_files_only=self._local_files_only)
+                self._reranker = load_reranker()
             logger.info(
                 "CrossEncoder reranker loaded on %s: %s",
                 self._reranker.device,

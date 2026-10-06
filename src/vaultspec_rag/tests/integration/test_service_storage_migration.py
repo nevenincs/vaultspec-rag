@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ... import store_schema
+from ..._qdrant_server_client import open_server_client
 from ..._store_models import root_collection_prefix
 from ...cli._service_storage import _migrate_name_map
 from ...server._routes_storage import _shape_survey_payload, _SurveyPayloadRequest
@@ -82,8 +83,8 @@ def test_real_local_to_service_document_migration_is_idempotent(
         path=str(tmp_path / "local-qdrant"),
         force_disable_check_same_thread=sqlite3.threadsafety == 3,
     )
-    server = QdrantClient(
-        url=migration_qdrant_server.url,
+    server = open_server_client(
+        migration_qdrant_server.url,
         timeout=int(CHILD_PROCESS_TIMEOUT_SECONDS),
     )
     try:
@@ -121,11 +122,10 @@ def test_canonical_local_migration_closes_sqlite_resources_in_fresh_process(
     tmp_path: Path,
 ) -> None:
     """Real CLI migration must not strand the SDK's SQLite thread-mode probe."""
-    from qdrant_client import QdrantClient
 
     source = root_collection_prefix(tmp_path) + store_schema.DOCUMENT_COLLECTION
-    server = QdrantClient(
-        url=migration_qdrant_server.url,
+    server = open_server_client(
+        migration_qdrant_server.url,
         timeout=int(CHILD_PROCESS_TIMEOUT_SECONDS),
     )
     try:
@@ -187,10 +187,9 @@ def test_real_document_pruning_debris_and_maintenance_route(
     tmp_path: Path,
 ) -> None:
     """Cover document prefix pruning, debris classification, and route counts."""
-    from qdrant_client import QdrantClient
 
-    client = QdrantClient(
-        url=migration_qdrant_server.url,
+    client = open_server_client(
+        migration_qdrant_server.url,
         timeout=int(CHILD_PROCESS_TIMEOUT_SECONDS),
     )
     try:

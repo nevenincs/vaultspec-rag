@@ -30,18 +30,21 @@ class TestDenseBackendFallback:
         os.environ[EnvVar.DENSE_BACKEND.value] = "onnx"
         reset_config()
         try:
-            # optimum / onnxruntime-gpu are not project deps, so the ONNX
-            # construction fails and the loader must degrade to torch.
+            # The default dense model is pinned, and its release holds no ONNX
+            # graph a digest could vouch for, so the ONNX backend is not
+            # attempted for it and the loader must use torch.
             with caplog.at_level(logging.WARNING, logger="vaultspec_rag.embeddings"):
                 model = EmbeddingModel()
             vecs = model.encode_documents_on_device(["def f(x):\n    return x + 1\n"])
             assert vecs.shape[0] == 1
             assert vecs.shape[1] == model.dimension
-            # Pin the test to the fallback path: a future ONNX dep must not
-            # silently convert this into a happy-path test (review M1).
+            # Pinned to the reason the torch backend was used: an ONNX graph
+            # loaded for a pinned model would be an unverified file, and this
+            # must not quietly become a test of that.
             assert any(
-                "ONNX dense backend unavailable" in r.message for r in caplog.records
-            ), "expected the ONNX->torch fallback warning"
+                "ONNX dense backend is not used with a pinned model" in r.message
+                for r in caplog.records
+            ), "expected the warning that a pinned model stays on torch"
         finally:
             if prev is None:
                 os.environ.pop(EnvVar.DENSE_BACKEND.value, None)

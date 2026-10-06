@@ -4,18 +4,22 @@ This module is the single source of truth for which Qdrant server
 binary vaultspec-rag provisions and trusts. The version is pinned to
 the same minor line as the locked ``qdrant-client`` dependency (a
 regression test parses ``uv.lock`` and asserts the minors match), and
-every release asset carries a committed SHA256 digest that is verified
-before extraction and before first execution. Upgrades are a two-line
-edit here plus ``vaultspec-rag server qdrant install --upgrade``.
+every release asset carries two committed SHA256 digests: one for the
+archive, verified before extraction, and one for the executable inside
+it, verified before an install is replaced and before every execution.
+An upgrade replaces the version and both tables here, then runs
+``vaultspec-rag server qdrant install --upgrade``.
 
-The digests below were transcribed from the upstream GitHub release
-JSON for the pinned tag by a maintainer; the live release JSON is
-never consulted at provisioning time.
+Every digest below reproduces by streaming the asset from the shipped
+default release source and hashing it; the live release JSON is never
+consulted at provisioning time. Where the bytes come from is a setting;
+which bytes may run is decided here and cannot be configured.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
@@ -28,12 +32,13 @@ if TYPE_CHECKING:
 #:
 #: The lock tracks the newest client, so this pin is what follows it rather
 #: than what holds it back, and a guard fails the suite whenever the two drift
-#: apart. Moving the pin means re-deriving every digest below: stream each
-#: asset from the pinned host and hash it, and re-derive the OUTGOING version's
-#: digests the same way first. Reproducing the digests already committed here
-#: is what shows the method and the transport can be trusted to mint the next
-#: set - without that step, a digest taken alongside the artifact attests to
-#: nothing but itself.
+#: apart. Moving the pin means re-deriving every digest in both tables below:
+#: stream each asset from the shipped default release source - never from a
+#: mirror an operator configured - and hash the archive and the executable
+#: inside it, and re-derive the OUTGOING version's digests the same way first.
+#: Reproducing the digests already committed here is what shows the method and
+#: the transport can be trusted to mint the next set - without that step, a
+#: digest taken alongside the artifact attests to nothing but itself.
 QDRANT_SERVER_VERSION: Final[str] = "1.19.0"
 
 #: The pinned Qdrant server cannot complete uploaded-snapshot recovery on
@@ -42,26 +47,6 @@ QDRANT_SERVER_VERSION: Final[str] = "1.19.0"
 WINDOWS_SERVER_ARCHIVE_RESTORE_UNSUPPORTED_REASON: Final[str] = (
     "windows_server_archive_restore_unsupported: "
     "restore the archive with a supported non-Windows Qdrant server"
-)
-
-#: Base URL for upstream release downloads. The effective download URL
-#: is ``{base}/v{version}/{asset}``.
-QDRANT_RELEASE_BASE_URL: Final[str] = (
-    "https://github.com/qdrant/qdrant/releases/download"
-)
-
-#: Hosts a provisioning download may touch. GitHub serves release
-#: artifacts via a redirect to its object-store hosts (observed:
-#: ``release-assets.githubusercontent.com``; historically
-#: ``objects.githubusercontent.com``); any redirect outside this set
-#: is rejected as a potential hijack.
-ALLOWED_DOWNLOAD_HOSTS: Final[frozenset[str]] = frozenset(
-    {
-        "github.com",
-        "api.github.com",
-        "objects.githubusercontent.com",
-        "release-assets.githubusercontent.com",
-    }
 )
 
 #: The release asset filenames, named once.
@@ -85,11 +70,14 @@ ASSET_WINDOWS_X86: Final = "qdrant-x86_64-pc-windows-msvc.zip"
 #: archive BEFORE extraction; a mismatch deletes the partial download
 #: and fails the provisioning run.
 #:
-#: ``ASSET_LINUX_X86_MUSL`` is pinned but no platform selects it: the resolver
-#: sends x86-64 Linux to the gnu build. The digest is kept rather than dropped
-#: because removing a reviewed pin is how an unpinned asset later becomes
-#: reachable, but it is deliberately unreachable today and a guard asserts the
-#: two lists differ only by this one entry.
+#: ``ASSET_LINUX_X86_GNU`` is pinned but no platform selects it: the resolver
+#: sends x86-64 Linux to the static musl build, because the gnu build links
+#: against a glibc floor that moves with upstream's build runner and a verified
+#: install could then fail at spawn on an older host. The gnu pins are kept in
+#: both tables so an install made while gnu was selected keeps verifying - its
+#: manifest names the asset, and that name selects the digest to compare. A
+#: guard asserts the selectable set and the pinned set differ only by this one
+#: entry.
 QDRANT_ASSET_SHA256: Final[dict[str, str]] = {
     ASSET_MACOS_ARM: (
         "4e279a80cc1ebe73e859318ff86375af54c123887dd7ae46605c0eb6cb7c44e8"
@@ -111,8 +99,69 @@ QDRANT_ASSET_SHA256: Final[dict[str, str]] = {
     ),
 }
 
+#: Committed SHA256 digests of the server executable inside every asset of
+#: :data:`QDRANT_ASSET_SHA256` - the single ``qdrant`` / ``qdrant.exe`` member
+#: - keyed by the same asset name.
+#:
+#: This table, not the archive table, is what authorises execution. An archive
+#: digest stops being evidence once the archive is unpacked: what runs is a
+#: file in a writable directory, and a digest recorded beside that file attests
+#: to nothing but itself. The staged executable is compared against this table
+#: before it replaces an install, and the installed executable is compared
+#: again immediately before every spawn.
+#:
+#: How a value is derived is part of the pin. For each asset: stream it from
+#: the shipped default release source, confirm the archive hashes to its entry
+#: in the table above, then hash the one executable member extracted from that
+#: same archive.
+#: ``tools/qdrant_pin_digests.py`` does exactly this and prints both tables, so
+#: a version bump replaces both from one run. Never take a value from an
+#: installed copy, a provisioning manifest, or release metadata, and never run
+#: the binary to obtain it.
+#:
+#: The two tables have identical keys, and a guard asserts it: an asset with an
+#: archive pin and no executable pin would install and then never be allowed to
+#: start, and the reverse is a digest for something that cannot be fetched.
+QDRANT_EXECUTABLE_SHA256: Final[dict[str, str]] = {
+    ASSET_MACOS_ARM: (
+        "036b94e5a39f1ea8f2329c8e528fcea54f83eb9205221a7dc1623c9862acc74d"
+    ),
+    ASSET_LINUX_ARM_MUSL: (
+        "d78155928882a6aa39cca6b79872e32d3902f7f0ae40999812f3481754d0ad09"
+    ),
+    ASSET_MACOS_X86: (
+        "a4706c528df035ab9c8400cff1e5ebc8147d5a5f02adf383b19400e50a2b37bc"
+    ),
+    ASSET_WINDOWS_X86: (
+        "369c562eae3d89333a13abfdb522fa209e3f587c1217a1059d817e80814ea9d4"
+    ),
+    ASSET_LINUX_X86_GNU: (
+        "f3aa04dd54b303feca241878521e563a2e09ead71e14cbd6caef85e227498d50"
+    ),
+    ASSET_LINUX_X86_MUSL: (
+        "abfe97e1d0225111dec2f048790428f151846c8a049eefc85328b6c9eccaf419"
+    ),
+}
+
 #: Name of the provisioning manifest written next to the binary.
 MANIFEST_FILENAME: Final[str] = "manifest.json"
+
+#: Ends the name of every working file an install creates in a version
+#: directory. Nothing reads a file carrying it as an install, so a run killed
+#: before it could clean up strands no executable.
+STAGING_SUFFIX: Final[str] = ".staging"
+
+#: The manifest's ``source`` values: how the pinned release reached the managed
+#: directory. Fetched; unpacked from a local copy of the same official archive;
+#: or not recorded, for an executable found to be the pinned release whose
+#: manifest was missing or wrong and had to be written afresh.
+#:
+#: The manifest is a record and nothing more. No verdict reads it: an install
+#: is the pinned release when its executable hashes to a committed digest, and
+#: is refused when it does not, whatever a manifest beside it says.
+MANIFEST_SOURCE_DOWNLOAD: Final = "download"
+MANIFEST_SOURCE_ARCHIVE: Final = "archive"
+MANIFEST_SOURCE_UNRECORDED: Final = "unrecorded"
 
 
 @dataclass
@@ -125,8 +174,8 @@ class ProvisionReport:
             values, so JSON consumers can filter on ``"created"``.
         version: The pinned server version the run targeted.
         asset: The release asset name for this platform.
-        url: The upstream download URL (informational; empty for
-            operator-supplied binaries).
+        url: The upstream download URL (informational; empty when nothing
+            was or would be fetched).
         binary: Path the active binary lives at (or would live at for
             a dry run).
         sha256: The committed digest the run verified (or would
@@ -156,24 +205,55 @@ class ProvisionReport:
         }
 
 
+class BinarySource(StrEnum):
+    """Where a qdrant binary came from, which decides what it is held to.
+
+    The values are what status surfaces and envelopes print. A source says
+    what was checked before the binary ran, so two origins held to different
+    evidence never share a value. Every source that can run is held to a
+    digest; they differ in who states it.
+    """
+
+    #: Named by the operator binary settings: a path and the SHA256 the
+    #: operator declares for it, both from the process environment. Held to
+    #: that declared digest. The committed pin does not apply.
+    OPERATOR_SETTING = "env"
+    #: The managed install: the pinned release, however it reached the managed
+    #: directory. Held to the committed executable digest its content was
+    #: found to match when it was resolved.
+    MANAGED_DOWNLOAD = "provisioned"
+    #: A running server this process did not spawn. It names no binary and is
+    #: never executable; it exists so an attached supervisor reports a source
+    #: of its own instead of borrowing one.
+    ATTACHED = "attached"
+
+    @property
+    def operator_supplied(self) -> bool:
+        """Whether an operator, not the committed pin, vouches for the binary."""
+        return self is BinarySource.OPERATOR_SETTING
+
+
 @dataclass
 class ResolvedBinary:
     """An executable qdrant binary plus where it came from.
 
     Attributes:
         path: Absolute path to the binary.
-        source: Resolution origin - ``"env"`` (operator env var),
-            ``"provisioned"`` (the managed bin dir), or ``"path"``
-            (found on ``PATH``).
-        version: The provisioned version when ``source`` is
-            ``"provisioned"``; empty otherwise (operator binaries are
-            trusted as-is).
-        sha256: The recorded binary digest from the provisioning
-            manifest when available; empty otherwise.
+        source: Resolution origin, which selects the check the binary must
+            pass before it runs.
+        version: The server version the binary is known to be: the pinned
+            version for the managed install, and for an operator binary only
+            when the digest declared for it is a pinned release executable's,
+            because a file that hashes to that digest is that release. Empty
+            when unknown, which is every other operator binary.
+        sha256: The digest the executable must hash to before it may run: the
+            committed constant its content matched for the managed install,
+            the operator's declaration for an operator binary. Never read from
+            a manifest. No file hashes to an empty one.
     """
 
     path: Path
-    source: str
+    source: BinarySource
     version: str = ""
     sha256: str = ""
 
@@ -203,6 +283,16 @@ class QdrantRuntimeState:
     version: str = QDRANT_SERVER_VERSION
     restarts: int = 0
     extra: dict[str, object] = field(default_factory=dict)
+
+    @property
+    def restart_refusal_note(self) -> str:
+        """A clause saying why the latest restart started nothing, or ``""``.
+
+        Written to follow a statement that the server is not live, so every
+        surface that makes that statement gives the same cause for it.
+        """
+        refusal = str(self.extra.get("restart_refusal") or "")
+        return f"; its restart started nothing: {refusal}" if refusal else ""
 
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-serialisable view of this state."""

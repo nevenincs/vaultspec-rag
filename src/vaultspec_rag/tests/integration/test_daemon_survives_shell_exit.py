@@ -138,12 +138,12 @@ class TestBreakawayFallback:
             cmd = [str(tmp_path / "does-not-exist-interpreter"), "-m", "noop"]
             if sys.platform == "win32":
                 with pytest.raises(DaemonBreakawayError):
-                    _spawn_windows(cmd, dict(os.environ), log_fd)
+                    _spawn_windows(cmd, dict(os.environ), log_fd, cwd=tmp_path)
             else:
                 # Off-Windows, _spawn_windows still escalates an unspawnable
                 # command (no breakaway/detach available) to the loud error,
                 # which is the contract under test: never a silent doomed spawn.
                 with pytest.raises((DaemonBreakawayError, OSError)):
-                    _spawn_windows(cmd, dict(os.environ), log_fd)
+                    _spawn_windows(cmd, dict(os.environ), log_fd, cwd=tmp_path)
         finally:
             os.close(log_fd)

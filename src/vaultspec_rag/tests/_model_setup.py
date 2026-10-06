@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, NoReturn
 from urllib.parse import quote
 
 from .._model_cache import cached_snapshot_is_complete
-from .._sparse_profile import sparse_model_revision
+from .._model_pins import committed_revision
 
 #: The Hub's own mirror variable. The product never reads it - the Hub
 #: library does - so the fixtures that report or redirect the endpoint are
@@ -292,7 +292,9 @@ def _missing_model_ids(
     return [
         model_id
         for model_id in model_ids
-        if not cached_snapshot_is_complete(model_id, cache_dir=cache_dir)
+        if not cached_snapshot_is_complete(
+            model_id, revision=committed_revision(model_id), cache_dir=cache_dir
+        )
     ]
 
 
@@ -351,7 +353,7 @@ def _worker(
         metadata_url = (
             f"{effective_endpoint.rstrip('/')}/api/models/"
             f"{quote(model_id, safe='/')}/revision/"
-            f"{sparse_model_revision(model_id) or 'main'}"
+            f"{committed_revision(model_id) or 'main'}"
         )
         print(
             f"acquiring model={model_id!r} metadata_url={metadata_url!r} "
@@ -360,7 +362,7 @@ def _worker(
         )
         snapshot = snapshot_download(
             model_id,
-            revision=sparse_model_revision(model_id),
+            revision=committed_revision(model_id),
             cache_dir=cache_dir,
             endpoint=endpoint,
         )

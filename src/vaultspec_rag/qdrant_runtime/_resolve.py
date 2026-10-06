@@ -2,13 +2,26 @@
 
 Resolution order for the binary the service will execute:
 
-1. ``VAULTSPEC_RAG_QDRANT_BINARY`` - operator-supplied path (the
-   air-gapped / proxy / policy escape hatch). Trusted as-is.
-2. The managed bin dir (``{status_dir}/bin/qdrant/{version}/``) when a
-   provisioning manifest is present and consistent with the committed
-   pin.
-3. ``qdrant`` on ``PATH`` - a convenience for system-managed installs;
-   version is not guaranteed and a skew warning is logged downstream.
+1. The operator binary: ``VAULTSPEC_RAG_QDRANT_BINARY`` names the file and
+   ``VAULTSPEC_RAG_QDRANT_BINARY_SHA256`` declares its digest, both from
+   the process environment and both required together. The path must be
+   absolute and name a regular file that is not a link. Half the pair, or
+   a path that names anything else, is an error and never a reason to
+   fall through: an operator who named a binary must not be handed
+   another, and no binary runs without a digest to hold it to.
+2. The managed bin dir (``{status_dir}/bin/qdrant/{version}/``) when the
+   executable in it is the pinned release, which is decided by hashing
+   it. An executable there that is anything else is an error, not an
+   absent install: it is never run and never silently replaced.
+
+Nothing else is consulted. In particular the binary is never looked up
+on ``PATH`` or in the working directory: that lookup runs an unpinned
+file of unknown version, and on Windows it finds one in the directory
+the service happened to be started from.
+
+What the managed directory holds is judged in one place, shared with the
+provisioner, so the two cannot disagree about whether an install exists.
+The manifest beside the executable is a record and is not read here.
 """
 
 from __future__ import annotations
@@ -17,7 +30,6 @@ import json
 import logging
 import os
 import platform as _platform
-import shutil
 import sys
 import time
 import urllib.error
@@ -42,29 +54,42 @@ from .._process_probe import (
     send_signal,
 )
 from ..config._settings import get_config, managed_status_dir
-from ..config._types import EnvVar
+from ..config._types import EnvVar, OperatorBinaryPairError
 from ._constants import (
     ASSET_LINUX_ARM_MUSL,
-    ASSET_LINUX_X86_GNU,
+    ASSET_LINUX_X86_MUSL,
     ASSET_MACOS_ARM,
     ASSET_MACOS_X86,
     ASSET_WINDOWS_X86,
     MANIFEST_FILENAME,
     QDRANT_ASSET_SHA256,
+    QDRANT_EXECUTABLE_SHA256,
     QDRANT_SERVER_VERSION,
+    BinarySource,
     ResolvedBinary,
 )
+from ._managed_install import InstallState, ManagedInstall, classify_managed_binary
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "QDRANT_BINARY_BUSY",
+    "QDRANT_BINARY_INVALID",
+    "QDRANT_BINARY_UNVERIFIED",
+    "QDRANT_INSTALL_FOREIGN_FILES",
+    "QDRANT_INSTALL_INVALID",
+    "QdrantBinaryError",
     "QdrantEndpointProbe",
     "QdrantIdentity",
+    "UnsupportedPlatformError",
     "asset_for_platform",
     "binary_filename",
     "classify_qdrant_state",
     "decide_qdrant_action",
     "has_provisioned_binary",
+    "managed_install_refusal",
+    "operator_binary_fault",
+    "operator_setting_refusal",
     "owner_pid_witness_state",
     "probe_qdrant_endpoint",
     "qdrant_bin_dir",
@@ -150,11 +175,24 @@ _ARM_MACHINES = frozenset({"arm64", "aarch64"})
 _X86_MACHINES = frozenset({"amd64", "x86_64"})
 
 
+class UnsupportedPlatformError(RuntimeError):
+    """No upstream release asset exists for the platform/arch pair.
+
+    Distinct from a pin-table defect so a caller can report an unsupported
+    host as an outcome instead of a crash. Such a host is never routed to
+    another architecture's build; the operator binary setting is its route.
+    """
+
+
 def asset_for_platform(
     platform: str | None = None,
     machine: str | None = None,
 ) -> str:
-    """Return the release asset name for a platform/arch pair.
+    """Return the release asset name a new install uses on a platform/arch pair.
+
+    Linux selects the static musl build on both architectures, so one linkage
+    model applies and no host glibc version can fail a verified install at
+    spawn.
 
     Args:
         platform: ``sys.platform`` value (``win32`` / ``darwin`` /
@@ -163,12 +201,13 @@ def asset_for_platform(
             machine.
 
     Returns:
-        The asset filename, guaranteed to be a key of
-        :data:`QDRANT_ASSET_SHA256`.
+        The asset filename, guaranteed to be a key of both
+        :data:`QDRANT_ASSET_SHA256` and :data:`QDRANT_EXECUTABLE_SHA256`.
 
     Raises:
-        RuntimeError: If the platform/arch pair has no upstream
+        UnsupportedPlatformError: If the platform/arch pair has no upstream
             release asset.
+        RuntimeError: If the selected asset is missing from a pin table.
     """
     plat = (platform or sys.platform).lower()
     mach = (machine or _platform.machine()).lower()
@@ -183,17 +222,18 @@ def asset_for_platform(
             asset = ASSET_MACOS_X86
     elif plat.startswith("linux"):
         if mach in _X86_MACHINES:
-            asset = ASSET_LINUX_X86_GNU
+            asset = ASSET_LINUX_X86_MUSL
         elif mach in _ARM_MACHINES:
             asset = ASSET_LINUX_ARM_MUSL
 
     if asset is None:
-        raise RuntimeError(
+        raise UnsupportedPlatformError(
             f"No Qdrant server release asset exists for platform={plat!r} "
-            f"machine={mach!r}. Supply a binary via "
-            f"{EnvVar.QDRANT_BINARY.value} instead."
+            f"machine={mach!r}. Supply a binary by setting "
+            f"{EnvVar.QDRANT_BINARY.value} to its absolute path and "
+            f"{EnvVar.QDRANT_BINARY_SHA256.value} to its SHA256."
         )
-    if asset not in QDRANT_ASSET_SHA256:
+    if asset not in QDRANT_ASSET_SHA256 or asset not in QDRANT_EXECUTABLE_SHA256:
         raise RuntimeError(
             f"Asset {asset!r} has no committed SHA256 digest; the pin "
             "table is incomplete."
@@ -400,11 +440,22 @@ def _reap_on_windows(
     """
     import subprocess
 
+    from .._program_lookup import Where, find_program
+
     if target_gone():
         return True
+    # An operating-system tool, run from the operating system's own directory:
+    # by bare name it would be looked for in the working directory first, and
+    # this one is handed a process to kill.
+    taskkill = find_program("taskkill", Where.SYSTEM)
+    if taskkill is None:
+        logger.warning(
+            "taskkill is not in the system directory; pid %d not reaped", pid
+        )
+        return target_gone()
     try:
         subprocess.run(  # fixed argv, no shell, trusted pid
-            ["taskkill", "/F", "/T", "/PID", str(pid)],
+            [taskkill, "/F", "/T", "/PID", str(pid)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
@@ -745,56 +796,147 @@ def decide_qdrant_action(
     return ("spawn", state)
 
 
-def _resolve_env_binary() -> ResolvedBinary | None:
-    raw = get_config().qdrant_binary
-    if not raw:
-        return None
-    candidate = Path(raw).expanduser()
-    if candidate.is_file():
-        return ResolvedBinary(path=candidate, source="env")
-    logger.debug(
-        "%s points at %s which does not exist; ignoring",
-        EnvVar.QDRANT_BINARY.value,
-        candidate,
-    )
+#: Machine-readable code for operator binary settings that cannot name a
+#: binary: only half the pair is set, or the path is not an absolute path to a
+#: regular, non-link file.
+QDRANT_BINARY_INVALID = "qdrant_binary_invalid"
+#: Machine-readable code for a binary that does not hash to the digest it is
+#: held to: a committed one for the managed install, the declared one for an
+#: operator binary.
+QDRANT_BINARY_UNVERIFIED = "qdrant_binary_unverified"
+#: Machine-readable code for a binary that could not be read, so nothing is
+#: known about its content. Usually gone a moment later; never a reason to
+#: replace the file.
+QDRANT_BINARY_BUSY = "qdrant_binary_busy"
+#: Machine-readable code for a managed directory whose installed name is taken
+#: by something that is not a file, which no install can be written over.
+QDRANT_INSTALL_INVALID = "qdrant_install_invalid"
+#: Machine-readable code for a managed directory that holds something no
+#: install wrote beside the executable, which could be loaded into the server.
+QDRANT_INSTALL_FOREIGN_FILES = "qdrant_install_foreign_files"
+
+
+class QdrantBinaryError(RuntimeError):
+    """The qdrant binary that would run is refused.
+
+    Attributes:
+        error: A stable machine-readable code naming why, for envelopes.
+    """
+
+    def __init__(self, error: str, message: str) -> None:
+        super().__init__(message)
+        self.error = error
+
+
+def operator_binary_fault(candidate: Path) -> str | None:
+    """Say why *candidate* may not be the operator binary, or ``None``.
+
+    Absolute, so the working directory can never choose the file. Not a link,
+    so what is named is what runs and cannot be re-pointed after the fact.
+    Asked at resolution and again at every spawn.
+    """
+    if not candidate.is_absolute():
+        return "is not an absolute path"
+    if candidate.is_symlink():
+        return "is a symbolic link"
+    if not candidate.is_file():
+        return "is not an existing regular file"
     return None
 
 
-def _resolve_provisioned(version: str) -> ResolvedBinary | None:
-    version_dir = qdrant_bin_dir(version)
-    binary = version_dir / binary_filename()
-    if not binary.is_file():
+def operator_setting_refusal(candidate: Path, fault: str) -> QdrantBinaryError:
+    """Build the refusal for an operator setting that names *candidate*."""
+    return QdrantBinaryError(
+        QDRANT_BINARY_INVALID,
+        f"{EnvVar.QDRANT_BINARY.value} names {candidate}, which {fault}. "
+        "It must name an absolute path to a regular file that is not a "
+        f"link. Correct it, or unset it and {EnvVar.QDRANT_BINARY_SHA256.value} "
+        "to use the managed qdrant server.",
+    )
+
+
+def _resolve_env_binary() -> ResolvedBinary | None:
+    try:
+        declared = get_config().qdrant_operator_binary
+    except OperatorBinaryPairError as exc:
+        # Half a pair names either a binary nothing vouches for or a digest
+        # with nothing to check. Neither is "no operator binary".
+        raise QdrantBinaryError(QDRANT_BINARY_INVALID, str(exc)) from exc
+    if declared is None:
         return None
-    manifest = read_manifest(version_dir)
-    if manifest is None:
-        logger.debug(
-            "provisioned qdrant binary at %s has no manifest; ignoring",
-            binary,
-        )
-        return None
-    recorded_version = str(manifest.get("version", ""))
-    if recorded_version != version:
-        logger.debug(
-            "provisioned qdrant manifest version %s != requested %s; ignoring",
-            recorded_version,
-            version,
-        )
-        return None
+    candidate = Path(declared.path).expanduser()
+    fault = operator_binary_fault(candidate)
+    if fault is not None:
+        raise operator_setting_refusal(candidate, fault)
+    # A file that hashes to a pinned release executable's digest is that
+    # release, and every spawn enforces the digest. Anything else is a binary
+    # whose version nobody has established.
+    is_pinned_release = declared.sha256 in QDRANT_EXECUTABLE_SHA256.values()
     return ResolvedBinary(
-        path=binary,
-        source="provisioned",
-        version=recorded_version,
-        sha256=str(manifest.get("binary_sha256", "")),
+        path=candidate,
+        source=BinarySource.OPERATOR_SETTING,
+        version=QDRANT_SERVER_VERSION if is_pinned_release else "",
+        sha256=declared.sha256,
+    )
+
+
+#: The code each unusable managed install is refused under. A healthy or an
+#: absent one is not refused, so neither has an entry.
+_INSTALL_REFUSAL_CODES = {
+    InstallState.REFUSED: QDRANT_BINARY_UNVERIFIED,
+    InstallState.UNREADABLE: QDRANT_BINARY_BUSY,
+    InstallState.OBSTRUCTED: QDRANT_INSTALL_INVALID,
+    InstallState.ACCOMPANIED: QDRANT_INSTALL_FOREIGN_FILES,
+}
+
+
+def managed_install_refusal(install: ManagedInstall) -> QdrantBinaryError | None:
+    """Return the refusal for a managed install that may not run, or ``None``.
+
+    The sentence is the classifier's, so a start, a status read and an install
+    run all tell an operator the same thing about the same directory; only the
+    code that envelopes carry is chosen here.
+    """
+    code = _INSTALL_REFUSAL_CODES.get(install.state)
+    return None if code is None else QdrantBinaryError(code, install.refusal)
+
+
+def _managed_install(version: str) -> ManagedInstall:
+    """Judge what the managed install's name for *version* holds."""
+    return classify_managed_binary(qdrant_bin_dir(version) / binary_filename())
+
+
+def _managed_binary(install: ManagedInstall) -> ResolvedBinary | None:
+    """Turn the verdict on a managed install into the binary that may run.
+
+    Raises:
+        QdrantBinaryError: When the installed name holds something that may
+            not run.
+    """
+    refusal = managed_install_refusal(install)
+    if refusal is not None:
+        raise refusal
+    if install.state is not InstallState.HEALTHY:
+        return None
+    # The committed digests are the pinned version's, so a file that matches
+    # one is that version whatever directory it sits in. The digest it matched
+    # is carried forward: every spawn holds the file to it again.
+    return ResolvedBinary(
+        path=install.binary,
+        source=BinarySource.MANAGED_DOWNLOAD,
+        version=QDRANT_SERVER_VERSION,
+        sha256=install.sha256,
     )
 
 
 def has_provisioned_binary(version: str = QDRANT_SERVER_VERSION) -> bool:
-    """Return whether a verified provisioned binary exists for *version*.
+    """Return whether the managed directory for *version* holds the pinned release.
 
-    Lets callers detect when an unpinned env/PATH binary would shadow a
-    properly provisioned (pinned, digest-checked) install.
+    Lets callers detect when an operator binary would shadow a managed
+    install. The executable is hashed: a file that is merely present is not
+    an install.
     """
-    return _resolve_provisioned(version) is not None
+    return _managed_install(version).state is InstallState.HEALTHY
 
 
 def resolve_binary(
@@ -802,26 +944,30 @@ def resolve_binary(
 ) -> ResolvedBinary | None:
     """Resolve the active qdrant binary, or ``None`` when absent.
 
-    Resolution order: operator env var, the managed provisioned dir
-    for *version*, then ``PATH``.
+    Resolution order: the operator binary setting, then the managed
+    provisioned dir for *version*. Nothing is looked up on ``PATH`` or in
+    the working directory.
+
+    An operator binary is returned without being hashed; every spawn and
+    every status check hashes it. The managed executable is hashed here,
+    because whether an install exists at all is a question about its content.
 
     Args:
-        version: The provisioned version to look for in the managed
-            dir (the pinned version by default).
+        version: The managed version directory to look in (the pinned
+            version's by default; only the pinned release can be found
+            healthy in any of them).
 
     Returns:
-        The resolved binary with its origin, or ``None`` when no
-        candidate exists.
+        The resolved binary with its origin, or ``None`` when the operator
+        setting is unset and nothing is at the managed install's name.
+
+    Raises:
+        QdrantBinaryError: When only half the operator pair is set, or its
+            path does not name an absolute path to a regular, non-link file;
+            the managed install is deliberately not consulted in that case.
+            Also when the managed install's name holds anything but the
+            pinned release: content that is not it, a file that cannot be
+            read, or something that is not a file. And when it holds the
+            pinned release with something beside it that no install wrote.
     """
-    resolved = _resolve_env_binary()
-    if resolved is not None:
-        return resolved
-
-    resolved = _resolve_provisioned(version)
-    if resolved is not None:
-        return resolved
-
-    on_path = shutil.which("qdrant")
-    if on_path:
-        return ResolvedBinary(path=Path(on_path), source="path")
-    return None
+    return _resolve_env_binary() or _managed_binary(_managed_install(version))

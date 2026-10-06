@@ -22,7 +22,9 @@ from .._operator_commands import (
     IndexCommandOptions,
     index_command,
     server_jobs_command,
+    server_restart_remedy,
     server_status_command,
+    server_stop_command,
 )
 from .._source_types import PublicSourceType
 from .._timestamps import parse_iso_timestamp
@@ -533,11 +535,20 @@ def _vector_service_finding(
     now: float,
 ) -> DegradedFinding | None:
     _ = now
-    if health_section(health, "qdrant").get("alive") is not False:
+    section = health_section(health, "qdrant")
+    if section.get("alive") is not False:
         return None
+    # The service restarts a dead server once on its own; a server still
+    # reported dead needs a new service, so the remedy is both commands and
+    # the first of them is the one offered to run.
+    refusal = str(section.get("restart_refusal") or "")
     return DegradedFinding(
         cause="the vector storage service is not live",
-        command="vaultspec-rag server qdrant status",
+        detail=(
+            (f"its restart started nothing: {refusal}; " if refusal else "")
+            + server_restart_remedy()
+        ),
+        command=server_stop_command(),
         family=DegradationReason.VECTOR_SERVICE_UNAVAILABLE,
     )
 

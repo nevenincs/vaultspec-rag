@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from enum import StrEnum
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from vaultspec_core.env_values import parse_bool
 
@@ -109,6 +109,19 @@ class EnvVar(StrEnum):
     EMBEDDING_DIMENSION = "VAULTSPEC_RAG_EMBEDDING_DIMENSION"
     SPARSE_MODEL = "VAULTSPEC_RAG_SPARSE_MODEL"
     RERANKER_MODEL = "VAULTSPEC_RAG_RERANKER_MODEL"
+    # The commit each of those two is fetched and loaded at. Unset, a default
+    # model uses the commit compiled into this package and a model the
+    # operator named uses none. The sparse model has no such variable: its
+    # repository ships the code that builds it, and a commit the environment
+    # could change would select code no committed digest covers.
+    EMBEDDING_MODEL_REVISION = "VAULTSPEC_RAG_EMBEDDING_MODEL_REVISION"
+    RERANKER_MODEL_REVISION = "VAULTSPEC_RAG_RERANKER_MODEL_REVISION"
+    # Where the models above are downloaded from. Exported to the hub
+    # client's own ``HF_ENDPOINT`` before that client is first imported,
+    # because the client reads its endpoint once, at import.
+    RAG_HF_ENDPOINT = "VAULTSPEC_RAG_HF_ENDPOINT"
+    # The longest one model fetch may take, every repository together.
+    MODEL_FETCH_DEADLINE_SECONDS = "VAULTSPEC_RAG_MODEL_FETCH_DEADLINE_SECONDS"
     TYPESAFE_API_KEY = "VAULTSPEC_RAG_TYPESAFE_API_KEY"
     EMBEDDING_BATCH_SIZE = "VAULTSPEC_RAG_EMBEDDING_BATCH_SIZE"
     EMBEDDING_ENCODE_BATCH_SIZE = "VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE"
@@ -192,7 +205,18 @@ class EnvVar(StrEnum):
     QDRANT_SERVER = "VAULTSPEC_RAG_QDRANT_SERVER"
     QDRANT_PORT = "VAULTSPEC_RAG_QDRANT_PORT"
     QDRANT_BINARY = "VAULTSPEC_RAG_QDRANT_BINARY"
+    # The SHA256 the operator declares for that binary. The two are one
+    # setting in two halves: a path with no digest would be a binary run
+    # unverified, and a digest with no path verifies nothing.
+    QDRANT_BINARY_SHA256 = "VAULTSPEC_RAG_QDRANT_BINARY_SHA256"
     QDRANT_STORAGE_DIR = "VAULTSPEC_RAG_QDRANT_STORAGE_DIR"
+    # Where the managed qdrant binary comes from, and whether a host start
+    # fetches it unasked. The digests the download is checked against are
+    # code constants and have no variable here: a source may be redirected,
+    # the bytes it must serve may not.
+    QDRANT_AUTO_PROVISION = "VAULTSPEC_RAG_QDRANT_AUTO_PROVISION"
+    QDRANT_RELEASE_BASE_URL = "VAULTSPEC_RAG_QDRANT_RELEASE_BASE_URL"
+    QDRANT_DOWNLOAD_HOSTS = "VAULTSPEC_RAG_QDRANT_DOWNLOAD_HOSTS"
     # Scheduled storage maintenance (auto-prune) knobs.
     STORAGE_AUTOPRUNE = "VAULTSPEC_RAG_STORAGE_AUTOPRUNE"
     STORAGE_AUTOPRUNE_INTERVAL_MINUTES = (
@@ -241,6 +265,8 @@ class EnvVar(StrEnum):
     # Third-party env vars this codebase reads or sets - defined here so
     # the string literal lives in exactly one place.
     HF_HOME = "HF_HOME"
+    HF_HUB_CACHE = "HF_HUB_CACHE"
+    HF_ENDPOINT = "HF_ENDPOINT"
     HF_HUB_OFFLINE = "HF_HUB_OFFLINE"
     HF_HUB_DOWNLOAD_TIMEOUT = "HF_HUB_DOWNLOAD_TIMEOUT"
     TRANSFORMERS_OFFLINE = "TRANSFORMERS_OFFLINE"
@@ -253,11 +279,67 @@ class EnvVar(StrEnum):
     UV_CACHE_DIR = "UV_CACHE_DIR"
     UV_TOOL_DIR = "UV_TOOL_DIR"
     VIRTUAL_ENV = "VIRTUAL_ENV"
+    # The interpreter's safe-path switch. Never read as configuration: it is
+    # set on this process only while an indexing worker pool is open, because
+    # the environment is the one thing that reaches a pool worker's start.
+    PYTHON_SAFE_PATH = "PYTHONSAFEPATH"
+    # The program search path and, on Windows, the extensions a program name
+    # may carry. Read to find a helper program in an absolute location: an
+    # empty or relative entry of the search path is never searched.
+    PATH = "PATH"
+    PATHEXT = "PATHEXT"
     # The operating system's temporary-directory conventions, read to decide
     # whether an indexed root was throwaway.
     TEMP = "TEMP"
     TMP = "TMP"
     TMPDIR = "TMPDIR"
+
+
+class OperatorBinaryPairError(ValueError):
+    """Exactly one of the operator binary's path and digest is set.
+
+    Its own type so that the code resolving the binary can report this one
+    refusal as a fault of the binary configuration without relabelling every
+    other unusable setting as one. It is a ``ValueError`` like any other
+    settings refusal, so nothing that handles those sees a difference.
+    """
+
+
+class OperatorBinary(NamedTuple):
+    """A Qdrant binary the operator supplies, and the digest they declare for it.
+
+    The two travel together because neither is usable alone. The digest is
+    what the operator states the file to be; whoever runs the file hashes it
+    and compares.
+
+    Attributes:
+        path: The configured path, as written. Whether it names an absolute
+            regular file is judged where the binary is resolved.
+        sha256: The declared SHA256, as 64 lower-case hexadecimal characters.
+    """
+
+    path: str
+    sha256: str
+
+
+class ModelRepo(NamedTuple):
+    """One model this configuration needs, and how firmly it is identified.
+
+    Attributes:
+        label: What the model is for, as an operator reads it.
+        repo: The hub repository id.
+        revision: The commit it is fetched and loaded at, or ``None`` when
+            none is named and the hub's default branch decides.
+        pinned: Whether file digests are committed for this repository at
+            this commit. Only then can a snapshot be checked against
+            anything; every other model is loaded on the hub's word. It says
+            a check is possible, not that one has been made.
+    """
+
+    label: str
+    repo: str
+    revision: str | None
+    pinned: bool
 
 
 #: Default for ``EnvVar.STATUS_DIR``, declared beside the env var it defaults
@@ -270,10 +352,9 @@ def hf_cache_only() -> bool:
     """Return whether supported Hugging Face offline mode is enabled.
 
     ``HF_HUB_OFFLINE`` is the authoritative Hub switch. Transformers also
-    documents ``TRANSFORMERS_OFFLINE`` for cache-only model loading, so honour
-    either value and pass ``local_files_only=True`` explicitly to model
-    constructors. Normal product construction remains online-capable when both
-    variables are unset.
+    documents ``TRANSFORMERS_OFFLINE``, so either value is honoured. What it
+    decides is whether the provisioning commands may fetch a model. Loading
+    one never fetches, so no load consults this.
 
     These two variables belong to the Hub and Transformers, not to this
     project, so a word neither table recognises is read as "not offline"

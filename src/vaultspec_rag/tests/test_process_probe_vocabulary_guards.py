@@ -56,15 +56,16 @@ class TestPinnedAssetNamesAreNamedOnce:
     instead of as a bad edit.
 
     The reverse direction had no check at all, and the two lists do differ:
-    six assets are pinned, five are reachable. The x86-64 musl build is pinned
-    and no platform selects it. That is deliberate - dropping a reviewed pin is
-    how an unpinned asset later becomes reachable - so it is asserted as the
-    one known exception rather than left as an unexplained gap.
+    six assets are pinned, five are reachable. The x86-64 gnu build is pinned
+    and no platform selects it. That is deliberate - an install made while it
+    was selected is still verified against its pin, and a new install must not
+    depend on the host's glibc - so it is asserted as the one known exception
+    rather than left as an unexplained gap.
     """
 
     #: Pinned but deliberately unreachable; see the constant's comment.
     _UNREACHABLE: ClassVar[frozenset[str]] = frozenset(
-        {"qdrant-x86_64-unknown-linux-musl.tar.gz"}
+        {"qdrant-x86_64-unknown-linux-gnu.tar.gz"}
     )
 
     #: Every pair the resolver accepts today.
@@ -108,7 +109,7 @@ class TestPinnedAssetNamesAreNamedOnce:
         """Both directions, so neither list can drift unnoticed.
 
         Proven able to fail: adding a pin with no selecting platform, or
-        making the musl build selectable, fails the second assertion.
+        sending x86-64 Linux back to the gnu build, fails the second assertion.
 
         The first assertion needs the resolver's OWN pin check removed before
         it can be reached - pointing a branch at an unpinned asset raises

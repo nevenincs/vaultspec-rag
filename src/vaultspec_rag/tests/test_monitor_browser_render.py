@@ -496,7 +496,8 @@ def test_carbon_delete_targets_the_selected_terminal_job(
     )
     result = browser.evaluate(
         "(async () => { const payload = await (await "
-        "fetch('/api/monitor/jobs?limit=100')).json(); return "
+        "fetch('/api/monitor/jobs?limit=100',{headers:{Authorization:'Bearer '+"
+        "sessionStorage.getItem('monitor-capability')}})).json(); return "
         "payload.jobs.map(job => job.id); })()"
     )
     assert first in cast("list[str]", result)

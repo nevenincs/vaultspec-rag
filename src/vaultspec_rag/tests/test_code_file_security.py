@@ -145,6 +145,39 @@ def test_safe_source_reads_preserve_content(
     assert response.json() == {"content": content}
 
 
+def test_an_absolute_spelling_is_judged_on_the_names_inside_the_workspace(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """A workspace kept under a hidden directory still serves its own source.
+
+    The name rules refuse a dot-prefixed component, and an absolute spelling
+    carries the workspace's own location. That location is not a name the
+    workspace holds, so it is not judged; a hidden directory inside the
+    workspace still is.
+
+    Mutation check: with the requested spelling judged whole, the first
+    request is refused as ``access denied`` and the first assertion fails.
+    Restoring the root-relative reading passes.
+    """
+    root = tmp_path / ".kept-here" / "project"
+    (root / ".vault").mkdir(parents=True)
+    (root / ".private").mkdir()
+    source = root / "main.py"
+    source.write_text("print('hello')\n", encoding="utf-8")
+    hidden = root / ".private" / "main.py"
+    hidden.write_text("print('hidden')\n", encoding="utf-8")
+
+    served = client.post(
+        "/code-file", json={"path": str(source), "project_root": str(root)}
+    )
+    refused = client.post(
+        "/code-file", json={"path": str(hidden), "project_root": str(root)}
+    )
+
+    assert served.json() == {"content": "print('hello')\n"}
+    assert refused.json() == {"error": "access denied"}
+
+
 def test_alias_outside_workspace_remains_denied(
     client: TestClient, workspace: Path
 ) -> None:

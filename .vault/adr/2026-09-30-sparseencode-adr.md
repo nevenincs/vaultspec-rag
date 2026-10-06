@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#sparseencode'
 date: '2026-09-30'
-modified: '2026-09-30'
+modified: '2026-10-05'
 body_schema: 'body-v2'
-body_hash: 'sha256:e6ab7aa035aeed15c08044921b40fcb87501c126bf24880e628a45b6536fcb0e'
+body_hash: 'sha256:aef3d3610480c8230b02231d48fb308b25497a0c723ab616c44c9b0bce5af530'
 related:
   - "[[2026-09-30-sparseencode-research]]"
   - "[[2026-03-06-gpu-only-rag-stack-adr]]"
@@ -40,6 +40,8 @@ Existing model identity must refuse mixed old/new vectors and drive a full rebui
 This ruling refines the sparse-model and dependency subsections of `2026-03-06-gpu-only-rag-stack-adr`, and retires the authentication-specific guidance in `2026-06-09-operability-hardening-adr` and relevant GPU-runner/provisioning records. Their unrelated commitments remain authoritative. The user's explicit reference-removal instruction authorizes removal of obsolete model/authentication mentions from historical records as maintenance.
 
 The sparse-model mismatch case is a scoped refinement of `2026-07-25-storage-conformance-adr` D4: reads and writes against a collection stamped with a different sparse model refuse with a rebuild remedy. Matching-geometry dense-model disagreement continues to degrade under that ruling. Read-only catalog/administrative access and explicit rebuild remain available for recovery.
+
+2026-10-05 authorized refinement: `2026-10-05-qdrant-provisioning-trust-adr` changes how the pinned implementation is held, not which implementation is trusted. The model library does not import the repository's code from the snapshot it was asked for: it copies the file into a modules cache of its own and imports whatever copy is already there, so pinning a revision on the load call pinned nothing about what executed. The sparse default model is therefore no longer loaded by name with remote code trusted. Its snapshot is checked file by file against a SHA256 manifest committed for the pinned commit, the one source file that builds the model is imported by this package from the same buffer that was hashed, and the model is built from the verified snapshot directory with nothing fetched. The intent stated above is unchanged: only the reviewed implementation runs for the default model, and its weights are safetensors. A change of commit still requires the code to be reviewed again, and now also requires the committed manifest to be regenerated; the sparse model has no revision setting.
 
 ## Implementation
 

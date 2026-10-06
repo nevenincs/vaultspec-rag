@@ -34,7 +34,6 @@ from .._workspace_layout import (
 from ..capabilities import backend_capabilities_dict
 from ._state import (
     _MAX_QUERY_LEN,
-    _SENSITIVE_DIRS,
     _SENSITIVE_PATTERNS,
 )
 
@@ -151,25 +150,26 @@ def _default_root() -> Path:
 
 
 def _is_sensitive_path(rel_path: str) -> bool:
-    """Check whether *rel_path* matches a sensitive file pattern.
+    """Check whether *rel_path* names a hidden location or a sensitive file.
 
     Uses forward-slash normalized paths for cross-platform consistency.
-    Checks each path component against ``_SENSITIVE_DIRS`` and the
-    filename against ``_SENSITIVE_PATTERNS``.
+    Any dot-prefixed path component is sensitive by default, and the
+    filename is checked against ``_SENSITIVE_PATTERNS`` without regard to
+    case, so a case-insensitive filesystem cannot alias past a pattern.
 
     Args:
         rel_path: File path relative to the workspace root.
 
     Returns:
-        True if the path matches any sensitive pattern.
+        True if the path is hidden or matches any sensitive pattern.
     """
-    normalised = rel_path.replace("\\", "/")
-    parts = normalised.split("/")
-    for part in parts[:-1]:
-        if part in _SENSITIVE_DIRS:
-            return True
-    filename = parts[-1]
-    return any(fnmatch.fnmatch(filename, pat) for pat in _SENSITIVE_PATTERNS)
+    parts = rel_path.replace("\\", "/").split("/")
+    # The relative-navigation components are not names; containment and
+    # canonicalization own them.
+    if any(part.startswith(".") and part not in (".", "..") for part in parts):
+        return True
+    filename = parts[-1].lower()
+    return any(fnmatch.fnmatchcase(filename, pat) for pat in _SENSITIVE_PATTERNS)
 
 
 def _clamp_top_k(top_k: int) -> int:

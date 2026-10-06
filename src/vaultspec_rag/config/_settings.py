@@ -18,6 +18,12 @@ from vaultspec_core.config import (
 from vaultspec_core.env_values import BOOL_SHAPE, parse_bool
 from vaultspec_core.logging_config import resolve_log_level
 
+from .._model_pins import (
+    DENSE_MODEL_ID,
+    RERANKER_MODEL_ID,
+    committed_manifest,
+    committed_revision,
+)
 from .._sparse_profile import SPARSE_MODEL_ID
 from ._paths import read_persisted_local_only
 from ._registry import entry
@@ -25,14 +31,30 @@ from ._schema import (
     ENV_OVERRIDE_MAP,
     SETTING_BOUNDS,
     checked_setting,
+    comma_separated,
     setting_rejection,
 )
-from ._types import STATUS_DIR_DEFAULT, VALID_PREPROCESS_MODES, EnvVar, PreprocessMode
+from ._types import (
+    STATUS_DIR_DEFAULT,
+    VALID_PREPROCESS_MODES,
+    EnvVar,
+    ModelRepo,
+    OperatorBinary,
+    OperatorBinaryPairError,
+    PreprocessMode,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
+
+#: The settings keys that are halves of the operator binary, and where each
+#: sits in the pair they are read through.
+_OPERATOR_BINARY_HALVES: dict[str, int] = {
+    "qdrant_binary": OperatorBinary._fields.index("path"),
+    "qdrant_binary_sha256": OperatorBinary._fields.index("sha256"),
+}
 
 
 class VaultSpecConfigWrapper:
@@ -89,7 +111,34 @@ class VaultSpecConfigWrapper:
         "local_only": False,
         "qdrant_port": 8765,
         "qdrant_binary": None,
+        # The SHA256 the operator declares for ``qdrant_binary``. Required
+        # with it and meaningless without it: the managed install is checked
+        # against digests compiled into this package, and a binary this
+        # package did not download has no such digest, so the operator
+        # supplies one or the binary is never run. Read both halves through
+        # ``qdrant_operator_binary``, which refuses one without the other.
+        "qdrant_binary_sha256": None,
         "qdrant_storage_dir": "~/.vaultspec-rag/qdrant-server/storage",
+        # Managed qdrant binary provisioning. Starting the service on a host
+        # is consent to fetch what the service needs, the binary as much as
+        # the model weights, so the switch ships on; turning it off restores
+        # failing with the install command when no binary resolves.
+        "qdrant_auto_provision": True,
+        # The release channel. The download URL is
+        # ``{base}/v{version}/{asset}``, the layout generic mirrors preserve,
+        # so a mirror is a different base and nothing else. The digests a
+        # download is checked against stay code constants: this moves where
+        # the bytes come from, never which bytes are accepted.
+        "qdrant_release_base_url": "https://github.com/qdrant/qdrant/releases/download",
+        # Hosts a redirect may land on while downloading. The base URL's own
+        # host serves the first request whatever this says; these are the
+        # hosts that request is allowed to be redirected to. The default is
+        # the upstream path as it is today and as it was before the asset
+        # host last moved. Comma-separated, like the other list settings.
+        "qdrant_download_hosts": (
+            "github.com,release-assets.githubusercontent.com,"
+            "objects.githubusercontent.com"
+        ),
         # Scheduled storage maintenance (auto-prune). The daemon's hourly
         # maintenance tick reclaims time-confirmed dangling namespaces:
         # empty (zero-point) orphans after a continuous grace window,
@@ -266,12 +315,34 @@ class VaultSpecConfigWrapper:
         # any failure. ``dense_onnx_file`` is the cached O4 model relative path.
         "dense_backend": "torch",
         "dense_onnx_file": "onnx/model_O4.onnx",
-        "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
+        "embedding_model": DENSE_MODEL_ID,
         "embedding_dimension": 1024,
         "sparse_enabled": True,
         "sparse_model": SPARSE_MODEL_ID,
         "reranker_enabled": True,
-        "reranker_model": "BAAI/bge-reranker-v2-m3",
+        "reranker_model": RERANKER_MODEL_ID,
+        # The commit the dense and reranker models are fetched and loaded
+        # at. Unset is the usual state and does not mean unpinned: a default
+        # model then uses the commit compiled into this package, the only
+        # one its committed file digests describe. Setting one names another
+        # commit, which is honoured and reported as unpinned, because no
+        # digest here covers it. A model the operator named has no compiled
+        # commit, so unset leaves the hub's default branch to decide.
+        "embedding_model_revision": None,
+        "reranker_model_revision": None,
+        # The hub the three models above are downloaded from. The default is
+        # the hub client's own, so an unset value changes nothing; a mirror
+        # is a different base that keeps the hub's path layout. It reaches
+        # the client through ``publish_model_hub_endpoint``, never through a
+        # read of this key at download time: the client fixes its endpoint
+        # when it is imported.
+        "hf_endpoint": "https://huggingface.co",
+        # The longest one model fetch may take, every repository together.
+        # A download that receives too little is stopped long before this by
+        # the progress floor; this bounds one that keeps receiving just
+        # enough. Four hours fetches the default models several times over on
+        # a 10 Mbit/s link.
+        "model_fetch_deadline_seconds": 14400.0,
         "reranker_batch_size": 32,
         # Token bound for CrossEncoder inputs. The reranker scores
         # token-bounded full candidate content; its tokenizer truncates
@@ -558,8 +629,7 @@ class VaultSpecConfigWrapper:
 
         if not isinstance(raw, str):
             return frozenset()
-        wanted = {tok.strip().lower() for tok in raw.split(",") if tok.strip()}
-        return frozenset(wanted & NOISE_DOMAINS)
+        return frozenset(comma_separated(raw)) & NOISE_DOMAINS
 
     @property
     def code_noise_hide_domains(self) -> frozenset[str]:
@@ -659,6 +729,56 @@ class VaultSpecConfigWrapper:
         fallback would silently address an empty URL.
         """
         return str(self.qdrant_url or "") or f"http://127.0.0.1:{self.qdrant_port}"
+
+    @property
+    def qdrant_operator_binary(self) -> OperatorBinary | None:
+        """Return the operator-supplied Qdrant binary and its declared digest.
+
+        The path and the digest are two halves of one setting, and this is
+        the one place the pairing is enforced. A path alone would be a binary
+        run with nothing to check it against; a digest alone checks nothing.
+        Either is refused, in one message that names both variables and says
+        how to produce the digest, because the operator who meets it has
+        usually set the path long ago and is seeing the second variable for
+        the first time.
+
+        The check runs at construction with every other unusable setting, and
+        again on each read: settings resolve from the live environment, so a
+        read is the only point that can vouch for the pair it returns.
+
+        Returns:
+            The path and its digest when both are set; ``None`` when neither
+            is, which selects the managed install.
+
+        Raises:
+            OperatorBinaryPairError: If exactly one of the two is set.
+            ValueError: If the digest is set and is not a digest.
+        """
+        path = self._resolve_rag_default("qdrant_binary")
+        digest = self._resolve_rag_default("qdrant_binary_sha256")
+        if path is None and digest is None:
+            return None
+        path_var = EnvVar.QDRANT_BINARY.value
+        digest_var = EnvVar.QDRANT_BINARY_SHA256.value
+        if digest is None:
+            raise OperatorBinaryPairError(
+                f"{path_var} and {digest_var} must be set together: {path_var} "
+                f"names a Qdrant binary but {digest_var} does not declare its "
+                "SHA256, and a binary is never run unverified. Set "
+                f"{digest_var} to the digest printed by 'Get-FileHash "
+                "-Algorithm SHA256 <path>' on Windows, or 'sha256sum <path>' "
+                f"or 'shasum -a 256 <path>' elsewhere; or unset {path_var} to "
+                "use the managed install."
+            )
+        if path is None:
+            raise OperatorBinaryPairError(
+                f"{path_var} and {digest_var} must be set together: "
+                f"{digest_var} declares a SHA256 but {path_var} names no "
+                f"Qdrant binary for it to verify. Set {path_var} to the "
+                f"absolute path of that binary, or unset {digest_var} to use "
+                "the managed install."
+            )
+        return OperatorBinary(path=str(path), sha256=str(digest))
 
     @property
     def hf_cache_location(self) -> str:
@@ -936,14 +1056,12 @@ class VaultSpecConfigWrapper:
         Raises:
             ValueError: If any setting is malformed or out of range.
         """
-        problems: list[str] = []
+        problems: dict[str, ValueError] = {}
 
         def record(exc: ValueError) -> None:
             # The relation checks re-resolve keys the sweep already visited, so
             # one bad value can surface twice. Report it once.
-            message = str(exc)
-            if message not in problems:
-                problems.append(message)
+            problems.setdefault(str(exc), exc)
 
         keys = [
             *SETTING_BOUNDS,
@@ -965,6 +1083,7 @@ class VaultSpecConfigWrapper:
             self._watch_retry_bounds,
             self._watch_policy_relations,
             lambda: self.document_chunk_overlap_chars,
+            lambda: self.qdrant_operator_binary,
             # The kill switch carries no settings key of its own, so the
             # per-key sweep above never reaches it. Resolving it here is what
             # puts a mistyped switch in the same collective report as every
@@ -981,7 +1100,10 @@ class VaultSpecConfigWrapper:
         if not problems:
             return
         if len(problems) == 1:
-            raise ValueError(problems[0])
+            # The refusal itself, not a copy of its text: a caller that
+            # handles one kind of refusal apart from the rest tells them
+            # apart by type, and a copy would be a plain ValueError.
+            raise next(iter(problems.values()))
         listed = "\n".join(f"  - {problem}" for problem in problems)
         raise ValueError(f"{len(problems)} unusable settings:\n{listed}")
 
@@ -1108,7 +1230,11 @@ class VaultSpecConfigWrapper:
     local_only: bool
     qdrant_port: int
     qdrant_binary: str | None
+    qdrant_binary_sha256: str | None
     qdrant_storage_dir: str
+    qdrant_auto_provision: bool
+    qdrant_release_base_url: str
+    qdrant_download_hosts: frozenset[str]
     storage_autoprune: bool
     storage_autoprune_interval_minutes: float
     storage_autoprune_grace_hours: float
@@ -1149,6 +1275,10 @@ class VaultSpecConfigWrapper:
     sparse_model: str
     reranker_enabled: bool
     reranker_model: str
+    embedding_model_revision: str | None
+    reranker_model_revision: str | None
+    hf_endpoint: str
+    model_fetch_deadline_seconds: float
     reranker_batch_size: int
     reranker_max_length: int
     vault_chunk_chars: int
@@ -1229,6 +1359,15 @@ class VaultSpecConfigWrapper:
                 also missing from the base config.
             ValueError: If the resolved value is malformed or out of range.
         """
+        # The two halves of the operator binary are read through the pair, so
+        # no read of either key can hand back a path whose digest is missing.
+        # The generic resolution below would, for a configuration built
+        # before the environment changed.
+        half = _OPERATOR_BINARY_HALVES.get(name)
+        if half is not None:
+            pair = self.qdrant_operator_binary
+            return None if pair is None else pair[half]
+
         if name in self._RAG_DEFAULTS:
             return self._resolve_rag_default(name)
 
@@ -1362,6 +1501,40 @@ def collect_environment_problems(
     return problems
 
 
+def publish_model_hub_endpoint() -> None:
+    """Export the configured model hub endpoint to the hub client's variable.
+
+    The hub client reads ``HF_ENDPOINT`` once, when it is first imported, and
+    builds its download URLs from that reading. A setting consulted at
+    download time would therefore arrive too late to move anything, so the
+    configured endpoint is written into the process environment instead, and
+    this has to run before anything imports the client. Every process kind
+    calls it at entry, straight after the shared startup refusal has vouched
+    for the value.
+
+    Precedence, highest first: this package's own variable; the operator's
+    own ``HF_ENDPOINT``; the client's built-in default. Nothing is written
+    unless this package's variable is set, so an operator who configures the
+    client directly keeps exactly the behaviour the client gives them, and
+    that value stays the client's to judge. A child process inherits the
+    export with the rest of the environment.
+
+    Raises:
+        ValueError: If the configured endpoint is unusable. The startup
+            refusal reports that first; this is reached only by a caller
+            that skipped it.
+    """
+    import os
+
+    if env_value(entry(EnvVar.RAG_HF_ENDPOINT)) is None:
+        return
+    # A throwaway settings object, for the same reason the refusal builds
+    # one: this runs before a workspace root is resolved, and must not leave
+    # a configuration built against the wrong root cached for a later reader.
+    endpoint = VaultSpecConfigWrapper.from_environment().hf_endpoint
+    os.environ[EnvVar.HF_ENDPOINT.value] = endpoint
+
+
 # Every numeric setting must declare its admissible range, and every declared
 # range must belong to a real setting. Checked at import so a new knob cannot
 # land without a range - the omission that let a negative TTL and a zero batch
@@ -1406,18 +1579,70 @@ if _undeclared_settings:
     )
 
 
-def configured_model_repos() -> tuple[tuple[str, str], ...]:
-    """Return every model repo this build needs, label first.
+def _model_repo(label: str, repo: str, configured_revision: str | None) -> ModelRepo:
+    """Resolve the commit one model is used at, and whether digests cover it.
+
+    A commit the operator configured wins. Without one, a default repository
+    uses the commit compiled into this package and any other repository uses
+    none. Either way the model is pinned only when file digests are committed
+    for exactly that repository at exactly that commit, so a default model
+    moved to another commit by configuration is not pinned.
+    """
+    revision = configured_revision or committed_revision(repo)
+    return ModelRepo(
+        label=label,
+        repo=repo,
+        revision=revision,
+        pinned=committed_manifest(repo, revision) is not None,
+    )
+
+
+def dense_model_repo(model_name: str | None = None) -> ModelRepo:
+    """Return the dense embedding model to fetch and load.
+
+    Args:
+        model_name: A repository named by the caller in place of the
+            configured one. The configured commit belongs to the configured
+            repository, so it is not applied to a different one.
+    """
+    cfg = get_config()
+    configured = str(cfg.embedding_model)
+    repo = model_name or configured
+    revision = cfg.embedding_model_revision if repo == configured else None
+    return _model_repo("Dense (Qwen3)", repo, revision)
+
+
+def sparse_model_repo() -> ModelRepo:
+    """Return the sparse model to fetch and load.
+
+    No configured commit is consulted, because there is no setting for one:
+    this model's repository ships the code that builds it, so its commit is
+    part of what was reviewed and not something the environment may move.
+    """
+    return _model_repo("Sparse (SPARSEUP)", str(get_config().sparse_model), None)
+
+
+def reranker_model_repo() -> ModelRepo:
+    """Return the reranker model to fetch and load."""
+    cfg = get_config()
+    return _model_repo(
+        "Reranker (CrossEncoder)",
+        str(cfg.reranker_model),
+        cfg.reranker_model_revision,
+    )
+
+
+def configured_model_repos() -> tuple[ModelRepo, ...]:
+    """Return every model this build needs, with the commit each is used at.
 
     Sparse (SPARSEUP) is omitted when ``sparse_enabled`` is false: a dense-only
     configuration never loads the sparse encoder, so provisioning, warmup, and
     readiness must not require its cached files either.
     """
-    cfg = get_config()
-    repos: list[tuple[str, str]] = [("Dense (Qwen3)", str(cfg.embedding_model))]
-    if bool(cfg.sparse_enabled):
-        repos.append(("Sparse (SPARSEUP)", str(cfg.sparse_model)))
-    repos.append(("Reranker (CrossEncoder)", str(cfg.reranker_model)))
+    repos = [dense_model_repo()]
+    if bool(get_config().sparse_enabled):
+        repos.append(sparse_model_repo())
+    repos.append(reranker_model_repo())
     return tuple(repos)
 
 

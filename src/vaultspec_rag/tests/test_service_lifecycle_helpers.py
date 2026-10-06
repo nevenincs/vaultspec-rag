@@ -123,10 +123,10 @@ class TestStartupPhaseLabel:
                 "pid": 1,
                 "port": 8766,
                 "phase": "warming",
-                "phase_detail": "provisioning the qdrant server",
+                "phase_detail": "starting the qdrant server",
             },
         )
-        assert _startup_phase_label(None) == "provisioning the qdrant server"
+        assert _startup_phase_label(None) == "starting the qdrant server"
 
     def test_renders_determinate_count_when_total_present(
         self, isolated_status_dir: Path

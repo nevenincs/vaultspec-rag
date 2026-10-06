@@ -9,7 +9,6 @@ verified afterwards rather than assumed from an exit code.
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -22,6 +21,7 @@ from .._process_probe import (
     EnvironmentHolders,
     environment_holders,
 )
+from .._program_lookup import Where, find_program
 from ..operator_state._holders import holder_summary, holder_wire
 from ..operator_state._installation import ComputeCapability
 from ..operator_state._provisioning import (
@@ -349,7 +349,9 @@ def _run_repair(interpreter: str, *, stream: bool) -> tuple[bool, str]:
 
     uv is resolved through the PATH rather than assumed: the product does not
     provision it, and an absent uv is an ordinary state on a machine whose
-    tool installation was made elsewhere.
+    tool installation was made elsewhere. Only the absolute entries of PATH
+    are searched, never the directory the command was typed in: what is found
+    here goes on to rewrite an environment.
 
     The steps run in order and stop at the first failure. The order is what
     makes the second one safe: it changes no package only because the first
@@ -363,7 +365,7 @@ def _run_repair(interpreter: str, *, stream: bool) -> tuple[bool, str]:
     output is captured instead, so the one envelope stays the only thing on
     stdout.
     """
-    uv = shutil.which("uv")
+    uv = find_program("uv", Where.SEARCH_PATH)
     if uv is None:
         return False, "uv is not on PATH, so the repair could not be run here"
     mismatch = _target_mismatch(uv, interpreter)

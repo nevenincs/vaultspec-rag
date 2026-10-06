@@ -10,25 +10,13 @@ gone. ``cli.__init__`` registers the verb modules for their decorators.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
 
 import typer
 
-import vaultspec_rag.cli as _cli
-
-from .._model_cache import cached_snapshot_is_complete
-from .._sparse_profile import sparse_model_revision
-from ..config._settings import configured_model_repos, get_config
-from ..config._types import EnvVar
-from ._app import server_root_app
-from ._gpu_errors import _handle_gpu_error
+from ._app import JsonMode, server_root_app
 from ._progress import StartupStatusReporter
 from ._render import _emit_json, _plain
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 __all__ = [
     "_LifecycleFailure",
@@ -86,12 +74,17 @@ def _fail_lifecycle(
     explicit ``raise`` and its control flow stays legible.
     """
     if json_mode:
+        # The commands that follow are part of the outcome, so a broker is
+        # given the same ones an operator reads.
+        payload = dict(data)
+        if request.next_actions:
+            payload["next_actions"] = list(request.next_actions)
         _emit_json(
             False,
             request.command,
             error=request.error,
             message=request.message,
-            data=dict(data) or None,
+            data=payload or None,
         )
     else:
         _print_lifecycle_lines(request.message, *request.human_lines)
@@ -149,115 +142,104 @@ def _should_unlink_discovery_file(pid_alive: bool) -> bool:
     return not pid_alive
 
 
-def _warmup_failure_detail(repo_id: str, exc: Exception) -> str:
-    """Explain a failed model fetch as an operator-actionable line.
-
-    The cache location comes from the config rather than a default spelled
-    inline: an operator who set ``HF_HOME`` was previously sent to the
-    library's default directory to clean up a partial download that is not
-    there.
-    """
-    cache = get_config().hf_cache_location
-    return f"{repo_id} failed: {exc} (partial cache may remain in {cache})"
-
-
-@dataclass(frozen=True, slots=True)
-class _WarmupFetchRequest:
-    download: Callable[..., object]
-    progress: StartupStatusReporter
-    repo_id: str
-    label: str
-    position: int
-    total: int
-
-
-def _warmup_fetch_model(request: _WarmupFetchRequest) -> str:
-    """Fetch one model repo with live progress; return its result line.
-
-    The fetch is minutes long and its size is known to the hub, so the stage
-    names WHICH repo of how many is running and the tracker turns the hub's own
-    counters into bytes-of-bytes. Every failure is reported and none aborts the
-    remaining models: a warmup that stops at the first unavailable repo leaves the
-    operator re-running it to discover the next one.
-    """
-    from ._hf_progress import SnapshotProgress
-
-    download, progress, repo_id, label, position, total = (
-        request.download,
-        request.progress,
-        request.repo_id,
-        request.label,
-        request.position,
-        request.total,
-    )
-
-    heading = f"Downloading {label} ({position}/{total})"
-    progress.stage(f"{heading}...")
-    try:
-        with SnapshotProgress(progress.heartbeat, prefix=heading) as tracker:
-            download(
-                repo_id,
-                tqdm_class=tracker.tqdm_class,
-                revision=sparse_model_revision(repo_id),
-                token=False,
-            )
-    except Exception as exc:
-        return _warmup_failure_detail(repo_id, exc)
-    return f"{repo_id} downloaded"
+#: The warmup verb as an envelope names it, and as an operator runs it.
+_WARMUP_COMMAND = "service.warmup"
+_WARMUP_VERB = "vaultspec-rag server warmup"
 
 
 @server_root_app.command(
     "warmup",
     help=(
-        "Download GPU model files before they are needed. "
-        "Run once before the first index to avoid model download latency at "
-        "search time."
+        "Fetch and check the model files the service loads. Each default "
+        "model is downloaded from the Hugging Face Hub, or the mirror the "
+        "hub endpoint setting names, at a pinned commit, and every file is "
+        "compared with a SHA256 digest compiled into vaultspec-rag. A model "
+        "that is already cached and passes costs no download; one you named "
+        "yourself is reported as unpinned. A client installation needs no "
+        "models and is told so. Exits non-zero when a model could not be "
+        "fetched, fails its check, or is missing while the hub is in offline "
+        "mode."
     ),
 )
-def service_warmup() -> None:
-    """Download GPU model files before they are needed."""
-    try:
-        from .._gpu import load_accelerator
+def service_warmup(json_mode: JsonMode = False) -> None:
+    """Download GPU model files before they are needed.
 
-        load_accelerator()
-    except (ImportError, RuntimeError) as exc:
-        _handle_gpu_error(exc)
+    Fetches files and nothing else: no model is constructed and this process
+    never imports torch. The files are fetched only for an environment that
+    can run the service, judged the way ``server start`` judges it, in a
+    child of the interpreter that would run the daemon. One that cannot is
+    told so, with the reason, before the cache is probed: a client needs no
+    model files, and a host whose accelerator stack is not usable yet gets
+    them from ``server start`` once it is.
 
+    Every way the verb ends is one outcome: with ``--json`` one envelope on
+    stdout, and exit 1 whenever the models are not all in place afterwards,
+    an interrupted run included.
+    """
+    from .._sync_vocabulary import ProvisionAction
+    from ..commands._provision import provision_models
+    from ..operator_state._service_environment import judge_service_environment
+    from ._process import _resolve_daemon_interpreter
+    from ._provision_progress import ReporterProvisionProgress
+
+    # The reporter is the only thing an operator sees during a download of
+    # several gigabytes, and it is silent under ``--json`` so the envelope is
+    # the one document on stdout. The per-model lines are the verb's result,
+    # so they are printed once the fetch returns rather than through the
+    # reporter, whose lines are progress and leave stdout alone off a
+    # terminal.
     try:
-        from huggingface_hub import (
-            snapshot_download,  # pyright: ignore[reportUnknownVariableType]  # huggingface_hub stubs partially unknown
+        with (
+            StartupStatusReporter(json_mode=json_mode) as reporter,
+            ReporterProvisionProgress(reporter) as progress,
+        ):
+            reporter.announce("Model warmup")
+            # The judgement starts an interpreter and imports torch in it,
+            # which takes seconds; saying so keeps the wait from reading as a
+            # hang.
+            reporter.stage("Checking that this environment can run the service...")
+            environment = judge_service_environment(_resolve_daemon_interpreter())
+            result = provision_models(progress=progress, environment=environment)
+    except KeyboardInterrupt:
+        raise _fail_lifecycle(
+            json_mode,
+            _LifecycleFailure(
+                command=_WARMUP_COMMAND,
+                error="interrupted",
+                message="Model warmup interrupted",
+                human_lines=("Files that finished downloading are kept.",),
+                next_actions=(_WARMUP_VERB,),
+            ),
+        ) from None
+
+    failed = result.action == ProvisionAction.FAILED
+    if json_mode:
+        _emit_json(
+            not failed,
+            _WARMUP_COMMAND,
+            data={
+                "action": str(result.action),
+                "detail": result.detail,
+                "repos": [
+                    {
+                        "label": repo.label,
+                        "repo": repo.repo,
+                        "action": str(repo.action),
+                        "detail": repo.detail,
+                        "code": repo.code,
+                        "pinned": repo.pinned,
+                    }
+                    for repo in result.repos
+                ],
+            },
+            **({"error": result.code, "message": result.detail} if failed else {}),
         )
-    except ImportError:
-        _cli.console.print("Error: huggingface_hub is not installed.")
-        raise typer.Exit(code=1) from None
-
-    os.environ.setdefault(EnvVar.HF_HUB_DOWNLOAD_TIMEOUT, "300")
-
-    models = configured_model_repos()
-
-    # No ``--json`` mode on this verb, so the reporter always speaks; it is the
-    # only thing an operator sees during a multi-gigabyte, effectively
-    # unbounded download.
-    with StartupStatusReporter(json_mode=False) as progress:
-        progress.announce("Model warmup")
-        for position, (label, repo_id) in enumerate(models, start=1):
-            progress.stage(f"Checking the cache for {label} ({position}/{len(models)})")
-            if cached_snapshot_is_complete(repo_id):
-                _print_detail_line(label, f"{repo_id} cached")
-                continue
-            _print_detail_line(
-                label,
-                _warmup_fetch_model(
-                    _WarmupFetchRequest(
-                        # The hub ships partial stubs, so the imported symbol is
-                        # only partially typed; naming the shape this call site
-                        # actually uses is what keeps the strict gate honest.
-                        cast("Callable[..., object]", snapshot_download),
-                        progress,
-                        repo_id,
-                        label,
-                        position,
-                        len(models),
-                    )
-                ),
-            )
+    else:
+        for repo in result.repos:
+            _print_detail_line(repo.label, f"{repo.repo} {repo.detail}")
+        if result.action == ProvisionAction.SKIPPED:
+            _print_detail_line("Models", result.detail)
+        if failed:
+            _plain(f"Error: {result.detail}", soft_wrap=True)
+    if failed:
+        raise typer.Exit(code=1)

@@ -18,6 +18,8 @@ from vaultspec_core.core.enums import (
 import vaultspec_rag.cli as _cli
 
 from ._app import JSON_OPTION_HELP, _global_target, app
+from ._progress import StartupStatusReporter
+from ._provision_progress import ReporterProvisionProgress
 from ._render import _plain, _render_install_report, _render_uninstall_report
 
 if TYPE_CHECKING:
@@ -49,7 +51,6 @@ if TYPE_CHECKING:
         provision: bool
         mcp: bool
         local_only: bool
-        skip_torch: bool
         skip_models: bool
         skip_qdrant: bool
         json: bool
@@ -93,7 +94,6 @@ class _InstallOptions:
     provision: bool
     install_mcp: bool
     local_only: bool
-    skip_torch: bool
     skip_models: bool
     skip_qdrant: bool
     json_output: bool
@@ -261,14 +261,6 @@ class _InstallCommand(TyperCommand):
                     ),
                 ),
                 TyperOption(
-                    param_decls=["--skip-torch"],
-                    default=False,
-                    is_flag=True,
-                    help=(
-                        "Skip the PyTorch provisioning step (finer than --local-only)."
-                    ),
-                ),
-                TyperOption(
                     param_decls=["--skip-models"],
                     default=False,
                     is_flag=True,
@@ -325,7 +317,6 @@ class _InstallCommand(TyperCommand):
                 provision=params["provision"],
                 install_mcp=params["mcp"],
                 local_only=params["local_only"],
-                skip_torch=params["skip_torch"],
                 skip_models=params["skip_models"],
                 skip_qdrant=params["skip_qdrant"],
                 json_output=params["json"],
@@ -347,10 +338,15 @@ class _InstallCommand(TyperCommand):
         "the agent-facing MCP search surface can run, and asks before changing "
         "PyTorch package configuration. Use --local-only for the minimal local "
         "backend (skips the binary), the finer "
-        "--skip-torch/--skip-models/--skip-qdrant flags for partial opt-out, "
+        "--skip-models/--skip-qdrant flags for partial opt-out, "
         "--no-mcp for a CLI-only workspace without the mcp dependency, and "
         "--no-provision to set up the workspace only; use --yes or "
-        "--no-torch-config for non-interactive runs."
+        "--no-torch-config for non-interactive runs. The model files and the "
+        "Qdrant server are each checked against digests compiled into "
+        "vaultspec-rag before they are used. A client installation is given "
+        "neither, and a host that cannot run the service yet gets them from "
+        "server start once it can. Exits non-zero when a step it was asked "
+        "to run failed."
     ),
 )
 def handle_install() -> None:
@@ -458,6 +454,17 @@ def _install_outcome(
         TorchConfigAction.SKIPPED_EOF,
         TorchConfigAction.SKIPPED_NON_TTY,
     }
+    # A dependency the run was asked to provision and could not is a failure of
+    # the run, not a remark on it: the models or the Qdrant server are still
+    # missing, and a caller that reads only the exit code must learn that.
+    # Enrollment has completed by then and the envelope still carries the whole
+    # report, so the step that failed and its remedy are both there, and a
+    # re-run finds the enrollment unchanged and tries the step again. It
+    # outranks a skipped consent step because it is the more serious of the
+    # two and the shared table gives failure the lower code.
+    provisioning_failed = (
+        report.provision_outcome is not None and not report.provision_outcome.ok
+    )
     hard_failure = (
         report.mcp_extra_action == "error"
         or report.mcp_sync_failed
@@ -466,6 +473,7 @@ def _install_outcome(
             and report.tool_torch_repair.blocks_install
         )
         or torch_errored
+        or provisioning_failed
     )
     if hard_failure:
         return "failed", 1
@@ -532,37 +540,45 @@ def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
     # Map the per-dependency opt-out flags onto the front door's skip
     # token set. ``--local-only`` already drops the qdrant binary in the
     # front door, so the explicit ``--skip-qdrant`` is the redundant-but-
-    # honest finer control; both are unioned here.
+    # honest finer control; both are unioned here. There is no such flag for
+    # torch: the torch step belongs to enrollment, where ``--no-torch-config``
+    # skips it, and the front door never runs it for this command.
     provision_skip: set[str] = set()
-    if options.skip_torch:
-        provision_skip.add("torch")
     if options.skip_models:
         provision_skip.add("models")
     if options.skip_qdrant:
         provision_skip.add("qdrant")
 
+    # The model and Qdrant fetches report through the same reporter the service
+    # verbs use, so an install shows the download it is waiting on. The live
+    # region opens only when provisioning first reports - after the questions
+    # above have been answered - and ``--json`` keeps it silent.
+    reporter = StartupStatusReporter(json_mode=options.json_output)
     try:
-        report = install_run(
-            path=effective_target,
-            upgrade=options.upgrade,
-            dry_run=options.dry_run,
-            force=options.force,
-            skip=set(options.skip),
-            configure_torch=options.configure_torch,
-            assume_yes=options.yes,
-            sync_after=options.sync_after,
-            confirm=confirm_fn,
-            provision=options.provision,
-            local_only=options.local_only,
-            provision_skip=provision_skip,
-            torch_group=options.torch_group,
-            install_mcp=options.install_mcp,
-            mode=options.mode,
-            repair_tool_torch=options.tool_repair,
-            # A multi-gigabyte download with no output reads as a hang, and a
-            # broker reading JSON must see one envelope and nothing else.
-            stream_repair=not options.json_output,
-        )
+        with ReporterProvisionProgress(reporter) as provision_progress:
+            report = install_run(
+                path=effective_target,
+                upgrade=options.upgrade,
+                dry_run=options.dry_run,
+                force=options.force,
+                skip=set(options.skip),
+                configure_torch=options.configure_torch,
+                assume_yes=options.yes,
+                sync_after=options.sync_after,
+                confirm=confirm_fn,
+                provision=options.provision,
+                local_only=options.local_only,
+                provision_skip=provision_skip,
+                torch_group=options.torch_group,
+                install_mcp=options.install_mcp,
+                mode=options.mode,
+                repair_tool_torch=options.tool_repair,
+                # A multi-gigabyte download with no output reads as a hang,
+                # and a broker reading JSON must see one envelope and nothing
+                # else.
+                stream_repair=not options.json_output,
+                provision_progress=provision_progress,
+            )
     except ParseError as exc:
         _report_command_failure(
             exc, prefix="Install failed", json_output=options.json_output

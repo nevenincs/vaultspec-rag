@@ -177,6 +177,16 @@ def server_stop_command(port: object | None = None) -> str:
     return f"vaultspec-rag server stop{port_option(port)}"
 
 
+def server_restart_remedy(port: object | None = None) -> str:
+    """Return what brings back a service whose vector server has died.
+
+    The daemon restarts a dead server once on its own. After that, or when
+    that restart was refused, nothing short of a new daemon starts another,
+    so every surface that reports a dead server names both commands.
+    """
+    return f"run `{server_stop_command(port)}`, then `{server_start_command(port)}`"
+
+
 #: The message every verb prints when it finds no service to talk to. Ten
 #: modules carried this sentence verbatim, which is one sentence too many to
 #: reword safely: an operator meeting it from two different verbs should not

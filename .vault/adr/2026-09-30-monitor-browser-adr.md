@@ -5,7 +5,7 @@ tags:
 date: '2026-09-30'
 modified: '2026-10-04'
 body_schema: 'body-v2'
-body_hash: 'sha256:b7a56340c15453c907b4124b2516ea1f47fb62f4bc3d83ef92167b996e9e577e'
+body_hash: 'sha256:13ed1eee5e6f1777cb541dee09d7b5118bb4aa517f114635c4b291692085395b'
 related:
   - "[[2026-09-30-monitor-tooling-adr]]"
   - "[[2026-09-30-monitor-refinement-audit]]"
@@ -50,6 +50,8 @@ Use pinned official @carbon/react and Sass, Carbon Grid at all breakpoints, IBM 
 2026-10-01 operations expansion authorized explicitly by the user: add service start/stop through the canonical local lifecycle owner, pause/resume through existing service routes, repository path/watch enrollment, resident eviction, storage survey refresh, resource/client read projections and bounded query return evidence. This replaces the earlier scope-only prohibition on service start and new monitoring endpoints; inference/rebuild remains an explicit separate operation. The frontend remains a presentation adapter with automatic internal credentials. Dashboard shows service status/state, system metrics, version, capacity and diagnostics. Index Requests, Queries and Logs are separate pages reached through a Carbon left navigation rail, with relational evidence nested under its parent. Repositories, Storage, Clients and Performance have their own pages. Storage management uses survey refresh and resident eviction; no destructive storage HTTP operation is added. No persistent query/result archive is introduced.
 
 2026-10-04 authorized credential-recovery refinement: loopback-http-security replaces the health-based token recovery described above. The bridge obtains and refreshes its credential only from protected same-user discovery for the addressed port. Browser users retain automatic server-side credentials and the existing monitor network policy.
+
+2026-10-04 authorized caller-authentication correction: `2026-10-04-monitor-capability-adr` reverses credential-free bridge access, because loopback admission cannot tell the owner from another local account. Every bridge call presents the monitor's capability, delivered in the owner's access link and held in that tab's session storage. The UI still has no login form, credential prompt, admin role or storage that outlives the tab, and the daemon credential remains server-side.
 
 ## Implementation
 

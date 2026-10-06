@@ -192,11 +192,11 @@ def _reconcile_storage_manifest(
     from ..storage_manifest import reconcile_manifest
 
     try:
-        from qdrant_client import QdrantClient
+        from .._qdrant_server_client import open_server_client
 
         cfg = get_config()
         url = cfg.effective_qdrant_url
-        client = QdrantClient(url=url, timeout=timeout)
+        client = open_server_client(url, timeout=timeout)
         try:
             names = [c.name for c in client.get_collections().collections]
         finally:
@@ -460,10 +460,12 @@ async def _start_components(
                 cfg.qdrant_url,
             )
         else:
-            # First-use provisioning downloads and verifies the qdrant binary,
-            # which can take many seconds; surface it so the start spinner is
-            # not a silent wait before the daemon even binds a port.
-            discovery.publish_phase("warming", detail="provisioning the qdrant server")
+            # The daemon never downloads the server: it resolves the binary the
+            # start command ensured, verifies it, and spawns it. Bringing a
+            # large store up can still take many seconds; surface it so the
+            # start spinner is not a silent wait before the daemon even binds a
+            # port.
+            discovery.publish_phase("warming", detail="starting the qdrant server")
             t_q = time.perf_counter()
             try:
                 supervisor = await _run_in_thread(
@@ -519,8 +521,10 @@ async def _start_components(
     registry._on_close_project = _m._stop_watcher  # pyright: ignore[reportPrivateUsage]
 
     # Load models (raises RuntimeError if no CUDA via _check_rag_deps). This is
-    # the longest cold-start stage - a first run downloads the weights - so the
-    # spinner names it, then names the reranker separately.
+    # the longest cold-start stage - every pinned weight file is hashed before
+    # it is read - so the spinner names it, then names the reranker separately.
+    # Nothing is downloaded here: a model the cache cannot supply stops startup
+    # with the command that fetches it.
     t0 = time.perf_counter()
     reranker_enabled = bool(get_config().reranker_enabled)
     # load_model brings up the dense and sparse encoders (two models); the
@@ -988,7 +992,8 @@ def _service_health_status(
         degradations.append(
             Degradation(
                 reason=DegradationReason.VECTOR_SERVICE_UNAVAILABLE,
-                detail="the configured vector service is not live",
+                detail="the configured vector service is not live"
+                + qdrant_state.restart_refusal_note,
             )
         )
         if status is HealthVerdict.READY:

@@ -14,6 +14,7 @@ round-tripping through ``json.dumps``.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -26,13 +27,17 @@ from .._readiness import (
     DependencyReadiness,
     ReadinessReport,
     ReadinessStatus,
+    _qdrant_readiness,
     _torch_readiness,
     compute_readiness,
 )
 from ..config._types import EnvVar
 from ..operator_state._compute import classify_torch
+from ..operator_state._installation import ComputeCapability
+from ..operator_state._models import ComputeReport
 from ..store_schema import STORAGE_SCHEMA_VERSION as _STORAGE_SCHEMA_VERSION
 from ._config_fixtures import reset_config
+from .conftest import managed_env
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -41,6 +46,25 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.unit]
 
 _DIMENSIONS = ("torch", "models", "qdrant")
+
+#: Both operator binary settings cleared. They outrank the managed install, so
+#: a pair in the developer's own environment would decide the dimension.
+_NO_OPERATOR_BINARY: dict[str, str | None] = {
+    EnvVar.QDRANT_BINARY.value: None,
+    EnvVar.QDRANT_BINARY_SHA256.value: None,
+}
+
+
+def _host_readiness() -> ReadinessReport:
+    """The report a host that can serve is given, whatever this lane installs.
+
+    A client needs neither the model files nor a server binary, so neither
+    is looked for on its behalf. What a host is told about each is asserted
+    with a host's verdict handed in, the way a caller that probed out of
+    process hands it, or the accelerator-free lane would assert the client
+    answer instead.
+    """
+    return compute_readiness(compute=ComputeReport(capability=ComputeCapability.READY))
 
 
 @pytest.fixture
@@ -215,9 +239,6 @@ class TestTorchDimension:
         this client as broken and fails the status assertion; restoring the
         client branch passes.
         """
-        from ..operator_state._installation import ComputeCapability
-        from ..operator_state._models import ComputeReport
-
         torch_dep = _torch_readiness(
             ComputeReport(capability=ComputeCapability.NOT_APPLICABLE)
         )
@@ -249,7 +270,7 @@ class TestModelsDimension:
         from ..config._settings import get_config
 
         cfg = get_config()
-        report = compute_readiness()
+        report = _host_readiness()
         models = report.dimension("models")
         assert models is not None
         repos = cast("dict[str, object]", models.info["repos"])
@@ -265,7 +286,7 @@ class TestModelsDimension:
         assert all(isinstance(v, bool) for v in repos.values())
 
     def test_models_status_matches_the_real_cache_state(self) -> None:
-        report = compute_readiness()
+        report = _host_readiness()
         models = report.dimension("models")
         assert models is not None
         repos = cast("dict[str, object]", models.info["repos"])
@@ -289,7 +310,7 @@ class TestModelsDimension:
         try:
             cfg = get_config()
             assert cfg.sparse_enabled is False
-            report = compute_readiness()
+            report = _host_readiness()
             models = report.dimension("models")
             assert models is not None
             repos = cast("dict[str, object]", models.info["repos"])
@@ -310,31 +331,46 @@ class TestModelsDimension:
 @pytest.mark.usefixtures("isolated_status_dir")
 class TestQdrantDimension:
     def test_absent_binary_is_not_ready_in_server_mode(self) -> None:
-        # Server mode is the effective default and the temp-isolated
-        # managed dir holds no provisioned binary. Unless an operator env
-        # binary or a PATH qdrant resolves on this host, the dimension is
-        # NOT_READY with an actionable remediation.
-        from ..qdrant_runtime._resolve import resolve_binary
-
-        report = compute_readiness()
+        # Server mode is the effective default, the temp-isolated managed dir
+        # holds no provisioned binary, and the operator setting is cleared, so
+        # nothing resolves: there is no other place a binary is looked for.
+        with managed_env(**_NO_OPERATOR_BINARY):
+            report = _host_readiness()
         qdrant = report.dimension("qdrant")
         assert qdrant is not None
         assert report.server_mode is True
+        assert qdrant.status == ReadinessStatus.NOT_READY
+        assert qdrant.info["binary_source"] == "absent"
+        assert "--local-only" in qdrant.detail
 
-        if resolve_binary() is None:
-            assert qdrant.status == ReadinessStatus.NOT_READY
-            assert qdrant.info["binary_source"] == "absent"
-            assert "--local-only" in qdrant.detail
-        else:
-            # A real provisioned/PATH binary on the dev host: with no
-            # supervised child in this process, a resolvable binary reads
-            # READY.
-            assert qdrant.status == ReadinessStatus.READY
-            assert qdrant.info["binary_source"] in {"env", "provisioned", "path"}
+    def test_an_unusable_operator_setting_is_not_ready_and_says_why(
+        self, tmp_path: Path
+    ) -> None:
+        """A setting a start would refuse must not read as an absent binary.
+
+        Proven able to fail: letting the refusal fall through to the absent
+        branch fails this on the ``invalid`` source assertion below.
+        """
+        missing = tmp_path / "no-such-qdrant"
+        with managed_env(
+            **{
+                EnvVar.QDRANT_BINARY.value: str(missing),
+                EnvVar.QDRANT_BINARY_SHA256.value: "c" * 64,
+            }
+        ):
+            report = _host_readiness()
+        qdrant = report.dimension("qdrant")
+        assert qdrant is not None
+        assert qdrant.status == ReadinessStatus.NOT_READY
+        assert qdrant.info["binary_source"] == "invalid"
+        assert qdrant.info["binary_error"] == "qdrant_binary_invalid"
+        assert qdrant.info["binary_path"] is None
+        assert EnvVar.QDRANT_BINARY.value in qdrant.detail
+        assert str(missing) in qdrant.detail
 
     @pytest.mark.usefixtures("local_only_env")
     def test_local_only_makes_an_absent_binary_ready(self) -> None:
-        report = compute_readiness()
+        report = _host_readiness()
         assert report.server_mode is False
         qdrant = report.dimension("qdrant")
         assert qdrant is not None
@@ -343,32 +379,161 @@ class TestQdrantDimension:
         assert qdrant.status == ReadinessStatus.READY
         assert qdrant.info["server_mode"] is False
 
-    def test_resolution_source_reflects_an_operator_supplied_binary(
+    def test_an_operator_binary_that_matches_its_declared_digest_is_ready(
         self, tmp_path: Path
     ) -> None:
-        # An operator-supplied binary is the first resolution source.
-        # Point the env knob at a real file and confirm the dimension
-        # reports the ``env`` source - read-only, no execution.
+        # An operator binary is the first resolution source. Name a real file
+        # with its real digest and confirm the dimension reports the ``env``
+        # source - read-only, hashed, never executed.
         fake_binary = tmp_path / "qdrant-operator"
         fake_binary.write_bytes(b"operator-supplied")
-        prev = os.environ.get(EnvVar.QDRANT_BINARY.value)
-        os.environ[EnvVar.QDRANT_BINARY.value] = str(fake_binary)
-        reset_config()
-        try:
-            report = compute_readiness()
-            qdrant = report.dimension("qdrant")
-            assert qdrant is not None
-            assert qdrant.info["binary_source"] == "env"
-            assert qdrant.info["binary_path"] == str(fake_binary)
-            # Binary resolves and no child is supervised in this process,
-            # so the read-only reporter can honestly call it ready.
-            assert qdrant.status == ReadinessStatus.READY
-        finally:
-            if prev is None:
-                os.environ.pop(EnvVar.QDRANT_BINARY.value, None)
-            else:
-                os.environ[EnvVar.QDRANT_BINARY.value] = prev
-            reset_config()
+        declared = hashlib.sha256(b"operator-supplied").hexdigest()
+        with managed_env(
+            **{
+                EnvVar.QDRANT_BINARY.value: str(fake_binary),
+                EnvVar.QDRANT_BINARY_SHA256.value: declared,
+            }
+        ):
+            report = _host_readiness()
+        qdrant = report.dimension("qdrant")
+        assert qdrant is not None
+        assert qdrant.info["binary_source"] == "env"
+        assert qdrant.info["binary_path"] == str(fake_binary)
+        assert "binary_error" not in qdrant.info
+        assert qdrant.status == ReadinessStatus.READY
+
+    def test_an_operator_binary_that_is_not_what_was_declared_is_not_ready(
+        self, tmp_path: Path
+    ) -> None:
+        """An operator binary is reported usable only after hashing it too.
+
+        Mutation it catches: hashing only the managed install. The operator
+        binary then reads ``READY`` on resolution alone and this fails on the
+        status assertion.
+        """
+        fake_binary = tmp_path / "qdrant-operator"
+        fake_binary.write_bytes(b"what the operator has")
+        declared = hashlib.sha256(b"what the operator declared").hexdigest()
+        with managed_env(
+            **{
+                EnvVar.QDRANT_BINARY.value: str(fake_binary),
+                EnvVar.QDRANT_BINARY_SHA256.value: declared,
+            }
+        ):
+            report = _host_readiness()
+        qdrant = report.dimension("qdrant")
+        assert qdrant is not None
+        assert qdrant.status == ReadinessStatus.NOT_READY
+        assert qdrant.info["binary_source"] == "env"
+        assert qdrant.info["binary_error"] == "qdrant_binary_unverified"
+        assert EnvVar.QDRANT_BINARY_SHA256.value in qdrant.detail
+
+    @staticmethod
+    def _seed_install_that_is_not_the_pinned_release(source: str = "download") -> Path:
+        """Seed a managed install whose manifest is in order and whose bytes are not.
+
+        The manifest says everything a provisioning run would have it say,
+        down to the committed digest of the release executable. Only hashing
+        the executable tells the install from a real one.
+        """
+        from ..qdrant_runtime._constants import (
+            MANIFEST_FILENAME,
+            QDRANT_ASSET_SHA256,
+            QDRANT_EXECUTABLE_SHA256,
+            QDRANT_SERVER_VERSION,
+        )
+        from ..qdrant_runtime._resolve import (
+            asset_for_platform,
+            binary_filename,
+            qdrant_bin_dir,
+        )
+
+        version_dir = qdrant_bin_dir()
+        version_dir.mkdir(parents=True)
+        binary = version_dir / binary_filename()
+        binary.write_bytes(b"not the pinned release")
+        asset = asset_for_platform()
+        (version_dir / MANIFEST_FILENAME).write_text(
+            json.dumps(
+                {
+                    "version": QDRANT_SERVER_VERSION,
+                    "asset": asset,
+                    "asset_sha256": QDRANT_ASSET_SHA256[asset],
+                    "binary_sha256": QDRANT_EXECUTABLE_SHA256[asset],
+                    "source": source,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return binary
+
+    @pytest.mark.parametrize("source", ["download", "archive", "operator"])
+    def test_an_install_that_is_not_the_pinned_release_is_not_ready(
+        self, source: str
+    ) -> None:
+        """An install a start would refuse is reported refused, with every remedy.
+
+        Nothing resolves, so no binary is named as the one in use; the detail
+        carries the path and both ways to replace what is there.
+
+        Mutation it catches: reading a refused install as no install. The
+        operator is then told to provision over a file a provisioning run
+        refuses to overwrite, and this fails on the source assertion.
+        """
+        binary = self._seed_install_that_is_not_the_pinned_release(source)
+
+        with managed_env(**_NO_OPERATOR_BINARY):
+            report = _host_readiness()
+
+        qdrant = report.dimension("qdrant")
+        assert qdrant is not None
+        assert qdrant.status == ReadinessStatus.NOT_READY
+        assert qdrant.info["binary_source"] == "invalid"
+        assert qdrant.info["binary_path"] is None
+        assert qdrant.info["binary_error"] == "qdrant_binary_unverified"
+        assert str(binary) in qdrant.detail
+        assert "vaultspec-rag server qdrant install --upgrade" in qdrant.detail
+        assert "--archive <file>" in qdrant.detail
+        assert EnvVar.QDRANT_BINARY_SHA256.value in qdrant.detail
+
+    @pytest.mark.usefixtures("local_only_env")
+    def test_local_only_does_not_judge_a_binary_it_will_not_run(self) -> None:
+        """Nothing is looked for, so what a start would refuse is not reported.
+
+        Mutation it catches: dropping the answer local-only mode gets before
+        any binary is judged. The seeded file is then judged and refused, and
+        this fails on the source assertion.
+        """
+        self._seed_install_that_is_not_the_pinned_release()
+
+        with managed_env(**_NO_OPERATOR_BINARY):
+            report = _host_readiness()
+
+        qdrant = report.dimension("qdrant")
+        assert qdrant is not None
+        assert qdrant.info["binary_source"] == "not_needed"
+        assert qdrant.status == ReadinessStatus.READY
+        assert "binary_error" not in qdrant.info
+
+    def test_a_check_that_does_not_finish_is_not_ready(self) -> None:
+        """Running out of time is neither a pass nor an absent binary.
+
+        A budget of nothing stands in for a file that cannot be read in time:
+        the judgement is never given the chance to finish.
+
+        Mutation it catches: reporting an unfinished judgement as nothing
+        installed. The operator is then told to provision what may already be
+        there, and this fails on the source assertion.
+        """
+        self._seed_install_that_is_not_the_pinned_release()
+
+        with managed_env(**_NO_OPERATOR_BINARY):
+            qdrant = _qdrant_readiness(server_mode=True, verify_budget=0.0)
+
+        assert qdrant.status == ReadinessStatus.NOT_READY
+        assert qdrant.info["binary_source"] == "unchecked"
+        assert qdrant.info["binary_error"] == "qdrant_binary_unchecked"
+        assert "could not be verified" in qdrant.detail
 
 
 class TestReadOnlyContract:

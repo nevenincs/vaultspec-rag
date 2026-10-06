@@ -256,7 +256,9 @@ class TestStartReorderAndGuards:
         assert env["data"]["phase"] == "warming"
         assert env["data"]["pid"] == daemon_pid
 
-    @pytest.mark.usefixtures("isolated_singleton_dirs")
+    # A start judges the installation before the port and the machine lock,
+    # so both guards are only reached as a host that can serve.
+    @pytest.mark.usefixtures("isolated_singleton_dirs", "inference_host")
     def test_a_foreign_port_holder_is_port_in_use_json(self) -> None:
         # Bind a real socket so the port-bindable guard trips: no recorded
         # service (idempotent None), the port is taken by something that is NOT
@@ -277,7 +279,7 @@ class TestStartReorderAndGuards:
         finally:
             sock.close()
 
-    @pytest.mark.usefixtures("isolated_singleton_dirs")
+    @pytest.mark.usefixtures("isolated_singleton_dirs", "inference_host")
     def test_a_machine_lock_holder_is_machine_owned_json(self) -> None:
         # Hold the real machine lock in THIS process, then a start on a free
         # port falls through the idempotent check and the port guard to the

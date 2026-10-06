@@ -81,14 +81,13 @@ def _fetch_surveys() -> list[NamespaceSurvey]:
     route prefers the daemon-held snapshot and only calls this on
     ``?fresh=true`` or a cold cache.
     """
-    from qdrant_client import QdrantClient
-
+    from .._qdrant_server_client import open_server_client
     from ..config._settings import get_config
     from ..storage_survey_ops import gather_survey, server_storage_collections_dir
 
     cfg = get_config()
     url = cfg.effective_qdrant_url
-    client = QdrantClient(url=url)
+    client = open_server_client(url)
     try:
         return gather_survey(client, server_storage_collections_dir())
     finally:

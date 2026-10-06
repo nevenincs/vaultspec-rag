@@ -24,7 +24,6 @@ class VaultSearcherConfigurationArguments(TypedDict, total=False):
     graph_provider: Callable[[], VaultGraph | None] | None
     gpu_lock: threading.Lock | None
     reranker: CrossEncoder | None
-    local_files_only: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,7 +34,6 @@ class VaultSearcherConfiguration:
     graph_provider: Callable[[], VaultGraph | None] | None = None
     gpu_lock: threading.Lock | None = None
     reranker: CrossEncoder | None = None
-    local_files_only: bool = False
 
 
 class VaultSearchOptionArguments(TypedDict, total=False):
