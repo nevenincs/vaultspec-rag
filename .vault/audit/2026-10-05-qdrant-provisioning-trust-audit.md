@@ -161,6 +161,38 @@ The GPU and integration tiers were not run, no real `server start` was performed
 
 The MCP entry that vaultspec-core renders launches `python -m vaultspec_rag.server` in the workspace directory without safe-path mode, and its `require_executable` helper is built on a search that takes the working directory first on Windows. Both need a change in vaultspec-core.
 
+### live-tiers-run | info | the GPU and integration tiers and a real start were run on a Windows host
+
+Run 2026-10-06 on an RTX 4080 SUPER against a service started with its own status and storage directories, so the operator's service and machine lock were not touched. A first `server start` downloaded and verified the pinned Qdrant archive; a second downloaded nothing; a third started in 28.2 seconds with all three models loaded on the device from the verified cache, and `server doctor` reported it ready. The resident tiers gave 740 passed, 8 failed, 2 skipped. The subprocess tier gave 71 passed, 3 failed of 74 on its second run; its first run was 34 passed, 3 failed, 37 errors, for the reason in the next entry. Of the eleven failures, three came from this work and are fixed and were re-run against the live service: the two entries below and one test that still expected the ONNX backend to be tried for a pinned model (`bde28ac0`). Eight are in code and tests this work does not change and are reported to the project's tracker with their output, not fixed here. The service was stopped through `server stop` and its launcher, daemon and Qdrant processes were confirmed gone. This supersedes the GPU and running-service part of `tiers-and-platforms-not-run`; macOS is still unrun.
+
+### live-fixture-waited-for-removed-log-line | medium | every test that starts a service failed at setup on a line the service no longer writes
+
+Found by the subprocess tier. The service now loads every model from the cache alone and has no mode to report, and the live-service fixture at `src/vaultspec_rag/tests/integration/conftest.py` still required the removed cache-only log lines. The unit tier could not see it: the fixture's one unit test wrote the expected line itself. Fixed in `05745ee7`; the fixture now requires each model's load to be reported with the hub switched off and the hub's address absent, and a unit test proves both refusals can fail.
+
+### stop-returned-before-server-gone | high | on Windows a stop could return while the Qdrant process was still alive
+
+Found by the resident tiers and fixed in `3492dd7a`. Ending the job and then terminating the process directly made the wait return on the recorded exit code before the process had gone. `src/vaultspec_rag/qdrant_runtime/_child_tree.py` now terminates directly only when the job did not take the process, and confirms on the process itself and on the job's member count.
+
+### library-beside-verified-executable | high | a file planted beside the managed server would be loaded into it with its digest still matching
+
+Raised by the independent review and confirmed: the pinned Windows executable imports libraries Windows does not take from its known set, and Windows looks beside the executable first. Fixed in `27cffa4c`. `src/vaultspec_rag/qdrant_runtime/_managed_install.py` judges the version directory wherever it judges the executable, on every platform, and `src/vaultspec_rag/qdrant_runtime/_spawn_trust.py` lists it before a process is created and again once it exists. Anything but the executable, the manifest and an install's working files refuses the start under `qdrant_install_foreign_files`, and no install removes it. Proven against the real installed binary: with a file planted, `server qdrant status` reported the refusal and `server start` exited non-zero with one envelope and no server process. Residual, stated in the module and the guide: nothing can close a directory to new files, so a file written and removed between the two listings is not seen. An operator's own binary is not judged on its directory; the guide says to keep that directory trusted.
+
+### independent-review-outcomes | medium | an independent review of the branch returned revision required with nothing critical
+
+Delegation was re-authorised for this review and for two bounded fixes, each in its own working tree with no push. Landed after being read and re-gated by the author: a process's image is read through psutil where `/proc` has none, so a live server on macOS is no longer refused as someone else's (`fe673f9c`); the exit peek asks whether the platform has it and states what is given up where it does not (`ed15acde`); PowerShell is taken from the operating system's directories and not from the search path (`7a17cb7d`); a docstring that still said the daemon loads online-capable (`7c6eec5c`). Accepted without change: an install hashes the staged file by descriptor and replaces by path, which the hold at every spawn covers. Left alone: the changelog's version and date, which release automation owns. Unexecuted: the branches that run only without `/proc` or without the peek, and the whole process-group stop, were not run on this host; Linux runs them in continuous integration and macOS runs none of this.
+
+### tests-launching-uv-on-the-checkout | medium | a test session could let uv replace the checkout's environment
+
+Follow-up to `linux-run-replaced-the-windows-environment`, decided and landed in `741c7c20` and `3b616b71`. The launch that did it was the development gates' environment probe, `uv run --no-sync python -c`, reached from a test: uv creates or replaces a project environment before it reads that flag. A test may now launch `uv run --no-sync` only on the environment its own interpreter runs from; every other project verb must target the temporary tree, and a session started from any other interpreter points uv's project environment into its own temporary tree for its duration. The session audit hook had also never read that launch on Windows, because its command-line splitter gave up on program text. Not run: a session from the checkout's own environment under the new hook before this entry, and anything off Windows.
+
+### push-to-a-ready-pull-request-runs-light-lint | info | a green check after a push does not mean the suites ran
+
+The merge gate runs the full suites when a pull request is opened or marked ready, or when a user applies the full-run label; a push to a ready pull request runs the light lint alone and the gate passes on it. The Linux lane for this work is therefore the labelled run on the head commit and nothing else.
+
+### vaultspec-core-lookups-landed | info | both working-directory lookups owned by vaultspec-core are fixed there
+
+Resolves `owned-by-vaultspec-core`. The rendered MCP entry now launches the interpreter in safe-path mode and executable lookup no longer takes the working directory; merged in that project as `57258a86`, with both of its issues closed.
+
 ## Recommendations
 
 - For `path-tier-cwd-exec`: a follow-on ADR must decide whether an implicit PATH lookup remains a resolution tier at all once provisioning is automatic.
@@ -170,3 +202,5 @@ The MCP entry that vaultspec-core renders launches `python -m vaultspec_rag.serv
 - For `duplicate-model-fetch` and `stale-provisioning-prose`: collapse to one implementation and correct the prose in the change that touches each site.
 
 Added at plan close. Run the GPU and integration tiers and one real `server start` on a host before release, and run the unit tier on macOS. Run the Linux lane from a checkout that lives on a Linux filesystem, never from the Windows drive. Decide whether a test may shell out to `uv` with the checkout as its working directory at all; that is a decision for a follow-on record, because the same hazard exists for anyone who runs the suite from two operating systems against one tree. Raise the two vaultspec-core lookups with that project.
+
+Added after the live run. Of the paragraph above, the GPU and integration tiers and the real start are done, the `uv` question is decided and guarded, and the vaultspec-core lookups are fixed in that project. Still open: run the unit tier on macOS, where the image probe, the exit peek and the process-group stop have never executed. The eight live failures reported to the tracker are in code this work does not change and need an owner there. A mitigation that makes Windows prefer its own directory for a child's libraries would close the window `library-beside-verified-executable` leaves, at the cost of creating the server process through the platform call directly; whether that is worth it is a decision for a follow-on record.
