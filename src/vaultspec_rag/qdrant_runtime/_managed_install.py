@@ -12,6 +12,16 @@ not, whatever a manifest claims for it. The manifest is a record of how an
 install got there; it sits in the directory it would be vouching for, so it
 is never read to reach a verdict.
 
+What else is in the directory is a second question, asked only of an
+executable that passed the first. A file beside an executable is not inert: a
+library the executable asks for by name is looked for in the executable's own
+directory - before the system's on Windows, and elsewhere whenever the
+executable names its own directory - so a file with the right name there runs
+inside the server, and the executable's digest says nothing about it. An
+install writes the executable, the manifest, and working files that are gone
+when it ends. Anything else was put there by something else, and the server
+is not run while it is there.
+
 Two states are kept apart from a failed verdict because the remedy differs. A
 file that cannot be read right now may be perfectly good: another program is
 holding it, or its permissions are wrong, and replacing it is not what that
@@ -31,7 +41,13 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from ._constants import QDRANT_EXECUTABLE_SHA256, QDRANT_SERVER_VERSION
+from .._atomic_write import is_temporary_sibling
+from ._constants import (
+    MANIFEST_FILENAME,
+    QDRANT_EXECUTABLE_SHA256,
+    QDRANT_SERVER_VERSION,
+    STAGING_SUFFIX,
+)
 from ._executable_hold import held_executable
 
 if TYPE_CHECKING:
@@ -41,8 +57,12 @@ __all__ = [
     "InstallState",
     "ManagedInstall",
     "classify_managed_binary",
+    "companions_verdict",
     "unreadable_refusal",
 ]
+
+#: How many unexpected names a refusal spells out before it counts the rest.
+_NAMED_COMPANIONS = 5
 
 
 class InstallState(StrEnum):
@@ -59,6 +79,9 @@ class InstallState(StrEnum):
     UNREADABLE = "unreadable"
     #: Something that is not a file holds the installed name.
     OBSTRUCTED = "obstructed"
+    #: A pinned release executable with something beside it that no install
+    #: wrote. It is not run while that is there, and no install removes it.
+    ACCOMPANIED = "accompanied"
 
 
 @dataclass(frozen=True)
@@ -153,6 +176,81 @@ def _obstructed(binary: Path) -> ManagedInstall:
     )
 
 
+def _install_writes(name: str) -> bool:
+    """Return whether an install puts an entry called *name* beside the executable.
+
+    The manifest, the temp file a manifest write passes through, and an
+    install's own working files. Judged by the name alone, as the filesystem
+    compares names.
+    """
+    name = os.path.normcase(name)
+    if name == MANIFEST_FILENAME or is_temporary_sibling(name, MANIFEST_FILENAME):
+        return True
+    return name.startswith(".") and name.endswith(STAGING_SUFFIX)
+
+
+def _unexpected_companions(binary: Path) -> list[str]:
+    """Return the names beside *binary* that no install puts there, sorted.
+
+    Nothing is opened: an entry is judged by its name, whatever it is.
+
+    Raises:
+        OSError: When the directory cannot be listed.
+    """
+    own = os.path.normcase(binary.name)
+    return sorted(
+        name
+        for name in os.listdir(binary.parent)
+        if os.path.normcase(name) != own and not _install_writes(name)
+    )
+
+
+def _accompanied(binary: Path, names: list[str]) -> ManagedInstall:
+    """Build the verdict for an executable with something else beside it."""
+    shown = ", ".join(names[:_NAMED_COMPANIONS])
+    uncounted = len(names) - _NAMED_COMPANIONS
+    if uncounted > 0:
+        shown = f"{shown} and {uncounted} more"
+    return ManagedInstall(
+        InstallState.ACCOMPANIED,
+        binary,
+        problem=f"its directory holds what no install put there: {shown}",
+        refusal=(
+            f"The directory of the Qdrant server at {binary} holds what no "
+            f"install put there: {shown}. A file beside an executable can be "
+            "loaded into it as a library, which the check of the executable "
+            "does not cover, so the server is not started while anything "
+            f"else is there. Remove everything from {binary.parent} except "
+            f"{binary.name} and {MANIFEST_FILENAME}, then try again."
+        ),
+    )
+
+
+def companions_verdict(binary: Path) -> ManagedInstall | None:
+    """Return the verdict refusing *binary* for what sits beside it, or ``None``.
+
+    Asked of an executable already found to be the pinned release: by the
+    classifier, and again by a spawn on either side of creating the process,
+    because a directory that was clean a moment ago need not be clean now. A
+    directory that cannot be listed is refused as unreadable: nothing is
+    known about it, and it may hold nothing at all.
+    """
+    try:
+        names = _unexpected_companions(binary)
+    except OSError as exc:
+        return ManagedInstall(
+            InstallState.UNREADABLE,
+            binary,
+            problem=f"its directory cannot be listed ({exc})",
+            refusal=(
+                f"The directory of the Qdrant server at {binary} cannot be "
+                f"listed ({exc}), so what else is in it cannot be checked. "
+                "Correct its permissions, then try again."
+            ),
+        )
+    return _accompanied(binary, names) if names else None
+
+
 def classify_managed_binary(binary: Path) -> ManagedInstall:
     """Judge what *binary*, the installed name of a managed install, holds.
 
@@ -161,6 +259,8 @@ def classify_managed_binary(binary: Path) -> ManagedInstall:
     is read. The file is healthy when it hashes to the committed executable
     digest of any pinned asset: an install made from an asset no platform
     selects any more stays healthy for as long as that asset stays pinned.
+    A pinned executable is then refused all the same when its directory
+    holds anything an install did not write.
 
     Args:
         binary: Where the pinned version's executable is installed.
@@ -192,7 +292,7 @@ def _judge_content(binary: Path) -> ManagedInstall:
         return _unreadable(binary, exc)
     for asset, committed in QDRANT_EXECUTABLE_SHA256.items():
         if committed == actual:
-            return ManagedInstall(
+            return companions_verdict(binary) or ManagedInstall(
                 InstallState.HEALTHY, binary, asset=asset, sha256=committed
             )
     return _refused(

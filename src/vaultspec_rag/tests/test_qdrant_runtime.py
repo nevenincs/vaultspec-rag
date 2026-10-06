@@ -188,6 +188,7 @@ _REFUSED_UNDER = {
     InstallState.REFUSED: "qdrant_binary_unverified",
     InstallState.UNREADABLE: "qdrant_binary_busy",
     InstallState.OBSTRUCTED: "qdrant_install_invalid",
+    InstallState.ACCOMPANIED: "qdrant_install_foreign_files",
 }
 
 

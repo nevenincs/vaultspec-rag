@@ -69,6 +69,15 @@ while all(ancestor.is_running() for ancestor in ancestors):
 """
 
 
+def fake_qdrant_launcher_path(tmp_path: Path, name: str = "fake_qdrant") -> Path:
+    """Return where :func:`fake_qdrant_binary` writes the launcher called *name*.
+
+    For a script that has to name its own launcher before the launcher exists.
+    """
+    suffix = ".bat" if sys.platform == "win32" else ".sh"
+    return tmp_path / f"{name}-launcher" / f"{name}{suffix}"
+
+
 def fake_qdrant_binary(
     tmp_path: Path,
     source: str,
@@ -78,8 +87,14 @@ def fake_qdrant_binary(
 ) -> Path:
     """Write a fake qdrant 'binary' the supervisor can exec as ``[binary]``.
 
+    The launcher is written where :func:`fake_qdrant_launcher_path` says: in
+    a directory that holds nothing else, the way a managed install's
+    executable sits in its version directory. A managed binary with anything
+    beside it is refused, and the script is such a thing.
+
     Args:
-        tmp_path: Where the script and its launcher are written.
+        tmp_path: Where the script is written, and the launcher's directory
+            is made.
         source: The script's source.
         name: The stem both files share.
         launcher_exits_first: The shape of the process tree. ``None`` is the
@@ -92,13 +107,13 @@ def fake_qdrant_binary(
     script = tmp_path / f"{name}.py"
     script.write_text(source, encoding="utf-8")
     run = f'"{sys.executable}" "{script}"'
+    launcher = fake_qdrant_launcher_path(tmp_path, name)
+    launcher.parent.mkdir(exist_ok=True)
     if sys.platform == "win32":
-        launcher = tmp_path / f"{name}.bat"
         # A batch file is always a separate process: the shell that reads it.
         line = f'@start "" /B {run}' if launcher_exits_first else f"@{run}"
         launcher.write_text(f"{line}\r\n", encoding="utf-8")
         return launcher
-    launcher = tmp_path / f"{name}.sh"
     line = {None: f"exec {run}", False: f"{run}\ntrue", True: f"{run} &"}[
         launcher_exits_first
     ]

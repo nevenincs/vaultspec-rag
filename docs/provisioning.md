@@ -161,9 +161,18 @@ mirror changes where the bytes come from and never which bytes are accepted.
 1. The extracted executable is hashed and compared before it replaces an install.
 1. The installed executable is hashed and compared again before every launch: a start,
    a restart, and a retry.
+1. The directory the executable is installed in is listed before every launch and
+   again once the server is running. It may hold the executable, its manifest, and the
+   working files of an install in progress. Anything else stops the launch.
 
 A mismatch at any step is a failure. Nothing is installed from an archive that failed,
 and a previous install is left as it was.
+
+The last step exists because a file beside an executable is not inert. A library the
+server asks for by name can be loaded from the server's own directory, so a file with
+the right name there would run inside a server whose own digest is correct. Nothing
+can stop a file being written into a directory, so a file put there and removed again
+between the two listings is not seen.
 
 The manifest written beside the executable records what was installed. It is never
 what a check trusts: the expected digest always comes from vaultspec-rag itself.
@@ -210,6 +219,11 @@ vaultspec-rag server qdrant install --upgrade
 `--upgrade` leaves an install that passes its check alone. On Windows, stop the service
 first: a running server holds its executable, and the install says so.
 
+An install with anything else in its directory is refused at start with
+`qdrant_install_foreign_files`, and the message names what is there. No install
+removes it, with or without `--upgrade`. Delete everything from that directory except
+the executable and `manifest.json`, then start again.
+
 ### Use your own executable
 
 To run a Qdrant server you built or obtained yourself, name it with two environment
@@ -227,6 +241,9 @@ and while both variables are set `install` and `server start` download no server
 file that fails the check stops the command and is never replaced by the pinned
 release. `server start` announces the server as operator-supplied, and
 `server qdrant status` shows its source as `operator-supplied (env)`.
+
+The directory your executable is in is yours and is not checked. Keep it writable only
+by accounts you trust: a library placed beside the executable can be loaded into it.
 
 Both variables are read from the process environment only. See
 [supplying your own server binary](configuration.md#supplying-your-own-server-binary).
@@ -438,15 +455,16 @@ is attempted before the command reports, so one failure does not hide the next.
 
 ### Qdrant server
 
-| What happened                                            | Code                       | What to do                                                                              |
-| -------------------------------------------------------- | -------------------------- | --------------------------------------------------------------------------------------- |
-| No server is installed and downloading is switched off   | `qdrant_missing`           | Run `vaultspec-rag server qdrant install`, or start with `--qdrant-auto-provision`      |
-| The install failed: see the causes below                 | `qdrant_provision_failed`  | The detail names the cause and its remedy                                               |
-| The installed executable is not the pinned release       | `qdrant_binary_unverified` | `vaultspec-rag server qdrant install --upgrade`                                         |
-| The executable cannot be read                            | `qdrant_binary_busy`       | Close whatever holds it, or correct its permissions, then try again                     |
-| Something that is not a file is at the install's name    | `qdrant_install_invalid`   | Remove it and run `vaultspec-rag server qdrant install`                                 |
-| Your own executable's settings do not name a usable file | `qdrant_binary_invalid`    | Correct `VAULTSPEC_RAG_QDRANT_BINARY`, or unset both settings to use the managed server |
-| Your own executable does not match its declared digest   | `qdrant_binary_unverified` | Correct the path or the digest, or unset both                                           |
+| What happened                                            | Code                           | What to do                                                                              |
+| -------------------------------------------------------- | ------------------------------ | --------------------------------------------------------------------------------------- |
+| No server is installed and downloading is switched off   | `qdrant_missing`               | Run `vaultspec-rag server qdrant install`, or start with `--qdrant-auto-provision`      |
+| The install failed: see the causes below                 | `qdrant_provision_failed`      | The detail names the cause and its remedy                                               |
+| The installed executable is not the pinned release       | `qdrant_binary_unverified`     | `vaultspec-rag server qdrant install --upgrade`                                         |
+| The executable cannot be read                            | `qdrant_binary_busy`           | Close whatever holds it, or correct its permissions, then try again                     |
+| Something that is not a file is at the install's name    | `qdrant_install_invalid`       | Remove it and run `vaultspec-rag server qdrant install`                                 |
+| The install's directory holds something no install wrote | `qdrant_install_foreign_files` | Delete everything there except the executable and `manifest.json`, then start again     |
+| Your own executable's settings do not name a usable file | `qdrant_binary_invalid`        | Correct `VAULTSPEC_RAG_QDRANT_BINARY`, or unset both settings to use the managed server |
+| Your own executable does not match its declared digest   | `qdrant_binary_unverified`     | Correct the path or the digest, or unset both                                           |
 
 Causes of `qdrant_provision_failed`, each named in the detail with what to do:
 

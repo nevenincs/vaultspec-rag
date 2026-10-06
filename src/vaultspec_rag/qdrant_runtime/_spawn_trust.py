@@ -15,6 +15,15 @@ so a file swapped for a link or removed after resolution is refused by name.
 
 A file that cannot be read is not a file that failed: it is refused under its
 own code, with a remedy that does not ask for it to be replaced.
+
+The managed install's directory is checked with it. A library the server asks
+for by name can be loaded from the server's own directory, so the directory
+is listed before the process is created and again once it exists, and
+anything no install wrote there refuses the spawn. Nothing can hold a
+directory closed to new files, so a file put there and taken away again
+between the two listings is not seen: the second listing bounds how long a
+planted file can go unnoticed, it does not prevent one. An operator binary's
+directory is the operator's, and is not judged.
 """
 
 from __future__ import annotations
@@ -29,7 +38,12 @@ from .._win32 import WIN_CREATE_NEW_PROCESS_GROUP, WIN_CREATE_NO_WINDOW
 from ..config._types import EnvVar
 from ._constants import QDRANT_SERVER_VERSION, BinarySource, ResolvedBinary
 from ._executable_hold import HeldExecutable, held_executable
-from ._managed_install import InstallState, classify_managed_binary, unreadable_refusal
+from ._managed_install import (
+    InstallState,
+    classify_managed_binary,
+    companions_verdict,
+    unreadable_refusal,
+)
 from ._resolve import (
     QDRANT_BINARY_BUSY,
     QDRANT_BINARY_UNVERIFIED,
@@ -115,6 +129,27 @@ def _managed_binary_changed(
     return _refusal(resolved, "changed while it was being checked")
 
 
+def _companions_refusal(resolved: ResolvedBinary) -> QdrantBinaryError | None:
+    """Refuse a managed binary for what sits beside it, or return ``None``.
+
+    The classifier's verdict and sentence, asked again here: the directory
+    was judged at resolution, and a spawn meets whatever is in it now.
+    """
+    if resolved.source is not BinarySource.MANAGED_DOWNLOAD:
+        return None
+    verdict = companions_verdict(resolved.path)
+    return None if verdict is None else managed_install_refusal(verdict)
+
+
+def _fault_once_started(
+    resolved: ResolvedBinary, held: HeldExecutable
+) -> QdrantBinaryError | None:
+    """Say why the process just created from *held* may not go on running."""
+    if not held.unchanged(resolved.sha256):
+        return _refusal(resolved, "changed while it was being started")
+    return _companions_refusal(resolved)
+
+
 @contextmanager
 def _verified(resolved: ResolvedBinary) -> Generator[HeldExecutable]:
     """Hold *resolved* open, proven to be what its source holds it to.
@@ -152,6 +187,9 @@ def _verified(resolved: ResolvedBinary) -> Generator[HeldExecutable]:
                 "does not match the SHA256 declared in "
                 f"{EnvVar.QDRANT_BINARY_SHA256.value}",
             )
+        crowded = _companions_refusal(resolved)
+        if crowded is not None:
+            raise crowded
         yield held
 
 
@@ -218,12 +256,13 @@ def spawn_verified(
                 bufsize=0,
                 start_new_session=True,
             )
-        if not held.unchanged(resolved.sha256):
+        fault = _fault_once_started(resolved, held)
+        if fault is not None:
             proc.kill()
             proc.wait()
             if proc.stdout is not None:
                 proc.stdout.close()
-            raise _refusal(resolved, "changed while it was being started")
+            raise fault
     return proc
 
 

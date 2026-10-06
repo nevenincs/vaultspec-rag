@@ -146,6 +146,11 @@ QDRANT_EXECUTABLE_SHA256: Final[dict[str, str]] = {
 #: Name of the provisioning manifest written next to the binary.
 MANIFEST_FILENAME: Final[str] = "manifest.json"
 
+#: Ends the name of every working file an install creates in a version
+#: directory. Nothing reads a file carrying it as an install, so a run killed
+#: before it could clean up strands no executable.
+STAGING_SUFFIX: Final[str] = ".staging"
+
 #: The manifest's ``source`` values: how the pinned release reached the managed
 #: directory. Fetched; unpacked from a local copy of the same official archive;
 #: or not recorded, for an executable found to be the pinned release whose

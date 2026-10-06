@@ -70,6 +70,7 @@ from ._constants import (
     QDRANT_ASSET_SHA256,
     QDRANT_EXECUTABLE_SHA256,
     QDRANT_SERVER_VERSION,
+    STAGING_SUFFIX,
     ProvisionReport,
 )
 from ._download import (
@@ -97,9 +98,6 @@ __all__ = [
 
 _COPY_CHUNK_BYTES = 1 << 20
 _DOWNLOAD_LIMITS = DownloadLimits()
-# Marks a file as one run's working copy. Nothing reads a file carrying it as
-# an install, so a run killed before it could clean up strands no executable.
-_STAGING_SUFFIX = ".staging"
 # One file for every version dir, beside them, so two runs cannot write the
 # same install at once whichever version each is after.
 _LOCK_FILENAME = "provision.lock"
@@ -203,9 +201,7 @@ def _open_staging(directory: Path, label: str) -> tuple[Path, IO[bytes]]:
     keeps the final move a rename within one volume, which is what makes it
     atomic.
     """
-    path = directory / (
-        f".{label}.{os.getpid()}.{os.urandom(6).hex()}{_STAGING_SUFFIX}"
-    )
+    path = directory / f".{label}.{os.getpid()}.{os.urandom(6).hex()}{STAGING_SUFFIX}"
     flags = (
         os.O_RDWR
         | os.O_CREAT
@@ -1047,9 +1043,10 @@ def _plan(
     # one that cannot be read to find out. Nothing replaces something that is
     # not a file, and nothing is replaced unasked.
     replaceable = existing.state in (InstallState.REFUSED, InstallState.UNREADABLE)
-    if existing.state is InstallState.OBSTRUCTED or (
-        replaceable and not request.upgrade
-    ):
+    # Installing again does not remove what sits beside the executable, so
+    # that is reported like an installed name nothing can be written over.
+    unwritable = existing.state in (InstallState.OBSTRUCTED, InstallState.ACCOMPANIED)
+    if unwritable or (replaceable and not request.upgrade):
         return ProvisionReport(
             action=ProvisionAction.FAILED,
             binary=existing.binary,
@@ -1113,7 +1110,7 @@ def _abandoned_staging(request: _ProvisionRequest) -> list[Path]:
     that deletes it.
     """
     try:
-        found = list(request.version_dir.glob(f".*{_STAGING_SUFFIX}"))
+        found = list(request.version_dir.glob(f".*{STAGING_SUFFIX}"))
     except OSError:
         return []
     if request.archive is None:

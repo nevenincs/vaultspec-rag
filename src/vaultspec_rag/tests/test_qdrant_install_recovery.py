@@ -580,6 +580,32 @@ class TestSomethingElseAtTheInstalledName:
         assert blocking.is_dir()
 
 
+class TestSomethingElseBesideAHealthyInstall:
+    @pytest.mark.parametrize("upgrade", [False, True], ids=["plain", "upgrade"])
+    def test_a_stray_file_is_reported_and_nothing_is_installed_over_it(
+        self, release: ServedRelease, version_dir: Path, upgrade: bool
+    ) -> None:
+        """Installing again would not remove the file, so no run pretends to.
+
+        Mutation: dropped the accompanied state from the states the plan
+        reports without installing. Observed the request-log assertion fail
+        in both cases: the release was downloaded and installed again beside
+        the stray file. Restored; passes.
+        """
+        _run()
+        stray = version_dir / "stray.dll"
+        stray.write_bytes(b"not a library")
+        fetched = len(release.source.requests)
+
+        report = _run(upgrade=upgrade)
+
+        assert len(release.source.requests) == fetched
+        assert report.action == ProvisionAction.FAILED
+        assert "stray.dll" in report.message
+        assert f"Remove everything from {version_dir} except" in report.message
+        assert stray.exists()
+
+
 def _a_file_where_bin_belongs(status_dir: Path) -> None:
     (status_dir / "bin").write_text("not a directory", encoding="utf-8")
 

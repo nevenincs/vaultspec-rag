@@ -26,6 +26,10 @@
   release only. A host with no route to the release source installs the
   official archive from a local file with
   `vaultspec-rag server qdrant install --archive <file>`.
+- The managed server's directory may hold only the executable and its
+  manifest. Anything else there stops `server start` with
+  `qdrant_install_foreign_files`, because a library beside an executable can
+  be loaded into it. Delete the extra files and start again.
 - The default models are pinned to commits, and every file is compared with a
   SHA256 digest compiled into vaultspec-rag after it is fetched and before
   every load. A snapshot that does not match is refused as

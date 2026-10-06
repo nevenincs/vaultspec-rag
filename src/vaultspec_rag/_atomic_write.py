@@ -48,6 +48,7 @@ __all__ = [
     "JsonWriteOptions",
     "NotDurableError",
     "fsync_directory",
+    "is_temporary_sibling",
     "replace_atomically",
     "replace_durably",
     "write_json_atomically",
@@ -58,6 +59,8 @@ __all__ = [
 #: the scanner's periodic open so repeated collisions do not lock-step.
 _ATTEMPTS = 10
 _BASE_SECONDS = 0.005
+#: Ends the name of every temp file a JSON write makes beside its target.
+_TEMPORARY_SUFFIX = ".tmp"
 _MAX_SLEEP_SECONDS = 0.15
 _JITTER_FRACTION = 0.25
 
@@ -179,6 +182,16 @@ def _move_file_write_through(source: Path | str, destination: Path | str) -> Non
         raise ctypes.WinError(ctypes.get_last_error())
 
 
+def is_temporary_sibling(name: str, target_name: str) -> bool:
+    """Return whether *name* is a temp file written on the way to *target_name*.
+
+    Judged by the name alone, for a caller deciding which entries of a
+    directory are a write in progress and which are something else. It says
+    nothing about who created the entry.
+    """
+    return name.startswith(f".{target_name}.") and name.endswith(_TEMPORARY_SUFFIX)
+
+
 def write_json_atomically(
     path: Path | str,
     payload: object,
@@ -227,7 +240,7 @@ def write_json_atomically(
     )
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(
-        f".{target.name}.{os.getpid()}.{os.urandom(6).hex()}.tmp"
+        f".{target.name}.{os.getpid()}.{os.urandom(6).hex()}{_TEMPORARY_SUFFIX}"
     )
     try:
         # newline="" so the bytes do not depend on the platform: with an

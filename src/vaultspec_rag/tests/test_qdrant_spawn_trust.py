@@ -27,6 +27,7 @@ import pytest
 
 from ..qdrant_runtime import _spawn_trust, _supervise
 from ..qdrant_runtime._constants import BinarySource, ResolvedBinary
+from ..qdrant_runtime._executable_hold import held_executable
 from ..qdrant_runtime._managed_install import classify_managed_binary
 from ..qdrant_runtime._provision import file_sha256
 from ..qdrant_runtime._resolve import QdrantBinaryError
@@ -35,6 +36,7 @@ from ..qdrant_runtime._supervise import QdrantSupervisor
 from ._fake_qdrant_binary import (
     FAKE_SERVER,
     fake_qdrant_binary,
+    fake_qdrant_launcher_path,
     unpinned,
     unreadable,
 )
@@ -280,6 +282,86 @@ class TestARefusalSaysWhatIsActuallyWrong:
         assert file_sha256(launcher) in str(refused.value)
 
 
+class TestAManagedBinaryRunsAloneInItsDirectory:
+    """Nothing an install did not write may sit beside the managed binary.
+
+    A library the server asks for by name can be loaded from the server's own
+    directory, so a file there runs inside a server whose digest was checked
+    and found correct.
+    """
+
+    @pytest.mark.parametrize(
+        ("planted", "is_folder"),
+        [("bcrypt.dll", False), ("marker.local", True)],
+        ids=["a file", "a folder"],
+    )
+    def test_a_managed_binary_with_something_beside_it_never_runs(
+        self, planted: str, is_folder: bool, tmp_path: Path
+    ) -> None:
+        """Refused before the process exists, and run once the directory is clean.
+
+        The check is asked first with no process in prospect, which is the
+        only way to tell the listing made before a process is created from
+        the one made after: the second would stop a spawn too, a moment late.
+
+        Mutation: removed the listing from the check made before a process
+        is created. Observed the first ``QdrantBinaryError`` go missing in
+        both cases. Restored; passes.
+        """
+        launcher, marker = _marker_launcher(tmp_path)
+        beside = launcher.parent / planted
+        if is_folder:
+            beside.mkdir()
+        else:
+            beside.write_bytes(b"not a library")
+        resolved = _held_to_its_own_digest(launcher)
+        supervisor = _supervisor(resolved, tmp_path)
+        try:
+            with pytest.raises(QdrantBinaryError):
+                verify_resolved_binary(resolved)
+            with pytest.raises(QdrantBinaryError) as refused:
+                supervisor.spawn()
+            ran_beside_it = marker.exists()
+            if is_folder:
+                beside.rmdir()
+            else:
+                beside.unlink()
+            supervisor.spawn()
+            process = supervisor._proc
+            assert process is not None
+            assert process.wait(timeout=30.0) == 0
+        finally:
+            assert supervisor.stop(timeout=10.0)
+
+        assert refused.value.error == "qdrant_install_foreign_files"
+        assert planted in str(refused.value)
+        assert str(launcher.parent) in str(refused.value)
+        assert "--upgrade" not in str(refused.value)
+        assert not ran_beside_it, "a managed binary ran with a file beside it"
+        assert marker.read_text(encoding="utf-8") == "ran"
+
+    def test_an_operator_binary_is_not_judged_on_its_directory(
+        self, tmp_path: Path
+    ) -> None:
+        """The directory an operator keeps their own binary in is theirs.
+
+        Mutation: judged every source on its directory. Observed this fail on
+        the ``QdrantBinaryError`` raised by the spawn. Restored; passes.
+        """
+        launcher, marker = _marker_launcher(tmp_path)
+        (launcher.parent / "anything-else.txt").write_text("theirs", encoding="utf-8")
+        supervisor = _supervisor(unpinned(launcher), tmp_path)
+        try:
+            supervisor.spawn()
+            process = supervisor._proc
+            assert process is not None
+            assert process.wait(timeout=30.0) == 0
+        finally:
+            assert supervisor.stop(timeout=10.0)
+
+        assert marker.read_text(encoding="utf-8") == "ran"
+
+
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 class TestEveryLaterSpawnIsHashedAgain:
     """A binary that verified at the first start is checked at each later one."""
@@ -330,17 +412,15 @@ class TestEveryLaterSpawnIsHashedAgain:
         storage = tmp_path / "qdrant" / "storage"
         (storage / "collections" / "r0000_vault_docs").mkdir(parents=True)
         runs = tmp_path / "runs.txt"
-        suffix = ".bat" if sys.platform == "win32" else ".sh"
         launcher = fake_qdrant_binary(
             tmp_path,
             _REWRITES_ITS_LAUNCHER_THEN_DIES.format(
                 runs=str(runs),
-                launcher=str(tmp_path / f"rewriter{suffix}"),
+                launcher=str(fake_qdrant_launcher_path(tmp_path, "rewriter")),
                 appended=_HARMLESS_TAIL,
             ),
             name="rewriter",
         )
-        assert launcher == tmp_path / f"rewriter{suffix}"
         supervisor = _supervisor(_held_to_its_own_digest(launcher), tmp_path)
         try:
             with pytest.raises(QdrantBinaryError) as refused:
@@ -523,19 +603,51 @@ class TestAProcessIsCreatedOnlyInsideTheHold:
         killing, fails the assertion on the block below.
         """
         tree = ast.parse(Path(_spawn_trust.__file__).read_text(encoding="utf-8"))
+        held_bodies = [
+            [ast.unparse(node) for node in hold.body]
+            for hold in ast.walk(tree)
+            if isinstance(hold, ast.With)
+        ]
+        asked = "fault = _fault_once_started(resolved, held)"
+        assert sum(asked in body for body in held_bodies) == 1
         look_again = [
             node
             for hold in ast.walk(tree)
             if isinstance(hold, ast.With)
             for node in hold.body
             if isinstance(node, ast.If)
-            and ast.unparse(node.test) == "not held.unchanged(resolved.sha256)"
+            and ast.unparse(node.test) == "fault is not None"
         ]
         assert len(look_again) == 1
         steps = [ast.unparse(step) for step in look_again[0].body]
         assert steps[0] == "proc.kill()"
-        assert steps[-1].startswith("raise _refusal(resolved, ")
+        assert steps[-1] == "raise fault"
         creation_lines = [
             call.lineno for _owner, call in self._creations(_spawn_trust.__file__)
         ]
         assert look_again[0].lineno > max(creation_lines)
+
+    def test_the_look_again_sees_a_file_put_beside_a_managed_binary(
+        self, tmp_path: Path
+    ) -> None:
+        """A file that arrives after the first listing is met by the second.
+
+        The same held launcher is asked twice, with a file written into its
+        directory in between, which is the order a spawn meets them in.
+
+        Mutation: made the look-again return after the digest and never list
+        the directory. Observed the ``beside is not None`` assertion fail.
+        Restored; passes.
+        """
+        launcher, _marker = _marker_launcher(tmp_path)
+        resolved = _held_to_its_own_digest(launcher)
+
+        with held_executable(launcher) as held:
+            untouched = _spawn_trust._fault_once_started(resolved, held)
+            (launcher.parent / "planted.dll").write_bytes(b"not a library")
+            beside = _spawn_trust._fault_once_started(resolved, held)
+
+        assert untouched is None
+        assert beside is not None
+        assert beside.error == "qdrant_install_foreign_files"
+        assert "planted.dll" in str(beside)

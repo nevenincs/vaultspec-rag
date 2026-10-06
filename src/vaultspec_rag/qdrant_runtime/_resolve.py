@@ -76,6 +76,7 @@ __all__ = [
     "QDRANT_BINARY_BUSY",
     "QDRANT_BINARY_INVALID",
     "QDRANT_BINARY_UNVERIFIED",
+    "QDRANT_INSTALL_FOREIGN_FILES",
     "QDRANT_INSTALL_INVALID",
     "QdrantBinaryError",
     "QdrantEndpointProbe",
@@ -810,6 +811,9 @@ QDRANT_BINARY_BUSY = "qdrant_binary_busy"
 #: Machine-readable code for a managed directory whose installed name is taken
 #: by something that is not a file, which no install can be written over.
 QDRANT_INSTALL_INVALID = "qdrant_install_invalid"
+#: Machine-readable code for a managed directory that holds something no
+#: install wrote beside the executable, which could be loaded into the server.
+QDRANT_INSTALL_FOREIGN_FILES = "qdrant_install_foreign_files"
 
 
 class QdrantBinaryError(RuntimeError):
@@ -882,6 +886,7 @@ _INSTALL_REFUSAL_CODES = {
     InstallState.REFUSED: QDRANT_BINARY_UNVERIFIED,
     InstallState.UNREADABLE: QDRANT_BINARY_BUSY,
     InstallState.OBSTRUCTED: QDRANT_INSTALL_INVALID,
+    InstallState.ACCOMPANIED: QDRANT_INSTALL_FOREIGN_FILES,
 }
 
 
@@ -962,6 +967,7 @@ def resolve_binary(
             the managed install is deliberately not consulted in that case.
             Also when the managed install's name holds anything but the
             pinned release: content that is not it, a file that cannot be
-            read, or something that is not a file.
+            read, or something that is not a file. And when it holds the
+            pinned release with something beside it that no install wrote.
     """
     return _resolve_env_binary() or _managed_binary(_managed_install(version))
