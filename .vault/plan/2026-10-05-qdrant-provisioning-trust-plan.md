@@ -12,9 +12,9 @@ related:
   - '[[2026-06-13-server-first-default-adr]]'
   - '[[2026-10-05-qdrant-provisioning-trust-audit]]'
   - '[[2026-10-05-qdrant-provisioning-trust-research]]'
-modified: '2026-10-05'
+modified: '2026-10-06'
 body_schema: body-v2
-body_hash: 'sha256:afa244dc317962fa681efed4de80dbbd71631c657a6caf4858d9edefb570352c'
+body_hash: 'sha256:0e48c655ce3838caad69a6e6b1b29d9f3c0d3c9168aeb327ab3fa002fda0c7ba'
 ---
 
 # `qdrant-provisioning-trust` plan
@@ -52,17 +52,17 @@ Extended 2026-10-05. Basis: after eight Steps had closed, the user wrote that no
 - [x] `S19` - commit revisions for the default dense and reranker models with prefixed revision settings, used by every fetch and load, and report an unpinned operator model on status; `src/vaultspec_rag/config/, _sparse_profile.py, _model_cache.py and the model load and fetch sites`.
 - [x] `S20` - restore the two gates that are red on this branch: the monitor test typing and the undeclared substitution site; `src/vaultspec_rag/tests/test_monitor_inventory.py, test_monitor_browser.py, test_document_index_symlinks.py and test_substitution_discipline.py`.
 - [x] `S21` - refuse a download that cannot fit with a free-space preflight, and test the binary downloader and the model fetch against stalled, slow, reset, truncated, refused, and untrusted connections and against exhausted disk space, each ending in a failed outcome that leaves a prior install intact; `src/vaultspec_rag/qdrant_runtime/_provision.py, commands/_model_fetch.py and their tests`.
-- [ ] `S22` - describe the provisioning process end to end in the guides and make every provisioning command's help state what it fetches, from where, how it is verified, how it is overridden, and how it fails; `docs/, README.md and the provisioning command help text under src/vaultspec_rag/cli/`.
+- [x] `S22` - describe the provisioning process end to end in the guides and make every provisioning command's help state what it fetches, from where, how it is verified, how it is overridden, and how it fails; `docs/, README.md and the provisioning command help text under src/vaultspec_rag/cli/`.
 - [x] `S23` - commit a per-file digest manifest for each default model at its pinned revision, verify the snapshot against it after fetch and before every load including the remote-code files that are actually imported, and load weights from safetensors only; `src/vaultspec_rag/_model_cache.py, _sparse_profile.py, _sparse_encoder.py, embeddings.py and the model fetch engine`.
-- [ ] `S24` - collapse the two kill-descendants, kill, wait, and confirm compositions around a child process into one shared teardown; `src/vaultspec_rag/commands/_model_download.py, indexer/_preprocess_runner.py and _process_probe.py`.
+- [x] `S24` - collapse the two kill-descendants, kill, wait, and confirm compositions around a child process into one shared teardown; `src/vaultspec_rag/commands/_model_download.py, indexer/_preprocess_runner.py and _process_probe.py`.
 - [x] `S25` - run every child interpreter the package spawns in safe-path mode so the working directory can never shadow the package or its dependencies, with a source guard over all spawn sites; `src/vaultspec_rag/commands/_model_download.py, cli/_process.py, operator_state/_environment_probe.py, _process_probe.py and the MCP launch writers`.
 - [x] `S26` - decide the backend once from the effective settings with flags as overrides, for both the start preflight and the daemon environment, so a persisted or exported local-only or remote-server choice is honoured; `src/vaultspec_rag/cli/_service_start.py and cli/_process.py`.
 - [x] `S27` - gate every provisioning surface and every readiness and status remedy on one judgement of whether this environment can run the service, and write no marker or directory before it; `src/vaultspec_rag/commands/_provision.py, _readiness.py, operator_state/ and cli/_service_qdrant.py`.
 - [x] `S28` - resolve the monitor, nvidia-smi, and uv from absolute locations outside the working directory through one helper, and pin the daemon's working directory; `src/vaultspec_rag/monitor_process.py, operator_state/_hardware.py, commands/_tool_torch.py, commands/_uv_sync.py and cli/_process.py`.
 - [x] `S29` - judge a version directory with one classifier shared by resolver and provisioner, heal a manifest-less install whose executable matches a committed digest, and name full commands in every remedy; `src/vaultspec_rag/qdrant_runtime/_provision.py and _resolve.py`.
-- [ ] `S30` - end an interrupted foreground fetch promptly with one interrupted envelope on start and the install verb, carry next actions and one failure code in JSON envelopes, and give warmup a JSON mode; `src/vaultspec_rag/cli/_service_start.py, _service_qdrant.py, _service_lifecycle.py and commands/`.
-- [ ] `S31` - bound every network call of the model fetch including the size query, add a whole-operation deadline setting, share one contention budget across repositories, classify local cache faults with their own remedy, and replace the substituted start-step tests with real ones; `src/vaultspec_rag/commands/_model_fetch.py, _hub_failure.py, config/ and tests/test_start_provisioning.py`.
-- [ ] `S32` - stop counting a restart refused before any spawn as the one heartbeat restart, word a transient hold failure as such, and name stop then start on every surface that reports a dead server; `src/vaultspec_rag/qdrant_runtime/_supervise.py, _spawn_trust.py, server/_lifecycle.py and the status labels`.
+- [x] `S30` - end an interrupted foreground fetch promptly with one interrupted envelope on start and the install verb, carry next actions and one failure code in JSON envelopes, and give warmup a JSON mode; `src/vaultspec_rag/cli/_service_start.py, _service_qdrant.py, _service_lifecycle.py and commands/`.
+- [x] `S31` - bound every network call of the model fetch including the size query, add a whole-operation deadline setting, share one contention budget across repositories, classify local cache faults with their own remedy, and replace the substituted start-step tests with real ones; `src/vaultspec_rag/commands/_model_fetch.py, _hub_failure.py, config/ and tests/test_start_provisioning.py`.
+- [x] `S32` - stop counting a restart refused before any spawn as the one heartbeat restart, word a transient hold failure as such, and name stop then start on every surface that reports a dead server; `src/vaultspec_rag/qdrant_runtime/_supervise.py, _spawn_trust.py, server/_lifecycle.py and the status labels`.
 
 ## Parallelization
 

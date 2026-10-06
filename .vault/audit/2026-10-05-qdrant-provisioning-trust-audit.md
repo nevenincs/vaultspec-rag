@@ -3,9 +3,9 @@ tags:
   - '#audit'
   - '#qdrant-provisioning-trust'
 date: '2026-10-05'
-modified: '2026-10-05'
+modified: '2026-10-06'
 body_schema: 'body-v2'
-body_hash: 'sha256:69098c659a9e03ea7bbe614a43f1d7b5218aa411dfa8cf3f079785fe0f549885'
+body_hash: 'sha256:2befd84e1c17a45091a8b7d11ee3efe539b9f9111c0ac176f12515ccf1fa4dbb'
 related:
   - "[[2026-06-12-qdrant-server-provisioning-adr]]"
   - "[[2026-06-13-provisioning-setup-adr]]"
@@ -133,6 +133,34 @@ Same review. A base URL with an empty or over-long host label passes validation 
 
 Held under attack in the same review: hard kills at five earlier install stages; two concurrent provisions; a hard-killed lock holder on Windows and Linux; an upgrade over a running child; the retry policy for each status class; a heartbeat restart over a changed, missing, or held binary never executing it; non-ASCII and very long paths; the download child dying with its parent; a killed cache-claim holder.
 
+### closing-review | info | every plan step is closed and each earlier finding has a landed change
+
+Reviewed 2026-10-06 against the plan and the accepted decision, by the author and not by an independent reviewer: delegation was withdrawn after the process incident recorded below. The findings above map to landed commits as follows. Working-directory execution and import shadowing: `9ee5bd95`, and the child-interpreter commits before it. The persisted backend choice: `9a80b406`. Install classification and the killed-install recovery: `f3e831a6`. Model revisions, per-file digests, safetensors only and verified import of repository code: `960027fd`. The one service-environment judgement, including the readiness remedies and the host role read from an unrelated distribution: `bc1f583c`. Stopping the whole server tree and restart accounting: `864e0b97`. The whole-fetch deadline, the shared wait and cache-fault classification: `0e5893e9`. Interrupt envelopes, next actions in JSON, and a JSON mode for warmup: `93acc847`, corrected by `1674b241`. The shared child teardown: `e5a563aa`. Help text and the provisioning guide: `732b69de`. Evidence: the complete unit tier on Windows, 7338 passed in seven bounded runs with four tests deselected for want of a compiled monitor binary, and break-and-restore proofs recorded per step in the ledger.
+
+### stop-leaves-launcher-started-server | high | a stop ended the supervised process and not the server it had started
+
+Found during execution and fixed in `864e0b97`. `src/vaultspec_rag/qdrant_runtime/_child_tree.py` ends the job on Windows and the process group elsewhere. The test stand-in at `src/vaultspec_rag/tests/_fake_qdrant_binary.py` had been written to watch its own ancestors, which is how the defect stayed hidden from every supervisor test.
+
+### linux-run-replaced-the-windows-environment | high | running the suite under WSL against the Windows checkout removed most of its virtual environment
+
+A process fault of this session, not a product defect. The Linux interpreter was pointed at the checkout on the Windows drive, tests in that tree shell out to `uv`, and a Linux `uv` treats a Windows environment directory as invalid and replaces it. It removed the package directory and part of the scripts directory and stopped at an interpreter that was in use. No tracked file changed. The environment was restored with `uv sync --locked --group dev` and confirmed to hold the GPU build again. The Linux sweep was stopped at that point.
+
+### linux-lane-not-swept-end-to-end | medium | the closing Linux run covers modules a to m only
+
+Targeted Linux runs accompanied each step and are in the ledger. The closing sweep reached modules a through m and was then stopped for the reason above, so modules from n onward were last run on Linux at the step that touched them, not after the final commit. Two failures seen in the sweep are environmental: git inside WSL cannot read this worktree's metadata, and the development runner's fixture needs a `python` on the path. One was real and is fixed: a start test that met the client refusal on a lane without the inference stack.
+
+### tiers-and-platforms-not-run | medium | nothing here was proven on a GPU, against a running service, or on macOS
+
+The GPU and integration tiers were not run, no real `server start` was performed end to end, and no model was loaded on a device, so the cache-only verifying load at `src/vaultspec_rag/embeddings.py` and the sparse import at `src/vaultspec_rag/_sparse_encoder.py` are proven by unit tests and static reading only. macOS was never run; the process-group stop relies on `os.waitid`, present there from Python 3.13.
+
+### orphan-reap-acts-on-one-pid | low | the startup reap of an orphaned server signals the recorded process alone
+
+`src/vaultspec_rag/qdrant_runtime/_resolve.py` reaps by the recorded pid on POSIX and by tree on Windows. It refuses a process whose image is not qdrant, so a launcher's orphan is refused rather than half-ended, and the operator is told to stop it by hand.
+
+### owned-by-vaultspec-core | medium | two working-directory lookups cannot be fixed in this repository
+
+The MCP entry that vaultspec-core renders launches `python -m vaultspec_rag.server` in the workspace directory without safe-path mode, and its `require_executable` helper is built on a search that takes the working directory first on Windows. Both need a change in vaultspec-core.
+
 ## Recommendations
 
 - For `path-tier-cwd-exec`: a follow-on ADR must decide whether an implicit PATH lookup remains a resolution tier at all once provisioning is automatic.
@@ -140,3 +168,5 @@ Held under attack in the same review: hard kills at five earlier install stages;
 - For `start-does-not-provision`: a follow-on ADR must decide the consent model for the binary on `server start`, and where the client and host roles are gated relative to any download.
 - For `install-not-atomic` and `download-hardening`: stage, verify, then replace; serialise provisioning; bound the download; route the source through settings. The override shape for the source is a decision for the same ADR.
 - For `duplicate-model-fetch` and `stale-provisioning-prose`: collapse to one implementation and correct the prose in the change that touches each site.
+
+Added at plan close. Run the GPU and integration tiers and one real `server start` on a host before release, and run the unit tier on macOS. Run the Linux lane from a checkout that lives on a Linux filesystem, never from the Windows drive. Decide whether a test may shell out to `uv` with the checkout as its working directory at all; that is a decision for a follow-on record, because the same hazard exists for anyone who runs the suite from two operating systems against one tree. Raise the two vaultspec-core lookups with that project.

@@ -5,7 +5,7 @@ tags:
 date: '2026-10-05'
 modified: '2026-10-06'
 body_schema: 'body-v2'
-body_hash: 'sha256:a3322f9352ddaeb35d8078246f1a92b8752db1e802b940f5b2ab5ba7a912a838'
+body_hash: 'sha256:fac2eb85ff356cbf09346b33229eff2730fc743705bd3515dc110af13c5c5154'
 related:
   - "[[2026-10-05-qdrant-provisioning-trust-plan]]"
 ---
@@ -431,6 +431,62 @@ related:
 - `S27` `verify:` `pytest unit CLI, service, start, install, readiness, qdrant modules (Linux)` -> `pass`
 - `S27` `verify:` `eight break-and-restore proofs` -> `pass`
 - `S27` `by:` `claude`
+- `S32` `M` `src/vaultspec_rag/_operator_commands.py`
+- `S32` `M` `src/vaultspec_rag/_process_probe.py`
+- `S32` `M` `src/vaultspec_rag/_readiness.py`
+- `S32` `M` `src/vaultspec_rag/_win32.py`
+- `S32` `M` `src/vaultspec_rag/cli/_status_labels.py`
+- `S32` `A` `src/vaultspec_rag/qdrant_runtime/_child_tree.py`
+- `S32` `M` `src/vaultspec_rag/qdrant_runtime/_constants.py`
+- `S32` `M` `src/vaultspec_rag/qdrant_runtime/_supervise.py`
+- `S32` `M` `src/vaultspec_rag/server/_lifecycle.py`
+- `S32` `M` `src/vaultspec_rag/server/_lifespan.py`
+- `S32` `M` `src/vaultspec_rag/tests/_fake_qdrant_binary.py`
+- `S32` `M` `src/vaultspec_rag/tests/test_cli_service_status.py`
+- `S32` `M` `src/vaultspec_rag/tests/test_process_probe_os_guards.py`
+- `S32` `A` `src/vaultspec_rag/tests/test_qdrant_restart_accounting.py`
+- `S32` `A` `src/vaultspec_rag/tests/test_qdrant_tree_stop.py`
+- `S32` `verify:` `pytest unit supervisor, status, readiness, process modules (Windows 669 passed, Linux 696 passed)` -> `pass`
+- `S32` `verify:` `eleven break-and-restore proofs across both platforms` -> `pass`
+- `S32` `by:` `claude`
+- `S31` `M` `.env.example`
+- `S31` `M` `docs/configuration.md`
+- `S31` `M` `src/vaultspec_rag/config/_schema.py`
+- `S31` `M` `src/vaultspec_rag/config/_settings.py`
+- `S31` `M` `src/vaultspec_rag/config/_types.py`
+- `S31` `A` `src/vaultspec_rag/tests/test_model_fetch_bounds.py`
+- `S31` `verify:` `pytest unit model fetch, settings and docs modules (Windows 470 passed, Linux 139 passed)` -> `pass`
+- `S31` `verify:` `three break-and-restore proofs` -> `pass`
+- `S31` `by:` `claude`
+- `S30` `M` `docs/cli.md`
+- `S30` `M` `src/vaultspec_rag/cli/_service_lifecycle.py`
+- `S30` `M` `src/vaultspec_rag/cli/_service_qdrant.py`
+- `S30` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S30` `A` `src/vaultspec_rag/tests/test_cli_interrupted_fetch.py`
+- `S30` `verify:` `pytest unit lifecycle CLI modules (Windows 428 passed, Linux 69 passed)` -> `pass`
+- `S30` `verify:` `four break-and-restore proofs` -> `pass`
+- `S30` `by:` `claude`
+- `S24` `M` `src/vaultspec_rag/_process_probe.py`
+- `S24` `M` `src/vaultspec_rag/commands/_model_download.py`
+- `S24` `M` `src/vaultspec_rag/indexer/_preprocess_runner.py`
+- `S24` `M` `src/vaultspec_rag/tests/test_model_fetch.py`
+- `S24` `M` `src/vaultspec_rag/tests/test_process_probe_os_guards.py`
+- `S24` `verify:` `pytest unit preprocess, process-probe, model-fetch modules (Windows 331 passed, Linux 311 passed)` -> `pass`
+- `S24` `verify:` `two break-and-restore proofs` -> `pass`
+- `S24` `by:` `claude`
+- `S22` `M` `CHANGELOG.md`
+- `S22` `M` `README.md`
+- `S22` `M` `docs/backends.md`
+- `S22` `M` `docs/cli.md`
+- `S22` `M` `docs/installation.md`
+- `S22` `A` `docs/provisioning.md`
+- `S22` `M` `src/vaultspec_rag/cli/_install.py`
+- `S22` `M` `src/vaultspec_rag/cli/_service_lifecycle.py`
+- `S22` `M` `src/vaultspec_rag/cli/_service_qdrant.py`
+- `S22` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S22` `verify:` `dev lint links, docs-conventions, citations, docs-cli, docs-version, markdown` -> `pass`
+- `S22` `verify:` `pytest unit docs and CLI modules (Windows)` -> `pass`
+- `S22` `by:` `claude`
 
 ## Notes
 
@@ -464,3 +520,8 @@ related:
 - `S19` Committed as 960027fd together with S23. Pinned commits: Qwen/Qwen3-Embedding-0.6B at 97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3, BAAI/bge-reranker-v2-m3 at 953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e. The sparse model has no revision setting.
 - `S23` Committed as 960027fd together with S19. Six guards proven to fail when broken and pass when restored: digest comparison, extra file, file added during load, pickle-only weights, missing shard, source digest. Residual stated in the module: off Windows a writer to the model cache can replace a file between the hash and the loader's read; weights are safetensors only and the executed source is the hashed buffer. GPU tier not run: no model was loaded on a device in this session.
 - `S27` Committed as bc1f583c. Integrated from a terminated worker's draft by three-way merge. Added the doctor readiness tests the draft lacked. Eight guards proven both ways. install --skip-torch removed. Tests that reached host behaviour without pinning a host were pinned, so the accelerator-free lane asserts the same branch.
+- `S32` Committed as 864e0b97. Also fixes a defect found during this work: stop() ended only the supervised process, so a server started by an operator's launcher outlived it. The orphan reap at startup is unchanged: it acts on the recorded pid only and refuses a process whose image is not qdrant, so a launcher's orphan is refused rather than half-killed. macOS not run; the group path relies on os.waitid, present there from Python 3.13.
+- `S31` Committed as 0e5893e9; the size query moved into the download child earlier, in d5a72983. New setting `VAULTSPEC_RAG_MODEL_FETCH_DEADLINE_SECONDS,` default 14400. The start-step tests were already driven against the real provisioner in f3e831a6.
+- `S30` Committed as 93acc847. Residual, stated in the install test: a read waiting on a silent release source is not woken by an interrupt, so the install verb answers when that read gives up, bounded by the 30 second stall limit. The top-level install command's own interrupt handling was not changed.
+- `S24` Committed as e5a563aa. No test stages a child whose descendants cannot be identified: nothing short of replacing the process probe produces that state, so that branch is covered by the type checkers and by reading, not by a run.
+- `S22` Committed as 732b69de, with the stop-envelope test correction in 1674b241. New guide docs/provisioning.md, completed from a draft left by a terminated worker and re-checked against the code at each marker. macOS statements are taken from the code and its comments; nothing was run on macOS.
