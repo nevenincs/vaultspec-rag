@@ -38,11 +38,16 @@ _PYTEST_GPU_TIER_PROBE_ENV = "_VAULTSPEC_RAG_PYTEST_GPU_TIER_PROBE"
 #: this harness did not choose is never read as one of them.
 _PROBE_GPU_TIER_SELECTED = 70
 _PROBE_NO_GPU_TIER = 71
+#: uv's own name for where a project's environment lives. Every uv process in
+#: the session's tree reads it, including the ones started by a child, which
+#: is the reach the audit hook does not have.
+_UV_PROJECT_ENVIRONMENT_ENV = "UV_PROJECT_ENVIRONMENT"
 _SINGLETON_ENV_NAMES = (
     PYTEST_SESSION_ACTIVE_ENV,
     PYTEST_SESSION_ROOT_ENV,
     EnvVar.STATUS_DIR.value,
     EnvVar.QDRANT_STORAGE_DIR.value,
+    _UV_PROJECT_ENVIRONMENT_ENV,
 )
 _singleton_prior_env: dict[str, str | None] | None = None
 _singleton_root: Path | None = None
@@ -591,7 +596,20 @@ def pytest_configure(config: pytest.Config) -> None:
     from vaultspec_rag.tests._operator_directory_guard import canonical_path
     from vaultspec_rag.tests._singleton_root_fixtures import (
         sweep_orphaned_singleton_roots,
+        uv_project_environment_redirect,
     )
+
+    # The path is named and not created: uv builds an environment there the
+    # first time something asks for one, and refuses a directory it finds
+    # occupied by anything else.
+    uv_environment = uv_project_environment_redirect(
+        prefix=sys.prefix,
+        rootdir=config.rootpath,
+        configured=os.environ.get(_UV_PROJECT_ENVIRONMENT_ENV),
+        scratch=base,
+    )
+    if uv_environment is not None:
+        os.environ[_UV_PROJECT_ENVIRONMENT_ENV] = str(uv_environment)
 
     _singleton_root = canonical_path(root)
     _reset_singleton_config_caches()
