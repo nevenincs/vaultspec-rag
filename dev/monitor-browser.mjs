@@ -153,7 +153,47 @@ try {
   await send("Network.enable");
   if (deliveredURL)
     await send("Fetch.enable", { patterns: [{ urlPattern: "*" }] });
-  await send("Page.navigate", { url });
+  // A document whose own script could not be fetched finishes loading with
+  // nothing drawn, and nothing a later command asks of it can succeed. So
+  // the page is ready once the application has drawn into its root, not
+  // once navigation was asked for. A load that ends undrawn is discarded
+  // and navigated again, a bounded number of times, with what it recorded
+  // written to the error stream; a page that never draws is a startup
+  // failure and not a ready browser. The root is asked for its children,
+  // which needs no layout: layout can block for a long time while a cold
+  // server compiles the stylesheet.
+  const drawn = "!!document.getElementById('root')?.childElementCount";
+  const reaches = async (expression, milliseconds) => {
+    const until = Date.now() + milliseconds;
+    while (Date.now() < until) {
+      if (await evaluate(expression).catch(() => false)) return true;
+      await delay(50);
+    }
+    return false;
+  };
+  for (let attempt = 1; ; attempt += 1) {
+    const before = errors.length;
+    await send("Page.navigate", { url });
+    if (
+      (await reaches("document.readyState === 'complete'", 45000)) &&
+      (await reaches(drawn, 10000))
+    )
+      break;
+    const recorded = errors
+      .slice(before)
+      .map((error) =>
+        typeof error === "string"
+          ? error
+          : (error.errorText ?? `HTTP ${error.status} ${error.url}`),
+      )
+      .join(", ");
+    const summary = recorded || "nothing was drawn";
+    if (attempt === 3)
+      throw new Error(`The monitor page did not load: ${summary}`);
+    process.stderr.write(`page load ${attempt} discarded: ${summary}\n`);
+    errors.splice(before);
+    network.length = 0;
+  }
   process.stdout.write(`${JSON.stringify({ ready: true })}\n`);
   const input = createInterface({ input: process.stdin });
   for await (const line of input) {
