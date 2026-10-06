@@ -271,13 +271,6 @@ jobs:
         python-version: ["3.13", "3.14"]
     env:
       CI_EXEC_BUDGET_MINUTES: 45
-      # The store-heavy tests are single-threaded work with deadlines of their
-      # own, and one worker per core starves them: uncapped, the slowest runs
-      # at about nine tenths of its timeout and a different one tips over each
-      # run. The runner's admission hook exports a smaller count when it
-      # grants a job fewer processors, and a value it writes for later steps
-      # replaces this one.
-      PYTEST_XDIST_AUTO_NUM_WORKERS: "4"
       # `.python-version` pins the dev interpreter to the floor, and uv reads
       # it in preference to whatever actions/setup-python put on PATH. Without
       # this the 3.14 leg would silently sync and test 3.13 — a green matrix
