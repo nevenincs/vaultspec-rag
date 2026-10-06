@@ -33,6 +33,7 @@ from ..indexer._source_file import SourceIdentityError
 from ..job_control import NO_RUN_CONTROL
 from ..progress import NullProgressReporter
 from ..store_runtime import VaultStore
+from ._preprocess_approval import approve_preprocess_policy
 from .test_live_checkpoint_resilience import unloaded_model
 
 if TYPE_CHECKING:
@@ -374,7 +375,7 @@ def test_incremental_removes_points_of_document_replaced_by_link(
 
 
 def test_refused_source_is_reported_as_one_failed_file(
-    tmp_path: Path, local_model: EmbeddingModel
+    tmp_path: Path, isolated_status_dir: Path, local_model: EmbeddingModel
 ) -> None:
     """A source refused before it is read carries a placeholder, not a digest.
 
@@ -382,11 +383,17 @@ def test_refused_source_is_reported_as_one_failed_file(
     the run; recording no digest reported the one file and finished. A refused
     source has nothing to encode, so the model here has no forward at all.
     """
+    # Requested ahead of the model: relocating the status dir clears the
+    # configuration, and the model fixture's settings have to come after.
+    del isolated_status_dir
     _write_blob_rule(
         tmp_path,
         f"{shlex.quote(sys.executable)} -c pass {{path}}",
         extra="max_source_bytes = 4\n",
     )
+    # The size refusal is the rule's own; an unapproved rule is held back
+    # before it is ever asked, and the run would report that instead.
+    approve_preprocess_policy(tmp_path)
     (tmp_path / "manual.blob").write_bytes(b"longer than four bytes")
     with VaultStore(tmp_path, embedding_dim=2) as store:
         indexer = DocumentIndexer(
