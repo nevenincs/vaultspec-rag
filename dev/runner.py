@@ -41,6 +41,12 @@ TOOL_MISSING = _TOOL_MISSING
 #: an MCP server, an editor, another agent's session - holds one of the
 #: console-script executables open. The recipes whose purpose IS to change the
 #: environment call ``uv`` directly and deliberately omit it.
+#:
+#: It does not make ``uv run`` read-only. uv creates a project environment
+#: that is absent, and replaces one it finds unusable, before it reads this
+#: flag - and an environment built by another operating system over the same
+#: checkout is one it finds unusable. The flag is safe on the environment the
+#: caller is itself running from, and on no other.
 NO_SYNC = ("--no-sync",)
 
 
