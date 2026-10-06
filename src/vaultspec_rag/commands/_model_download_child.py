@@ -273,7 +273,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 timeout=constants.HF_HUB_ETAG_TIMEOUT,
             )
             records.write({"record": RECORD_DECLARED, "bytes": declared})
-            if sys.stdin.readline().strip() != GO_AHEAD:
+            # Read as bytes and decoded here: a text read would use whatever
+            # encoding the parent's environment happened to set.
+            answer = sys.stdin.buffer.readline().decode("utf-8", errors="replace")
+            if answer.strip() != GO_AHEAD:
                 # The reader refused the download or is gone; either way it
                 # is not waiting for a result, and nothing was fetched.
                 return _EXIT_UNREAD
