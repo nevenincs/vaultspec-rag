@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 import psutil
 import pytest
 
+from .._process_probe import pid_alive
 from ..qdrant_runtime._supervise import QdrantSupervisor
 from ._fake_qdrant_binary import fake_qdrant_binary, unpinned
 from ._ports import free_loopback_port
@@ -110,8 +111,13 @@ def test_a_stop_ends_the_server_a_launcher_started(tmp_path: Path) -> None:
     worker: psutil.Process | None = None
     try:
         worker = _worker_started_by(supervisor, pidfile)
+        launcher = supervisor.pid
+        assert launcher is not None
 
         assert supervisor.stop(timeout=10.0), "the stop did not converge"
+        # Asked the instant the stop returns: a stop that reports on an exit
+        # code recorded for a process still on its way out fails here.
+        assert not pid_alive(launcher), "the stop returned before its child was gone"
         assert supervisor.pid is None
         assert _gone(worker), "the server the launcher started outlived the stop"
     finally:

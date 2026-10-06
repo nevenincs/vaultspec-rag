@@ -34,7 +34,12 @@ import sys
 import time
 from typing import TYPE_CHECKING, cast
 
-from .._process_probe import iter_process_info, pid_is_zombie, send_group_signal
+from .._process_probe import (
+    iter_process_info,
+    pid_alive,
+    pid_is_zombie,
+    send_group_signal,
+)
 from .._win32 import job_member_count, terminate_job
 
 if TYPE_CHECKING:
@@ -48,6 +53,11 @@ logger = logging.getLogger(__name__)
 #: still running. A kill cannot be refused, so this bounds the operating
 #: system's own bookkeeping, not a process's cooperation.
 _KILL_CONFIRM_SECONDS = 5.0
+
+#: How long a terminated job is given to take the child down with it before
+#: the child is terminated directly. Termination through a job is immediate,
+#: so a child still running after this was never a member.
+_JOB_GRACE_SECONDS = 2.0
 
 _POLL_SECONDS = 0.05
 
@@ -89,32 +99,48 @@ def end_tree(proc: subprocess.Popen[bytes], job: int | None, *, timeout: float) 
     return _end_group(proc, timeout=timeout)
 
 
+def _exits_within(proc: subprocess.Popen[bytes], seconds: float) -> bool:
+    """Wait up to *seconds* for *proc* to exit; return whether it did."""
+    try:
+        proc.wait(timeout=seconds)
+    except subprocess.TimeoutExpired:
+        return False
+    return True
+
+
 def _end_job(proc: subprocess.Popen[bytes], job: int | None, *, timeout: float) -> bool:
-    """End the job's members, and the child itself in case it never joined."""
-    terminate_job(job, purpose="qdrant")
-    if proc.poll() is None:
+    """End the job's members, the child directly if it never joined, and confirm.
+
+    The child is not terminated a second time when the job took it. A process
+    that is already dying refuses another termination, and the standard
+    library then records its exit code at once, before the process is gone,
+    so the wait that follows returns while the server still holds its port
+    and its store. For the same reason the end is confirmed on the process
+    itself and not on the exit code recorded for it.
+    """
+    taken = terminate_job(job, purpose="qdrant") and _exits_within(
+        proc, _JOB_GRACE_SECONDS
+    )
+    if not taken and proc.poll() is None:
         try:
             proc.terminate()
         except OSError as exc:
             logger.debug("qdrant terminate failed: %s", exc)
-    try:
-        proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
+    if not _exits_within(proc, timeout):
         logger.error("qdrant pid=%d survived termination", proc.pid)
         return False
-    deadline = time.monotonic() + _KILL_CONFIRM_SECONDS
-    # An unreadable count is the job that could not be created or joined: the
-    # child alone was the tree that could be governed, and it has exited.
-    while (members := job_member_count(job)) not in {0, None}:
-        if time.monotonic() >= deadline:
-            logger.error(
-                "%d process(es) started by qdrant pid=%d survived termination",
-                members,
-                proc.pid,
-            )
-            return False
-        time.sleep(_POLL_SECONDS)
-    return True
+
+    def gone() -> bool:
+        # The open process handle keeps the pid from being reused, so this
+        # asks about the child and nothing else. An unreadable count is the
+        # job that could not be created or joined: the child alone was the
+        # tree that could be governed.
+        return not pid_alive(proc.pid) and job_member_count(job) in {0, None}
+
+    if _holds_within(gone, _KILL_CONFIRM_SECONDS):
+        return True
+    logger.error("qdrant pid=%d or a process it started survived termination", proc.pid)
+    return False
 
 
 def _other_members(group: int) -> list[int] | None:
