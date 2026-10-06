@@ -1,11 +1,11 @@
 """Unit tests for the ``preprocess`` CLI verb group (no GPU).
 
-Exercises the inspection verbs (``list`` / ``check`` / ``run-one``) plus the
-amended ``status`` surface and the ``server start`` / ``index`` ``--no-preprocess``
-flag over a real tmp workspace with a real ``.vaultragpreprocess.toml`` and a real
-extractor script (no mocks). The OS sandbox and its ``--preprocess-unsandboxed``
-escape hatch were removed: rules resolve for any root and run directly, gated
-only by the ``off`` kill switch.
+Exercises the inspection verbs (``list`` / ``check`` / ``run-one``), the
+``approve`` / ``revoke`` verbs, the ``status`` surface and the ``server start``
+/ ``index`` ``--no-preprocess`` flag over a real tmp workspace with a real
+``.vaultragpreprocess.toml`` and a real extractor script (no mocks). Rules
+resolve for any root; they run directly, with no sandbox, once the operator
+has approved the root's exact policy and the ``off`` kill switch is not thrown.
 """
 
 from __future__ import annotations
@@ -23,9 +23,11 @@ from typer.testing import CliRunner
 from ..cli import app
 from ..cli._index import _apply_preprocess_off_env
 from ..cli._process import _build_service_child_env, _ServiceChildEnvRequest
+from ..cli._service_start import _print_preprocess_start_notice
 from ..config._settings import get_config
 from ..config._types import EnvVar
 from ._config_fixtures import reset_config
+from ._preprocess_approval import approve_preprocess_policy
 from ._scaffold import make_workspace
 
 if TYPE_CHECKING:
@@ -44,10 +46,10 @@ def _preprocess_env(  # pyright: ignore[reportUnusedFunction]
 ) -> Iterator[None]:
     """Isolate the status dir and resolve the ``default`` mode.
 
-    The managed status dir is isolated to a per-test tmp path. Clearing
-    the mode env var leaves the resolved mode at ``default``, so ``list`` /
-    ``run-one`` see a root's rules for any root - no per-root trust act. The
-    off-mode tests call :func:`_off_mode` to override.
+    The managed status dir is isolated to a per-test tmp path, so each test
+    starts with an empty approval store. Clearing the mode env var leaves the
+    resolved mode at ``default``. The off-mode tests call :func:`_off_mode` to
+    override.
     """
     status_dir = tmp_path / "status"
     status_dir.mkdir()
@@ -113,6 +115,36 @@ def _config_with_rule(root: Path) -> None:
     (root / ".vaultragpreprocess.toml").write_text(body, encoding="utf-8")
 
 
+def _sentinel_rule(root: Path) -> Path:
+    """Write a rule whose extractor proves it ran by creating a sentinel file."""
+    sentinel = root / "EXECUTED.flag"
+    script = root / "sentinel_extractor.py"
+    script.write_text(
+        textwrap.dedent(f"""
+            import json, pathlib, sys
+            pathlib.Path({str(sentinel)!r}).write_text("executed")
+            print(json.dumps({{
+                "schema_version": 1,
+                "preprocessor_id": "sentinel",
+                "preprocessor_version": "1.0",
+                "source_path": sys.argv[1],
+                "units": [{{"text": "sentinel output"}}],
+            }}))
+        """),
+        encoding="utf-8",
+    )
+    command = f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} {{path}}"
+    (root / ".vaultragpreprocess.toml").write_text(
+        'version = 2\n\n[[rule]]\npattern = "*.pdf"\n'
+        'target = "document"\n'
+        'extractor_version = "1.0.0"\n'
+        f"command = '''{command}'''\n"
+        'on_error = "skip"\n',
+        encoding="utf-8",
+    )
+    return sentinel
+
+
 def _json(output: str) -> dict[str, object]:
     # The runner may mix a stray log line into the captured output; the JSON
     # envelope is the last line that parses as an object.
@@ -145,6 +177,8 @@ def _human_fields(output: str) -> dict[str, str]:
     [
         ["preprocess", "list", "--help"],
         ["preprocess", "check", "--help"],
+        ["preprocess", "approve", "--help"],
+        ["preprocess", "revoke", "--help"],
         ["preprocess", "run-one", "--help"],
         ["preprocess", "status", "--help"],
     ],
@@ -159,11 +193,124 @@ def test_preprocess_json_help_uses_script_language(argv: list[str]) -> None:
         assert "report configuration problems" in result.output
 
 
-def test_trust_verbs_are_removed() -> None:
-    # The trust/untrust verbs were deleted; no such subcommands exist.
-    for verb in ("trust", "untrust"):
-        result = runner.invoke(app, ["preprocess", verb, "--help"])
-        assert result.exit_code != 0
+# --- approve / revoke ----------------------------------------------------------
+
+
+def test_approve_records_the_policy_and_reports_what_it_runs(tmp_path: Path) -> None:
+    root = make_workspace(tmp_path)
+    _config_with_rule(root)
+
+    result = runner.invoke(
+        app, ["--target", str(root), "preprocess", "approve", "--json"]
+    )
+
+    assert result.exit_code == 0, result.output
+    data = _data(_json(result.output))
+    assert data["status"] == "approved"
+    assert data["rule_count"] == 1
+    assert str(data["policy_digest"]).startswith("sha256:")
+    rules = cast("list[dict[str, object]]", data["rules"])
+    assert rules[0]["pattern"] == "*.pdf"
+    assert "extractor.py" in str(rules[0]["invocation"])
+
+    status = runner.invoke(
+        app, ["--target", str(root), "preprocess", "status", "--json"]
+    )
+    status_data = _data(_json(status.output))
+    assert status_data["approved"] is True
+    assert status_data["policy_digest"] == data["policy_digest"]
+    assert status_data["hooks"] == "active"
+    assert status_data["would_run"] is True
+
+
+def test_approve_human_output_shows_the_commands_and_the_next_step(
+    tmp_path: Path,
+) -> None:
+    root = make_workspace(tmp_path)
+    _config_with_rule(root)
+
+    result = runner.invoke(app, ["--target", str(root), "preprocess", "approve"])
+
+    assert result.exit_code == 0, result.output
+    assert "Approved: 1 preprocess rule for" in result.output
+    assert "Files: *.pdf" in result.output
+    assert "Invocation:" in result.output
+    assert "Policy digest: sha256:" in result.output
+    assert "needs approval again" in result.output
+    assert "vaultspec-rag index" in result.output
+
+
+def test_approve_is_idempotent(tmp_path: Path) -> None:
+    root = make_workspace(tmp_path)
+    _config_with_rule(root)
+    args = ["--target", str(root), "preprocess", "approve", "--json"]
+
+    first = _data(_json(runner.invoke(app, args).output))
+    second_result = runner.invoke(app, args)
+
+    assert second_result.exit_code == 0, second_result.output
+    second = _data(_json(second_result.output))
+    assert first["status"] == "approved"
+    assert second["status"] == "already_approved"
+    assert second["policy_digest"] == first["policy_digest"]
+
+
+def test_approve_without_rules_has_nothing_to_approve(tmp_path: Path) -> None:
+    root = make_workspace(tmp_path)
+
+    result = runner.invoke(
+        app, ["--target", str(root), "preprocess", "approve", "--json"]
+    )
+
+    assert result.exit_code == 0, result.output
+    data = _data(_json(result.output))
+    assert data["status"] == "no_rules"
+    assert data["policy_digest"] is None
+
+
+def test_approve_refuses_an_invalid_config(tmp_path: Path) -> None:
+    root = make_workspace(tmp_path)
+    (root / ".vaultragpreprocess.toml").write_text(
+        "not = = valid [[[", encoding="utf-8"
+    )
+
+    result = runner.invoke(
+        app, ["--target", str(root), "preprocess", "approve", "--json"]
+    )
+
+    assert result.exit_code == 1
+    assert _json(result.output)["ok"] is False
+
+
+def test_revoke_withdraws_an_approval(tmp_path: Path) -> None:
+    root = make_workspace(tmp_path)
+    _config_with_rule(root)
+    approve_preprocess_policy(root)
+
+    result = runner.invoke(
+        app, ["--target", str(root), "preprocess", "revoke", "--json"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert _data(_json(result.output))["status"] == "revoked"
+    status = runner.invoke(
+        app, ["--target", str(root), "preprocess", "status", "--json"]
+    )
+    status_data = _data(_json(status.output))
+    assert status_data["approved"] is False
+    assert status_data["hooks"] == "unapproved"
+
+
+def test_revoke_of_an_unapproved_root_is_already_done(tmp_path: Path) -> None:
+    root = make_workspace(tmp_path)
+    _config_with_rule(root)
+
+    result = runner.invoke(
+        app, ["--target", str(root), "preprocess", "revoke", "--json"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert _data(_json(result.output))["status"] == "not_approved"
 
 
 def test_list_empty(tmp_path: Path) -> None:
@@ -269,17 +416,21 @@ def test_check_invalid_rule_exits_nonzero(tmp_path: Path) -> None:
 def test_run_one_no_match(tmp_path: Path) -> None:
     root = make_workspace(tmp_path)
     _config_with_rule(root)
+    approve_preprocess_policy(root)
     (root / "notes.txt").write_text("hello", encoding="utf-8")
     result = runner.invoke(
         app, ["--target", str(root), "preprocess", "run-one", "notes.txt", "--json"]
     )
     assert result.exit_code == 0
-    assert _data(_json(result.output))["matched"] is False
+    data = _data(_json(result.output))
+    assert data["matched"] is False
+    assert "gated" not in data
 
 
 def test_run_one_matches_and_runs(tmp_path: Path) -> None:
     root = make_workspace(tmp_path)
     _config_with_rule(root)
+    approve_preprocess_policy(root)
     (root / "report.pdf").write_bytes(b"\x00\x01binary")
     result = runner.invoke(
         app, ["--target", str(root), "preprocess", "run-one", "report.pdf", "--json"]
@@ -295,9 +446,10 @@ def test_run_one_matches_and_runs(tmp_path: Path) -> None:
 def test_run_one_human_output_uses_plain_result_language(tmp_path: Path) -> None:
     root = make_workspace(tmp_path)
     _config_with_rule(root)
+    approve_preprocess_policy(root)
     (root / "report.pdf").write_bytes(b"\x00\x01binary")
-    # Default mode resolves the rules for any root - no trust act is needed, and
-    # no warning pollutes the field-exact human output.
+    # An approved root's rule runs, and no warning pollutes the field-exact
+    # human output.
     result = runner.invoke(
         app, ["--target", str(root), "preprocess", "run-one", "report.pdf"]
     )
@@ -340,14 +492,112 @@ def test_run_one_gated_off_json_reports_mode(
     assert data["matched"] is False
     assert data["gated"] is True
     assert data["mode"] == "off"
+    assert data["hooks"] == "disabled"
+
+
+def test_run_one_does_not_execute_an_unapproved_rule(tmp_path: Path) -> None:
+    """The authoring verb obeys the same gate as indexing.
+
+    Mutation check: skipping the hook-state gate in ``run-one`` creates the
+    sentinel and fails here on its absence; restoring the gate passes.
+    """
+    root = make_workspace(tmp_path)
+    sentinel = _sentinel_rule(root)
+    (root / "report.pdf").write_bytes(b"\x00\x01binary")
+
+    result = runner.invoke(
+        app, ["--target", str(root), "preprocess", "run-one", "report.pdf", "--json"]
+    )
+
+    assert result.exit_code == 0, result.output
+    data = _data(_json(result.output))
+    assert not sentinel.exists()
+    assert data["matched"] is False
+    assert data["gated"] is True
+    assert data["mode"] == "default"
+    assert data["hooks"] == "unapproved"
+    assert data["rule_count"] == 1
+
+
+def test_run_one_runs_once_the_rule_is_approved_and_stops_when_it_changes(
+    tmp_path: Path,
+) -> None:
+    root = make_workspace(tmp_path)
+    sentinel = _sentinel_rule(root)
+    (root / "report.pdf").write_bytes(b"\x00\x01binary")
+    args = ["--target", str(root), "preprocess", "run-one", "report.pdf", "--json"]
+
+    approve = runner.invoke(app, ["--target", str(root), "preprocess", "approve"])
+    assert approve.exit_code == 0, approve.output
+    ran = runner.invoke(app, args)
+    assert _data(_json(ran.output))["matched"] is True
+    assert sentinel.exists()
+
+    sentinel.unlink()
+    config = root / ".vaultragpreprocess.toml"
+    config.write_text(
+        config.read_text(encoding="utf-8") + "timeout_s = 30\n", encoding="utf-8"
+    )
+    held = runner.invoke(app, args)
+    assert not sentinel.exists()
+    assert _data(_json(held.output)).get("hooks") == "unapproved"
+
+
+def test_run_one_unapproved_message_names_the_approval_command(
+    tmp_path: Path,
+) -> None:
+    root = make_workspace(tmp_path)
+    _config_with_rule(root)
+    (root / "report.pdf").write_bytes(b"\x00\x01binary")
+
+    result = runner.invoke(
+        app, ["--target", str(root), "preprocess", "run-one", "report.pdf"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Preprocess rules are not approved" in result.output
+    assert "vaultspec-rag preprocess approve" in result.output
 
 
 # --- status --------------------------------------------------------------------
 
 
+def test_status_reports_an_unapproved_root_will_not_run(tmp_path: Path) -> None:
+    root = make_workspace(tmp_path)
+    _config_with_rule(root)
+
+    result = runner.invoke(
+        app, ["--target", str(root), "preprocess", "status", "--json"]
+    )
+
+    assert result.exit_code == 0, result.output
+    data = _data(_json(result.output))
+    assert data["mode"] == "default"
+    assert data["rule_count"] == 1
+    assert data["approved"] is False
+    assert str(data["policy_digest"]).startswith("sha256:")
+    assert data["hooks"] == "unapproved"
+    assert data["would_run"] is False
+
+
+def test_status_human_output_tells_an_unapproved_root_how_to_approve(
+    tmp_path: Path,
+) -> None:
+    root = make_workspace(tmp_path)
+    _config_with_rule(root)
+
+    result = runner.invoke(app, ["--target", str(root), "preprocess", "status"])
+
+    assert result.exit_code == 0, result.output
+    assert "Approval: not approved" in result.output
+    assert "configured but not approved" in result.output
+    assert "vaultspec-rag preprocess approve" in result.output
+
+
 def test_status_default_mode_reports_would_run(tmp_path: Path) -> None:
     root = make_workspace(tmp_path)
     _config_with_rule(root)
+    approve_preprocess_policy(root)
     result = runner.invoke(
         app, ["--target", str(root), "preprocess", "status", "--json"]
     )
@@ -361,11 +611,11 @@ def test_status_default_mode_reports_would_run(tmp_path: Path) -> None:
     assert data["targets"] == ["document"]
     assert data["extractor_versions"] == ["1.0.0"]
     assert data["path_independent_rules"] == 0
+    assert data["approved"] is True
+    assert data["hooks"] == "active"
     assert data["would_run"] is True
-    # The removed sandbox and trust surfaces must not resurface in the envelope.
+    # The removed sandbox surface must not resurface in the envelope.
     assert "sandbox_backend" not in data
-    assert "trust_state" not in data
-    assert "rule_set_hash" not in data
 
 
 def test_status_no_config_reports_no_rules(tmp_path: Path) -> None:
@@ -400,13 +650,48 @@ def test_status_off_mode_reports_off(
 def test_status_human_output_reports_direct_execution(tmp_path: Path) -> None:
     root = make_workspace(tmp_path)
     _config_with_rule(root)
+    approve_preprocess_policy(root)
     result = runner.invoke(app, ["--target", str(root), "preprocess", "status"])
     assert result.exit_code == 0, result.output
     assert "Preprocess mode: default" in result.output
     assert "Rules: 1" in result.output
+    assert "Approval: approved" in result.output
     # The effect line now states direct execution, not a sandbox backend.
     assert "run directly" in result.output
     assert "Sandbox:" not in result.output
+
+
+# --- server start notice -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("approved", "mode", "expected"),
+    [
+        (True, "default", "will run; their commands execute"),
+        (False, "default", "will be skipped (not approved)"),
+        (True, "off", "will be skipped (mode is off)"),
+    ],
+)
+def test_server_start_notice_says_whether_the_root_hooks_run(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    approved: bool,
+    mode: str,
+    expected: str,
+) -> None:
+    root = make_workspace(tmp_path)
+    _config_with_rule(root)
+    if approved:
+        approve_preprocess_policy(root)
+
+    _print_preprocess_start_notice(root, mode)
+
+    # The notice is prose that may wrap at the console width; the command in
+    # its remedy is on a line of its own and must survive whole.
+    captured = capsys.readouterr().out
+    assert expected in " ".join(captured.split())
+    names_the_approval_command = "vaultspec-rag preprocess approve" in captured
+    assert names_the_approval_command is (not approved)
 
 
 # --- server start mode flags ---------------------------------------------------

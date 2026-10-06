@@ -19,6 +19,7 @@ from ...job_manager.models import JobAttemptContext
 from ...job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
 from ...service import ServiceRegistry
 from ...service_quiesce import ServiceQuiesceController
+from .._preprocess_approval import approve_preprocess_policy
 
 pytestmark = [pytest.mark.integration, pytest.mark.timeout(120)]
 
@@ -36,6 +37,9 @@ def _write_document_route(root: Path, extractor: Path) -> None:
         'on_error = "fail"\n',
         encoding="utf-8",
     )
+    # Approved, so that the only thing keeping the extractor from launching is
+    # the admission budget and not a withheld approval.
+    approve_preprocess_policy(root)
 
 
 @pytest.mark.asyncio

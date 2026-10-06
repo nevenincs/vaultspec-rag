@@ -17,6 +17,7 @@ from ...indexer._run_ledger_models import RunAuthority
 from ...progress import NullProgressReporter
 from ...registry import get_registry
 from ...store_runtime import VaultStore
+from .._preprocess_approval import approve_preprocess_policy
 from .._store_fixtures import get_all_document_content_ids
 
 if TYPE_CHECKING:
@@ -41,6 +42,9 @@ def _write_document_extractor_route(
         'on_error = "fail"\n',
         encoding="utf-8",
     )
+    # Approved, so that the only thing keeping the extractor from launching is
+    # the code job's own boundary and not a withheld approval.
+    approve_preprocess_policy(root)
 
 
 def _document_chunk(dimension: int) -> DocumentChunk:
