@@ -766,10 +766,8 @@ def _run_clean_rebuild_availability_phase(
         last_job=terminal_job,
         last_response=post_response,
     )
-    assert post_status == 503, post_evidence
-    assert post_body["ok"] is False, post_evidence
-    assert post_body["error"] == "index_unverifiable", post_evidence
-    assert "results" not in post_body, post_evidence
+    assert post_status == 200, post_evidence
+    _assert_authoritative_empty_answer(post_body, evidence=post_evidence)
     raw_post_state = post_body["index_state"]
     assert isinstance(raw_post_state, dict), post_evidence
     post_state = cast("dict[str, object]", raw_post_state)
@@ -780,14 +778,45 @@ def _run_clean_rebuild_availability_phase(
     post_integrity = cast("dict[str, object]", raw_post_integrity)
     # Mutation proof: restoring the stale ``unverifiable`` expectation fails
     # here after the real rebuild publishes a consistent generation.
-    # The rebuild establishes canonical storage proof even though a fresh
-    # readiness-controller observation is still unavailable to this isolated
-    # process, so admission remains conservative while integrity is exact.
+    # The rebuild establishes canonical storage proof, and that proof is what
+    # the admission asserted above stands on.
     assert post_integrity["verdict"] == "consistent", post_evidence
     assert post_integrity["claimed_count"] == post_integrity["live_count"], (
         post_evidence
     )
     assert post_integrity["generation_id"], post_evidence
+
+
+def _assert_authoritative_empty_answer(
+    body: dict[str, object], *, evidence: str
+) -> None:
+    """Assert a search admitted against a published rebuild that matched nothing.
+
+    Once the rebuild has published, the publication it serves is the target a
+    search is held to, so the search is admitted and its empty answer is
+    authoritative: nothing matched an index known to be whole. It is no longer
+    refused for want of a controller observation an isolated process never
+    has.
+    """
+    assert "error" not in body, evidence
+    assert body["results"] == [], evidence
+    raw_empty = body["empty"]
+    assert isinstance(raw_empty, dict), evidence
+    assert cast("dict[str, object]", raw_empty)["reason"] == "no_match", evidence
+    raw_readiness = body["readiness"]
+    assert isinstance(raw_readiness, dict), evidence
+    raw_sources = cast("dict[str, object]", raw_readiness)["sources"]
+    assert isinstance(raw_sources, list), evidence
+    vault_fact = next(
+        cast("dict[str, object]", fact)
+        for fact in cast("list[object]", raw_sources)
+        if cast("dict[str, object]", fact)["source"] == "vault"
+    )
+    assert (
+        vault_fact["availability"],
+        vault_fact["freshness"],
+        vault_fact["absence_authority"],
+    ) == ("usable", "current", "authoritative"), evidence
 
 
 def _persist_paused_matching_rebuild(state_path: Path, root: Path) -> str:
