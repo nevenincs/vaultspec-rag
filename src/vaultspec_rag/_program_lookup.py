@@ -14,7 +14,7 @@ A program is therefore always run by an absolute path, found here, in the
 places its caller says it belongs:
 
 * beside this installation's own programs, for what ships with it;
-* the operating system's own directory, for operating-system tools, which
+* the operating system's own directories, for operating-system tools, which
   must not be answered by a same-named port earlier on ``PATH``;
 * the absolute entries of ``PATH``, for a tool the operator installed.
 
@@ -52,8 +52,9 @@ class Where(Enum):
     #: The directories this installation's own programs are installed into:
     #: the environment's scripts directory and the running program's own.
     INSTALLATION = "beside this installation's programs"
-    #: Where the operating system keeps its own programs.
-    SYSTEM = "the operating system's program directory"
+    #: Where the operating system keeps its own programs. On Windows that is
+    #: the system directory and the PowerShell directory beneath it.
+    SYSTEM = "the operating system's program directories"
     #: The absolute entries of ``PATH``, in order.
     SEARCH_PATH = "an absolute entry of PATH"
 
@@ -133,5 +134,9 @@ def _system_directories() -> Sequence[str]:
     if sys.platform == "win32":
         from ._win32 import system_directory
 
-        return [system_directory()]
+        system = system_directory()
+        # Windows keeps PowerShell in a directory of its own beneath the
+        # system directory, so that one alone would send a caller wanting it
+        # back to PATH, where a same-named program can answer first.
+        return [system, os.path.join(system, "WindowsPowerShell", "v1.0")]
     return os.defpath.split(os.pathsep)

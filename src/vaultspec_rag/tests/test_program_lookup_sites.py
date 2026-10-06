@@ -29,7 +29,6 @@ import pytest
 
 from .._process_probe import _windows_image_matches
 from .._python_child import inline_command
-from .._win32 import system_directory
 from ..commands._mcp_topology import _restore_junction
 from ..commands._models import InstallReport
 from ..commands._tool_torch import _run_repair
@@ -235,14 +234,17 @@ def test_a_junction_is_not_restored_by_a_powershell_from_the_working_directory(
 ) -> None:
     """An install rollback restores a junction with the real PowerShell.
 
-    ``PATH`` names the one directory the real program lives in, after the
-    relative entries. Shown to fail by running the bare name again: the
-    planted program answers, creates nothing, and the restore raises. Passes
-    with the lookup restored.
+    A same-named program stands in the working directory and in the one
+    absolute directory ``PATH`` names; the directory the real one lives in is
+    not on ``PATH`` at all. Shown to fail by finding the program on ``PATH``
+    again: the planted program answers, creates nothing, and the restore
+    raises. Passes with the operating system's own directories asked.
     """
     plant_native_program(checkout, "powershell")
-    powershell_home = os.path.join(system_directory(), "WindowsPowerShell", "v1.0")
-    monkeypatch.setenv("PATH", os.pathsep.join(["", os.curdir, powershell_home]))
+    shadow = tmp_path / "ports"
+    shadow.mkdir()
+    plant_native_program(shadow, "powershell")
+    monkeypatch.setenv("PATH", os.pathsep.join(["", os.curdir, str(shadow)]))
     target = tmp_path / "junction-target"
     target.mkdir()
     junction = tmp_path / "junction"

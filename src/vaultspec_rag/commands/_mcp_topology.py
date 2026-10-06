@@ -871,9 +871,11 @@ def _restore_junction(path: Path, target: str) -> None:
         f"New-Item -ItemType Junction -Path $env:{EnvVar.RAG_JUNCTION_PATH.value} "
         f"-Target $env:{EnvVar.RAG_JUNCTION_TARGET.value} | Out-Null"
     )
-    # Found on PATH and run by absolute path: this runs in the project being
-    # installed into, where a bare name would be looked for first.
-    powershell = find_program("powershell.exe", Where.SEARCH_PATH)
+    # An operating-system program, taken from the operating system's own
+    # directories and run by absolute path. This runs in the project being
+    # installed into, where a bare name would be looked for first, and a
+    # same-named program earlier on PATH must not be what answers either.
+    powershell = find_program("powershell.exe", Where.SYSTEM)
     if powershell is None:
         raise OSError(f"cannot restore the junction at {path}: no powershell.exe")
     completed = subprocess.run(
