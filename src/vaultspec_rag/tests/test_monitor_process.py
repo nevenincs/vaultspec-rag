@@ -233,6 +233,79 @@ def test_stop_reaps_verified_orphan_and_clears_assignment(
         path.unlink(missing_ok=True)
 
 
+_HOLDS_THE_STATUS_LOCK = """
+import sys
+from pathlib import Path
+
+from vaultspec_rag.serviceclient._discovery import status_write_lock
+
+with status_write_lock(Path(sys.argv[1]), timeout=30.0):
+    print("held", flush=True)
+    sys.stdin.readline()
+"""
+
+
+def test_a_stopped_monitor_is_stopped_even_when_its_record_cannot_be_withdrawn(
+    isolated_singleton_dirs: Path,
+) -> None:
+    """A held status lock delays the record's removal, not the stop.
+
+    The monitor process has exited by the time its record is withdrawn, so a
+    lock another process holds leaves a record naming a dead process. That is
+    what the next start or stop reaps; reporting the stop as failed made a
+    daemon that had released everything end its shutdown as unclean.
+
+    Mutation: let the lock's timeout escape ``stop``. Observed this fail on
+    the ``TimeoutError`` raised out of the call. Restored; passes.
+    """
+    path = isolated_singleton_dirs / "monitor.json"
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import sys; sys.stdin.read()"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+    )
+    holder = subprocess.Popen(
+        [sys.executable, "-c", _HOLDS_THE_STATUS_LOCK, str(path)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
+    )
+    try:
+        identity = MonitorIdentity(
+            os.getpid(),
+            pid_start_time(os.getpid()),
+            child.pid,
+            pid_start_time(child.pid),
+            54321,
+        )
+        write_json_atomically(path, asdict(identity))
+        monitor = MonitorProcess(54320)
+        monitor.process = child
+        monitor.identity = identity
+        assert holder.stdout is not None
+        assert holder.stdout.readline().strip() == "held"
+
+        stopped = monitor.stop()
+
+        assert stopped is True
+        assert child.poll() is not None, "the monitor process was left running"
+        assert monitor.process is None
+        assert monitor.identity is None
+        assert path.exists(), "the record was removed without the lock"
+    finally:
+        for process in (holder, child):
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=10)
+            for stream in (process.stdin, process.stdout):
+                if stream is not None:
+                    stream.close()
+        path.unlink(missing_ok=True)
+
+
 def test_orphan_cleanup_preserves_live_successor_owner(
     isolated_singleton_dirs: Path,
 ) -> None:

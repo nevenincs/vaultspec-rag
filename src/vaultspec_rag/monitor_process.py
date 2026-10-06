@@ -286,9 +286,20 @@ class MonitorProcess:
         if process.stdout is not None:
             process.stdout.close()
         path = _identity_path()
-        with status_write_lock(path):
-            if _read_identity(path) == self.identity:
-                path.unlink(missing_ok=True)
+        try:
+            with status_write_lock(path):
+                if _read_identity(path) == self.identity:
+                    path.unlink(missing_ok=True)
+        except TimeoutError as exc:
+            # The monitor has exited; only its record could not be withdrawn,
+            # because another process holds the status lock. What is left
+            # names a dead process, and the next start or stop reaps exactly
+            # that, so the stop that was asked for has still happened.
+            logger.warning(
+                "monitor stopped; its identity record is left for the next "
+                "start or stop to clear: %s",
+                exc,
+            )
         self.identity = None
         self.access = None
         self.process = None
