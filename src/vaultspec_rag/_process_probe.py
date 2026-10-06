@@ -246,15 +246,18 @@ def pid_image_path(pid: int) -> str | None:
     privilege this process cannot open - and is never evidence about what the
     image IS. Callers deciding whether to trust or kill a pid must treat it as
     unknown, not as a mismatch.
+
+    Each platform is asked through the mechanism it has. Windows queries the
+    image name on a limited-information handle. Linux reads the
+    ``/proc/<pid>/exe`` link. macOS and the BSDs have no such link, so reading
+    it there fails for every pid, live or not, and an answer that is the same
+    for every process says nothing about any of them; they are asked through
+    psutil instead.
     """
     if pid <= 0:
         return None
     if sys.platform != "win32":
-        try:
-            return os.readlink(f"/proc/{pid}/exe")
-        except OSError as exc:
-            logger.debug("image path unreadable for pid %d: %s", pid, exc)
-            return None
+        return _posix_image_path(pid)
     import ctypes
     from ctypes import wintypes
 
@@ -276,6 +279,60 @@ def pid_image_path(pid: int) -> str | None:
         return buf.value
     finally:
         kernel32.CloseHandle(handle)
+
+
+def _posix_image_path(pid: int) -> str | None:
+    """Read the image from ``/proc`` where it is there, through psutil where not."""
+    if not _procfs_names_images():
+        return _psutil_image_path(pid)
+    try:
+        return os.readlink(f"/proc/{pid}/exe")
+    except OSError as exc:
+        logger.debug("image path unreadable for pid %d: %s", pid, exc)
+        return None
+
+
+def _procfs_names_images() -> bool:
+    """Return whether ``/proc`` carries each process's image link here.
+
+    Asked of this process's own entry, which exists wherever the link does and
+    is never hidden from its owner.
+    """
+    return os.path.lexists("/proc/self/exe")
+
+
+def _psutil_image_path(pid: int) -> str | None:
+    """Return *pid*'s executable path as psutil reads it, or ``None``.
+
+    The image read for a platform without the ``/proc`` link. Every psutil
+    failure is "could not tell": the process went away, belongs to another
+    user, or is a zombie with no image left to name. psutil reports an image
+    it could not determine as an empty string, which is the same answer.
+    """
+    import psutil
+
+    try:
+        image = psutil.Process(pid).exe()
+    except psutil.Error as exc:
+        logger.debug("image path unreadable for pid %d: %s", pid, exc)
+        return None
+    return image or None
+
+
+def _psutil_image_name(pid: int) -> str | None:
+    """Return *pid*'s short process name as psutil reads it, or ``None``.
+
+    The name stays readable for a process whose image path is not, which is
+    what makes it worth asking second.
+    """
+    import psutil
+
+    try:
+        name = psutil.Process(pid).name()
+    except psutil.Error as exc:
+        logger.debug("image name unreadable for pid %d: %s", pid, exc)
+        return None
+    return name or None
 
 
 def pid_argv(pid: int, *, timeout: float | None = None) -> list[str] | None:
@@ -326,6 +383,16 @@ def pid_image_matches(pid: int, needle: str, *, timeout: float | None = None) ->
     handle cannot be opened: that is the access-denied case, where refusing to
     fall back would silently shrink reap coverage to processes this one can
     already open. Both mechanisms live here so they cannot drift apart.
+
+    Elsewhere the same two steps are the image path and then the short process
+    name, which stays readable for another user's process whose path is not.
+    Linux reads both from ``/proc``; macOS and the BSDs, which have no such
+    entries, read both through psutil.
+
+    ``False`` is also the answer when neither could be read. That is the
+    fail-closed value for a kill guard, not a finding that the image is
+    something else: a caller that must tell the two apart asks
+    :func:`pid_image_path`, which keeps unreadable as ``None``.
     """
     if not pid_alive(pid):
         return False
@@ -339,12 +406,23 @@ def pid_image_matches(pid: int, needle: str, *, timeout: float | None = None) ->
 
 
 def _posix_image_matches(pid: int, lowered_needle: str) -> bool:
-    """Fall back to Linux's readable process-image name."""
-    try:
-        comm = Path(f"/proc/{pid}/comm").read_text(encoding="utf-8")
-    except OSError:
+    """Match on the short process name once the image path was unreadable."""
+    name = _posix_image_name(pid)
+    if name is None:
+        logger.debug("no image witness for pid %d; treated as unmatched", pid)
         return False
-    return lowered_needle in comm.strip().lower()
+    return lowered_needle in name.lower()
+
+
+def _posix_image_name(pid: int) -> str | None:
+    """Return *pid*'s short process name, or ``None`` when unreadable."""
+    if not _procfs_names_images():
+        return _psutil_image_name(pid)
+    try:
+        return Path(f"/proc/{pid}/comm").read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        logger.debug("image name unreadable for pid %d: %s", pid, exc)
+        return None
 
 
 def _windows_image_matches(
