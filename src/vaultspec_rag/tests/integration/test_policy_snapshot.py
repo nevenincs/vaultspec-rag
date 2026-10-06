@@ -24,8 +24,10 @@ from ...indexer._content_policy import (
     SourceProfileVersion,
 )
 from ...indexer._preprocess_config import PREPROCESS_CONFIG_FILENAME
+from ...operator_state._features import PreprocessHookState
 from ...progress import NullProgressReporter
 from .._config_fixtures import reset_config
+from .._preprocess_approval import approve_preprocess_policy
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -221,6 +223,10 @@ def _assert_published_snapshot(
     assert key.content_identity == entry_code.content
     fresh_policy = indexer.resolve_policy_snapshot()
     fresh_code = fresh_policy.fingerprints_for(ContentKind.CODE)
+    # The extractor rewrote the policy file mid-run. The run it was launched
+    # from stays approved; the rewrite is a policy nobody approved.
+    assert entry_policy.hook_state is PreprocessHookState.ACTIVE
+    assert fresh_policy.hook_state is PreprocessHookState.UNAPPROVED
     assert fresh_policy.fingerprints.snapshot != entry_policy.fingerprints.snapshot
     assert not fresh_policy.html_strip
     assert (
@@ -263,6 +269,7 @@ def test_config_edit_during_extraction_cannot_change_active_snapshot(
     from ...store_runtime import VaultStore
 
     paths = _write_snapshot_project(tmp_path)
+    approve_preprocess_policy(tmp_path)
     with _snapshot_environment() as html_key:
         store = VaultStore(tmp_path)
         indexer = CodebaseIndexer(

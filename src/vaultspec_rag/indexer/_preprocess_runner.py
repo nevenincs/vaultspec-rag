@@ -15,7 +15,9 @@ metacharacters cannot inject.
 
 The hook runs directly with the operator's privileges: a root's preprocess
 config is repo-authored code, the same trust class as building that repo.
-The child still gets a curated, secret-free
+Whether a root's rules may run at all is decided before this module is
+reached, by the operator's approval of that root's policy; nothing here
+re-checks it. The child still gets a curated, secret-free
 environment and runs with the project root as its cwd, and every
 output/timeout bound below applies unchanged.
 """

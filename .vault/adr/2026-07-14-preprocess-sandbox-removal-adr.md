@@ -8,10 +8,11 @@ related:
   - "[[2026-07-13-preprocess-sandbox-adr]]"
   - "[[2026-06-10-preprocess-hooks-adr]]"
   - '[[2026-07-27-preprocess-sandbox-removal-grounding-research]]'
+  - '[[2026-10-04-preprocess-root-approval-adr]]'
 supersedes:
   - '2026-07-13-preprocess-sandbox-adr'
-modified: '2026-07-27'
-body_hash: 'sha256:d8c026f6a6c6372a4768087ce92f6ec97a4321e6d604f066375755df9bd405b8'
+modified: '2026-10-04'
+body_hash: 'sha256:3b410f0c347a35647f7df6dc85fda77e68259851cf91acb8e7ff9902735239f7'
 ---
 
 # `preprocess-sandbox-removal` adr: `Direct hook execution replaces OS containment: performance is the mandate` | (**status:** `accepted`)
@@ -95,6 +96,17 @@ re-establishes the trust model as that of any local dev tool.
 - Removal must leave the control surface coherent: with the "unsandboxed" arm gone, the
   tri-state `preprocess_mode` collapses to `default`/`off`, and every flag/env knob
   referencing sandbox opt-out must go with it.
+
+2026-10-04 authorized security refinement: `2026-10-04-preprocess-root-approval-adr`
+governs whether a root's hooks execute, and overrides this record's commitment that they
+run by default for any root with no consent gate - the default-on mandate in the Problem
+Statement, the Consideration that trust alone solves the non-interactive-client problem,
+the statement that the superseded record's trust-store deletion stands, and the
+trust-based framing under Consequences. A root's rules now run only after the operator
+approves that root's exact policy. The removal of OS containment (D1-D4), the direct
+bounded launch and its hygiene (D5-D8), the cache (D9) and the kill switch (D10) remain
+in force. Of the two options under Pathway left open, the per-root trust designation is
+the one taken; a persistent sandboxed hook host remains open.
 
 ## Implementation
 

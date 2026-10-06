@@ -521,12 +521,13 @@ class VaultSpecConfigWrapper:
         "watch_scope_max_paths": 100_000,
         "watch_scope_max_bytes": 8 * 1024 * 1024,
         # Document-preprocessing two-state.
-        # ``default`` runs a root's ``.vaultragpreprocess.toml`` rules directly
-        # for any root: a root's preprocess config is repo-authored code and
-        # executes with the operator's privileges, so no trust check gates it.
-        # ``off`` is the kill switch (no rules ever load). Env resolution lives
-        # in the ``preprocess_mode`` property: ``VAULTSPEC_RAG_PREPROCESS=off``
-        # forces off, unset means default.
+        # ``default`` lets a root's ``.vaultragpreprocess.toml`` rules run once
+        # the operator has approved that root's exact policy: the config is
+        # repo-authored code that executes with the operator's privileges, so
+        # the repository alone never authorises it. ``off`` is the kill switch
+        # (no rule ever runs, approved or not). Env resolution lives in the
+        # ``preprocess_mode`` property: ``VAULTSPEC_RAG_PREPROCESS=off`` forces
+        # off, unset means default.
         "preprocess_mode": "default",
         # Document-preprocessing hook knobs (#185). The source-size cap
         # (``_MAX_FILE_SIZE``) is relaxed for files matched by a preprocess

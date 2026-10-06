@@ -61,7 +61,10 @@ def _preprocess_preflight(
     document-preprocessing hooks will fire. This
     mirrors the ``server start`` operator notice as JSON: whether the root ships
     a preprocess configuration, its resolved rule count, the effective mode,
-    and whether hooks will run under it (``off`` skips; ``default`` runs).
+    the hook state, and whether hooks will run. ``hooks`` names why they will
+    not: ``disabled`` under the ``off`` switch, ``unapproved`` while the
+    operator has not approved the root's current policy. A client cannot
+    approve; ``remediation`` carries what the operator has to run.
 
     Code jobs project rule count, mode, and execution state from the same
     structured scan used for admission. The file-presence field is retained as
@@ -70,28 +73,26 @@ def _preprocess_preflight(
     CPU-only configuration read.
     """
     from ..indexer._preprocess_config import PREPROCESS_CONFIG_FILENAME
+    from ..operator_state._features import PreprocessHookState
 
     config_present = (root / PREPROCESS_CONFIG_FILENAME).is_file()
     if admission is not None:
         scan = admission.scan
-        return {
-            "config_present": config_present,
-            "rule_count": scan.preprocess_rule_count,
-            "mode": scan.preprocess_mode,
-            "hooks_will_run": scan.hooks_will_run,
-        }
+        mode = scan.preprocess_mode
+        state, rule_count = scan.preprocess_hooks, scan.preprocess_rule_count
+    else:
+        from ..config._settings import get_config
+        from ..indexer._preprocess_config import root_hook_state
 
-    from ..config._settings import get_config
-    from ..indexer._preprocess_config import root_hook_state
-    from ..operator_state._features import PreprocessHookState
-
-    mode = get_config().preprocess_mode
-    state, rule_count = root_hook_state(root, mode)
+        mode = get_config().preprocess_mode
+        state, rule_count = root_hook_state(root, mode)
     return {
         "config_present": config_present,
         "rule_count": rule_count,
         "mode": mode,
+        "hooks": state.value,
         "hooks_will_run": state is PreprocessHookState.ACTIVE,
+        "remediation": state.remediation,
     }
 
 

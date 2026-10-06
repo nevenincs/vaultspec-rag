@@ -22,6 +22,7 @@ from ...serviceclient._transport import (
     _try_http_get_job,
     _try_http_reindex,
 )
+from .._preprocess_approval import approve_preprocess_policy
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -68,6 +69,9 @@ def _write_indexed_document_fixture(root: Path) -> tuple[str, str]:
         'on_error = "fail"\n',
         encoding="utf-8",
     )
+    # The operator approves on the daemon's own machine: the attached test
+    # process shares its status directory, and no client call can do this.
+    approve_preprocess_policy(root)
     return source_path, phrase
 
 

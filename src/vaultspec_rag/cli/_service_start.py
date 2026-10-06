@@ -688,28 +688,34 @@ def _print_preprocess_start_notice(root: Path, effective_mode: str) -> None:
     """Print a best-effort notice about the target root's preprocess rules.
 
     Operator visibility: when the resolved root defines preprocess rules, say
-    whether they will run under the effective mode. Rules run directly for any
-    root; the ``off`` kill switch skips them. Never raises - a missing or
-    invalid config simply yields no notice. Imports are function-local so this
-    stays off the module import path (the CLI service-control surface stays
-    torch-free).
+    whether they will run. Approved rules run directly; the ``off`` kill
+    switch skips them, and so does a policy the operator has not approved.
+    Never raises - a missing or invalid config simply yields no notice.
+    Imports are function-local so this stays off the module import path (the
+    CLI service-control surface stays torch-free).
     """
     from ..indexer._preprocess_config import root_hook_state
     from ..operator_state._features import PreprocessHookState
 
     state, count = root_hook_state(root, effective_mode)
-    if state not in {PreprocessHookState.ACTIVE, PreprocessHookState.DISABLED}:
-        return
     word = "rule" if count == 1 else "rules"
     if state is PreprocessHookState.DISABLED:
         _print_lifecycle_lines(
             f"Preprocess: {count} {word} at {root} will be skipped (mode is off)."
         )
-        return
-    _print_lifecycle_lines(
-        f"Preprocess: {count} {word} at {root} will run; their commands "
-        "execute with the service's privileges."
-    )
+    elif state is PreprocessHookState.UNAPPROVED:
+        # The remedy goes on its own soft-wrapped line so the command in it
+        # is not folded mid-token.
+        remediation = state.remediation
+        _print_lifecycle_lines(
+            f"Preprocess: {count} {word} at {root} will be skipped (not approved).",
+            *([remediation] if remediation else []),
+        )
+    elif state is PreprocessHookState.ACTIVE:
+        _print_lifecycle_lines(
+            f"Preprocess: {count} {word} at {root} will run; their commands "
+            "execute with the service's privileges."
+        )
 
 
 def _guard_start_preconditions(port: int, json_mode: bool) -> None:

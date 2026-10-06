@@ -30,6 +30,8 @@ __all__ = [
     "index_command",
     "index_source_option",
     "port_option",
+    "preprocess_approve_command",
+    "preprocess_list_command",
     "preprocess_status_command",
     "server_doctor_command",
     "server_jobs_command",
@@ -120,6 +122,16 @@ def server_jobs_command(
 def preprocess_status_command() -> str:
     """Return the ``preprocess status`` invocation that explains this root's hooks."""
     return "vaultspec-rag preprocess status"
+
+
+def preprocess_list_command() -> str:
+    """Return the ``preprocess list`` invocation that shows what a root would run."""
+    return "vaultspec-rag preprocess list"
+
+
+def preprocess_approve_command() -> str:
+    """Return the ``preprocess approve`` invocation that lets a root's hooks run."""
+    return "vaultspec-rag preprocess approve"
 
 
 def server_doctor_command(port: object | None = None) -> str:

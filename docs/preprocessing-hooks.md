@@ -20,6 +20,9 @@ If you installed vaultspec-rag as a standalone tool, drop the prefix and call
 
 1. Add a version-2 `.vaultragpreprocess.toml` to your project root (a sibling of
    `.vaultragignore`) mapping file patterns to extraction commands and explicit targets.
+1. Approve the rules with `vaultspec-rag preprocess approve`. Rules never run until the
+   person operating this machine has approved them, and any later edit to the file needs
+   approval again.
 1. During indexing, a file matching a rule is handed to your command, which prints one
    JSON document on stdout.
 1. vaultspec-rag validates that JSON, turns it into searchable chunks (carrying your
@@ -33,10 +36,11 @@ re-includes files excluded by `.gitignore` or `.vaultragignore`; ignore always w
 
 ## Configure rules
 
-> **A rule is code that runs as you.** vaultspec-rag executes the command a rule
-> names, with your account's privileges, in no sandbox and with no consent
-> prompt. Do not index a repository you would not build. Read
-> [Security posture](#security-posture) before adopting rules you did not write.
+> **A rule is code that runs as you.** Once you approve a project's rules,
+> vaultspec-rag executes the command each rule names, with your account's
+> privileges and in no sandbox. Nothing runs until you approve, and editing the
+> file withdraws the approval. Read [Security posture](#security-posture) before
+> approving rules you did not write.
 
 Create `.vaultragpreprocess.toml` at the project root:
 
@@ -106,16 +110,18 @@ the same CPU-only isolation and `timeout_s` bound. An `entry_point` callable mus
 importable in the service's environment and return a mapping (or pydantic model) shaped
 like the [output schema](#output-schema).
 
-### Inspect and validate your configuration
+### Inspect, validate, and approve your configuration
 
-Four commands cover authoring and debugging. Prefix each with `uv run` in a uv-managed
-environment:
+Six commands cover authoring, approval, and debugging. Prefix each with `uv run` in a
+uv-managed environment:
 
 ```bash
 uv run vaultspec-rag preprocess list            # show resolved rules, in precedence order
 uv run vaultspec-rag preprocess check           # validate the config; non-zero exit on a bad config
+uv run vaultspec-rag preprocess approve         # let the current rules of this project run
+uv run vaultspec-rag preprocess revoke          # withdraw that approval
 uv run vaultspec-rag preprocess run-one a.pdf   # trial the matching rule against one file
-uv run vaultspec-rag preprocess status          # mode, config presence, and rule count
+uv run vaultspec-rag preprocess status          # mode, approval, config presence, and rule count
 ```
 
 - `preprocess list` prints each resolved rule with its target, extractor version,
@@ -124,17 +130,26 @@ uv run vaultspec-rag preprocess status          # mode, config presence, and rul
 - `preprocess check` strictly validates `.vaultragpreprocess.toml` and reports the first
   defect. Invalid or legacy targetless configuration is rejected before indexing can
   mutate a collection, sidecar, ledger, or cache.
+- `preprocess approve` records your approval of the rules exactly as they are now, for
+  this project directory, and prints each rule's command and the digest it approved.
+  Approving an already approved project changes nothing. An invalid configuration
+  cannot be approved. Run `vaultspec-rag index` afterwards to apply it.
+- `preprocess revoke` withdraws the approval, so the rules stop running from the next
+  index run.
 - `preprocess run-one <path>` runs the matching rule against one file and prints the
-  validated output, with no indexing side effect. Routing and migration defects, plus an
-  extractor abort under `on_error = "fail"`, are structured errors with a non-zero exit.
-  Other malformed rules use the non-strict loader and may appear as no match. When
-  validating configuration, run `preprocess check` first.
-- `preprocess status` reports the effective execution mode, schema version, targets,
-  extractor versions, rule count, and whether the kill switch prevents hooks from
-  running. Its `--json` envelope carries more than that human summary shows; the
-  [CLI reference](cli.md) names every field.
+  validated output, with no indexing side effect. It obeys the same gate as indexing: on
+  an unapproved project it runs nothing and names the approval command, so approve after
+  each edit while authoring. Routing and migration defects, plus an extractor abort under
+  `on_error = "fail"`, are structured errors with a non-zero exit. Other malformed rules
+  use the non-strict loader and may appear as no match. When validating configuration,
+  run `preprocess check` first.
+- `preprocess status` reports the effective execution mode, whether the current rules
+  are approved, schema version, targets, extractor versions, rule count, and whether the
+  kill switch or a missing approval prevents hooks from running. Its `--json` envelope
+  carries more than that human summary shows, including the `policy_digest` an approval
+  binds; the [CLI reference](cli.md) names every field.
 
-All four accept `--json` for scripting.
+All six accept `--json` for scripting.
 
 ## Invocation envelope
 
@@ -364,9 +379,11 @@ missing from the index.
 For a non-interactive client of the resident service, two response fields carry the
 same visibility. A reindex job record from `/jobs` (and `vaultspec-rag server jobs --json`) carries `preprocess_skipped` and `preprocess_failures`, so the client sees
 exactly which files a hook failed to extract. The `/reindex` response also includes a `preprocess` pre-flight
-block reporting whether the root ships a config, its resolved rule count, and the
-effective mode, mirroring the notice `server start` prints - so a client learns whether
-hooks will fire *before* the job runs.
+block reporting whether the root ships a config, its resolved rule count, the effective
+mode, and the hook state, mirroring the notice `server start` prints - so a client learns
+whether hooks will fire *before* the job runs. Its `hooks` field is `active`, `disabled`
+(the kill switch), `unapproved`, or `none`, and `remediation` carries the command an
+operator has to run. A client cannot approve a project; only the operator can.
 
 ## Size limits
 
@@ -379,18 +396,47 @@ outcome and cannot silently publish the file as converged. See the
 
 ## Security posture
 
-A root's `.vaultragpreprocess.toml` **is code execution with your privileges**. When you
-index a repository, its preprocess rules run as arbitrary local commands under the account
-running the service - the same trust class as running that repo's `make`, `npm install`,
-or any of its build scripts. The rule is load-bearing: **do not index a
-repository you would not build.** Indexing a repo is an act of trust in that repo, so its
-hooks run **by default**, with no consent prompt and no OS containment between a
-`/reindex` call and the hook running.
+A root's `.vaultragpreprocess.toml` **is code execution with your privileges**. Its rules
+name arbitrary local commands that run under the account running the service - the same
+trust class as that repo's `make`, `npm install`, or any of its build scripts - and anyone
+who can change the repository can change that file. So the file never authorises itself:
+**a project's rules run only after you approve them on this machine.**
 
-Because the hook runs with your privileges, its filesystem and network access are those of
-the account running the service. It can read and write what you can, and reach the network
-as you can. Treat `.vaultragpreprocess.toml` as executable project configuration and review
-it exactly as you would a build script or a CI job before running it.
+### Approval
+
+- `vaultspec-rag preprocess approve` records your approval of the project's rules exactly
+  as they are. Review them first with `vaultspec-rag preprocess list`.
+- Approval is bound to the project directory and to the exact bytes of the file. Any edit
+  (a new command, a wider pattern, even a comment) returns the project to unapproved, and
+  the same file in another clone or worktree needs its own approval.
+- Until then nothing runs. Indexing, the watcher, the service, and `preprocess run-one`
+  all skip the rules and say so: `status` and `preprocess status` report
+  `configured but not approved`, `server start` prints a notice, the `/reindex` response
+  and `index --dry-run --json` carry the `unapproved` hook state, and every skipped file
+  is listed as `preprocessing awaiting approval; not extracted`.
+- Content extracted before the project became unapproved is not all kept. Extracted
+  documents stay searchable. Extracted content routed to the `code` domain survives the
+  watcher's per-file updates, but a full index or an unscoped incremental one removes
+  it, and it returns once you approve and index again. The extraction cache means that
+  costs embedding time, not extractor time.
+- Only the operator of this machine can approve. There is no approval over HTTP or the
+  Model Context Protocol, no environment variable that approves, and no setting that
+  trusts every project.
+- Approvals are stored in the service directory (`~/.vaultspec-rag` by default), never in
+  the repository.
+
+An unattended deployment approves as part of provisioning: run `preprocess approve` for
+each project after your own review step, and again whenever its rules change.
+
+### What approval does not do
+
+Approval is consent, not containment. An approved hook runs with no sandbox, so its
+filesystem and network access are those of the account running the service: it can read
+and write what you can, and reach the network as you can. Approval also covers the rule
+file and not the programs its commands launch. If a rule runs
+`python tools/xlsx_extract.py`, a later change to that script runs without asking again.
+Approve a project's rules only if you would build that project, and review
+`.vaultragpreprocess.toml` exactly as you would a build script or a CI job.
 
 Two bounds still apply to every hook, and they earn their place at near-zero cost rather
 than as a security boundary:
@@ -405,18 +451,21 @@ than as a security boundary:
   stdout and stderr caps bound a misbehaving extractor in time and output.
 
 `vaultspec-rag preprocess status` reports whether a root ships a config, its resolved rule
-count, and the effective mode.
+count, whether those rules are approved, and the effective mode.
 
-`VAULTSPEC_RAG_PREPROCESS=off` is the kill switch and wins over everything: no root's
-rules load, ever. `server start --no-preprocess` disables them for that service. Note
+`VAULTSPEC_RAG_PREPROCESS=off` is the kill switch and wins over everything, approval
+included: no root's rules run, ever. `server start --no-preprocess` disables them for that
+service. Note
 that `index --no-preprocess` applies to in-process indexing only: when a service is
 already running, `index` hands the work to it and the flag has no effect. See the
 [configuration reference](configuration.md#preprocessing) for the full variable and flag
 inventory.
 
 One operational note: the index tracks the preprocess configuration it was built with, so
-changing the effective mode for a root (toggling `off`) triggers an automatic rebuild on
-the next index run - correct, but expensive on a large corpus.
+changing whether a root's hooks run - toggling `off`, or granting or losing approval -
+triggers an automatic rebuild on the next index run. That is correct, but expensive on a
+large corpus, so approve a project before its first index, and re-approve an edited
+policy before the next run picks the edit up.
 
 ## Parser capability is not admission
 

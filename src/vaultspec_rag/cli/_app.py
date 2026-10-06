@@ -379,7 +379,7 @@ server_storage_app = typer.Typer(
     no_args_is_help=False,
 )
 preprocess_app = typer.Typer(
-    help="Inspect and validate document preprocessing rules.",
+    help="Inspect, validate, and approve document preprocessing rules.",
     rich_markup_mode=None,
     no_args_is_help=False,
 )

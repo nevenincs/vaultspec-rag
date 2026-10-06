@@ -378,6 +378,7 @@ def _dry_run_document_source(scan: _DryRunScan) -> dict[str, object]:
             document_scan.preprocess_rule_count if document_scan else 0
         ),
         "execution_mode": document_scan.execution_mode if document_scan else None,
+        "preprocess_hooks": document_scan.preprocess_hooks if document_scan else None,
     }
 
 

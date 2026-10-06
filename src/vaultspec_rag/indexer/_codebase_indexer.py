@@ -988,7 +988,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             rel for rel in current_files if policy.transform_disabled(rel)
         }
         for rel in disabled_current:
-            self._mark_preprocess_stale(rel)
+            self._mark_preprocess_stale(rel, policy)
             current_files.pop(rel, None)
             current_hashes.pop(rel, None)
         deleted_files = set(previous_metadata) - set(current_hashes)
@@ -1163,7 +1163,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             classified = self._classify_file(path, rel, policy)
             disposition = classified.disposition
             if policy.transform_disabled(rel):
-                self._mark_preprocess_stale(rel)
+                self._mark_preprocess_stale(rel, policy)
                 return
             if disposition.admitted and disposition.kind is ContentKind.CODE:
                 to_hash[rel] = path
