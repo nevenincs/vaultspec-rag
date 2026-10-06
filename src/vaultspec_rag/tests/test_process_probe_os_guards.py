@@ -40,6 +40,24 @@ def test_no_module_signals_a_process_directly() -> None:
     )
 
 
+def test_no_module_composes_its_own_child_tree_teardown() -> None:
+    # Two modules each witnessed a child's descendants, killed them, killed
+    # the child and waited, and the two had drifted: one opened its
+    # confirmation window before a slow ancestry walk and so reported
+    # survivors it had never waited for, the other said nothing when the
+    # descendants could not be identified. The one teardown is the only
+    # caller of the descendant kill.
+    found = find_offenders(
+        lambda n: (
+            isinstance(n.func, ast.Name) and n.func.id == "kill_process_descendants"
+        )
+    )
+    assert not found, (
+        f"a child-tree teardown composed outside _process_probe at {found}; "
+        "use kill_child_tree"
+    )
+
+
 def test_no_module_builds_its_own_psutil_process_probe() -> None:
     found = find_offenders(
         lambda n: (

@@ -27,6 +27,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import subprocess
 import sys
 import time
 from collections.abc import Iterator, Mapping, Sequence
@@ -53,11 +54,13 @@ __all__ = [
     "EnvironmentHolders",
     "HolderRelation",
     "LineageEntry",
+    "TreeKill",
     "argv_of",
     "bounded_call",
     "environment_holders",
     "is_server_launch",
     "iter_process_info",
+    "kill_child_tree",
     "kill_process_descendants",
     "pid_alive",
     "pid_argv",
@@ -478,6 +481,73 @@ def kill_process_descendants(parent: LineageEntry) -> tuple[LineageEntry, ...]:
         raise OSError(
             f"could not contain descendants of pid {parent.pid}: {exc}"
         ) from exc
+
+
+@dataclass(frozen=True, slots=True)
+class TreeKill:
+    """What killing a child's tree established.
+
+    Attributes:
+        survivors: Processes that were killed and could not be confirmed gone.
+        witnessed: Whether what the child had started could be identified.
+            False when the child was running and could not be pinned to one
+            incarnation, or its children could not be listed: its descendants
+            are then unknown, which is not the same as there being none.
+    """
+
+    survivors: tuple[int, ...] = ()
+    witnessed: bool = True
+
+
+def kill_child_tree(
+    child: subprocess.Popen[bytes] | subprocess.Popen[str], *, confirm_seconds: float
+) -> TreeKill:
+    """Kill *child*, a child of this process, and everything it started.
+
+    The tree, not the process: on Windows the interpreter a virtual
+    environment names is a launcher that starts the real one as its child, so
+    killing the launcher alone would leave the work running. Descendants are
+    witnessed before the child dies, because afterwards the ancestry can no
+    longer be established.
+
+    Only the child's own creation time is read to pin it. Walking its
+    ancestry to learn the same thing cost most of a second on an idle machine
+    and a quarter of a minute on a loaded one, and the tree kept running for
+    all of it.
+
+    The time allowed to confirm the kills starts once they have been sent.
+    Finding the descendants is not time the tree was given to die in, and a
+    window opened before it could be spent before the first kill, reporting
+    survivors that were never waited for.
+    """
+    descendants: tuple[LineageEntry, ...] = ()
+    witnessed = True
+    if child.poll() is None:
+        created = pid_start_time(child.pid)
+        if created > 0.0:
+            try:
+                descendants = kill_process_descendants(LineageEntry(child.pid, created))
+            except (OSError, ValueError) as exc:
+                logger.debug("descendants of pid %d not witnessed: %s", child.pid, exc)
+                witnessed = False
+        else:
+            witnessed = False
+        with contextlib.suppress(OSError):
+            child.kill()
+    deadline = time.monotonic() + confirm_seconds
+    survivors: list[int] = []
+    try:
+        child.wait(timeout=confirm_seconds)
+    except subprocess.TimeoutExpired:
+        survivors.append(child.pid)
+    survivors.extend(
+        descendant.pid
+        for descendant in descendants
+        if not wait_for_exit(
+            descendant.pid, timeout=max(0.0, deadline - time.monotonic())
+        )
+    )
+    return TreeKill(tuple(survivors), witnessed)
 
 
 #: The deepest ancestry a lineage walk follows. A real chain - a terminal, a

@@ -271,51 +271,23 @@ def _int(value: object) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
-def _kill_tree(process: subprocess.Popen[str]) -> list[int]:
-    """Kill *process* and everything it started; return the pids still alive.
+def _stopped(process: subprocess.Popen[str]) -> str:
+    """Kill the download's whole tree; return what could not be confirmed.
 
-    The tree, not the process: on Windows the interpreter a virtual
-    environment names is a launcher that starts the real one as its child, so
-    killing the launcher alone would leave the download running. Descendants
-    are witnessed before the parent dies, because afterwards the ancestry can
-    no longer be established.
-
-    Only the process's own creation time is read to pin it. Walking its
-    ancestry to learn the same thing cost most of a second on an idle machine
-    and a quarter of a minute on a loaded one, and the download kept running
-    for all of it.
+    The answer is a clause to follow the reason the download was stopped, and
+    is empty when every process is known to be gone.
     """
-    from .._process_probe import (
-        LineageEntry,
-        kill_process_descendants,
-        pid_start_time,
-        wait_for_exit,
-    )
+    from .._process_probe import kill_child_tree
 
-    descendants: tuple[LineageEntry, ...] = ()
-    if process.poll() is None:
-        created = pid_start_time(process.pid)
-        if created > 0.0:
-            with contextlib.suppress(OSError, ValueError):
-                descendants = kill_process_descendants(
-                    LineageEntry(process.pid, created)
-                )
-        with contextlib.suppress(OSError):
-            process.kill()
-    deadline = time.monotonic() + _KILL_CONFIRM_SECONDS
-    survivors: list[int] = []
-    try:
-        process.wait(timeout=_KILL_CONFIRM_SECONDS)
-    except subprocess.TimeoutExpired:
-        survivors.append(process.pid)
-    survivors.extend(
-        descendant.pid
-        for descendant in descendants
-        if not wait_for_exit(
-            descendant.pid, timeout=max(0.0, deadline - time.monotonic())
+    killed = kill_child_tree(process, confirm_seconds=_KILL_CONFIRM_SECONDS)
+    if killed.survivors:
+        return f"; processes {list(killed.survivors)} could not be confirmed stopped"
+    if not killed.witnessed:
+        return (
+            "; the processes it started could not be identified, so they "
+            "could not be confirmed stopped"
         )
-    )
-    return survivors
+    return ""
 
 
 def _partial_files(blobs: Path) -> set[Path]:
@@ -328,35 +300,28 @@ def _partial_files(blobs: Path) -> set[Path]:
 def _stalled(
     process: subprocess.Popen[str], limits: FetchLimits, received: int
 ) -> DownloadOutcome:
-    survivors = _kill_tree(process)
-    message = (
+    unconfirmed = _stopped(process)
+    return DownloadOutcome(
+        HubFailure.STALLED,
         f"stalled: fewer than {human_bytes(limits.min_bytes)} arrived in "
         f"{limits.window_seconds:g} seconds ({human_bytes(received)} in all), "
-        "so the download was stopped"
+        f"so the download was stopped{unconfirmed}",
     )
-    if survivors:
-        message += f"; processes {survivors} could not be confirmed stopped"
-    return DownloadOutcome(HubFailure.STALLED, message)
 
 
 def _out_of_time(process: subprocess.Popen[str], received: int) -> DownloadOutcome:
     """Stop a download that was still running when the whole fetch ran out of time."""
-    survivors = _kill_tree(process)
-    message = (
+    unconfirmed = _stopped(process)
+    return DownloadOutcome(
+        HubFailure.DEADLINE,
         "was stopped: the time allowed for the whole fetch ran out with "
-        f"{human_bytes(received)} of it received"
+        f"{human_bytes(received)} of it received{unconfirmed}",
     )
-    if survivors:
-        message += f"; processes {survivors} could not be confirmed stopped"
-    return DownloadOutcome(HubFailure.DEADLINE, message)
 
 
 def _refused(process: subprocess.Popen[str], reason: str) -> DownloadOutcome:
     """Stop a child the caller would not let download, which fetched no file."""
-    survivors = _kill_tree(process)
-    if survivors:
-        reason += f"; processes {survivors} could not be confirmed stopped"
-    return DownloadOutcome(HubFailure.REFUSED, reason)
+    return DownloadOutcome(HubFailure.REFUSED, reason + _stopped(process))
 
 
 def _ended(process: subprocess.Popen[str], feed: _ChildFeed) -> DownloadOutcome:
@@ -488,7 +453,7 @@ def _run(request: _Request) -> DownloadOutcome:
         return outcome
     finally:
         if process.poll() is None:
-            _kill_tree(process)
+            _stopped(process)
         for pipe in (process.stdin, process.stdout, process.stderr):
             if pipe is not None:
                 # Closing the answering pipe of a dead child can report the

@@ -900,8 +900,7 @@ class TestADownloadThatMustBeStopped:
         """
         import psutil
 
-        from .._process_probe import wait_for_exit
-        from ..commands._model_download import _kill_tree
+        from .._process_probe import kill_child_tree, wait_for_exit
 
         started_another = (
             "import subprocess, sys, time\n"
@@ -922,9 +921,10 @@ class TestADownloadThatMustBeStopped:
             inner_pid = int(outer.stdout.readline())
             assert psutil.pid_exists(inner_pid), "premise: a two-level tree is running"
 
-            survivors = _kill_tree(outer)
+            killed = kill_child_tree(outer, confirm_seconds=10.0)
 
-            assert survivors == []
+            assert killed.witnessed
+            assert killed.survivors == ()
             assert outer.poll() is not None
             assert wait_for_exit(inner_pid, timeout=5.0), "a started process survived"
         finally:
