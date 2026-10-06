@@ -45,7 +45,7 @@ from .._process_probe import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
 pytestmark = [pytest.mark.unit]
 
@@ -55,7 +55,7 @@ _SLEEP = "import time; time.sleep(30)  # qdrant"
 
 
 @contextlib.contextmanager
-def _sleeping_child() -> Iterator[subprocess.Popen[bytes]]:
+def _sleeping_child() -> Generator[subprocess.Popen[bytes]]:
     """Run a real interpreter that only sleeps, and end its whole tree after."""
     child = subprocess.Popen(
         [sys.executable, "-c", _SLEEP],
