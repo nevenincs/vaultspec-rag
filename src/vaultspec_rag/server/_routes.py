@@ -30,6 +30,7 @@ the canonical job-admission pipeline they build on.
 
 from __future__ import annotations
 
+import contextlib
 import io
 import logging
 import os
@@ -923,6 +924,25 @@ async def get_readiness_route(request: Request) -> JSONResponse:
     return JSONResponse(res)
 
 
+def _spelling_inside(roots: tuple[Path, ...], path: str) -> str:
+    """Return the requested spelling as a name inside the workspace.
+
+    The name rules judge names the workspace holds. An absolute spelling also
+    carries the workspace's own location, and a directory above the root is
+    not one of those names: a workspace kept under a dot-directory would
+    otherwise have every absolute request refused. Only that leading location
+    is dropped, and only when the spelling plainly begins with one of
+    *roots* - the root as the caller named it, or as it resolves. A spelling
+    that reaches the workspace some other way is judged whole.
+    """
+    requested = Path(path)
+    if requested.is_absolute():
+        for root in roots:
+            with contextlib.suppress(ValueError):
+                return requested.relative_to(root).as_posix()
+    return path
+
+
 def _code_file_admitted(root_resolved: Path, full_path: Path, path: str) -> bool:
     """Decide whether a contained path may be returned as source.
 
@@ -959,7 +979,8 @@ def _read_code_file(root: Path, path: str) -> dict[str, str]:
     full_path = (root_resolved / path).resolve()
     if not full_path.is_relative_to(root_resolved):
         return {"error": f"path '{path}' is outside the workspace"}
-    if not _code_file_admitted(root_resolved, full_path, path):
+    spelling = _spelling_inside((root_resolved, root), path)
+    if not _code_file_admitted(root_resolved, full_path, spelling):
         return {"error": "access denied"}
     try:
         # The name was authorized above; the read binds to the object that
