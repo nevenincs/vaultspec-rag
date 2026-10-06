@@ -351,9 +351,12 @@ def _ensure_start_dependencies(
     Starting the service is the consent to fetch what it needs, so the model
     files and the Qdrant server are ensured here, in the foreground, through
     the same provisioning front door ``install`` uses: the transfer and any
-    failure are visible, where a daemon fetching on its own shows only a
-    warm-up that never ends. The daemon still loads its models online-capable,
-    as the backstop for a start that did not come through this command.
+    failure are visible, where a fetch inside the daemon would show only a
+    warm-up that never ends. The daemon does not fetch a model at all: it
+    loads each one from the cache alone, after checking what the cache holds,
+    and a model that is missing or fails that check stops the load with the
+    command to run. A service started any other way therefore has only the
+    models ``install`` or ``server warmup`` already fetched.
 
     The Qdrant server is ensured only when *backend* says the daemon will run
     one. The on-disk store and a server that is already running elsewhere
