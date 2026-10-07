@@ -24,6 +24,7 @@ from ..jobs import record_finish, record_start
 from ..server._search_activity import SearchActivityCompletion, SearchActivityStart
 from ..server._state import search_activity_ledger
 from ..service_quiesce import QuiesceTransitionCode
+from ._child_signal import CHILD_PROCESS_TIMEOUT_SECONDS
 from .test_monitor_logs import monitor_http as monitor_http
 
 if TYPE_CHECKING:
@@ -67,7 +68,7 @@ def browser_bridge(monitor_http: tuple[int, Path]) -> Iterator[tuple[str, Path]]
             target=lambda: answer.put(output.readline()), daemon=True
         )
         reader.start()
-        yield answer.get(timeout=10).strip(), directory
+        yield answer.get(timeout=CHILD_PROCESS_TIMEOUT_SECONDS).strip(), directory
     finally:
         process.terminate()
         try:

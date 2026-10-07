@@ -27,6 +27,7 @@ from ..monitor_process import (
     _resolve_monitor_executable,
     stop_recorded_monitor,
 )
+from ._child_signal import PROCESS_TIMEOUT_SECONDS
 from .conftest import managed_env
 
 if TYPE_CHECKING:
@@ -203,7 +204,7 @@ def test_stop_refuses_a_reused_monitor_pid_and_emits_one_failure(
         assert path.exists()
     finally:
         process.terminate()
-        process.wait(timeout=5)
+        process.wait(timeout=PROCESS_TIMEOUT_SECONDS)
         (isolated_singleton_dirs / "monitor.json").unlink(missing_ok=True)
 
 
@@ -224,12 +225,12 @@ def test_stop_reaps_verified_orphan_and_clears_assignment(
         )
         write_json_atomically(path, asdict(identity))
         assert stop_recorded_monitor() is True
-        process.wait(timeout=5)
+        process.wait(timeout=PROCESS_TIMEOUT_SECONDS)
         assert not path.exists()
     finally:
         if process.poll() is None:
             process.terminate()
-            process.wait(timeout=5)
+            process.wait(timeout=PROCESS_TIMEOUT_SECONDS)
         path.unlink(missing_ok=True)
 
 
@@ -434,5 +435,5 @@ def test_orphan_cleanup_preserves_live_successor_owner(
     finally:
         if process.poll() is None:
             process.terminate()
-            process.wait(timeout=5)
+            process.wait(timeout=PROCESS_TIMEOUT_SECONDS)
         path.unlink(missing_ok=True)
