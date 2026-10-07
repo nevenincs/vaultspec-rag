@@ -276,7 +276,14 @@ class TestMotionMeansSomething:
         self, control_service: _JobService
     ) -> None:
         """And it must still move when something genuinely is happening."""
-        control_service.control_delay = 0.6
+        # The request is held rather than merely slowed. The glyph turns for
+        # exactly as long as the service takes to answer, so a fixed delay is
+        # a bet that this box paints and reads a frame inside it; a loaded
+        # shard answers first, and the wait then hunts a glyph that has
+        # already stopped. Held on an event, the request stays out until the
+        # frame that proves it has been read.
+        answered = threading.Event()
+        control_service.control_gate = answered
         app = _app(control_service, [_finished_job("job00000")])
         async with app.run_test(size=_WIDE, notifications=True) as pilot:
             await _ready(pilot, app)
@@ -291,6 +298,7 @@ class TestMotionMeansSomething:
                 ),
                 "an animated header glyph",
             )
+            answered.set()
             await _settle(pilot)
 
         assert "vaultspec-rag" in _line_with(painted, "vaultspec-rag")
