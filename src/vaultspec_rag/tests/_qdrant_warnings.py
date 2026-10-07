@@ -6,6 +6,8 @@ import time
 from collections import Counter
 from typing import TYPE_CHECKING
 
+from ._child_signal import PROCESS_TIMEOUT_SECONDS
+
 if TYPE_CHECKING:
     import pytest
 
@@ -26,7 +28,7 @@ def await_client_warnings(
     the capture must stay active until that real probe answers. No SDK checks
     are disabled and unexpected warnings remain errors under strict pytest.
     """
-    deadline = time.monotonic() + 10.0
+    deadline = time.monotonic() + PROCESS_TIMEOUT_SECONDS
     while len(captured) < len(expected) and time.monotonic() < deadline:
         time.sleep(0.01)
     assert Counter(str(warning.message) for warning in captured) == Counter(expected)
