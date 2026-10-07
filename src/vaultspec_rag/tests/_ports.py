@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
 
 def free_loopback_port() -> int:
@@ -31,7 +31,7 @@ def free_loopback_port() -> int:
 
 
 @contextmanager
-def refused_loopback_port() -> Iterator[int]:
+def refused_loopback_port() -> Generator[int]:
     """Yield a loopback port that refuses every connection while it is held.
 
     A socket bound to an ephemeral port but never put into ``listen()`` rejects
