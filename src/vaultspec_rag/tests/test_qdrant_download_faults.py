@@ -322,12 +322,26 @@ class TestDeadline:
     def test_a_retry_that_cannot_start_before_the_deadline_is_not_made(
         self, sources: LoopbackSources
     ) -> None:
+        """The refusal is reported as it stands when no retry can fit.
+
+        Mutation: made ``_retry_delay`` return the wait whether or not it fits
+        before the deadline. Observed the kind assertion fail as too slow,
+        after the wait had been slept through. Restored; passes.
+        """
         source = sources.serve(_status(HTTPStatus.SERVICE_UNAVAILABLE))
 
         failure = _fetch(
             source.url("/asset.bin"),
-            # The wait before a second attempt is longer than the time left.
-            DownloadLimits(deadline_seconds=0.3, retry_base_seconds=5.0),
+            # The wait before a second attempt is longer than the time left,
+            # however the jitter falls: at least three quarters of the base.
+            # The deadline is seconds, not a fraction of one, because it also
+            # covers the handshake and the refusal, and a first attempt that
+            # overruns it ends as too slow before any retry is weighed.
+            DownloadLimits(
+                deadline_seconds=5.0,
+                retry_base_seconds=20.0,
+                retry_cap_seconds=20.0,
+            ),
         )
 
         assert failure.kind is DownloadFailure.UNAVAILABLE
