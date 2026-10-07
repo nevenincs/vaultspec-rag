@@ -299,11 +299,19 @@ def refused_port() -> Iterator[int]:
     A socket bound to an ephemeral port but never put into ``listen()`` rejects
     every connect with ECONNREFUSED for as long as it is held - so there is no
     bind/close/reuse window (which returning a closed port number would leave).
+
+    macOS is the exception: it answers a connect to such a socket with
+    silence, so the caller times out instead of being refused. There the port
+    is released before it is handed over, which that system refuses at once,
+    and the reuse window is accepted as the smaller error.
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    if sys.platform == "darwin":
+        sock.close()
     try:
-        yield sock.getsockname()[1]
+        yield port
     finally:
         sock.close()
 

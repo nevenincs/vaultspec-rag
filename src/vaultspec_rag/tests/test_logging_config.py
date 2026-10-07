@@ -20,6 +20,7 @@ from ..logging_config import (
     read_managed_logs,
     validate_managed_log_payload,
 )
+from ._child_signal import CHILD_PROCESS_TIMEOUT_SECONDS
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -350,10 +351,10 @@ finally:
             capture_output=True,
             text=True,
             check=False,
-            timeout=20,
+            timeout=CHILD_PROCESS_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired as exc:
-        pytest.fail(f"daemon logging probe exceeded 20 seconds: {exc}")
+        pytest.fail(f"daemon logging probe exceeded its bound: {exc}")
     assert result.returncode == 0, result.stderr
     rendered = log_path.read_text(encoding="utf-8")
     assert rendered.count("__ONE_CANONICAL_RECORD__") == 1
@@ -420,10 +421,10 @@ if capture is None or capture.persistence_error is not None:
             capture_output=True,
             text=True,
             check=False,
-            timeout=20,
+            timeout=CHILD_PROCESS_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired as exc:
-        pytest.fail(f"raw daemon log probe exceeded 20 seconds: {exc}")
+        pytest.fail(f"raw daemon log probe exceeded its bound: {exc}")
 
     assert result.returncode == 0, result.stderr
     generations = sorted(tmp_path.glob("service.log*"))
