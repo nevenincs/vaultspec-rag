@@ -17,6 +17,7 @@ from ...indexer._content_policy import (
 from ...indexer._preprocess_config import PREPROCESS_CONFIG_FILENAME
 from ...progress import NullProgressReporter
 from .._cli_helpers import app, runner
+from .._preprocess_approval import approve_preprocess_policy
 
 if TYPE_CHECKING:
     from ...indexer._codebase_indexer import ContentScanResult
@@ -84,6 +85,9 @@ def _write_admission_sources(tmp_path: Path) -> dict[str, Path]:
         encoding="utf-8",
     )
     paths[PREPROCESS_CONFIG_FILENAME] = config_path
+    # Approved, so the routed file is a document the code scan rejects and
+    # not a held-back transform it leaves alone.
+    approve_preprocess_policy(tmp_path)
     return paths
 
 
