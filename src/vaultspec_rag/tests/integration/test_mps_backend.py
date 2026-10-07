@@ -92,7 +92,7 @@ def test_configured_model_stack_runs_together_on_mps(
         # dense, sparse, and reranker stacks fit and execute while co-resident.
         assert model.device == "mps"
         _assert_parameters_on_mps("dense model", model._dense_model)
-        _assert_parameters_on_mps("sparse model", model._require_sparse_model())
+        _assert_parameters_on_mps("sparse model", model._require_sparse_model()._model)
         _assert_parameters_on_mps("reranker", reranker.model)
         dense = model.encode_query("accelerator backend selection")
         sparse = model.encode_query_sparse("accelerator backend selection")

@@ -14,16 +14,21 @@ time allowed for it set the way an operator sets it.
 from __future__ import annotations
 
 import errno
+import time
 from typing import TYPE_CHECKING, cast
 
 import pytest
 
 from .._anchor_claim import claim_anchor, release_anchor_claim
 from ..commands._hub_failure import HubFailure, classify_hub_failure
+from ..commands._model_download import FetchLimits
 from ..commands._model_fetch import (
     MODELS_BUSY,
     MODELS_CACHE_UNUSABLE,
     MODELS_DEADLINE,
+    _fetch_repo,
+    _FetchContext,
+    _Wanted,
 )
 from ..config._types import EnvVar
 from ._loopback_model_hub import LoopbackModelHub, loopback_model_hub
@@ -32,6 +37,8 @@ from ._model_fetch_child import DENSE_REPO, RERANKER_REPO, fetch_from
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from ..commands._snapshot_progress import SnapshotCounts
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("inference_host")]
 
@@ -117,6 +124,68 @@ def test_the_wait_for_another_fetch_is_one_allowance_for_every_repository(
         [RERANKER_REPO, "failed", MODELS_BUSY],
     ]
     assert progress.count("to finish downloading models") == 1, progress
+
+
+class _Stages:
+    """Record the stages a fetch declares, in the order a console prints them."""
+
+    def __init__(self) -> None:
+        self.labels: list[str] = []
+
+    def stage(self, label: str) -> None:
+        self.labels.append(label)
+
+    def downloading(self, heading: str, counts: SnapshotCounts) -> None:
+        del heading, counts
+
+
+def test_checking_the_cache_does_not_spend_the_wait_for_another_fetch(
+    tmp_path: Path,
+) -> None:
+    """The allowance for waiting runs from when the cache is found held.
+
+    A fetch checks what is cached before it asks for the cache. On a busy
+    machine that check outlasted a short allowance, and with the allowance
+    counted from the start of the fetch it was spent before any waiting
+    began: the fetch answered busy at once and never said who held the cache.
+
+    This fetch began ten seconds before it reaches the cache and has a fifth
+    of a second to wait, so only an allowance counted from the cache being
+    found held leaves it any.
+
+    Mutation check: with the wait begun at the fetch's own start before the
+    cache is asked for, no notice is given and the notice assertion fails;
+    restoring passes.
+    """
+    cache = tmp_path / "hub-cache"
+    held = claim_anchor(
+        cache / ".locks" / "vaultspec-rag-fetch.lock",
+        pid_record=True,
+        create_parent=True,
+    )
+    assert held.descriptor is not None, "premise: this test holds the cache"
+    stages = _Stages()
+    context = _FetchContext(
+        progress=stages,
+        limits=FetchLimits(contention_seconds=0.2),
+        total=1,
+        dry_run=False,
+        offline=False,
+        cache=cache,
+        endpoint="",
+        started=time.monotonic() - 10.0,
+        deadline_seconds=3600.0,
+    )
+    try:
+        result = _fetch_repo(
+            context, _Wanted("Dense", DENSE_REPO, "(1/1)", None, pinned=False)
+        )
+    finally:
+        release_anchor_claim(held.descriptor, pid_record=True)
+
+    assert result.code == MODELS_BUSY
+    notices = [label for label in stages.labels if "to finish downloading" in label]
+    assert len(notices) == 1, stages.labels
 
 
 def test_a_cache_that_cannot_be_written_is_not_blamed_on_the_network(

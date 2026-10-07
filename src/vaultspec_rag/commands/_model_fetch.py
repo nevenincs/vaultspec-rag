@@ -53,7 +53,7 @@ from __future__ import annotations
 import logging
 import shutil
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -64,6 +64,7 @@ from ..config._types import EnvVar, hf_cache_only
 from ._hub_failure import HubFailure
 from ._model_download import (
     DEFAULT_LIMITS,
+    CacheWait,
     DownloadCaller,
     FetchLimits,
     download_snapshot,
@@ -186,10 +187,13 @@ class _FetchContext:
     cache: Path
     endpoint: str
     #: When the fetch began, on the monotonic clock, and how long all of it
-    #: may take. Every wait and every download is measured against the one
-    #: start, so three repositories do not each get the whole allowance.
+    #: may take. Every download is measured against the one start, so three
+    #: repositories do not each get the whole allowance.
     started: float
     deadline_seconds: float
+    #: The one allowance for waiting on another process's fetch, shared by
+    #: every repository of this one.
+    cache_wait: CacheWait = field(default_factory=CacheWait)
 
     @property
     def until(self) -> float:
@@ -364,7 +368,7 @@ def _fetch_repo(context: _FetchContext, wanted: _Wanted) -> ModelRepoResult:
         on_wait=stage,
         # One allowance for the whole fetch: a repository that waited it out
         # leaves none for the next, which is answered at once.
-        since=context.started,
+        wait=context.cache_wait,
         until=context.until,
     ) as busy:
         if busy is not None:

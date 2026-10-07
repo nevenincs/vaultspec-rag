@@ -159,6 +159,19 @@ def stop_recorded_monitor() -> bool:
     return True
 
 
+def recorded_monitor_exited() -> bool:
+    """Whether the recorded monitor process is known to have exited.
+
+    Read without the status lock: the record is replaced atomically, so it
+    is read whole, and nothing here changes it. A caller that could not take
+    the lock asks this to tell a record that merely outlived its process from
+    a monitor that is still running. A live process under the recorded pid is
+    never taken as gone, whatever its incarnation.
+    """
+    identity = _read_identity(_identity_path())
+    return identity is None or not pid_alive(identity.pid)
+
+
 class MonitorProcess:
     """Own the compiled monitor and publish the port it actually bound."""
 
@@ -286,9 +299,20 @@ class MonitorProcess:
         if process.stdout is not None:
             process.stdout.close()
         path = _identity_path()
-        with status_write_lock(path):
-            if _read_identity(path) == self.identity:
-                path.unlink(missing_ok=True)
+        try:
+            with status_write_lock(path):
+                if _read_identity(path) == self.identity:
+                    path.unlink(missing_ok=True)
+        except TimeoutError as exc:
+            # The monitor has exited; only its record could not be withdrawn,
+            # because another process holds the status lock. What is left
+            # names a dead process, and the next start or stop reaps exactly
+            # that, so the stop that was asked for has still happened.
+            logger.warning(
+                "monitor stopped; its identity record is left for the next "
+                "start or stop to clear: %s",
+                exc,
+            )
         self.identity = None
         self.access = None
         self.process = None

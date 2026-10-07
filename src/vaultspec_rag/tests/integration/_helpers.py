@@ -8,12 +8,14 @@ subprocess environment setup without a sibling-import hack.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import socket
 import time
+import urllib.request
 from contextlib import contextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from vaultspec_core.config import (
     reset_config,
@@ -395,7 +397,7 @@ def _poll_own_health(
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return None
-        health = _try_http_health(port, timeout=min(5.0, remaining))
+        health = _health_as_holder(port, token, timeout=min(5.0, remaining))
         if health is not None and health.get("service_token") == token:
             return health
         remaining = deadline - time.monotonic()
@@ -404,6 +406,31 @@ def _poll_own_health(
         time.sleep(min(delay, remaining))
         # Same low cap as _poll_health: the cap bounds detection overshoot.
         delay = min(delay * 2, 1.0)
+
+
+def _health_as_holder(
+    port: int, token: str, *, timeout: float
+) -> dict[str, object] | None:
+    """Ask ``/health`` on *port* as the holder of *token*, or ``None``.
+
+    Health names its identity token only to a caller that already presents
+    it. The service client takes that credential from local discovery, which
+    a child started with nothing but a token has not published, so the caller
+    that minted the token presents it here itself. Anything but a JSON object
+    in answer - nothing listening yet, a refusal, a body that is not one - is
+    ``None``: the poll simply asks again.
+    """
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}/health",
+        headers={"Authorization": f"Bearer {token}"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body: object = json.loads(response.read())
+    except (OSError, ValueError):
+        return None
+    return cast("dict[str, object]", body) if isinstance(body, dict) else None
 
 
 #: Gap between liveness reads while waiting a process out. The poll interval is

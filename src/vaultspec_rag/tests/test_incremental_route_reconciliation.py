@@ -186,22 +186,27 @@ def _write(
     checkpoint: DocumentRunCheckpoint,
     chunks: list[DocumentChunk],
 ) -> None:
-    for chunk in chunks:
-        unit = checkpoint.unit_for(
-            chunk.payload.source_path,
-            chunk.payload.content_fingerprint,
-            0,
-            is_file_end=True,
-            point_ids=(chunk.id,),
-        )
-        lifecycle = checkpoint.mutation_lifecycle(unit)
-        if lifecycle is not None:
-            assert lifecycle.prepare()
-        harness.store.upsert_document_content_chunks([chunk], write_policy=None)
-        if lifecycle is not None:
-            lifecycle.mark_applied()
-            lifecycle.confirm()
-        checkpoint.record_confirmed_slice(unit)
+    # Held as the indexers hold it around ingestion. Without the idle handle
+    # each of the four ledger transactions a chunk takes is the last connection
+    # on the file, and closing it folds the write-ahead log back into the
+    # database: over a thousand of those for the largest case here.
+    with checkpoint.preserve_incomplete_generation():
+        for chunk in chunks:
+            unit = checkpoint.unit_for(
+                chunk.payload.source_path,
+                chunk.payload.content_fingerprint,
+                0,
+                is_file_end=True,
+                point_ids=(chunk.id,),
+            )
+            lifecycle = checkpoint.mutation_lifecycle(unit)
+            if lifecycle is not None:
+                assert lifecycle.prepare()
+            harness.store.upsert_document_content_chunks([chunk], write_policy=None)
+            if lifecycle is not None:
+                lifecycle.mark_applied()
+                lifecycle.confirm()
+            checkpoint.record_confirmed_slice(unit)
 
 
 def _publish_parent(harness: _RouteStore, chunks: list[DocumentChunk]) -> None:

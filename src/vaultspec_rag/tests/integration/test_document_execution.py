@@ -73,6 +73,7 @@ from .._indexer_fixtures import (
     DocumentFileChunkResult,
     chunk_document_and_hash_file,
 )
+from .._preprocess_approval import approve_preprocess_policy
 from ._helpers import _document_policy
 
 if TYPE_CHECKING:
@@ -581,6 +582,9 @@ def test_failed_document_extraction_never_publishes_complete_hash_metadata(
     source = tmp_path / "retry.blob"
     source.write_bytes(b"\xff\xfe extractor-owned")
     _write_rule(tmp_path, command=_command(extractor), on_error="skip")
+    # Approved, so each run launches the extractor and counts its failure
+    # instead of holding the hook back.
+    approve_preprocess_policy(tmp_path)
     store = VaultStore(tmp_path)
     try:
         indexer = DocumentIndexer(
