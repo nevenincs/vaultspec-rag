@@ -41,7 +41,9 @@ pytestmark = [pytest.mark.unit, pytest.mark.repo]
 #: choice; anywhere else it is a hold, and nothing promotes a release back.
 PUBLICATION_FLAG = "--draft=false"
 
-#: The package-index stage's job ids: the upload, then the publication.
+#: The package-index stage's job ids: the admission, the upload, then the
+#: publication.
+ADMISSION_JOB = "admit-package-index"
 UPLOAD_JOB = "publish-pypi"
 PUBLICATION_JOB = "publish-release"
 
@@ -172,7 +174,9 @@ def test_the_release_is_published_last_and_only_once() -> None:
     ``resolve-target`` instead of the upload job made it fail on the ordering
     assertion; a second ``--draft=false`` edit made it fail on the count
     assertion; moving the publication step below both dispatches made it fail
-    naming the channel pointer; restoring each made it pass.
+    naming the channel pointer; pointing the upload job's ``needs`` at
+    ``resolve-target`` alone made it fail on the admission assertion;
+    restoring each made it pass.
     """
     source = _source(Workflow.PUBLISH)
     assert source.count(PUBLICATION_FLAG) == 1, (
@@ -208,11 +212,15 @@ def test_the_release_is_published_last_and_only_once() -> None:
         "acts are one-way, but a failed upload should leave an unpublished "
         "draft rather than a release advertising a version PyPI does not carry"
     )
-    # The upload reads the release's own attached distribution, so the release
-    # must be proven to carry it before anything reaches the index.
-    assert _index_of(Workflow.PUBLISH, UPLOAD_JOB, "gh release view") < _index_of(
-        Workflow.PUBLISH, UPLOAD_JOB, "uv publish"
-    ), "the index is written before the release is checked for its distribution"
+    # The upload sends the release's own attached distribution, so the release
+    # must be proven to carry it before anything reaches the index. The proof
+    # is the admission job's, because reading a draft takes a grant the job
+    # holding `id-token` must not have.
+    _index_of(Workflow.PUBLISH, ADMISSION_JOB, "gh release view")
+    assert ADMISSION_JOB in _needed(Workflow.PUBLISH, UPLOAD_JOB), (
+        "the index is written before the release is checked for its distribution"
+    )
+    _index_of(Workflow.PUBLISH, UPLOAD_JOB, "uv publish")
 
     flip = _index_of(Workflow.PUBLISH, PUBLICATION_JOB, PUBLICATION_FLAG)
     for advertisement, why in (
