@@ -9,6 +9,11 @@ from __future__ import annotations
 
 import socket
 import sys
+from contextlib import contextmanager
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 
 def free_loopback_port() -> int:
@@ -23,6 +28,33 @@ def free_loopback_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
+
+
+@contextmanager
+def refused_loopback_port() -> Generator[int]:
+    """Yield a loopback port that refuses every connection while it is held.
+
+    A socket bound to an ephemeral port but never put into ``listen()`` rejects
+    every connect with ECONNREFUSED for as long as it is held - so there is no
+    bind/close/reuse window, which a released port number leaves open to any
+    listener another test starts in that moment. A connect that reaches such
+    a listener is accepted and never answered, and the caller waits out its
+    own timeout where the test expected an immediate refusal.
+
+    macOS is the exception: it answers a connect to such a socket with
+    silence, so the caller times out instead of being refused. There the port
+    is released before it is handed over, which that system refuses at once,
+    and the reuse window is accepted as the smaller error.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    port = int(sock.getsockname()[1])
+    if sys.platform == "darwin":
+        sock.close()
+    try:
+        yield port
+    finally:
+        sock.close()
 
 
 def bind_released_loopback_port(port: int) -> None:
