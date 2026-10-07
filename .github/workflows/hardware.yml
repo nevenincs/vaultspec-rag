@@ -10,7 +10,8 @@ name: RAG Hardware Tiers
 #
 # Every precondition the tiers read is provisioned here, inside the job that
 # reads it: the public model cache, the pinned Qdrant
-# binary and the resident service the CUDA tier borrows. A tier that finds a
+# binary, the compiled monitor and the resident service the CUDA tier borrows,
+# which launches that monitor. A tier that finds a
 # precondition missing refuses to run and fails, so a caller that skipped a
 # step would block every release without measuring anything.
 #
@@ -177,6 +178,21 @@ jobs:
 
       - name: Provision the pinned Qdrant binary the GPU tier requires
         run: uv run --no-sync vaultspec-rag server qdrant install
+
+      # A service start launches the monitor and stops when no compiled monitor
+      # is found, so the resident service below cannot come up without one. The
+      # build names its output to the later steps through the job environment.
+      - name: Set up Node for the monitor build
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          package-manager-cache: false
+          node-version-file: .nvmrc
+
+      - name: Restore monitor dependencies
+        run: npm ci
+
+      - name: Compile the native monitor the resident service starts
+        run: just build-monitor-test
 
       # The tier does not own the card, it BORROWS it: the coordinator captures
       # a live, health-verified, version-compatible resident service before

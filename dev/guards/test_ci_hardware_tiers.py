@@ -214,6 +214,31 @@ def test_the_cuda_tier_always_stops_the_service_it_started() -> None:
     )
 
 
+def test_the_resident_service_starts_after_its_monitor_is_compiled() -> None:
+    """The CUDA tier compiles the monitor before the service that launches it.
+
+    A service start launches the compiled monitor and stops when it finds
+    none, so a job that never builds one ends before a single test runs.
+
+    Mutation proof: deleting the ``just build-monitor-test`` step made this
+    fail on the compile assertion, deleting the ``npm ci`` step made it fail
+    on the restore assertion, and moving the compile step below the resident
+    start made it fail on the compile assertion; restoring each passed.
+    """
+    job = next(
+        job for job in workflows.load_jobs(Workflow.HARDWARE) if job.job_id == "cuda"
+    )
+    start = next(
+        index for index, step in enumerate(job.steps) if step.get("id") == "resident"
+    )
+    earlier = [_run(step) for step in job.steps[:start]]
+    assert "npm ci" in earlier, "the monitor build has no restored dependencies"
+    assert "just build-monitor-test" in earlier, (
+        "the resident service starts before any monitor is compiled"
+    )
+    assert earlier.index("npm ci") < earlier.index("just build-monitor-test")
+
+
 @pytest.mark.parametrize("token", ["VAULTSPEC_RAG_TYPESAFE_API_KEY"])
 def test_every_caller_hands_the_hardware_workflow_its_token(token: str) -> None:
     """The token is declared by the tiers and passed by every caller.
