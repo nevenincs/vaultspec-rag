@@ -273,6 +273,15 @@ entries, and land that catalog change on `main` through the normal review proces
 The producer commit remains the commit that built the artifacts; the catalog commit
 is separate approval evidence.
 
+Before landing it, commit the entry on its branch and ask the verifier's own check
+whether that commit admits a fresh download of the four archives:
+
+```sh
+uv run --no-project --python 3.13 -- python -m tools.monitor.pins validate \
+  --tag "$TAG" --source-revision "$(git rev-parse "$TAG^{commit}")" \
+  --catalog-revision "$(git rev-parse HEAD)" --directory <downloaded-archives>
+```
+
 Rerun only the failed `verify-release-assets` job in the original `RAG Binaries` run.
 It fetches the reviewed catalog from `main` and validates the existing draft bytes.
 Do not rerun the successful build jobs to resolve a missing pin: a rebuild can change

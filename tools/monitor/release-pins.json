@@ -1,4 +1,28 @@
 {
   "schema": "vaultspec.monitor.release-pins.v1",
-  "releases": {}
+  "releases": {
+    "vaultspec-rag-v0.6.0": {
+      "frontend_sha256": "9cb4d00e08c0fc3cd1dae75a9f7b0a7dcf8cf35d2d9aad85e69188cbff70fc64",
+      "lock_sha256": "40f681cafee2f79e3d47480e04dcc87adc569ac1ec64424976f95a7e12257a2a",
+      "source_revision": "599356f43000849213448c1041a5ca1d85a4723d",
+      "targets": {
+        "aarch64-apple-darwin": {
+          "archive_sha256": "d11e496f84348298fea6185e79abe4cc6fd970d9c8316176b8e895703ddfd9b0",
+          "monitor_sha256": "9983fd5f9847373fb41dd3f398c65a609869e5a0d3d53cbac8c5c22d3a929519"
+        },
+        "aarch64-unknown-linux-gnu": {
+          "archive_sha256": "72c20c7805e6b23fb29190838f167538fe95ddd2d09f137165f4d17ba85a3d99",
+          "monitor_sha256": "2e0858149267684bef713eb3e89e8fbde356518a2332060c62e8db864e831920"
+        },
+        "x86_64-pc-windows-msvc": {
+          "archive_sha256": "dcf0f126866aa062de82e95194151bba769aa2e7bb86fe05707eb410f7e38018",
+          "monitor_sha256": "5b588c841e1685ef44fbb8dfa9c7fa834b04740f408458438912afa9e2ebc4ac"
+        },
+        "x86_64-unknown-linux-gnu": {
+          "archive_sha256": "7337a02ea6a32efe5d27f0774fda355263a97b171f51253b9114d2b77b3f9d99",
+          "monitor_sha256": "66caa9e9052111c4830cde546a9831d3404fb2a2e967e8fce4772156bfbd0415"
+        }
+      }
+    }
+  }
 }
