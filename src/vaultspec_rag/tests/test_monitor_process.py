@@ -306,6 +306,108 @@ def test_a_stopped_monitor_is_stopped_even_when_its_record_cannot_be_withdrawn(
         path.unlink(missing_ok=True)
 
 
+def _holding_the_status_lock(path: Path) -> subprocess.Popen[str]:
+    """Start a process that holds the status lock until its stdin closes."""
+    holder = subprocess.Popen(
+        [sys.executable, "-c", _HOLDS_THE_STATUS_LOCK, str(path)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
+    )
+    assert holder.stdout is not None
+    assert holder.stdout.readline().strip() == "held"
+    return holder
+
+
+def _end(*processes: subprocess.Popen[str]) -> None:
+    for process in processes:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=10)
+        for stream in (process.stdin, process.stdout):
+            if stream is not None:
+                stream.close()
+
+
+def test_the_stop_verb_succeeds_over_a_dead_monitors_record_it_cannot_withdraw(
+    isolated_singleton_dirs: Path,
+) -> None:
+    """The stop verb answers for the monitor process, not for its record.
+
+    The recorded monitor has exited and another process holds the status
+    lock, so the record can be neither reaped nor withdrawn. The stop that
+    was asked for has happened: the verb exits zero and leaves the record for
+    the next start or stop to clear.
+
+    Mutation: let the lock's timeout reach the verb's failure branch.
+    Observed this fail on the exit code, with ``monitor_stop_failed``.
+    Restored; passes.
+    """
+    path = isolated_singleton_dirs / "monitor.json"
+    exited = subprocess.Popen(
+        [sys.executable, "-c", "pass"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+    )
+    exited.wait(timeout=30)
+    # The impossible pid represents a confirmed-dead owner.
+    write_json_atomically(
+        path, asdict(MonitorIdentity(2**30, 1.0, exited.pid, 1.0, 54321))
+    )
+    holder = _holding_the_status_lock(path)
+    try:
+        result = CliRunner().invoke(app, ["server", "stop", "--json"])
+
+        assert result.exit_code == 0, result.stdout
+        assert json.loads(result.stdout)["ok"] is True
+        assert path.exists(), "the record was removed without the lock"
+    finally:
+        _end(holder, exited)
+        path.unlink(missing_ok=True)
+
+
+def test_the_stop_verb_fails_over_a_live_monitor_it_cannot_reap(
+    isolated_singleton_dirs: Path,
+) -> None:
+    """A held status lock excuses a leftover record, never a running monitor.
+
+    The recorded monitor is alive, its owner is gone, and another process
+    holds the status lock, so it cannot be reaped. The monitor is still
+    running, and the verb says so by failing.
+
+    Mutation: take every lock timeout as a stop that happened. Observed this
+    fail on the exit code. Restored; passes.
+    """
+    path = isolated_singleton_dirs / "monitor.json"
+    running = subprocess.Popen(
+        [sys.executable, "-c", "import sys; sys.stdin.read()"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+    )
+    write_json_atomically(
+        path,
+        asdict(
+            MonitorIdentity(2**30, 1.0, running.pid, pid_start_time(running.pid), 54321)
+        ),
+    )
+    holder = _holding_the_status_lock(path)
+    try:
+        result = CliRunner().invoke(app, ["server", "stop", "--json"])
+
+        assert result.exit_code == 1, result.stdout
+        assert json.loads(result.stdout)["error"] == "monitor_stop_failed"
+        assert pid_alive(running.pid)
+        assert path.exists()
+    finally:
+        _end(holder, running)
+        path.unlink(missing_ok=True)
+
+
 def test_orphan_cleanup_preserves_live_successor_owner(
     isolated_singleton_dirs: Path,
 ) -> None:

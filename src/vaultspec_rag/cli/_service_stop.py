@@ -429,10 +429,19 @@ def _stop_success(
     idempotent case as satisfied rather than as a fault; that rule lives in the
     shared renderer alongside the envelope-versus-human decision.
     """
-    from ..monitor_process import stop_recorded_monitor
+    from ..monitor_process import recorded_monitor_exited, stop_recorded_monitor
 
     try:
-        monitor_stopped = stop_recorded_monitor()
+        try:
+            monitor_stopped = stop_recorded_monitor()
+        except TimeoutError:
+            # Another process holds the status lock, so the record could be
+            # neither reaped nor withdrawn. One that names a process already
+            # gone is left for the next start or stop to clear: the stop that
+            # was asked for has happened. Anything else stays a failure.
+            if not recorded_monitor_exited():
+                raise
+            monitor_stopped = True
     except (OSError, RuntimeError, ValueError) as exc:
         raise _fail_stop(
             json_mode,

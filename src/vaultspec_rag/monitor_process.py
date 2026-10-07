@@ -159,6 +159,19 @@ def stop_recorded_monitor() -> bool:
     return True
 
 
+def recorded_monitor_exited() -> bool:
+    """Whether the recorded monitor process is known to have exited.
+
+    Read without the status lock: the record is replaced atomically, so it
+    is read whole, and nothing here changes it. A caller that could not take
+    the lock asks this to tell a record that merely outlived its process from
+    a monitor that is still running. A live process under the recorded pid is
+    never taken as gone, whatever its incarnation.
+    """
+    identity = _read_identity(_identity_path())
+    return identity is None or not pid_alive(identity.pid)
+
+
 class MonitorProcess:
     """Own the compiled monitor and publish the port it actually bound."""
 
