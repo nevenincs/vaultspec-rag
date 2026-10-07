@@ -417,8 +417,6 @@ def test_package_index_publication_uses_the_proven_drafts_packages(
     Mutation proof: pointing ``publish-pypi`` back at ``smoke-test`` failed the
     ``needs`` assertion; inverting the package asset check failed the missing
     distribution assertion. Each passed again once restored.
-    Removing the per-package uniqueness checks failed the exact-entry
-    assertion; it passed immediately after restoration.
     """
     publish = _load(repo_root, "publish.yml")
     jobs = publish["jobs"]
@@ -428,28 +426,7 @@ def test_package_index_publication_uses_the_proven_drafts_packages(
     assert stage["type"] == "choice"
     assert stage["options"] == ["release", "package-index"]
     assert stage["default"] == "release"
-
-    index = jobs["publish-pypi"]
-    assert index["needs"] == "resolve-target"
-    assert index["if"] == "${{ inputs.stage == 'package-index' }}"
-    assert index["environment"] == {"name": "pypi"}
-    assert index["permissions"]["id-token"] == "write"
-    steps = [str(step.get("run", "")) for step in index["steps"]]
-    distribution = next(i for i, run in enumerate(steps) if "gh release view" in run)
-    upload = next(i for i, run in enumerate(steps) if "uv publish" in run)
-    assert "--json isDraft,assets" in steps[distribution]
-    assert "[ ${#missing[@]} -ne 0 ]" in steps[distribution]
-    assert '"vaultspec_rag-${version}-py3-none-any.whl"' in steps[distribution]
-    assert '"vaultspec_rag-${version}.tar.gz" SHA256SUMS' in steps[distribution]
-    assert "exit 1" in steps[distribution]
-    assert distribution < upload
-    assert "sha256sum -c ../packages.sha256" in steps[upload]
-    assert steps[upload].index("sha256sum -c") < steps[upload].index("uv publish")
-    for package in ("wheel", "sdist"):
-        assert (
-            f'awk -v name="${{{package}}}" \'$2 == name {{ count++ }} '
-            "END { print count+0 }'"
-        ) in steps[upload], "each package needs exactly one checksum entry"
+    assert jobs["publish-pypi"]["needs"] == ["resolve-target", "admit-package-index"]
 
     final = jobs["publish-release"]
     assert final["needs"] == "publish-pypi"
@@ -468,8 +445,9 @@ def test_package_index_publication_uses_the_proven_drafts_packages(
     for job_id in ("build", "smoke-test", "github-release"):
         assert "publish-pypi" not in _upstream(jobs, job_id), job_id
     assert jobs["build"]["if"] == "${{ inputs.stage != 'package-index' }}"
+    index_stage = {"admit-package-index", "publish-pypi", "publish-release"}
     for job_id in jobs:
-        if job_id in {"resolve-target", "build", "publish-pypi", "publish-release"}:
+        if job_id in {"resolve-target", "build"} | index_stage:
             continue
         assert "publish-pypi" not in _upstream(jobs, job_id), job_id
         assert "build" in _upstream(jobs, job_id), job_id
@@ -485,6 +463,73 @@ def test_package_index_publication_uses_the_proven_drafts_packages(
     finalizer = binaries[handoff:]
     assert "if: ${{ success() }}" in finalizer
     assert "-f stage=package-index" in finalizer
+
+
+def test_package_index_admission_and_upload_never_share_a_grant(
+    repo_root: Path,
+) -> None:
+    """Admission reads the draft; the upload holds only the publishing grant.
+
+    Reading a draft takes a token that may write releases, and uploading takes
+    an OIDC one any step could spend on another audience. So admission reads
+    and checks, and the upload receives bytes it can only compare and send.
+
+    Mutation proof: inverting the package asset check failed the missing
+    distribution assertion, and removing the per-package uniqueness checks
+    failed the exact-entry assertion. Granting the upload job ``contents:
+    write`` failed its exact-permissions assertion, giving the admission job
+    ``id-token: write`` failed the admission-permissions assertion, and
+    dropping the upload job's digest check failed the re-check assertion. Each
+    passed once restored.
+    """
+    jobs = _load(repo_root, "publish.yml")["jobs"]
+    admission = jobs["admit-package-index"]
+    assert admission["needs"] == "resolve-target"
+    assert admission["if"] == "${{ inputs.stage == 'package-index' }}"
+    assert admission["permissions"] == {"contents": "write"}
+    assert "environment" not in admission
+    steps = [str(step.get("run", "")) for step in admission["steps"]]
+    distribution = next(i for i, run in enumerate(steps) if "gh release view" in run)
+    admit = next(i for i, run in enumerate(steps) if "sha256sum -c" in run)
+    assert "--json isDraft,assets" in steps[distribution]
+    assert "[ ${#missing[@]} -ne 0 ]" in steps[distribution]
+    assert '"vaultspec_rag-${version}-py3-none-any.whl"' in steps[distribution]
+    assert '"vaultspec_rag-${version}.tar.gz" SHA256SUMS' in steps[distribution]
+    assert "exit 1" in steps[distribution]
+    assert distribution < admit
+    assert "sha256sum -c ../packages.sha256" in steps[admit]
+    for package in ("wheel", "sdist"):
+        assert (
+            f'awk -v name="${{{package}}}" \'$2 == name {{ count++ }} '
+            "END { print count+0 }'"
+        ) in steps[admit], "each package needs exactly one checksum entry"
+        assert f"{package}_sha256=" in steps[admit]
+        assert admission["outputs"][f"{package}_sha256"] == (
+            f"${{{{ steps.admit.outputs.{package}_sha256 }}}}"
+        )
+    assert not any("uv publish" in run for run in steps)
+
+    index = jobs["publish-pypi"]
+    assert index["needs"] == ["resolve-target", "admit-package-index"]
+    assert index["if"] == "${{ inputs.stage == 'package-index' }}"
+    assert index["environment"] == {"name": "pypi"}
+    assert index["permissions"] == {"id-token": "write", "contents": "read"}
+    assert not any(
+        str(step.get("uses", "")).startswith("actions/checkout@")
+        for step in index["steps"]
+    ), "the job holding the OIDC grant runs repository code"
+    assert index["env"]["WHEEL_SHA256"] == (
+        "${{ needs.admit-package-index.outputs.wheel_sha256 }}"
+    )
+    assert index["env"]["SDIST_SHA256"] == (
+        "${{ needs.admit-package-index.outputs.sdist_sha256 }}"
+    )
+    steps = [str(step.get("run", "")) for step in index["steps"]]
+    assert not any("gh " in run for run in steps)
+    upload = next(i for i, run in enumerate(steps) if "uv publish" in run)
+    assert '"${WHEEL_SHA256}" "${wheel}" "${SDIST_SHA256}" "${sdist}"' in steps[upload]
+    assert "sha256sum -c ../packages.sha256" in steps[upload]
+    assert steps[upload].index("sha256sum -c") < steps[upload].index("uv publish")
 
 
 #: The inherited-manifest rewrite in a checksum merge, as the workflow spells it.
@@ -599,7 +644,7 @@ def test_binary_consumers_use_the_validated_remote_revision(repo_root: Path) -> 
     jobs = _load(repo_root, "binaries.yml")["jobs"]
     validate = jobs.pop("validate")
     assert jobs["verify-release-assets"]["if"] == (
-        "${{ always() && needs.validate.result == 'success' }}"
+        "${{ always() && needs.validate.result == 'success' && !inputs.rehearse }}"
     ), "draft verification can start without a proven release SHA"
     assert validate["outputs"]["sha"] == "${{ steps.commit.outputs.sha }}"
     commit = next(step for step in validate["steps"] if step.get("id") == "commit")
@@ -651,15 +696,123 @@ def test_reviewed_release_pins_precede_publication_and_cover_acquisition(
     assert "tools.monitor.pins propose" in binaries
     assert "monitor-pin-proposal-${{ needs.validate.outputs.sha }}" in binaries
     assert "git push" not in binaries
-    publication = _load(repo_root, "publish.yml")["jobs"]["publish-pypi"]
-    publish = next(
-        s["run"] for s in publication["steps"] if "uv publish" in str(s.get("run", ""))
+    publication = _load(repo_root, "publish.yml")["jobs"]
+    admit = next(
+        str(s["run"])
+        for s in publication["admit-package-index"]["steps"]
+        if s.get("id") == "admit"
     )
-    # Removing or moving reviewed-pin admission fails this ordered assertion.
-    assert publish.index("tools.monitor.pins validate") < publish.index("uv publish")
+    # Removing reviewed-pin admission, or moving it after the digests the
+    # upload trusts are emitted, fails this ordered assertion.
+    assert "tools.monitor.pins validate" in admit
+    assert admit.index("tools.monitor.pins validate") < admit.index("wheel_sha256=")
+    assert "admit-package-index" in publication["publish-pypi"]["needs"]
     acquisition = _load(repo_root, "acquisition.yml")["jobs"]["acquire"]
     from tools.packaging.products import VAULTSPEC_RAG
 
     assert {
         leg["target"] for leg in acquisition["strategy"]["matrix"]["include"]
     } == set(VAULTSPEC_RAG.supported_targets)
+
+
+def test_a_job_that_reads_the_draft_holds_the_grant_that_lists_it(
+    repo_root: Path,
+) -> None:
+    """Every job naming a release before publication may write releases.
+
+    GitHub lists a draft only to a token that may write releases. A job that
+    reads one with ``contents: read`` is answered ``release not found``, and
+    every release in this chain is a draft until its last step.
+
+    Mutation proof: returning the binaries ``wheel`` job to ``contents: read``
+    failed this naming that job; restoring the grant passed.
+    """
+    blind = [
+        f"{workflow}:{job_id}"
+        for workflow in ("publish.yml", "binaries.yml")
+        for job_id, job in _load(repo_root, workflow)["jobs"].items()
+        if any("gh release " in str(step.get("run", "")) for step in job["steps"])
+        and (job.get("permissions") or {}).get("contents") != "write"
+    ]
+    assert blind == [], "these jobs cannot see the draft they read"
+
+
+def test_publish_looks_for_the_draft_before_creating_one(repo_root: Path) -> None:
+    """Creating a draft is never how its existence is checked.
+
+    A draft does not reserve its tag, so ``gh release create --draft`` beside
+    the cut's draft succeeds and leaves two releases for one tag.
+
+    Mutation proof: creating unconditionally ahead of the lookup failed the
+    ordering assertion; restoring the lookup passed.
+    """
+    steps = _load(repo_root, "publish.yml")["jobs"]["resolve-target"]["steps"]
+    ensure = next(
+        str(step["run"])
+        for step in steps
+        if step.get("name") == "Ensure a draft release exists for the tag"
+    )
+    assert re.search(
+        r"if gh release view [^\n]+; then\n[^\n]+\nelse\n\s*gh release create ", ensure
+    ), "the draft is created without first looking for one"
+    assert "|| true" not in ensure
+
+
+def test_a_rehearsal_builds_every_target_and_writes_nothing(repo_root: Path) -> None:
+    """A rehearsed run reaches no release and dispatches no lane.
+
+    The binaries lane otherwise runs only from a release tag, so a defect in
+    it is found at a cut. A rehearsal builds and proves the dispatched commit
+    on every target and stops before the first write.
+
+    Mutation proof: removing the condition from ``Upload bundles to release``
+    failed this naming that step, gating the build job on the input failed
+    the build assertion, and dropping the resolver's commit comparison failed
+    the dispatched-commit assertion. Each passed once restored.
+    """
+    document = _load(repo_root, "binaries.yml")
+    triggers = document.get("on", document.get(True))
+    assert triggers is not None
+    rehearse = triggers["workflow_dispatch"]["inputs"]["rehearse"]
+    assert rehearse["type"] == "boolean"
+    assert rehearse["default"] is False
+
+    jobs = document["jobs"]
+    resolver = next(s for s in jobs["validate"]["steps"] if s.get("id") == "commit")
+    script = str(resolver["run"])
+    assert '[ "${GITHUB_SHA}" != "${TARGET_SHA}" ]' in script, (
+        "a rehearsal never proves it builds the dispatched commit"
+    )
+    assert script.index('[ "${GITHUB_SHA}" != "${TARGET_SHA}" ]') < script.index(
+        'echo "sha=${TARGET_SHA}" >> "$GITHUB_OUTPUT"'
+    ), "a rehearsal emits its SHA before proving it is the dispatched commit"
+
+    live = "${{ !inputs.rehearse }}"
+    for job_id, job in jobs.items():
+        whole_job = "!inputs.rehearse" in str(job.get("if", ""))
+        for step in job["steps"]:
+            run = str(step.get("run", ""))
+            if "gh release " in run or "gh workflow run" in run:
+                assert whole_job or step.get("if") == live, (
+                    f"a rehearsal reaches {job_id}: {step.get('name')}"
+                )
+
+    for job_id in ("frontend", "build", "release"):
+        assert "if" not in jobs[job_id], f"a rehearsal skips {job_id}"
+    assert not any("if" in step for step in jobs["build"]["steps"])
+    proven = [
+        step
+        for step in jobs["release"]["steps"]
+        if "release verify-set " in str(step.get("run", ""))
+        or step.get("name") == "Assert every declared target archive ready"
+    ]
+    assert len(proven) == 2
+    assert not any("if" in step for step in proven)
+
+    wheel = {
+        str(step.get("if")): str(step.get("run", ""))
+        for step in jobs["wheel"]["steps"]
+        if "if" in step
+    }
+    assert "gh release download" in wheel[live]
+    assert "uv build --wheel --out-dir dist" in wheel["${{ inputs.rehearse }}"]
