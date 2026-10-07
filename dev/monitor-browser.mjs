@@ -32,6 +32,7 @@ let socket;
 const pending = new Map();
 const errors = [];
 const network = [];
+const requested = new Map();
 let backgroundTarget;
 let sequence = 0;
 let closing = false;
@@ -130,16 +131,20 @@ try {
       !message.params.response.url.includes("/api/monitor/")
     )
       errors.push(message.params.response);
-    else if (
-      message.method === "Network.requestWillBeSent" &&
-      message.params.request.url.includes("/api/monitor/")
-    )
-      network.push(message.params.request.url);
-    else if (
+    else if (message.method === "Network.requestWillBeSent") {
+      requested.set(message.params.requestId, message.params.request.url);
+      if (message.params.request.url.includes("/api/monitor/"))
+        network.push(message.params.request.url);
+    } else if (
       message.method === "Network.loadingFailed" &&
       !message.params.canceled
     )
-      errors.push(message.params);
+      // A failed load reports its request id and no URL, so the failure is
+      // recorded with the URL that id was sent to.
+      errors.push({
+        ...message.params,
+        url: requested.get(message.params.requestId),
+      });
   });
   socket.addEventListener("close", () => {
     for (const reply of pending.values()) {

@@ -21,6 +21,7 @@ from ..watcher_retry import (
 )
 from ..watcher_retry_policy import _ADMISSION_RESERVATIONS, WatcherRetryPolicy
 from ..watcher_runtime import reconcile_completed_rebuild
+from ._child_signal import CHILD_PROCESS_TIMEOUT_SECONDS
 from .test_watcher_rebuild_reconciliation import (
     _observe,
     _published_rebuild,
@@ -93,7 +94,7 @@ def _persist_exited_owner_attempt(
         capture_output=True,
         text=True,
         check=True,
-        timeout=20.0,
+        timeout=CHILD_PROCESS_TIMEOUT_SECONDS,
     )
     cfg = get_config()
     return read_state(

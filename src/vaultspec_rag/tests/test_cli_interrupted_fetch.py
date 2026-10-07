@@ -19,6 +19,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -55,12 +56,20 @@ import time
 
 import pytest
 
+from pathlib import Path
+
 from vaultspec_rag.operator_state._installation import ComputeCapability, InstallRole
-from vaultspec_rag.tests.conftest import pin_daemon_capability, pin_install_role
+from vaultspec_rag.tests.conftest import (
+    pin_daemon_capability,
+    pin_hardware_anchors,
+    pin_install_role,
+)
 
 pinned = pytest.MonkeyPatch()
 pin_install_role(pinned, InstallRole.HOST)
 pin_daemon_capability(pinned, ComputeCapability.READY)
+# A service that owns this machine's GPU would refuse the start outright.
+pin_hardware_anchors(pinned, Path(sys.argv[1]).parent)
 
 
 def interrupt_when_told(marker):
@@ -99,7 +108,13 @@ class _SilentSource:
 def _interrupted(
     tmp_path: Path, argv: list[str], env: dict[str, str], source: _SilentSource
 ) -> subprocess.CompletedProcess[str]:
-    """Run *argv*, interrupt it once its fetch reached *source*, and return it."""
+    """Run *argv*, interrupt it once its fetch reached *source*, and return it.
+
+    Mutation check: with the child's hardware anchors left on the machine's
+    own, a host whose service owns the GPU refuses the start, and the premise
+    fails within two seconds carrying the ``gpu_owned`` envelope. Restoring
+    the redirect passes.
+    """
     marker = tmp_path / "interrupt-now"
     child = subprocess.Popen(
         [sys.executable, "-c", _INTERRUPTED_COMMAND, str(marker), *argv],
@@ -111,9 +126,17 @@ def _interrupted(
         errors="replace",
     )
     try:
-        assert source.asked.wait(timeout=CHILD_PROCESS_TIMEOUT_SECONDS), (
-            "premise: the fetch never reached its source"
-        )
+        deadline = time.monotonic() + CHILD_PROCESS_TIMEOUT_SECONDS
+        while not source.asked.wait(timeout=0.2):
+            # A child that ended has answered already, and what it said is
+            # the reason its fetch never began.
+            assert child.poll() is None, (
+                "premise: the command ended before its fetch reached the source",
+                *child.communicate(),
+            )
+            assert time.monotonic() < deadline, (
+                "premise: the fetch never reached its source"
+            )
         marker.write_text("now", encoding="utf-8")
         stdout, stderr = child.communicate(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
     finally:

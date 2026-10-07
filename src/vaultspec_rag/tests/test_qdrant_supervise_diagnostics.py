@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from ..qdrant_runtime._supervise import QdrantSupervisor
+from ._child_signal import PROCESS_TIMEOUT_SECONDS
 from ._fake_qdrant_binary import unpinned
 
 if TYPE_CHECKING:
@@ -44,7 +45,7 @@ def _drain_process_output(supervisor: QdrantSupervisor, output: str) -> None:
     )
     assert process.stdout is not None
     supervisor._drain_output(cast("BinaryIO", process.stdout))
-    assert process.wait(timeout=10.0) == 0
+    assert process.wait(timeout=PROCESS_TIMEOUT_SECONDS) == 0
 
 
 class TestSupervisorOutputCapture:
@@ -234,7 +235,7 @@ class TestSupervisorOutputCapture:
         assert old_drain is not None
 
         try:
-            assert process.wait(timeout=10.0) == 0
+            assert process.wait(timeout=PROCESS_TIMEOUT_SECONDS) == 0
             assert old_drain.is_alive()
 
             assert supervisor.restart(timeout=0.1) is False
@@ -257,7 +258,7 @@ class TestSupervisorOutputCapture:
             release_path.touch(exist_ok=True)
             if process.poll() is None:
                 process.kill()
-                process.wait(timeout=10.0)
+                process.wait(timeout=PROCESS_TIMEOUT_SECONDS)
             old_drain.join(timeout=10.0)
             supervisor.stop(timeout=0.1)
 
@@ -420,7 +421,7 @@ class TestChildRunsInManagedDirectory:
             # before stop can terminate it with an empty marker on Windows.
             process = sup._proc
             assert process is not None
-            assert process.wait(timeout=10.0) == 0
+            assert process.wait(timeout=PROCESS_TIMEOUT_SECONDS) == 0
         finally:
             assert sup.stop()
 
