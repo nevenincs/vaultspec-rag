@@ -287,6 +287,14 @@ def _start_state_lock_holder(
     )
 
 
+async def _wait_for_lock_holder(ready_path: Path) -> None:
+    """Wait for a lock holder to publish that it owns the lock."""
+    deadline = asyncio.get_running_loop().time() + 10.0
+    while not ready_path.exists() and asyncio.get_running_loop().time() < deadline:
+        await asyncio.sleep(0.02)
+    assert ready_path.exists()
+
+
 async def _wait_for_path(path: Path) -> None:
     await _wait_for_watcher_state(
         path,
@@ -1092,37 +1100,64 @@ async def test_watcher_retries_intent_after_real_state_lock_contention(
     """A process-held state lock delays intake without losing durable intent."""
     registry, _manager = managed_watcher_runtime
     root = tmp_path.resolve()
-    _slot, _trigger, target = _build_watched_code_project(root, registry)
+    slot, _trigger, target = _build_watched_code_project(root, registry)
+    relative = str(target.relative_to(root)).replace("\\", "/")
     state_path = root / get_config().data_dir / "watcher-retry" / "code.json"
     ready_path = root / "watcher-state-lock-ready.marker"
     holder: subprocess.Popen[str] | None = None
 
+    retried = "service.watcher event=state_transaction_retry"
     await _start_watcher(root, cooldown=0.0)
     try:
         await _wait_for_path(state_path)
+        # A first change, indexed and settled before the lock is taken, shows
+        # the watcher is delivering changes. The contended change below is
+        # then known to be seen, so a lock that delayed nothing cannot be
+        # mistaken for a change nobody noticed.
+        target.write_text(
+            'def zebrafish_marker():\n    return "watching"\n',
+            encoding="utf-8",
+        )
+        await _wait_for_code_payload(slot, path=relative, expected_content="watching")
+        await _wait_for_watcher_state(
+            state_path,
+            lambda state: state.get("convergence_pending") is False,
+            "the first change did not settle before the lock was taken",
+        )
+        # Held until this test ends the holder, not for a span. The lock's
+        # own wait is two seconds, so a holder that let go after 2.4 gave the
+        # watcher 0.4 seconds to notice the change and start its transaction;
+        # any later and the lock delayed nothing.
         holder = _start_state_lock_holder(
             state_path.with_name(f"{state_path.name}.lock"),
             ready_path,
+            hold_seconds=120.0,
         )
-        deadline = asyncio.get_running_loop().time() + 10.0
-        while not ready_path.exists() and asyncio.get_running_loop().time() < deadline:
-            await asyncio.sleep(0.02)
-        assert ready_path.exists()
+        await _wait_for_lock_holder(ready_path)
         with caplog.at_level(logging.WARNING, logger="vaultspec_rag.watcher"):
             target.write_text(
                 'def zebrafish_marker():\n    return "lock-contended"\n',
                 encoding="utf-8",
             )
-            ticks = 0
+            written = asyncio.get_running_loop().time()
             while (
-                "service.watcher event=state_transaction_retry" not in caplog.text
-                and ticks < 200
+                retried not in caplog.text
+                and asyncio.get_running_loop().time() < written + 60.0
             ):
                 await asyncio.sleep(0.02)
-                ticks += 1
-        assert ticks >= 20
+            waited = asyncio.get_running_loop().time() - written
+        assert retried in caplog.text, "the held lock never delayed the intake"
+        # A retry is logged only once the lock's own wait has run out, so one
+        # that arrives at once did not wait on the lock. Measured on the
+        # clock, not in loop turns: a descheduled loop takes few turns over a
+        # long wait.
+        assert waited >= 0.4, f"the intake retried after {waited:.3f}s"
         cleanup = server._stop_watcher(root)
         assert cleanup is not None
+        # Given back only once the stop has been asked for, so the intent is
+        # recorded by a watcher that is stopping and the index never runs.
+        holder.terminate()
+        await asyncio.to_thread(holder.wait, 10.0)
         assert await asyncio.wait_for(asyncio.shield(cleanup), timeout=10.0)
         durable = _load_watcher_state(state_path)
         assert durable["convergence_pending"] is True
@@ -1279,10 +1314,7 @@ async def test_watcher_startup_retries_real_state_lock_contention(
         ready_path,
     )
     try:
-        deadline = asyncio.get_running_loop().time() + 10.0
-        while not ready_path.exists() and asyncio.get_running_loop().time() < deadline:
-            await asyncio.sleep(0.02)
-        assert ready_path.exists()
+        await _wait_for_lock_holder(ready_path)
         await _start_watcher(root, cooldown=0.0)
         await asyncio.sleep(0.1)
         assert not server._watcher_tasks[root].done()
