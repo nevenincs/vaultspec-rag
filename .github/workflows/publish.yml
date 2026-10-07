@@ -210,11 +210,25 @@ jobs:
           name: dist-${{ needs.build.outputs.sha }}
           path: dist/
 
+      # The check is the pipeline's and the artifact is the tag's. The smoke
+      # installs the wheel beside whatever its dependencies have published
+      # since, so what it must expect can change after a tag exists; a release
+      # commit's own copy of the check cannot follow that, and a tag is never
+      # moved to make it.
+      - name: Check out the pipeline's smoke check
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          path: pipeline
+          sparse-checkout: tests/smoke_check.py
+          sparse-checkout-cone-mode: false
+
       - name: Smoke test (wheel)
-        run: uv run --isolated --no-project --with dist/*.whl tests/smoke_check.py
+        run: uv run --isolated --no-project --with dist/*.whl pipeline/tests/smoke_check.py
 
       - name: Smoke test (sdist)
-        run: uv run --isolated --no-project --with dist/*.tar.gz tests/smoke_check.py
+        run: uv run --isolated --no-project --with dist/*.tar.gz pipeline/tests/smoke_check.py
 
   github-release:
     name: "Build: Release assets (Linux)"
