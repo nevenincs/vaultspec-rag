@@ -90,6 +90,27 @@ jobs:
       - name: Initialize the worktree
         run: just init
 
+      # The suite's monitor tests drive the Vite toolchain and the compiled
+      # monitor, as the merge gate's suites do. Advisory with the suite they
+      # serve, so a failed build here never withholds the MPS guard.
+      - name: Set up Node for local monitor route tests
+        if: inputs.macos_full_suite
+        continue-on-error: true
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          package-manager-cache: false
+          node-version-file: .nvmrc
+
+      - name: Restore monitor dependencies for installed-browser checks
+        if: inputs.macos_full_suite
+        continue-on-error: true
+        run: npm ci
+
+      - name: Compile the native monitor for lifecycle tests
+        if: inputs.macos_full_suite
+        continue-on-error: true
+        run: just build-monitor-test
+
       # ADVISORY, through `continue-on-error`. The macOS suite has never been
       # fully triaged; it flips to gating by deleting that flag once its
       # failure count reaches zero. Ratchet down, never up. Releases do not run
