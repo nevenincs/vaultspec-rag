@@ -815,12 +815,17 @@ async def test_watcher_restart_refuses_fenced_scope_without_canonical_job_histor
             lambda state: state.get("scope_refusal") == "full_reindex_required",
             "restart did not expose terminal rebuild refusal",
         )
+        # The refusal ends the attempt and starts no job, and it keeps what
+        # the attempt had taken: the changed path goes back to pending, so the
+        # scope an explicit rebuild has to cover is still on record and not
+        # silently dropped with the attempt that held it.
+        pending = cast("list[dict[str, object]]", refused["pending_paths"])
         assert (
-            refused["pending_paths"],
+            [item["relative_path"] for item in pending],
             refused["captured_paths"],
             refused["attempt_job_id"],
             _watcher_jobs(manager, root),
-        ) == ([], [], None, [])
+        ) == (["pkg/lost.py"], [], None, [])
         after_results: tuple[tuple[str, str, float, str], ...] = ()
         with registry.compute_lease(root) as lease:
             after_results = tuple(

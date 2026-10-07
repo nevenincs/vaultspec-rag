@@ -472,7 +472,7 @@ Check the version:
 vaultspec-rag --version
 ```
 
-This reports `vaultspec-rag v0.6.0`. <!-- x-release-please-version -->
+This reports `vaultspec-rag v0.5.3`. <!-- x-release-please-version -->
 
 Then run the readiness report:
 

@@ -416,6 +416,10 @@ def _mint_loopback_certificate(directory: Path, label: str) -> tuple[Path, Path]
 
 def _server_context(certificate_path: Path, key_path: Path) -> ssl.SSLContext:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    # Stated, not left to the interpreter's default: a stand-in that would
+    # still negotiate TLS 1.0 or 1.1 proves nothing about a client that has
+    # to refuse them.
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(certificate_path, key_path)
     return context
 
