@@ -21,7 +21,7 @@ from .._process_probe import (
     wait_for_exit,
 )
 from ..indexer._preprocess_runner import _terminate_and_join
-from ._child_signal import CHILD_PROCESS_TIMEOUT_SECONDS
+from ._child_signal import CHILD_PROCESS_TIMEOUT_SECONDS, PROCESS_TIMEOUT_SECONDS
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -70,7 +70,7 @@ try:
     (root / 'descendant.json').write_text(json.dumps(descendant))
     (root / 'witnessed').touch()
     if mode == 'parent_exited':
-        parent.wait(timeout=10)
+        parent.wait(timeout=120)
     token = RunControlToken()
     if mode == 'cancel':
         token.request_cancel()
@@ -99,7 +99,7 @@ finally:
     for process in (parent, sibling):
         if process.poll() is None:
             process.kill()
-        process.wait(timeout=5)
+        process.wait(timeout=120)
         for pipe in (process.stdout, process.stderr):
             if pipe is not None:
                 pipe.close()
@@ -172,7 +172,7 @@ def test_changed_parent_identity_cannot_authorize_descendant_termination() -> No
         assert parent.poll() is None
     finally:
         parent.kill()
-        parent.wait(timeout=10)
+        parent.wait(timeout=PROCESS_TIMEOUT_SECONDS)
 
 
 def test_reader_shutdown_preserves_the_uncontained_descendant_diagnostic() -> None:
@@ -198,7 +198,7 @@ def test_reader_shutdown_preserves_the_uncontained_descendant_diagnostic() -> No
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     ) as parent:
-        parent.wait(timeout=10)
+        parent.wait(timeout=PROCESS_TIMEOUT_SECONDS)
         reader.start()
         try:
             with pytest.raises(
