@@ -31,6 +31,11 @@ on:
         description: "Immutable release commit to build and publish"
         required: true
         type: string
+      rehearse:
+        description: "Build and prove the dispatched commit without touching any release"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -61,6 +66,7 @@ jobs:
         env:
           TAG: ${{ inputs.tag }}
           TARGET_SHA: ${{ inputs.target_sha }}
+          REHEARSE: ${{ inputs.rehearse }}
         run: |
           set -euo pipefail
           if ! [[ "${TAG}" =~ ^vaultspec-rag-v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$ ]]; then
@@ -70,6 +76,18 @@ jobs:
           if ! [[ "${TARGET_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::error::target_sha is not a full lowercase commit ID"
             exit 1
+          fi
+          # A rehearsal has no tag to resolve: it builds the commit it was
+          # dispatched on, under the version that commit declares, and
+          # attaches nothing anywhere.
+          if [ "${REHEARSE}" = "true" ]; then
+            if [ "${GITHUB_SHA}" != "${TARGET_SHA}" ]; then
+              echo "::error::a rehearsal builds the dispatched commit ${GITHUB_SHA}, not ${TARGET_SHA}"
+              exit 1
+            fi
+            echo "sha=${TARGET_SHA}" >> "$GITHUB_OUTPUT"
+            echo "rehearsing ${TAG} at ${TARGET_SHA}"
+            exit 0
           fi
           refs=$(git ls-remote --tags "https://github.com/${GITHUB_REPOSITORY}.git" "${TAG}")
           sha=$(awk -v ref="refs/tags/${TAG}" '$2 == ref "^{}" { print $1; exit }' <<<"${refs}")
@@ -101,6 +119,10 @@ jobs:
     timeout-minutes: 150
     name: "Check: Release wheel (Linux)"
     runs-on: [self-hosted, Linux, X64, build]
+    permissions:
+      # A draft release is listed only to a token that may write releases, so
+      # reading the wheel off the draft takes this grant. Nothing is written.
+      contents: write
     env:
       CI_EXEC_BUDGET_MINUTES: 30
     steps:
@@ -120,6 +142,7 @@ jobs:
       # manifest missing the wheel would otherwise pass by checking nothing,
       # and a mismatch stops here, before any binary is built around it.
       - name: Fetch the wheel Publish attached, checked against SHA256SUMS
+        if: ${{ !inputs.rehearse }}
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -151,6 +174,12 @@ jobs:
 
       - name: Install Python
         run: uv python install 3.13
+
+      # No release carries a rehearsed commit's wheel, so the rehearsal
+      # builds the one the binaries will carry.
+      - name: Build the wheel a rehearsal carries
+        if: ${{ inputs.rehearse }}
+        run: uv build --wheel --out-dir dist
 
       - name: Validate the wheel matches the release tag
         shell: bash
@@ -346,6 +375,11 @@ jobs:
           TAG: ${{ inputs.tag }}
           TARGET_SHA: ${{ needs.validate.outputs.sha }}
           TARGET: ${{ matrix.target }}
+          # Read on Windows only: the directory whose two program paths the
+          # host denies outbound traffic. Adding such a rule takes an
+          # Administrator and the runner account is not one, so the host
+          # carries the rules and the proof only occupies them.
+          MONITOR_OUTBOUND_DENIED_DIR: ${{ vars.WINDOWS_OUTBOUND_DENIED_DIR }}
         run: uv run --no-project --python 3.13 -- python -m tools.monitor.release native-smoke --tag "$TAG" --source-revision "$TARGET_SHA" --target "$TARGET" --directory dist-bin --os-offline
 
       - name: Package and verify the release bundle
@@ -427,12 +461,6 @@ jobs:
 
       - name: Aggregate checksums
         shell: bash
-        env:
-          # Needed by the merge below. Without them `gh release download` fails
-          # and the merge silently no-ops - which looks exactly like success and
-          # leaves the manifest incomplete again.
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
           cd dist-bundles
@@ -455,6 +483,21 @@ jobs:
             esac
           done
           sha256sum -c SHA256SUMS
+
+      # A rehearsal has no release to merge with or attach to: it stops at the
+      # complete-target gate below, having proven everything short of a write.
+      - name: Merge the checksums the release already carries
+        if: ${{ !inputs.rehearse }}
+        shell: bash
+        env:
+          # Needed by the merge below. Without them `gh release download` fails
+          # and the merge silently no-ops - which looks exactly like success and
+          # leaves the manifest incomplete again.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          cd dist-bundles
           # MERGE into whatever the release already carries rather than
           # replacing it. binaries.yml and publish.yml both publish a file named
           # SHA256SUMS to the same release with --clobber, and neither knows
@@ -551,6 +594,7 @@ jobs:
           echo "all ${#expected[@]} declared target archives are ready for ${TAG}"
 
       - name: Upload bundles to release
+        if: ${{ !inputs.rehearse }}
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -579,12 +623,13 @@ jobs:
     timeout-minutes: 150
     name: "Check: Release proven (Linux)"
     needs: [validate, release, frontend]
-    if: ${{ always() && needs.validate.result == 'success' }}
+    if: ${{ always() && needs.validate.result == 'success' && !inputs.rehearse }}
     runs-on: [self-hosted, Linux, X64, build]
     permissions:
-      # Reads the release and downloads its assets; it edits nothing. The
-      # handoff below is a write to the Actions API.
-      contents: read
+      # Reads the release and downloads its assets; it edits nothing. A draft
+      # is listed only to a token that may write releases, so the read takes
+      # this grant. The handoff below is a write to the Actions API.
+      contents: write
       actions: write
     env:
       CI_EXEC_BUDGET_MINUTES: 30
