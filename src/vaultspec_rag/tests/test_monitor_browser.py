@@ -478,7 +478,7 @@ def test_bridge_refuses_undeclared_proxy_authorities(
 
 
 def test_bridge_refuses_a_client_outside_admitted_loopback_addresses(
-    browser_bridge: tuple[str, Path],
+    browser_bridge: tuple[str, Path], second_loopback_address: str
 ) -> None:
     access, _ = browser_bridge
     # Removing client-address validation failed this real-source assertion;
@@ -487,7 +487,7 @@ def test_bridge_refuses_a_client_outside_admitted_loopback_addresses(
         "127.0.0.1",
         urllib.parse.urlsplit(access).port,
         timeout=8,
-        source_address=("127.0.0.2", 0),
+        source_address=(second_loopback_address, 0),
     )
     try:
         connection.request("GET", "/api/monitor/health")

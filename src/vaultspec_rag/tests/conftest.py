@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import socket
 import typing
 from contextlib import contextmanager
 from pathlib import Path
@@ -215,6 +216,27 @@ def isolated_singleton_dirs(tmp_path: Path) -> Generator[Path]:
         }
     ):
         yield status_dir
+
+
+@pytest.fixture
+def second_loopback_address() -> str:
+    """A loopback address other than 127.0.0.1, or a skip where none exists.
+
+    The monitor admits one peer address, so its refusals are proven from a
+    real second one. Linux and Windows route all of 127.0.0.0/8. macOS
+    configures 127.0.0.1 alone, and there no such peer can be made without
+    root: binding fails and connecting is answered with silence.
+    """
+    address = "127.0.0.2"
+    with socket.socket() as probe:
+        try:
+            probe.bind((address, 0))
+        except OSError:
+            pytest.skip(
+                f"this host has no {address}; add it with "
+                f"`sudo ifconfig lo0 alias {address}` to run this proof"
+            )
+    return address
 
 
 def pin_install_role(monkeypatch: pytest.MonkeyPatch, role: InstallRole) -> None:
