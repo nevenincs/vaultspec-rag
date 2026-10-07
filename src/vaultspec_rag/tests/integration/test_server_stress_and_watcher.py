@@ -1139,16 +1139,19 @@ async def test_watcher_retries_intent_after_real_state_lock_contention(
                 'def zebrafish_marker():\n    return "lock-contended"\n',
                 encoding="utf-8",
             )
-            ticks = 0
-            deadline = asyncio.get_running_loop().time() + 60.0
+            written = asyncio.get_running_loop().time()
             while (
                 retried not in caplog.text
-                and asyncio.get_running_loop().time() < deadline
+                and asyncio.get_running_loop().time() < written + 60.0
             ):
                 await asyncio.sleep(0.02)
-                ticks += 1
+            waited = asyncio.get_running_loop().time() - written
         assert retried in caplog.text, "the held lock never delayed the intake"
-        assert ticks >= 20
+        # A retry is logged only once the lock's own wait has run out, so one
+        # that arrives at once did not wait on the lock. Measured on the
+        # clock, not in loop turns: a descheduled loop takes few turns over a
+        # long wait.
+        assert waited >= 0.4, f"the intake retried after {waited:.3f}s"
         cleanup = server._stop_watcher(root)
         assert cleanup is not None
         # Given back only once the stop has been asked for, so the intent is
