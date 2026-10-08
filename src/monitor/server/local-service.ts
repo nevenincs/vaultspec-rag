@@ -509,8 +509,9 @@ async function forward(
  * Answering and closing while the caller is still sending resets the
  * connection, and on Windows a reset discards the answer the caller has not
  * read yet: it sees an aborted connection where the refusal should be. A
- * standard client writes headers and body separately, so the body is discarded
- * unread first and the refusal follows it.
+ * standard client writes headers and body separately, so a body that was
+ * declared is discarded unread first and the refusal follows it. A request
+ * that declares none is refused at once.
  */
 function refuse(
   request: IncomingMessage,
@@ -518,7 +519,10 @@ function refuse(
   status: number,
   body: Record<string, unknown>,
 ): void {
-  if (request.complete) {
+  const declaresBody =
+    request.headers["transfer-encoding"] !== undefined ||
+    Number(request.headers["content-length"] ?? 0) > 0;
+  if (request.complete || !declaresBody) {
     reply(response, status, body);
     return;
   }
