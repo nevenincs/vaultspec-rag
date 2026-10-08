@@ -53,8 +53,6 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-from dev.exit_codes import OK, TOOL_MISSING
-
 VERSION = "1.7.12"
 
 #: `(system, machine) -> (archive suffix, sha256)`. Every digest here is one
@@ -97,6 +95,11 @@ ARCHIVES: dict[tuple[str, str], tuple[str, str]] = {
 #: The release artefact path under the download host, which `_download` joins
 #: to a literal `https://` origin.
 RELEASE_PATH = "rhysd/actionlint/releases/download"
+
+#: Exit codes, from `dev/EXIT-CODES.md`: 0 OK, 1 FAILED, 127 TOOL_MISSING.
+OK = 0
+FAILED = 1
+TOOL_MISSING = 127
 
 
 def _platform_key() -> tuple[str, str]:
