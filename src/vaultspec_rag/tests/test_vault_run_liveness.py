@@ -7,6 +7,7 @@ import sqlite3
 import sys
 import threading
 import time
+from contextlib import closing
 from dataclasses import replace
 from functools import partial
 from typing import TYPE_CHECKING
@@ -294,7 +295,7 @@ def test_failed_terminal_commit_never_retires_the_deadline(
         checkpoint = _open(tmp_path, store, RunControlToken())
         _confirm(store, checkpoint, _chunk())
         checkpoint.publish_proof_transition()
-        with sqlite3.connect(checkpoint.ledger.path) as connection:
+        with closing(sqlite3.connect(checkpoint.ledger.path)) as connection, connection:
             connection.execute(
                 "CREATE TRIGGER fail_terminal BEFORE UPDATE ON generations "
                 "WHEN NEW.terminal_state = 'succeeded' "

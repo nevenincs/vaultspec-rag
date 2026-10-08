@@ -42,13 +42,17 @@ class Workflow(StrEnum):
     CHANNELS = "channels.yml"
     CODE_HEALTH = "code-health.yml"
     DEVSERVER = "devserver.yml"
+    NOTIFY_MARKETING = "notify-marketing.yml"
 
 
 #: The product owned workflow names start with, so their runs group together.
 PRODUCT = "RAG"
 
 # Shared workflows retain their owner's name in every consumer repository.
-SHARED_WORKFLOW_NAMES = {Workflow.DEVSERVER: "Dev server"}
+SHARED_WORKFLOW_NAMES = {
+    Workflow.DEVSERVER: "Dev server",
+    Workflow.NOTIFY_MARKETING: "Notify Marketing",
+}
 
 #: The workflow that measures pull requests and reports merge readiness.
 #: Release and scheduled hardware workflows answer different questions.

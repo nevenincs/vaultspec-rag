@@ -10,6 +10,8 @@ import type { Duplex } from "node:stream";
 const prefix = "/api/monitor";
 const maxResponseBytes = 32 * 1024 * 1024;
 const maxRequestBytes = 8192;
+// How long a refusal waits for the body of the request it refuses.
+const refusalDrainMilliseconds = 3000;
 declare const MONITOR_COMPILED: boolean;
 const checkout =
   typeof MONITOR_COMPILED !== "undefined" && MONITOR_COMPILED
@@ -503,6 +505,58 @@ async function forward(
   }
 }
 
+/**
+ * Answer a request this bridge will not serve, once its body is off the wire.
+ *
+ * Answering and closing while the caller is still sending resets the
+ * connection, and on Windows a reset discards the answer the caller has not
+ * read yet: it sees an aborted connection where the refusal should be. A
+ * standard client writes headers and body separately, so a body that was
+ * declared is discarded unread first and the refusal follows it. A request
+ * that declares none is refused at once.
+ *
+ * The caller is one this bridge has not admitted, so the courtesy is bounded
+ * by the same size an admitted request may have and by a short wait. A body
+ * declared larger than that is not waited for at all; one that runs past the
+ * size, or has not ended in time, is answered there and the connection closed.
+ */
+function refuse(
+  request: IncomingMessage,
+  response: ServerResponse,
+  status: number,
+  body: Record<string, unknown>,
+): void {
+  const declared = Number(request.headers["content-length"] ?? 0);
+  const chunked = request.headers["transfer-encoding"] !== undefined;
+  if (request.complete || (!chunked && !(declared > 0))) {
+    reply(response, status, body);
+    return;
+  }
+  if (declared > maxRequestBytes) {
+    response.setHeader("Connection", "close");
+    reply(response, status, body);
+    return;
+  }
+  let discarded = 0;
+  let answered = false;
+  const answer = (close: boolean) => {
+    if (answered) return;
+    answered = true;
+    clearTimeout(deadline);
+    request.off("data", discard);
+    if (close) response.setHeader("Connection", "close");
+    reply(response, status, body);
+  };
+  const discard = (chunk: Buffer | string) => {
+    discarded += Buffer.byteLength(chunk);
+    if (discarded > maxRequestBytes) answer(true);
+  };
+  const deadline = setTimeout(() => answer(true), refusalDrainMilliseconds);
+  request.once("end", () => answer(false));
+  request.once("close", () => clearTimeout(deadline));
+  request.on("data", discard);
+}
+
 export function monitorUpgrade(request: IncomingMessage, socket: Duplex): void {
   if (!localRequest(request)) socket.destroy();
 }
@@ -513,7 +567,7 @@ export function monitorMiddleware(
   next: () => void,
 ): void {
   if (!localRequest(request)) {
-    reply(response, 403, {
+    refuse(request, response, 403, {
       ok: false,
       message: "The monitor accepts only loopback clients at a local host.",
     });
@@ -525,7 +579,7 @@ export function monitorMiddleware(
   }
   if (!authorized(request)) {
     response.setHeader("WWW-Authenticate", "Bearer");
-    reply(response, 401, {
+    refuse(request, response, 401, {
       ok: false,
       message:
         "The monitor requires its access link. Open the address reported by `vaultspec-rag server start`, or printed by a monitor you launched directly.",
