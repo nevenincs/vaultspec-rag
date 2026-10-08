@@ -9,6 +9,7 @@ from __future__ import annotations
 import atexit
 import hashlib
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -59,7 +60,7 @@ _singleton_participant: str | None = None
 _session_failed = False
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from _typeshed import HasFileno
 
@@ -156,6 +157,65 @@ if _real_fdatasync is not None:
     cast("dict[str, object]", vars(os))["fdatasync"] = _suppressed_fdatasync
 
 
+# ===========================================================================
+#  The local store's point file
+#
+#  THE SAME COST, BY A ROUTE THE SUBSTITUTION ABOVE CANNOT SEE. The on-disk
+#  Qdrant backend keeps each collection's points in one SQLite file and commits
+#  once per point, and SQLite forces every commit to the device itself, from C,
+#  without ever calling `os.fsync`. A test that stores a few hundred points
+#  pays a few hundred device syncs, so its duration is a property of the disk
+#  under it: the same test that takes seconds on one host runs at its time
+#  limit on another. That file is opened here with syncing off, on the terms
+#  above - no test asserts survival across power loss - and a `durable` test
+#  gets the real setting back.
+#
+#  ONLY THAT FILE. Every other SQLite connection is returned exactly as asked
+#  for. The run ledger's durability level in particular is the product's own
+#  contract and a test reads it back; turning it down here would make that
+#  test report on the harness.
+#
+#  WHY THE STANDARD LIBRARY AND NOT THE DEPENDENCY'S CLASS. Nothing imports the
+#  Qdrant client until a store is opened, and this module is loaded by every
+#  invocation; reaching for the class here would add its import, about a
+#  second, to each of them. The file is recognised by the name the dependency
+#  gives it, and `test_point_file_sync.py` opens one through the dependency so
+#  a rename there fails a test instead of quietly restoring the cost.
+# ===========================================================================
+
+#: The file the on-disk Qdrant backend keeps one collection's points in.
+_POINT_FILE_NAME = "storage.sqlite"
+_real_sqlite_connect = cast("Callable[..., sqlite3.Connection]", sqlite3.connect)
+_point_files_unsynced = 0
+
+
+def _connect_leaving_point_files_unsynced(
+    *args: object, **kwargs: object
+) -> sqlite3.Connection:
+    """Open what was asked for; a local store's point file stops syncing."""
+    connection = _real_sqlite_connect(*args, **kwargs)
+    database = args[0] if args else kwargs.get("database")
+    if (
+        _fsync_restored_depth
+        or not isinstance(database, (str, bytes, Path))
+        or Path(os.fsdecode(database)).name != _POINT_FILE_NAME
+    ):
+        return connection
+    global _point_files_unsynced
+    try:
+        connection.execute("PRAGMA synchronous = OFF")
+    except BaseException:
+        connection.close()
+        raise
+    _point_files_unsynced += 1
+    return connection
+
+
+cast("dict[str, object]", vars(sqlite3))["connect"] = (
+    _connect_leaving_point_files_unsynced
+)
+
+
 @pytest.fixture(autouse=True)
 def _durable_writes(request: pytest.FixtureRequest) -> Iterator[None]:
     """Give a `durable`-marked test the real ``fsync`` back for its duration."""
@@ -179,7 +239,9 @@ def _durable_writes(request: pytest.FixtureRequest) -> Iterator[None]:
 #: substitution that announces itself and then understates its own reach by
 #: three orders of magnitude is worse than one that says nothing.
 _FSYNC_KEY = "vaultspec_rag_fsync_suppressed"
+_POINT_FILES_KEY = "vaultspec_rag_point_files_unsynced"
 _fsync_from_workers = 0
+_point_files_from_workers = 0
 
 
 def pytest_report_header() -> str:
@@ -187,25 +249,34 @@ def pytest_report_header() -> str:
     return (
         "fsync: SUPPRESSED for this session (atomicity comes from the O_EXCL "
         "temp plus the rename; durability across power loss is asserted by no "
-        "test). Tests marked `durable` run with the real call."
+        "test), and the local store's point files open with syncing off. Tests "
+        "marked `durable` run with the real call and the real setting."
     )
 
 
 def pytest_testnodedown(node: object, error: object) -> None:
-    """Collect a finished xdist worker's suppression count."""
+    """Collect a finished xdist worker's suppression counts."""
     del error
-    global _fsync_from_workers
+    global _fsync_from_workers, _point_files_from_workers
     output = getattr(node, "workeroutput", None)
     if isinstance(output, dict):
-        count = cast("dict[str, object]", output).get(_FSYNC_KEY, 0)
-        assert isinstance(count, int)
-        _fsync_from_workers += count
+        counts = cast("dict[str, object]", output)
+        fsyncs = counts.get(_FSYNC_KEY, 0)
+        point_files = counts.get(_POINT_FILES_KEY, 0)
+        assert isinstance(fsyncs, int)
+        assert isinstance(point_files, int)
+        _fsync_from_workers += fsyncs
+        _point_files_from_workers += point_files
 
 
 def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
-    """Report how many calls the suppression absorbed, across every process."""
+    """Report what the suppression absorbed, across every process."""
     total = _fsync_suppressed + _fsync_from_workers
-    terminalreporter.write_line(f"fsync: {total} call(s) suppressed this session.")
+    point_files = _point_files_unsynced + _point_files_from_workers
+    terminalreporter.write_line(
+        f"fsync: {total} call(s) suppressed this session; "
+        f"{point_files} local store point file(s) opened with syncing off."
+    )
 
 
 def _capture_host_provisioned_qdrant() -> tuple[Path, Path] | None:
@@ -633,6 +704,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     output = getattr(session.config, "workeroutput", None)
     if isinstance(output, dict):
         output[_FSYNC_KEY] = _fsync_suppressed
+        output[_POINT_FILES_KEY] = _point_files_unsynced
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:

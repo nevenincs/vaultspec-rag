@@ -77,6 +77,7 @@ def test_monitor_rejects_remote_peers_before_dispatch() -> None:
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.usefixtures("second_loopback_address")
 @pytest.mark.parametrize("mode", ["dev", "preview"])
 @pytest.mark.parametrize("wildcard", [False, True])
 def test_vite_monitor_listener_and_admission(

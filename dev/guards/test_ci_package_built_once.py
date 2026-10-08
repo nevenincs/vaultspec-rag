@@ -24,22 +24,33 @@ BUILDER = (Workflow.PUBLISH, "build")
 _BUILDING = ("uv build", "just build-python", "python -m build", "pip wheel")
 
 
+#: The condition of a step that runs in a rehearsal and at no other time. A
+#: rehearsal reaches no release, so it has no attached wheel to take and no
+#: release its own build could put different bytes behind.
+REHEARSAL_ONLY = "${{ inputs.rehearse }}"
+
+
 def _runs(job: workflows.Job) -> list[str]:
     """Return every ``run:`` script in *job*."""
     return [str(step.get("run") or "") for step in job.steps]
 
 
 def test_only_publish_builds_the_package() -> None:
-    """No job but Publish's build produces a wheel or an sdist.
+    """No job but Publish's build produces a wheel or an sdist for a release.
 
     Mutation proof: restoring ``uv build --wheel --out-dir dist`` to the
     Binaries wheel job made this fail naming ``binaries.yml:wheel``;
-    removing it made this pass.
+    removing it made this pass. Taking the rehearsal condition off that job's
+    rehearsal build failed the same way; restoring the condition passed.
     """
     builders = sorted(
         f"{job.workflow}:{job.job_id}"
         for job in workflows.load_jobs()
-        if any(command in run for run in _runs(job) for command in _BUILDING)
+        if any(
+            command in str(step.get("run") or "") and step.get("if") != REHEARSAL_ONLY
+            for step in job.steps
+            for command in _BUILDING
+        )
     )
     assert builders == [f"{BUILDER[0]}:{BUILDER[1]}"], (
         f"the package is built by {builders}; only "

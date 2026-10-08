@@ -271,13 +271,6 @@ jobs:
         python-version: ["3.13", "3.14"]
     env:
       CI_EXEC_BUDGET_MINUTES: 45
-      # Four workers, as on Windows. The store-heavy tests carry deadlines of
-      # their own, and on the slower Linux runner, with one worker per core,
-      # several of them ran at or past those deadlines and a different one
-      # failed from run to run. Measured there, this bound takes a third to a
-      # half off all of them but the slowest, which it leaves where it was,
-      # and adds about six minutes to the job.
-      PYTEST_XDIST_AUTO_NUM_WORKERS: "4"
       # `.python-version` pins the dev interpreter to the floor, and uv reads
       # it in preference to whatever actions/setup-python put on PATH. Without
       # this the 3.14 leg would silently sync and test 3.13 — a green matrix
@@ -322,7 +315,19 @@ jobs:
       - name: Compile the native monitor for lifecycle tests
         run: just build-monitor-test
 
+      # Four workers, as on Windows. The store-heavy tests carry deadlines of
+      # their own, and on the slower Linux runner, with one worker per core,
+      # several of them ran at or past those deadlines and a different one
+      # failed from run to run. Measured there, this bound takes a third to a
+      # half off all of them but the slowest, which it leaves where it was,
+      # and adds about six minutes to the job.
+      #
+      # Set HERE, on the step. The runner's admission hook exports its own
+      # value for this variable, one worker per CPU it admitted, after the
+      # job's `env:` is read, and that export wins over a job-level value.
       - name: Run tests
+        env:
+          PYTEST_XDIST_AUTO_NUM_WORKERS: "4"
         run: just test-python
 
   # Windows GATES. A test that fails only on Windows is a defect on a
@@ -353,10 +358,6 @@ jobs:
     runs-on: [self-hosted, Windows, X64]
     env:
       UV_PYTHON: "3.13"
-      # Native monitors, browsers and owner-witness children need scheduling
-      # headroom alongside pytest. Bound concurrency while retaining the full
-      # suite and its existing startup and response deadlines.
-      PYTEST_XDIST_AUTO_NUM_WORKERS: "4"
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -401,7 +402,19 @@ jobs:
       - name: Compile the native monitor for lifecycle tests
         run: just build-monitor-test
 
+      # Native monitors, browsers and owner-witness children need scheduling
+      # headroom alongside pytest. The runner admits this job with a hard cap
+      # on the CPU of its whole process tree, so the workers are held below
+      # that cap and the children they start get the rest. With one worker
+      # per admitted CPU a child waited tens of seconds to start or to exit,
+      # and a different child-bounded test failed from run to run.
+      #
+      # Set HERE, on the step. The runner's admission hook exports its own
+      # value for this variable, one worker per CPU it admitted, after the
+      # job's `env:` is read, and that export wins over a job-level value.
       - name: Run full test suite
+        env:
+          PYTEST_XDIST_AUTO_NUM_WORKERS: "4"
         run: just test-python
 
   dependency-audit:

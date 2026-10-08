@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import socket
 import typing
 from contextlib import contextmanager
 from pathlib import Path
@@ -217,6 +218,27 @@ def isolated_singleton_dirs(tmp_path: Path) -> Generator[Path]:
         yield status_dir
 
 
+@pytest.fixture
+def second_loopback_address() -> str:
+    """A loopback address other than 127.0.0.1, or a skip where none exists.
+
+    The monitor admits one peer address, so its refusals are proven from a
+    real second one. Linux and Windows route all of 127.0.0.0/8. macOS
+    configures 127.0.0.1 alone, and there no such peer can be made without
+    root: binding fails and connecting is answered with silence.
+    """
+    address = "127.0.0.2"
+    with socket.socket() as probe:
+        try:
+            probe.bind((address, 0))
+        except OSError:
+            pytest.skip(
+                f"this host has no {address}; add it with "
+                f"`sudo ifconfig lo0 alias {address}` to run this proof"
+            )
+    return address
+
+
 def pin_install_role(monkeypatch: pytest.MonkeyPatch, role: InstallRole) -> None:
     """Substitute the one reading of this installation's role.
 
@@ -292,6 +314,28 @@ def client_installation(monkeypatch: pytest.MonkeyPatch) -> None:
     pin_install_role(monkeypatch, InstallRole.CLIENT)
 
 
+def pin_hardware_anchors(monkeypatch: pytest.MonkeyPatch, directory: Path) -> None:
+    """Resolve the machine's hardware anchors inside *directory*.
+
+    The anchors cannot be moved through the environment, by design: one
+    resolved through anything a process can change would exclude nothing. So
+    a fresh interpreter a test starts consults the machine's own, and where a
+    live service owns the GPU its start is refused before it does anything
+    the test set out to observe. Such a child calls this itself, as the suite
+    does for its own process.
+    """
+    from .. import _gpu_admission, _gpu_owner
+
+    monkeypatch.setattr(
+        _gpu_owner, "gpu_owner_anchor_path", lambda: directory / "gpu-owner.lock"
+    )
+    monkeypatch.setattr(
+        _gpu_admission,
+        "load_window_lock_path",
+        lambda: directory / "gpu-load-window.lock",
+    )
+
+
 @pytest.fixture(autouse=True)
 def gpu_owner_anchor(
     request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -311,17 +355,12 @@ def gpu_owner_anchor(
     unchanged, and there is no such redirection outside the suite. A test that
     asserts where the real ones resolve opts out with ``real_hardware_anchor``.
     """
-    from .. import _gpu_admission, _gpu_owner
+    from .. import _gpu_owner
     from .._anchor_claim import release_anchor_claim
 
     anchor = tmp_path / "gpu-owner.lock"
     if "real_hardware_anchor" not in request.keywords:
-        monkeypatch.setattr(_gpu_owner, "gpu_owner_anchor_path", lambda: anchor)
-        monkeypatch.setattr(
-            _gpu_admission,
-            "load_window_lock_path",
-            lambda: tmp_path / "gpu-load-window.lock",
-        )
+        pin_hardware_anchors(monkeypatch, tmp_path)
     yield anchor
     with _gpu_owner._guard:
         descriptor = _gpu_owner._held.pop(str(anchor), None)

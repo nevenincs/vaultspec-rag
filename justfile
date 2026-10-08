@@ -526,12 +526,12 @@ release-binaries tag rust_target outdir='dist-bin' wheel_dir='dist':
 # Build and record the exact frontend handoff once per release producer.
 [group('release')]
 release-monitor-frontend tag producer_revision frontend_dir='dist-monitor-frontend':
-    uv run --no-project --python 3.13 -- python -m tools.monitor.build frontend --tag {{tag}} --source-revision {{producer_revision}} --outdir "{{frontend_dir}}"
+    uv run --no-project --python 3.13 -- python -m tools.monitor.build frontend --tag {{tag}} --source-revision {{producer_revision}} --outdir {{frontend_dir}}
 
 # Compile the common frontend handoff using the verified native Bun compiler.
 [group('release')]
 release-monitor tag producer_revision frontend_digest frontend_dir='dist-monitor-frontend' outdir='dist-bin':
-    uv run --no-project --python 3.13 -- python -m tools.monitor.build compile --tag {{tag}} --source-revision {{producer_revision}} --frontend "{{frontend_dir}}" --frontend-sha256 {{frontend_digest}} --outdir "{{outdir}}"
+    uv run --no-project --python 3.13 -- python -m tools.monitor.build compile --tag {{tag}} --source-revision {{producer_revision}} --frontend {{frontend_dir}} --frontend-sha256 {{frontend_digest}} --outdir {{outdir}}
 
 # Render and probe finalized bytes before packaging or publication.
 [group('release')]
