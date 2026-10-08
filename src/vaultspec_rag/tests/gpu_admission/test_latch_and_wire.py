@@ -7,6 +7,7 @@ mutated on disk.
 
 from __future__ import annotations
 
+import importlib
 import logging
 import subprocess
 import sys
@@ -426,11 +427,12 @@ class TestTheWireReading:
         """A torch-free host is reported absent quietly, not as a failed probe.
 
         A ``None`` entry in ``sys.modules`` makes the real import raise
-        ``ImportError``, which is what a host without the package does.
+        ``ModuleNotFoundError`` naming torch, which is what a host without
+        the package does.
 
-        Mutation: moved the ``import torch`` back inside the guarded block
-        that warns. Observed this fail on the empty-records assertion, with
-        the "probe failed" warning and its traceback in the capture.
+        Mutation: treated the absent package like any other failure. Observed
+        this fail on the empty-records assertion, with the "probe failed"
+        warning and its traceback in the capture.
         """
         monkeypatch.setitem(sys.modules, "torch", None)
 
@@ -443,6 +445,46 @@ class TestTheWireReading:
             if record.levelno >= logging.WARNING
         ] == []
         assert "torch is not installed" in caplog.text
+
+    def test_a_torch_that_fails_to_import_is_a_failed_probe(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        tmp_path: Path,
+    ) -> None:
+        """An installed torch whose import fails still warns, with its cause.
+
+        The package on the path here is a real one whose initializer raises
+        ``ImportError``, as a torch with a missing native library does. That
+        is a broken installation, not a torch-free host.
+
+        Mutation: reported every ``ImportError`` as an absent torch. Observed
+        this fail on the warning assertion, with only the debug line captured.
+        """
+        package = tmp_path / "torch"
+        package.mkdir()
+        (package / "__init__.py").write_text(
+            "raise ImportError('libcudart.so.12: cannot open shared object file')\n",
+            encoding="utf-8",
+        )
+        monkeypatch.delitem(sys.modules, "torch", raising=False)
+        sys.path.insert(0, str(tmp_path))
+        importlib.invalidate_caches()
+        try:
+            with caplog.at_level(logging.DEBUG, logger="vaultspec_rag._gpu_admission"):
+                assert device_load_reading() is None
+        finally:
+            sys.path.remove(str(tmp_path))
+            importlib.invalidate_caches()
+
+        warned = [
+            record for record in caplog.records if record.levelno >= logging.WARNING
+        ]
+        assert [record.getMessage() for record in warned] == [
+            "device-load admission probe failed; reporting it absent"
+        ]
+        assert warned[0].exc_info is not None
+        assert "libcudart" in str(warned[0].exc_info[1])
 
 
 class TestTorchFreedom:
