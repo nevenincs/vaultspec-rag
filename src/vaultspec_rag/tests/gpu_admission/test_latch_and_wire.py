@@ -7,6 +7,7 @@ mutated on disk.
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import sys
 import threading
@@ -418,6 +419,30 @@ class TestTheWireReading:
         )
 
         assert device_load_reading() is None
+
+    def test_a_host_without_torch_is_absent_without_a_warning(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A torch-free host is reported absent quietly, not as a failed probe.
+
+        A ``None`` entry in ``sys.modules`` makes the real import raise
+        ``ImportError``, which is what a host without the package does.
+
+        Mutation: moved the ``import torch`` back inside the guarded block
+        that warns. Observed this fail on the empty-records assertion, with
+        the "probe failed" warning and its traceback in the capture.
+        """
+        monkeypatch.setitem(sys.modules, "torch", None)
+
+        with caplog.at_level(logging.DEBUG, logger="vaultspec_rag._gpu_admission"):
+            assert device_load_reading() is None
+
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if record.levelno >= logging.WARNING
+        ] == []
+        assert "torch is not installed" in caplog.text
 
 
 class TestTorchFreedom:

@@ -541,11 +541,18 @@ def device_load_reading() -> dict[str, object] | None:
     absent rather than surfacing as an error. Callers that poll this at a fast
     cadence (the jobs listing) cache the result themselves; this function
     always takes a fresh reading.
+
+    A host without torch has no device to read. That is the ordinary state of
+    a service client, so it is reported absent without the warning and
+    traceback an unreadable probe earns: polled, those bury every other line.
     """
     backend: AcceleratorBackend = "cuda"
     try:
         import torch
-
+    except ImportError:
+        logger.debug("device-load reading skipped: torch is not installed")
+        return None
+    try:
         from ._gpu import detect_accelerator_backend
 
         detected = detect_accelerator_backend(torch)
