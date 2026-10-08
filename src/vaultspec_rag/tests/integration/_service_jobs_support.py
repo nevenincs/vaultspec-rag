@@ -332,13 +332,20 @@ def _assert_mcp_job_snapshot(
 
     Exact on purpose: the envelope is a contract, and a subset check would stop
     catching an unintended key forever. The tool answers from the same route as
-    the HTTP listing, so the machine-wide readings the listing carries are part
-    of what it returns.
+    the HTTP listing, so the machine-wide readings the listing carries, and
+    the paging and ordering it reports for the page it returned, are part of
+    what it returns.
     """
     assert set(result) == {
         "jobs",
         "total",
         "returned",
+        "matched",
+        "offset",
+        "limit",
+        "sort",
+        "order",
+        "has_more",
         "summary",
         "filters",
         "gpu",

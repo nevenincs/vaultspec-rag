@@ -168,7 +168,7 @@ def test_managed_monitor_connects_to_backend_and_canonical_lifecycle(
         monitor.stop()
 
 
-@pytest.mark.usefixtures("isolated_singleton_dirs")
+@pytest.mark.usefixtures("isolated_singleton_dirs", "second_loopback_address")
 def test_managed_monitor_confines_requests_and_listener_to_loopback() -> None:
     """A compiled wildcard listener fails the destination refusal assertion;
     restoring loopback passes. Removing admission fails the request assertion.

@@ -33,6 +33,7 @@ from .._store_writes import (
 )
 from ..config._types import EnvVar
 from ._config_fixtures import reset_config
+from ._ports import refused_loopback_port
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -372,11 +373,8 @@ class TestStoreCallSitesRouteThroughTheRetry:
     ) -> None:
         from ..store_runtime import VaultStore
 
-        with socket.socket() as probe:
-            probe.bind(("127.0.0.1", 0))
-            port = int(probe.getsockname()[1])
-
         with (
+            refused_loopback_port() as port,
             _server_mode_against(port, tmp_path),
             _retry_policy(
                 attempts=3,

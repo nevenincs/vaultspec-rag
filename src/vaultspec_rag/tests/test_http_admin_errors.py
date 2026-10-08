@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import contextlib
 import os
-import socket
 import sys
 import threading
 import time
@@ -34,6 +33,7 @@ from ..serviceclient._transport import (
     _try_http_health,
 )
 from ._http_stubs import QuietHandler
+from ._ports import refused_loopback_port
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
@@ -294,18 +294,9 @@ class TestHTTPErrorResponseLifetime:
 
 @pytest.fixture
 def refused_port() -> Iterator[int]:
-    """Yield a port that deterministically refuses connections.
-
-    A socket bound to an ephemeral port but never put into ``listen()`` rejects
-    every connect with ECONNREFUSED for as long as it is held - so there is no
-    bind/close/reuse window (which returning a closed port number would leave).
-    """
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", 0))
-    try:
-        yield sock.getsockname()[1]
-    finally:
-        sock.close()
+    """Yield a port that deterministically refuses connections."""
+    with refused_loopback_port() as port:
+        yield port
 
 
 @pytest.fixture

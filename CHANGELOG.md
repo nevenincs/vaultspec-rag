@@ -1,11 +1,12 @@
 # Changelog
 
-## [0.6.0](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.5.3...vaultspec-rag-v0.6.0) (2026-10-06)
+## [0.6.0](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.5.3...vaultspec-rag-v0.6.0) (2026-10-07)
 
 
 ### ⚠ BREAKING CHANGES
 
 * provision the Qdrant server and the models on a host start, verified end to end, and never on a client ([#577](https://github.com/nevenincs/vaultspec-rag/issues/577))
+* **preprocess:** a root with preprocess rules stops running its hooks until `vaultspec-rag preprocess approve` is run for that root, and again after any edit to its policy file. Each clone or worktree is its own root. Unattended deployments must approve during provisioning. Granting or losing approval changes the index's execution identity, as toggling the kill switch does, and while a root is unapproved a full or unscoped code index run drops content its code-targeted rules extracted earlier until it is approved and indexed again.
 * ModernBERT sparse encoding, indexing performance, and diagnostics ([#569](https://github.com/nevenincs/vaultspec-rag/issues/569))
 
 ### Features
@@ -21,10 +22,15 @@
 * **ci:** let self-hosted jobs outlast the fleet's admission wait ([#562](https://github.com/nevenincs/vaultspec-rag/issues/562)) ([1ad2bc6](https://github.com/nevenincs/vaultspec-rag/commit/1ad2bc6bf92a58ff3d36b2cc9b045e0adf0142e2))
 * **ci:** reserve the GPU release tier's Qdrant gRPC port with its HTTP port ([#566](https://github.com/nevenincs/vaultspec-rag/issues/566)) ([444773a](https://github.com/nevenincs/vaultspec-rag/commit/444773ad9a696ad8d9747624d50fb562be60c6be))
 * consolidate monitor security and index recovery ([#576](https://github.com/nevenincs/vaultspec-rag/issues/576)) ([d126f08](https://github.com/nevenincs/vaultspec-rag/commit/d126f083802311e30300d2c5e98f087806172a52))
+* count the wait for another model fetch from when the cache is found held ([eeb5521](https://github.com/nevenincs/vaultspec-rag/commit/eeb55212905cce36c19aedb77e442cc674d2117f))
 * **gpu:** share the machine-wide GPU anchor directory with every account ([f237fe2](https://github.com/nevenincs/vaultspec-rag/commit/f237fe282e1c5756ce50c5726153b9d8e75a372c))
 * **lint:** pin taplo to an image tag that exists ([#567](https://github.com/nevenincs/vaultspec-rag/issues/567)) ([bea6188](https://github.com/nevenincs/vaultspec-rag/commit/bea61889dfc9becdf0f9e7b0d962b7623570e29e))
 * never hand out an install command that can resolve CPU-only torch ([27a7325](https://github.com/nevenincs/vaultspec-rag/commit/27a7325540ddd7d45d650332351b42648d094054))
+* **preprocess:** run a root's hooks only after the operator approves its policy ([6d0812c](https://github.com/nevenincs/vaultspec-rag/commit/6d0812c40f8907d68bd4b9c129a54ed293c9b278))
 * provision the Qdrant server and the models on a host start, verified end to end, and never on a client ([#577](https://github.com/nevenincs/vaultspec-rag/issues/577)) ([ff281ac](https://github.com/nevenincs/vaultspec-rag/commit/ff281ac4c327a761a9bcd9edff78f55246952ba0))
+* stop a stopped monitor being reported as running, and make both accelerator tiers pass again ([#583](https://github.com/nevenincs/vaultspec-rag/issues/583)) ([eeb5521](https://github.com/nevenincs/vaultspec-rag/commit/eeb55212905cce36c19aedb77e442cc674d2117f))
+* **tests:** approve the policy before proving a size refusal ([e96a28a](https://github.com/nevenincs/vaultspec-rag/commit/e96a28a224104ea317b041a4372d5e89674a02f1))
+* **tests:** import the shared private-file assertion from its new home ([202998d](https://github.com/nevenincs/vaultspec-rag/commit/202998dadba35adebb3c64c792f6b1c768dd35de))
 
 
 ### Miscellaneous

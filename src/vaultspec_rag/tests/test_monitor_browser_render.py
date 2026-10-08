@@ -357,6 +357,43 @@ def test_browser_wait_uses_its_deadline_for_renderer_commands(
     assert rendered_monitor.evaluate("window.monitorWaitFinished") is True
 
 
+#: The elements whose right edge lies past the viewport, widest first, each
+#: with its tag, class and the start of its text.
+_STICKING_OUT = (
+    "[...document.querySelectorAll('body *')]"
+    ".map(node => [node, node.getBoundingClientRect()])"
+    ".filter(([, box]) => box.width > 0 && box.right > innerWidth + 0.5)"
+    ".sort(([, a], [, b]) => b.right - a.right)"
+    ".slice(0, 8)"
+    ".map(([node, box]) => `${node.tagName.toLowerCase()}"
+    ".${node.getAttribute('class') ?? ''} right=${Math.round(box.right)} "
+    "width=${Math.round(box.width)} "
+    "${(node.textContent ?? '').trim().slice(0, 40)}`)"
+)
+
+
+def _fits_viewport(browser: Browser) -> None:
+    """Wait for the page to settle with nothing wider than its viewport.
+
+    Waited for, not sampled once: the page was drawn at the browser's own
+    size and the charts take a new width a frame or more after a resize, so
+    the first frame at a narrower size is still as wide as the last one. A
+    page that keeps overflowing never settles, and the failure then names
+    what sticks out.
+
+    Mutation proof: a ``min-width: 2000px`` on the body failed this on the
+    overflow condition at 320 pixels; removing it passed.
+    """
+    try:
+        browser.wait("document.documentElement.scrollWidth <= innerWidth")
+    except AssertionError:
+        widths = browser.evaluate("[document.documentElement.scrollWidth, innerWidth]")
+        sticking_out = browser.evaluate(_STICKING_OUT)
+        raise AssertionError(
+            f"the page stays wider than its viewport {widths}: {sticking_out}"
+        ) from None
+
+
 @pytest.mark.parametrize("size", [(1440, 1000), (800, 900), (390, 844), (320, 740)])
 def test_carbon_monitor_live_scopes_and_retained_evidence(
     rendered_monitor: Browser,
@@ -405,10 +442,7 @@ def test_carbon_monitor_live_scopes_and_retained_evidence(
             )
             is True
         )
-        assert (
-            browser.evaluate("document.documentElement.scrollWidth <= innerWidth")
-            is True
-        )
+        _fits_viewport(browser)
         assert (
             browser.evaluate(
                 "document.querySelector('h1').getBoundingClientRect().top "
@@ -460,10 +494,7 @@ def test_carbon_monitor_live_scopes_and_retained_evidence(
         _page(browser, "logs")
         browser.wait("document.body.innerText.includes('qdrant-own-record')")
         browser.wait("document.body.innerText.includes('next-job')")
-        assert (
-            browser.evaluate("document.documentElement.scrollWidth <= innerWidth")
-            is True
-        )
+        _fits_viewport(browser)
         evidence = cast("dict[str, object]", browser.command("evidence"))
         assert evidence["errors"] == []
     finally:

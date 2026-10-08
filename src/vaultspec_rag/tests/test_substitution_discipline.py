@@ -621,7 +621,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "never runs",
     ),
     "test_tool_torch_repair.py": (
-        27,
+        28,
         "the persistent uv tool interpreter and machine singleton cannot be "
         "safely forced through a CUDA repair during a test: that would install "
         "packages into the developer's own tool environment, which is how a "
@@ -632,7 +632,12 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "sentinels that fail if consent, a foreign target, an unreadable "
         "release, a holder, a no-device diagnosis, the CUDA re-probe or the "
         "receipt postcondition is bypassed. The count is high because each "
-        "guard stages the same boundaries again for the one branch it proves",
+        "guard stages the same boundaries again for the one branch it proves. "
+        "One site pins the host the real remediation is asked about to one "
+        "PyTorch builds CUDA for: the remediation asks the platform first and "
+        "hands macOS the Metal wheel, so on Apple silicon no CUDA outcome "
+        "these contracts describe can be reached, and a test cannot change "
+        "the host it runs on",
     ),
     "test_watcher_controller_intake.py": (
         14,

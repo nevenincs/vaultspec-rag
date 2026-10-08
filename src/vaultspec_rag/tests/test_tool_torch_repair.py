@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import inspect
 import sys
 from pathlib import Path
@@ -46,9 +47,26 @@ def _no_cuda_receipt(_interpreter: str) -> ToolReceiptVerdict:
     return ToolReceiptVerdict.NO_CUDA_SOURCE
 
 
+@pytest.fixture(autouse=True)
+def _a_host_with_a_cuda_build(monkeypatch: MonkeyPatch) -> None:
+    """Hold every contract here to a host PyTorch publishes a CUDA build for.
+
+    The remediation asks the platform before the environment and hands macOS
+    the Metal wheel, so on Apple silicon the transaction below would report
+    that remediation and none of the CUDA outcomes these contracts describe.
+    """
+    monkeypatch.setattr(
+        _tool_torch,
+        "cuda_remediation",
+        functools.partial(
+            _provisioning.cuda_remediation, platform_name="linux", machine="x86_64"
+        ),
+    )
+
+
 def _remediation_for(interpreter: str) -> _provisioning.CudaRemediation:
     """The remediation a tool environment is handed, built where all are."""
-    return _provisioning.cuda_remediation(interpreter, env_kind=RuntimeEnvKind.UV_TOOL)
+    return _tool_torch.cuda_remediation(interpreter, env_kind=RuntimeEnvKind.UV_TOOL)
 
 
 def _need(capability: ComputeCapability) -> _tool_torch._RepairNeed:

@@ -94,13 +94,17 @@ is dispatched explicitly by the lane before it, in this order:
    common frontend digest and the reviewed release-pin catalog on `main`. A missing
    pin leaves the draft waiting for the review described below.
 1. Only on success, that gate dispatches `RAG Publish` in its `package-index`
-   stage. That run requires the release to carry its wheel, source
+   stage. Its admission job requires the release to carry its wheel, source
    distribution, and `SHA256SUMS`, downloads the release's own packages, checks
-   them against the release's `SHA256SUMS`, independently admits all four archives
-   against the committed pin catalog, and uploads exactly those package bytes to
-   PyPI through the trusted publisher. An already-published release is accepted
-   so a failed upload can be retried; PyPI skips files it already holds.
-1. A separate job in that same run then publishes the release, as the last act
+   them against the release's `SHA256SUMS`, and independently admits all four
+   archives against the committed pin catalog. Its upload job receives exactly
+   those package bytes, checks them against the digests admission read, and
+   sends them to PyPI through the trusted publisher. The two are separate jobs
+   because reading a draft takes a token that may write releases, and the job
+   holding `id-token` holds nothing else. An already-published release is
+   accepted so a failed upload can be retried; PyPI skips files it already
+   holds.
+1. A third job in that same run then publishes the release, as the last act
    of the chain. It holds no `id-token`. PyPI comes first deliberately: both
    acts are one-way, and a failed upload leaves an unpublished draft that a
    re-dispatch repairs, while a release published first would advertise a
@@ -129,9 +133,13 @@ rerun for the same tag.
    writes. Leave them unapproved. The run release-please dispatches is the
    required check, and approving a held run only repeats the full gate on
    the same commit.
-1. Dispatch `RAG Release Please` to cut the release. Merging the PR by hand
-   releases nothing; the cut finishes a hand-merged proposal too. Do not
-   manually create a second tag or Release for the same version.
+1. Merge the release PR yourself, then dispatch `RAG Release Please` to cut
+   the release. The cut cannot merge the proposal: the branch ruleset asks for
+   an approval the workflow's own commits can never carry, and an owner's
+   review does not lift it. Merging releases nothing by itself; the cut proves
+   the merged commit, tags it and starts the chain. Land nothing else on
+   `main` between the merge and the tag, and do not manually create a second
+   tag or Release for the same version.
 1. Watch `RAG Publish`, then `RAG Binaries`. Review and commit the candidate release
    pins before rerunning the failed draft verifier. That verifier then dispatches
    the `package-index` run of `RAG Publish`. The Release stays a draft
@@ -147,6 +155,50 @@ The required release checks include workflow lint, static analysis, tests,
 documentation checks, the Vault audit, and the dependency audit. The GPU
 acceptance tiers prove CUDA and MPS at release cut. Native monitor rendering and the
 complete four-target archive set are additional release gates.
+
+## What a cut needs from the fleet
+
+A cut is unattended only while these hold. Each one stopped a release once.
+
+- **Release Please may open pull requests.** The repository setting "Allow
+  GitHub Actions to create and approve pull requests" must be on, or the
+  proposal branch is pushed and no pull request appears:
+
+  ```sh
+  gh api repos/nevenincs/vaultspec-rag/actions/permissions/workflow \
+    --jq .can_approve_pull_request_reviews
+  ```
+
+- **The CUDA host's accelerator is free.** The GPU tier starts its own service
+  and refuses to while an installed `vaultspec-rag` service owns the device.
+  Stop that service on the Windows GPU runner's host before dispatching the
+  cut, and start it again afterwards.
+- **The Apple-silicon host is awake.** It carries the MPS tier, the macOS
+  build and the Linux arm64 runner, and its runners go offline when it sleeps.
+- **Every Linux runner has a browser.** The native monitor proof drives an
+  installed Chrome or Chromium and never downloads one, so the browser belongs
+  to the runner image.
+- **The Windows host denies outbound traffic to the proof's two program
+  paths, and names their directory in the runner's environment.** See
+  [the Windows outbound-denied directory](#the-windows-outbound-denied-directory).
+
+## Rehearsing the binaries lane
+
+`RAG Binaries` runs from a release tag, so nothing on `main` exercises it and a
+defect in it is otherwise found at a cut. A rehearsal builds and proves a
+branch or `main` commit on all four targets and stops before the first write:
+it reads no release, attaches nothing and dispatches no other lane.
+
+```sh
+SHA=$(git rev-parse origin/<branch>)
+gh workflow run binaries.yml --repo "$REPO" --ref <branch> \
+  --field tag=vaultspec-rag-v<version> --field target_sha="$SHA" \
+  --field rehearse=true
+```
+
+The tag names the version the binaries are built as and must match the
+version that commit declares; no such tag needs to exist. Rehearse after
+changing `binaries.yml`, a release recipe, or a fleet runner.
 
 ## Reproducing the binary artifacts locally
 
@@ -242,18 +294,46 @@ by the verified native compiler on all four targets. Each target renders the
 finalized monitor in an installed browser and repeats the smoke under OS outbound
 denial. The private Actions artifacts retain binaries, hashes and smoke reports.
 
-Acquisition uses a native GitHub ARM64 runner with an immutable Playwright image
-for its installed browser, and a disposable Windows runner for firewall authority.
-Linux x64 and macOS use the enrolled native hosts.
+Acquisition runs each target on the enrolled host that builds it for a release,
+so a host that cannot prove a monitor is found here and not at a cut.
 
 Linux uses a process-scoped kernel filter; macOS uses a process sandbox allowing
-loopback. Windows requires an elevated runner and enabled firewall profiles. Its
-temporary rules cover the monitor and a pinned network control; the probe removes
-only its own rules. The browser driver stays outside each platform's OS policy.
-The external TCP control must connect
-before isolation and fail under it, while the compiled monitor serves loopback
-HTTP. Failure leaves release admission closed. Candidate verification is separate
-from acquisition of the final published archives.
+loopback; Windows uses firewall rules on two program paths, described below. The
+browser driver stays outside each platform's OS policy. The external TCP control
+must connect outside the policy and fail under it, while the compiled monitor
+serves loopback HTTP. Failure leaves release admission closed. Candidate
+verification is separate from acquisition of the final published archives.
+
+### The Windows outbound-denied directory
+
+A Windows Firewall rule can only be added by an Administrator, and a runner
+account is deliberately not one. So the rules are added once per host, and each
+proof only occupies them. The host carries a directory the runner may write,
+with outbound traffic denied to two fixed program paths inside it. A proof
+copies the pinned network control into both paths and requires each copy to
+fail to connect, having first connected from an ordinary path. Only then does
+the monitor take its path, so it runs under a denial that run watched work.
+
+The host provides that directory and names it in `MONITOR_OUTBOUND_DENIED_DIR`.
+On the fleet's Windows runner both come from the fleet: its repository declares
+the directory and the two rules, converges them from an elevated session, and
+writes the variable into the runner's environment. No workflow here sets it.
+
+To run the Windows proof on another machine, create the two rules once from
+an elevated PowerShell session and set the variable to the directory:
+
+```powershell
+$directory = 'C:\outbound-denied'
+New-Item -ItemType Directory -Force -Path $directory | Out-Null
+foreach ($name in 'monitor.exe', 'network-control.exe') {
+  New-NetFirewallRule -DisplayName outbound-denied -Direction Outbound `
+    -Action Block -Profile Any -Program (Join-Path $directory $name) | Out-Null
+}
+$env:MONITOR_OUTBOUND_DENIED_DIR = $directory
+```
+
+A proof that reports its blocked control still connects is on a host whose
+rules are missing or whose firewall profiles are disabled.
 
 ## Reviewing monitor release pins
 
@@ -272,6 +352,15 @@ Merge the reviewed release entry into
 entries, and land that catalog change on `main` through the normal review process.
 The producer commit remains the commit that built the artifacts; the catalog commit
 is separate approval evidence.
+
+Before landing it, commit the entry on its branch and ask the verifier's own check
+whether that commit admits a fresh download of the four archives:
+
+```sh
+uv run --no-project --python 3.13 -- python -m tools.monitor.pins validate \
+  --tag "$TAG" --source-revision "$(git rev-parse "$TAG^{commit}")" \
+  --catalog-revision "$(git rev-parse HEAD)" --directory <downloaded-archives>
+```
 
 Rerun only the failed `verify-release-assets` job in the original `RAG Binaries` run.
 It fetches the reviewed catalog from `main` and validates the existing draft bytes.

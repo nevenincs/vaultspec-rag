@@ -56,6 +56,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "DEFAULT_LIMITS",
+    "CacheWait",
     "DownloadCaller",
     "DownloadOutcome",
     "FetchLimits",
@@ -499,13 +500,35 @@ def _watch(
             return _out_of_time(process, received)
 
 
+class CacheWait:
+    """The one allowance a fetch has for waiting on another fetch's claim.
+
+    The allowance runs from the moment the cache is first found held, not
+    from the start of the fetch: checking what is already cached can take
+    longer than a short allowance, and time spent checking is not time spent
+    waiting. One instance serves every repository of a fetch, so a repository
+    that waited the allowance out leaves none for the next.
+    """
+
+    __slots__ = ("_began",)
+
+    def __init__(self) -> None:
+        self._began: float | None = None
+
+    def began(self, now: float) -> float:
+        """Return when the wait began, beginning it at *now* if it has not."""
+        if self._began is None:
+            self._began = now
+        return self._began
+
+
 @contextlib.contextmanager
 def exclusive_fetch(
     cache: Path,
     *,
     limits: FetchLimits = DEFAULT_LIMITS,
     on_wait: Callable[[str], None] | None = None,
-    since: float | None = None,
+    wait: CacheWait | None = None,
     until: float | None = None,
 ) -> Generator[str | None]:
     """Hold this cache's one-fetch-at-a-time claim for the block.
@@ -523,10 +546,10 @@ def exclusive_fetch(
         cache: The hub cache the claim belongs to.
         limits: How long another holder is waited for.
         on_wait: Told once, when the wait begins, who is being waited for.
-        since: The monotonic time the wait is counted from. A fetch of
-            several repositories passes the time it began, so the wait is
-            one allowance for the whole fetch and not one per repository;
-            omitted, it is counted from this call.
+        wait: The allowance the wait is counted against. A fetch of several
+            repositories passes the same one for each, so the wait is one
+            allowance for the whole fetch and not one per repository;
+            omitted, this call has an allowance of its own.
         until: A monotonic time past which the wait ends whatever is left of
             the allowance; omitted, only the allowance ends it.
 
@@ -539,7 +562,7 @@ def exclusive_fetch(
     from .._anchor_claim import claim_anchor, record_claim_owner, release_anchor_claim
 
     lock_path = cache / _LOCK_NAME
-    started = time.monotonic() if since is None else since
+    wait = CacheWait() if wait is None else wait
     announced = False
     while True:
         claim = claim_anchor(lock_path, pid_record=True, create_parent=True)
@@ -549,13 +572,14 @@ def exclusive_fetch(
             f"process {claim.holder_pid}" if claim.holder_pid else "another process"
         )
         now = time.monotonic()
-        remaining = limits.contention_seconds - (now - started)
+        waited = now - wait.began(now)
+        remaining = limits.contention_seconds - waited
         if until is not None:
             remaining = min(remaining, until - now)
         if remaining <= 0:
             yield (
                 f"{holder} was still downloading models into {cache} after "
-                f"{now - started:.0f} seconds"
+                f"{waited:.0f} seconds"
             )
             return
         if not announced:

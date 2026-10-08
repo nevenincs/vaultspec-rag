@@ -3,21 +3,26 @@
 from __future__ import annotations
 
 import argparse
-import json
+import contextlib
 import os
 import shutil
 import socket
 import subprocess
 import sys
 import tempfile
-import uuid
+import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from tools.binaries.bun_pins import BUN_EXECUTABLES
 from tools.binaries.bun_toolchain import provision_bun
 from tools.binaries.native import host_target_triple
 from tools.monitor.smoke import probe
+from vaultspec_rag._fd_lock import lock_fd_exclusive, unlock_fd
 from vaultspec_rag.qdrant_runtime._provision import verify_native_binary
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 CONTROL_HOST = "1.1.1.1"
 CONTROL_PORT = 443
@@ -26,40 +31,20 @@ MAC_PROFILE = """(version 1)
 (deny network-outbound)
 (allow network-outbound (remote ip "localhost:*"))
 """
-FIREWALL = """
-$ErrorActionPreference = 'Stop'
-if ($env:MONITOR_FIREWALL_ACTION -eq 'check') {
-    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
-    $adminRole = [Security.Principal.WindowsBuiltInRole]::Administrator
-    if (-not $principal.IsInRole($adminRole)) {
-        throw 'Windows OS-offline verification requires an elevated test account'
-    }
-    if ((Get-NetFirewallProfile | Where-Object { -not $_.Enabled }).Count -ne 0) {
-        throw 'Every firewall profile must be enabled for offline proof'
-    }
-    exit 0
-}
-$spec = Get-Content -LiteralPath $env:MONITOR_FIREWALL_SPEC -Raw | ConvertFrom-Json
-if ($env:MONITOR_FIREWALL_ACTION -eq 'remove') {
-    Get-NetFirewallRule -Group $spec.group -ErrorAction SilentlyContinue |
-        Remove-NetFirewallRule
-    exit 0
-}
-foreach ($program in $spec.programs) {
-    $rule = New-NetFirewallRule -DisplayName $spec.group -Group $spec.group `
-        -Direction Outbound -Action Block -Profile Any -Program $program -Enabled True
-    $active = Get-NetFirewallRule -PolicyStore ActiveStore -Name $rule.Name
-    $filter = $active | Get-NetFirewallApplicationFilter
-    if ($active.Enabled -ne 'True' -or $active.Action -ne 'Block' -or
-        $active.Direction -ne 'Outbound' -or $filter.Program -ne $program) {
-        throw 'The executable outbound rule is not active'
-    }
-}
-"""
+# Adding a firewall rule takes an Administrator, and a CI runner account is
+# deliberately not one. So the rules are the host's: two fixed program paths
+# in a directory the runner may write, which the host names in this variable.
+# A proof only copies bytes into those paths and shows that they cannot
+# connect; it adds, reads and removes no rule.
+DENIED_DIRECTORY = "MONITOR_OUTBOUND_DENIED_DIR"
+MONITOR_SLOT = "monitor.exe"
+CONTROL_SLOT = "network-control.exe"
+CLAIM = "claim.lock"
+CLAIM_WAIT_SECONDS = 900.0
 BUN_CONTROL = """
 import { createConnection } from 'node:net';
-const socket = createConnection({ host: '1.1.1.1', port: 443 });
+const [host, port] = process.argv.slice(1);
+const socket = createConnection({ host, port: Number(port) });
 socket.setTimeout(5000);
 socket.on('connect', () => { socket.destroy(); console.log('connected'); });
 socket.on('error', error => { console.error(error.code); process.exit(1); });
@@ -94,7 +79,14 @@ def macos_launcher() -> tuple[str, ...]:
 def bun_connection(binary: Path, launch_prefix: tuple[str, ...] = ()) -> bool:
     verify_native_binary(binary, BUN_EXECUTABLES[host_target_triple()])
     result = subprocess.run(
-        [*launch_prefix, str(binary), "--eval", BUN_CONTROL],
+        [
+            *launch_prefix,
+            str(binary),
+            "--eval",
+            BUN_CONTROL,
+            CONTROL_HOST,
+            str(CONTROL_PORT),
+        ],
         capture_output=True,
         text=True,
         check=False,
@@ -118,69 +110,74 @@ def bun_connection(binary: Path, launch_prefix: tuple[str, ...] = ()) -> bool:
     return False
 
 
+def denied_directory() -> Path:
+    """Return the directory whose two program paths the host denies outbound."""
+    configured = os.environ.get(DENIED_DIRECTORY, "")
+    directory = Path(configured)
+    if not configured or not directory.is_absolute() or not directory.is_dir():
+        raise RuntimeError(
+            f"Windows OS-offline verification needs {DENIED_DIRECTORY} to name a "
+            f"directory in which the host denies outbound traffic to {MONITOR_SLOT} "
+            f"and {CONTROL_SLOT}; the host that runs this proof provides it"
+        )
+    return directory
+
+
+@contextlib.contextmanager
+def claimed(directory: Path) -> Generator[None]:
+    """Hold the denied directory's two program paths for one proof at a time."""
+    descriptor = os.open(directory / CLAIM, os.O_RDWR | os.O_CREAT)
+    try:
+        deadline = time.monotonic() + CLAIM_WAIT_SECONDS
+        while True:
+            try:
+                lock_fd_exclusive(descriptor)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(
+                        "Another offline proof still holds the denied directory"
+                    ) from None
+                time.sleep(1)
+        try:
+            yield
+        finally:
+            unlock_fd(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def windows_probe(
-    directory: Path,
     binary: Path,
     digest: str,
     identity: dict[str, object],
     browser: Path,
 ) -> dict[str, object]:
-    powershell = str(
-        Path(os.environ["SYSTEMROOT"])
-        / "System32/WindowsPowerShell/v1.0/powershell.exe"
-    )
-    subprocess.run(
-        [powershell, "-NoProfile", "-NonInteractive", "-Command", FIREWALL],
-        env={**os.environ, "MONITOR_FIREWALL_ACTION": "check"},
-        check=True,
-        timeout=15,
-    )
-    copied_binary = directory / binary.name
-    shutil.copy2(binary, copied_binary)
-    verify_native_binary(copied_binary, digest)
+    directory = denied_directory()
     bun = provision_bun(
         Path(tempfile.gettempdir()) / "vaultspec-bun", host_target_triple()
     )
-    control = directory / "network-control.exe"
-    shutil.copy2(bun, control)
-    if not bun_connection(control):
+    if not bun_connection(bun):
         raise RuntimeError("The external TCP positive control did not connect")
-    group = "vaultspec-monitor-" + uuid.uuid4().hex
-    specification = directory / "firewall.json"
-    specification.write_text(
-        json.dumps(
-            {
-                "group": group,
-                "programs": [str(copied_binary.resolve()), str(control.resolve())],
-            }
-        ),
-        encoding="utf-8",
-    )
-    environment = {
-        **os.environ,
-        "MONITOR_FIREWALL_SPEC": str(specification),
-        "MONITOR_FIREWALL_ACTION": "add",
-    }
-    try:
-        subprocess.run(
-            [powershell, "-NoProfile", "-NonInteractive", "-Command", FIREWALL],
-            env=environment,
-            check=True,
-            timeout=60,
-        )
-        if bun_connection(control):
-            raise RuntimeError(
-                "OS offline proof refused: blocked control still connects"
-            )
-        return probe(copied_binary, digest, identity, browser)
-    finally:
-        environment["MONITOR_FIREWALL_ACTION"] = "remove"
-        subprocess.run(
-            [powershell, "-NoProfile", "-NonInteractive", "-Command", FIREWALL],
-            env=environment,
-            check=True,
-            timeout=60,
-        )
+    monitor = directory / MONITOR_SLOT
+    control = directory / CONTROL_SLOT
+    with claimed(directory):
+        try:
+            # The control occupies BOTH paths before the monitor takes its
+            # own, so the denial the monitor runs under is one this proof
+            # watched refuse a connection, not one it was told exists.
+            for slot in (control, monitor):
+                shutil.copy2(bun, slot)
+                if bun_connection(slot):
+                    raise RuntimeError(
+                        "OS offline proof refused: blocked control still connects"
+                    )
+            shutil.copy2(binary, monitor)
+            verify_native_binary(monitor, digest)
+            return probe(monitor, digest, identity, browser)
+        finally:
+            for slot in (monitor, control):
+                slot.unlink(missing_ok=True)
 
 
 def probe_offline(
@@ -190,41 +187,37 @@ def probe_offline(
     browser: Path,
 ) -> dict[str, object]:
     verify_native_binary(binary, expected_sha256)
-    with tempfile.TemporaryDirectory(prefix="monitor-os-offline-") as scratch:
-        directory = Path(scratch)
-        if os.name == "nt":
-            result = windows_probe(
-                directory, binary.absolute(), expected_sha256, identity, browser
-            )
-            mechanism = "Windows Firewall executable rules"
-            scope = "monitor and pinned Bun control; browser harness outside policy"
-        elif sys.platform == "linux":
-            bun = provision_bun(
-                Path(tempfile.gettempdir()) / "vaultspec-bun", host_target_triple()
-            )
-            if not bun_connection(bun):
-                raise RuntimeError("The external TCP positive control did not connect")
-            launcher = (sys.executable, str(Path(__file__).with_name("linux_exec.py")))
-            control_prefix = (*launcher, BUN_EXECUTABLES[host_target_triple()])
-            if bun_connection(bun, control_prefix):
-                raise RuntimeError("OS offline proof refused: blocked control connects")
-            result = probe(
-                binary,
-                expected_sha256,
-                identity,
-                browser,
-                (*launcher, expected_sha256),
-            )
-            mechanism = "Linux seccomp outbound connect/datagram denial"
-            scope = "monitor and pinned Bun control; accepted loopback HTTP preserved"
-        elif sys.platform == "darwin":
-            if not external_connection():
-                raise RuntimeError("The external TCP positive control did not connect")
-            result = probe(binary, expected_sha256, identity, browser, macos_launcher())
-            mechanism = "macOS Seatbelt"
-            scope = "monitor and Python network control; loopback HTTP preserved"
-        else:
-            raise RuntimeError("No native OS isolation method for this platform")
+    if os.name == "nt":
+        result = windows_probe(binary.absolute(), expected_sha256, identity, browser)
+        mechanism = "Windows Firewall executable rules"
+        scope = "monitor and pinned Bun control; browser harness outside policy"
+    elif sys.platform == "linux":
+        bun = provision_bun(
+            Path(tempfile.gettempdir()) / "vaultspec-bun", host_target_triple()
+        )
+        if not bun_connection(bun):
+            raise RuntimeError("The external TCP positive control did not connect")
+        launcher = (sys.executable, str(Path(__file__).with_name("linux_exec.py")))
+        control_prefix = (*launcher, BUN_EXECUTABLES[host_target_triple()])
+        if bun_connection(bun, control_prefix):
+            raise RuntimeError("OS offline proof refused: blocked control connects")
+        result = probe(
+            binary,
+            expected_sha256,
+            identity,
+            browser,
+            (*launcher, expected_sha256),
+        )
+        mechanism = "Linux seccomp outbound connect/datagram denial"
+        scope = "monitor and pinned Bun control; accepted loopback HTTP preserved"
+    elif sys.platform == "darwin":
+        if not external_connection():
+            raise RuntimeError("The external TCP positive control did not connect")
+        result = probe(binary, expected_sha256, identity, browser, macos_launcher())
+        mechanism = "macOS Seatbelt"
+        scope = "monitor and Python network control; loopback HTTP preserved"
+    else:
+        raise RuntimeError("No native OS isolation method for this platform")
     return {
         **result,
         "os_offline_verified": True,

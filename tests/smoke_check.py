@@ -2,7 +2,8 @@
 
 Run against an installed wheel or sdist to verify that the package is
 importable, exposes expected metadata and package data, enrolls both native
-project MCP targets, and that both console-script entry points
+project MCP targets or holds them for the operator's approval where Core asks
+for one, and that both console-script entry points
 (``vaultspec-rag`` and ``vaultspec-search-mcp``) are functional.
 
 Usage from CI::
@@ -164,30 +165,57 @@ def check_mcp_help() -> None:
     print("PASS: vaultspec-search-mcp --help exits 0")
 
 
+def _install_into(target: Path) -> dict[str, object]:
+    """Run the installed CLI's MCP install and return each provider's outcome."""
+    result = _run_script(
+        "vaultspec-rag",
+        [
+            "install",
+            "--target",
+            str(target),
+            "--no-provision",
+            "--no-torch-config",
+            "--mcp",
+            "--json",
+        ],
+    )
+    if result.returncode != 0:
+        _fail(
+            f"installed vaultspec-rag install exited {result.returncode}\n"
+            f"  stdout: {result.stdout.strip()}\n"
+            f"  stderr: {result.stderr.strip()}"
+        )
+    return json.loads(result.stdout)["data"]["sync_providers"]
+
+
+def _held_for_approval(target: Path, providers: dict[str, object]) -> bool:
+    """Whether Core held the server back for its operator's approval.
+
+    A Core that asks its operator to approve an executable definition at a
+    terminal enrolls nothing until they have, and no script can answer for
+    them. An install that was held must have enrolled nothing, on either
+    provider, and must have said how to approve.
+    """
+    held = [name for name, outcome in providers.items() if outcome["skipped"]]
+    if not held:
+        return False
+    if set(held) != {"claude", "codex"} or (target / ".mcp.json").exists():
+        _fail(f"the server was held for {held} and enrolled elsewhere")
+    for name in held:
+        if "spec mcps trust" not in " ".join(providers[name]["warnings"]):
+            _fail(f"{name} held the server back without naming the approval")
+    return True
+
+
 def check_installed_package_enrollment() -> None:
     """Run the installed CLI and verify both provider-native project targets."""
     from vaultspec_core.core.mcps import mcp_status, mcp_uninstall
 
     with tempfile.TemporaryDirectory(prefix="vaultspec-rag-smoke-") as raw_target:
         target = Path(raw_target)
-        result = _run_script(
-            "vaultspec-rag",
-            [
-                "install",
-                "--target",
-                str(target),
-                "--no-provision",
-                "--no-torch-config",
-                "--mcp",
-                "--json",
-            ],
-        )
-        if result.returncode != 0:
-            _fail(
-                f"installed vaultspec-rag install exited {result.returncode}\n"
-                f"  stdout: {result.stdout.strip()}\n"
-                f"  stderr: {result.stderr.strip()}"
-            )
+        if _held_for_approval(target, _install_into(target)):
+            print("PASS: installed CLI holds its MCP server for operator approval")
+            return
 
         claude = json.loads((target / ".mcp.json").read_text(encoding="utf-8"))
         codex = tomllib.loads(

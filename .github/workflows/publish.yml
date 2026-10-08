@@ -100,11 +100,17 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.commit.outputs.tag }}
         run: |
-          gh release create "${TAG}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --draft \
-            --verify-tag \
-            --generate-notes || true
+          # A draft does not reserve its tag, so creating one beside the cut's
+          # draft succeeds and leaves two. Look first.
+          if gh release view "${TAG}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "${TAG} already has a release"
+          else
+            gh release create "${TAG}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft \
+              --verify-tag \
+              --generate-notes
+          fi
 
   build:
     name: "Build: Python package (Linux)"
@@ -210,11 +216,25 @@ jobs:
           name: dist-${{ needs.build.outputs.sha }}
           path: dist/
 
+      # The check is the pipeline's and the artifact is the tag's. The smoke
+      # installs the wheel beside whatever its dependencies have published
+      # since, so what it must expect can change after a tag exists; a release
+      # commit's own copy of the check cannot follow that, and a tag is never
+      # moved to make it.
+      - name: Check out the pipeline's smoke check
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          path: pipeline
+          sparse-checkout: tests/smoke_check.py
+          sparse-checkout-cone-mode: false
+
       - name: Smoke test (wheel)
-        run: uv run --isolated --no-project --with dist/*.whl tests/smoke_check.py
+        run: uv run --isolated --no-project --with dist/*.whl pipeline/tests/smoke_check.py
 
       - name: Smoke test (sdist)
-        run: uv run --isolated --no-project --with dist/*.tar.gz tests/smoke_check.py
+        run: uv run --isolated --no-project --with dist/*.tar.gz pipeline/tests/smoke_check.py
 
   github-release:
     name: "Build: Release assets (Linux)"
@@ -310,32 +330,26 @@ jobs:
   #
   # Binaries dispatches this stage from the gate that judged the draft. It
   # queues behind that run on the shared per-tag lock without holding a
-  # runner, and a maintainer may re-dispatch it to retry a failed upload. It
-  # uploads the release's own wheel and sdist, checked against the release's
-  # SHA256SUMS, so PyPI receives exactly the bytes the gate verified. Staying
-  # in this workflow keeps the trusted publisher (publish.yml, environment
-  # pypi) unchanged.
-  publish-pypi:
-    name: "Build: Package index release (Linux)"
+  # runner, and a maintainer may re-dispatch it to retry a failed upload.
+  #
+  # ADMISSION IS ITS OWN JOB because the two halves of the stage need grants
+  # that must not meet. Reading a draft takes `contents: write`: GitHub lists a
+  # draft only to a token that may write releases. Uploading takes `id-token:
+  # write`. This job holds the first, reads the release's own wheel and sdist,
+  # checks them against the release's SHA256SUMS and the reviewed monitor
+  # pins, and hands exactly those bytes to the upload job below.
+  admit-package-index:
+    name: "Check: Package index admission (Linux)"
     timeout-minutes: 135
     needs: resolve-target
     if: ${{ inputs.stage == 'package-index' }}
     runs-on: [self-hosted, Linux, X64, build]
-    # Carried forward so the publication job below never re-resolves the tag:
-    # the release it publishes must be the one this job uploaded from.
     outputs:
-      tag: ${{ needs.resolve-target.outputs.tag }}
-      sha: ${{ needs.resolve-target.outputs.sha }}
-    environment:
-      name: pypi
+      wheel_sha256: ${{ steps.admit.outputs.wheel_sha256 }}
+      sdist_sha256: ${{ steps.admit.outputs.sdist_sha256 }}
     permissions:
-      # `id-token: write` is for PyPI trusted publishing, and it lives in this
-      # job alone: the grant is not scoped to Sigstore, so any step in a job
-      # holding it can mint an OIDC token for any audience it names. The
-      # publication job below flips the release without it, and the channel
-      # deploy key sits in its own lane.
-      id-token: write
-      contents: read
+      # Reads the draft and downloads its assets; it edits nothing.
+      contents: write
     env:
       CI_EXEC_BUDGET_MINUTES: 15
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -348,10 +362,10 @@ jobs:
           persist-credentials: false
           ref: main
       # A DRAFT is what this stage expects, because the release is published
-      # by the job below and by nothing else. An already-published release is
-      # accepted so a failed upload can be retried for the same tag: PyPI
-      # skips the files it already holds, so the retry is a no-op for anything
-      # that landed.
+      # by the last job below and by nothing else. An already-published
+      # release is accepted so a failed upload can be retried for the same
+      # tag: PyPI skips the files it already holds, so the retry is a no-op
+      # for anything that landed.
       #
       # The distribution must be on the release before anything is uploaded
       # from it. Together those two conditions are what "complete draft" means
@@ -386,7 +400,8 @@ jobs:
           prune-cache: false
           enable-cache: false
 
-      - name: Publish the release's verified packages to PyPI
+      - name: Admit the release's verified packages
+        id: admit
         shell: bash
         run: |
           set -euo pipefail
@@ -416,7 +431,79 @@ jobs:
             --dir "${work}/bundles" --pattern 'vaultspec-rag-v*.zip' --pattern 'vaultspec-rag-v*.tar.gz'
           uv run --no-project --python 3.13 -- python -m tools.monitor.pins validate \
             --tag "$TAG" --source-revision "$TARGET_SHA" --directory "${work}/bundles"
-          uv publish --check-url https://pypi.org/simple/ "${work}/dist/${wheel}" "${work}/dist/${sdist}"
+          # The digests travel as job outputs, apart from the artifact that
+          # carries the bytes, so the upload job checks what it received
+          # against something the artifact store never held.
+          echo "wheel_sha256=$(awk -v name="${wheel}" '$2 == name { print $1 }' "${work}/packages.sha256")" >> "$GITHUB_OUTPUT"
+          echo "sdist_sha256=$(awk -v name="${sdist}" '$2 == name { print $1 }' "${work}/packages.sha256")" >> "$GITHUB_OUTPUT"
+
+      - name: Hand the admitted packages to the upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: package-index-${{ needs.resolve-target.outputs.sha }}
+          path: ${{ runner.temp }}/package-index/dist/
+          if-no-files-found: error
+          retention-days: 5
+
+  # The upload, and nothing else. Staying in this workflow keeps the trusted
+  # publisher (publish.yml, environment pypi) unchanged.
+  publish-pypi:
+    name: "Build: Package index release (Linux)"
+    timeout-minutes: 135
+    needs: [resolve-target, admit-package-index]
+    if: ${{ inputs.stage == 'package-index' }}
+    runs-on: [self-hosted, Linux, X64, build]
+    # Carried forward so the publication job below never re-resolves the tag:
+    # the release it publishes must be the one this job uploaded from.
+    outputs:
+      tag: ${{ needs.resolve-target.outputs.tag }}
+      sha: ${{ needs.resolve-target.outputs.sha }}
+    environment:
+      name: pypi
+    permissions:
+      # `id-token: write` is for PyPI trusted publishing, and it lives in this
+      # job alone: the grant is not scoped to Sigstore, so any step in a job
+      # holding it can mint an OIDC token for any audience it names. The job
+      # therefore checks out nothing and may write nothing to the repository:
+      # the admission job above reads the draft, the publication job below
+      # flips it, and the channel deploy key sits in its own lane.
+      id-token: write
+      contents: read
+    env:
+      CI_EXEC_BUDGET_MINUTES: 15
+      TAG: ${{ needs.resolve-target.outputs.tag }}
+      WHEEL_SHA256: ${{ needs.admit-package-index.outputs.wheel_sha256 }}
+      SDIST_SHA256: ${{ needs.admit-package-index.outputs.sdist_sha256 }}
+    steps:
+      - name: Download the admitted packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: package-index-${{ needs.resolve-target.outputs.sha }}
+          path: ${{ runner.temp }}/package-index/dist/
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          prune-cache: false
+          enable-cache: false
+
+      - name: Publish the admitted packages to PyPI
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${TAG#vaultspec-rag-v}"
+          wheel="vaultspec_rag-${version}-py3-none-any.whl"
+          sdist="vaultspec_rag-${version}.tar.gz"
+          cd "${RUNNER_TEMP}/package-index/dist"
+          # Exactly the two admitted files, each against the digest admission
+          # read off the release: anything else in the handoff is refused.
+          if [ "$(find . -mindepth 1 | wc -l)" -ne 2 ]; then
+            echo "::error::the handoff does not hold exactly ${wheel} and ${sdist}"
+            exit 1
+          fi
+          printf '%s  %s\n' "${WHEEL_SHA256}" "${wheel}" "${SDIST_SHA256}" "${sdist}" > ../packages.sha256
+          sha256sum -c ../packages.sha256
+          uv publish --check-url https://pypi.org/simple/ "${wheel}" "${sdist}"
 
   # THE PUBLICATION, and the last act of the chain. Everything before it ran
   # against a draft: the release stage attached the wheel and sdist, Binaries
