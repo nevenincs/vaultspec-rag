@@ -6,6 +6,7 @@ import json
 import os
 import queue
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -257,6 +258,51 @@ def test_bridge_refuses_loopback_callers_without_its_capability(
     status, health = _read(access, "/health")
     assert status == 200
     assert cast("dict[str, object]", health["quiesce"])["state"] == "running"
+
+
+def test_a_refusal_waits_for_the_request_it_refuses(
+    browser_bridge: tuple[str, Path],
+) -> None:
+    """A refused request is answered only once its body is off the wire.
+
+    A server that answers and closes while the caller is still sending
+    resets the connection, and on Windows a reset discards the answer the
+    caller has not read yet: the caller sees an aborted connection where
+    the refusal should be. A standard client writes its headers and its body
+    separately, so every refused mutation is open to it.
+
+    Mutation proof: answering the refusal at once made this fail on the
+    timeout expectation, with the refusal on the wire before any body was
+    sent; draining the request first made it pass.
+    """
+    access, _ = browser_bridge
+    link = urllib.parse.urlsplit(access)
+    assert link.hostname is not None
+    assert link.port is not None
+    body = b'{"root": "unconfirmed", "watch": false}'
+    head = "\r\n".join(
+        (
+            "POST /api/monitor/repositories/enroll HTTP/1.1",
+            f"Host: {link.netloc}",
+            "Content-Type: application/json",
+            f"Content-Length: {len(body)}",
+            "Connection: close",
+            "",
+            "",
+        )
+    )
+    with socket.create_connection((link.hostname, link.port), timeout=8) as caller:
+        caller.sendall(head.encode())
+        caller.settimeout(0.5)
+        with pytest.raises(TimeoutError):
+            caller.recv(1)
+        caller.settimeout(8)
+        caller.sendall(body)
+        answer = b""
+        while chunk := caller.recv(4096):
+            answer += chunk
+    assert answer.startswith(b"HTTP/1.1 401 ")
+    assert b"The monitor requires its access link." in answer
 
 
 @pytest.mark.parametrize("installed", [True, False])

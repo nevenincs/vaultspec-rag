@@ -503,6 +503,29 @@ async function forward(
   }
 }
 
+/**
+ * Answer a request this bridge will not serve, once its body is off the wire.
+ *
+ * Answering and closing while the caller is still sending resets the
+ * connection, and on Windows a reset discards the answer the caller has not
+ * read yet: it sees an aborted connection where the refusal should be. A
+ * standard client writes headers and body separately, so the body is discarded
+ * unread first and the refusal follows it.
+ */
+function refuse(
+  request: IncomingMessage,
+  response: ServerResponse,
+  status: number,
+  body: Record<string, unknown>,
+): void {
+  if (request.complete) {
+    reply(response, status, body);
+    return;
+  }
+  request.once("end", () => reply(response, status, body));
+  request.resume();
+}
+
 export function monitorUpgrade(request: IncomingMessage, socket: Duplex): void {
   if (!localRequest(request)) socket.destroy();
 }
@@ -513,7 +536,7 @@ export function monitorMiddleware(
   next: () => void,
 ): void {
   if (!localRequest(request)) {
-    reply(response, 403, {
+    refuse(request, response, 403, {
       ok: false,
       message: "The monitor accepts only loopback clients at a local host.",
     });
@@ -525,7 +548,7 @@ export function monitorMiddleware(
   }
   if (!authorized(request)) {
     response.setHeader("WWW-Authenticate", "Bearer");
-    reply(response, 401, {
+    refuse(request, response, 401, {
       ok: false,
       message:
         "The monitor requires its access link. Open the address reported by `vaultspec-rag server start`, or printed by a monitor you launched directly.",
