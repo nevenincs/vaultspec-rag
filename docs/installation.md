@@ -380,9 +380,13 @@ The repository setup does three things:
 - Adds the AI assistant integration: a rule, a skill, and the MCP server entry your
   assistant launches. See [MCP integration](mcp.md).
 - Creates the `.vault/` folder if it's missing.
-- On the first repository, downloads the search models and the Qdrant index server
-  binary. Later repositories reuse both. The default configuration downloads three
-  models, and a dense-only configuration downloads two. The first run downloads several
+- On the first host repository, when the service environment is ready and managed
+  Qdrant is selected, setup downloads the search models and the Qdrant server binary.
+  Local-only mode skips the Qdrant download. A host whose PyTorch build cannot run the
+  service yet skips these downloads; the first host `server start` fetches what its
+  selected backend needs after the environment is ready. Later repositories reuse the
+  cached models and managed server. The default configuration downloads three models,
+  and a dense-only configuration downloads two. The first run downloads several
   gigabytes.
 
 These flags change it:
@@ -447,10 +451,12 @@ Start the service from the host installation:
 vaultspec-rag server start
 ```
 
-On a host installation the command first downloads whatever the service needs and
-doesn't have yet: any missing model files, and the Qdrant server if none is installed.
-It shows each transfer, then loads the models and waits until the service is ready. A
-repository setup that already downloaded both leaves nothing to fetch. To stop
+On a host installation the command first downloads whatever the selected backend needs
+and doesn't have yet: missing model files, and the Qdrant server when managed-server
+mode is selected and no binary resolves. Local-only mode fetches model files but skips
+Qdrant. It shows each transfer, then loads the models and waits until the service is
+ready. A repository setup that already downloaded the required files leaves nothing to
+fetch. To stop
 `server start` from downloading the Qdrant server, pass `--no-qdrant-auto-provision` or
 set `VAULTSPEC_RAG_QDRANT_AUTO_PROVISION=0`; see
 [managed server provisioning](configuration.md#managed-server-provisioning). Stop the
@@ -608,21 +614,6 @@ installation and every client together.
    which is the same command [pin the GPU build](#pin-the-gpu-build) describes. Nothing
    needs to be stopped for it.
 
-1. Start the service again from the host installation, so it runs the release you just
-   installed:
-
-   ```bash
-   vaultspec-rag server start
-   ```
-
-   An upgrade replaces the installed package while the running daemon keeps the code it
-   imported at startup, so clients refuse it as a different release until it restarts.
-
-   If uv reports that it could not install an entry point because the file is in use,
-   the release is installed and the environment is intact: only the launcher it could
-   not overwrite was left alone, and that launcher keeps working. Restarting the
-   service, and any assistant session holding one, is what clears the report.
-
 1. Read the new release from the upgraded host installation with
    `vaultspec-rag --version`. Move every client project to that release, keeping its
    extras:
@@ -634,9 +625,11 @@ installation and every client together.
    A client on the plain package uses `uv add --dev "vaultspec-rag==<release>"`.
    Collaborators then upgrade their own host installations to the same release.
 
-1. In each repository, refresh the repository setup. Repeat any `--local-only`,
-   `--no-mcp`, or `--no-torch-config` you used; only the installation route carries
-   over.
+1. In each repository, refresh the repository setup. Repeat any per-run flags whose
+   effects you want for this refresh, such as `--local-only`, `--skip-models`,
+   `--skip-qdrant`, `--no-provision`, `--no-mcp`, or `--no-torch-config`; only the
+   installation route carries over. On the host, `--local-only` records the saved
+   backend choice, while provisioning opt-outs apply only to this command.
 
    ```bash
    vaultspec-rag install --upgrade
@@ -651,21 +644,40 @@ installation and every client together.
    working `tool`-mode setup onto `dependency` mode just because the package is also
    listed.
 
-1. If you ran the host's repository setup with `--local-only`, `--skip-qdrant`, or
-   `--no-provision`, it skipped the Qdrant download. When the
-   [release notes](https://github.com/nevenincs/vaultspec-rag/releases) name a new
-   Qdrant version, the next `server start` downloads it. To fetch it ahead of time, or
-   if you switched the automatic download off, install it:
+1. If a release advances the pinned Qdrant version, a host start with managed Qdrant
+   selected ensures that version is installed, downloading it if it is missing. This
+   also applies when repository refresh used `--skip-qdrant` or `--no-provision`. A
+   saved local-only choice is different: a plain start continues in local-only mode
+   and skips Qdrant. Use `server start --qdrant` to select the managed server for one
+   start, or install the binary without changing the backend choice:
 
    ```bash
    vaultspec-rag server qdrant install
    ```
 
-   Otherwise, the repository setup already downloaded it.
+   If you want managed-server mode saved for later plain starts, rerun the host's
+   `install --upgrade` without `--local-only` or a local-only environment override,
+   while its service environment is ready; a successful setup records that choice. If
+   automatic Qdrant downloads are disabled, `server start --qdrant` reports the install
+   command instead.
 
-1. Start the service again from the host installation, reconnect assistants, and rerun
-   the checks in [start and verify](#start-and-verify). If the release requires
-   rebuilding indexes, follow [reindexing](verification.md#reindexing).
+1. Start the service from the host installation, reconnect assistants, and rerun the
+   checks in [start and verify](#start-and-verify). If `uv` reports that it could not
+   replace an entry point because the file is in use, the release is installed and the
+   environment is intact; restarting the service and any assistant session holding the
+   old launcher clears the report.
+
+1. Apply any release-specific index migration after the new service is running. In
+   particular, upgrading to 0.6.0 from the previous sparse encoder requires rebuilding
+   every indexed repository: its existing sparse vectors are incompatible with the new
+   model, and automatic file convergence does not migrate them. Run:
+
+   ```bash
+   vaultspec-rag --target <repository> index --rebuild --type all
+   ```
+
+   Repeat for each indexed repository and wait for each rebuild to complete. See the
+   [sparse encoder details](indexing.md) and [reindexing guide](verification.md#reindexing).
 
 ## When something goes wrong
 
