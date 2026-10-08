@@ -115,9 +115,15 @@ jobs:
       # fully triaged; it flips to gating by deleting that flag once its
       # failure count reaches zero. Ratchet down, never up. Releases do not run
       # it: the MPS guard below is the release's Apple silicon claim.
+      #
+      # Four workers, as in the merge gate, and set on the step for the same
+      # reason: a value exported by the runner's own hook replaces one declared
+      # for the job.
       - name: Run tests
         if: inputs.macos_full_suite
         continue-on-error: true
+        env:
+          PYTEST_XDIST_AUTO_NUM_WORKERS: "4"
         run: just test-python
 
       # The guard below reads the model cache with the Hub switched off,
