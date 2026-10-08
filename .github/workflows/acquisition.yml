@@ -93,7 +93,9 @@ jobs:
           # The same hosts that build each target for a release, so a host
           # that cannot prove a monitor is found here and not at a cut. The
           # browser and, on Windows, the outbound-denied directory are host
-          # prerequisites the fleet provisions; nothing here acquires either.
+          # prerequisites the host provides. The Windows runner's own environment
+          # names that directory as MONITOR_OUTBOUND_DENIED_DIR; nothing here
+          # sets it, and nothing here acquires a browser.
           - name: linux-x86_64
             runner: [self-hosted, Linux, X64, build]
             target: x86_64-unknown-linux-gnu
@@ -110,11 +112,6 @@ jobs:
     runs-on: ${{ matrix.runner }}
     env:
       CI_EXEC_BUDGET_MINUTES: 30
-      # Read on Windows only: the directory whose two program paths the host
-      # denies outbound traffic. Adding such a rule takes an Administrator and
-      # the runner account is not one, so the host carries the rules and the
-      # proof only occupies them.
-      MONITOR_OUTBOUND_DENIED_DIR: ${{ vars.WINDOWS_OUTBOUND_DENIED_DIR }}
     steps:
       - name: Checkout the reviewed catalog and acquisition driver
         if: inputs.mode != 'candidate'

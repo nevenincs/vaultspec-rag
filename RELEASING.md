@@ -179,7 +179,7 @@ A cut is unattended only while these hold. Each one stopped a release once.
   installed Chrome or Chromium and never downloads one, so the browser belongs
   to the runner image.
 - **The Windows host denies outbound traffic to the proof's two program
-  paths.** See
+  paths, and names their directory in the runner's environment.** See
   [the Windows outbound-denied directory](#the-windows-outbound-denied-directory).
 
 ## Rehearsing the binaries lane
@@ -314,21 +314,22 @@ copies the pinned network control into both paths and requires each copy to
 fail to connect, having first connected from an ordinary path. Only then does
 the monitor take its path, so it runs under a denial that run watched work.
 
-Provision a host once, from an elevated session, and let the runner account
-modify the directory:
+The host provides that directory and names it in `MONITOR_OUTBOUND_DENIED_DIR`.
+On the fleet's Windows runner both come from the fleet: its repository declares
+the directory and the two rules, converges them from an elevated session, and
+writes the variable into the runner's environment. No workflow here sets it.
+
+To run the Windows proof on another machine, create the two rules once from
+an elevated PowerShell session and set the variable to the directory:
 
 ```powershell
-uv run --no-project --python 3.13 -- python -m tools.monitor.offline `
-  --provision-denied-directory X:\ci-shared\outbound-denied
-```
-
-The repository variable `WINDOWS_OUTBOUND_DENIED_DIR` names that directory to
-the workflows, which pass it to the proof as `MONITOR_OUTBOUND_DENIED_DIR`. Set
-the same variable to run the Windows proof by hand. Provisioning again is safe:
-it replaces only the rules for those two paths. The rules stay until removed:
-
-```powershell
-Get-NetFirewallRule -Group vaultspec-monitor-outbound-denied | Remove-NetFirewallRule
+$directory = 'C:\outbound-denied'
+New-Item -ItemType Directory -Force -Path $directory | Out-Null
+foreach ($name in 'monitor.exe', 'network-control.exe') {
+  New-NetFirewallRule -DisplayName outbound-denied -Direction Outbound `
+    -Action Block -Profile Any -Program (Join-Path $directory $name) | Out-Null
+}
+$env:MONITOR_OUTBOUND_DENIED_DIR = $directory
 ```
 
 A proof that reports its blocked control still connects is on a host whose
