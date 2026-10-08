@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 import time
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
@@ -133,7 +133,7 @@ def _contradict_persisted_publication(
     ledger: RunLedger, generation_id: str, failure: str, root: Path
 ) -> None:
     """Persist typed contradictions without fabricating ledger responses."""
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         if failure == "unpublished-phase":
             connection.execute(
                 "UPDATE generations SET finalization_phase = ? WHERE generation_id = ?",

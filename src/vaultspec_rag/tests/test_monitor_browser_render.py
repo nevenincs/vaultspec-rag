@@ -394,6 +394,23 @@ def _fits_viewport(browser: Browser) -> None:
         ) from None
 
 
+def _resize_after_drawing(browser: Browser, size: tuple[int, int]) -> None:
+    """Take *size* only once the health charts are drawn at the browser's own.
+
+    A drawn chart carries its width in pixels, so narrowing after it is the
+    case that can leave the page too wide. When the readings happened to
+    arrive after the resize instead, a fit check passed without meeting it.
+
+    Mutation proof: without the health tile's stack rule in the monitor
+    stylesheet, both narrow sizes then failed the fit check on the System RAM
+    chart keeping its drawn width; with the rule all four sizes passed.
+    """
+    browser.wait(
+        "document.querySelector('.monitor-health-tile .chart-holder') !== null"
+    )
+    browser.command("resize", width=size[0], height=size[1])
+
+
 @pytest.mark.parametrize("size", [(1440, 1000), (800, 900), (390, 844), (320, 740)])
 def test_carbon_monitor_live_scopes_and_retained_evidence(
     rendered_monitor: Browser,
@@ -417,7 +434,7 @@ def test_carbon_monitor_live_scopes_and_retained_evidence(
     )
     (directory / QDRANT_LOG_NAME).write_text("qdrant-own-record\n", encoding="utf-8")
     try:
-        browser.command("resize", width=size[0], height=size[1])
+        _resize_after_drawing(browser, size)
         browser.wait("document.body.innerText.includes('Models and integrations')")
         browser.wait("document.body.innerText.includes('System CPU')")
         assert (

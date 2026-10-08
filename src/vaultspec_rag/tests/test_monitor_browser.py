@@ -6,6 +6,7 @@ import json
 import os
 import queue
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -257,6 +258,127 @@ def test_bridge_refuses_loopback_callers_without_its_capability(
     status, health = _read(access, "/health")
     assert status == 200
     assert cast("dict[str, object]", health["quiesce"])["state"] == "running"
+
+
+#: The largest body the bridge reads from any request, admitted or not.
+_BRIDGE_BODY_LIMIT = 8192
+
+#: A window well inside the bridge's wait for a refused request's body: an
+#: answer inside it was not that wait running out.
+_AT_ONCE_SECONDS = 1.5
+
+
+def _refused_post(access: str, *framing: str) -> socket.socket:
+    """Connect and send only the head of a POST the bridge refuses."""
+    link = urllib.parse.urlsplit(access)
+    assert link.hostname is not None
+    assert link.port is not None
+    head = "\r\n".join(
+        (
+            "POST /api/monitor/repositories/enroll HTTP/1.1",
+            f"Host: {link.netloc}",
+            "Content-Type: application/json",
+            *framing,
+            "",
+            "",
+        )
+    )
+    caller = socket.create_connection((link.hostname, link.port), timeout=8)
+    caller.sendall(head.encode())
+    return caller
+
+
+def _whole_answer(caller: socket.socket) -> bytes:
+    """Read until the bridge closes the connection."""
+    answer = b""
+    while chunk := caller.recv(4096):
+        answer += chunk
+    return answer
+
+
+def test_a_refusal_waits_for_the_request_it_refuses(
+    browser_bridge: tuple[str, Path],
+) -> None:
+    """A refused request is answered only once its body is off the wire.
+
+    A server that answers and closes while the caller is still sending
+    resets the connection, and on Windows a reset discards the answer the
+    caller has not read yet: the caller sees an aborted connection where
+    the refusal should be. A standard client writes its headers and its body
+    separately, so every refused mutation is open to it.
+
+    Mutation proof: answering the refusal at once made this fail on the
+    timeout expectation, with the refusal on the wire before any body was
+    sent; draining the request first made it pass.
+    """
+    access, _ = browser_bridge
+    body = b'{"root": "unconfirmed", "watch": false}'
+    with _refused_post(
+        access, f"Content-Length: {len(body)}", "Connection: close"
+    ) as caller:
+        caller.settimeout(0.5)
+        with pytest.raises(TimeoutError):
+            caller.recv(1)
+        caller.settimeout(8)
+        caller.sendall(body)
+        answer = _whole_answer(caller)
+    assert answer.startswith(b"HTTP/1.1 401 ")
+    assert b"The monitor requires its access link." in answer
+
+
+def test_a_refusal_does_not_wait_for_a_body_too_large_to_serve(
+    browser_bridge: tuple[str, Path],
+) -> None:
+    """A body declared past the bridge's limit is refused without reading it.
+
+    Mutation proof: waiting for any declared body made this time out inside
+    the window, the answer arriving only when the bridge's wait ran out;
+    refusing an oversized declaration at once made it pass.
+    """
+    access, _ = browser_bridge
+    with _refused_post(access, f"Content-Length: {_BRIDGE_BODY_LIMIT + 1}") as caller:
+        caller.settimeout(_AT_ONCE_SECONDS)
+        answer = _whole_answer(caller)
+    assert answer.startswith(b"HTTP/1.1 401 ")
+    assert b"connection: close" in answer.lower()
+
+
+def test_a_refusal_stops_waiting_for_a_body_that_never_arrives(
+    browser_bridge: tuple[str, Path],
+) -> None:
+    """A caller that declares a body and sends none is answered and dropped.
+
+    Mutation proof: waiting without a deadline made this time out reading
+    the answer; restoring the deadline made it pass.
+    """
+    access, _ = browser_bridge
+    with _refused_post(access, "Content-Length: 64") as caller:
+        caller.settimeout(0.5)
+        with pytest.raises(TimeoutError):
+            caller.recv(1)
+        caller.settimeout(8)
+        answer = _whole_answer(caller)
+    assert answer.startswith(b"HTTP/1.1 401 ")
+    assert b"connection: close" in answer.lower()
+
+
+def test_a_refusal_stops_reading_a_body_that_outgrows_the_limit(
+    browser_bridge: tuple[str, Path],
+) -> None:
+    """A stream with no declared length is refused once it passes the limit.
+
+    Mutation proof: discarding without counting made this time out inside the
+    window, the answer arriving only when the bridge's wait ran out; counting
+    what is discarded made it pass.
+    """
+    access, _ = browser_bridge
+    size = _BRIDGE_BODY_LIMIT + 1
+    with _refused_post(access, "Transfer-Encoding: chunked") as caller:
+        caller.sendall(f"{size:x}\r\n".encode() + b"x" * size + b"\r\n")
+        caller.settimeout(_AT_ONCE_SECONDS)
+        answer = _whole_answer(caller)
+    assert answer.startswith(b"HTTP/1.1 401 ")
+    assert b"connection: close" in answer.lower()
 
 
 @pytest.mark.parametrize("installed", [True, False])

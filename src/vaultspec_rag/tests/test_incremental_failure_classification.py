@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -114,7 +115,7 @@ class _FailAfterAcknowledgement(NullProgressReporter):
 
 
 def _failure_count(checkpoint: CodeRunCheckpoint) -> int:
-    with sqlite3.connect(checkpoint.ledger.path) as connection:
+    with closing(sqlite3.connect(checkpoint.ledger.path)) as connection, connection:
         row = connection.execute(
             "SELECT consecutive_failures FROM generations WHERE generation_id = ?",
             (checkpoint.generation_id,),

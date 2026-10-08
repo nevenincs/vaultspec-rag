@@ -13,6 +13,7 @@ Every mutation was immediately restored and its selected test then passed.
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 from typing import TYPE_CHECKING
 from uuid import NAMESPACE_URL, uuid5
@@ -337,13 +338,13 @@ def test_rebuild_recovery_without_a_durable_commit_does_not_advance_progress(
             _write(incremental, receipt_store, "new-guide.md")
         if recovery == "not-ready":
             incremental.seal_incremental_proof()
-            with sqlite3.connect(ledger.path) as connection:
+            with closing(sqlite3.connect(ledger.path)) as connection, connection:
                 connection.execute(
                     "DELETE FROM file_states WHERE generation_id = ?",
                     (incremental.generation_id,),
                 )
         elif recovery == "rollback-refused":
-            with sqlite3.connect(ledger.path) as connection:
+            with closing(sqlite3.connect(ledger.path)) as connection, connection:
                 connection.execute(
                     """
                     CREATE TRIGGER refuse_receipt_rollback
@@ -528,7 +529,7 @@ def test_recovery_commit_refuses_confirmed_units_without_matching_file_state(
     incremental.seal_incremental_proof()
     incremental.mark_failed("interrupted after sealing")
     assert incremental.receipt is not None
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         connection.execute(
             "DELETE FROM file_states WHERE generation_id = ?",
             (incremental.generation_id,),
@@ -599,7 +600,7 @@ def test_resume_refuses_a_committed_receipt_with_changed_current_proof(
     )
     assert incremental.receipt is not None
     ledger.commit_publication_receipt(incremental.receipt.receipt_id)
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         connection.execute("UPDATE publication_proofs SET revision = revision + 1")
 
     with pytest.raises(
@@ -722,7 +723,7 @@ def test_missing_receipt_is_not_treated_as_completed_noop(tmp_path: Path) -> Non
         RunAuthority.PUBLICATION,
     )
     assert incremental.receipt is not None
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         connection.execute(
             "DELETE FROM publication_receipts WHERE receipt_id = ?",
             (incremental.receipt.receipt_id,),

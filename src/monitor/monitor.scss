@@ -70,6 +70,15 @@ body {
   block-size: 100%;
 }
 
+// A Carbon stack is an inline grid, sized by its content, and a drawn chart
+// has a width in pixels. Left so, the stack keeps the chart's last width when
+// its tile narrows, the chart is never told to redraw, and the page stays
+// wider than the window it was narrowed to.
+.monitor-health-tile > .cds--stack-vertical {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .monitor-reasons {
   padding-inline-start: spacing.$spacing-05;
   list-style-type: disc;

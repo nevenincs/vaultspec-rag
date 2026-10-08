@@ -541,6 +541,12 @@ def device_load_reading() -> dict[str, object] | None:
     absent rather than surfacing as an error. Callers that poll this at a fast
     cadence (the jobs listing) cache the result themselves; this function
     always takes a fresh reading.
+
+    A host without torch has no device to read. That is the ordinary state of
+    a service client, so it is reported absent without the warning and
+    traceback an unreadable probe earns: polled, those bury every other line.
+    Only the package being absent counts. A torch that is installed and fails
+    to import is a broken installation, and is reported as a failed probe.
     """
     backend: AcceleratorBackend = "cuda"
     try:
@@ -552,11 +558,14 @@ def device_load_reading() -> dict[str, object] | None:
         if detected is not None:
             backend = detected
         admission = evaluate_device_admission(backend)
-    except Exception:
-        logger.warning(
-            "device-load admission probe failed; reporting it absent",
-            exc_info=True,
-        )
+    except Exception as exc:
+        if isinstance(exc, ModuleNotFoundError) and exc.name == "torch":
+            logger.debug("device-load reading skipped: torch is not installed")
+        else:
+            logger.warning(
+                "device-load admission probe failed; reporting it absent",
+                exc_info=True,
+            )
         return None
     return device_load_wire(admission)
 
