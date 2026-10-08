@@ -369,17 +369,16 @@ jobs:
           FRONTEND_SHA256: ${{ needs.frontend.outputs.frontend_sha256 }}
         run: just release-monitor "$TAG" "$TARGET_SHA" "$FRONTEND_SHA256"
 
+      # On Windows the proof occupies the directory the runner's own
+      # environment names as MONITOR_OUTBOUND_DENIED_DIR. The host denies
+      # outbound traffic to two program paths in it; adding such a rule takes
+      # an Administrator, and the runner account is not one.
       - name: Verify finalized monitor bytes and render in an installed browser
         shell: bash
         env:
           TAG: ${{ inputs.tag }}
           TARGET_SHA: ${{ needs.validate.outputs.sha }}
           TARGET: ${{ matrix.target }}
-          # Read on Windows only: the directory whose two program paths the
-          # host denies outbound traffic. Adding such a rule takes an
-          # Administrator and the runner account is not one, so the host
-          # carries the rules and the proof only occupies them.
-          MONITOR_OUTBOUND_DENIED_DIR: ${{ vars.WINDOWS_OUTBOUND_DENIED_DIR }}
         run: uv run --no-project --python 3.13 -- python -m tools.monitor.release native-smoke --tag "$TAG" --source-revision "$TARGET_SHA" --target "$TARGET" --directory dist-bin --os-offline
 
       - name: Package and verify the release bundle

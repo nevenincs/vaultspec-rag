@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import json
 import os
 import shutil
 import socket
@@ -23,7 +22,7 @@ from vaultspec_rag._fd_lock import lock_fd_exclusive, unlock_fd
 from vaultspec_rag.qdrant_runtime._provision import verify_native_binary
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
 CONTROL_HOST = "1.1.1.1"
 CONTROL_PORT = 443
@@ -33,41 +32,15 @@ MAC_PROFILE = """(version 1)
 (allow network-outbound (remote ip "localhost:*"))
 """
 # Adding a firewall rule takes an Administrator, and a CI runner account is
-# deliberately not one. So the rules are added once per host, for two fixed
-# program paths in a directory the runner may write, and every proof after
-# that only copies bytes into those paths and shows that they cannot connect.
+# deliberately not one. So the rules are the host's: two fixed program paths
+# in a directory the runner may write, which the host names in this variable.
+# A proof only copies bytes into those paths and shows that they cannot
+# connect; it adds, reads and removes no rule.
 DENIED_DIRECTORY = "MONITOR_OUTBOUND_DENIED_DIR"
-DENIED_GROUP = "vaultspec-monitor-outbound-denied"
 MONITOR_SLOT = "monitor.exe"
 CONTROL_SLOT = "network-control.exe"
 CLAIM = "claim.lock"
 CLAIM_WAIT_SECONDS = 900.0
-PROVISION = """
-$ErrorActionPreference = 'Stop'
-$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-$principal = [Security.Principal.WindowsPrincipal]::new($identity)
-$adminRole = [Security.Principal.WindowsBuiltInRole]::Administrator
-if (-not $principal.IsInRole($adminRole)) {
-    throw 'Provisioning outbound denial requires an elevated session'
-}
-if ((Get-NetFirewallProfile | Where-Object { -not $_.Enabled }).Count -ne 0) {
-    throw 'Every firewall profile must be enabled for offline proof'
-}
-$spec = Get-Content -LiteralPath $env:MONITOR_FIREWALL_SPEC -Raw | ConvertFrom-Json
-foreach ($program in $spec.programs) {
-    Get-NetFirewallRule -Group $spec.group -ErrorAction SilentlyContinue |
-        Where-Object { ($_ | Get-NetFirewallApplicationFilter).Program -eq $program } |
-        Remove-NetFirewallRule
-    $rule = New-NetFirewallRule -DisplayName $spec.group -Group $spec.group `
-        -Direction Outbound -Action Block -Profile Any -Program $program -Enabled True
-    $active = Get-NetFirewallRule -PolicyStore ActiveStore -Name $rule.Name
-    $filter = $active | Get-NetFirewallApplicationFilter
-    if ($active.Enabled -ne 'True' -or $active.Action -ne 'Block' -or
-        $active.Direction -ne 'Outbound' -or $filter.Program -ne $program) {
-        throw 'The executable outbound rule is not active'
-    }
-}
-"""
 BUN_CONTROL = """
 import { createConnection } from 'node:net';
 const [host, port] = process.argv.slice(1);
@@ -138,20 +111,20 @@ def bun_connection(binary: Path, launch_prefix: tuple[str, ...] = ()) -> bool:
 
 
 def denied_directory() -> Path:
-    """Return the host's provisioned outbound-denied directory."""
+    """Return the directory whose two program paths the host denies outbound."""
     configured = os.environ.get(DENIED_DIRECTORY, "")
     directory = Path(configured)
     if not configured or not directory.is_absolute() or not directory.is_dir():
         raise RuntimeError(
             f"Windows OS-offline verification needs {DENIED_DIRECTORY} to name a "
-            "directory provisioned from an elevated session with "
-            "`python -m tools.monitor.offline --provision-denied-directory <dir>`"
+            f"directory in which the host denies outbound traffic to {MONITOR_SLOT} "
+            f"and {CONTROL_SLOT}; the host that runs this proof provides it"
         )
     return directory
 
 
 @contextlib.contextmanager
-def claimed(directory: Path) -> Iterator[None]:
+def claimed(directory: Path) -> Generator[None]:
     """Hold the denied directory's two program paths for one proof at a time."""
     descriptor = os.open(directory / CLAIM, os.O_RDWR | os.O_CREAT)
     try:
@@ -172,38 +145,6 @@ def claimed(directory: Path) -> Iterator[None]:
             unlock_fd(descriptor)
     finally:
         os.close(descriptor)
-
-
-def provision_denied_directory(directory: Path) -> None:
-    """Deny outbound traffic to the two program paths a proof occupies."""
-    if os.name != "nt":
-        raise RuntimeError("Only Windows proves outbound denial by program path")
-    directory = directory.resolve()
-    directory.mkdir(parents=True, exist_ok=True)
-    powershell = str(
-        Path(os.environ["SYSTEMROOT"])
-        / "System32/WindowsPowerShell/v1.0/powershell.exe"
-    )
-    with tempfile.TemporaryDirectory(prefix="monitor-os-offline-") as scratch:
-        specification = Path(scratch) / "firewall.json"
-        specification.write_text(
-            json.dumps(
-                {
-                    "group": DENIED_GROUP,
-                    "programs": [
-                        str(directory / MONITOR_SLOT),
-                        str(directory / CONTROL_SLOT),
-                    ],
-                }
-            ),
-            encoding="utf-8",
-        )
-        subprocess.run(
-            [powershell, "-NoProfile", "-NonInteractive", "-Command", PROVISION],
-            env={**os.environ, "MONITOR_FIREWALL_SPEC": str(specification)},
-            check=True,
-            timeout=120,
-        )
 
 
 def windows_probe(
@@ -292,14 +233,9 @@ def probe_offline(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    action = parser.add_mutually_exclusive_group(required=True)
-    action.add_argument("--check-outbound", action="store_true")
-    action.add_argument("--provision-denied-directory", type=Path)
-    args = parser.parse_args()
-    if args.provision_denied_directory:
-        provision_denied_directory(args.provision_denied_directory)
-    else:
-        require_denial()
+    parser.add_argument("--check-outbound", action="store_true", required=True)
+    parser.parse_args()
+    require_denial()
 
 
 if __name__ == "__main__":

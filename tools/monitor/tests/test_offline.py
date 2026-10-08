@@ -31,7 +31,7 @@ def test_missing_network_denial_cannot_produce_offline_evidence(
 
 
 @pytest.mark.unit
-def test_a_host_without_a_denied_directory_is_told_how_to_provision_one(
+def test_a_host_without_a_denied_directory_is_told_what_it_lacks(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The Windows proof never falls back to a path nothing denies.
@@ -39,7 +39,7 @@ def test_a_host_without_a_denied_directory_is_told_how_to_provision_one(
     Mutation proof: returning the configured path without the directory check
     failed the missing-directory case; restoring the check passed.
     """
-    remedy = "--provision-denied-directory"
+    remedy = "the host that runs this proof provides it"
     monkeypatch.delenv(offline.DENIED_DIRECTORY, raising=False)
     with pytest.raises(RuntimeError, match=remedy):
         offline.denied_directory()
