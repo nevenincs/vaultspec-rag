@@ -10,6 +10,8 @@ import type { Duplex } from "node:stream";
 const prefix = "/api/monitor";
 const maxResponseBytes = 32 * 1024 * 1024;
 const maxRequestBytes = 8192;
+// How long a refusal waits for the body of the request it refuses.
+const refusalDrainMilliseconds = 3000;
 declare const MONITOR_COMPILED: boolean;
 const checkout =
   typeof MONITOR_COMPILED !== "undefined" && MONITOR_COMPILED
@@ -512,6 +514,11 @@ async function forward(
  * standard client writes headers and body separately, so a body that was
  * declared is discarded unread first and the refusal follows it. A request
  * that declares none is refused at once.
+ *
+ * The caller is one this bridge has not admitted, so the courtesy is bounded
+ * by the same size an admitted request may have and by a short wait. A body
+ * declared larger than that is not waited for at all; one that runs past the
+ * size, or has not ended in time, is answered there and the connection closed.
  */
 function refuse(
   request: IncomingMessage,
@@ -519,15 +526,35 @@ function refuse(
   status: number,
   body: Record<string, unknown>,
 ): void {
-  const declaresBody =
-    request.headers["transfer-encoding"] !== undefined ||
-    Number(request.headers["content-length"] ?? 0) > 0;
-  if (request.complete || !declaresBody) {
+  const declared = Number(request.headers["content-length"] ?? 0);
+  const chunked = request.headers["transfer-encoding"] !== undefined;
+  if (request.complete || (!chunked && !(declared > 0))) {
     reply(response, status, body);
     return;
   }
-  request.once("end", () => reply(response, status, body));
-  request.resume();
+  if (declared > maxRequestBytes) {
+    response.setHeader("Connection", "close");
+    reply(response, status, body);
+    return;
+  }
+  let discarded = 0;
+  let answered = false;
+  const answer = (close: boolean) => {
+    if (answered) return;
+    answered = true;
+    clearTimeout(deadline);
+    request.off("data", discard);
+    if (close) response.setHeader("Connection", "close");
+    reply(response, status, body);
+  };
+  const discard = (chunk: Buffer | string) => {
+    discarded += Buffer.byteLength(chunk);
+    if (discarded > maxRequestBytes) answer(true);
+  };
+  const deadline = setTimeout(() => answer(true), refusalDrainMilliseconds);
+  request.once("end", () => answer(false));
+  request.once("close", () => clearTimeout(deadline));
+  request.on("data", discard);
 }
 
 export function monitorUpgrade(request: IncomingMessage, socket: Duplex): void {
