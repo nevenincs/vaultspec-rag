@@ -55,7 +55,16 @@ Wait for the stop to succeed, then choose one of the following starts.
 vaultspec-rag server start --local-only
 ```
 
-Include `--local-only` on every start. A plain `server start` overrides a saved or environment-based local-only selection, including one saved by `install --local-only`.
+Use `--local-only` for a single start. To save local-only as the host's choice, run
+`install --local-only`; a plain `server start` honors it unless a command flag or
+environment setting overrides it. Start flags take precedence over the process
+environment, which takes precedence over the saved choice, then the managed-server
+default. `server start --qdrant` selects managed Qdrant for that start even when
+local-only is saved or exported; it does not change the saved choice.
+
+The service's index support profile must also include `embedded-local`. Set
+`VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE=embedded-local` in the service environment;
+the default profile refuses local-only storage. See [installation requirements](installation.md#what-you-need-before-you-start).
 
 <p id="switching-back-to-the-managed-server"></p>
 
