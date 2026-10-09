@@ -289,7 +289,8 @@ def occasions(workflow: str) -> tuple[tuple[str, dict[str, object]], ...]:
     pair running together. So a pull request is expanded over the actions its
     trigger lists, draft or ready, and - for a label - :data:`FULL_RUN_LABEL`
     or any other; a dispatch is expanded over every choice input's options.
-    Every other event, and every payload field not named here, stays unknown.
+    Dispatches also enumerate literal branch comparisons in job conditions,
+    plus a branch outside that set. Other payload fields stay unknown.
     """
     document_ = document(workflow)
     declared = triggers(document_)
@@ -332,6 +333,26 @@ def occasions(workflow: str) -> tuple[tuple[str, dict[str, object]], ...]:
                 for shape in shapes
                 for option in options
             ]
+        if event == "workflow_dispatch":
+            branches = sorted(
+                {
+                    branch
+                    for job in (document_.get("jobs") or {}).values()
+                    for branch in re.findall(
+                        r"github\.ref_name\s*(?:==|!=)\s*'([^']+)'",
+                        str(job.get("if") or ""),
+                    )
+                }
+            )
+            if branches:
+                other = "__other_dispatch_branch__"
+                while other in branches:
+                    other += "_"
+                shapes = [
+                    {**shape, "github.ref_name": branch}
+                    for shape in shapes
+                    for branch in (*branches, other)
+                ]
         found.extend((event, shape) for shape in shapes)
     return tuple(found)
 

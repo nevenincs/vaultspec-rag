@@ -1100,8 +1100,10 @@ and every `files[].name` exists with its listed size and digest. `manifest.json`
 doesn't hash the enclosing archive; `SHA256SUMS` is the source of truth for that digest.
 The manifest's `platform.glibc_floor` records the enclosing Linux bundle floor.
 The monitor's component records its independently measured `glibc_required`; it does
-not lower the RAG bundle's glibc 2.39 requirement. Release CI also compares the archive
-and monitor against the independently reviewed [committed release pins](../tools/monitor/release-pins.json).
+not lower the RAG bundle's glibc 2.39 requirement. Release CI and public acquisition
+also authenticate the archive's GitHub/Sigstore attestation against the release
+repository, signing workflow, tag and source commit before inspecting or extracting
+it. The executable hashes inside that authenticated archive are checked before launch.
 
 ### Which Linux binary your distribution can run
 

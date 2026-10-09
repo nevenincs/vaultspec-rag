@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#monitor-delivery'
 date: '2026-10-02'
-modified: '2026-10-04'
+modified: '2026-10-09'
 body_schema: 'body-v2'
-body_hash: 'sha256:bf5ea55372fd12450a4744751e6562d13cdffead948c43d53a8752e62ea7509c'
+body_hash: 'sha256:23f25ab68226cacd3a3c4f685f0e41c8daf0a967af603dce31347335ee267837'
 related:
   - "[[2026-10-02-monitor-delivery-reference]]"
   - "[[2026-10-02-monitor-delivery-research]]"
@@ -74,3 +74,15 @@ The existing archive is the smallest boundary that carries the frontend server, 
 ## Consequences
 
 Users extract one RAG archive and canonical server start launches its bundled monitor; direct monitor launch also supports isolated diagnostics. Ordinary frontend startup is independent of development tooling. Builds acquire a pinned Bun compiler, the manifest evolves, and release proof gains native frontend checks on four targets. Public acquisition also needs an independently reviewed release-pin handoff. The backend remains a separate running service with its existing first-launch requirements. Reconsider this ruling if independent monitor releases, additional target platforms, remote multi-user service access or a bunx package become requirements. Acceptance establishes the contract; it does not claim that a binary has already been built or tested.
+
+## Authorized provenance amendment
+
+Amended 2026-10-09 on the maintainer's explicit instruction that the release PR
+merge is the only human action. `2026-10-09-automatic-merge-gate-autonomous-release-adr`
+replaces the separate human release-pin catalog review with workflow-bound
+GitHub/Sigstore archive attestations after native proof. Repository, signing workflow,
+exact tag ref and source/signing commit are authenticated before archive inspection
+or extraction. Finalized executable hashes come from that authenticated archive and
+are rechecked before launch. Live checksums alone remain insufficient. The historical
+catalog-review wording above records the earlier ruling; this amendment governs
+release-product admission. Toolchain provisioning retains reviewed committed pins.

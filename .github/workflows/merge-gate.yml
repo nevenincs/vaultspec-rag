@@ -15,10 +15,9 @@ name: RAG Merge Gate
 # - A push to main runs the full gate on the commit that landed. Release
 #   Please refreshes the release proposal only after that run succeeds, so a
 #   regression can reach main but never a release.
-# - A dispatch runs the full gate unless it asks for `scope: light`, which is
-#   how Release Please keeps its regenerated branch mergeable without
-#   re-running suites main has already passed. The release cut calls this
-#   workflow for the full gate on the exact head it is about to merge.
+# - Release proposals always run the full gate, including Dev Server proof
+#   on their exact SHA. Other dispatches may ask for light lint. The release
+#   cut calls the full gate on the exact merged commit before tagging it.
 # - The weekly schedule runs only the dependency audit: main's tree was
 #   measured when it landed, but an advisory can be published against an
 #   unchanged lock at any time.
@@ -129,7 +128,8 @@ jobs:
     # carries that workflow's event, a dispatch, and runs the full gate.
     if: >-
       github.event_name == 'push' ||
-      (github.event_name == 'workflow_dispatch' && inputs.scope != 'light') ||
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.scope != 'light' || github.ref_name == 'release-please--branches--main--components--vaultspec-rag')) ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
        ((github.event.action == 'labeled' && github.event.label.name == 'ci:full' &&
@@ -196,7 +196,8 @@ jobs:
     # A fork's pull request never runs here: the workflow it would run is the
     # fork's own. The gate refuses it instead.
     if: >-
-      (github.event_name == 'workflow_dispatch' && inputs.scope == 'light') ||
+      (github.event_name == 'workflow_dispatch' && inputs.scope == 'light' &&
+       github.ref_name != 'release-please--branches--main--components--vaultspec-rag') ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
        github.event.action == 'synchronize' &&
@@ -250,7 +251,8 @@ jobs:
     # fork's own. The gate refuses it instead.
     if: >-
       github.event_name == 'push' ||
-      (github.event_name == 'workflow_dispatch' && inputs.scope != 'light') ||
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.scope != 'light' || github.ref_name == 'release-please--branches--main--components--vaultspec-rag')) ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
        ((github.event.action == 'labeled' && github.event.label.name == 'ci:full' &&
@@ -344,7 +346,8 @@ jobs:
     # fork's own. The gate refuses it instead.
     if: >-
       github.event_name == 'push' ||
-      (github.event_name == 'workflow_dispatch' && inputs.scope != 'light') ||
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.scope != 'light' || github.ref_name == 'release-please--branches--main--components--vaultspec-rag')) ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
        ((github.event.action == 'labeled' && github.event.label.name == 'ci:full' &&
@@ -427,7 +430,8 @@ jobs:
     if: >-
       github.event_name == 'push' ||
       github.event_name == 'schedule' ||
-      (github.event_name == 'workflow_dispatch' && inputs.scope != 'light') ||
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.scope != 'light' || github.ref_name == 'release-please--branches--main--components--vaultspec-rag')) ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
        ((github.event.action == 'labeled' && github.event.label.name == 'ci:full' &&
@@ -492,7 +496,7 @@ jobs:
       # run against the same commit. That matches how branch
       # protection evaluates the newest required check and cannot revive an
       # older green verdict after a newer red one.
-      actions: read
+      actions: write
       pull-requests: write
     env:
       CI_RESOURCE_CLASS: verdict
@@ -501,6 +505,7 @@ jobs:
       DRAFT: ${{ github.event.pull_request.draft }}
       PR: ${{ github.event.pull_request.number }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
       HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
       AUTHOR: ${{ github.event.pull_request.user.login }}
       ASSOCIATION: ${{ github.event.pull_request.author_association }}
@@ -524,6 +529,33 @@ jobs:
         run: |
           gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/$PR/labels/$FULL_RUN_LABEL" --silent \
             || gh api "repos/$GITHUB_REPOSITORY/issues/$PR/labels" --jq 'any(.[]; .name == env.FULL_RUN_LABEL) | not' | grep -qx true
+
+      - name: Require the release dev server proof on this exact commit
+        if: >-
+          (github.event_name == 'workflow_dispatch' &&
+           github.ref_name == 'release-please--branches--main--components--vaultspec-rag') ||
+          github.event_name == 'push'
+        env:
+          PROOF_SHA: ${{ inputs.ref || github.sha }}
+          PROOF_EVENT: ${{ github.event_name == 'push' && 'push' || 'workflow_dispatch' }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$PROOF_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            PROOF_SHA="$GITHUB_SHA"
+          fi
+          # The check runs separately on the canonical workflow's runner.
+          # Poll only its newest run on this SHA, and never reuse an older green.
+          for _ in $(seq 1 180); do
+            state=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/devserver.yml/runs?event=$PROOF_EVENT&head_sha=$PROOF_SHA&per_page=100" \
+              --jq '.workflow_runs | sort_by(.id) | last | "\(.status // "missing") \(.conclusion // "none")"')
+            case "$state" in
+              "completed success") exit 0 ;;
+              completed*) echo "::error::Dev Server for $PROOF_SHA ended $state"; exit 1 ;;
+            esac
+            sleep 10
+          done
+          echo "::error::Dev Server did not prove $PROOF_SHA within thirty minutes"
+          exit 1
 
       - name: Every full check passed on this commit
         run: |
@@ -562,6 +594,25 @@ jobs:
             echo "::error::the checks this event requires did not all run (lint=${LINT} light=${LIGHT} linux=${TESTS} windows=${WINDOWS} audit=${AUDIT})"
             exit 1
           fi
+          if [ "$AUTHOR" = "github-actions[bot]" ] && [ "$HEAD_BRANCH" = "release-please--branches--main--components--vaultspec-rag" ]; then
+            for _ in $(seq 1 20); do
+              previous=$(gh api \
+                "repos/$GITHUB_REPOSITORY/actions/workflows/merge-gate.yml/runs?event=workflow_dispatch&head_sha=$HEAD_SHA&per_page=100" \
+                --jq '.workflow_runs | sort_by(.id) | last | "\(.id // 0) \(.status // "missing") \(.conclusion // "none")"')
+              read -r run status conclusion <<< "$previous"
+              if [ "$status" = completed ]; then
+                [ "$conclusion" = success ] || { echo "::error::release proposal full dispatch ended $conclusion"; exit 1; }
+                measured=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?per_page=100" \
+                  --jq '[.jobs[] | select(.name == "Check: Full lint (Linux)" or .name == "Test: Correctness suite (Linux, 3.13)" or .name == "Test: Correctness suite (Linux, 3.14)" or .name == "Test: Full suite (Windows)" or .name == "Check: Dependency advisories (Linux)")] | length == 5 and all(.[]; .conclusion == "success")')
+                [ "$measured" = true ] || { echo "::error::release proposal lacks full measured proof on $HEAD_SHA"; exit 1; }
+                echo "full dispatched checks proved release proposal $HEAD_SHA"
+                exit 0
+              fi
+              sleep 3
+            done
+            echo "::error::release proposal has no completed full proof on $HEAD_SHA"
+            exit 1
+          fi
           # An unrelated label can preserve only the newest completed verdict
           # earned by this exact commit. This run is still in progress, so
           # filtering to completed runs excludes it without comparing ids.
@@ -587,3 +638,28 @@ jobs:
             echo "::error::the last run on $HEAD_SHA ended in $previous; push a fix, or add $FULL_RUN_LABEL to run the full gate again"
           fi
           exit 1
+
+      - name: Approve the proven release proposal checks
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          github.ref_name == 'release-please--branches--main--components--vaultspec-rag' &&
+          (inputs.ref == '' || inputs.ref == github.ref_name || inputs.ref == github.sha)
+        env:
+          SHA: ${{ github.sha }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          proposal=$(gh pr list --repo "$GITHUB_REPOSITORY" --base main --state open \
+            --head "$BRANCH" --label "autorelease: pending" \
+            --json number,headRefOid,author \
+            --jq '.[] | select(.author.is_bot and .author.login == "app/github-actions") | "\(.number) \(.headRefOid)"')
+          [ -n "$proposal" ] || exit 0
+          read -r number head <<< "$proposal"
+          [ "$head" = "$SHA" ] || exit 0
+          held=$(gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/merge-gate.yml/runs?event=pull_request&head_sha=$SHA&status=action_required&per_page=100" \
+            --jq '.workflow_runs[].id')
+          for run in $held; do
+            gh api --method POST "repos/$GITHUB_REPOSITORY/actions/runs/$run/approve" --silent
+            echo "approved the held gate of proven release proposal #$number at $SHA"
+          done

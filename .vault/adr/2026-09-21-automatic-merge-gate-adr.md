@@ -1,17 +1,18 @@
 ---
 tags:
-  - '#adr'
-  - '#automatic-merge-gate'
+  - "#adr"
+  - "#automatic-merge-gate"
 date: '2026-09-21'
-modified: '2026-09-30'
-body_schema: 'body-v2'
-body_hash: 'sha256:658878b29300a8f0e8ec60bcdb3f004f8c6ec3810ffe71a8d6e0e9eee0806e9d'
 related:
   - "[[2026-09-21-automatic-merge-gate-reference]]"
-  - '[[2026-09-29-release-pr-identity-research]]'
+  - "[[2026-09-29-release-pr-identity-research]]"
+superseded_by: '2026-10-09-automatic-merge-gate-autonomous-release-adr'
+modified: '2026-10-09'
+body_schema: 'body-v2'
+body_hash: 'sha256:ebdbbee60f587a808c9e53e08f7641519c056330c79e6f7d75a0686d4da7049b'
 ---
 
-# `automatic-merge-gate` adr: `automatic pull-request and release-branch proof` | (**status:** `accepted`)
+# `automatic-merge-gate` adr: `automatic pull-request and release-branch proof` | (**status:** `superseded`)
 
 ## Problem Statement
 

@@ -53,6 +53,7 @@ jobs:
     # The step below creates the draft release when one is missing.
     permissions:
       contents: write
+      pull-requests: read
     outputs:
       sha: ${{ steps.commit.outputs.sha }}
       tag: ${{ steps.commit.outputs.tag }}
@@ -62,6 +63,7 @@ jobs:
         shell: bash
         env:
           INPUT_TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           tag="${INPUT_TAG}"
@@ -69,11 +71,30 @@ jobs:
             echo "::error::not a release tag: ${tag}"
             exit 1
           fi
-          refs=$(git ls-remote --tags "https://github.com/${GITHUB_REPOSITORY}.git" "${tag}")
+          refs=$(git ls-remote --tags "https://github.com/${GITHUB_REPOSITORY}.git" "refs/tags/${tag}" "refs/tags/${tag}^{}")
           sha=$(awk -v ref="refs/tags/${tag}" '$2 == ref "^{}" { print $1; exit }' <<<"${refs}")
           [ -n "${sha}" ] || sha=$(awk -v ref="refs/tags/${tag}" '$2 == ref { print $1; exit }' <<<"${refs}")
           if ! [[ "${sha}" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::error::release tag ${tag} does not exist"
+            exit 1
+          fi
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::the publication workflow must run from main"
+            exit 1
+          fi
+          repo="repos/$GITHUB_REPOSITORY"
+          status=$(gh api "$repo/compare/${sha}...main" --jq .status)
+          case "$status" in ahead|identical) ;; *) echo "::error::release commit is not on main"; exit 1 ;; esac
+          proposals=$(gh api --paginate "$repo/commits/$sha/pulls" --jq \
+            '.[] | select(.merged_at != null and .merge_commit_sha == "'"$sha"'" and .base.ref == "main" and .base.repo.full_name == "'"$GITHUB_REPOSITORY"'") | select(any(.labels[]; .name == "autorelease: tagged" or .name == "autorelease: pending")) | .number')
+          if ! [[ "$proposals" =~ ^[0-9]+$ ]]; then
+            echo "::error::the release tag must identify exactly one merged release proposal"
+            exit 1
+          fi
+          version=$(gh api "$repo/contents/.release-please-manifest.json?ref=$sha" \
+            --jq '.content | @base64d | fromjson | ."."')
+          if [ "$tag" != "vaultspec-rag-v$version" ]; then
+            echo "::error::release tag differs from the merged release manifest"
             exit 1
           fi
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
@@ -336,8 +357,8 @@ jobs:
   # that must not meet. Reading a draft takes `contents: write`: GitHub lists a
   # draft only to a token that may write releases. Uploading takes `id-token:
   # write`. This job holds the first, reads the release's own wheel and sdist,
-  # checks them against the release's SHA256SUMS and the reviewed monitor
-  # pins, and hands exactly those bytes to the upload job below.
+  # checks them against the release's SHA256SUMS and the authenticated monitor
+  # provenance, and hands exactly those bytes to the upload job below.
   admit-package-index:
     name: "Check: Package index admission (Linux)"
     timeout-minutes: 135
@@ -350,6 +371,7 @@ jobs:
     permissions:
       # Reads the draft and downloads its assets; it edits nothing.
       contents: write
+      attestations: read
     env:
       CI_EXEC_BUDGET_MINUTES: 15
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -429,7 +451,7 @@ jobs:
           mkdir -p "${work}/bundles"
           gh release download "${TAG}" --repo "$GITHUB_REPOSITORY" \
             --dir "${work}/bundles" --pattern 'vaultspec-rag-v*.zip' --pattern 'vaultspec-rag-v*.tar.gz'
-          uv run --no-project --python 3.13 -- python -m tools.monitor.pins validate \
+          uv run --no-project --python 3.13 -- python -m tools.monitor.provenance \
             --tag "$TAG" --source-revision "$TARGET_SHA" --directory "${work}/bundles"
           # The digests travel as job outputs, apart from the artifact that
           # carries the bytes, so the upload job checks what it received
@@ -577,7 +599,8 @@ jobs:
                --ref main -f tag="$TAG"; then
             echo "dispatched the channel pointers for ${TAG}"
           else
-            echo "::warning::could not dispatch the channel pointers for ${TAG}; re-dispatch RAG Channels for this tag"
+            echo "::error::could not dispatch the channel pointers for ${TAG}"
+            exit 1
           fi
 
       # The acquisition check downloads the way a user does - unauthenticated
@@ -589,8 +612,8 @@ jobs:
       # would fire for anything this lane produces. A dispatch is explicitly
       # exempt from that rule.
       #
-      # A failure to dispatch does not fail the release: it is published and
-      # verified by this point, and the weekly run still covers it.
+      # A rejected handoff fails this run so a green publication cannot hide
+      # an acquisition check that never started.
       - name: Ask the acquisition check to try this release
         shell: bash
         env:
@@ -601,5 +624,6 @@ jobs:
                --ref main -f tag="$TAG" -f target_sha="$TARGET_SHA"; then
             echo "dispatched the acquisition check for ${TAG}"
           else
-            echo "::warning::could not dispatch the acquisition check for ${TAG}; its weekly run still covers this release"
+            echo "::error::could not dispatch the acquisition check for ${TAG}"
+            exit 1
           fi

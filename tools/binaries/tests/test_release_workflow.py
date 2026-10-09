@@ -371,12 +371,15 @@ def test_published_bundle_acquisition_checks_digests_and_producer_commit(
     acquire_source = (repo_root / "tools/monitor/acquire.py").read_text(
         encoding="utf-8"
     )
-    pins_source = (repo_root / "tools/monitor/pins.py").read_text(encoding="utf-8")
-    assert "catalog_at_commit(ROOT)" in acquire_source
+    provenance_source = (repo_root / "tools/monitor/provenance.py").read_text(
+        encoding="utf-8"
+    )
+    assert "pins = admit_archive(archive, spec, resolved)" in acquire_source
     assert "extract_verified_archive(" in acquire_source
     assert "probe_offline if os_offline else probe" in acquire_source
     assert "require_unique=True" in acquire_source
-    assert '"git", "show", f"{revision}:{CATALOG}"' in pins_source
+    assert '"--source-digest", producer' in " ".join(provenance_source.split())
+    assert '"--source-ref", f"refs/tags/{tag}"' in " ".join(provenance_source.split())
 
     document = _load(repo_root, "acquisition.yml")
     jobs = document["jobs"]
@@ -486,7 +489,10 @@ def test_package_index_admission_and_upload_never_share_a_grant(
     admission = jobs["admit-package-index"]
     assert admission["needs"] == "resolve-target"
     assert admission["if"] == "${{ inputs.stage == 'package-index' }}"
-    assert admission["permissions"] == {"contents": "write"}
+    assert admission["permissions"] == {
+        "contents": "write",
+        "attestations": "read",
+    }
     assert "environment" not in admission
     steps = [str(step.get("run", "")) for step in admission["steps"]]
     distribution = next(i for i, run in enumerate(steps) if "gh release view" in run)
@@ -668,6 +674,16 @@ def test_binary_consumers_use_the_validated_remote_revision(repo_root: Path) -> 
             for step in job["steps"]
             if str(step.get("uses", "")).startswith("actions/checkout@")
         ]
+        if name == "attest":
+            assert not checkouts, (
+                "the attestation grant must never run checked-out code"
+            )
+            assert job["permissions"] == {
+                "contents": "read",
+                "id-token": "write",
+                "attestations": "write",
+            }
+            continue
         assert checkouts, f"{name} does not check out the release"
         assert all(step["with"]["ref"] == "${{ github.sha }}" for step in checkouts), (
             f"{name} does not check out the proven workflow commit"
@@ -683,18 +699,30 @@ def test_binary_consumers_use_the_validated_remote_revision(repo_root: Path) -> 
     )
 
 
-def test_reviewed_release_pins_precede_publication_and_cover_acquisition(
+def test_authenticated_provenance_precedes_publication_and_covers_acquisition(
     repo_root: Path,
 ) -> None:
+    """Mutation proof: removing attestation from release prerequisites failed
+    the admission assertion (exit 1); exact restoration passed (exit 0).
+    """
     binaries = _workflow(repo_root)
     draft = binaries.index("- name: Require every declared target on the draft release")
     handoff = binaries.index(_HANDOFF)
     gate = binaries[draft:handoff]
-    assert "tools.monitor.pins validate" in gate
-    assert "fetch --no-tags origin main" in gate
-    assert '--catalog-revision "$catalog_sha"' in gate
-    assert "tools.monitor.pins propose" in binaries
-    assert "monitor-pin-proposal-${{ needs.validate.outputs.sha }}" in binaries
+    assert "tools.monitor.provenance" in gate
+    jobs = _load(repo_root, "binaries.yml")["jobs"]
+    assert "attest" in jobs["release"]["needs"]
+    assert set(jobs["attest"]["needs"]) == {"validate", "build"}
+    assert jobs["attest"]["permissions"] == {
+        "contents": "read",
+        "id-token": "write",
+        "attestations": "write",
+    }
+    assert any(
+        str(step.get("uses", "")).startswith("actions/attest@")
+        for step in jobs["attest"]["steps"]
+    )
+    assert "monitor-pin-proposal" not in binaries
     assert "git push" not in binaries
     publication = _load(repo_root, "publish.yml")["jobs"]
     admit = next(
@@ -702,10 +730,10 @@ def test_reviewed_release_pins_precede_publication_and_cover_acquisition(
         for s in publication["admit-package-index"]["steps"]
         if s.get("id") == "admit"
     )
-    # Removing reviewed-pin admission, or moving it after the digests the
+    # Removing provenance admission, or moving it after the digests the
     # upload trusts are emitted, fails this ordered assertion.
-    assert "tools.monitor.pins validate" in admit
-    assert admit.index("tools.monitor.pins validate") < admit.index("wheel_sha256=")
+    assert "tools.monitor.provenance" in admit
+    assert admit.index("tools.monitor.provenance") < admit.index("wheel_sha256=")
     assert "admit-package-index" in publication["publish-pypi"]["needs"]
     acquisition = _load(repo_root, "acquisition.yml")["jobs"]["acquire"]
     from tools.packaging.products import VAULTSPEC_RAG
@@ -797,8 +825,12 @@ def test_a_rehearsal_builds_every_target_and_writes_nothing(repo_root: Path) -> 
                     f"a rehearsal reaches {job_id}: {step.get('name')}"
                 )
 
-    for job_id in ("frontend", "build", "release"):
+    for job_id in ("frontend", "build"):
         assert "if" not in jobs[job_id], f"a rehearsal skips {job_id}"
+    assert (
+        "needs.attest.result == 'success' || inputs.rehearse" in jobs["release"]["if"]
+    )
+    assert jobs["attest"]["if"] == "${{ !inputs.rehearse }}"
     assert not any("if" in step for step in jobs["build"]["steps"])
     proven = [
         step

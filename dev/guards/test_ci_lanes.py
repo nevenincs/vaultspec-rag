@@ -99,6 +99,15 @@ _SCENARIOS: tuple[tuple[str, str, dict[str, object], frozenset[str]], ...] = (
     ("dispatch", "workflow_dispatch", {"scope": "full"}, FULL_JOBS),
     ("dispatch without a scope", "workflow_dispatch", {"scope": None}, FULL_JOBS),
     ("light dispatch", "workflow_dispatch", {"scope": "light"}, LIGHT_JOBS),
+    (
+        "release cannot request light proof",
+        "workflow_dispatch",
+        {
+            "scope": "light",
+            "ref_name": "release-please--branches--main--components--vaultspec-rag",
+        },
+        FULL_JOBS,
+    ),
     ("weekly schedule", "schedule", {}, frozenset({"dependency-audit"})),
     (
         "ready pull request opened",
@@ -225,6 +234,7 @@ def _bindings(payload: dict[str, object]) -> dict[str, object]:
         "github.event.pull_request.author_association": payload.get("author", "OWNER"),
         "github.event.sender.type": payload.get("sender", "User"),
         "inputs.scope": payload.get("scope"),
+        "github.ref_name": payload.get("ref_name", "feature"),
     }
 
 
@@ -243,6 +253,8 @@ def test_pull_request_state_selects_the_cost_tier(
     ``true`` made the draft cases fail naming ``tests``; adding
     ``synchronize`` to the full lanes' actions made the push case fail naming
     every full job; restoring each made every case pass.
+    Changing the release branch's full-scope override failed the release light
+    dispatch case (exit 1); exact restoration passed the 21 cases (exit 0).
     """
     running = {
         job_id
