@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.6.1](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.6.0...vaultspec-rag-v0.6.1) (2026-10-09)
+
+
+### Features
+
+* signal complete releases to marketing ([181b1a4](https://github.com/nevenincs/vaultspec-rag/commit/181b1a45a8af6db50dfa6d3e4540c650ab2e81a5))
+
+
+### Bug Fixes
+
+* **ci:** automate verified release publication after proposal merge ([#602](https://github.com/nevenincs/vaultspec-rag/issues/602)) ([380e875](https://github.com/nevenincs/vaultspec-rag/commit/380e875fe92d223431dfe0d30ec60c5a7f613c6b))
+* **ci:** restore the fleet's actionlint copy; make the client-warning wait ignore collector noise ([#599](https://github.com/nevenincs/vaultspec-rag/issues/599)) ([5e06888](https://github.com/nevenincs/vaultspec-rag/commit/5e068880381e7256c747588e6cb7bdf721789884))
+* five defects behind today's red runs on main ([#600](https://github.com/nevenincs/vaultspec-rag/issues/600)) ([f58c41d](https://github.com/nevenincs/vaultspec-rag/commit/f58c41db76f5f0a1d52911906ebcffebc1311c6a))
+* open the on-disk store without the client's unclosed SQLite probe ([#601](https://github.com/nevenincs/vaultspec-rag/issues/601)) ([1fa2bc4](https://github.com/nevenincs/vaultspec-rag/commit/1fa2bc45112743e9c6f0c8ec88305b9351005034))
+* **release:** let the release chain run unattended on the fleet ([#592](https://github.com/nevenincs/vaultspec-rag/issues/592)) ([165141f](https://github.com/nevenincs/vaultspec-rag/commit/165141f7b76892a913d317d9b90e918ccfc63d34))
+* **release:** take the Windows outbound-denied directory from the host ([#597](https://github.com/nevenincs/vaultspec-rag/issues/597)) ([12e239c](https://github.com/nevenincs/vaultspec-rag/commit/12e239c362c0b7bcb0737f01da0713dfdb46d25a))
+
 ## [0.6.0](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.5.3...vaultspec-rag-v0.6.0) (2026-10-07)
 
 
