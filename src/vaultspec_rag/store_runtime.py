@@ -428,9 +428,7 @@ class VaultStore(
 
     def _open_local_client(self, cfg: VaultSpecConfigWrapper) -> None:
         """Create (or open) the embedded local Qdrant store and set its fields."""
-        import sqlite3
-
-        from qdrant_client import QdrantClient as _QdrantClient
+        from ._qdrant_local_client import open_local_client
 
         data_dir = _typed_setting(cfg.data_dir, str, "data_dir")
         qdrant_dir = _typed_setting(cfg.qdrant_dir, str, "qdrant_dir")
@@ -446,12 +444,7 @@ class VaultStore(
             )
         try:
             with suppress_local_qdrant_warnings():
-                self._client = _QdrantClient(
-                    path=str(self.db_path),
-                    # Supported Python reports the compiled SQLite mode directly.
-                    # Only serialized SQLite can share connections across threads.
-                    force_disable_check_same_thread=sqlite3.threadsafety == 3,
-                )
+                self._client = open_local_client(self.db_path)
         except RuntimeError as exc:
             self._lock_helper.release()
             if "already accessed by another instance" in str(exc):

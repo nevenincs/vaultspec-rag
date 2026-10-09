@@ -14,7 +14,6 @@ impossible without an explicit manifest attribution.
 from __future__ import annotations
 
 import logging
-import sqlite3
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
@@ -993,8 +992,7 @@ def storage_migrate(
     json_mode: JsonMode = False,
 ) -> None:
     """Copy a root's namespaced collections between the local and server stores."""
-    from qdrant_client import QdrantClient
-
+    from .._qdrant_local_client import open_local_client
     from .._qdrant_server_client import open_server_client
     from ..storage_migration import migrate_collections
 
@@ -1022,10 +1020,7 @@ def storage_migrate(
         _emit_or_echo_error(
             _MIGRATE_CMD, "unsafe_path", f"Refusing migrate: {exc}", 2, json_mode
         )
-    local = QdrantClient(
-        path=str(local_path),
-        force_disable_check_same_thread=sqlite3.threadsafety == 3,
-    )
+    local = open_local_client(local_path)
     server = open_server_client(url)
     src, dst = (local, server) if to_server else (server, local)
     preview = dry_run or not yes

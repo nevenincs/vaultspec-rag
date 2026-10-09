@@ -21,6 +21,7 @@ from uuid import NAMESPACE_URL, uuid5
 import pytest
 from qdrant_client import QdrantClient, models
 
+from .._qdrant_local_client import open_local_client
 from .._source_types import PublicSourceType
 from ..indexer._document_checkpoint import DocumentRunCheckpoint
 from ..indexer._publication_proof import (
@@ -52,7 +53,7 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture
 def receipt_store(tmp_path: Path) -> Generator[QdrantClient]:
-    client = QdrantClient(path=str(tmp_path / "qdrant"))
+    client = open_local_client(tmp_path / "qdrant")
     client.create_collection(
         "served",
         vectors_config=models.VectorParams(size=8, distance=models.Distance.COSINE),
