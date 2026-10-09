@@ -2,8 +2,9 @@
 
 This is the maintainer runbook for publishing the Python package, standalone
 binary bundles, and package-manager pointers. The release pipeline is
-automated after a maintainer cuts a release, with an independent pin review before
-publication. This document records
+autonomous after a maintainer merges the release PR. The proposal must pass full
+checks and Dev Server proof before merge; no further dispatch or pin review is needed.
+This document records
 the artifact contract, the gates a release must pass before it is published at
 all, and the recovery paths when a lane stalls.
 
@@ -64,12 +65,15 @@ Nothing in the chain reacts to a pushed tag or to a `release` event. Each lane
 is dispatched explicitly by the lane before it, in this order:
 
 1. `release-please.yml` opens and updates the release PR from conventional
-   commits. Merging the PR releases nothing. A maintainer dispatches the same
-   workflow to cut a release: it proves the PR head with the full merge gate
-   and both accelerator tiers, squash-merges it, and has release-please force
-   the `vaultspec-rag-v<version>` tag and create the draft Release. The cut
-   refuses a tag that does not point at the proven commit, then dispatches
-   `RAG Publish` with the exact tag.
+   commits on pushes to `main`. After the final lockfile refresh it dispatches
+   the full merge gate and the canonical Dev Server check on the release branch.
+   The required aggregate includes the actual Dev Server verdict on the exact SHA;
+   light or skipped measuring jobs cannot authorize the release proposal. The full
+   dispatch releases the bot PR's held merge gate automatically.
+1. Merging that PR starts the cut automatically. It proves the merged commit
+   with the full merge gate and both accelerator tiers, then has release-please
+   force the tag and create the draft Release. The cut checks the tag against
+   the proven commit and dispatches `RAG Publish`. Manual dispatch is recovery only.
 1. `RAG Publish`, release stage, builds the wheel and source distribution,
    smoke-tests both across the supported Python versions, and attaches them
    with a merged `SHA256SUMS` to the draft. It creates the draft itself only if
@@ -83,7 +87,9 @@ is dispatched explicitly by the lane before it, in this order:
    and compiles the server with the committed Bun archive/executable pins.
    Windows resources, macOS signing and Unix modes are finalized before hashing.
    Each target must pass the isolated executable and installed-browser probe before
-   packaging. Its release job aggregates the archive checksums, passes
+   packaging. An isolated job attests the four finalized archives with GitHub/Sigstore
+   provenance after their native proof; it holds the OIDC grant without checking out
+   project code or writing release assets. Its release job aggregates the archive checksums, passes
    the complete-target gate, and attaches only the public archives and the
    merged checksum file to the draft.
 1. `RAG Binaries` always runs `verify-release-assets` after its release job.
@@ -91,13 +97,14 @@ is dispatched explicitly by the lane before it, in this order:
    correctly named archive, the exact wheel and source distribution, no raw
    executables, exact `SHA256SUMS` coverage with valid digests, and a
    successful binary release job. It verifies all four monitor proofs against the
-   common frontend digest and the reviewed release-pin catalog on `main`. A missing
-   pin leaves the draft waiting for the review described below.
+   common frontend digest and authenticated repository/workflow/tag/source identity.
+   Missing or invalid attestation fails the draft verifier; generated checksums alone
+   do not authorize publication.
 1. Only on success, that gate dispatches `RAG Publish` in its `package-index`
    stage. Its admission job requires the release to carry its wheel, source
    distribution, and `SHA256SUMS`, downloads the release's own packages, checks
    them against the release's `SHA256SUMS`, and independently admits all four
-   archives against the committed pin catalog. Its upload job receives exactly
+   archives against their authenticated provenance. Its upload job receives exactly
    those package bytes, checks them against the digests admission read, and
    sends them to PyPI through the trusted publisher. The two are separate jobs
    because reading a draft takes a token that may write releases, and the job
@@ -125,40 +132,24 @@ rerun for the same tag.
 
 1. Merge feature work to `main` with conventional commit messages such as
    `feat:`, `fix:`, or `perf:`.
-1. Review the release PR opened by release-please. Confirm the proposed
-   version, changelog, `pyproject.toml`, `.release-please-manifest.json`, and
-   `uv.lock` are coherent, and wait for the required checks. The Actions tab
-   also shows the release PR's own `RAG Merge Gate` runs waiting for
-   approval: GitHub holds workflows on pull requests the default token
-   writes. Leave them unapproved. The run release-please dispatches is the
-   required check, and approving a held run only repeats the full gate on
-   the same commit.
-1. Merge the release PR yourself, then dispatch `RAG Release Please` to cut
-   the release. The cut cannot merge the proposal: the branch ruleset asks for
-   an approval the workflow's own commits can never carry, and an owner's
-   review does not lift it. Merging releases nothing by itself; the cut proves
-   the merged commit, tags it and starts the chain. Land nothing else on
-   `main` between the merge and the tag, and do not manually create a second
-   tag or Release for the same version.
-1. Watch `RAG Publish`, then `RAG Binaries`. Review and commit the candidate release
-   pins before rerunning the failed draft verifier. That verifier then dispatches
-   the `package-index` run of `RAG Publish`. The Release stays a draft
-   for the whole of that sequence. It becomes visible only after PyPI has the
-   version, so a release listed on the releases page is a release the chain
-   finished.
-1. Confirm the GitHub Release asset list and the PyPI version, then the
-   `RAG Channels` and `RAG Acquisition` runs the publication dispatched. A
-   normal, complete release should expose four binary archives, one wheel, one
-   source distribution, and `SHA256SUMS`.
+1. Review the release PR's version, changelog, manifest and lockfile. Wait for
+   full lint, both Linux interpreters, Windows tests, dependency audit and Dev Server
+   proof. The bot dispatches those checks and releases its held required gate;
+   no label or workflow approval is needed.
+1. Press the release PR's merge button. This is the only human release action.
+   The merge starts exact-commit checks, CUDA/MPS proof, tag/draft creation,
+   package and binary builds, provenance verification, PyPI upload, GitHub
+   publication and the channel/acquisition handoffs automatically.
 
-The required release checks include workflow lint, static analysis, tests,
-documentation checks, the Vault audit, and the dependency audit. The GPU
-acceptance tiers prove CUDA and MPS at release cut. Native monitor rendering and the
-complete four-target archive set are additional release gates.
+The release stays a draft until all artifacts are verified and PyPI accepts the
+packages. A failure reports red and leaves the draft unpublished where possible.
+Recovery commands below are for failed releases, not normal release steps.
+Do not use the administrator bypass to merge before the full proposal gate passes.
 
 ## What a cut needs from the fleet
 
-A cut is unattended only while these hold. Each one stopped a release once.
+The fleet must continuously provide these prerequisites; the workflow does not ask
+for per-release setup.
 
 - **Release Please may open pull requests.** The repository setting "Allow
   GitHub Actions to create and approve pull requests" must be on, or the
@@ -171,13 +162,16 @@ A cut is unattended only while these hold. Each one stopped a release once.
 
 - **The CUDA host's accelerator is free.** The GPU tier starts its own service
   and refuses to while an installed `vaultspec-rag` service owns the device.
-  Stop that service on the Windows GPU runner's host before dispatching the
-  cut, and start it again afterwards.
+  Use a runner GPU available to the CI service. An unavailable device fails the
+  hardware gate rather than silently skipping accelerator proof.
+
 - **The Apple-silicon host is awake.** It carries the MPS tier, the macOS
   build and the Linux arm64 runner, and its runners go offline when it sleeps.
+
 - **Every Linux runner has a browser.** The native monitor proof drives an
   installed Chrome or Chromium and never downloads one, so the browser belongs
   to the runner image.
+
 - **The Windows host denies outbound traffic to the proof's two program
   paths, and names their directory in the runner's environment.** See
   [the Windows outbound-denied directory](#the-windows-outbound-denied-directory).
@@ -280,8 +274,8 @@ it by hand, or attach raw staging files to repair a release.
 
 ## Verifying a monitor candidate
 
-Before cutting a release, dispatch the private native verification lane on the
-commit to be checked:
+For an optional developer rehearsal, dispatch the private native verification lane
+on the commit to be checked. Normal release builds already perform native proof:
 
 ```sh
 gh workflow run acquisition.yml --repo "$REPO" --ref main \
@@ -335,45 +329,28 @@ $env:MONITOR_OUTBOUND_DENIED_DIR = $directory
 A proof that reports its blocked control still connects is on a host whose
 rules are missing or whose firewall profiles are disabled.
 
-## Reviewing monitor release pins
+## Automated monitor provenance
 
-The binary release job uploads a private Actions artifact named
-`monitor-pin-proposal-<producer-sha>`. Its JSON is a candidate, not an approval.
-The first release starts with an empty catalog and deliberately stops at the draft
-verifier until a maintainer completes this review.
+The four native release archives are attested after finalized-byte browser and
+OS-offline proof. The signing job contains no checkout or project code and can
+write attestations, but cannot write repository contents. Release attachment waits
+for this job; the draft verifier and package-index admission both authenticate the
+attached archives before publication.
 
-Review the candidate against the four actual draft archives and their native smoke
-results. Check the release tag, full producer commit, npm lock digest, common frontend
-manifest digest, and the finalized archive and monitor executable hashes. Confirm that
-all four native browser and OS-offline probes passed and that the archives carry
-the same frontend.
-Merge the reviewed release entry into
-[tools/monitor/release-pins.json](tools/monitor/release-pins.json), preserving previous
-entries, and land that catalog change on `main` through the normal review process.
-The producer commit remains the commit that built the artifacts; the catalog commit
-is separate approval evidence.
+Verification requires the `nevenincs/vaultspec-rag` repository,
+`.github/workflows/binaries.yml` signer, the exact release tag ref and the exact
+producer/signing commit. The signature authenticates archive digests; monitor hashes,
+source, npm lock and common frontend evidence are then read from those authenticated
+archives. GitHub's CLI verifies the Sigstore signature and certificate identity.
+The former manually reviewed catalog and candidate-pin handoff are removed.
 
-Before landing it, commit the entry on its branch and ask the verifier's own check
-whether that commit admits a fresh download of the four archives:
-
-```sh
-uv run --no-project --python 3.13 -- python -m tools.monitor.pins validate \
-  --tag "$TAG" --source-revision "$(git rev-parse "$TAG^{commit}")" \
-  --catalog-revision "$(git rev-parse HEAD)" --directory <downloaded-archives>
-```
-
-Rerun only the failed `verify-release-assets` job in the original `RAG Binaries` run.
-It fetches the reviewed catalog from `main` and validates the existing draft bytes.
-Do not rerun the successful build jobs to resolve a missing pin: a rebuild can change
-the executable or archive hashes and would require a new candidate review.
-The `package-index` stage independently repeats admission before uploading to PyPI.
-
-After publication, `RAG Acquisition` reads the committed catalog and verifies archive
-hashes before extraction and executable hashes before every launch. The public
-`SHA256SUMS` is an additional consistency check. It runs the downloaded monitor alone
-in a fresh directory without a sibling backend command and proves the unavailable
-backend view on each native target. Node and the installed browser run the verification
-driver; they are not prerequisites for the delivered monitor.
+After publication, `RAG Acquisition` verifies this provenance before inspecting or
+extracting the downloaded archive and rechecks executable digests before launch.
+Live `SHA256SUMS` remains an additional consistency check. Git, GitHub CLI, Node and
+an installed browser are verification-runner prerequisites; they are not runtime
+requirements of the delivered monitor. Compiler/runtime provisioning still uses
+reviewed committed SHA256 pins. Releases predating archive attestations are refused
+by this verifier rather than admitted from live checksums alone.
 
 ## Package-manager publication
 
@@ -433,7 +410,7 @@ URL and digest.
 ## Recovery
 
 The release remains a draft until the chain finishes. Repair a failed lane for the
-**same tag**; a missing reviewed pin instead requires the verifier-only retry below.
+**same tag**. Attestation failures must be diagnosed before publication is retried.
 Never publish a draft by hand to
 unstick a lane - the publication is the statement that everything above it
 passed.
@@ -526,21 +503,16 @@ last act of the chain, so a published release with a broken asset set means a
 lane pushed something after it - fix forward with a new release rather than
 retracting a version users may already hold.
 
-### Missing reviewed monitor pins
+### Missing or invalid monitor provenance
 
-A successful binary build followed by a pin-catalog rejection needs review, not a
-rebuild. Follow the pin review above, land the catalog entry, then rerun the failed
-verifier job from that same Actions run. For a run whose only failed job is the
-verifier:
+The draft verifier and package-index admission reject archives without the expected
+GitHub/Sigstore attestation. Inspect the `Build: Release provenance (Linux)` job and
+its exact tag/source identity. A release produced before this attestation workflow
+needs a new release; do not replace the trust check with a live checksum.
 
-```sh
-gh run rerun <binary-run-id> --repo "$REPO" --failed
-```
-
-If the rejection reports a digest mismatch, compare the actual draft bytes with the
-reviewed candidate. Do not copy a new live checksum into the catalog merely to make
-the gate pass. Changed artifacts require their native proofs and a fresh independent
-review before admission.
+For transient API failures, rerun the failed verifier job against the existing
+attested draft bytes. Changed artifacts must pass native proof and be attested again
+before they can be admitted.
 
 ### Missing Python artifacts or PyPI publication
 
@@ -561,7 +533,7 @@ gh workflow run publish.yml --repo "$REPO" --ref main --field tag="$TAG" \
 ```
 
 That stage requires the release to carry its wheel, source distribution, and
-`SHA256SUMS`, all four binary archives, and their reviewed committed monitor pins.
+`SHA256SUMS`, all four binary archives, and their authenticated build provenance.
 If it refuses for a missing Python asset, the release stage has not
 finished for this tag: rerun it as above. The stage publishes the release when
 it completes, so it also repairs a chain that stopped after the binaries were
@@ -614,7 +586,8 @@ fetch and rebase, then retry without force-pushing.
 
 ### The acquisition check never ran for a release
 
-The publication dispatches it, and a failed dispatch does not fail the release.
+The publication dispatches it, and a rejected dispatch fails the publication run.
+A downstream check failure reports in its own workflow and does not retract the public release.
 Ask for it again; it downloads the published archives the way a user does, so it
 needs the release to be published:
 

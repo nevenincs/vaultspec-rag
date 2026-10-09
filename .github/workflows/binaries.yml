@@ -89,7 +89,7 @@ jobs:
             echo "rehearsing ${TAG} at ${TARGET_SHA}"
             exit 0
           fi
-          refs=$(git ls-remote --tags "https://github.com/${GITHUB_REPOSITORY}.git" "${TAG}")
+          refs=$(git ls-remote --tags "https://github.com/${GITHUB_REPOSITORY}.git" "refs/tags/${TAG}" "refs/tags/${TAG}^{}")
           sha=$(awk -v ref="refs/tags/${TAG}" '$2 == ref "^{}" { print $1; exit }' <<<"${refs}")
           [ -n "${sha}" ] || sha=$(awk -v ref="refs/tags/${TAG}" '$2 == ref { print $1; exit }' <<<"${refs}")
           if [ -z "${sha}" ]; then
@@ -396,10 +396,51 @@ jobs:
           if-no-files-found: error
           retention-days: 5
 
+  attest:
+    name: "Build: Release provenance (Linux)"
+    needs: [validate, build]
+    if: ${{ !inputs.rehearse }}
+    timeout-minutes: 150
+    runs-on: [self-hosted, Linux, X64, build]
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      CI_EXEC_BUDGET_MINUTES: 30
+    steps:
+      # No checkout or project code runs beside the signing grant.
+      - name: Download the native-proven archives into a fresh directory
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: binaries-${{ needs.validate.outputs.sha }}-*
+          path: ${{ runner.temp }}/attested-bundles/
+          merge-multiple: true
+      - name: Enumerate only immutable public archives
+        id: subjects
+        env:
+          TAG: ${{ inputs.tag }}
+          DIRECTORY: ${{ runner.temp }}/attested-bundles
+        run: |
+          set -euo pipefail
+          mapfile -t subjects < <(find "$DIRECTORY" -maxdepth 1 -type f \
+            \( -name "$TAG-*.zip" -o -name "$TAG-*.tar.gz" \) | LC_ALL=C sort)
+          [ "${#subjects[@]}" -eq 4 ] || { echo "::error::expected all four proven archives"; exit 1; }
+          {
+            echo 'paths<<SUBJECTS_EOF'
+            printf '%s\n' "${subjects[@]}"
+            echo SUBJECTS_EOF
+          } >> "$GITHUB_OUTPUT"
+      - name: Attest the proven native archives
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ steps.subjects.outputs.paths }}
+
   release:
     timeout-minutes: 150
     name: "Build: Release attachment (Linux)"
-    needs: [validate, build, frontend]
+    needs: [validate, build, frontend, attest]
+    if: ${{ always() && needs.validate.result == 'success' && needs.build.result == 'success' && needs.frontend.result == 'success' && (needs.attest.result == 'success' || inputs.rehearse) }}
     runs-on: [self-hosted, Linux, X64, build]
     env:
       CI_EXEC_BUDGET_MINUTES: 30
@@ -441,22 +482,6 @@ jobs:
           TARGET_SHA: ${{ needs.validate.outputs.sha }}
           FRONTEND_SHA256: ${{ needs.frontend.outputs.frontend_sha256 }}
         run: uv run --no-project --python 3.13 -- python -m tools.monitor.release verify-set --tag "$TAG" --source-revision "$TARGET_SHA" --frontend-sha256 "$FRONTEND_SHA256" --directory dist-bundles
-
-      - name: Generate the candidate release pins for independent review
-        shell: bash
-        env:
-          TAG: ${{ inputs.tag }}
-          TARGET_SHA: ${{ needs.validate.outputs.sha }}
-          FRONTEND_SHA256: ${{ needs.frontend.outputs.frontend_sha256 }}
-        run: uv run --no-project --python 3.13 -- python -m tools.monitor.pins propose --tag "$TAG" --source-revision "$TARGET_SHA" --frontend-sha256 "$FRONTEND_SHA256" --directory dist-bundles --output dist-release-evidence/release-pins-proposal.json
-
-      - name: Upload candidate pins without approving them
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: monitor-pin-proposal-${{ needs.validate.outputs.sha }}
-          path: dist-release-evidence/release-pins-proposal.json
-          if-no-files-found: error
-          retention-days: 30
 
       - name: Aggregate checksums
         shell: bash
@@ -630,6 +655,7 @@ jobs:
       # this grant. The handoff below is a write to the Actions API.
       contents: write
       actions: write
+      attestations: read
     env:
       CI_EXEC_BUDGET_MINUTES: 30
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -766,16 +792,14 @@ jobs:
           [ ${#raw[@]} -eq 0 ] || problems+=("raw executables: ${raw[*]}")
 
           if [ ${#problems[@]} -eq 0 ]; then
+            (cd .sparse-verify-release-assets && uv run --no-project --python 3.13 -- python -m tools.monitor.provenance --tag "$TAG" --source-revision "$TARGET_SHA" --directory "${verify_dir}")
             (cd .sparse-verify-release-assets && uv run --no-project --python 3.13 -- python -m tools.monitor.release verify-set --tag "$TAG" --source-revision "$TARGET_SHA" --frontend-sha256 "$FRONTEND_SHA256" --directory "${verify_dir}")
-            git -C .sparse-verify-release-assets fetch --no-tags origin main
-            catalog_sha=$(git -C .sparse-verify-release-assets rev-parse FETCH_HEAD)
-            (cd .sparse-verify-release-assets && uv run --no-project --python 3.13 -- python -m tools.monitor.pins validate --tag "$TAG" --source-revision "$TARGET_SHA" --catalog-revision "$catalog_sha" --directory "${verify_dir}")
             echo "all ${#expected[@]} declared target archives present on ${TAG}"
             exit 0
           fi
 
           echo "::warning::${TAG} failed the complete archive gate: ${problems[*]}"
-          echo "::error::Re-dispatch repairs a fix to THIS FILE (use --ref main), not a fix to tracked source. A source-level build fix needs a new release."
+          echo "::error::Re-dispatch with --ref ${TAG} retries the immutable release workflow. A workflow or source-level build fix needs a new release."
           echo "::error::${TAG} is INCOMPLETE - ${problems[*]}. It stays a draft, so nothing has been advertised. Fix the build and re-dispatch this workflow for this tag."
           exit 1
 

@@ -2,9 +2,9 @@ name: RAG Acquisition
 
 run-name: RAG Acquisition ${{ inputs.mode || 'public' }} ${{ inputs.tag || 'latest' }} @ ${{ github.sha }}
 
-# Committed main supplies the catalog and driver. Only downloaded monitor
+# Reviewed main supplies the provenance verifier and driver. Only downloaded monitor
 # bytes run with an empty PATH/home and no checkout or backend sibling.
-# Live checksums add coverage; reviewed committed pins authorize launch.
+# Live checksums add coverage; authenticated build provenance authorizes launch.
 on:
   schedule:
     - cron: "41 6 * * 1"
@@ -27,6 +27,7 @@ on:
 
 permissions:
   contents: read
+  attestations: read
 
 concurrency:
   group: acquisition-${{ inputs.tag || 'latest' }}
@@ -112,8 +113,9 @@ jobs:
     runs-on: ${{ matrix.runner }}
     env:
       CI_EXEC_BUDGET_MINUTES: 30
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - name: Checkout the reviewed catalog and acquisition driver
+      - name: Checkout the reviewed provenance and acquisition driver
         if: inputs.mode != 'candidate'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -168,7 +170,7 @@ jobs:
             --tag "$TAG" --source-revision "$PRODUCER" --target "$TARGET" --directory dist-bin
           uv run --no-project --python 3.13 -- python -m tools.monitor.release native-smoke \
             --tag "$TAG" --source-revision "$PRODUCER" --target "$TARGET" --directory dist-bin --os-offline
-      - name: Verify public delivery against committed pins and render native bytes
+      - name: Verify public build provenance and render native bytes
         if: inputs.mode != 'candidate'
         shell: bash
         env:

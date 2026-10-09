@@ -14,12 +14,11 @@ from tools.binaries.build_pyapp import check_platform_floor
 from tools.binaries.native import host_target_triple
 from tools.binaries.release_hosts import GITHUB_RELEASE_REDIRECT_HOSTS
 from tools.monitor.offline import probe_offline
-from tools.monitor.pins import (
-    ROOT,
-    PinError,
-    ReleasePins,
-    catalog_at_commit,
-    require_release,
+from tools.monitor.provenance import (
+    DeliveryProof,
+    ProvenanceError,
+    admit_archive,
+    release_commit,
 )
 from tools.monitor.smoke import installed_browser, probe
 from tools.packaging.bundles import BundleSpec, verify_bundle
@@ -44,11 +43,11 @@ def _fetch(url: str, destination: Path) -> None:
 
 
 def extract_delivery(
-    archive: Path, spec: BundleSpec, pins: ReleasePins, destination: Path
+    archive: Path, spec: BundleSpec, pins: DeliveryProof, destination: Path
 ) -> dict[str, str]:
     hashes = pins.targets[spec.target]
     if archive.is_symlink() or file_sha256(archive) != hashes.archive_sha256:
-        raise PinError("Reviewed archive digest mismatch before extraction")
+        raise ProvenanceError("Authenticated archive digest mismatch before extraction")
     manifest = verify_bundle(archive, spec)
     components = cast("dict[str, dict[str, object]]", manifest["components"])
     name = spec.product.executable_name(MONITOR_EXECUTABLE, spec.target)
@@ -59,8 +58,8 @@ def extract_delivery(
         or proof["frontend_sha256"] != pins.frontend_sha256
         or proof["sha256"] != hashes.monitor_sha256
     ):
-        raise PinError(
-            "Reviewed monitor or producer identity mismatch before extraction"
+        raise ProvenanceError(
+            "Authenticated monitor or producer identity mismatch before extraction"
         )
     files = cast("list[dict[str, str]]", manifest["files"])
     digests = {item["name"]: item["sha256"] for item in files}
@@ -82,7 +81,7 @@ def extract_delivery(
                 timeout=30,
             )
             if result.returncode or "not found" in result.stdout + result.stderr:
-                raise PinError(
+                raise ProvenanceError(
                     f"The native loader refused {name}: {result.stdout}{result.stderr}"
                 )
     return digests
@@ -94,11 +93,11 @@ def latest_tag(directory: Path) -> str:
         "https://api.github.com/repos/nevenincs/vaultspec-rag/releases/latest", metadata
     )
     if metadata.stat().st_size > 1 << 20:
-        raise PinError("Latest-release metadata exceeds its bounded window")
+        raise ProvenanceError("Latest-release metadata exceeds its bounded window")
     payload = json.loads(metadata.read_text(encoding="utf-8"))
     tag = payload.get("tag_name")
     if not isinstance(tag, str):
-        raise PinError("The public latest release has no tag identity")
+        raise ProvenanceError("The public latest release has no tag identity")
     return tag
 
 
@@ -106,26 +105,32 @@ def acquire(
     tag: str | None, producer: str | None, target: str, *, os_offline: bool = False
 ) -> dict[str, object]:
     if target != host_target_triple():
-        raise PinError("Public acquisition requires the native declared target")
-    authority, catalog = catalog_at_commit(ROOT)
+        raise ProvenanceError("Public acquisition requires the native declared target")
     browser = installed_browser()
     with tempfile.TemporaryDirectory(prefix="monitor-acquisition-") as scratch:
         directory = Path(scratch)
         tag = tag or latest_tag(directory)
-        pins = require_release(catalog, tag, producer)
+        resolved = release_commit(tag)
+        if producer is not None and producer != resolved:
+            raise ProvenanceError(
+                "Requested producer differs from the exact release tag"
+            )
         version = VAULTSPEC_RAG.version_from_tag(tag)
         spec = BundleSpec(VAULTSPEC_RAG, version, target)
         archive = directory / spec.archive_name
         base = VAULTSPEC_RAG.release_base_url(version)
         sums = directory / "SHA256SUMS"
-        # Live checksums add coverage; the committed catalog supplies authority.
+        # Live checksums add consistency; authenticated provenance supplies authority.
         _fetch(base + "/SHA256SUMS", sums)
         digests = parse_checksums(
             sums.read_text(encoding="utf-8", newline=""), require_unique=True
         )
-        if require(digests, archive.name) != pins.targets[target].archive_sha256:
-            raise PinError("Live SHA256SUMS differs from the reviewed archive pin")
         _fetch(base + "/" + archive.name, archive)
+        pins = admit_archive(archive, spec, resolved)
+        if require(digests, archive.name) != pins.targets[target].archive_sha256:
+            raise ProvenanceError(
+                "Live SHA256SUMS differs from the authenticated archive"
+            )
         extracted = directory / "extracted"
         extract_delivery(archive, spec, pins, extracted)
         # Keep backend bootstrappers outside the shell-only process placement.
@@ -152,7 +157,7 @@ def acquire(
         return {
             **report,
             "release_tag": tag,
-            "catalog_revision": authority,
+            "provenance_source_revision": resolved,
             "archive_sha256": pins.targets[target].archive_sha256,
         }
 

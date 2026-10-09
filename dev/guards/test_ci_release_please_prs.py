@@ -1,13 +1,8 @@
-"""Release Please proposes on every green main and releases only when asked.
-
-The proposal path dispatches the required gate on its final branch head and
-never creates a release. The cut path, started by a dispatch alone, proves the
-head with the full gate and both accelerator tiers before it merges and tags.
-"""
+"""Release proposals require full proof, and merging starts the release cut."""
 
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -28,13 +23,13 @@ def _triggers(workflow: str) -> dict[object, object]:
     return cast("dict[object, object]", triggers)
 
 
-def _job(job_id: str) -> dict[object, object]:
+def _job(job_id: str) -> dict[str, Any]:
     """Return one raw job of the release workflow."""
     jobs = workflows.document(RELEASE_WORKFLOW).get("jobs")
     assert isinstance(jobs, dict)
     job = cast("dict[object, object]", jobs).get(job_id)
     assert isinstance(job, dict), f"{RELEASE_WORKFLOW} has no job `{job_id}`"
-    return cast("dict[object, object]", job)
+    return cast("dict[str, Any]", job)
 
 
 def _release_please_steps(job_id: str) -> list[dict[object, object]]:
@@ -53,7 +48,7 @@ def test_release_please_dispatches_the_gate_after_its_last_branch_write() -> Non
     """The bot proves the lock-refreshed head without a label or operator.
 
     Mutation proof: deleting ``--field ref=`` makes this fail on the dispatch
-    contract, and deleting ``--field scope=light`` fails on the scope;
+    contract, and deleting ``--field scope=full`` fails on the scope;
     restoring each makes this pass.
     """
     jobs = workflows.document(RELEASE_WORKFLOW).get("jobs")
@@ -79,44 +74,44 @@ def test_release_please_dispatches_the_gate_after_its_last_branch_write() -> Non
     assert "gh workflow run merge-gate.yml" in run
     assert '--ref "${HEAD_BRANCH}"' in run
     assert '--field ref="${HEAD_BRANCH}"' in run
-    assert "--field scope=light" in run
+    assert "--field scope=full" in run
 
 
-def test_the_proposal_never_releases_and_follows_a_green_main() -> None:
-    """Merging changes accumulates a proposal; nothing is released unasked.
+def test_main_push_selects_either_a_proposal_or_an_automatic_cut() -> None:
+    """A merged release starts proof without an operator dispatch.
 
-    Mutation proof: deleting ``skip-github-release: true`` fails the proposal
-    assertion; dropping the ``conclusion == 'success'`` clause fails the
-    trigger assertion; restoring each makes this pass.
+    Mutation proof: removing the push trigger failed trigger admission
+    (exit 1); exact restoration passed (exit 0).
     """
     triggers = _triggers(RELEASE_WORKFLOW)
-    assert set(triggers) == {"workflow_run", "workflow_dispatch"}
-    run = triggers["workflow_run"]
-    assert isinstance(run, dict)
-    assert cast("dict[object, object]", run).get("workflows") == ["RAG Merge Gate"]
-    condition = " ".join(str(_job("release-please").get("if") or "").split())
-    for clause in (
-        "github.event_name == 'workflow_run'",
-        "github.event.workflow_run.event == 'push'",
-        "github.event.workflow_run.conclusion == 'success'",
-    ):
-        assert clause in condition, f"the proposal runs without {clause!r}"
+    assert set(triggers) == {"push", "workflow_dispatch"}
+    assert triggers["push"] == {"branches": ["main"]}
+    candidate = _job("candidate")
+    assert "if" not in candidate, "automatic pushes must select a release candidate"
+    script = str(candidate["steps"][0]["run"])
+    assert 'elif [ "${EVENT_NAME}" = "push" ]; then' in script
+    assert script.index("--state merged") < script.index("--state open")
+    proposal = _job("release-please")
+    assert proposal["needs"] == "candidate"
+    assert (
+        proposal["if"] == "github.event_name == 'push' && !needs.candidate.outputs.sha"
+    )
     proposals = _release_please_steps("release-please")
     assert len(proposals) == 1
-    options = proposals[0].get("with")
-    assert isinstance(options, dict)
-    assert cast("dict[object, object]", options).get("skip-github-release") is True
+    assert (
+        cast("dict[str, object]", proposals[0]["with"])["skip-github-release"] is True
+    )
 
 
 def test_the_cut_proves_the_head_before_it_releases() -> None:
-    """Only a dispatch releases, and only after the gate and both tiers pass.
+    """Automatic cuts require the full gate and both accelerator tiers.
 
     Mutation proof: removing ``prove-hardware`` from the cut's ``needs`` fails
     naming it; calling the gate with the light scope fails the call check;
     restoring each makes this pass.
     """
     candidate = _job("candidate")
-    assert candidate.get("if") == "github.event_name == 'workflow_dispatch'"
+    assert "if" not in candidate
     gate = _job("prove-gate")
     assert gate.get("uses") == f"./.github/workflows/{GATE_WORKFLOW}"
     options = gate.get("with")
@@ -166,3 +161,71 @@ def test_every_gate_checkout_uses_the_requested_ref() -> None:
     assert not findings, (
         "Gate jobs do not all validate the dispatched ref:\n\n" + "\n".join(findings)
     )
+
+
+def test_release_readiness_requires_dev_server_and_releases_held_checks() -> None:
+    """The required aggregate includes the canonical exact-SHA dev proof.
+
+    Mutation proof: dropping the dev proof's SHA filter failed proof admission
+    (exit 1); exact restoration passed (exit 0).
+    """
+    proposal = _job("release-please")["steps"]
+    scripts = [str(step.get("run", "")) for step in proposal]
+    dev = next(
+        i
+        for i, script in enumerate(scripts)
+        if "gh workflow run devserver.yml" in script
+    )
+    gate = next(
+        i
+        for i, script in enumerate(scripts)
+        if "gh workflow run merge-gate.yml" in script
+    )
+    lock = next(
+        i
+        for i, step in enumerate(proposal)
+        if step.get("name") == "Regenerate and push uv.lock"
+    )
+    assert lock < dev < gate
+    assert '--ref "$HEAD_BRANCH"' in scripts[dev]
+    raw = workflows.document(GATE_WORKFLOW)["jobs"]["gate"]
+    assert raw["permissions"]["actions"] == "write"
+    steps = {step.get("name"): step for step in raw["steps"]}
+    proof = str(
+        steps["Require the release dev server proof on this exact commit"]["run"]
+    )
+    assert "head_sha=$PROOF_SHA" in proof
+    assert '"completed success") exit 0' in proof
+    assert "completed*)" in proof and "exit 1" in proof
+    approve = str(steps["Approve the proven release proposal checks"]["run"])
+    assert '.author.is_bot and .author.login == "app/github-actions"' in approve
+    assert '[ "$head" = "$SHA" ]' in approve
+    assert "head_sha=$SHA&status=action_required" in approve
+    assert "actions/runs/$run/approve" in approve
+    verdict = str(steps["Every full check passed on this commit"]["run"])
+    assert "event=workflow_dispatch&head_sha=$HEAD_SHA" in verdict
+    assert 'length == 5 and all(.[]; .conclusion == "success")' in verdict
+
+
+def test_release_result_refuses_a_skipped_selected_path() -> None:
+    """The orchestrator reports failure when any mandatory stage did not pass.
+
+    Mutation proof: removing hardware from the final comparison failed this
+    contract (exit 1); exact restoration passed (exit 0).
+    """
+    result = _job("result")
+    assert result["if"] == "always()"
+    assert set(result["needs"]) == {
+        "candidate",
+        "release-please",
+        "prove-gate",
+        "prove-hardware",
+        "cut",
+    }
+    script = str(result["steps"][0]["run"])
+    assert '"$CANDIDATE_RESULT" != success' in script
+    assert (
+        '"$GATE_RESULT $HARDWARE_RESULT $CUT_RESULT" != "success success success"'
+        in script
+    )
+    assert '"$PROPOSAL_RESULT" != success' in script
