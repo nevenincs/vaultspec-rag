@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import subprocess
 import sys
 from typing import TYPE_CHECKING
@@ -12,6 +11,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ... import store_schema
+from ..._qdrant_local_client import open_local_client
 from ..._qdrant_server_client import open_server_client
 from ..._store_models import root_collection_prefix
 from ...cli._service_storage import _migrate_name_map
@@ -77,12 +77,7 @@ def test_real_local_to_service_document_migration_is_idempotent(
     tmp_path: Path,
 ) -> None:
     """Copy a real local document collection once and safely skip its replay."""
-    from qdrant_client import QdrantClient
-
-    local = QdrantClient(
-        path=str(tmp_path / "local-qdrant"),
-        force_disable_check_same_thread=sqlite3.threadsafety == 3,
-    )
+    local = open_local_client(tmp_path / "local-qdrant")
     server = open_server_client(
         migration_qdrant_server.url,
         timeout=int(CHILD_PROCESS_TIMEOUT_SECONDS),
@@ -134,21 +129,17 @@ def test_canonical_local_migration_closes_sqlite_resources_in_fresh_process(
         server.close()
     script = """
 import gc
-import sqlite3
 import sys
-from qdrant_client import QdrantClient
 from qdrant_client.local.persistence import CollectionPersistence
 from vaultspec_rag import store_schema
+from vaultspec_rag._qdrant_local_client import open_local_client
 from vaultspec_rag.cli._service_storage import _local_store_path, storage_migrate
 
 assert CollectionPersistence.CHECK_SAME_THREAD is None
 storage_migrate(
     sys.argv[1], to_backend="local", yes=True, dry_run=False, json_mode=True
 )
-client = QdrantClient(
-    path=str(_local_store_path(sys.argv[1])),
-    force_disable_check_same_thread=sqlite3.threadsafety == 3,
-)
+client = open_local_client(_local_store_path(sys.argv[1]))
 try:
     points, _ = client.scroll(collection_name=store_schema.DOCUMENT_COLLECTION)
     assert len(points) == 1

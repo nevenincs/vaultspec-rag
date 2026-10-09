@@ -19,17 +19,14 @@ pytestmark = [pytest.mark.unit]
 def test_deleted_collection_closes_storage_in_fresh_process() -> None:
     script = """
 import gc
-import sqlite3
 import tempfile
 from pathlib import Path
-from qdrant_client import QdrantClient, models
+from qdrant_client import models
+from vaultspec_rag._qdrant_local_client import open_local_client
 from vaultspec_rag._qdrant_local_lifetime import close_local_collection
 
 with tempfile.TemporaryDirectory(prefix="qdrant-delete-lifetime-") as directory:
-    client = QdrantClient(
-        path=str(Path(directory) / "qdrant"),
-        force_disable_check_same_thread=sqlite3.threadsafety == 3,
-    )
+    client = open_local_client(Path(directory) / "qdrant")
     try:
         for name in ("keep", "drop"):
             client.create_collection(
