@@ -8,8 +8,9 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
-from qdrant_client import QdrantClient, models
+from qdrant_client import models
 
+from .._qdrant_local_client import open_local_client
 from .._store_models import (
     generation_code_collection,
     publish_served_code_collection,
@@ -63,7 +64,7 @@ def test_generation_deletion_obeys_configured_autoprune_and_explicit_dry_run(
         assert (policy.max_per_cycle > 0) is autoprune
         record_generation_stamps({old: (now - timedelta(hours=200)).isoformat()})
         before = load_generation_stamps()
-        with closing(QdrantClient(path=str(tmp_path / "qdrant"))) as client:
+        with closing(open_local_client(tmp_path / "qdrant")) as client:
             for name in names:
                 client.create_collection(
                     collection_name=name,
@@ -107,7 +108,7 @@ def test_disabled_autoprune_still_persists_new_generation_grace_observation(
     with managed_env(**{EnvVar.STORAGE_AUTOPRUNE.value: "0"}):
         _publish_code_proof(root)
         record_generation_stamps({})
-        with closing(QdrantClient(path=str(tmp_path / "qdrant"))) as client:
+        with closing(open_local_client(tmp_path / "qdrant")) as client:
             client.create_collection(
                 collection_name=old,
                 vectors_config=models.VectorParams(
@@ -154,7 +155,7 @@ def test_archive_retention_obeys_autoprune_without_disabling_reconciliation(
                 ),
             }
         ),
-        closing(QdrantClient(path=str(tmp_path / "qdrant"))) as client,
+        closing(open_local_client(tmp_path / "qdrant")) as client,
     ):
         result = run_maintenance_cycle(
             MaintenanceCycleRequest(
