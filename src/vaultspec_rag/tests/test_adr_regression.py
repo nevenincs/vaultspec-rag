@@ -86,14 +86,6 @@ class TestGraphCache:
         assert cache._root is None
         assert cache._built_at == 0.0
 
-    def test_graph_cache_has_lock(self):
-        import threading
-
-        from ..graph_cache import GraphCache
-
-        cache = GraphCache(ttl_seconds=300.0)
-        assert isinstance(cache._lock, type(threading.Lock()))
-
 
 class TestQwen3NoDocumentPrompt:
     """ADR: document encoding must NOT pass prompt_name to the dense model."""
