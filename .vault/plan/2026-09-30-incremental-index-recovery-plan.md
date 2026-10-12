@@ -8,20 +8,22 @@ related:
   - '[[2026-09-08-incremental-publication-cost-adr]]'
   - '[[2026-09-07-explicit-reindex-authority-adr]]'
   - '[[2026-09-08-adaptive-watcher-control-adr]]'
-  - '[[2026-07-25-non-destructive-index-publication-adr]]'
   - '[[2026-07-21-large-index-resilience-adr]]'
   - '[[2026-07-21-service-job-control-adr]]'
   - '[[2026-09-01-generation-accounting-adr]]'
-modified: '2026-10-01'
+  - '[[2026-10-12-destructive-rebuild-lifecycle-adr]]'
+modified: '2026-10-12'
 body_schema: body-v2
-body_hash: 'sha256:4725fa874ca08f90b167052bb4e293117a93b9c6f433f78567f88a94bc3d3cd0'
+body_hash: 'sha256:8a21523ec819d303115f84fc96d4b40ff541da90c571b34457b59117b58dabc5'
 ---
 
 # `incremental-index-recovery` plan
 
 ## Description
 
-Approved 2026-10-01
+Approved 2026-10-12
+
+Original S01-S04 authorization and completion are retained. The user now explicitly authorizes fixing interrupted publication and indexing recovery, stopping the service, automatic safe repair, and service continuation. S05-S07 implement and verify that incident recovery using existing owners; preserve unrelated completed indexes. The accepted 2026-10-12 rebuild decision supersedes the preservation policy for new recovery work. This repair does not claim completion of the separate six-step rebuild architecture rollout.
 
 The user explicitly authorized fixing every incremental-indexing, recovery-state and vault-audit bug identified during the storage recovery. Restore the accepted publication, explicit authority and durable watcher contracts without changing public schemas, GPU ownership or storage locking. Existing accepted decisions cover all repairs; no new costly decision is proposed.
 
@@ -33,11 +35,16 @@ The incremental-publication-cost decision governs receipt finalization and bound
 - [x] `S02` - Bound incremental route reconciliation and indexed ledger membership work with genuine durable checkpoints; `src/vaultspec_rag/indexer/_route_migration.py, bounded effective ledger readers, reconciliation performance tests`.
 - [x] `S03` - Settle stale watcher refusals only after certified published rebuilds, report failed generations truthfully and preserve concurrent dirty scope; `src/vaultspec_rag/watcher_retry_policy.py, src/vaultspec_rag/watcher_durability.py, src/vaultspec_rag/job_dispatch.py, watcher runtime and service settlement owners, watcher and job regression tests`.
 - [x] `S04` - Validate optional and nested vault payload fields and compare canonical audit identities correctly; `src/vaultspec_rag/_index_integrity.py, payload validation owners, vault audit regression tests`.
+- [ ] `S05` - Recover interrupted publication and unblock source-scoped explicit rebuilds using existing ledger and storage owners; preserve confirmed resumable work and isolate sibling sources; `src/vaultspec_rag/indexer/, src/vaultspec_rag/tests/test_publication_recovery.py and related recovery tests`.
+- [x] `S06` - Restore and continue interrupted service index attempts with exact job authority and durable checkpoint association; verify retry and restart behavior; `src/vaultspec_rag/job_manager/, job_dispatch.py, job_persistence.py and corresponding restart/retry tests`.
+- [ ] `S07` - Verify integrated repair and source isolation, review the patch, deploy through the existing tool environment, and resume affected operations with honest status; `src/vaultspec_rag/api.py, store cleanup owners, integration tests, installed service and existing project ledgers`.
 
 ## Parallelization
+
+For S05-S07, run S05 receipt/indexer recovery and S06 service restart/retry restoration concurrently. S05 owns indexer checkpoint/ledger/publication recovery, source entry points and their tests. S06 owns job manager, job dispatch, persistence and their tests. The supervisor owns shared storage cleanup APIs, S07 validation/deployment, vault records and all commits. Workers share this branch, preserve each other’s edits, create no ad-hoc folders, and do not operate the service. Serialize changes to any shared path.
 
 Implement S01, S03 and S04 concurrently with three delegated workers under vaultspec-team. The receipt worker owns checkpoint and receipt recovery modules and their focused tests. The watcher worker owns watcher policy/runtime and service settlement integration and their focused tests. The audit worker owns payload validation and canonical audit identity and their focused tests. The supervisor owns S02 route reconciliation and ledger query performance, shared test commands, plan/ledger writes, all commits and the integrated review. Serialize any shared source change through the supervisor. All workers share the isolated incremental-recovery worktree and must preserve other workers' edits. After S04 closes, its worker may own the disjoint S02 real-storage regression module while the supervisor retains production ownership. S02 final verification depends on S01 receipt behavior. Workers do not commit or alter vault records.
 
 ## Verification
 
-Exercise the production finalization path for repeated empty and unchanged document updates without advancing proof revision. Demonstrate safe explicit rebuild recovery after an unfinished receipt while preserving served data and source isolation. Verify bounded page/scoped reconciliation and indexed candidate membership using real SQLite and temporary storage, with mutation-proved guards against corpus-wide incremental work and unsafe deletion. Verify that successful explicit rebuild settlement clears only obsolete watcher refusal and retains newer pending changes; unsuccessful, incremental and foreign-source jobs cannot clear it. Audit valid vault payloads including optional content and nested passages, and reject malformed payloads and foreign identities. Run relevant regression suites, package lint and formatting, strict type checks and vault checks. Record red/green guard evidence and perform the final integrated review before completion. Do not push, merge or alter the running installed service during implementation.
+Exercise the production finalization path for repeated empty and unchanged document updates without advancing proof revision. Demonstrate safe explicit rebuild recovery after an unfinished receipt while preserving served data and source isolation. Verify bounded page/scoped reconciliation and indexed candidate membership using real SQLite and temporary storage, with mutation-proved guards against corpus-wide incremental work and unsafe deletion. Verify that successful explicit rebuild settlement clears only obsolete watcher refusal and retains newer pending changes; unsuccessful, incremental and foreign-source jobs cannot clear it. Audit valid vault payloads including optional content and nested passages, and reject malformed payloads and foreign identities. Run relevant regression suites, package lint and formatting, strict type checks and vault checks. Record red/green guard evidence and perform the final integrated review before completion. Do not push or merge. The 2026-10-12 instruction authorizes stopping the installed service, deploying the verified repair, restarting it, and resuming interrupted operations. Use existing workspace and test locations; do not create ad-hoc folders. Preserve and verify healthy sibling indexes before and after recovery.

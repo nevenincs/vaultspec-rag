@@ -1165,8 +1165,11 @@ class JobManagerControl(JobManagerQuiesceControl):
                     resume_strategy=ResumeStrategy.RECONCILE,
                 ),
                 started_at=None,
+                finished_at=None,
                 control_requested_at=None,
                 control_acknowledged_at=None,
+                result=None,
+                error_kind=None,
             ),
         )
 

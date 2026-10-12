@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -12,11 +13,14 @@ from ..job_control import PauseRequested, RunControlToken
 from ..job_manager._control import AttemptTerminal
 from ..job_manager.manager import JobManager
 from ..job_manager.models import (
+    JobAttemptContext,
+    JobExecutionResult,
     ProgressUpdate,
     ResourceUpdate,
 )
 from ..job_models import (
     DesiredJobState,
+    IndexResilienceSnapshot,
     JobInitiator,
     JobMode,
     JobOperation,
@@ -530,3 +534,70 @@ class TestManagedJobTransitions:
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
+
+
+@pytest.mark.asyncio
+async def test_shutdown_restarts_the_same_job_and_keeps_checkpoint(
+    tmp_path: Path,
+) -> None:
+    """Real dispatch/shutdown/restore continues the prior durable work once."""
+    path = tmp_path / "jobs.json"
+    manager = JobManager(quiesce_controller=ServiceQuiesceController(), state_path=path)
+    created = manager.create(
+        JobSpec(
+            JobOperation.INDEX,
+            JobSource.CODE,
+            str(tmp_path),
+            JobMode.REBUILD,
+            RunAuthority.REBUILD,
+        ),
+        JobInitiator("test", "shutdown recovery", str(tmp_path)),
+    )
+    assert created.job is not None
+    job_id = created.job.id
+    entered = threading.Event()
+    release = threading.Event()
+    checkpoint = IndexResilienceSnapshot(
+        generation_id="confirmed-build", committed_units=200
+    )
+
+    def first(context: JobAttemptContext) -> JobExecutionResult:
+        context.set_resilience(checkpoint)
+        entered.set()
+        assert release.wait(timeout=10)
+        context.control.checkpoint()
+        raise AssertionError("shutdown was not delivered")
+
+    manager.bind_dispatch(job_id, first)
+    assert manager.dispatch(job_id).code == "attempt_started"
+    try:
+        assert await asyncio.to_thread(entered.wait, 10)
+        requested = manager.begin_shutdown()
+    finally:
+        release.set()
+    await manager.wait_for_shutdown(requested, timeout_seconds=10)
+    stopped = manager.get(job_id)
+    assert stopped is not None
+    assert stopped.state is JobState.INTERRUPTED
+    assert stopped.error_kind == "service_shutdown"
+    resumed = JobManager(quiesce_controller=ServiceQuiesceController(), state_path=path)
+    assert resumed.restore_persisted().code == "job_state_restored"
+    restored = resumed.get(job_id)
+    assert restored is not None
+    assert restored.resilience == checkpoint
+    calls: list[int] = []
+
+    def second(context: JobAttemptContext) -> JobExecutionResult:
+        calls.append(context.attempt)
+        assert context.authority is RunAuthority.REBUILD
+        return JobExecutionResult(summary="continued checkpoint")
+
+    resumed.bind_dispatch(job_id, second)
+    assert resumed.dispatch(job_id).code == "attempt_started"
+    await resumed.wait_for_attempt(job_id, timeout_seconds=10)
+    completed = resumed.get(job_id)
+    assert completed is not None and completed.state is JobState.SUCCEEDED
+    assert calls == [2]
+    final = JobManager(quiesce_controller=ServiceQuiesceController(), state_path=path)
+    assert final.restore_persisted().code == "job_state_restored"
+    assert not final.active()

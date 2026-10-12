@@ -395,14 +395,15 @@ class TestManagedJobPersistence:
             assert restarted.restore_persisted().code == "job_state_restored"
             interrupted = restarted.get(created.job.id)
             assert interrupted is not None
-            assert interrupted.state is JobState.INTERRUPTED
-            assert interrupted.timestamps.finished_at is not None
+            assert interrupted.state is JobState.QUEUED
+            assert interrupted.attempt.number == 2
+            assert interrupted.timestamps.finished_at is None
             assert interrupted.runtime.task_active is False
-            assert interrupted.runtime.pid == 123456
-            assert interrupted.runtime.executable == "old-service.exe"
+            assert interrupted.runtime.pid == os.getpid()
+            assert interrupted.runtime.executable == sys.executable
             persisted = json.loads(state_path.read_text(encoding="utf-8"))["jobs"]
             assert len(persisted) == 1
-            assert persisted[0]["state"] == "interrupted"
+            assert persisted[0]["state"] == "queued"
         finally:
             owner_task.cancel()
             stale_task.cancel()
@@ -411,7 +412,7 @@ class TestManagedJobPersistence:
                     await task
 
     @pytest.mark.asyncio
-    async def test_interrupted_recovery_displaces_older_terminal_history(
+    async def test_interrupted_recovery_preserves_older_terminal_history(
         self,
         tmp_path: Path,
     ) -> None:
@@ -490,8 +491,9 @@ class TestManagedJobPersistence:
             terminal = restarted.terminal()
 
             assert len(terminal) == 1
-            assert terminal[0].id == interrupted.job.id
-            assert terminal[0].state is JobState.INTERRUPTED
+            assert terminal[0].id == completed.job.id
+            assert terminal[0].state is JobState.SUCCEEDED
+            assert [job.id for job in restarted.active()] == [interrupted.job.id]
 
             restarted_again = JobManager(
                 quiesce_controller=ServiceQuiesceController(),
@@ -501,8 +503,9 @@ class TestManagedJobPersistence:
             )
             assert restarted_again.restore_persisted().code == "job_state_restored"
             retained_again = restarted_again.terminal()
-            assert [job.id for job in retained_again] == [interrupted.job.id]
-            assert retained_again[0].state is JobState.INTERRUPTED
+            assert [job.id for job in retained_again] == [completed.job.id]
+            assert retained_again[0].state is JobState.SUCCEEDED
+            assert [job.id for job in restarted_again.active()] == [interrupted.job.id]
         finally:
             completed_task.cancel()
             interrupted_task.cancel()
@@ -890,11 +893,9 @@ class TestManagedJobPersistence:
             )
             outcome = restarted.restore_persisted()
             assert outcome.code == "job_state_restored"
-            assert restarted.active() == []
-            assert len(restarted.terminal()) == 3
-            assert all(
-                job.state is JobState.INTERRUPTED for job in restarted.terminal()
-            )
+            assert restarted.terminal() == []
+            assert len(restarted.active()) == 3
+            assert all(job.state is JobState.QUEUED for job in restarted.active())
         finally:
             for task in tasks:
                 task.cancel()

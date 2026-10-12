@@ -947,7 +947,11 @@ class JobManagerExecution(JobManagerState):
                 state=state,
                 result=result,
                 error_kind=(
-                    "interrupted" if interrupted else classify_error_text(result)
+                    "service_shutdown"
+                    if shutdown
+                    else "interrupted"
+                    if interrupted
+                    else classify_error_text(result)
                 ),
             ),
         )

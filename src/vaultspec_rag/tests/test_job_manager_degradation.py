@@ -10,6 +10,7 @@ import pytest
 
 from ..indexer._run_ledger_models import RunAuthority
 from ..job_control import RunControlToken
+from ..job_manager._control import AttemptTerminal
 from ..job_manager.manager import JobManager
 from ..job_models import (
     JobInitiator,
@@ -47,9 +48,8 @@ class TestInterruptedJobDegradationSplit:
     ) -> None:
         """The index that run was building is incomplete, so it must be flagged.
 
-        The interruption is produced the way a daemon death produces it: a
-        started attempt is persisted, and a fresh manager restores that state
-        and finds an attempt no live worker owns. No state is hand-written.
+        An unclassified interrupted attempt remains diagnostic history.
+        Service-owned shutdown and orphaned live work resume on restart.
         """
         state_path = tmp_path / "managed-jobs.json"
         manager = JobManager(
@@ -78,6 +78,15 @@ class TestInterruptedJobDegradationSplit:
             assert started.job is not None
             assert started.job.state is JobState.RUNNING
 
+            manager.finish_attempt(
+                created.job.id,
+                AttemptTerminal(
+                    attempt=1,
+                    task=task,
+                    state=JobState.INTERRUPTED,
+                    error_kind="interrupted",
+                ),
+            )
             restarted = JobManager(
                 quiesce_controller=ServiceQuiesceController(),
                 max_nonterminal=2,

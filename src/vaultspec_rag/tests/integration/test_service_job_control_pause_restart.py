@@ -400,18 +400,16 @@ def _assert_restored_restart_state(
     assert paused.runtime.task_active is False
     assert paused.id == paused_id
     assert interrupted is not None
-    assert interrupted.state is JobState.INTERRUPTED
-    assert interrupted.runtime.task_active is False
-    assert interrupted.runtime.worker_active is False
+    assert interrupted.state in {JobState.RUNNING, JobState.SUCCEEDED}
+    assert interrupted.attempt.number == 2
+    assert interrupted.desired_state is DesiredJobState.RUNNING
     return queued, paused, interrupted
 
 
 async def _complete_restored_queued_job(
     manager: JobManager,
-    registry: ServiceRegistry,
     restored: JobSnapshot,
-    root: Path,
-) -> None:
+) -> JobSnapshot:
     """Wait for restored queued work and assert released success."""
     assert (
         await manager.wait_for_attempt(
@@ -422,40 +420,26 @@ async def _complete_restored_queued_job(
     completed = manager.get(restored.id)
     assert completed is not None
     assert completed.state is JobState.SUCCEEDED
-    assert_released(completed, registry.peek_project(root))
+    return completed
 
 
-async def _retry_restored_interruption(
+async def _complete_restored_interruption(
     manager: JobManager,
-    registry: ServiceRegistry,
     restored: JobSnapshot,
-    root: Path,
-) -> None:
-    """Retry restored interrupted work and assert its durable parent link."""
-    retry = manager.retry(
-        restored.id,
-        initiator=_integration_initiator(root, "restart retry probe"),
-    )
-    assert retry.code == "job_retry_created"
-    assert retry.job is not None
-    assert retry.job.attempt.parent_job_id == restored.id
-    activated = await jobs.activate_index_job(
-        retry,
-        code_preflight=None,
-        registry=registry,
-    )
-    assert activated.status is not JobOutcomeStatus.ERROR
+) -> JobSnapshot:
+    """Startup dispatch continues the same job from its durable checkpoint."""
     assert (
         await manager.wait_for_attempt(
-            retry.job.id,
+            restored.id,
             timeout_seconds=E2E_TIMEOUT_SECONDS,
         )
     ).code == "attempt_released"
-    completed = manager.get(retry.job.id)
+    completed = manager.get(restored.id)
     assert completed is not None
     assert completed.state is JobState.SUCCEEDED
-    assert completed.attempt.parent_job_id == restored.id
-    assert_released(completed, registry.peek_project(root))
+    assert completed.attempt.number == 2
+    assert completed.attempt.parent_job_id is None
+    return completed
 
 
 def _assert_restart_delete_and_pause(
@@ -493,11 +477,11 @@ def _assert_restart_delete_and_pause(
 
 
 @pytest.mark.timeout(300)
-async def test_restart_dispatches_queued_preserves_pause_and_links_retry(
+async def test_restart_dispatches_queued_preserves_pause_and_resumes_interruption(
     tmp_path: Path,
     _e2e_runtime: tuple[ServiceRegistry, JobManager],
 ) -> None:
-    """Restore durable intent, reconcile interruption, retry, and delete."""
+    """Restore durable intent, continue interrupted work, and retain user pause."""
     registry, seed_manager = _e2e_runtime
     queued_root = tmp_path / "restart-queued"
     paused_root = tmp_path / "restart-paused"
@@ -542,18 +526,14 @@ async def test_restart_dispatches_queued_preserves_pause_and_links_retry(
             interrupted_id=interrupted_job.id,
         )
     )
-    await _complete_restored_queued_job(
-        restarted,
-        registry,
-        restored_queued,
-        queued_root,
+    completed_queued = await _complete_restored_queued_job(restarted, restored_queued)
+    completed_interrupted = await _complete_restored_interruption(
+        restarted, restored_interrupted
     )
-    await _retry_restored_interruption(
-        restarted,
-        registry,
-        restored_interrupted,
-        interrupted_root,
-    )
+    # Both jobs run automatically now. Global capacity may still be owned by
+    # the second job when the first releases its own resources.
+    assert_released(completed_queued, registry.peek_project(queued_root))
+    assert_released(completed_interrupted, registry.peek_project(interrupted_root))
     _assert_restart_delete_and_pause(
         restarted,
         state_path,
