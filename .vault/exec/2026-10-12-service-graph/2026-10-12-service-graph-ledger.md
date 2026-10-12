@@ -5,7 +5,7 @@ tags:
 date: '2026-10-12'
 modified: '2026-10-12'
 body_schema: 'body-v2'
-body_hash: 'sha256:81c5379b4f2e26f2837e03d5b0c3c69e4333e796365cbc4997b04a23b78ddd0c'
+body_hash: 'sha256:d4090a668d739e721d820072571f58ba5f382970f52c18eb374ad5309a543466'
 related:
   - "[[2026-10-12-service-graph-plan]]"
 ---
@@ -39,3 +39,19 @@ related:
 - `S02` `verify:` `real graph load 3.17s, single-entry refresh 6.01s, assembly 0.73s, PageRank 0.44s, centrality 0.21s` -> `pass`
 - `S02` `verify:` `installed vault query cold 2.11s warm 1.49s code 2.82s` -> `pass`
 - `S02` `verify:` `canonical core commit 5cab80da installed source SHA256 and 89 dependency compatibility checks` -> `pass`
+- `S03` `M` `vaultspec-core/src/vaultspec_core/config/config.py`
+- `S03` `M` `vaultspec-core/src/vaultspec_core/config/read_scope.py`
+- `S03` `M` `vaultspec-core/src/vaultspec_core/config/tests/test_config.py`
+- `S03` `M` `vaultspec-core/src/vaultspec_core/core/corpus_io.py`
+- `S03` `M` `vaultspec-core/src/vaultspec_core/core/windows_paths.py`
+- `S03` `M` `vaultspec-core/src/vaultspec_core/core/tests/test_corpus_security.py`
+- `S03` `M` `vaultspec-core/src/vaultspec_core/graph/api.py`
+- `S03` `M` `vaultspec-core/src/vaultspec_core/graph/algorithms.py`
+- `S03` `M` `vaultspec-core/src/vaultspec_core/graph/tests/test_graph.py`
+- `S03` `M` `vaultspec-core/src/vaultspec_core/graph/tests/test_pagerank.py`
+- `S03` `M` `vaultspec-core/dev/experiments/graph_profile.py`
+- `S03` `verify:` `523 covering tests; four default deselections` -> `pass`
+- `S03` `verify:` `Ruff format ty basedpyright Pylint and core commit gates` -> `pass`
+- `S03` `verify:` `five guard mutations fail and restored pass` -> `pass`
+- `S03` `verify:` `py-spy and controlled resource measurement recorded in core audit` -> `pass`
+- `S03` `verify:` `core 618cdf1c installed hashes and 89 dependencies; live vault 3.289s and 0.587s` -> `pass`

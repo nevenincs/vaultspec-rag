@@ -4,12 +4,13 @@ tags:
   - '#service-graph'
 date: '2026-04-02'
 modified: '2026-10-12'
-body_hash: 'sha256:3e0e0c2a2bc8a00260f1bfcdb764a5a362e420c1bf4090119171626409886005'
+body_hash: 'sha256:04935a5387a1e4ddf4ea7c60f892d19d0ff5902285f2be8b3dbfd8eb2e580cb5'
 related:
   - '[[2026-04-02-service-graph-adr]]'
   - '[[2026-04-02-service-graph-phase1-plan]]'
   - '[[2026-04-02-service-graph-research]]'
 ---
+
 # `service-graph` Code Review
 
 Rolling audit log for the service orchestration implementation.
@@ -775,3 +776,33 @@ On the real TUI vault (4,477 nodes, 8,071 edges), complete cached construction m
 Verification: 236 graph/scanner/corpus-security tests passed (four default external-capability deselections); 64 cache tests passed again after moving the helper to the existing cache-I/O owner to preserve the module-size ceiling. Ruff, formatting, ty, basedpyright and production-file Pylint passed. Three guard mutations failed on their intended assertions and passed after restoration: ancestor redirect refusal, snapshot timestamp integrity, and bounded configuration resolutions. The core performance audit contains the evidence and decision-placement limitations.
 
 The installed service now has both changes. Final five core runtime SHA256 values match the reviewed source, and all 89 installed dependencies are compatible. Live queries measured vault 2.11 seconds cold and 1.49 seconds warm versus code 2.82 seconds; graph ranking was 1.07 and 0.16 milliseconds. After the final helper move and reinstall, a further vault request succeeded in 3.23 seconds server time. Service PID 6480 is running on port 8766 with automatic updates enabled. No index was deleted or rebuilt by this performance work. Both S01 and S02 are closed; existing earlier audit findings outside this scope are not reclassified by this PASS.
+
+### cold-graph-resource-optimization | low | PASS for S03
+
+Reviewed canonical core commit 618cdf1c against 5cab80da and the integrated service
+graph contract. The scope pins configuration per operation, reuses scan observations,
+validates actual Windows file handles, snapshots archive names once, and materializes
+PageRank adjacency once. Redirect/type/identity checks remain enforced; handles are
+closed after metadata resolution and descriptor ownership transfers are explicit.
+No index replacement, storage deletion or duplicate indexing feature was introduced.
+
+Controlled cold graph medians improved 9.086 -> 5.519 seconds (39%), CPU 8.266 -> 4.953
+seconds (40%), and metadata/control I/O 320,715 -> 137,473 operations (57%). PageRank
+improved 0.182 -> 0.082 seconds with all 4,481 scores unchanged. Warm builds took
+2.17-2.54 seconds and four process read calls per repeat. Handles stabilized at 161;
+sampled peak RSS increased about 7 MB to 224.5 MB. Core's performance audit identifies
+all before/after py-spy and resource artifacts and records sampling limitations.
+Cold disables the graph cache, not OS caches; system disk counters include other
+workloads and do not establish physical-disk savings.
+
+523 covering tests passed (four default external-capability deselections). Package
+Ruff, changed formatting, ty, basedpyright and production Pylint passed. Five guard
+mutations failed for their intended reasons and passed after restoration: path
+redirection, leaked handles, repeated configuration, repeated archive enumeration,
+and repeated PageRank edge lookup. Core commit gates also passed.
+
+The installed uv service environment matches all six changed runtime SHA256 hashes;
+89 dependency checks pass. PID 90256 restarted on port 8766 with automatic updates.
+Live vault server times were 3.289 seconds initially and 0.587 seconds on repetition;
+graph ranking took 0.864 and 0.156 milliseconds. The repeat used five TypeSafe cache
+hits and no TypeSafe network requests. Earlier S01/S02 verification remains applicable.

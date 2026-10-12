@@ -9,7 +9,7 @@ related:
   - '[[2026-03-07-vaultgraph-cache-adr]]'
 modified: '2026-10-12'
 body_schema: body-v2
-body_hash: 'sha256:907f8e26cfdf88bc76cac45eba772a8aedff083ca1f84b244db281795c653d66'
+body_hash: 'sha256:5e972ba98734da8c6fba999c19b981e4336538756cd8775f2ca19b06f855a409'
 ---
 
 # `service-graph` plan
@@ -30,6 +30,7 @@ storage deletion is required for this work.
 
 - [x] `S01` - Remove synchronous graph construction from search and verify lifecycle races and live latency; `src/vaultspec_rag/graph_cache.py, search, service.py, _service_eviction.py, tests`.
 - [x] `S02` - Profile and optimize canonical graph calculation separately while preserving graph and filesystem safety semantics; `vaultspec-core/src/vaultspec_core graph, config, core/corpus_io.py and covering tests`.
+- [x] `S03` - Profile cold graph construction with py-spy and process I/O, CPU, memory and handles; optimize measured work and verify cache and filesystem safety; `vaultspec-core/src/vaultspec_core/core/corpus_io.py, graph, config, scanner, covering tests and dev profiling instrument`.
 
 ## Parallelization
 
@@ -46,3 +47,8 @@ and covering tests. Verify cold and warm live service query timings after deploy
 S02: measure scan, validation, construction, and cache restore separately on the real
 vault. Optimize the measured dominant work, preserve graph nodes/edges and unsafe-path
 refusals, and rerun the relevant canonical-owner tests and same-corpus timings.
+
+S03: capture py-spy stacks and process CPU, I/O, RSS and handles on the real corpus.
+Compare controlled cold runs, measure cached loads and PageRank separately, preserve
+path safety and handle ownership with mutation-proven guards, run covering tests and
+configured gates, and verify installed runtime hashes and live service searches.
