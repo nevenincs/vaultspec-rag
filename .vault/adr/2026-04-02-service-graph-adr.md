@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#service-graph'
 date: '2026-04-02'
-modified: '2026-09-30'
-body_hash: 'sha256:93efb27ca31891cca7ec46fba45252a65870fe37d437037d620606485df78240'
+modified: '2026-10-12'
+body_hash: 'sha256:628f7c6708aadb761a77d97391ad6be9aeadbff2ba9169c35e376ef253a2e74a'
 related:
   - '[[2026-04-02-service-graph-research]]'
   - '[[2026-04-02-release-readiness-audit]]'
@@ -434,3 +434,25 @@ v
 ## Considered options
 
 Evidence gap: the retained ADR body and complete git log --follow history provide no separate considered-options inventory. No option is asserted.
+
+## Search latency amendment, 2026-10-12
+
+Authorized by the user's instruction to fix the measured graph-related search stall.
+This amendment replaces the synchronous construction and duplicate search fallback
+requirements above for semantic search. Explicit relationship queries may still wait
+for the canonical graph. Search reads never wait for construction: they use a current
+ready graph or retain semantic ranking without the optional structural tie-breakers.
+One GraphCache implementation owns construction, TTL, invalidation, and retry for
+service and standalone searchers. Construction runs outside the state lock on a
+coalesced background worker. Successful indexing invalidates graph data immediately;
+an epoch fences late completion so a superseded build cannot restore stale data.
+Eviction closes the cache and refuses subsequent publication. Failures have bounded
+retry backoff and cannot trigger a second inline construction in the reranker.
+
+Live evidence: the original 87.44-second query spent 85.41 seconds in graph processing;
+a reproduction spent 118.47 of 122.20 seconds there. An immediate vault repeat took
+1.80 seconds versus 1.99 seconds for code. The graph had 4,477 documents. A read-only
+profile found 9,325 configuration calls and 130,189 path resolutions; cached JSON
+loading itself took 0.42 seconds. Background execution addresses request blocking,
+not graph calculation cost. The latter is separately authorized follow-on work and
+must retain canonical graph semantics and filesystem safety validation.

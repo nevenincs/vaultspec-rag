@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-09-14'
-body_hash: 'sha256:dd21085af06b05ab7e98a4cdd0fa5e6f1346f67b74571e5fbf4c53a38904729f'
+modified: '2026-10-12'
+body_hash: 'sha256:288f1c8a94dea333a087d874968a6b7654e0ed2c8301f226b2fc134d2203e9e7'
 related:
   - '[[2026-03-07-threading-lock-for-singleton-adr]]'
   - '[[2026-03-07-continuous-research]]'
@@ -93,3 +93,25 @@ Call `_graph_cache.invalidate()` after reindex completes.
 - Reindex code must call `_graph_cache.invalidate()` after completion.
 - If cross-process invalidation is ever needed (CLI reindex while MCP runs),
   switch to mtime-based checking.
+
+## Search latency amendment, 2026-10-12
+
+Authorized by the user's instruction to fix the measured graph-related search stall.
+This amendment replaces the synchronous construction and duplicate search fallback
+requirements above for semantic search. Explicit relationship queries may still wait
+for the canonical graph. Search reads never wait for construction: they use a current
+ready graph or retain semantic ranking without the optional structural tie-breakers.
+One GraphCache implementation owns construction, TTL, invalidation, and retry for
+service and standalone searchers. Construction runs outside the state lock on a
+coalesced background worker. Successful indexing invalidates graph data immediately;
+an epoch fences late completion so a superseded build cannot restore stale data.
+Eviction closes the cache and refuses subsequent publication. Failures have bounded
+retry backoff and cannot trigger a second inline construction in the reranker.
+
+Live evidence: the original 87.44-second query spent 85.41 seconds in graph processing;
+a reproduction spent 118.47 of 122.20 seconds there. An immediate vault repeat took
+1.80 seconds versus 1.99 seconds for code. The graph had 4,477 documents. A read-only
+profile found 9,325 configuration calls and 130,189 path resolutions; cached JSON
+loading itself took 0.42 seconds. Background execution addresses request blocking,
+not graph calculation cost. The latter is separately authorized follow-on work and
+must retain canonical graph semantics and filesystem safety validation.

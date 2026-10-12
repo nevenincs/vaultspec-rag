@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#service-graph'
 date: '2026-04-02'
-modified: '2026-10-01'
-body_hash: 'sha256:35b730637ed1f0e1b056519f48a8ca8bca3b070e5e637383ebd326d1051765d6'
+modified: '2026-10-12'
+body_hash: 'sha256:4283084aceb18b9472afc7728cfd43dd27a94210d1e6f20ece07f37fb47119c4'
 related:
   - '[[2026-04-02-service-graph-adr]]'
   - '[[2026-04-02-service-graph-phase1-plan]]'
@@ -739,3 +739,30 @@ Retained audit evidence: the detailed review entries in this document constitute
 ## Recommendations
 
 Evidence gap: the retained audit body and complete git log --follow history state no separate recommendations. No recommendation is asserted.
+
+### nonblocking-search-refresh | low | PASS for search blocking correction
+
+Reviewed the integrated search provider, standalone fallback, reranker, cache epoch,
+index invalidation, eviction, and registry shutdown paths. The implementation uses
+one canonical graph builder outside the state lock and does not change graph nudges
+when the graph is ready. Missing or expired graphs retain semantic ranking. In-flight
+invalidations coalesce and cannot republish a superseded graph; closed caches refuse
+publication. Failed builds back off for five seconds rather than rebuilding per query.
+
+The initial covering run passed 107 tests, including real service searches. After
+shutdown and test updates, 21 focused graph, ranking, shutdown, and real performance
+integration tests passed. Package Ruff, formatting of all eight changed Python files,
+and both ty and strict basedpyright passed. Deliberately forcing blocking failed the
+named search-wait assertion; removing the epoch fence failed the superseded-publication
+assertion. Both restored guards passed. No mutation remains.
+
+The existing uv tool environment was updated after stopping the service. All five
+changed runtime modules match installed SHA256 bytes and all 89 dependencies pass
+compatibility checks. Service PID 62576 started with updates enabled. Live TUI queries
+on 21,226 vault points and 128,789 code points measured: first vault 2.97976 seconds
+(graph stage 0.000940 seconds), immediate vault repeat 0.59079 seconds (graph stage
+0.000154 seconds), code 1.87238 seconds. Request ids are fc3b85db139a46fdbcafd595159d5d3e,
+5e8835fb42cf442cb32bd689edf5cbf0, and 8d2afc92663b4329b41f1b7f6f5fc5dc respectively.
+The original reproduction was 122.20 seconds with 118.47 seconds in graph processing.
+Graph-calculation optimization remains open separately; moving work off the request
+path does not satisfy that additional requirement.

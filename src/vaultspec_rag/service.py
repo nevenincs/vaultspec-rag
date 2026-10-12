@@ -1100,7 +1100,7 @@ class ServiceRegistry(
             root,
             model,
             slot.store,
-            graph_provider=lambda gc=slot.graph_cache, r=root: gc.get(r),
+            graph_provider=lambda gc=slot.graph_cache, r=root: gc.get(r, wait=False),
             gpu_lock=self._gpu_lock,
             reranker=reranker,
         )
@@ -1236,6 +1236,7 @@ class ServiceRegistry(
                         root,
                         slot.ref_count,
                     )
+                slot.graph_cache.close()
                 slot.store.close(force_after_seconds=STORE_FORCE_CLOSE_SECONDS)
                 logger.info("ProjectSlot closed for %s", root)
             for store in tuple(self._transient_stores):

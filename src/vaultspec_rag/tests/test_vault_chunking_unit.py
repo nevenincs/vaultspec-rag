@@ -205,7 +205,6 @@ class TestBoundedGraphNudge:
         results = [_result(node_id, base_score) for node_id in graph.nodes]
         reranked = rerank_with_graph(
             results,
-            tmp_path,
             ParsedQuery(text="q", filters={"feature": "sample"}),
             graph=graph,
         )
@@ -220,3 +219,20 @@ class TestBoundedGraphNudge:
         from ..search._postprocess import PREFER_SCORE_NUDGE
 
         assert _IN_LINK_NUDGE_STEP * _IN_LINK_NUDGE_CAP <= PREFER_SCORE_NUDGE
+
+
+@pytest.mark.unit
+def test_absent_graph_preserves_semantic_ranking(monkeypatch: pytest.MonkeyPatch):
+    from unittest.mock import Mock
+
+    from ..search._models import ParsedQuery
+
+    constructor = Mock(side_effect=AssertionError("query rebuilt the graph"))
+    monkeypatch.setattr("vaultspec_core.graph.VaultGraph", constructor)
+    results = [_result("target", 0.75)]
+    assert (
+        rerank_with_graph(results, ParsedQuery(text="q", filters={}), graph=None)
+        is results
+    )
+    assert results[0].score == 0.75
+    constructor.assert_not_called()
