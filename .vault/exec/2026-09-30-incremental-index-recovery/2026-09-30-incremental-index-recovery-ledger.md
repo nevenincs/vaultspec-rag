@@ -5,7 +5,7 @@ tags:
 date: '2026-09-30'
 modified: '2026-10-12'
 body_schema: 'body-v2'
-body_hash: 'sha256:73c161098d73cdb4c51e2383b081b1c7f59c4d94214cb9d0f93d3d5bd6771f29'
+body_hash: 'sha256:37ce22e63801da44c0a4dede70d3f55a3d727d5abddb4b99a2c0b430d6140263'
 related:
   - "[[2026-09-30-incremental-index-recovery-plan]]"
 ---
@@ -225,6 +225,8 @@ related:
 - `S07` `verify:` `installed service restart same-generation resume and continued progress` -> `pass`
 - `S07` `verify:` `live search during same-root vault ingestion: 2.810 seconds` -> `pass`
 - `S07` `verify:` `vault check all --feature incremental-index-recovery` -> `pass`
+- `S07` `verify:` `live TUI vault same-generation completion 21175 units and subsequent automatic update` -> `pass`
+- `S07` `verify:` `live vault query returns consistent 21189-point proof; main code advances6928` -> `pass`
 
 ## Notes
 
@@ -245,3 +247,4 @@ related:
 - `S02` Final shared evidence closes prior pending verification. Windows runner budget4 retains the complete CPU suite and every latency/startup deadline. Explicit GPU/MPS/performance environment skips remain unclaimed; failed earlier scheduling logs and restored guard evidence are retained. Final metadata checks follow this append.
 - `S03` Final shared evidence closes prior pending verification. Windows runner budget4 retains the complete CPU suite and every latency/startup deadline. Explicit GPU/MPS/performance environment skips remain unclaimed; failed earlier scheduling logs and restored guard evidence are retained. Final metadata checks follow this append.
 - `S04` Final shared evidence closes prior pending verification. Windows runner budget4 retains the complete CPU suite and every latency/startup deadline. Explicit GPU/MPS/performance environment skips remain unclaimed; failed earlier scheduling logs and restored guard evidence are retained. Final metadata checks follow this append.
+- `S07` Post-commit live observation: first vault query timed out during cold graph build; follow-up succeeds87.436s. Latency limitation remains; code unchanged.

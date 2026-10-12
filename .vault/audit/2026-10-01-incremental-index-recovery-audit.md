@@ -5,7 +5,7 @@ tags:
 date: '2026-10-01'
 modified: '2026-10-12'
 body_schema: 'body-v2'
-body_hash: 'sha256:f2948f34d7b4ed7302847063ec3b48cf2236a076a7ac46b7d6058d9114edf14f'
+body_hash: 'sha256:58f9f21cfa17fc4e74736340818cafa9b15ec173ce886739082931a7657edde2'
 related:
   - "[[2026-09-30-incremental-index-recovery-plan]]"
 ---
@@ -224,6 +224,14 @@ Final service PID 64648 runs the installed correction on port 8766 with automati
 TUI vault linked retry 61710977-682c-49b7-b3f1-e8ea81e6fb0d now resumes generation 882b6affdf594136aa040fc10c7200fe and passes the former source-digest failure point. At the verification snapshot it completed 512 replacement chunks in this attempt and held 10843 confirmed units after source-drift retirement. Read-only SQL confirms obsolete receipt 1177788cc1f84eb6873975ddcf6a4ca1 is absent and its old generation is invalidated. No whole-root storage deletion occurred. Search against TUI code during main recovery returned real results in 2.968 seconds with its full pre-update 128802-point proof consistent. A final same-root code query during active TUI vault ingestion returned two real results in 2.810 server seconds, with all 128826 code points and current proof consistent. Both remaining rebuilds are allowed to continue; this evidence proves recovery/progress, not their eventual completion.
 
 All S05-S07 incident-recovery findings are resolved with applicable unit, real-store, GPU, guard mutation and independent review evidence above. This completes the recovery repair and operational resumption; it does not assert the separate six-step destructive-rebuild architecture rollout is implemented.
+
+### live-vault-completion | low | Resumed vault completed and automatic updates continue
+
+After commit 536b86a8, TUI vault retry 61710977-682c-49b7-b3f1-e8ea81e6fb0d completed successfully: +4471 /0 -0 in 283621 ms, with the original generation 882b6affdf594136aa040fc10c7200fe succeeded/compacted and 21175 confirmed units. Automatic scoped vault update 298c4fd05b5b4044baaf6d509f073f9d then succeeded, adding one newly changed document and advancing the corpus to 4472. Main code retains 6136 units and remains resumed for continuation. TUI code and main document recovery already completed as recorded above. These observations supersede the earlier in-progress vault snapshot without changing the verified code.
+
+### cold-vault-graph-observation | low | Initial post-rebuild query exceeded its timeout
+
+The first TUI vault query after automatic indexing timed out at 120 seconds while the existing graph owner rebuilt a cold cache. Logs show normal progress: 4472 nodes and 8048 edges completed at 12:29:03, the 49920705-byte graph cache was saved at 12:29:39, and the automatic vault job finished at 12:29:40. A subsequent code watcher update completed, and main code acquired the pipeline again with its original generation and 6136 saved units. This is a disclosed cold graph latency limitation, not another interrupted-index failure; no graph implementation was changed in this repair. The follow-up query succeeded in 87.436 server seconds with one real result and all 21189 vault points / 4472 documents consistent. Main code concurrently advanced to 6928 confirmed units in its original generation. Vault-query latency remains a disclosed limitation; this repair does not assert a latency improvement. Read-only tracing confirms graph get holds its lock across construction/cache I/O, and watcher invalidation uses that lock, explaining the earlier post-index wait without proving the full duration of the follow-up query came from graph work.
 
 ## Recommendations
 
