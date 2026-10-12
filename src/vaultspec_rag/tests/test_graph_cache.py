@@ -5,7 +5,7 @@ Covers:
 - GraphCache.get() concurrent access at TTL boundary
 - GraphCache.invalidate() triggers rebuild on next get
 - VaultSearcher with graph_provider (delegation)
-- VaultSearcher without graph_provider (internal fallback with lock)
+- VaultSearcher without graph_provider (shared nonblocking implementation)
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from __future__ import annotations
 import threading
 import time
 from typing import TYPE_CHECKING, ClassVar
+from unittest.mock import Mock
 
 import pytest
 
@@ -87,14 +88,6 @@ class TestGraphCacheInvalidate:
         assert g2 is not None
         assert g1 is not g2
 
-    def test_invalidate_resets_built_at(self, tmp_path: Path):
-        root = _make_vault_dir(tmp_path)
-        cache = GraphCache(ttl_seconds=300.0)
-        cache.get(root)
-        assert cache._built_at > 0.0
-        cache.invalidate()
-        assert cache._built_at == 0.0
-
 
 class TestGraphCacheConcurrency:
     """Concurrent access at TTL boundary produces exactly one rebuild.
@@ -132,35 +125,8 @@ class TestGraphCacheConcurrency:
         assert all(r is first for r in results)
 
 
-class TestGraphCacheFailureRecovery:
-    """GraphCache.get() after a construction failure retries on next call.
-
-    When VaultGraph raises, get() catches the exception, sets _graph=None
-    and _built_at=now. Because _is_stale() returns True whenever _graph
-    is None, the next call will attempt a fresh build - no TTL-based
-    retry suppression.
-    """
-
-    pytestmark: ClassVar = [pytest.mark.unit]
-
-    def test_get_retries_after_simulated_failure(self, tmp_path: Path):
-        """After a failure state (_graph=None, _built_at=recent), get()
-        still rebuilds because _is_stale returns True when _graph is None."""
-        root = _make_vault_dir(tmp_path)
-        cache = GraphCache(ttl_seconds=300.0)
-
-        # Simulate a prior failure: _graph is None but _built_at is recent
-        cache._graph = None
-        cache._root = root
-        cache._built_at = time.monotonic()
-
-        # get() should retry and succeed despite recent _built_at
-        result = cache.get(root)
-        assert result is not None
-        # Verify it actually built a graph (not just returned stale None)
-        from vaultspec_core.graph import VaultGraph
-
-        assert isinstance(result, VaultGraph)
+class TestGraphCacheRootChange:
+    """Cache data cannot cross project roots."""
 
     def test_get_recovers_after_root_change(self, tmp_path: Path):
         """Changing root_dir triggers rebuild even within TTL."""
@@ -212,85 +178,159 @@ class TestGraphCacheConcurrentInvalidate:
         assert len(results) == 10
 
 
-class TestVaultSearcherGraphProvider:
-    """VaultSearcher delegates to graph_provider when supplied."""
+class TestNonblockingGraphRefresh:
+    """Hold construction explicitly so timing assertions do not depend on CPU speed."""
 
-    pytestmark: ClassVar = [pytest.mark.unit]
-
-    def test_get_graph_uses_provider(self, tmp_path: Path):
-        from vaultspec_core.graph import VaultGraph
-
-        root = _make_vault_dir(tmp_path)
-        graph_instance = VaultGraph(root)
-        call_count = 0
-
-        def provider() -> VaultGraph:
-            nonlocal call_count
-            call_count += 1
-            return graph_instance
-
-        # Build a minimal VaultSearcher without GPU models - only test
-        # _get_graph, which does not need the model or store.
+    @pytest.mark.parametrize("expired", [False, True])
+    def test_search_and_invalidation_do_not_wait(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, expired: bool
+    ) -> None:
         from ..search import VaultSearcher
 
+        entered = threading.Event()
+        release = threading.Event()
+        returned = threading.Event()
+        graph = object()
+
+        def build(_root: Path) -> object:
+            entered.set()
+            assert release.wait(5)
+            return graph
+
+        cache = GraphCache(ttl_seconds=300)
+        if expired:
+            with monkeypatch.context() as prime:
+                prime.setattr(
+                    "vaultspec_core.graph.VaultGraph", Mock(return_value=graph)
+                )
+                assert cache.get(tmp_path) is graph
+            cache._built_at = 0.0
+        constructor = Mock(side_effect=build)
+        monkeypatch.setattr("vaultspec_core.graph.VaultGraph", constructor)
         searcher = VaultSearcher.__new__(VaultSearcher)
-        searcher._graph_provider = provider
-        searcher._graph_ttl = 300.0
-        searcher._cached_graph = None
-        searcher._graph_built_at = 0.0
-        searcher._graph_lock = threading.Lock()
-        searcher.root_dir = root
-
-        result = searcher._get_graph()
-        assert result is graph_instance
-        assert call_count == 1
-
-    def test_get_graph_fallback_without_provider(self, tmp_path: Path):
-        """Without graph_provider, the internal lock+TTL cache is used."""
-        root = _make_vault_dir(tmp_path)
-
-        from ..search import VaultSearcher
-
-        searcher = VaultSearcher.__new__(VaultSearcher)
-        searcher._graph_provider = None
-        searcher._graph_ttl = 300.0
-        searcher._cached_graph = None
-        searcher._graph_built_at = 0.0
-        searcher._graph_lock = threading.Lock()
-        searcher.root_dir = root
-
-        g1 = searcher._get_graph()
-        assert g1 is not None
-        # Second call returns same instance (within TTL)
-        g2 = searcher._get_graph()
-        assert g1 is g2
-
-    def test_fallback_lock_prevents_concurrent_builds(self, tmp_path: Path):
-        """Internal fallback path has a lock preventing concurrent builds."""
-        root = _make_vault_dir(tmp_path)
-
-        from ..search import VaultSearcher
-
-        searcher = VaultSearcher.__new__(VaultSearcher)
-        searcher._graph_provider = None
-        searcher._graph_ttl = 0.0  # always stale
-        searcher._cached_graph = None
-        searcher._graph_built_at = 0.0
-        searcher._graph_lock = threading.Lock()
-        searcher.root_dir = root
-
+        searcher._graph_provider = lambda: cache.get(tmp_path, wait=False)
+        searcher.root_dir = tmp_path
         results: list[object] = []
-        barrier = threading.Barrier(4)
 
-        def worker():
-            barrier.wait()
+        def search():
             results.append(searcher._get_graph())
+            returned.set()
 
-        threads = [threading.Thread(target=worker) for _ in range(4)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=30)
+        reader = threading.Thread(target=search)
+        reader.start()
+        try:
+            assert entered.wait(2)
+            # Mutating the service provider to wait=True must fail this assertion.
+            assert returned.wait(1), "search waited for graph construction"
+            assert results == [None]
+            for _ in range(20):
+                assert cache.get(tmp_path, wait=False) is None
+            assert constructor.call_count == 1
+            cache.invalidate()
+            assert cache.get(tmp_path, wait=False) is None
+            assert constructor.call_count == 1
+        finally:
+            release.set()
+            reader.join(5)
+        assert cache.get(tmp_path) is graph
+        assert constructor.call_count == 2
+        cache.close()
 
-        assert len(results) == 4
-        assert all(r is not None for r in results)
+    def test_invalidation_discards_late_build(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        first_entered = threading.Event()
+        first_release = threading.Event()
+        second_entered = threading.Event()
+        second_release = threading.Event()
+        old, new = object(), object()
+        calls = 0
+
+        def build(_root: Path) -> object:
+            nonlocal calls
+            calls += 1
+            entered, release = (
+                (first_entered, first_release)
+                if calls == 1
+                else (second_entered, second_release)
+            )
+            entered.set()
+            assert release.wait(5)
+            return old if calls == 1 else new
+
+        monkeypatch.setattr("vaultspec_core.graph.VaultGraph", build)
+        cache = GraphCache(ttl_seconds=300)
+        try:
+            assert cache.get(tmp_path, wait=False) is None
+            assert first_entered.wait(2)
+            cache.invalidate()
+            first_release.set()
+            second_entered.wait(2)
+            # Removing the epoch check must expose the old graph here.
+            assert cache.get(tmp_path, wait=False) is None, (
+                "superseded graph was published"
+            )
+            assert second_entered.is_set()
+            second_release.set()
+            assert cache.get(tmp_path) is new
+        finally:
+            first_release.set()
+            second_release.set()
+            cache.close()
+
+    def test_failure_backoff_then_recovery(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        graph = object()
+        constructor = Mock(side_effect=[OSError("unavailable"), graph])
+        monkeypatch.setattr("vaultspec_core.graph.VaultGraph", constructor)
+        cache = GraphCache(ttl_seconds=300)
+        assert cache.get(tmp_path) is None
+        for _ in range(10):
+            assert cache.get(tmp_path, wait=False) is None
+        assert constructor.call_count == 1
+        cache._retry_at = 0
+        assert cache.get(tmp_path) is graph
+        assert constructor.call_count == 2
+        cache.close()
+
+    def test_close_rejects_late_completion(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        entered, release = threading.Event(), threading.Event()
+
+        def build(_root: Path) -> object:
+            entered.set()
+            assert release.wait(5)
+            return object()
+
+        monkeypatch.setattr("vaultspec_core.graph.VaultGraph", build)
+        cache = GraphCache(ttl_seconds=300)
+        try:
+            assert cache.get(tmp_path, wait=False) is None
+            assert entered.wait(2)
+            worker = cache._worker
+            cache.close()
+            release.set()
+            assert worker is not None
+            worker.join(5)
+            assert not worker.is_alive()
+            assert cache.get(tmp_path) is None
+        finally:
+            release.set()
+            cache.close()
+
+    def test_standalone_uses_same_nonblocking_cache(self, tmp_path: Path):
+        from ..search import VaultSearcher
+
+        searcher = VaultSearcher.__new__(VaultSearcher)
+        searcher._graph_provider = None
+        searcher._graph_cache = GraphCache(ttl_seconds=300)
+        searcher.root_dir = _make_vault_dir(tmp_path)
+        try:
+            searcher._get_graph()
+            graph = searcher._graph_cache.get(tmp_path)
+            assert graph is not None
+            assert searcher._get_graph() is graph
+        finally:
+            searcher._graph_cache.close()

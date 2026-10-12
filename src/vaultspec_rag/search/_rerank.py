@@ -7,20 +7,14 @@ Codebase hits pass through unchanged.
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    import pathlib
-
     from vaultspec_core.graph import (
         VaultGraph,
     )
 
     from ._models import ParsedQuery, SearchResult
-
-logger = logging.getLogger(__name__)
-
 
 # Additive nudge magnitudes. The reranker emits calibrated [0, 1]
 # scores; structural graph signals must only break ties and near-ties,
@@ -56,7 +50,6 @@ def _boost_vault_result(
 
 def rerank_with_graph(
     results: list[SearchResult],
-    root_dir: pathlib.Path,
     query: ParsedQuery,
     graph: VaultGraph | None = None,
 ) -> list[SearchResult]:
@@ -69,12 +62,9 @@ def rerank_with_graph(
 
     Args:
         results: Mixed vault/codebase results to rerank.
-        root_dir: Project root used to build a VaultGraph when
-            *graph* is ``None``.
         query: Parsed query; its ``feature`` filter drives the
             neighbor-feature boost.
-        graph: Pre-built graph.  When ``None``, a new VaultGraph
-            is constructed from *root_dir*.
+        graph: Current pre-built graph. None leaves semantic ranking unchanged.
 
     Returns:
         Re-sorted list of SearchResult with updated scores.
@@ -82,19 +72,8 @@ def rerank_with_graph(
     vault_results = [r for r in results if r.source == "vault"]
     code_results = [r for r in results if r.source == "codebase"]
 
-    if not vault_results:
+    if not vault_results or graph is None:
         return results
-
-    if graph is None:
-        from vaultspec_core.graph import (
-            VaultGraph as _VaultGraph,
-        )
-
-        try:
-            graph = _VaultGraph(root_dir)
-        except Exception as e:
-            logger.error("Graph build failed: %s", e)
-            return results
 
     feature_filter = query.filters.get("feature")
     for result in vault_results:

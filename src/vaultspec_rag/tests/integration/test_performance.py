@@ -201,11 +201,11 @@ class TestPerformance:
 
         # First search builds graph
         searcher.search_vault("architecture", top_k=1)
-        graph1 = searcher._cached_graph
+        graph1 = searcher._graph_cache.get(searcher.root_dir)
 
         # Second search should reuse same graph instance
         searcher.search_vault("editor", top_k=1)
-        graph2 = searcher._cached_graph
+        graph2 = searcher._graph_cache.get(searcher.root_dir)
 
         assert graph1 is graph2, "Graph should be reused across searches"
 
@@ -226,21 +226,17 @@ class TestPerformance:
         )
 
         searcher.search_vault("architecture", top_k=1)
-        graph1 = searcher._cached_graph
+        graph1 = searcher._graph_cache.get(searcher.root_dir)
 
         searcher.search_vault("editor", top_k=1)
-        graph2 = searcher._cached_graph
+        graph2 = searcher._graph_cache.get(searcher.root_dir)
 
         assert graph1 is not graph2, "Graph should be rebuilt with TTL=0"
 
     def test_graph_rebuild_cost_per_query(
         self, rag_components: RagComponentsWithManifest
     ):
-        """Measure the cost of VaultGraph construction, which is rebuilt on
-        every search call by rerank_with_graph(). VaultGraph reads every
-        file in the vault twice (metadata + links pass). This test documents
-        the overhead so we can track it and optimize later if needed.
-        """
+        """Measure canonical graph construction independently of search latency."""
         import time
 
         from vaultspec_core.graph import (
@@ -255,7 +251,7 @@ class TestPerformance:
 
         assert len(graph.nodes) > 0
         # Document the cost - this is informational, threshold is generous
-        # since graph rebuild happens on every search query
+        # independently of the nonblocking search path
         assert graph_ms < 2000, (
             f"VaultGraph build took {graph_ms:.0f}ms, expected < 2000ms"
         )

@@ -166,7 +166,7 @@ class ProjectEvictionMixin:
         """
         if self._on_close_project is not None:
             self._on_close_project(root)
-        slot.graph_cache.invalidate()
+        slot.graph_cache.close()
         slot.store.close()
         logger.info("Evicted ProjectSlot %s (reason=%s)", root, reason)
 

@@ -123,10 +123,6 @@ class _Rerankable(Protocol):
     rerank_text: str | None
 
 
-class VaultGraphError(RuntimeError):
-    """Raised when the VaultGraph fails to initialize."""
-
-
 @dataclass(frozen=True, slots=True)
 class _EncodedSearchQuery:
     """One parsed and encoded query shared by domain pipelines."""
@@ -195,8 +191,8 @@ class VaultSearcher:
             graph_provider: Zero-arg callable returning the current
                 ``VaultGraph`` (or ``None``).  When set,
                 ``_get_graph()`` delegates entirely to it and the
-                internal cache fields are unused.  When ``None``,
-                an internal lock+TTL cache is used as fallback.
+                local cache is unused.  When ``None``,
+                the same nonblocking GraphCache implementation is used.
             gpu_lock: Optional ``threading.Lock`` that serializes
                 GPU operations (encoding + reranking) across
                 concurrent search calls.  When ``None``, no
@@ -219,10 +215,9 @@ class VaultSearcher:
         self.model = model
         self.store = store
         self._graph_provider = settings.graph_provider
-        self._graph_ttl: float = resolved_ttl
-        self._cached_graph: VaultGraph | None = None
-        self._graph_built_at: float = 0.0
-        self._graph_lock = threading.Lock()
+        from ..graph_cache import GraphCache
+
+        self._graph_cache = GraphCache(ttl_seconds=resolved_ttl)
         self._gpu_lock = settings.gpu_lock
         self._reranker_enabled: bool = cfg.reranker_enabled
         self._reranker_model_name: str = cfg.reranker_model
@@ -384,38 +379,10 @@ class VaultSearcher:
         return [float(s) for s in raw_scores]
 
     def _get_graph(self) -> VaultGraph | None:
-        """Return the cached VaultGraph, rebuilding on TTL expiry.
-
-        When a ``graph_provider`` was supplied at construction time,
-        delegates entirely to it.  Otherwise falls back to an
-        internal lock+TTL cache for the fallback path.
-
-        Returns:
-            Cached VaultGraph, or ``None`` if the build fails.
-        """
+        """Read optional graph nudges without waiting for graph construction."""
         if self._graph_provider is not None:
             return self._graph_provider()
-
-        from vaultspec_core.graph import (
-            VaultGraph as _VaultGraph,
-        )
-
-        now = time.monotonic()
-        if self._cached_graph is None or (now - self._graph_built_at) > self._graph_ttl:
-            with self._graph_lock:
-                now = time.monotonic()
-                if (
-                    self._cached_graph is None
-                    or (now - self._graph_built_at) > self._graph_ttl
-                ):
-                    try:
-                        self._cached_graph = _VaultGraph(self.root_dir)
-                        self._graph_built_at = now
-                    except Exception as e:
-                        logger.error("Graph build failed: %s", e)
-                        self._graph_built_at = now
-                        raise VaultGraphError("Failed to build vault graph") from e
-        return self._cached_graph
+        return self._graph_cache.get(self.root_dir, wait=False)
 
     def _resolve_intent_profile(
         self, intent: str | None
@@ -637,7 +604,7 @@ class VaultSearcher:
         phase_started = time.perf_counter()
         results = _group_chunks_by_document(results)
         graph = self._get_graph()
-        results = rerank_with_graph(results, self.root_dir, encoded.parsed, graph=graph)
+        results = rerank_with_graph(results, encoded.parsed, graph=graph)
         # Intent-conditioned type x status prior: composes after the graph
         # nudges so the pipeline-role/status signal is primary and the graph
         # in-link/feature nudges break ties within the reweighted ordering. An
