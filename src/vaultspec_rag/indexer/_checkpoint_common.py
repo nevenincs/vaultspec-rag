@@ -34,6 +34,7 @@ from functools import partial
 from typing import TYPE_CHECKING, ClassVar, Protocol, Self
 
 from .. import store_schema
+from .._context_scope import bind_context
 from .._job_errors import JobError, JobErrorKind
 from .._operator_commands import IndexCommandOptions, index_command
 from .._store_writes import workspace_volume_path
@@ -87,7 +88,9 @@ if TYPE_CHECKING:
     ]
 
 
-_CHECKPOINT_PROGRESS_OBSERVER: ContextVar[CheckpointProgressObserver | None] = (
+# The first observation registers the actual checkpoint; later observations
+# carry confirmed durable progress for that same attempt.
+checkpoint_progress_observer: ContextVar[CheckpointProgressObserver | None] = (
     ContextVar("checkpoint_progress_observer", default=None)
 )
 
@@ -95,9 +98,10 @@ __all__ = [
     "PublicationExecution",
     "RunCheckpointBase",
     "RunOpenRequest",
+    "checkpoint_progress_observer",
     "classify_interrupted_generation",
     "configuration_fingerprint",
-    "observe_checkpoint_progress",
+    "publish_checkpoint",
 ]
 
 
@@ -117,22 +121,6 @@ def publication_replay_paths() -> frozenset[str]:
     """Paths that this writer must replace even when source hashes reverted."""
     replay = _PUBLICATION_REPLAY.get()
     return replay.paths if replay is not None else frozenset()
-
-
-@contextmanager
-def observe_checkpoint_progress(
-    observer: CheckpointProgressObserver,
-) -> Generator[None]:
-    """Bind newly opened checkpoints to one exact attempt's observation.
-
-    The initial notification carries no progress snapshot: it registers the
-    actual checkpoint. Subsequent notifications follow confirmed durable work.
-    """
-    token = _CHECKPOINT_PROGRESS_OBSERVER.set(observer)
-    try:
-        yield
-    finally:
-        _CHECKPOINT_PROGRESS_OBSERVER.reset(token)
 
 
 class RunOpenRequest(Protocol):
@@ -247,7 +235,7 @@ class RunCheckpointBase:
     _embedding_schema: ClassVar[int]
 
     def __post_init__(self) -> None:
-        observer = _CHECKPOINT_PROGRESS_OBSERVER.get()
+        observer = checkpoint_progress_observer.get()
         if observer is not None:
             self.run_policy.set_durable_progress_observer(partial(observer, self))
             observer(self, None)
@@ -423,7 +411,7 @@ class RunCheckpointBase:
         delete_points: Callable[[list[str]], None],
         replay_source: Callable[[], object],
     ) -> None:
-        from .._publication_state import publication_recovery_reads
+        from .._publication_state import publication_recovery_receipt
 
         paths = tuple(
             sorted(
@@ -448,14 +436,14 @@ class RunCheckpointBase:
         receipt = ledger.reopen_publication_after_storage_reset(
             receipt.receipt_id, paths
         )
-        token = _PUBLICATION_REPLAY.set(
-            _PublicationReplay(receipt, frozenset(paths), delete_points)
-        )
-        try:
-            with publication_recovery_reads(receipt):
-                replay_source()
-        finally:
-            _PUBLICATION_REPLAY.reset(token)
+        with (
+            bind_context(
+                _PUBLICATION_REPLAY,
+                _PublicationReplay(receipt, frozenset(paths), delete_points),
+            ),
+            bind_context(publication_recovery_receipt, receipt),
+        ):
+            replay_source()
         pending = ledger.active_publication_receipt(receipt.compatibility_key)
         if pending is not None:
             if pending.mutations:
@@ -1277,3 +1265,16 @@ class RunCheckpointBase:
             self.generation_id,
             FileState.indexed(rel_path, self._content_kind, source_digest),
         )
+
+
+def publish_checkpoint(
+    checkpoint: RunCheckpointBase,
+    root_dir: Path,
+    notify: Callable[[Path, str], object] | None,
+) -> None:
+    """Notify readiness only after proof and generation are durable."""
+    with checkpoint.run_policy.protected("proof certification"):
+        checkpoint.publish_proof_transition()
+        published = checkpoint.publish_generation()
+        if notify is not None:
+            notify(root_dir, published.generation_id)

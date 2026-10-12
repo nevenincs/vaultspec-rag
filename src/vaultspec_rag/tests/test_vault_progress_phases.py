@@ -33,6 +33,9 @@ class _StoreReachedError(Exception):
 class _StoreStandIn:
     """Answers the activity stamp, then stops the run at its first real use."""
 
+    def __init__(self, root_dir: Path) -> None:
+        self.root_dir = root_dir
+
     def touch_manifest_last_indexed(self) -> None:
         return None
 
@@ -82,7 +85,7 @@ def test_hashing_reports_its_progress_in_its_own_phase(tmp_path: Path) -> None:
     indexer = VaultIndexer(
         root,
         cast("EmbeddingModel", object()),
-        cast("VaultStore", _StoreStandIn()),
+        cast("VaultStore", _StoreStandIn(root)),
     )
 
     with pytest.raises(_StoreReachedError):
@@ -128,7 +131,9 @@ def _scoped_backend_seams(
     store.backend_identity = "cpu-progress-backend"
     store.get_chunk_counts.return_value = dict.fromkeys(previous, 1)
     store.get_stored_chunk_ordinals.return_value = {doc_id: {0} for doc_id in previous}
+    store.count.return_value = len(previous)
     snapshot = Mock()
+    snapshot.proof.aggregate.retained_points = len(previous)
     snapshot.ledger.publication_evidence_for_paths.return_value = {
         doc_id: Mock(content_identity=digest) for doc_id, digest in previous.items()
     }

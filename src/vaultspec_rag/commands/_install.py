@@ -861,7 +861,9 @@ def install_run(
 ) -> InstallReport:
     """Run install behind one required-node topology transaction."""
     validate_rag_skip(options.get("skip") or set())
-    return _install_with_tool_repair(_InstallRunRequest(path=path, **options))
+    return Context().run(
+        _install_with_tool_repair, _InstallRunRequest(path=path, **options)
+    )
 
 
 def _install_with_tool_repair(request: _InstallRunRequest) -> InstallReport:

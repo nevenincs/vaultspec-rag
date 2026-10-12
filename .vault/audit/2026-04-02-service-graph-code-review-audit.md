@@ -4,7 +4,7 @@ tags:
   - '#service-graph'
 date: '2026-04-02'
 modified: '2026-10-12'
-body_hash: 'sha256:04935a5387a1e4ddf4ea7c60f892d19d0ff5902285f2be8b3dbfd8eb2e580cb5'
+body_hash: 'sha256:2333ac7519306c23091570ca166ab7ee587caf125190a45f7174aa133477040d'
 related:
   - '[[2026-04-02-service-graph-adr]]'
   - '[[2026-04-02-service-graph-phase1-plan]]'
@@ -806,3 +806,84 @@ The installed uv service environment matches all six changed runtime SHA256 hash
 Live vault server times were 3.289 seconds initially and 0.587 seconds on repetition;
 graph ranking took 0.864 and 0.156 milliseconds. The repeat used five TypeSafe cache
 hits and no TypeSafe network requests. Earlier S01/S02 verification remains applicable.
+
+### full-ci-reconciliation | low | PENDING full matrix for S04
+
+The user authorized preserving already-landed work and completing remaining fixes
+through one RAG PR, reusing core PR 606. Base 9b0764fd is already on remote main;
+this follow-up neither undoes those commits nor presents them as an unmerged diff.
+
+Full Windows CI on that base reported 64 failures, 37 setup errors, 8,053 passes
+and 15 platform skips. Root causes include enrollment context escaping to later
+operations, tests that predated core 0.3.5 executable consent and host-local
+ownership, obsolete refusal expectations after automatic recovery, duplicate
+publication/context helpers, and unreviewed graph-test substitutions. The local
+environment initially had core 0.3.2; it was aligned to the locked 0.3.5 before
+reproducing or validating integration corrections.
+
+Install and uninstall now run in private execution contexts. Installation tests
+grant exact canonical launch snapshots in isolated homes and inspect the canonical
+ownership path. They preserve the production consent boundary and safe Python
+launch flag. Recovery assertions now exercise actual resumed work, durable proof
+ordering and queued restart lineage. Publication and context binding each have one
+canonical implementation. Graph race tests execute real graph builders, observed
+with root-specific profiling barriers, and backoff uses a real invalid workspace.
+No substitution allowlist was expanded.
+
+Focused verification: 103 install/workspace tests, 92 recovery/publication tests,
+29 graph tests and two substitution-discipline guards passed. The enrollment
+context test passed separately. Thirteen doctor tests passed; browser tests were
+initially skipped because frontend dependencies were absent, so those dependencies
+are being restored for actual browser verification. The browser parent now allows
+its child's existing bounded startup retries instead of expiring during attempt
+two. No rendering assertion was removed.
+
+Nine mutation guards failed at their named assertions and passed after restoration:
+five graph lifecycle/ranking guards, recovery context reset, publication notification
+ordering, and both enrollment entry-point context boundaries. Graph/recovery worker
+lint, format, ty, basedpyright and production Pylint passed; integrated package
+checks and the full correctness lane are in progress. A loopback placeholder URL
+in the landed capability reference was rewritten as endpoint prose, and the
+recovery audit's missing Markdown separator was restored.
+
+Review scope is the whole recovery/graph integration plus dependency adaptation.
+No destructive index operation, service reinstall or service restart is part of S04.
+Core PR 606 contains the canonical graph implementation and portability fixes.
+Its Windows suite and CodeQL passed; Linux gate checks remain pending.
+
+### full-ci-reconciliation-final | low | Local verification complete; PR matrix pending
+
+Reviewed the S04 working-tree diff against 9b0764fd as one integration change.
+No unresolved high or critical code finding remains. The full local CPU lane
+completed with 8,145 passes, 16 platform skips, five failures and four setup errors.
+The setup errors required the compiled monitor artifact; the canonical verified
+compiler produced it and all four lifecycle tests then passed. All eleven browser
+rendering tests also passed.
+
+The five model-fetch failures came from subprocesses inheriting the developer
+checkout: dotenv discovery launched six Git probes, invalidating process counts
+and allowing the deliberate child-kill test to target Git. Test subprocesses now
+use their existing temporary workspace. The two affected model-fetch modules
+passed 34 cases, with their remaining explicit Popen corrected and passing in a
+separate rerun. All five bound tests passed. Existing process-count, cache reuse,
+termination and network isolation assertions remain intact. These are test
+isolation corrections, not production download-policy changes.
+
+All package lint dimensions now have passing evidence: Ruff, format, ty,
+basedpyright, Pylint, complexity, nesting, imports, workflow, TOML, citations,
+documentation conventions/version/reference, vault structure and frontend lint,
+format, types and build. Failed Markdown and link dimensions were corrected and
+rerun over their affected scope. Ten generated capability references needed
+literal filename escaping or repaired code spans; no lint rule was weakened.
+The full vault check reported only two pre-existing modified-stamp warnings in
+unrelated records. Final links: 6,562 passing, zero errors, 32 configured exclusions.
+The new model test edits passed Ruff, format, ty, basedpyright and helper Pylint.
+Earlier focused and mutation evidence remains applicable to unchanged runtime code.
+
+Evidence logs are in the existing .vault/data/engine-data directory under s04-.
+The full local run is preserved as failed evidence, with focused passing reruns;
+it is not relabeled as an all-green single run. The PR must pass the full remote
+matrix before merge. S04 remains open for that required verification.
+
+Core PR 606 passed Linux lint/full tests, Windows library tests, CodeQL and its
+merge gate, then merged into main as 575a8e7cf0c969690ea439d54cf5bba5b1d6d54f.

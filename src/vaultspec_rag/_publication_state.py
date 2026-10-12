@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Final, NamedTuple
 
@@ -21,7 +20,6 @@ from .store_runtime import configured_backend_identity
 
 if TYPE_CHECKING:
     import pathlib
-    from collections.abc import Generator
 
     from .indexer._publication_proof import ProofEvidence, ProofReadToken
     from .indexer._run_ledger_models import PublicationProof, PublicationReceipt
@@ -49,19 +47,10 @@ UNREADABLE_PUBLICATION_ERRORS: Final = (
     RunLedgerError,
 )
 
-_RECOVERY_RECEIPT: ContextVar[PublicationReceipt | None] = ContextVar(
+# Only the exact leased recovery writer may read its canonical parent.
+publication_recovery_receipt: ContextVar[PublicationReceipt | None] = ContextVar(
     "publication_recovery_receipt", default=None
 )
-
-
-@contextmanager
-def publication_recovery_reads(receipt: PublicationReceipt) -> Generator[None]:
-    """Permit only the leased recovery writer to compare its canonical parent."""
-    token = _RECOVERY_RECEIPT.set(receipt)
-    try:
-        yield
-    finally:
-        _RECOVERY_RECEIPT.reset(token)
 
 
 class PublicationSnapshot(NamedTuple):
@@ -117,7 +106,7 @@ def acquire_publication_snapshot(
         )
     ledger = RunLedger(ledger_path)
     backend_identity = configured_backend_identity(resolved)
-    writer_receipt = _RECOVERY_RECEIPT.get()
+    writer_receipt = publication_recovery_receipt.get()
     if writer_receipt is not None:
         recovery_key = writer_receipt.compatibility_key
         if (

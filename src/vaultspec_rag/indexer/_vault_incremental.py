@@ -26,6 +26,7 @@ from vaultspec_core.vaultcore import (
 
 from ..job_control import NO_RUN_CONTROL
 from . import _stat_gate, _vault_fingerprint
+from ._checkpoint_common import publish_checkpoint
 from ._run_ledger_models import FETCH_BATCH, CommitUnitKind, RunAuthority, RunOperation
 from ._streaming import _stream_encode_and_upsert_vault, execute_store_mutation
 from ._streaming_types import VaultStreamRequest
@@ -36,7 +37,7 @@ from ._vault_prep import IndexResult, prepare_document, split_document
 if TYPE_CHECKING:
     import pathlib
     import threading
-    from collections.abc import Generator, Iterable, Iterator
+    from collections.abc import Callable, Generator, Iterable, Iterator
 
     from .._publication_state import PublicationSnapshot
     from .._store_models import VaultChunk, VaultDocument
@@ -231,7 +232,7 @@ class VaultIncrementalMixin:
             self,
         ) -> tuple[ReuseStats | None, DonorReuseContext | None]: ...
 
-        def _publish_generation(self, checkpoint: VaultRunCheckpoint) -> None: ...
+        _publish_readiness: Callable[[pathlib.Path, str], object] | None
 
         def _purge_shrunk_chunk_tails(
             self,
@@ -757,7 +758,7 @@ class VaultIncrementalMixin:
         # the changed hashes, and drop the deleted ids. Never recompute the
         # whole map (that is what the full scan is for).
         with controlled_phase(reporter, run_control, "write metadata", 1):
-            self._publish_generation(checkpoint)
+            publish_checkpoint(checkpoint, self.root_dir, self._publish_readiness)
             total = checkpoint.ledger.publication_proof(
                 checkpoint.receipt.compatibility_key
             ).aggregate.indexed_identities

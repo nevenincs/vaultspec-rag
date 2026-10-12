@@ -22,6 +22,7 @@ from .._store_writes import workspace_volume_path
 from ..job_control import NO_RUN_CONTROL
 from ..store_runtime import StorageGeometryError
 from . import _config_epoch, _stat_gate, _vault_fingerprint
+from ._checkpoint_common import publish_checkpoint
 from ._index_lifecycle import (
     IndexLifecycleRequest,
     incremental_mode,
@@ -425,7 +426,7 @@ class VaultIndexer(VaultIncrementalMixin):
                     reporter.advance(len(stale_ids))
 
             with controlled_phase(reporter, run_control, "write metadata", 1):
-                self._publish_generation(checkpoint)
+                publish_checkpoint(checkpoint, self.root_dir, self._publish_readiness)
                 reporter.advance(1)
         run_control.checkpoint()
 
@@ -645,7 +646,7 @@ class VaultIndexer(VaultIncrementalMixin):
         with controlled_phase(reporter, run_control, "write metadata", 1):
             # The publication's own count, so the reported total and the
             # breadth claim beside it describe one instant of the collection.
-            self._publish_generation(checkpoint)
+            publish_checkpoint(checkpoint, self.root_dir, self._publish_readiness)
             total = checkpoint.ledger.publication_proof(
                 receipt.compatibility_key
             ).aggregate.indexed_identities
@@ -664,14 +665,6 @@ class VaultIndexer(VaultIncrementalMixin):
             files=len(current_docs),
             reuse=outcome.reuse.snapshot() if outcome.reuse is not None else None,
         )
-
-    def _publish_generation(self, checkpoint: VaultRunCheckpoint) -> None:
-        """Notify only after proof and generation publication are durable."""
-        with checkpoint.run_policy.protected("vault proof certification"):
-            checkpoint.publish_proof_transition()
-            published = checkpoint.publish_generation()
-            if self._publish_readiness is not None:
-                self._publish_readiness(self.root_dir, published.generation_id)
 
     def _prepare_collection(
         self,

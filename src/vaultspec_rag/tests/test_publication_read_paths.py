@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from .._context_scope import bind_context
 from .._index_breadth import acquire_code_breadth_snapshot_if_proven
 from .._index_integrity import (
     IndexIntegrity,
@@ -130,7 +131,7 @@ def test_recovery_writer_reads_parent_without_unfencing_other_readers(
 
     from .._publication_state import (
         acquire_publication_snapshot,
-        publication_recovery_reads,
+        publication_recovery_receipt,
     )
     from ..indexer._publication_proof import ProofReadConflictError
     from ..indexer._run_ledger_models import RunOperation
@@ -151,10 +152,21 @@ def test_recovery_writer_reads_parent_without_unfencing_other_readers(
         generation.generation_id,
         expected_parent_revision=parent.proof.revision,
     )
-    with publication_recovery_reads(receipt):
+    with bind_context(publication_recovery_receipt, receipt):
         snapshot = acquire_publication_snapshot(tmp_path, PublicSourceType.VAULT)
         snapshot.validate()
         assert snapshot.proof.generation_id == parent.proof.generation_id
+        # A failing nested binding must restore the owning recovery receipt.
+        # Omitting bind_context's reset failed the receipt equality below;
+        # restoring it passed and read the canonical parent again.
+        foreign = replace(receipt, receipt_id="nested-foreign-owner")
+        with (
+            pytest.raises(ProofReadConflictError, match="does not own"),
+            bind_context(publication_recovery_receipt, foreign),
+        ):
+            acquire_publication_snapshot(tmp_path, PublicSourceType.VAULT)
+        assert publication_recovery_receipt.get() == receipt
+        acquire_publication_snapshot(tmp_path, PublicSourceType.VAULT).validate()
         with ThreadPoolExecutor(max_workers=1) as pool:
             reader = pool.submit(
                 acquire_publication_snapshot, tmp_path, PublicSourceType.VAULT
@@ -181,7 +193,7 @@ def test_recovery_read_rejects_another_receipt_owner(
 
     from .._publication_state import (
         acquire_publication_snapshot,
-        publication_recovery_reads,
+        publication_recovery_receipt,
     )
     from ..indexer._publication_proof import ProofReadConflictError
     from ..indexer._run_ledger_models import RunOperation
@@ -204,7 +216,7 @@ def test_recovery_read_rejects_another_receipt_owner(
     )
     foreign = replace(receipt, **{field: "another-owner"})
     with (
-        publication_recovery_reads(foreign),
+        bind_context(publication_recovery_receipt, foreign),
         pytest.raises(ProofReadConflictError, match="does not own"),
     ):
         acquire_publication_snapshot(tmp_path, PublicSourceType.VAULT)
