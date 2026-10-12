@@ -14,7 +14,7 @@ related:
   - '[[2026-10-12-destructive-rebuild-lifecycle-adr]]'
 modified: '2026-10-12'
 body_schema: body-v2
-body_hash: 'sha256:8a21523ec819d303115f84fc96d4b40ff541da90c571b34457b59117b58dabc5'
+body_hash: 'sha256:cafc0746873a90f1549b7fd627cdacbef3c93e5b5108ad0af979ed171d8af793'
 ---
 
 # `incremental-index-recovery` plan
@@ -35,7 +35,7 @@ The incremental-publication-cost decision governs receipt finalization and bound
 - [x] `S02` - Bound incremental route reconciliation and indexed ledger membership work with genuine durable checkpoints; `src/vaultspec_rag/indexer/_route_migration.py, bounded effective ledger readers, reconciliation performance tests`.
 - [x] `S03` - Settle stale watcher refusals only after certified published rebuilds, report failed generations truthfully and preserve concurrent dirty scope; `src/vaultspec_rag/watcher_retry_policy.py, src/vaultspec_rag/watcher_durability.py, src/vaultspec_rag/job_dispatch.py, watcher runtime and service settlement owners, watcher and job regression tests`.
 - [x] `S04` - Validate optional and nested vault payload fields and compare canonical audit identities correctly; `src/vaultspec_rag/_index_integrity.py, payload validation owners, vault audit regression tests`.
-- [ ] `S05` - Recover interrupted publication and unblock source-scoped explicit rebuilds using existing ledger and storage owners; preserve confirmed resumable work and isolate sibling sources; `src/vaultspec_rag/indexer/, src/vaultspec_rag/tests/test_publication_recovery.py and related recovery tests`.
+- [x] `S05` - Recover interrupted publication and unblock source-scoped explicit rebuilds using existing ledger and storage owners; preserve confirmed resumable work and isolate sibling sources; `src/vaultspec_rag/indexer/, src/vaultspec_rag/tests/test_publication_recovery.py and related recovery tests`.
 - [x] `S06` - Restore and continue interrupted service index attempts with exact job authority and durable checkpoint association; verify retry and restart behavior; `src/vaultspec_rag/job_manager/, job_dispatch.py, job_persistence.py and corresponding restart/retry tests`.
 - [ ] `S07` - Verify integrated repair and source isolation, review the patch, deploy through the existing tool environment, and resume affected operations with honest status; `src/vaultspec_rag/api.py, store cleanup owners, integration tests, installed service and existing project ledgers`.
 

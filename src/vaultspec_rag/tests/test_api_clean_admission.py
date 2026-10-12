@@ -179,3 +179,49 @@ def test_clean_does_not_construct_or_import_vault_store_directly() -> None:
     )
     assert len(_attribute_calls(clean_node, "lease_maintenance_store")) == 1
     assert api.clean is clean
+
+
+@pytest.mark.parametrize(
+    "source", [PublicSourceType.VAULT, PublicSourceType.CODE, PublicSourceType.DOCUMENT]
+)
+def test_reset_source_preserves_sibling_collections(
+    tmp_path: Path, source: PublicSourceType
+) -> None:
+    """The shared reset owner discards only the selected source's points.
+
+    Mutation: deleting all sources failed the sibling point-count assertion;
+    restoring selected-source deletion passed.
+    """
+    from qdrant_client import models
+
+    from .. import store_schema
+    from ..config._settings import get_config
+    from ..store_runtime import VaultStore
+
+    get_config({"qdrant_url": None, "embedding_dimension": 2, "sparse_enabled": False})
+    with VaultStore(tmp_path, embedding_dim=2) as store:
+        store.ensure_table()
+        store.ensure_code_table()
+        store.ensure_document_table()
+        collections = {
+            PublicSourceType.VAULT: store.TABLE_NAME,
+            PublicSourceType.CODE: store.CODE_TABLE_NAME,
+            PublicSourceType.DOCUMENT: store.DOCUMENT_TABLE_NAME,
+        }
+        for collection in collections.values():
+            store.client.upsert(
+                collection,
+                points=[
+                    models.PointStruct(
+                        id=1,
+                        vector={store_schema.DENSE_VECTOR_NAME: [1.0, 0.0]},
+                        payload={"content": "preserve sibling"},
+                    )
+                ],
+                wait=True,
+            )
+        assert store.reset_source(source) == [source.value]
+        for kind, collection in collections.items():
+            assert store.client.count(collection, exact=True).count == int(
+                kind is not source
+            )

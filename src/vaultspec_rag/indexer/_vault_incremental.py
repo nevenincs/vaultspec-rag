@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     import threading
     from collections.abc import Generator, Iterable, Iterator
 
+    from .._publication_state import PublicationSnapshot
     from .._store_models import VaultChunk, VaultDocument
     from ..embeddings import EmbeddingModel
     from ..job_control import RunControl
@@ -144,6 +145,8 @@ def classify_documents(
     previous: dict[str, str],
 ) -> _VaultClassification:
     """Route each candidate document to the cheapest outcome that is correct."""
+    from ._checkpoint_common import publication_replay_paths
+
     body: set[str] = set()
     metadata: set[str] = set()
     for doc_id in candidates:
@@ -151,7 +154,7 @@ def classify_documents(
             # Unhashable this run; the previous publication stands for it.
             continue
         delta = _vault_fingerprint.classify(previous.get(doc_id), current[doc_id])
-        if delta is VaultDelta.BODY:
+        if delta is VaultDelta.BODY or doc_id in publication_replay_paths():
             body.add(doc_id)
         elif delta is VaultDelta.METADATA:
             metadata.add(doc_id)
@@ -277,6 +280,21 @@ class VaultIncrementalMixin:
             )
         return evidence
 
+    def _assert_vault_publication_storage(self, snapshot: PublicationSnapshot) -> None:
+        """Apply the same storage-backing admission to scoped and full scans."""
+        from .._job_errors import JobError, JobErrorKind
+        from ._checkpoint_common import publication_replay_paths
+
+        if (
+            not publication_replay_paths()
+            and self.store.count() < snapshot.proof.aggregate.retained_points
+        ):
+            raise JobError(
+                JobErrorKind.FULL_REINDEX_REQUIRED,
+                "vault storage is shorter than its canonical proof; "
+                "request an explicit full vault reindex",
+            )
+
     def _hash_documents(
         self,
         current_docs: dict[str, pathlib.Path],
@@ -298,7 +316,11 @@ class VaultIncrementalMixin:
                 reporter=reporter,
                 run_control=run_control,
             )
-            for doc_id, _error in outcome.failures:
+            from ._checkpoint_common import publication_replay_paths
+
+            for doc_id, error in outcome.failures:
+                if doc_id in publication_replay_paths():
+                    raise error
                 logger.warning("Cannot hash file, skipping: %s", doc_id)
             if full_membership:
                 gate.prune(current_docs.keys())
@@ -626,6 +648,7 @@ class VaultIncrementalMixin:
             PublicSourceType.VAULT,
         )
 
+        self._assert_vault_publication_storage(snapshot)
         to_hash, deletion_candidates = self._classify_scoped_paths(
             changed_paths,
             docs_dir,

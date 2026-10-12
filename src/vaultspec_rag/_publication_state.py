@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Final, NamedTuple
 
 from . import store_schema
@@ -19,9 +21,12 @@ from .store_runtime import configured_backend_identity
 
 if TYPE_CHECKING:
     import pathlib
+    from collections.abc import Generator
 
     from .indexer._publication_proof import ProofEvidence, ProofReadToken
-    from .indexer._run_ledger_models import PublicationProof
+    from .indexer._run_ledger_models import PublicationProof, PublicationReceipt
+    from .job_control import RunControl
+    from .store_runtime import VaultStore
 
 __all__ = [
     "UNREADABLE_PUBLICATION_ERRORS",
@@ -44,6 +49,20 @@ UNREADABLE_PUBLICATION_ERRORS: Final = (
     RunLedgerError,
 )
 
+_RECOVERY_RECEIPT: ContextVar[PublicationReceipt | None] = ContextVar(
+    "publication_recovery_receipt", default=None
+)
+
+
+@contextmanager
+def publication_recovery_reads(receipt: PublicationReceipt) -> Generator[None]:
+    """Permit only the leased recovery writer to compare its canonical parent."""
+    token = _RECOVERY_RECEIPT.set(receipt)
+    try:
+        yield
+    finally:
+        _RECOVERY_RECEIPT.reset(token)
+
 
 class PublicationSnapshot(NamedTuple):
     """One committed proof and the token fencing a related backend read."""
@@ -51,10 +70,26 @@ class PublicationSnapshot(NamedTuple):
     proof: PublicationProof
     ledger: RunLedger
     token: ProofReadToken
+    writer_receipt: PublicationReceipt | None = None
 
     def validate(self) -> None:
         """Reject a backend read concurrent with publication."""
-        self.ledger.validate_publication_read_token(self.token)
+        if self.writer_receipt is None:
+            self.ledger.validate_publication_read_token(self.token)
+            return
+        key = self.token.compatibility_key
+        proof, _token = self.ledger.acquire_current_publication_snapshot(
+            source_type=key.source_type,
+            root_identity=key.root_identity,
+            backend_identity=key.backend_identity,
+            writer_receipt=self.writer_receipt,
+        )
+        self.token.validate(
+            compatibility_key=proof.compatibility_key,
+            revision=proof.revision,
+            reservation_sequence=proof.reservation_sequence,
+            has_open_receipt=False,
+        )
 
 
 def _collection(source: PublicSourceType) -> str:
@@ -81,10 +116,21 @@ def acquire_publication_snapshot(
             f"publication proof does not exist; {FULL_REINDEX_REQUIRED_PHRASE}"
         )
     ledger = RunLedger(ledger_path)
+    backend_identity = configured_backend_identity(resolved)
+    writer_receipt = _RECOVERY_RECEIPT.get()
+    if writer_receipt is not None:
+        recovery_key = writer_receipt.compatibility_key
+        if (
+            recovery_key.root_identity != str(resolved)
+            or recovery_key.source_type is not source
+            or recovery_key.backend_identity != backend_identity
+        ):
+            writer_receipt = None
     proof, token = ledger.acquire_current_publication_snapshot(
         source_type=source,
         root_identity=str(resolved),
-        backend_identity=configured_backend_identity(resolved),
+        backend_identity=backend_identity,
+        writer_receipt=writer_receipt,
     )
     key = proof.compatibility_key
     if (
@@ -95,7 +141,9 @@ def acquire_publication_snapshot(
         raise ProofIncompatibleError(
             "canonical publication proof does not match the current storage projection"
         )
-    return PublicationSnapshot(proof=proof, ledger=ledger, token=token)
+    return PublicationSnapshot(
+        proof=proof, ledger=ledger, token=token, writer_receipt=writer_receipt
+    )
 
 
 def read_all_publication_evidence(
@@ -130,3 +178,28 @@ def clear_publication_state(
         str(resolved),
         backend_identity,
     )
+
+
+def reset_pending_publication_for_rebuild(
+    store: VaultStore, source: PublicSourceType, run_control: RunControl
+) -> None:
+    """Discard an obsolete in-place publication under explicit rebuild authority.
+
+    The caller owns the source writer lease and has admitted a rebuild. A full
+    generation's resumable work has no incremental receipt and is left intact.
+    """
+    resolved = store.root_dir.resolve()
+    path = index_run_ledger_path(workspace_volume_path(resolved))
+    if not path.is_file():
+        return
+    ledger = RunLedger(path)
+    receipt = ledger.recoverable_publication_receipt(
+        source_type=source,
+        root_identity=str(resolved),
+        backend_identity=store.backend_identity,
+    )
+    if receipt is None or not receipt.state.is_open:
+        return
+    run_control.checkpoint()
+    with run_control.protected():
+        store.reset_source(source)

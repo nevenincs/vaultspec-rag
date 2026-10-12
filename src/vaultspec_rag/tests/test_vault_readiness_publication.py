@@ -33,7 +33,9 @@ pytestmark = pytest.mark.unit
 
 def _backend(root: Path) -> Mock:
     store = Mock()
+    store.root_dir = root
     store.backend_identity = configured_backend_identity(root)
+    store.count.return_value = 0
     store.get_chunk_counts.return_value = {}
     store.get_stored_chunk_ordinals.return_value = {}
     store.delete_prechunk_vault_points.return_value = 0

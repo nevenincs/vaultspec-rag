@@ -20,6 +20,7 @@ from ..indexer._publication_proof import (
     ProofReceiptState,
 )
 from ..indexer._run_ledger_models import (
+    RESUMABLE_STATES,
     CommitUnit,
     CommitUnitKind,
     PublicationMutationUnit,
@@ -74,9 +75,12 @@ def test_verified_proof_parents_incremental_without_copying_manifest_rows(
     assert list(ledger.iter_units(incremental.generation_id)) == []
 
 
+@pytest.mark.parametrize("terminal_state", RESUMABLE_STATES)
 def test_clearing_publication_invalidates_proof_before_storage_removal(
     tmp_path: Path,
+    terminal_state: RunTerminalState,
 ) -> None:
+    """Using a resumable state failed the assertion; restoring invalidation passed."""
     ledger = RunLedger(tmp_path / "runs.sqlite3")
     generation = ledger.start_generation(
         replace(ledger_test_signature(tmp_path), clean=True)
@@ -87,6 +91,9 @@ def test_clearing_publication_invalidates_proof_before_storage_removal(
         (ProofEvidence("src/a.py", ledger_test_digest("a"), ("a:0",)),),
     )
 
+    if terminal_state is not RunTerminalState.RUNNING:
+        ledger.finish_generation(generation.generation_id, terminal_state)
+
     ledger.clear_publication_source(
         PublicSourceType.CODE,
         str(tmp_path.resolve()),
@@ -96,8 +103,11 @@ def test_clearing_publication_invalidates_proof_before_storage_removal(
     with pytest.raises(ProofMissingError):
         ledger.publication_proof(proof.compatibility_key)
     assert ledger.generation(generation.generation_id).terminal_state is (
-        RunTerminalState.REBUILD_INCOMPLETE
+        RunTerminalState.INVALIDATED
     )
+
+    replacement = ledger.start_generation(generation.signature)
+    assert replacement.generation_id != generation.generation_id
 
 
 def test_run_authority_has_exact_persisted_vocabulary() -> None:

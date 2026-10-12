@@ -208,6 +208,12 @@ class VaultIndexer(VaultIncrementalMixin):
                 index_run_ledger_path(workspace_volume_path(self.root_dir.resolve()))
             )
         with self._writer_lock, self._memory_telemetry():
+            if authority is RunAuthority.REBUILD:
+                from .._publication_state import reset_pending_publication_for_rebuild
+
+                reset_pending_publication_for_rebuild(
+                    self.store, PublicSourceType.VAULT, run_control
+                )
             return run_index_lifecycle(
                 lambda: self._full_index_locked(
                     clean=clean,
@@ -474,8 +480,14 @@ class VaultIndexer(VaultIncrementalMixin):
             VaultRunCheckpoint.recover_pending_publication(
                 self.root_dir,
                 PublicSourceType.VAULT,
-                backend_identity=self.store.backend_identity,
+                store=self.store,
                 run_control=run_control,
+                replay_source=lambda: self._incremental_index_locked(
+                    reporter=reporter,
+                    changed_paths=None,
+                    authority=authority,
+                    run_control=run_control,
+                ),
             )
             return run_index_lifecycle(
                 lambda: self._incremental_index_locked(
@@ -543,6 +555,7 @@ class VaultIndexer(VaultIncrementalMixin):
         )
 
         snapshot = acquire_publication_snapshot(self.root_dir, PublicSourceType.VAULT)
+        self._assert_vault_publication_storage(snapshot)
         prev_meta = {
             path: evidence.content_identity
             for path, evidence in read_all_publication_evidence(snapshot).items()
