@@ -5,7 +5,7 @@ tags:
 date: '2026-10-12'
 modified: '2026-10-12'
 body_schema: 'body-v2'
-body_hash: 'sha256:079ec7f7d484a77f32a94e575a184f5df14669fe1036167f810e5b7c619d551a'
+body_hash: 'sha256:81c5379b4f2e26f2837e03d5b0c3c69e4333e796365cbc4997b04a23b78ddd0c'
 related:
   - "[[2026-10-12-service-graph-plan]]"
 ---
@@ -26,3 +26,16 @@ related:
 - `S01` `verify:` `package ruff, changed format, ty, basedpyright` -> `pass`
 - `S01` `verify:` `blocking and epoch guard mutations fail and restored pass` -> `pass`
 - `S01` `verify:` `installed cold vault 2.98s graph 0.00094s warm 0.59s code 1.87s` -> `pass`
+- `S02` `M` `Y:/code/vaultspec-core-worktrees/main/src/vaultspec_core/core/corpus_io.py`
+- `S02` `M` `Y:/code/vaultspec-core-worktrees/main/src/vaultspec_core/core/tests/test_corpus_security.py`
+- `S02` `M` `Y:/code/vaultspec-core-worktrees/main/src/vaultspec_core/graph/api.py`
+- `S02` `M` `Y:/code/vaultspec-core-worktrees/main/src/vaultspec_core/graph/cache.py`
+- `S02` `M` `Y:/code/vaultspec-core-worktrees/main/src/vaultspec_core/graph/cache_io.py`
+- `S02` `M` `Y:/code/vaultspec-core-worktrees/main/src/vaultspec_core/graph/tests/test_cache.py`
+- `S02` `M` `Y:/code/vaultspec-core-worktrees/main/src/vaultspec_core/vaultcore/scanner.py`
+- `S02` `verify:` `236 covering tests and 64 cache tests after owner extraction` -> `pass`
+- `S02` `verify:` `package ruff, changed format, ty, basedpyright, production pylint` -> `pass`
+- `S02` `verify:` `three guard mutations fail and restored guards pass` -> `pass`
+- `S02` `verify:` `real graph load 3.17s, single-entry refresh 6.01s, assembly 0.73s, PageRank 0.44s, centrality 0.21s` -> `pass`
+- `S02` `verify:` `installed vault query cold 2.11s warm 1.49s code 2.82s` -> `pass`
+- `S02` `verify:` `canonical core commit 5cab80da installed source SHA256 and 89 dependency compatibility checks` -> `pass`

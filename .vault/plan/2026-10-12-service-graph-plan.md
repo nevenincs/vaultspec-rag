@@ -9,7 +9,7 @@ related:
   - '[[2026-03-07-vaultgraph-cache-adr]]'
 modified: '2026-10-12'
 body_schema: body-v2
-body_hash: 'sha256:11084ccde2d4112c1758d3096d0b06c310a8742ac9b25c0233602d72a6c3e6b7'
+body_hash: 'sha256:907f8e26cfdf88bc76cac45eba772a8aedff083ca1f84b244db281795c653d66'
 ---
 
 # `service-graph` plan
@@ -29,7 +29,7 @@ storage deletion is required for this work.
 ## Steps
 
 - [x] `S01` - Remove synchronous graph construction from search and verify lifecycle races and live latency; `src/vaultspec_rag/graph_cache.py, search, service.py, _service_eviction.py, tests`.
-- [ ] `S02` - Profile and optimize canonical graph calculation separately while preserving graph and filesystem safety semantics; `Y:/code/vaultspec-core-worktrees/main/src/vaultspec_core graph, config, core/corpus_io.py and covering tests`.
+- [x] `S02` - Profile and optimize canonical graph calculation separately while preserving graph and filesystem safety semantics; `Y:/code/vaultspec-core-worktrees/main/src/vaultspec_core graph, config, core/corpus_io.py and covering tests`.
 
 ## Parallelization
 

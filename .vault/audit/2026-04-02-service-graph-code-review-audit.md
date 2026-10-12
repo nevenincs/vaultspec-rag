@@ -4,13 +4,12 @@ tags:
   - '#service-graph'
 date: '2026-04-02'
 modified: '2026-10-12'
-body_hash: 'sha256:4283084aceb18b9472afc7728cfd43dd27a94210d1e6f20ece07f37fb47119c4'
+body_hash: 'sha256:3e0e0c2a2bc8a00260f1bfcdb764a5a362e420c1bf4090119171626409886005'
 related:
   - '[[2026-04-02-service-graph-adr]]'
   - '[[2026-04-02-service-graph-phase1-plan]]'
   - '[[2026-04-02-service-graph-research]]'
 ---
-
 # `service-graph` Code Review
 
 Rolling audit log for the service orchestration implementation.
@@ -766,3 +765,13 @@ on 21,226 vault points and 128,789 code points measured: first vault 2.97976 sec
 The original reproduction was 122.20 seconds with 118.47 seconds in graph processing.
 Graph-calculation optimization remains open separately; moving work off the request
 path does not satisfy that additional requirement.
+
+### canonical-graph-performance | low | PASS for S02 and completed plan
+
+Reviewed S02 in the existing core checkout on `feature/graph-calculation-performance`, against its vault-scale-performance ADR and canonical graph/cache owners. The separate performance work is complete: per-run configuration and trusted-root resolution, discovery-metadata reuse, fast matching cache paths, and fingerprint-verified cached text avoid repeated whole-vault filesystem work. All nodes and edges are recalculated when the corpus differs. Failed reads remain visible and retried; partial-refresh malformed-cache fallback reads documents. Exact rooted-path and descriptor checks remain intact. No duplicate graph parser or persistent schema was introduced.
+
+On the real TUI vault (4,477 nodes, 8,071 edges), complete cached construction measured 2.69–3.17 seconds. A controlled in-memory single-entry invalidation took 6.01 seconds, reading one document; persistence was disabled for this diagnostic, and no source document changed. Graph assembly took 0.73 seconds, standalone PageRank 0.44 seconds, and betweenness centrality 0.21 seconds. Forced cache-off construction still requires all filesystem reads and measured 51.24 seconds; this is an explicit remaining cold-I/O cost, not a search-blocking dependency.
+
+Verification: 236 graph/scanner/corpus-security tests passed (four default external-capability deselections); 64 cache tests passed again after moving the helper to the existing cache-I/O owner to preserve the module-size ceiling. Ruff, formatting, ty, basedpyright and production-file Pylint passed. Three guard mutations failed on their intended assertions and passed after restoration: ancestor redirect refusal, snapshot timestamp integrity, and bounded configuration resolutions. The core performance audit contains the evidence and decision-placement limitations.
+
+The installed service now has both changes. Final five core runtime SHA256 values match the reviewed source, and all 89 installed dependencies are compatible. Live queries measured vault 2.11 seconds cold and 1.49 seconds warm versus code 2.82 seconds; graph ranking was 1.07 and 0.16 milliseconds. After the final helper move and reinstall, a further vault request succeeded in 3.23 seconds server time. Service PID 6480 is running on port 8766 with automatic updates enabled. No index was deleted or rebuilt by this performance work. Both S01 and S02 are closed; existing earlier audit findings outside this scope are not reclassified by this PASS.
