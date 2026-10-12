@@ -968,6 +968,8 @@ class DocumentIndexer:
         scoped: bool,
     ) -> set[str]:
         """Select changed/deleted paths without conflating scoped discovery."""
+        from ._checkpoint_common import publication_replay_paths
+
         discovered = {
             path.relative_to(self.root_dir).as_posix(): path
             for path in authorized_paths
@@ -995,6 +997,7 @@ class DocumentIndexer:
                 for rel in discovered
                 if rel not in previous_files
                 or outcome.hashes[rel] != previous_files[rel].content_fingerprint
+                or rel in publication_replay_paths()
             }
             gate.prune(discovered.keys())
             gate.persist()
@@ -1126,6 +1129,12 @@ class DocumentIndexer:
         )
         effective_clean = clean and not preprocessing_disabled
         with self._writer_lock:
+            if authority is RunAuthority.REBUILD:
+                from .._publication_state import reset_pending_publication_for_rebuild
+
+                reset_pending_publication_for_rebuild(
+                    self.store, PublicSourceType.DOCUMENT, run_control
+                )
             checkpoint = self._open_checkpoint(
                 policy=policy,
                 operation=RunOperation.FULL,
@@ -1321,8 +1330,14 @@ class DocumentIndexer:
             DocumentRunCheckpoint.recover_pending_publication(
                 self.root_dir,
                 PublicSourceType.DOCUMENT,
-                backend_identity=self.store.backend_identity,
+                store=self.store,
                 run_control=run_control,
+                replay_source=lambda: self.incremental_index(
+                    reporter=reporter,
+                    changed_paths=None,
+                    authority=authority,
+                    run_control=run_control,
+                ),
             )
             from .._publication_state import (
                 acquire_publication_snapshot,
@@ -1367,7 +1382,12 @@ class DocumentIndexer:
                 }
             live = self.store.count_document()
             snapshot.validate()
-            if live < snapshot.proof.aggregate.retained_points:
+            from ._checkpoint_common import publication_replay_paths
+
+            if (
+                not publication_replay_paths()
+                and live < snapshot.proof.aggregate.retained_points
+            ):
                 raise JobError(
                     JobErrorKind.FULL_REINDEX_REQUIRED,
                     "document storage is shorter than its canonical proof; request "

@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import threading
 from pathlib import Path  # noqa: TC003
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -24,6 +25,13 @@ from ...job_control import (
 )
 from ...progress import NullProgressReporter
 from ...store_runtime import VaultStore
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from types import FrameType
+
+    from ...indexer._publication_proof import ProofEvidence
+    from ...indexer._vault_prep import IndexResult
 
 pytestmark = pytest.mark.integration
 
@@ -225,3 +233,213 @@ def test_an_interrupted_rebuild_leaves_the_served_index_fully_readable(
         assert read_served_code_collection(tmp_path) == store.CODE_TABLE_NAME
         assert_current_code_state(indexer, store, paths, "interrupted-rebuild")
     _assert_code_resources_released()
+
+
+def _recovery_source_files(
+    tmp_path: Path, source_name: str
+) -> tuple[Path, Path, str, str, str]:
+    if source_name == "vault":
+        directory = tmp_path / ".vault" / "adr"
+        directory.mkdir(parents=True)
+        touched = directory / "changed.md"
+        sibling = directory / "untouched.md"
+        template = (
+            "---\ntype: adr\ntitle: Recovery\nfeature: recovery\n"
+            "---\n# Recovery\n\n{marker}\n"
+        )
+        touched_id, sibling_id = "adr/changed", "adr/untouched"
+    else:
+        suffix = ".py" if source_name == "code" else ".txt"
+        touched, sibling = (
+            tmp_path / f"changed{suffix}",
+            tmp_path / f"untouched{suffix}",
+        )
+        template = (
+            "def value():\n    return '{marker}'\n"
+            if source_name == "code"
+            else "Recovery evidence {marker}\n"
+        )
+        touched_id, sibling_id = touched.name, sibling.name
+    return touched, sibling, template, touched_id, sibling_id
+
+
+def _interrupt_publication(
+    incremental: Callable[[list[Path] | None], IndexResult], touched: Path
+) -> None:
+    import sys
+
+    interrupted = threading.Event()
+
+    def interrupt_prepared(frame: FrameType, event: str, _arg: object):
+        if (
+            event == "return"
+            and frame.f_code.co_name == "prepare_publication_mutation"
+            and not interrupted.is_set()
+        ):
+            interrupted.set()
+            raise RuntimeError("injected publication interruption")
+        return interrupt_prepared
+
+    previous_trace = sys.gettrace()
+    previous_thread_trace = threading.gettrace()
+    try:
+        sys.settrace(interrupt_prepared)
+        threading.settrace(interrupt_prepared)
+        try:
+            incremental([touched])
+        except RuntimeError as exc:
+            assert "injected publication interruption" in str(exc)
+    finally:
+        sys.settrace(previous_trace)
+        threading.settrace(previous_thread_trace)
+    assert interrupted.is_set()
+
+
+def _assert_replayed_store(
+    store: VaultStore,
+    source_name: str,
+    current: dict[str, ProofEvidence],
+    source_change: str,
+) -> None:
+    from ..._source_types import PublicSourceType
+
+    source = PublicSourceType(source_name)
+    collection = {
+        PublicSourceType.VAULT: store.TABLE_NAME,
+        PublicSourceType.CODE: store._code_collection(None),
+        PublicSourceType.DOCUMENT: store.DOCUMENT_TABLE_NAME,
+    }[source]
+    records, offset = store._scroll(
+        collection_name=collection, limit=100, with_payload=True
+    )
+    assert offset is None
+    expected_points = {
+        str(store._stable_id(point))
+        for evidence in current.values()
+        for point in evidence.point_ids
+    }
+    assert {str(record.id) for record in records} == expected_points
+    content = "\n".join(
+        str((record.payload or {}).get("content", "")) for record in records
+    )
+    assert "unchanged sibling content" in content
+    assert "interrupted source content" not in content
+    if source_change != "delete":
+        assert (
+            "original source content"
+            if source_change == "revert"
+            else "latest source content"
+        ) in content
+
+
+@pytest.mark.parametrize("source_name", ["vault", "code", "document"])
+@pytest.mark.parametrize("source_change", ["drift", "revert", "delete"])
+def test_interrupted_incremental_replays_current_source_with_real_encoder(
+    tmp_path: Path,
+    index_control_model: EmbeddingModel,
+    source_name: str,
+    source_change: str,
+) -> None:
+    """A real interrupted write resumes through the ordinary GPU pipeline."""
+    from ..._publication_state import (
+        acquire_publication_snapshot,
+        read_all_publication_evidence,
+    )
+    from ..._source_types import PublicSourceType
+    from ...indexer import DocumentIndexer, VaultIndexer
+    from ...indexer._publication_proof import ProofMutationState
+    from ._helpers import _document_policy
+
+    source = PublicSourceType(source_name)
+    touched, sibling, template, touched_id, sibling_id = _recovery_source_files(
+        tmp_path, source_name
+    )
+    original = template.format(marker="original source content")
+    touched.write_text(original, encoding="utf-8")
+    sibling.write_text(
+        template.format(marker="unchanged sibling content"), encoding="utf-8"
+    )
+
+    with VaultStore(tmp_path, embedding_dim=index_control_model.dimension) as store:
+        if source is PublicSourceType.CODE:
+            indexer = CodebaseIndexer(
+                tmp_path,
+                index_control_model,
+                store,
+                options=CodebaseIndexer.Options(gpu_lock=threading.Lock()),
+            )
+            indexer.full_index(
+                reporter=NullProgressReporter(), preflight=indexer.preflight_content()
+            )
+        elif source is PublicSourceType.DOCUMENT:
+            indexer = DocumentIndexer(
+                tmp_path,
+                index_control_model,
+                store,
+                content_policy=_document_policy("*.txt"),
+            )
+            indexer.full_index(reporter=NullProgressReporter())
+        else:
+            indexer = VaultIndexer(tmp_path, index_control_model, store)
+            indexer.full_index(reporter=NullProgressReporter())
+        before = acquire_publication_snapshot(tmp_path, source)
+        previous = read_all_publication_evidence(before)
+        assert set(previous) == {touched_id, sibling_id}
+        touched.write_text(
+            template.format(marker="interrupted source content"), encoding="utf-8"
+        )
+
+        def incremental(paths: list[Path] | None):
+            if isinstance(indexer, CodebaseIndexer):
+                preflight = (
+                    indexer.preflight_content()
+                    if paths is None
+                    else indexer.preflight_changed_paths(paths)
+                )
+                return indexer.incremental_index(
+                    reporter=NullProgressReporter(),
+                    changed_paths=paths,
+                    preflight=preflight,
+                )
+            return indexer.incremental_index(
+                reporter=NullProgressReporter(), changed_paths=paths
+            )
+
+        _interrupt_publication(incremental, touched)
+        pending = before.ledger.active_publication_receipt(
+            before.proof.compatibility_key
+        )
+        assert pending is not None
+        assert any(
+            item.state is ProofMutationState.PREPARED for item in pending.mutations
+        )
+        if source_change == "delete":
+            touched.unlink()
+        else:
+            touched.write_text(
+                original
+                if source_change == "revert"
+                else template.format(marker="latest source content"),
+                encoding="utf-8",
+            )
+        # An unrelated empty watcher batch must still recover the interrupted path.
+        incremental([])
+        after = acquire_publication_snapshot(tmp_path, source)
+        current = read_all_publication_evidence(after)
+        assert current[sibling_id] == previous[sibling_id]
+        if source_change == "delete":
+            assert touched_id not in current
+        elif source_change == "revert":
+            assert current[touched_id] == previous[touched_id]
+        else:
+            assert (
+                current[touched_id].content_identity
+                != previous[touched_id].content_identity
+            )
+        assert (
+            before.ledger.active_publication_receipt(before.proof.compatibility_key)
+            is None
+        )
+        _assert_replayed_store(store, source_name, current, source_change)
+        result = incremental(None)
+        assert (result.added, result.updated, result.removed) == (0, 0, 0)

@@ -790,59 +790,8 @@ def clean(
     """
     source_type = parse_source_type(clean_type, allow_aliases=True)
     root = _resolve(root_dir)
-    from ._publication_state import clear_publication_state
-
-    cleared: list[str] = []
-
-    combined = source_type is PublicSourceType.COMBINED
-    do_vault = source_type is PublicSourceType.VAULT or combined
-    do_code = source_type is PublicSourceType.CODE or combined
-    do_document = source_type is PublicSourceType.DOCUMENT or combined
-
     with registry.lease_maintenance_store(root) as store:
-        code_target = None
-        if do_code:
-            from ._store_models import read_served_pointer
-
-            pointer = read_served_pointer(root, store.DERIVED_CODE_TABLE_NAME)
-            if not pointer.verifiable:
-                raise RuntimeError(
-                    "cannot clean code without a verifiable served pointer"
-                )
-            code_target = pointer.collection or store.DERIVED_CODE_TABLE_NAME
-        if do_vault:
-            clear_publication_state(
-                root,
-                PublicSourceType.VAULT,
-                store.backend_identity,
-            )
-        if do_code:
-            clear_publication_state(
-                root,
-                PublicSourceType.CODE,
-                store.backend_identity,
-            )
-        if do_document:
-            clear_publication_state(
-                root,
-                PublicSourceType.DOCUMENT,
-                store.backend_identity,
-            )
-
-        if do_vault:
-            store.drop_table()
-            store.ensure_table()
-            cleared.append("vault")
-        if do_code:
-            store.drop_code_table(code_target)
-            store.ensure_code_table(code_target)
-            cleared.append("code")
-        if do_document:
-            store.drop_document_table()
-            store.ensure_document_table()
-            cleared.append("document")
-
-    return cleared
+        return store.reset_source(source_type)
 
 
 def get_status(root_dir: pathlib.Path) -> dict[str, object]:

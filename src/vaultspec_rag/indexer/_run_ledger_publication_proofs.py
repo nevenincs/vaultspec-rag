@@ -15,6 +15,7 @@ from ._publication_proof import (
     ProofReceiptState,
 )
 from ._run_ledger_models import (
+    RESUMABLE_STATES,
     FinalizationPhase,
     GenerationRow,
     PublicationProof,
@@ -168,13 +169,15 @@ class RunLedgerPublicationProofMethods:
             rows: list[sqlite3.Row] = fetch_all(
                 connection,
                 """
-                SELECT generation_id, signature_json
+                SELECT generation_id, signature_json, terminal_state
                 FROM generations
-                WHERE source_type = ? AND terminal_state = ?
+                WHERE source_type = ?
                 """,
-                (source_type.value, RunTerminalState.RUNNING.value),
+                (source_type.value,),
             )
             for row in rows:
+                if column_text(row, "terminal_state") not in RESUMABLE_STATES:
+                    continue
                 raw_payload = json.loads(column_text(row, "signature_json"))
                 if not isinstance(raw_payload, dict):
                     raise RunLedgerCorruptionError(
@@ -194,7 +197,7 @@ class RunLedgerPublicationProofMethods:
                     WHERE generation_id = ?
                     """,
                     (
-                        RunTerminalState.REBUILD_INCOMPLETE.value,
+                        RunTerminalState.INVALIDATED.value,
                         FinalizationPhase.INGESTING.value,
                         "backing storage explicitly cleared",
                         now,

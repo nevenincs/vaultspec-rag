@@ -22,6 +22,7 @@ if TYPE_CHECKING:
         WalConfigDiff,
     )
 
+    from ._source_types import PublicSourceType
     from ._store_locks import ReentrantLock
 
 
@@ -58,6 +59,7 @@ class _VaultCollectionMixin:
         DERIVED_CODE_TABLE_NAME: str
         DOCUMENT_TABLE_NAME: str
         root_dir: pathlib.Path
+        backend_identity: str
         db_path: pathlib.Path | str
         _server_mode: bool
         _embedding_dim: int
@@ -254,6 +256,38 @@ class _VaultCollectionMixin:
     def drop_document_table(self) -> None:
         """Drop only the independently owned document collection."""
         self._drop_collection(self.DOCUMENT_TABLE_NAME)
+
+    def reset_source(self, source: PublicSourceType) -> list[str]:
+        """Invalidate selected proofs and recreate storage under a writer lease."""
+        from ._publication_state import clear_publication_state
+        from ._source_types import PublicSourceType
+
+        sources = (
+            (PublicSourceType.VAULT, PublicSourceType.CODE, PublicSourceType.DOCUMENT)
+            if source is PublicSourceType.COMBINED
+            else (source,)
+        )
+        code_target = None
+        if PublicSourceType.CODE in sources:
+            pointer = read_served_pointer(self.root_dir, self.DERIVED_CODE_TABLE_NAME)
+            if not pointer.verifiable:
+                raise RuntimeError(
+                    "cannot clean code without a verifiable served pointer"
+                )
+            code_target = pointer.collection or self.DERIVED_CODE_TABLE_NAME
+        for selected in sources:
+            clear_publication_state(self.root_dir, selected, self.backend_identity)
+        for selected in sources:
+            if selected is PublicSourceType.VAULT:
+                self.drop_table()
+                self.ensure_table()
+            elif selected is PublicSourceType.CODE:
+                self.drop_code_table(code_target)
+                self.ensure_code_table(code_target)
+            else:
+                self.drop_document_table()
+                self.ensure_document_table()
+        return [selected.value for selected in sources]
 
     def _record_manifest(self) -> None:
         """Record this root in the storage manifest (server mode only).

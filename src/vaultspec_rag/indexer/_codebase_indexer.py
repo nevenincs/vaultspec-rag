@@ -576,6 +576,12 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         )
         run_control.checkpoint()
         with self._writer_lock:
+            if authority is RunAuthority.REBUILD:
+                from .._publication_state import reset_pending_publication_for_rebuild
+
+                reset_pending_publication_for_rebuild(
+                    self.store, PublicSourceType.CODE, run_control
+                )
             self._resolved_policy = resolved_policy
             self._reset_reuse_state()
             return run_index_lifecycle(
@@ -922,10 +928,18 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         RunCheckpointBase.recover_pending_publication(
             self.root_dir,
             PublicSourceType.CODE,
-            backend_identity=self.store.backend_identity,
+            store=self.store,
             run_control=run_control,
+            replay_source=lambda: self._incremental_index_locked(
+                policy=policy,
+                reporter=reporter,
+                changed_paths=None,
+                execution=execution,
+            ),
         )
-        if self._lifecycle.published_evidence_lost():
+        from ._checkpoint_common import publication_replay_paths
+
+        if not publication_replay_paths() and self._lifecycle.published_evidence_lost():
             # The predicate has already logged which branch fired and, for a
             # shortfall, both counts. Naming only the absent-collection case
             # here would contradict it on the commoner path.
@@ -1071,11 +1085,14 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         current_files: dict[str, pathlib.Path],
         deleted_files: set[str],
     ) -> tuple[set[str], set[str], set[str], list[pathlib.Path], set[str]]:
+        from ._checkpoint_common import publication_replay_paths
+
         new_files = set(current_hashes) - set(previous_metadata)
         modified_files = {
             rel
             for rel in set(current_hashes).intersection(previous_metadata)
             if current_hashes[rel] != previous_metadata.get(rel)
+            or rel in publication_replay_paths()
         }
         to_index = new_files | modified_files
         paths_to_index = [current_files[rel] for rel in sorted(to_index)]

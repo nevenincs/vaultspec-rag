@@ -29,6 +29,8 @@ if TYPE_CHECKING:
     from qdrant_client.conversions.common_types import PointsSelector
     from qdrant_client.http.models import PointStruct, Vector
 
+    from ._source_types import PublicSourceType
+
 
 logger = logging.getLogger(__name__)
 
@@ -548,6 +550,31 @@ class _VaultIngestMixin:
                 points_selector=models.PointIdsList(points=point_ids),
             )
         logger.info("Deleted %d document chunk(s)", len(ids))
+
+    def delete_publication_points(
+        self, source: PublicSourceType, ids: list[str]
+    ) -> None:
+        """Replay exact journaled deletions without deleting sibling chunks."""
+        from ._source_types import PublicSourceType
+
+        if source is PublicSourceType.CODE:
+            self.delete_code_chunks(ids)
+        elif source is PublicSourceType.DOCUMENT:
+            self.delete_document_content_chunks(ids)
+        elif source is PublicSourceType.VAULT:
+            if not ids:
+                return
+            from qdrant_client import models
+
+            self.ensure_table()
+            with self._point_lock(self.TABLE_NAME):
+                point_ids: list[int | str | UUID] = [self._stable_id(i) for i in ids]
+                self._delete_points(
+                    collection_name=self.TABLE_NAME,
+                    points_selector=models.PointIdsList(points=point_ids),
+                )
+        else:
+            raise ValueError("publication deletion requires one concrete source")
 
     def delete_migration_origin_points(
         self, collection: str, ids: Sequence[str]

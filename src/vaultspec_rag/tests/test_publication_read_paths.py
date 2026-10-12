@@ -115,3 +115,96 @@ def test_an_update_publishing_leaves_a_search_unfenced_rather_than_failing(
     assert isinstance(observation, IndexIntegrity)
     assert observation.reason == "proof_unreadable"
     assert acquire_code_breadth_snapshot_if_proven(root) is None
+
+
+def test_recovery_writer_reads_parent_without_unfencing_other_readers(
+    tmp_path: Path,
+) -> None:
+    """The recovery exception is limited to the exact owning execution context.
+
+    Mutation: bypassing the ordinary open-receipt fence failed the concurrent
+    reader assertion with DID NOT RAISE; restoring the fence passed.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from dataclasses import replace
+
+    from .._publication_state import (
+        acquire_publication_snapshot,
+        publication_recovery_reads,
+    )
+    from ..indexer._publication_proof import ProofReadConflictError
+    from ..indexer._run_ledger_models import RunOperation
+    from .test_api_clean_admission import _publish_empty_vault_proof
+
+    _publish_empty_vault_proof(tmp_path)
+    parent = acquire_publication_snapshot(tmp_path, PublicSourceType.VAULT)
+    ledger = parent.ledger
+    generation = ledger.start_generation(
+        replace(
+            ledger.generation(parent.proof.generation_id).signature,
+            clean=False,
+            operation=RunOperation.SCOPED_INCREMENTAL,
+        )
+    )
+    receipt = ledger.reserve_publication_receipt(
+        parent.proof.compatibility_key,
+        generation.generation_id,
+        expected_parent_revision=parent.proof.revision,
+    )
+    with publication_recovery_reads(receipt):
+        snapshot = acquire_publication_snapshot(tmp_path, PublicSourceType.VAULT)
+        snapshot.validate()
+        assert snapshot.proof.generation_id == parent.proof.generation_id
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            reader = pool.submit(
+                acquire_publication_snapshot, tmp_path, PublicSourceType.VAULT
+            )
+            with pytest.raises(ProofReadConflictError, match="open receipt"):
+                reader.result()
+        ledger.begin_publication_rollback(receipt.receipt_id)
+        with pytest.raises(ProofReadConflictError, match="does not own"):
+            snapshot.validate()
+    with pytest.raises(ProofReadConflictError, match="open receipt"):
+        acquire_publication_snapshot(tmp_path, PublicSourceType.VAULT)
+
+
+@pytest.mark.parametrize("field", ["receipt_id", "generation_id"])
+def test_recovery_read_rejects_another_receipt_owner(
+    tmp_path: Path, field: str
+) -> None:
+    """A caller cannot borrow another generation's read exemption.
+
+    Mutation: removing each receipt/generation identity comparison failed its
+    corresponding DID NOT RAISE assertion; each restored guard passed.
+    """
+    from dataclasses import replace
+
+    from .._publication_state import (
+        acquire_publication_snapshot,
+        publication_recovery_reads,
+    )
+    from ..indexer._publication_proof import ProofReadConflictError
+    from ..indexer._run_ledger_models import RunOperation
+    from .test_api_clean_admission import _publish_empty_vault_proof
+
+    _publish_empty_vault_proof(tmp_path)
+    parent = acquire_publication_snapshot(tmp_path, PublicSourceType.VAULT)
+    ledger = parent.ledger
+    generation = ledger.start_generation(
+        replace(
+            ledger.generation(parent.proof.generation_id).signature,
+            clean=False,
+            operation=RunOperation.SCOPED_INCREMENTAL,
+        )
+    )
+    receipt = ledger.reserve_publication_receipt(
+        parent.proof.compatibility_key,
+        generation.generation_id,
+        expected_parent_revision=parent.proof.revision,
+    )
+    foreign = replace(receipt, **{field: "another-owner"})
+    with (
+        publication_recovery_reads(foreign),
+        pytest.raises(ProofReadConflictError, match="does not own"),
+    ):
+        acquire_publication_snapshot(tmp_path, PublicSourceType.VAULT)

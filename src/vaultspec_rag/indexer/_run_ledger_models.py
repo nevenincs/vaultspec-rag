@@ -66,6 +66,7 @@ __all__ = [
     "RunTerminalState",
     "column_int",
     "column_text",
+    "expected_publication_deletion",
     "fetch_all",
     "fetch_one",
     "in_ledger_transaction",
@@ -74,6 +75,7 @@ __all__ = [
     "ledger_transaction",
     "open_ledger_connection",
     "raise_if_lock_contention",
+    "validate_publication_mutation_group",
     "with_contention_retry",
 ]
 
@@ -1350,7 +1352,7 @@ def _validate_mutation_coverage(
         raise ValueError("sealed mutations must exactly cover changed proof paths")
 
     for key, units in actual_units.items():
-        _validate_mutation_group(
+        validate_publication_mutation_group(
             key,
             units,
             expected_points=expected_points[key],
@@ -1374,14 +1376,14 @@ def _expected_mutation_coverage(
                 delta.new.point_ids
             )
             expected_content[delta.new.rel_path] = delta.new.content_identity
-        deletion = _expected_deletion(delta)
+        deletion = expected_publication_deletion(delta)
         if deletion is not None:
             deletion_kind, rel_path, deleted_points = deletion
             expected_points[(deletion_kind, rel_path)] = deleted_points
     return expected_points, expected_content
 
 
-def _expected_deletion(
+def expected_publication_deletion(
     delta: PathDelta,
 ) -> tuple[CommitUnitKind, str, frozenset[str]] | None:
     if delta.old is None:
@@ -1408,7 +1410,7 @@ def _expected_deletion(
     return CommitUnitKind.DELETE_STALE, delta.old.rel_path, deleted_points
 
 
-def _validate_mutation_group(
+def validate_publication_mutation_group(
     key: tuple[CommitUnitKind, str],
     units: list[CommitUnit],
     *,

@@ -330,6 +330,7 @@ class RunLedgerPublicationReadMethods:
         source_type: PublicSourceType,
         root_identity: str,
         backend_identity: str,
+        writer_receipt: PublicationReceipt | None = None,
     ) -> tuple[PublicationProof, ProofReadToken]:
         """Atomically select the current proof and its receipt-free read token.
 
@@ -391,31 +392,9 @@ class RunLedgerPublicationReadMethods:
                     raise ProofIncompatibleError(
                         "publication proof generation ancestry is incompatible"
                     )
-                open_receipt_exists = has_open_receipt(row)
-                if open_receipt_exists:
-                    receipt_row: sqlite3.Row | None = fetch_one(
-                        connection,
-                        f"""
-                        SELECT * FROM publication_receipts
-                        WHERE source_type = ? AND root_identity = ?
-                          AND backend_identity = ? AND collection_identity = ?
-                          AND {OPEN_RECEIPT_SQL}
-                        """,
-                        stable_parameters(proof.compatibility_key),
-                    )
-                    if receipt_row is None:
-                        receipt_corrupt(
-                            "open publication receipt snapshot is inconsistent"
-                        )
-                    receipt = hydrate_receipt(connection, receipt_row)
-                    if (
-                        receipt.compatibility_key != proof.compatibility_key
-                        or receipt.parent_revision != proof.revision
-                        or receipt.reservation_sequence != proof.reservation_sequence
-                    ):
-                        receipt_corrupt(
-                            "open publication receipt does not match the current proof"
-                        )
+                open_receipt_exists = self._reader_receipt_fence(
+                    connection, proof, row, writer_receipt
+                )
                 token = ProofReadToken.from_snapshot(
                     compatibility_key=proof.compatibility_key,
                     revision=proof.revision,
@@ -425,6 +404,53 @@ class RunLedgerPublicationReadMethods:
                 return proof, token
             finally:
                 connection.rollback()
+
+    def _reader_receipt_fence(
+        self,
+        connection: sqlite3.Connection,
+        proof: PublicationProof,
+        row: sqlite3.Row,
+        writer_receipt: PublicationReceipt | None,
+    ) -> bool:
+        """Keep readers fenced unless the exact recovery writer owns the receipt."""
+        if not has_open_receipt(row):
+            return False
+        receipt_row: sqlite3.Row | None = fetch_one(
+            connection,
+            f"""
+            SELECT * FROM publication_receipts
+            WHERE source_type = ? AND root_identity = ?
+              AND backend_identity = ? AND collection_identity = ?
+              AND {OPEN_RECEIPT_SQL}
+            """,
+            stable_parameters(proof.compatibility_key),
+        )
+        if receipt_row is None:
+            receipt_corrupt("open publication receipt snapshot is inconsistent")
+        receipt = hydrate_receipt(connection, receipt_row)
+        if (
+            receipt.compatibility_key != proof.compatibility_key
+            or receipt.parent_revision != proof.revision
+            or receipt.reservation_sequence != proof.reservation_sequence
+        ):
+            receipt_corrupt("open publication receipt does not match the current proof")
+        if writer_receipt is None:
+            return True
+        if (
+            receipt.receipt_id != writer_receipt.receipt_id
+            or receipt.generation_id != writer_receipt.generation_id
+            or receipt.compatibility_key != writer_receipt.compatibility_key
+            or receipt.parent_revision != writer_receipt.parent_revision
+            or receipt.reservation_sequence != writer_receipt.reservation_sequence
+            or receipt.state is ProofReceiptState.ROLLING_BACK
+        ):
+            raise ProofReadConflictError(
+                "recovery reader does not own the open receipt"
+            )
+        self._require_compatible_receipt_generation(
+            connection, receipt.generation_id, receipt.compatibility_key, proof
+        )
+        return False
 
     def validate_publication_read_token(self, token: ProofReadToken) -> None:
         """Reject a backend read if proof or open-receipt state changed."""

@@ -5,7 +5,7 @@ tags:
 date: '2026-09-30'
 modified: '2026-10-12'
 body_schema: 'body-v2'
-body_hash: 'sha256:6b845448b87b86ab4bf74747715061b9bf8ddb8b65604d87e6f769a63a3098f5'
+body_hash: 'sha256:f6940970996ab5849836d7e5f56c60672986db4d6b1656dd99d8fa5bae40286d'
 related:
   - "[[2026-09-30-incremental-index-recovery-plan]]"
 ---
@@ -156,6 +156,36 @@ related:
 - `S06` `verify:` `basedpyright changed Python files` -> `pass`
 - `S06` `verify:` `clock rollback guard mutations: intended red then restored green` -> `pass`
 - `S06` `by:` `vaultspec-high-executor`
+- `S05` `M` `src/vaultspec_rag/_publication_state.py`
+- `S05` `M` `src/vaultspec_rag/api.py`
+- `S05` `M` `src/vaultspec_rag/indexer/_checkpoint_common.py`
+- `S05` `M` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S05` `M` `src/vaultspec_rag/indexer/_document_indexer.py`
+- `S05` `M` `src/vaultspec_rag/indexer/_run_ledger_commits.py`
+- `S05` `M` `src/vaultspec_rag/indexer/_run_ledger_models.py`
+- `S05` `M` `src/vaultspec_rag/indexer/_run_ledger_publication_proofs.py`
+- `S05` `M` `src/vaultspec_rag/indexer/_run_ledger_publication_reads.py`
+- `S05` `M` `src/vaultspec_rag/indexer/_vault_incremental.py`
+- `S05` `M` `src/vaultspec_rag/indexer/_vault_indexer.py`
+- `S05` `M` `src/vaultspec_rag/store_collections.py`
+- `S05` `M` `src/vaultspec_rag/store_ingest.py`
+- `S05` `M` `src/vaultspec_rag/tests/integration/test_index_job_control_publication.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_api_clean_admission.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_index_run_ledger_publication_models.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_publication_read_paths.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_publication_recovery.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_vault_readiness_publication.py`
+- `S05` `verify:` `pytest test_publication_recovery.py test_index_run_ledger_publication_models.py: 87 passed` -> `pass`
+- `S05` `verify:` `pytest coupled publication ledger proof readiness resume dispatch: 121 cases passed across initial115 and corrected6 rerun` -> `pass`
+- `S05` `verify:` `pytest integration/test_index_job_control_publication.py current-source recovery matrix: 9 real GPU cases passed` -> `pass`
+- `S05` `verify:` `recovery safety guard mutations: 4 intended red/restored green pairs` -> `pass`
+- `S05` `verify:` `source reset and receipt reader identity/concurrency mutations: intended red/restored green` -> `pass`
+- `S05` `verify:` `ruff check src/vaultspec_rag` -> `pass`
+- `S05` `verify:` `ruff format --check src/vaultspec_rag` -> `pass`
+- `S05` `verify:` `ty check changed Python files` -> `pass`
+- `S05` `verify:` `basedpyright changed Python files` -> `pass`
+- `S05` `verify:` `independent integrated code review` -> `pass`
+- `S05` `by:` `vaultspec-high-executor`
 
 ## Notes
 

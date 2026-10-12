@@ -17,6 +17,7 @@ from .._store_models import CodeChunk, DocumentChunk, DocumentPayload, VaultChun
 from ..config._settings import get_config
 from ..embeddings import EmbeddingModel
 from ..indexer import CodebaseIndexer, DocumentIndexer, VaultIndexer
+from ..indexer._checkpoint_common import RunCheckpointBase
 from ..indexer._content_policy import ContentKind
 from ..indexer._file_state import FileState
 from ..indexer._publication_proof import (
@@ -25,6 +26,7 @@ from ..indexer._publication_proof import (
     ProofEvidence,
     ProofMutationState,
     ProofReadConflictError,
+    ProofReceiptState,
 )
 from ..indexer._run_ledger_models import (
     CommitUnit,
@@ -227,16 +229,12 @@ def test_source_entry_recovers_an_abandoned_empty_reservation(
 
 
 @pytest.mark.parametrize("state", list(ProofMutationState))
-def test_incomplete_receipt_preserves_fence_through_incremental_and_rebuild_refusal(
+def test_unsealed_receipt_recovers_through_source_entry(
     published_indexer: CodebaseIndexer | DocumentIndexer | VaultIndexer,
     publication_source: PublicSourceType,
     state: ProofMutationState,
 ) -> None:
-    """Mutation proved: bypassing either admission guard failed; restoration passed.
-
-    Removing the rebuild guard reached a later receipt error and failed the exact
-    recovery matcher. Restoring it passed with the proof, receipt and store intact.
-    """
+    """Confirmed complete work rolls forward; uncertain absent work replays."""
     ledger, receipt = _reserve(published_indexer, publication_source)
     unit = CommitUnit(
         rel_path="lost.txt",
@@ -253,34 +251,345 @@ def test_incomplete_receipt_preserves_fence_through_incremental_and_rebuild_refu
     if state is ProofMutationState.CONFIRMED:
         ledger.confirm_publication_mutation(receipt.receipt_id, unit)
 
-    with pytest.raises(JobError) as caught:
-        _incremental(published_indexer)
-    assert caught.value.error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
-    assert "complete storage-confirmed delta" in str(caught.value)
-    assert ledger.active_publication_receipt(receipt.compatibility_key) is not None
-    with pytest.raises(ProofReadConflictError):
-        acquire_publication_snapshot(published_indexer.root_dir, publication_source)
+    _incremental(published_indexer)
 
-    proof = ledger.publication_proof(receipt.compatibility_key)
-    pending = ledger.active_publication_receipt(receipt.compatibility_key)
-    durable = sqlite_contents(ledger.path)
+    after = acquire_publication_snapshot(published_indexer.root_dir, publication_source)
+    assert ledger.active_publication_receipt(receipt.compatibility_key) is None
+    if state is ProofMutationState.PREPARED:
+        assert after.proof.aggregate.retained_points == 0
+    else:
+        assert after.proof.aggregate.retained_points == 1
+        assert after.proof.generation_id == receipt.generation_id
+        assert ledger.unit_committed(receipt.generation_id, unit)
+
+
+@pytest.mark.parametrize(
+    "is_file_end,sealed", [(False, False), (True, False), (True, True)]
+)
+def test_uncertain_write_replays_after_source_disappears(
+    published_indexer: CodebaseIndexer | DocumentIndexer | VaultIndexer,
+    publication_source: PublicSourceType,
+    is_file_end: bool,
+    sealed: bool,
+) -> None:
+    """Unacknowledged storage is removed by ordinary replay, never certified."""
+    ledger, receipt = _reserve(published_indexer, publication_source)
+    unit = CommitUnit(
+        rel_path="vanished.txt",
+        kind=CommitUnitKind.UPSERT,
+        source_digest="3" * 128,
+        segment_ordinal=0,
+        is_file_end=is_file_end,
+        point_ids=("vanished.txt#c0",),
+    )
+    ledger.prepare_publication_mutation(receipt.receipt_id, unit)
+    _upsert_recorded_point(published_indexer.store, publication_source, unit)
+    if not is_file_end:
+        ledger.mark_publication_mutation_applied(receipt.receipt_id, unit)
+        ledger.confirm_publication_mutation(receipt.receipt_id, unit)
+    if sealed:
+        ledger.seal_publication_receipt(
+            receipt.receipt_id,
+            (
+                PathDelta(
+                    PathOutcome.ADD,
+                    receipt.parent_revision,
+                    unit.rel_path,
+                    new=ProofEvidence(
+                        unit.rel_path, unit.source_digest or "", unit.point_ids
+                    ),
+                ),
+            ),
+        )
+    _incremental(published_indexer)
+    after = acquire_publication_snapshot(published_indexer.root_dir, publication_source)
+    assert after.proof.aggregate.retained_points == 0
+    assert ledger.active_publication_receipt(receipt.compatibility_key) is None
     store = published_indexer.store
-    counts = (store.count(), store.count_code(), store.count_document())
-    with pytest.raises(RunLedgerStateError, match="exact recorded-unit recovery"):
-        if isinstance(published_indexer, CodebaseIndexer):
-            published_indexer.full_index(
-                reporter=NullProgressReporter(),
-                preflight=published_indexer.preflight_content(),
-            )
-        else:
-            published_indexer.full_index(reporter=NullProgressReporter())
+    count = {
+        PublicSourceType.VAULT: store.count,
+        PublicSourceType.CODE: store.count_code,
+        PublicSourceType.DOCUMENT: store.count_document,
+    }[publication_source]
+    assert count() == 0
 
-    assert ledger.publication_proof(receipt.compatibility_key) == proof
-    assert ledger.active_publication_receipt(receipt.compatibility_key) == pending
-    assert (store.count(), store.count_code(), store.count_document()) == counts
-    assert_sqlite_unchanged(ledger.path, durable)
-    with pytest.raises(ProofReadConflictError):
-        acquire_publication_snapshot(published_indexer.root_dir, publication_source)
+
+@pytest.mark.parametrize("after_reset", [False, True])
+def test_interrupted_receipt_reset_replays_durable_paths(
+    published_indexer: CodebaseIndexer | DocumentIndexer | VaultIndexer,
+    publication_source: PublicSourceType,
+    after_reset: bool,
+) -> None:
+    """Reset markers survive both sides of the storage/checkpoint boundary."""
+    ledger, receipt = _reserve(published_indexer, publication_source)
+    unit = CommitUnit(
+        rel_path="interrupted.txt",
+        kind=CommitUnitKind.UPSERT,
+        source_digest="4" * 128,
+        segment_ordinal=0,
+        is_file_end=True,
+        point_ids=("interrupted.txt#c0",),
+    )
+    ledger.prepare_publication_mutation(receipt.receipt_id, unit)
+    _upsert_recorded_point(published_indexer.store, publication_source, unit)
+    ledger.mark_publication_mutation_applied(receipt.receipt_id, unit)
+    ledger.confirm_publication_mutation(receipt.receipt_id, unit)
+    ledger.begin_publication_storage_reset(receipt.receipt_id, (unit.rel_path,))
+    published_indexer.store.delete_publication_points(
+        publication_source, list(unit.point_ids)
+    )
+    if after_reset:
+        ledger.reopen_publication_after_storage_reset(
+            receipt.receipt_id, (unit.rel_path,)
+        )
+    _incremental(published_indexer)
+    after = acquire_publication_snapshot(published_indexer.root_dir, publication_source)
+    assert after.proof.aggregate.retained_points == 0
+    assert ledger.active_publication_receipt(receipt.compatibility_key) is None
+
+
+@pytest.mark.parametrize("state", list(ProofMutationState))
+def test_explicit_rebuild_discards_unfinished_receipt_without_touching_siblings(
+    published_indexer: CodebaseIndexer | DocumentIndexer | VaultIndexer,
+    publication_source: PublicSourceType,
+    state: ProofMutationState,
+) -> None:
+    """The recovery fallback resets only the explicitly selected index."""
+    ledger, receipt = _reserve(published_indexer, publication_source)
+    unit = CommitUnit(
+        rel_path="lost.txt",
+        kind=CommitUnitKind.UPSERT,
+        source_digest="1" * 128,
+        segment_ordinal=0,
+        is_file_end=False,
+        point_ids=("lost.txt#c0",),
+    )
+    ledger.prepare_publication_mutation(receipt.receipt_id, unit)
+    _upsert_recorded_point(published_indexer.store, publication_source, unit)
+    if state is not ProofMutationState.PREPARED:
+        ledger.mark_publication_mutation_applied(receipt.receipt_id, unit)
+    if state is ProofMutationState.CONFIRMED:
+        ledger.confirm_publication_mutation(receipt.receipt_id, unit)
+    sibling = (
+        PublicSourceType.CODE
+        if publication_source is not PublicSourceType.CODE
+        else PublicSourceType.DOCUMENT
+    )
+    _upsert_recorded_point(published_indexer.store, sibling, unit)
+    sibling_count = (
+        published_indexer.store.count_code
+        if sibling is PublicSourceType.CODE
+        else published_indexer.store.count_document
+    )
+    before = sibling_count()
+    if isinstance(published_indexer, CodebaseIndexer):
+        published_indexer.full_index(
+            reporter=NullProgressReporter(),
+            preflight=published_indexer.preflight_content(),
+        )
+    else:
+        published_indexer.full_index(reporter=NullProgressReporter())
+    after = acquire_publication_snapshot(published_indexer.root_dir, publication_source)
+    assert after.proof.aggregate.retained_points == 0
+    assert ledger.active_publication_receipt(receipt.compatibility_key) is None
+    assert sibling_count() == before == 1
+
+
+def test_recovery_validates_complete_file_stream_before_sealing(
+    published_indexer: CodebaseIndexer | DocumentIndexer | VaultIndexer,
+    publication_source: PublicSourceType,
+) -> None:
+    """Accepting a truncated stream failed the assertion; restoring the guard passed."""
+    ledger, receipt = _reserve(published_indexer, publication_source)
+    unit = CommitUnit(
+        rel_path="partial.txt",
+        kind=CommitUnitKind.UPSERT,
+        source_digest="5" * 128,
+        segment_ordinal=0,
+        is_file_end=False,
+        point_ids=("partial.txt#c0",),
+    )
+    ledger.prepare_publication_mutation(receipt.receipt_id, unit)
+    _upsert_recorded_point(published_indexer.store, publication_source, unit)
+    ledger.mark_publication_mutation_applied(receipt.receipt_id, unit)
+    ledger.confirm_publication_mutation(receipt.receipt_id, unit)
+    current = ledger.active_publication_receipt(receipt.compatibility_key)
+    assert current is not None
+    delta = PathDelta(
+        PathOutcome.ADD,
+        receipt.parent_revision,
+        unit.rel_path,
+        new=ProofEvidence(unit.rel_path, unit.source_digest or "", unit.point_ids),
+    )
+    assert not RunCheckpointBase._complete_mutation_streams(current, (delta,))
+
+
+def test_reset_marker_blocks_forward_certification_of_removed_points(
+    published_indexer: CodebaseIndexer | DocumentIndexer | VaultIndexer,
+    publication_source: PublicSourceType,
+) -> None:
+    """Ignoring reset intent failed the state assertion; restoring the guard passed."""
+    ledger, receipt = _reserve(published_indexer, publication_source)
+    unit = CommitUnit(
+        rel_path="partial.txt",
+        kind=CommitUnitKind.UPSERT,
+        source_digest="5" * 128,
+        segment_ordinal=0,
+        is_file_end=True,
+        point_ids=("partial.txt#c0",),
+    )
+    ledger.prepare_publication_mutation(receipt.receipt_id, unit)
+    _upsert_recorded_point(published_indexer.store, publication_source, unit)
+    ledger.mark_publication_mutation_applied(receipt.receipt_id, unit)
+    ledger.confirm_publication_mutation(receipt.receipt_id, unit)
+    ledger.begin_publication_storage_reset(receipt.receipt_id, (unit.rel_path,))
+    published_indexer.store.delete_publication_points(
+        publication_source, list(unit.point_ids)
+    )
+    current = ledger.active_publication_receipt(receipt.compatibility_key)
+    assert current is not None
+    recovered = RunCheckpointBase._recover_unsealed_publication(
+        ledger,
+        current,
+        NO_RUN_CONTROL,
+        lambda ids: published_indexer.store.delete_publication_points(
+            publication_source, ids
+        ),
+    )
+    assert recovered.state is ProofReceiptState.RESERVED
+
+
+def test_parent_replay_cannot_close_when_current_source_was_skipped(
+    published_indexer: CodebaseIndexer | DocumentIndexer | VaultIndexer,
+    publication_source: PublicSourceType,
+) -> None:
+    """Skipping coverage raised DID NOT RAISE; restoring coverage passed."""
+    ledger, receipt = _reserve(published_indexer, publication_source)
+    unit = CommitUnit(
+        rel_path="parent.txt",
+        kind=CommitUnitKind.UPSERT,
+        source_digest="6" * 128,
+        segment_ordinal=0,
+        is_file_end=True,
+        point_ids=("parent.txt#c0",),
+    )
+    ledger.prepare_publication_mutation(receipt.receipt_id, unit)
+    _upsert_recorded_point(published_indexer.store, publication_source, unit)
+    ledger.mark_publication_mutation_applied(receipt.receipt_id, unit)
+    ledger.confirm_publication_mutation(receipt.receipt_id, unit)
+    _incremental(published_indexer)
+    ledger, receipt = _reserve(published_indexer, publication_source)
+    ledger.begin_publication_storage_reset(receipt.receipt_id, (unit.rel_path,))
+    published_indexer.store.delete_publication_points(
+        publication_source, list(unit.point_ids)
+    )
+    empty = ledger.reopen_publication_after_storage_reset(
+        receipt.receipt_id, (unit.rel_path,)
+    )
+    with pytest.raises(
+        RunLedgerStateError, match=r"unresolved parent path 'parent\.txt'"
+    ):
+        RunCheckpointBase._assert_replayed_parent_paths(
+            ledger, empty, frozenset((unit.rel_path,))
+        )
+    assert ledger.active_publication_receipt(receipt.compatibility_key) is not None
+    assert ledger.publication_replay_paths(receipt.receipt_id) == (unit.rel_path,)
+    # The next genuine discovery sees the removed source and confirms deletion.
+    _incremental(published_indexer)
+    after = acquire_publication_snapshot(published_indexer.root_dir, publication_source)
+    assert after.proof.aggregate.retained_points == 0
+
+
+def test_receipt_recovery_refuses_missing_untouched_parent_storage(
+    published_indexer: CodebaseIndexer | DocumentIndexer | VaultIndexer,
+    publication_source: PublicSourceType,
+) -> None:
+    """A journal cannot repair a collection removed outside its recorded paths."""
+    ledger, receipt = _reserve(published_indexer, publication_source)
+    unit = CommitUnit(
+        rel_path="parent.txt",
+        kind=CommitUnitKind.UPSERT,
+        source_digest="6" * 128,
+        segment_ordinal=0,
+        is_file_end=True,
+        point_ids=("parent.txt#c0",),
+    )
+    ledger.prepare_publication_mutation(receipt.receipt_id, unit)
+    _upsert_recorded_point(published_indexer.store, publication_source, unit)
+    ledger.mark_publication_mutation_applied(receipt.receipt_id, unit)
+    ledger.confirm_publication_mutation(receipt.receipt_id, unit)
+    _incremental(published_indexer)
+    ledger, pending = _reserve(published_indexer, publication_source)
+    published_indexer.store.delete_publication_points(
+        publication_source, list(unit.point_ids)
+    )
+    before = sqlite_contents(ledger.path)
+    with pytest.raises(
+        JobError, match="storage no longer backs untouched publication proof paths"
+    ):
+        _incremental(published_indexer)
+    assert_sqlite_unchanged(ledger.path, before)
+    assert ledger.active_publication_receipt(pending.compatibility_key) is not None
+
+
+class _MakeVaultPathUnreadable(NullProgressReporter):
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.failed = False
+
+    def phase_start(self, name: str, total: int | None = None) -> None:
+        del total
+        if name == "hash documents" and not self.failed:
+            self.path.unlink()
+            self.path.mkdir()
+            self.failed = True
+
+
+def test_vault_hash_failure_retains_replay_fence_until_next_reconciliation(
+    tmp_path: Path,
+    recovery_model: EmbeddingModel,
+) -> None:
+    """Real filesystem hash failure cannot re-certify removed parent storage."""
+    (tmp_path / ".vault").mkdir()
+    with VaultStore(tmp_path, embedding_dim=recovery_model.dimension) as store:
+        indexer = VaultIndexer(tmp_path, recovery_model, store)
+        indexer.full_index(reporter=NullProgressReporter())
+        ledger, receipt = _reserve(indexer, PublicSourceType.VAULT)
+        unit = CommitUnit(
+            rel_path="adr/broken",
+            kind=CommitUnitKind.UPSERT,
+            source_digest="7" * 128,
+            segment_ordinal=0,
+            is_file_end=True,
+            point_ids=("adr/broken#c0",),
+        )
+        ledger.prepare_publication_mutation(receipt.receipt_id, unit)
+        _upsert_recorded_point(store, PublicSourceType.VAULT, unit)
+        ledger.mark_publication_mutation_applied(receipt.receipt_id, unit)
+        ledger.confirm_publication_mutation(receipt.receipt_id, unit)
+        _incremental(indexer)
+        source = tmp_path / ".vault" / "adr" / "broken.md"
+        source.parent.mkdir()
+        source.write_text(
+            "---\ntags: ['#adr', '#recovery']\n---\n# Recovery\nsource content\n"
+        )
+        ledger, receipt = _reserve(indexer, PublicSourceType.VAULT)
+        ledger.prepare_publication_mutation(
+            receipt.receipt_id, replace(unit, source_digest="8" * 128)
+        )
+        reporter = _MakeVaultPathUnreadable(source)
+        with pytest.raises(OSError):
+            indexer.incremental_index(reporter=reporter, changed_paths=[])
+        assert reporter.failed
+        assert store.count() == 0
+        assert ledger.active_publication_receipt(receipt.compatibility_key) is not None
+        assert ledger.publication_replay_paths(receipt.receipt_id) == (unit.rel_path,)
+        with pytest.raises(ProofReadConflictError):
+            acquire_publication_snapshot(tmp_path, PublicSourceType.VAULT)
+        source.rmdir()
+        _incremental(indexer)
+        after = acquire_publication_snapshot(tmp_path, PublicSourceType.VAULT)
+        assert after.proof.aggregate.retained_points == store.count() == 0
 
 
 @pytest.mark.parametrize(
