@@ -61,6 +61,7 @@ class _DocumentPreparationWindow:
     root_dir: pathlib.Path
     run_control: RunControl
     max_in_flight: int
+    strict_read_errors: bool
     exhausted: bool = False
 
 
@@ -188,7 +189,12 @@ def _fill_document_window(window: _DocumentPreparationWindow) -> None:
             window.exhausted = True
         else:
             window.pending.add(
-                window.pool.submit(prepare_document, path, window.root_dir)
+                window.pool.submit(
+                    prepare_document,
+                    path,
+                    window.root_dir,
+                    skip_read_errors=not window.strict_read_errors,
+                )
             )
 
 
@@ -302,6 +308,7 @@ class VaultIncrementalMixin:
         *,
         run_control: RunControl = NO_RUN_CONTROL,
         full_membership: bool = False,
+        strict_read_errors: bool = False,
     ) -> dict[str, str]:
         """Hash documents behind the stat-evidence gate.
 
@@ -319,7 +326,7 @@ class VaultIncrementalMixin:
             from ._checkpoint_common import publication_replay_paths
 
             for doc_id, error in outcome.failures:
-                if doc_id in publication_replay_paths():
+                if strict_read_errors or doc_id in publication_replay_paths():
                     raise error
                 logger.warning("Cannot hash file, skipping: %s", doc_id)
             if full_membership:
@@ -519,6 +526,7 @@ class VaultIncrementalMixin:
         *,
         run_control: RunControl = NO_RUN_CONTROL,
         skip_errors: bool,
+        strict_read_errors: bool = False,
     ) -> list[VaultDocument]:
         """Prepare documents with bounded queued work and control-aware unwind."""
         max_workers = min(32, (os.cpu_count() or 1) + 4)
@@ -530,6 +538,7 @@ class VaultIncrementalMixin:
             root_dir=self.root_dir,
             run_control=run_control,
             max_in_flight=max_in_flight,
+            strict_read_errors=strict_read_errors,
         )
         docs: list[VaultDocument] = []
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import functools
 import json
 import logging
@@ -845,7 +844,6 @@ class DocumentIndexer:
                     policy,
                     ContentKind.DOCUMENT,
                 )
-            checkpoint.publish_proof_transition()
             self._publish_generation(checkpoint)
             reporter.advance(1)
         finally:
@@ -856,9 +854,11 @@ class DocumentIndexer:
 
     def _publish_generation(self, checkpoint: DocumentRunCheckpoint) -> None:
         """Publish durable generation state, then notify the service authority."""
-        published = checkpoint.publish_generation()
-        if self._publish_readiness is not None:
-            self._publish_readiness(self.root_dir, published.generation_id)
+        with checkpoint.run_policy.protected("document proof certification"):
+            checkpoint.publish_proof_transition()
+            published = checkpoint.publish_generation()
+            if self._publish_readiness is not None:
+                self._publish_readiness(self.root_dir, published.generation_id)
 
     def _finish_result(
         self,
@@ -1226,22 +1226,9 @@ class DocumentIndexer:
             )
             is not None
         )
-        publication_span = (
-            checkpoint.run_policy.protected("clean document publication")
-            if effective_clean
-            else contextlib.nullcontext()
-        )
-        with checkpoint.preserve_incomplete_generation(), publication_span:
-            # A clean rebuild replaces in place: every discovered file is
-            # republished over its live points and the stale remainder is
-            # purged only after the run proves itself, so an interruption at
-            # any instant leaves the previous complete collection answering
-            # searches under a manifest that still describes it. Dropping
-            # first would convert every interruption into a served husk
-            # under a full claim. The one recreation left is a stored
-            # geometry this configuration cannot write into, where in-place
-            # replacement is physically impossible and the old points were
-            # unservable for this configuration anyway.
+        # Durable per-file writes protect their own mutation boundaries;
+        # retain confirmed work when control interrupts the remaining rebuild.
+        with checkpoint.preserve_incomplete_generation():
             try:
                 self.store.ensure_document_table()
             except StorageGeometryError:
@@ -1286,7 +1273,6 @@ class DocumentIndexer:
                     policy,
                     ContentKind.DOCUMENT,
                 )
-                checkpoint.publish_proof_transition()
                 self._publish_generation(checkpoint)
         return self._finish_result(
             _DocumentResultDetails(
@@ -1493,7 +1479,6 @@ class DocumentIndexer:
                         policy,
                         ContentKind.DOCUMENT,
                     )
-                checkpoint.publish_proof_transition()
                 self._publish_generation(checkpoint)
             return self._finish_result(
                 _DocumentResultDetails(

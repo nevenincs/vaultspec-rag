@@ -5,7 +5,7 @@ tags:
 date: '2026-09-30'
 modified: '2026-10-12'
 body_schema: 'body-v2'
-body_hash: 'sha256:f6940970996ab5849836d7e5f56c60672986db4d6b1656dd99d8fa5bae40286d'
+body_hash: 'sha256:73c161098d73cdb4c51e2383b081b1c7f59c4d94214cb9d0f93d3d5bd6771f29'
 related:
   - "[[2026-09-30-incremental-index-recovery-plan]]"
 ---
@@ -186,6 +186,45 @@ related:
 - `S05` `verify:` `basedpyright changed Python files` -> `pass`
 - `S05` `verify:` `independent integrated code review` -> `pass`
 - `S05` `by:` `vaultspec-high-executor`
+- `S07` `M` `.vault/audit/2026-10-01-incremental-index-recovery-audit.md`
+- `S07` `M` `.vault/plan/2026-09-30-incremental-index-recovery-plan.md`
+- `S07` `M` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S07` `M` `src/vaultspec_rag/indexer/_document_indexer.py`
+- `S07` `M` `src/vaultspec_rag/indexer/_generation_lifecycle.py`
+- `S07` `M` `src/vaultspec_rag/indexer/_run_ledger_commits.py`
+- `S07` `M` `src/vaultspec_rag/indexer/_streaming.py`
+- `S07` `M` `src/vaultspec_rag/indexer/_vault_checkpoint.py`
+- `S07` `M` `src/vaultspec_rag/indexer/_vault_incremental.py`
+- `S07` `M` `src/vaultspec_rag/indexer/_vault_indexer.py`
+- `S07` `M` `src/vaultspec_rag/indexer/_vault_prep.py`
+- `S07` `M` `src/vaultspec_rag/job_dispatch.py`
+- `S07` `M` `src/vaultspec_rag/job_manager/_execution.py`
+- `S07` `M` `src/vaultspec_rag/job_manager/models.py`
+- `S07` `M` `src/vaultspec_rag/tests/integration/_index_job_control_support.py`
+- `S07` `M` `src/vaultspec_rag/tests/integration/test_index_job_control_managed.py`
+- `S07` `M` `src/vaultspec_rag/tests/integration/test_index_job_control_stream.py`
+- `S07` `M` `src/vaultspec_rag/tests/test_live_checkpoint_resilience.py`
+- `S07` `M` `src/vaultspec_rag/tests/test_publication_recovery.py`
+- `S07` `M` `src/vaultspec_rag/tests/test_vault_checkpoint.py`
+- `S07` `verify:` `pytest job contracts persistence transitions quiesce control dispatch retry live-checkpoint: 222 cases` -> `pass`
+- `S07` `verify:` `pytest control and readiness: 24 cases` -> `pass`
+- `S07` `verify:` `pytest vault checkpoint streaming: 24 cases` -> `pass`
+- `S07` `verify:` `pytest final checkpoint publication recovery: 88 cases` -> `pass`
+- `S07` `verify:` `pytest strict parse hash filesystem failures: 2 cases` -> `pass`
+- `S07` `verify:` `pytest GPU three-source pause cancel resume: 6 cases` -> `pass`
+- `S07` `verify:` `pytest GPU managed controls: 7 cases` -> `pass`
+- `S07` `verify:` `pytest GPU paused vault grow shrink delete: 3 cases` -> `pass`
+- `S07` `verify:` `new control filter completion drift and read guards: 8 red restored-green pairs` -> `pass`
+- `S07` `verify:` `ruff check src/vaultspec_rag` -> `pass`
+- `S07` `verify:` `ruff format --check src/vaultspec_rag` -> `pass`
+- `S07` `verify:` `ty check changed Python files` -> `pass`
+- `S07` `verify:` `basedpyright changed Python files` -> `pass`
+- `S07` `verify:` `independent integrated code review` -> `pass`
+- `S07` `verify:` `uv pip check installed tool: 89 compatible packages` -> `pass`
+- `S07` `verify:` `SHA256 installed source comparison: 22 runtime modules` -> `pass`
+- `S07` `verify:` `installed service restart same-generation resume and continued progress` -> `pass`
+- `S07` `verify:` `live search during same-root vault ingestion: 2.810 seconds` -> `pass`
+- `S07` `verify:` `vault check all --feature incremental-index-recovery` -> `pass`
 
 ## Notes
 

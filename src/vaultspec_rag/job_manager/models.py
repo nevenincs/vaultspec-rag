@@ -34,6 +34,8 @@ class JobExecutionResult:
     preprocess_failures: tuple[str, ...] = ()
     reuse: dict[str, object] | None = None
     drift: dict[str, object] | None = None
+    # Set only after the exact attempt's checkpoint certifies publication.
+    published_generation_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -14,7 +14,7 @@ related:
   - '[[2026-10-12-destructive-rebuild-lifecycle-adr]]'
 modified: '2026-10-12'
 body_schema: body-v2
-body_hash: 'sha256:cafc0746873a90f1549b7fd627cdacbef3c93e5b5108ad0af979ed171d8af793'
+body_hash: 'sha256:cf0dd1cec6898f7a27fb3167e9be8595f3ee1ebfe95653311549642cb7fe9b2d'
 ---
 
 # `incremental-index-recovery` plan
@@ -37,11 +37,11 @@ The incremental-publication-cost decision governs receipt finalization and bound
 - [x] `S04` - Validate optional and nested vault payload fields and compare canonical audit identities correctly; `src/vaultspec_rag/_index_integrity.py, payload validation owners, vault audit regression tests`.
 - [x] `S05` - Recover interrupted publication and unblock source-scoped explicit rebuilds using existing ledger and storage owners; preserve confirmed resumable work and isolate sibling sources; `src/vaultspec_rag/indexer/, src/vaultspec_rag/tests/test_publication_recovery.py and related recovery tests`.
 - [x] `S06` - Restore and continue interrupted service index attempts with exact job authority and durable checkpoint association; verify retry and restart behavior; `src/vaultspec_rag/job_manager/, job_dispatch.py, job_persistence.py and corresponding restart/retry tests`.
-- [ ] `S07` - Verify integrated repair and source isolation, review the patch, deploy through the existing tool environment, and resume affected operations with honest status; `src/vaultspec_rag/api.py, store cleanup owners, integration tests, installed service and existing project ledgers`.
+- [x] `S07` - Verify integrated repair and source isolation, review the patch, deploy through the existing tool environment, and resume affected operations with honest status; `src/vaultspec_rag/api.py, store cleanup owners, indexer full-rebuild control and resume boundaries, job dispatch certified completion, integration tests, installed service and existing project ledgers`.
 
 ## Parallelization
 
-For S05-S07, run S05 receipt/indexer recovery and S06 service restart/retry restoration concurrently. S05 owns indexer checkpoint/ledger/publication recovery, source entry points and their tests. S06 owns job manager, job dispatch, persistence and their tests. The supervisor owns shared storage cleanup APIs, S07 validation/deployment, vault records and all commits. Workers share this branch, preserve each other’s edits, create no ad-hoc folders, and do not operate the service. Serialize changes to any shared path.
+For S05-S07, run S05 receipt/indexer recovery and S06 service restart/retry restoration concurrently. S05 owns indexer checkpoint/ledger/publication recovery, source entry points and their tests. S06 owns job manager, job dispatch, persistence and their tests. The supervisor owns shared storage cleanup APIs, S07 validation/deployment, vault records and all commits. Workers share this branch, preserve each other’s edits, create no ad-hoc folders, and do not operate the service. Serialize changes to any shared path. During S07 live verification, the receipt/indexer worker owns the correction to whole-rebuild control protection and its full-rebuild interruption tests; the supervisor owns service parking, deployment and restoration. The job worker owns exact certified-attempt completion in dispatch/manager and its late-control regressions; the indexer worker also owns vault committed-unit filtering before encoding. This follows the explicit stop/resume instruction and accepted replacement of old whole-publication preservation.
 
 Implement S01, S03 and S04 concurrently with three delegated workers under vaultspec-team. The receipt worker owns checkpoint and receipt recovery modules and their focused tests. The watcher worker owns watcher policy/runtime and service settlement integration and their focused tests. The audit worker owns payload validation and canonical audit identity and their focused tests. The supervisor owns S02 route reconciliation and ledger query performance, shared test commands, plan/ledger writes, all commits and the integrated review. Serialize any shared source change through the supervisor. All workers share the isolated incremental-recovery worktree and must preserve other workers' edits. After S04 closes, its worker may own the disjoint S02 real-storage regression module while the supervisor retains production ownership. S02 final verification depends on S01 receipt behavior. Workers do not commit or alter vault records.
 

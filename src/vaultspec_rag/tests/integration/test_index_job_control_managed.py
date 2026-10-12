@@ -117,6 +117,10 @@ def test_code_pipeline_control_unwinds_and_reconciliation_converges(
     signal_type: type[RunControlSignal],
 ) -> None:
     """Pause/cancel unwind producers and consumer before a fresh attempt converges."""
+    from ..._publication_state import acquire_publication_snapshot
+    from ..._store_models import generation_code_collection
+    from ...indexer._publication_proof import ProofMissingError
+
     paths = _write_code_files(tmp_path, 192, "initial")
     token = RunControlToken()
 
@@ -133,8 +137,13 @@ def test_code_pipeline_control_unwinds_and_reconciliation_converges(
 
         assert token.snapshot().delivered is control_request
         _assert_code_resources_released()
-        published_count = store.count_code()
-        published_ids = store.get_all_code_ids()
+        checkpoint = indexer.last_checkpoint
+        assert checkpoint is not None
+        collection = generation_code_collection(
+            store.DERIVED_CODE_TABLE_NAME, checkpoint.generation_id
+        )
+        published_count = store.count_code(collection)
+        published_ids = store.get_all_code_ids(collection)
         # Control is cooperative. The sole consumer may finish its
         # already-buffered slices before the producer observes the delivered
         # signal, so the durable prefix may equal the whole corpus.
@@ -142,10 +151,12 @@ def test_code_pipeline_control_unwinds_and_reconciliation_converges(
         # fresh attempt converges from whichever confirmed prefix won the race.
         assert 0 < published_count <= len(paths)
         assert len(published_ids) == published_count
+        with pytest.raises(ProofMissingError):
+            acquire_publication_snapshot(tmp_path, PublicSourceType.CODE)
 
         time.sleep(0.25)
-        assert store.count_code() == published_count
-        assert store.get_all_code_ids() == published_ids
+        assert store.count_code(collection) == published_count
+        assert store.get_all_code_ids(collection) == published_ids
 
         reconciled = indexer.full_index(
             reporter=NullProgressReporter(),
@@ -154,93 +165,6 @@ def test_code_pipeline_control_unwinds_and_reconciliation_converges(
         )
         assert reconciled.files == len(paths)
         assert_current_code_state(indexer, store, paths, "initial")
-
-    _assert_code_resources_released()
-
-
-def test_code_clean_rebuild_defers_pause_until_publication_is_current(
-    tmp_path: Path,
-    index_control_model: EmbeddingModel,
-) -> None:
-    """Clean code publication cannot expose an empty or stale collection."""
-    paths = _write_code_files(tmp_path, 24, "seed")
-    token = RunControlToken()
-    gpu_lock = threading.Lock()
-
-    with VaultStore(tmp_path, embedding_dim=index_control_model.dimension) as store:
-        indexer = CodebaseIndexer(
-            tmp_path,
-            index_control_model,
-            store,
-            options=CodebaseIndexer.Options(gpu_lock=gpu_lock),
-        )
-        indexer.full_index(
-            clean=True,
-            reporter=NullProgressReporter(),
-            preflight=indexer.preflight_content(),
-        )
-        assert_current_code_state(indexer, store, paths, "seed")
-        metadata_before = published_content_identities(tmp_path, PublicSourceType.CODE)
-        paths = _write_code_files(tmp_path, len(paths), "clean-current")
-
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            gpu_lock.acquire()
-            try:
-                rebuild = executor.submit(
-                    indexer.full_index,
-                    True,
-                    reporter=NullProgressReporter(),
-                    preflight=indexer.preflight_content(),
-                    run_control=token,
-                )
-                served_before_rebuild = store.count_code()
-                deadline = time.monotonic() + _CONTROL_WAIT_SECONDS
-                while time.monotonic() < deadline:
-                    state = token.snapshot()
-                    if state.protected_depth == 1:
-                        break
-                    time.sleep(_CONTROL_POLL_SECONDS)
-                else:
-                    raise AssertionError(
-                        "clean code rebuild never entered its protected span"
-                    )
-
-                # The wait used to key on the collection reading zero, because a
-                # clean rebuild dropped before repopulating and the empty window
-                # was a convenient marker for "inside the protected span". A
-                # rebuild now builds beside the served collection, so that window
-                # does not exist and waiting for it would hang forever. The
-                # protected depth is the property this test was always about.
-                #
-                # The absent window is worth asserting rather than merely no
-                # longer waiting on: a rebuild that emptied what it serves is the
-                # defect the generation build removes.
-                assert store.count_code() == served_before_rebuild
-
-                assert token.request_pause()
-                pending = token.snapshot()
-                assert pending.desired is ControlRequest.PAUSE
-                assert pending.delivered is None
-                assert pending.protected_depth == 1
-                assert not rebuild.done()
-
-                gpu_lock.release()
-                with pytest.raises(PauseRequested):
-                    rebuild.result(timeout=_CONTROL_WAIT_SECONDS)
-            finally:
-                if gpu_lock.locked():
-                    gpu_lock.release()
-
-        assert_current_code_state(indexer, store, paths, "clean-current")
-        metadata_after = published_content_identities(tmp_path, PublicSourceType.CODE)
-        assert metadata_after.keys() == metadata_before.keys()
-        assert all(
-            metadata_after[path] != old_hash
-            for path, old_hash in metadata_before.items()
-        )
-        final = token.snapshot()
-        assert final.delivered is ControlRequest.PAUSE
-        assert final.protected_depth == 0
 
     _assert_code_resources_released()
 

@@ -805,9 +805,13 @@ class JobManagerExecution(JobManagerState):
                 JobState.PAUSING,
                 JobState.CANCELLING,
             }
-            if exit_state.error is not None or isinstance(
-                exit_state.control_signal,
-                ShutdownRequested,
+            result = exit_state.result
+            certified = (
+                result is not None and result.published_generation_id is not None
+            )
+            if exit_state.error is not None or (
+                isinstance(exit_state.control_signal, ShutdownRequested)
+                and not certified
             ):
                 return self._finish_terminal_exit(
                     job_id,
@@ -815,7 +819,9 @@ class JobManagerExecution(JobManagerState):
                     task=task,
                     exit_state=exit_state,
                 )
-            if exit_state.control_signal is not None or control_pending:
+            if (
+                exit_state.control_signal is not None or control_pending
+            ) and not certified:
                 return self.acknowledge_control(
                     job_id,
                     attempt=attempt,

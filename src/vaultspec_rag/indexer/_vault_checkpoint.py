@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 
     from .._store_models import VaultChunk
     from ..job_control import RunControl
+    from ..store_runtime import VaultStore
     from ._content_policy import ContentKind
     from ._streaming_types import StoreMutationLifecycle
 
@@ -132,6 +133,60 @@ class VaultRunCheckpoint(RunCheckpointBase):
             )
             for chunk in chunks
         )
+
+    def reconcile_resumed_paths(
+        self, store: VaultStore, content_identities: dict[str, str]
+    ) -> int:
+        """Retire changed or removed full-rebuild paths before encoding replacements."""
+        if not self.generation.signature.clean or self.receipt is not None:
+            return 0
+        recorded: dict[str, set[str]] = {}
+        for unit in self.ledger.iter_units(self.generation_id):
+            self.run_policy.checkpoint("vault resumed-source comparison")
+            if unit.kind is CommitUnitKind.UPSERT and unit.source_digest is not None:
+                recorded.setdefault(unit.rel_path, set()).add(unit.source_digest)
+        reset_paths = set(
+            self.ledger.generation_storage_reset_paths(self.generation_id)
+        )
+        reset_paths.update(
+            path
+            for path, digests in recorded.items()
+            if digests != {content_identities.get(path)}
+        )
+        for path in sorted(reset_paths):
+            self.run_policy.checkpoint("vault resumed-path retirement")
+            self.ledger.begin_generation_storage_reset(self.generation_id, (path,))
+            # Include provisional writes that reached storage before their unit
+            # could be recorded. A durable marker makes this deletion replayable
+            # even when the source reverts to its previous digest after a crash.
+            store.delete_documents([path])
+            for digest in recorded.get(path, ()):
+                self.ledger.reopen_drifted_path(
+                    self.generation_id, path, superseded_digest=digest
+                )
+            self.ledger.finish_generation_storage_reset(self.generation_id, (path,))
+            self.run_policy.record_durable_progress(
+                kind=DurableProgressKind.LEDGER_UNIT_COMMITTED,
+                label=f"vault resumed-path retirement {path}",
+            )
+        return len(reset_paths)
+
+    def pending_chunks(
+        self,
+        chunks: list[VaultChunk],
+        content_identities: dict[str, str],
+    ) -> list[VaultChunk]:
+        """Exclude exact confirmed units before spending GPU work on a retry."""
+        pending = {
+            unit.identity: chunk
+            for chunk, unit in zip(
+                chunks, self.units_for_chunks(chunks, content_identities), strict=True
+            )
+        }
+        for unit in self.ledger.iter_units(self.generation_id):
+            self.run_policy.checkpoint("vault confirmed-unit reconciliation")
+            pending.pop(unit.identity, None)
+        return list(pending.values())
 
     def chunk_lifecycle(
         self,

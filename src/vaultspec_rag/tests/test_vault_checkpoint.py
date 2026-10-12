@@ -55,6 +55,31 @@ def test_vault_rebuild_establishes_proof_from_confirmed_chunk_units(
     checkpoint.publish_generation()
 
 
+@pytest.mark.parametrize("source_changed", [False, True])
+def test_vault_pending_chunks_reuses_only_exact_confirmed_evidence(
+    tmp_path: Path, source_changed: bool
+) -> None:
+    """Exact evidence skips confirmed chunks; changed bytes retain new units.
+
+    Returning every chunk failed the pending-list assertion; restoring passed.
+    """
+    checkpoint = VaultRunCheckpoint.open(
+        tmp_path,
+        backend_identity="backend-v1",
+        authority=RunAuthority.REBUILD,
+        operation=RunOperation.FULL,
+        run_control=NO_RUN_CONTROL,
+    )
+    chunks = [_chunk("docs/a", 0, 2), _chunk("docs/a", 1, 2)]
+    digest = hashlib.blake2b(b"original").hexdigest()
+    checkpoint.record_confirmed_chunks(chunks[:1], {"docs/a": digest})
+    current_digest = (
+        hashlib.blake2b(b"changed").hexdigest() if source_changed else digest
+    )
+    pending = checkpoint.pending_chunks(chunks, {"docs/a": current_digest})
+    assert pending == (chunks if source_changed else chunks[1:])
+
+
 def test_an_incremental_run_without_a_compatible_proof_asks_for_a_rebuild(
     tmp_path: Path,
 ) -> None:
@@ -134,3 +159,86 @@ def test_vault_rebuild_accepts_length_sorted_chunk_batches(tmp_path: Path) -> No
     assert evidence["docs/a"].point_ids == tuple(
         sorted(chunk.point_key for chunk in chunks)
     )
+
+
+@pytest.mark.parametrize(
+    "boundary", ["before_delete", "after_delete", "after_retirement"]
+)
+def test_resumed_vault_reset_survives_source_revert_and_provisional_points(
+    tmp_path: Path, clean_config: None, boundary: str
+) -> None:
+    """Durable intent prevents old-digest skips after any interrupted reset.
+
+    Removing marker insertion failed the replay-count assertion; restoring passed.
+    """
+    from ..config._settings import get_config
+    from ..store_runtime import VaultStore
+
+    del clean_config
+    get_config({"embedding_dimension": 2, "qdrant_url": None, "sparse_enabled": False})
+    with VaultStore(tmp_path, embedding_dim=2) as store:
+        checkpoint = VaultRunCheckpoint.open(
+            tmp_path,
+            backend_identity=store.backend_identity,
+            authority=RunAuthority.REBUILD,
+            operation=RunOperation.FULL,
+            run_control=NO_RUN_CONTROL,
+        )
+        original = hashlib.blake2b(b"original").hexdigest()
+        sibling = _chunk("docs/sibling", 0, 1)
+        old = _chunk("docs/changed", 0, 2)
+        provisional = _chunk("docs/changed", 5, 6)
+        for chunk in (old, sibling, provisional):
+            chunk.vector = [1.0, 0.0]
+        store.upsert_document_chunks([old, sibling, provisional], write_policy=None)
+        identities = {"docs/changed": original, "docs/sibling": original}
+        checkpoint.record_confirmed_chunks([old, sibling], identities)
+        checkpoint.ledger.begin_generation_storage_reset(
+            checkpoint.generation_id, (old.doc_id,)
+        )
+        if boundary != "before_delete":
+            store.delete_documents([old.doc_id])
+        if boundary == "after_retirement":
+            checkpoint.ledger.reopen_drifted_path(
+                checkpoint.generation_id, old.doc_id, superseded_digest=original
+            )
+        assert checkpoint.reconcile_resumed_paths(store, identities) == 1
+        assert store.get_chunk_counts() == {sibling.doc_id: 1}
+        assert list(checkpoint.ledger.iter_units(checkpoint.generation_id)) == list(
+            checkpoint.units_for_chunks([sibling], identities)
+        )
+        assert (
+            checkpoint.ledger.generation_storage_reset_paths(checkpoint.generation_id)
+            == ()
+        )
+        assert checkpoint.pending_chunks([old, sibling], identities) == [old]
+
+
+@pytest.mark.parametrize("removed", [False, True])
+def test_resumed_vault_retires_changed_or_removed_partial_file(
+    tmp_path: Path, clean_config: None, removed: bool
+) -> None:
+    """Ignoring changed digests failed the retirement assertion; restoring passed."""
+    from ..config._settings import get_config
+    from ..store_runtime import VaultStore
+
+    del clean_config
+    get_config({"embedding_dimension": 2, "qdrant_url": None, "sparse_enabled": False})
+    with VaultStore(tmp_path, embedding_dim=2) as store:
+        checkpoint = VaultRunCheckpoint.open(
+            tmp_path,
+            backend_identity=store.backend_identity,
+            authority=RunAuthority.REBUILD,
+            operation=RunOperation.FULL,
+            run_control=NO_RUN_CONTROL,
+        )
+        old = _chunk("docs/changed", 0, 2)
+        old.vector = [1.0, 0.0]
+        store.upsert_document_chunks([old], write_policy=None)
+        checkpoint.record_confirmed_chunks(
+            [old], {old.doc_id: hashlib.blake2b(b"old").hexdigest()}
+        )
+        current = {} if removed else {old.doc_id: hashlib.blake2b(b"new").hexdigest()}
+        assert checkpoint.reconcile_resumed_paths(store, current) == 1
+        assert store.count() == 0
+        assert not list(checkpoint.ledger.iter_units(checkpoint.generation_id))

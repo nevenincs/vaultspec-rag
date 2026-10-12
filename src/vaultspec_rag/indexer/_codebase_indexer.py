@@ -7,7 +7,6 @@ chunks, tracking content hashes for incremental re-indexing.
 
 from __future__ import annotations
 
-import contextlib
 import functools
 import logging
 import pathlib
@@ -743,17 +742,9 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         # pipeline upserts as it goes; an empty tree still falls through to the
         # purge below so a rebuild after deleting every source file clears the
         # old collection.
-        # A request already pending is delivered by ``protected`` before a
-        # clean collection can be dropped. Once the drop begins, defer new
-        # requests through recreation, the bounded producer/consumer pipeline,
-        # stale cleanup, and atomic metadata publication. Non-clean rebuilding
-        # remains failure-safe and interruptible between bounded slices.
-        publication_span = (
-            checkpoint.run_policy.protected("clean code publication")
-            if effective_clean
-            else contextlib.nullcontext()
-        )
-        with checkpoint.preserve_incomplete_generation(), publication_span:
+        # Per-unit mutation spans defer control only through durable writes.
+        # A clean rebuild remains interruptible between those units.
+        with checkpoint.preserve_incomplete_generation():
             existing_ids_before = self._prepare_full_collection(
                 checkpoint,
                 effective_clean=effective_clean,

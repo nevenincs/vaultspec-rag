@@ -296,7 +296,8 @@ class VaultIndexer(VaultIncrementalMixin):
                 paths,
                 reporter,
                 run_control=run_control,
-                skip_errors=True,
+                skip_errors=False,
+                strict_read_errors=True,
             )
 
         docs_dir = self.root_dir / get_config().docs_dir
@@ -306,6 +307,7 @@ class VaultIndexer(VaultIncrementalMixin):
                 reporter,
                 run_control=run_control,
                 full_membership=True,
+                strict_read_errors=True,
             )
         checkpoint = VaultRunCheckpoint.open(
             self.root_dir,
@@ -321,27 +323,19 @@ class VaultIndexer(VaultIncrementalMixin):
         # ``full_index(clean=True)`` on a now-empty vault still
         # purges every previously-indexed row.
 
-        # Failure-safe rebuild, clean or not: ensure the table exists,
-        # snapshot the current ID set, stream upsert (idempotent by doc_id -
-        # existing rows are overwritten in place), then purge only the IDs
-        # that no longer exist in the new corpus. If any slice raises we
-        # have not destroyed the old collection, so a crash at any instant
-        # leaves the old complete index answering searches. ``clean=True``
-        # keeps its "no stale documents persist" contract through the final
-        # purge steps rather than through an up-front drop, because a drop
-        # that precedes the build converts every interruption into a served
-        # husk. The only recreation left is the geometry-incompatible case
-        # inside ``_prepare_collection``, where in-place replacement is
-        # physically impossible.
-        # A cooperative request already pending is delivered before a clean
-        # publication span begins; within it, new requests are deferred
-        # through streaming, stale cleanup, and metadata publication so a
-        # deliberate pause/cancel never exposes a partial replacement.
-        with run_control.protected() if clean else contextlib.nullcontext():
+        # Each published slice owns its durable mutation span. Preserve the
+        # generation on cooperative interruption so the next attempt resumes
+        # confirmed units without shielding the entire rebuild from control.
+        with checkpoint.preserve_incomplete_generation():
             existing_counts = self._prepare_collection(
                 clean=clean,
                 reporter=reporter,
                 run_control=run_control,
+            )
+            existing_counts = (
+                self.store.get_chunk_counts()
+                if checkpoint.reconcile_resumed_paths(self.store, content_identities)
+                else existing_counts
             )
             existing_ids_before: set[str] = set(existing_counts)
 
@@ -673,10 +667,11 @@ class VaultIndexer(VaultIncrementalMixin):
 
     def _publish_generation(self, checkpoint: VaultRunCheckpoint) -> None:
         """Notify only after proof and generation publication are durable."""
-        checkpoint.publish_proof_transition()
-        published = checkpoint.publish_generation()
-        if self._publish_readiness is not None:
-            self._publish_readiness(self.root_dir, published.generation_id)
+        with checkpoint.run_policy.protected("vault proof certification"):
+            checkpoint.publish_proof_transition()
+            published = checkpoint.publish_generation()
+            if self._publish_readiness is not None:
+                self._publish_readiness(self.root_dir, published.generation_id)
 
     def _prepare_collection(
         self,
