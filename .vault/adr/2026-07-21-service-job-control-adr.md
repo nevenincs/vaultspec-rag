@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#service-job-control'
 date: '2026-07-21'
-modified: '2026-07-21'
-body_hash: 'sha256:24e5ede7d30af74a9d2437e4f6ecae7c702024a3e86cd5140071f24c756e2cd9'
+modified: '2026-10-12'
+body_hash: 'sha256:be21286f79a83f96f56066c3b00d9b463bdddc1abae77aa884a1d2f576ae8bf0'
 related:
   - "[[2026-07-21-service-job-control-research]]"
   - "[[2026-07-21-service-job-control-reference]]"
@@ -13,6 +13,7 @@ related:
   - "[[2026-06-12-service-concurrency-adr]]"
   - "[[2026-06-30-mcp-search-scope-adr]]"
   - "[[2026-07-21-index-backpressure-storage-hygiene-adr]]"
+  - '[[2026-10-12-destructive-rebuild-lifecycle-adr]]'
 ---
 
 # `service-job-control` adr: `desired-state control for indexing jobs` | (**status:** `accepted`)
@@ -65,6 +66,12 @@ indexing job.
   ownership, and orphan recovery. It is a separate architectural decision.
 
 ## Constraints
+
+### 2026-10-12: reset-first rebuild and progressive search
+
+The user authorized reset-first rebuilds with concurrent search on 2026-10-12. `2026-10-12-destructive-rebuild-lifecycle-adr` replaces the Control boundary paragraph that protects a clean rebuild from drop through full publication and the corresponding long-control-latency consequence. Protect reset and each indivisible mutation/commit only. Once the empty target is ready, cooperative pause or cancellation may stop at a durable unit boundary, release resources, and leave current rebuild points searchable with incomplete readiness. Resume or linked retry explicitly binds the same rebuild generation; a fresh rebuild resets again. A reset interrupted before confirmation replays idempotently. There is no recovery fallback to the discarded old index. Desired-state ownership, acknowledgement after unwind, immutable terminal history, and all ordinary job APIs remain binding.
+
+### Retained original ruling, subject to the amendment above
 
 - The accepted asynchronous-indexing decision remains binding: submission stays
   non-blocking and the service retains strong references to live work. `JobManager` becomes

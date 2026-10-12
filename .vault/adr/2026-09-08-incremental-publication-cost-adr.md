@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#incremental-publication-cost'
 date: '2026-09-08'
-modified: '2026-09-08'
+modified: '2026-10-12'
 body_schema: 'body-v2'
-body_hash: 'sha256:7641e756df0c2c3524df50b67433d761823bd219890d66ddb5788d50e4270f56'
+body_hash: 'sha256:56d51e511ae02f0e3f0c37f65aeff302e47a285e84524f5df3a4d2f6c185ef14'
 related:
   - "[[2026-09-08-incremental-publication-cost-research]]"
   - "[[2026-09-08-incremental-publication-cost-reference]]"
@@ -13,6 +13,7 @@ related:
   - "[[2026-07-25-non-destructive-index-publication-adr]]"
   - "[[2026-09-01-generation-accounting-adr]]"
   - "[[2026-07-21-code-document-index-boundary-adr]]"
+  - '[[2026-10-12-destructive-rebuild-lifecycle-adr]]'
 ---
 
 # `incremental-publication-cost` adr: `publish exact completeness proofs from committed deltas` | (**status:** `accepted`)
@@ -68,6 +69,14 @@ proof. The cutover instead fails old indexes closed until an explicitly authoriz
 retained as the exceptional verification path.
 
 ## Constraints
+
+### 2026-10-12: reset-first rebuild and progressive search
+
+The user authorized reset-first rebuilds and concurrent search on 2026-10-12. `2026-10-12-destructive-rebuild-lifecycle-adr` replaces the shadow-generation, pointer-last, previous-generation fallback, and stable-non-destructive-parent clauses below for explicit rebuilds. Reset invalidates old source proof before verified deletion and creates a fresh live target with a new reset epoch. Final proof certifies that same collection; it does not select a replacement collection.
+
+An open receipt still forbids complete-proof certification and authoritative absence. It does not forbid useful partial retrieval from compatible storage in the current reset epoch. Such reads are epoch-fenced and marked incomplete; they never borrow a previous generation's proof or counts. This is a serving-state projection of the same ledger, not an alternative completeness authority. Closed, verified finalization retains exact proof and storage-before-proof ordering. Scoped incremental delta costs, backend/source isolation, and refusal to seed new proof from old persisted formats remain binding.
+
+### Retained original ruling, subject to the amendment above
 
 - A stable compatibility key includes source kind, root, backend, collection, storage and
   payload schema, embedding or chunking schema, and membership, content, and policy

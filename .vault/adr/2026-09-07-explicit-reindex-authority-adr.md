@@ -7,11 +7,12 @@ related:
   - "[[2026-09-07-explicit-reindex-authority-research]]"
   - "[[2026-07-25-non-destructive-index-publication-adr]]"
   - "[[2026-07-21-large-index-resilience-adr]]"
+  - '[[2026-10-12-destructive-rebuild-lifecycle-adr]]'
 supersedes:
   - '2026-07-25-index-completeness-guard-adr'
-modified: '2026-09-07'
+modified: '2026-10-12'
 body_schema: 'body-v2'
-body_hash: 'sha256:d00dbd190dfc00d7f0cf6eb2ccdcb0f15f43ec22da017b9c6c9354eb25592837'
+body_hash: 'sha256:bb740ec06d1a87cfa6ba5fb389f6d7b02bf0e38c46e524229a8809346c300a66'
 ---
 
 # `explicit-reindex-authority` adr: `Require explicit authority for full-corpus indexing` | (**status:** `accepted`)
@@ -39,6 +40,12 @@ Incremental indexing is admitted as bounded change reconciliation, but its imple
 **Make incremental entry points incapable of executing full-corpus work; return a typed requirement and reserve full entry points for explicit rebuild requests.** Chosen. Detection remains automatic, execution authority does not.
 
 ## Constraints
+
+### 2026-10-12: reset-first rebuild and progressive search
+
+The user authorized reset-first rebuilds and concurrent search on 2026-10-12. For explicit rebuilds, `2026-10-12-destructive-rebuild-lifecycle-adr` replaces this record's non-destructive-publication constraint and its statements that generation-scoped preservation remains stable or untouched. A newly admitted rebuild deletes its selected old index before ingestion, searches the growing replacement, and certifies completeness at the end. Resume and retry of that rebuild preserve only its new committed progress. Incremental refusal, explicit authority, backend identity, attribution, and bounded automatic scope remain binding. The earlier preservation wording below records the prior dependency, not the current rebuild contract.
+
+### Retained original ruling, subject to the amendment above
 
 - No incremental method may call a full-index method or silently discard caller scope.
 - A full-corpus operation requires an explicit rebuild operation in the admitted job specification or a direct full-index API call.

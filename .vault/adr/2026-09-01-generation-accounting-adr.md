@@ -3,12 +3,13 @@ tags:
   - '#adr'
   - '#generation-accounting'
 date: '2026-09-01'
-modified: '2026-09-01'
+modified: '2026-10-12'
 body_schema: 'body-v2'
-body_hash: 'sha256:17ce81025a02ca07765ab780d9c5081f5a3faa8b4a4a6fef6e98c015e3f36167'
+body_hash: 'sha256:e329f403d62b6bdb160cf250d054808757a77b207703bb90c127cf3325d1adaf'
 related:
   - "[[2026-09-01-generation-accounting-repair-research]]"
   - "[[2026-09-01-generation-accounting-repair-reference]]"
+  - '[[2026-10-12-destructive-rebuild-lifecycle-adr]]'
 ---
 
 # `generation-accounting` adr: `repair generation ownership and convergence` | (**status:** `accepted`)
@@ -48,6 +49,12 @@ leaves those boundaries inconsistent, so an accepted repair is required before i
   setting ineffective.
 
 ## Constraints
+
+### 2026-10-12: reset-first rebuild and progressive search
+
+The user authorized reset-first rebuilds and concurrent search on 2026-10-12. `2026-10-12-destructive-rebuild-lifecycle-adr` replaces this record's stable-parent claim about non-destructive publication, the prohibition on changing served identity before completion, and the requirement to target a shadow collection until publication. The shared lifecycle now owns the selected source's canonical live collection and reset epoch. Every mutation must match that active epoch; no prior attempt can write after reset. Search reads new partial content throughout ingestion. Storage-before-ledger retirement, runtime timeout resolution, and one canonical owner remain binding. The preservation and pointer-last statements below describe the superseded rebuild policy.
+
+### Retained original ruling, subject to the amendment above
 
 - This ADR refines neither parent ADR and does not supersede them; both are accepted,
   stable, and binding.
