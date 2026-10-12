@@ -364,6 +364,8 @@ def split_documents(
 def prepare_document(
     path: pathlib.Path,
     root_dir: pathlib.Path,
+    *,
+    skip_read_errors: bool = True,
 ) -> VaultDocument | None:
     """Prepare a single vault document for indexing (without vector).
 
@@ -372,6 +374,7 @@ def prepare_document(
     Args:
         path: Absolute path to the markdown document file.
         root_dir: Workspace root directory used to compute the relative path.
+        skip_read_errors: Whether unreadable sources may be omitted.
 
     Returns:
         A ``VaultDocument`` with an empty vector, or ``None`` if the file
@@ -380,6 +383,8 @@ def prepare_document(
     try:
         text = path.read_text(encoding="utf-8")
     except Exception as e:
+        if not skip_read_errors:
+            raise
         logger.warning("Cannot read %s: %s", path, e)
         return None
     return vault_document_from_text(path, root_dir, text)

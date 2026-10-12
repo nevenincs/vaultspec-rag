@@ -533,13 +533,14 @@ def test_receipt_recovery_refuses_missing_untouched_parent_storage(
 
 
 class _MakeVaultPathUnreadable(NullProgressReporter):
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, phase: str = "hash documents") -> None:
         self.path = path
+        self.phase = phase
         self.failed = False
 
     def phase_start(self, name: str, total: int | None = None) -> None:
         del total
-        if name == "hash documents" and not self.failed:
+        if name == self.phase and not self.failed:
             self.path.unlink()
             self.path.mkdir()
             self.failed = True
@@ -894,3 +895,43 @@ def test_document_recovery_cannot_reclaim_a_concurrent_callers_live_reservation(
         assert failures == []
         after = acquire_publication_snapshot(tmp_path, PublicSourceType.DOCUMENT)
         assert after.proof.revision == parent.proof.revision
+
+
+@pytest.mark.parametrize("phase", ["parse documents", "hash documents"])
+def test_full_vault_read_failure_preserves_confirmed_rebuild_work(
+    tmp_path: Path, recovery_model: EmbeddingModel, phase: str
+) -> None:
+    """Unreadable scanned input cannot become an apparent source deletion.
+
+    Swallowing strict read errors failed DID NOT RAISE; restoring passed.
+    """
+    source = tmp_path / ".vault" / "adr" / "broken.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("---\ntype: adr\ntitle: Broken\n---\n# Broken\nsource bytes\n")
+    with VaultStore(tmp_path, embedding_dim=recovery_model.dimension) as store:
+        checkpoint = VaultRunCheckpoint.open(
+            tmp_path,
+            backend_identity=store.backend_identity,
+            authority=RunAuthority.REBUILD,
+            operation=RunOperation.FULL,
+            run_control=NO_RUN_CONTROL,
+        )
+        unit = CommitUnit(
+            rel_path="adr/broken",
+            kind=CommitUnitKind.UPSERT,
+            source_digest="7" * 128,
+            segment_ordinal=0,
+            is_file_end=True,
+            point_ids=("adr/broken#c0",),
+        )
+        _upsert_recorded_point(store, PublicSourceType.VAULT, unit)
+        checkpoint.ledger.record_storage_confirmed_unit(checkpoint.generation_id, unit)
+        before = sqlite_contents(checkpoint.ledger.path)
+        reporter = _MakeVaultPathUnreadable(source, phase)
+        with pytest.raises(OSError):
+            VaultIndexer(tmp_path, recovery_model, store).full_index(
+                clean=True, reporter=reporter
+            )
+        assert reporter.failed
+        assert store.count() == 1
+        assert_sqlite_unchanged(checkpoint.ledger.path, before)

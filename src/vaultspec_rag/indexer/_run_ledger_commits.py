@@ -539,6 +539,18 @@ def _require_mutation_cursor(
         receipt_corrupt("publication mutation cursor has no predecessor")
 
 
+def _mark_storage_reset_paths(
+    connection: sqlite3.Connection, generation_id: str, paths: tuple[str, ...]
+) -> None:
+    for path in paths:
+        validate_rel_path(path)
+    connection.executemany(
+        "INSERT OR IGNORE INTO file_state_tombstones (generation_id, "
+        "rel_path) VALUES (?, ?)",
+        [(generation_id, path) for path in paths],
+    )
+
+
 class RunLedgerCommitMethods:
     if TYPE_CHECKING:
         path: Path
@@ -566,6 +578,54 @@ class RunLedgerCommitMethods:
             *,
             rebuild_signature: RunSignature | None = None,
         ) -> RunGeneration: ...
+
+    def generation_storage_reset_paths(self, generation_id: str) -> tuple[str, ...]:
+        """Read source-reset intent from the existing generation tombstones."""
+        with ledger_connection(self.path) as connection:
+            rows: list[sqlite3.Row] = fetch_all(
+                connection,
+                "SELECT rel_path FROM file_state_tombstones "
+                "WHERE generation_id = ? ORDER BY rel_path",
+                (generation_id,),
+            )
+            return tuple(column_text(row, "rel_path") for row in rows)
+
+    def begin_generation_storage_reset(
+        self, generation_id: str, paths: tuple[str, ...]
+    ) -> None:
+        """Fence resumed full-generation evidence before removing its storage."""
+        with ledger_transaction(self.path) as connection:
+            generation = self._require_mutable_generation(connection, generation_id)
+            if not self._generation_from_row(generation).signature.clean:
+                raise RunLedgerStateError("generation storage reset requires a rebuild")
+            if generation["finalization_phase"] != FinalizationPhase.INGESTING.value:
+                raise RunLedgerStateError(
+                    "storage reset requires an ingesting generation"
+                )
+            _mark_storage_reset_paths(connection, generation_id, paths)
+
+    def finish_generation_storage_reset(
+        self, generation_id: str, paths: tuple[str, ...]
+    ) -> None:
+        """Release reset intent only after the superseded upsert units are gone."""
+        with ledger_transaction(self.path) as connection:
+            self._require_mutable_generation(connection, generation_id)
+            for path in paths:
+                row = fetch_one(
+                    connection,
+                    "SELECT 1 FROM commit_units WHERE generation_id = ? "
+                    "AND rel_path = ? AND unit_kind = 'upsert' LIMIT 1",
+                    (generation_id, path),
+                )
+                if row is not None:
+                    raise RunLedgerStateError(
+                        "storage reset still has retained upserts"
+                    )
+                connection.execute(
+                    "DELETE FROM file_state_tombstones "
+                    "WHERE generation_id = ? AND rel_path = ?",
+                    (generation_id, path),
+                )
 
     def publication_replay_paths(self, receipt_id: str) -> tuple[str, ...]:
         """Return durable reset paths owned by this unfinished receipt."""
@@ -657,11 +717,7 @@ class RunLedgerCommitMethods:
                 raise KeyError(receipt_id)
             receipt = hydrate_receipt(connection, row)
             self._validate_receipt_authority(connection, receipt)
-            connection.executemany(
-                "INSERT OR IGNORE INTO file_state_tombstones (generation_id, "
-                "rel_path) VALUES (?, ?)",
-                [(receipt.generation_id, path) for path in paths],
-            )
+            _mark_storage_reset_paths(connection, receipt.generation_id, paths)
 
     def reopen_publication_after_storage_reset(
         self, receipt_id: str, paths: tuple[str, ...]

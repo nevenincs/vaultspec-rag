@@ -3,13 +3,12 @@ tags:
   - '#audit'
   - '#incremental-index-recovery'
 date: '2026-10-01'
-modified: '2026-10-04'
+modified: '2026-10-12'
 body_schema: 'body-v2'
-body_hash: 'sha256:f8f78fcabcec3175315271f5e3cc17fc2af9978843c6521821aea3e832495d79'
+body_hash: 'sha256:f2948f34d7b4ed7302847063ec3b48cf2236a076a7ac46b7d6058d9114edf14f'
 related:
   - "[[2026-09-30-incremental-index-recovery-plan]]"
 ---
-
 # `incremental-index-recovery` audit: `Integrated incremental indexing recovery review`
 
 ## Scope
@@ -154,6 +153,78 @@ Receipt, route, watcher, storage-survey CLI and substitution guards have intende
 
 The supervisor checked all local branch tips and registered worktree heads against the monitor integration. Missing recovery code is included through the ordinary incremental-recovery merge. Security and canonical code-file changes were checkpointed in `4d871170`; resident recovery, diagnostics, cache/release handling and other overlapping changes already have their current implementations in monitor. The seven reconciled branch histories will be preserved with a history-only merge that retains the verified source tree. The obsolete shutdown diagnostic workflow remains in history because its own CI failed canonical workflow guards; the current canonical workflow provides the active coverage. The missing incident checkout's recorded commit is preserved without pruning the worktree registration.
 
+### interrupted-index-recovery-review | high | Clock ordering could revive a parent beside its retry
+
+The 2026-10-12 S05-S07 incident repair is reviewed against the working tree based on ffc66ec3 and the accepted destructive rebuild decision. Initial S06 review found that newest-created-at selection could revive a service-shutdown parent alongside queued retry work when the clock moved backwards or timestamps tied. The persistence owner now checks active job identity and explicit retry ancestry before timestamp fallback. Three regressions failed the intended active-set assertion before correction and passed across repeated restores afterward. Independent follow-up review confirms the finding is resolved; 162 affected persistence, transition and registry tests and scoped static checks pass.
+
+### interrupted-index-recovery-scope | low | Source isolation and recovery reader ownership are verified
+
+Independent review found no substantive issue in shared selected-source reset, exact journaled point deletion, or receipt-bound writer reads. Ordinary concurrent readers remain fenced. The supervisor's 11 real-ledger/store tests pass, with intended failing mutations and restored passes for source isolation, receipt identity, generation identity and ordinary-reader fencing. Partial-write replay review, real GPU integration and operational recovery remain pending. This is an intermediate PENDING verdict, not completion of the separate rebuild architecture rollout.
+
+### replay-path-coverage | high | Unreadable parent paths could lose their recovery fence
+
+Integrated review found that replay completion validated only paths represented in new mutations, then removed all replay markers. Recovery had already removed the affected parent points. A vault hash failure can skip a parent path without producing a mutation, so the receipt could close while its proof still claimed deleted points. Require confirmed restoration or explicit deletion for every affected parent path before clearing replay intent, including the empty-replay fallback. The executor is adding this coverage gate and failure/retry regressions; this finding remains open pending verification.
+
+### external-storage-loss | high | The live TUI vault collection is absent despite retained proof
+
+The stopped-service ledger inspection and subsequent read-only managed storage survey establish that TUI has a retained vault proof and unfinished receipt, but no vault collection. TUI code remains at 128802 points in its existing served collection. Journal replay alone cannot restore unrelated externally deleted parent data. The executor is adding a lower-bound readiness check before automatic receipt recovery; the authorized live action is a vault-only rebuild. Main vault retains 21763 points, and main code has 5585 confirmed checkpoint units in generation 1e6310b6452847bebdb70a1a06ffdc43 with its in-progress collection retained. No live collection or ledger has been reset by this repair session.
+
+### interrupted-recovery-review-resolution | low | Replay retains proof safety and source isolation
+
+Independent follow-up review confirms both current high findings resolved. Every affected parent path must have a confirmed complete restoration or exact deletion before replay markers clear; unreadable files retain their receipt and retry intent. A real filesystem hash-failure regression passes through the source entry point and then completes an ordinary retry. Receipt recovery now refuses storage shorter than the untouched parent evidence requires. This detects the observed missing collection, not arbitrary same-count backend corruption. Explicit selected-source rebuild reuses the existing reset owner and preserves sibling storage.
+
+The source and test changes pass package Ruff lint and formatting, changed-file ty, and changed-file strict basedpyright. Real GPU pause/cancel/restart integration passed all three cases across the full run and a focused corrected restart test. Its initial global-idle assertion fired while the second automatically resumed job was correctly running; the test now awaits both jobs before asserting global resource release. The coupled ledger regression suite and real-GPU source replay matrix remain pending. No live reset has occurred.
+
+### full-rebuild-control-boundary | high | Whole-rebuild protection suppresses requested pause and shutdown
+
+S07 live verification found full TUI vault rebuilding continued from 3776 to 10432 chunks after a pause request because the clean rebuild protects the entire streaming, cleanup and publication span. Read-only tracing confirms code, vault and document full rebuilds share that obsolete protection, suppressing pause, cancellation, shutdown and quiesce until the whole corpus completes. Existing full-clean tests intentionally assert deferral under the superseded preservation policy; scoped incremental replacement protection is a separate contract and stays intact. The executor is narrowing protection to existing durable units and adding three-source interruption/resume verification. This remains a high finding until verified.
+
+The installed journal recovery fix already removed TUI's stuck receipt and invalidated its obsolete generation through source-scoped reset. TUI code stayed at 128802 points and served a live query in 2.285 seconds during vault ingestion. The main code retry was accepted despite a client timeout, so no duplicate request was submitted. The service was then stopped and restarted for control-fix validation with all four owned jobs deliberately paused; TUI's same rebuild generation retains 10432 confirmed units. Main's original code generation still retains 5585 units. No whole-root storage deletion occurred.
+
+### rebuild-resume-completion | high | Verification found redundant encoding and late-control replay
+
+The real-GPU full-rebuild control matrix found vault resume reused confirmed storage units but still encoded their chunks again; code and document resume skipped their confirmed encoding. The indexer owner is filtering vault chunks using existing committed-unit evidence before encoding. A targeted integrated trace also found control requested during final certification can be delivered after the generation succeeds but before dispatch returns its result. The manager records interruption, and resume starts another full rebuild because successful generations are not resumable. The job owner is adding exact certified-attempt completion handling through existing dispatch and manager owners. Both findings remain open pending regression and integrated verification.
+
+### certified-completion-resolution | low | Exact completed attempts outrank late cooperative control
+
+The dispatch owner now reuses the current observed checkpoint certification to acknowledge publication completed before pause, cancel, shutdown or quiesce. Its internal result identifies that certified generation, and the manager gives this completion precedence over pending cooperative control while preserving real application and resource-release failures. Stale or missing current checkpoints cannot certify an attempt. Independent review passes. The focused real-ledger/manager suite passes 17 tests; the broader job contracts, persistence, transitions, quiesce, control admission, dispatch, retry and live checkpoint command passes 222 tests. Three guard mutations produce the intended failures and pass after restoration. Package Ruff/format and both changed-file type checkers pass. This resolves the late-completion part of the previous finding; final vault filtering and managed GPU verification remain pending.
+
+### rebuild-control-verification | low | Real GPU resume preserves work across all three sources
+
+The final six-case GPU matrix passes for vault, code and document pause/cancel followed by same-generation completion. It checks actual retained point IDs and real encoder inputs, proving confirmed work is not encoded again. Vault uses a single cooperative committed-unit traversal before encoding while retaining complete corpus chunk counts. Two CPU suites pass 24 cases each, covering control/readiness and vault checkpoint/streaming, including partial-file and source-digest drift.
+
+The first broader managed run exposed obsolete assertions against the served code collection while an interrupted rebuild remained in its generation collection. Corrected tests inspect the actual retained build, require no premature proof and no writes after control acknowledgement, then verify completed convergence. The first run also encountered managed async failures and was interrupted; its GPU lease was verified released and all live jobs remained paused. The final seven managed integration cases pass in 153.66 seconds with the completed-attempt fix, covering direct code controls, scoped replacement deferral, managed vault/code pause/resume, absorbing cancellation and the write-gate cancellation race. No test threshold was relaxed. Safety-guard mutation verification and final deployment remain pending.
+
+### full-rebuild-control-resolution | low | PASS on restored final code
+
+Both S07 guard probes produced intended assertion failures and immediate restored passes: bypassing vault confirmed-unit filtering and reintroducing whole-rebuild protection. All mutation bytes were restored and borrowed GPU ownership returned. Final independent integrated review reports no substantive findings. Package Ruff and formatting (1009 files), changed-file ty and strict basedpyright, and all feature vault checks pass. The earlier full-rebuild control and redundant vault encoding findings are resolved.
+
+The supervisor stopped service PID 71656 and deployed through the existing uv tool environment. All 21 changed runtime modules match installed SHA256 bytes; all 89 installed dependencies are compatible. Service PID 26664 started on port 8766 with updates enabled. Before resumption, read-only ledgers confirmed TUI vault generation 882b6affdf594136aa040fc10c7200fe retained 10432 units and main code generation 1e6310b6452847bebdb70a1a06ffdc43 retained 5585 units. Live continued-progress verification is in progress.
+
+### vault-resume-source-drift | high | Live changed files collide with retained old-digest units
+
+Live verification confirms main code retry resumed generation 1e6310b6452847bebdb70a1a06ffdc43 and advanced from 5585 to 5734 confirmed units. Pause acknowledged in 5.30 seconds and released index capacity, project lease, writer lock and pipeline. TUI code search returned real results in 2.968 server seconds with all 128802 points consistent. Main document rebuild fc52e9a3-0678-480c-b3c0-454f0c87a26c succeeded with compatible empty generation 0ff432703ddc47159dc221f52a81d6fb; its configuration currently routes extracted content to code.
+
+TUI vault resume then exposed another real failure: source files changed during the pause, and existing confirmed units for an older digest collided with newly encoded chunks (`segments for one path must share one source digest`). Its generation 882b6affdf594136aa040fc10c7200fe still retains 10432 units. The source owner is reusing ledger path retirement and durable tombstone intent to retire only changed/deleted paths safely before encoding, including crash/revert recovery. Main code and TUI code watcher jobs were parked, and service PID 26664 stopped for a no-updates validation restart. The TUI watcher had advanced to 116 committed units before pause. This finding remains open until final regression and live retry pass; no whole-root reset is authorized or needed.
+
+### vault-drift-recovery-verification | low | Changed and removed paused paths reconcile safely
+
+The vault owner now reuses existing path retirement, document deletion and the ledger tombstone table. Reset intent is durable before deletion; deletion covers provisional uncheckpointed ordinals; old digest evidence retires before the marker clears. A crash followed by source reversion cannot leave missing points incorrectly treated as confirmed. Counts refresh before resumed ingestion. Full-vault read, decode, parse and hash failures propagate before retirement; ordinary incremental skip behavior is unchanged. Independent review passes.
+
+The coupled checkpoint/publication recovery command passes 88 tests in 86.78 seconds. Two actual filesystem read-failure tests pass with physical point count and complete SQLite content unchanged. Real GPU grow/shrink/delete cases interrupt an actual partial vault document, resume the same generation, and compare exact physical IDs with published proof; all three pass in 64.79 seconds and the GPU lease returned normally. Minimal mutation proofs and final installed live retry remain pending.
+
+### vault-drift-resolution | low | PASS with restored guard proofs
+
+All three new safety guards produce intended failures and restored passes: removing durable reset intent, ignoring changed digests, and swallowing strict read errors. All mutations are restored. Independent review and final package lint/format, changed-file ty and strict basedpyright pass. The live source-drift finding is resolved in code. The corrected package was installed in place after stopping validation PID 31636; all 22 changed runtime modules match installed bytes and all 89 dependencies are compatible. Final service startup enables updates; live same-generation retry follows.
+
+### installed-recovery-final-verification | low | PASS with live continued progress
+
+Final service PID 64648 runs the installed correction on port 8766 with automatic updates enabled. The package matches all 22 changed runtime modules and dependency checks pass. Main document rebuild fc52e9a3-0678-480c-b3c0-454f0c87a26c succeeded with compatible empty proof. TUI interrupted code update 82c22eb98b904539a97d3285c43a58aa recovered its unfinished publication and succeeded (+112 /25 -0), producing 128826 points. Main code retry f718638a-4ab1-4d62-894f-146f05c12c6e resumed the original generation and advanced from 5585 to 6136 confirmed units; repeated pause/resume retained work, with acknowledgements of 5.30 and 0.81 seconds and resources released. Its desired state is running, waiting behind vault ingestion.
+
+TUI vault linked retry 61710977-682c-49b7-b3f1-e8ea81e6fb0d now resumes generation 882b6affdf594136aa040fc10c7200fe and passes the former source-digest failure point. At the verification snapshot it completed 512 replacement chunks in this attempt and held 10843 confirmed units after source-drift retirement. Read-only SQL confirms obsolete receipt 1177788cc1f84eb6873975ddcf6a4ca1 is absent and its old generation is invalidated. No whole-root storage deletion occurred. Search against TUI code during main recovery returned real results in 2.968 seconds with its full pre-update 128802-point proof consistent. A final same-root code query during active TUI vault ingestion returned two real results in 2.810 server seconds, with all 128826 code points and current proof consistent. Both remaining rebuilds are allowed to continue; this evidence proves recovery/progress, not their eventual completion.
+
+All S05-S07 incident-recovery findings are resolved with applicable unit, real-store, GPU, guard mutation and independent review evidence above. This completes the recovery repair and operational resumption; it does not assert the separate six-step destructive-rebuild architecture rollout is implemented.
+
 ## Recommendations
 
-Implementation and required verification are complete. Preserve the strict canonical commit and certified rebuild gates, newer unknown intent and non-destructive private code publication during release. Keep the inherited search complexity limitation visible rather than changing its threshold or adding a suppression. Any installation into the running service belongs to the ordinary release flow; do not push or merge this implementation branch.
+Allow the resumed jobs to complete under the running service. Preserve selected-source isolation, durable saved work and explicit pause/cancel intent. The incident-recovery review is PASS; no required verification gaps remain. The separate destructive-rebuild architecture rollout remains open. Do not push or merge this branch.

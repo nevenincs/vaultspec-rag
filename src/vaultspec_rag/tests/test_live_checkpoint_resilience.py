@@ -38,12 +38,13 @@ from ..indexer._run_policy import DurableProgressKind
 from ..indexer._streaming import execute_store_mutation
 from ..indexer._streaming_types import CodeFileSegment
 from ..indexer._vault_checkpoint import VaultRunCheckpoint
-from ..job_control import RunControlToken
-from ..job_dispatch import _observe_index_resilience
+from ..job_control import PauseRequested, RunControlToken
+from ..job_dispatch import _execute_index_attempt, _observe_index_resilience
 from ..job_manager._control import AttemptTerminal
 from ..job_manager.manager import JobManager
-from ..job_manager.models import JobAttemptContext
+from ..job_manager.models import JobAttemptContext, JobExecutionResult
 from ..job_models import (
+    DesiredJobState,
     IndexResilienceSnapshot,
     JobInitiator,
     JobMode,
@@ -61,6 +62,7 @@ if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
 
+    from ..indexer import IndexResult
     from ..indexer._run_checkpoint import CodeRunCheckpoint
     from ..job_manager.state import AttemptExit
 
@@ -497,3 +499,149 @@ def test_observer_failure_does_not_mask_durable_progress() -> None:
         failure = exc
     assert failure is None, "observer failure escaped a durable boundary"
     assert policy.snapshot().last_durable_progress_at > before
+
+
+@pytest.mark.parametrize("control_request", ["pause", "cancel", "shutdown", "quiesce"])
+@pytest.mark.asyncio
+async def test_certified_attempt_wins_control_at_publication_exit(
+    tmp_path: Path, unloaded_model: EmbeddingModel, control_request: str
+) -> None:
+    """A published real ledger cannot become resumable rebuild work again.
+
+    Mutation-proved: propagating final-edge control after certification makes
+    these jobs paused, cancelled, or interrupted; restoring conversion succeeds.
+    """
+    path = tmp_path / "jobs.json"
+    controller = ServiceQuiesceController()
+    manager = JobManager(state_path=path, quiesce_controller=controller)
+    created = manager.create(
+        JobSpec(
+            JobOperation.INDEX,
+            JobSource.VAULT,
+            str(tmp_path),
+            JobMode.REBUILD,
+            RunAuthority.REBUILD,
+        ),
+        JobInitiator("test", "late publication control", str(tmp_path)),
+    )
+    assert created.job is not None
+    job_id = created.job.id
+    generations: list[str] = []
+    with VaultStore(tmp_path, embedding_dim=2) as store:
+        indexer = VaultIndexer(tmp_path, unloaded_model, store)
+
+        def runner(context: JobAttemptContext) -> JobExecutionResult:
+            with _observe_index_resilience(
+                context, indexer, IndexResilienceSnapshot()
+            ) as publication:
+
+                def execute() -> IndexResult:
+                    checkpoint = VaultRunCheckpoint.open(
+                        tmp_path,
+                        backend_identity=store.backend_identity,
+                        authority=context.authority,
+                        operation=RunOperation.FULL,
+                        run_control=context.control,
+                    )
+                    generations.append(checkpoint.generation_id)
+                    with context.control.protected():
+                        if control_request == "pause":
+                            manager.set_desired_state(job_id, DesiredJobState.PAUSED)
+                        elif control_request == "cancel":
+                            manager.set_desired_state(job_id, DesiredJobState.CANCELLED)
+                        elif control_request == "shutdown":
+                            manager.begin_shutdown()
+                        else:
+                            controller.begin_pause()
+                            manager.request_quiesce_attempts()
+                        checkpoint.publish_proof_transition()
+                        checkpoint.publish_generation()
+                    raise AssertionError("late control did not reach the final edge")
+
+                return _execute_index_attempt(publication, execute, JobMode.REBUILD)
+
+        manager.bind_dispatch(job_id, runner)
+        manager.dispatch(job_id)
+        assert (
+            await manager.wait_for_attempt(job_id, timeout_seconds=10)
+        ).code == "attempt_released"
+        completed = manager.get(job_id)
+        assert completed is not None
+        assert completed.state is JobState.SUCCEEDED
+        assert completed.resilience is not None
+        assert completed.resilience.generation_id == generations[0]
+        assert completed.resilience.terminal_outcome == "succeeded"
+        restored = JobManager(
+            state_path=path, quiesce_controller=ServiceQuiesceController()
+        )
+        assert restored.restore_persisted().code == "job_state_restored"
+        assert not restored.active()
+        assert restored.retry(job_id).code == "job_not_retryable"
+
+
+@pytest.mark.parametrize("open_current", [False, True])
+@pytest.mark.asyncio
+async def test_late_control_cannot_claim_a_previous_publication(
+    tmp_path: Path, unloaded_model: EmbeddingModel, open_current: bool
+) -> None:
+    """Neither no-op allowance nor an incomplete new run certifies old success.
+
+    Mutation-proved: falling back to indexer.last_checkpoint consumes pause
+    using the previous run; the exact-attempt observer correctly rethrows it.
+    """
+    (tmp_path / "module.py").write_text("def alpha():\n    return 1\n")
+    with VaultStore(tmp_path, embedding_dim=2) as store, _running(tmp_path) as context:
+        indexer = CodebaseIndexer(tmp_path, unloaded_model, store)
+        previous = _open_code(indexer, context)
+        _commit(indexer, previous, 0, end=True)
+        indexer._lifecycle.publish(
+            previous,
+            build_target=indexer._lifecycle.active_build_target,
+            reporter=NullProgressReporter(),
+            phase_label="previous publication",
+        )
+        with _observe_index_resilience(
+            context, indexer, IndexResilienceSnapshot()
+        ) as publication:
+
+            def execute() -> IndexResult:
+                if open_current:
+                    current = _open_code(indexer, context)
+                    assert current.generation_id != previous.generation_id
+                context.control.request_pause()
+                context.control.checkpoint()
+                raise AssertionError("pause was not delivered")
+
+            with pytest.raises(PauseRequested):
+                _execute_index_attempt(publication, execute, JobMode.INCREMENTAL)
+
+
+@pytest.mark.asyncio
+async def test_application_failure_after_publication_is_not_control_success(
+    tmp_path: Path, unloaded_model: EmbeddingModel
+) -> None:
+    """A real error after certification retains priority over completed data.
+
+    Mutation-proved: catching OSError as success fails the exception assertion;
+    restoring the cooperative-only handler preserves the application failure.
+    """
+    with VaultStore(tmp_path, embedding_dim=2) as store, _running(tmp_path) as context:
+        indexer = VaultIndexer(tmp_path, unloaded_model, store)
+        with _observe_index_resilience(
+            context, indexer, IndexResilienceSnapshot()
+        ) as publication:
+
+            def execute() -> IndexResult:
+                checkpoint = VaultRunCheckpoint.open(
+                    tmp_path,
+                    backend_identity=store.backend_identity,
+                    authority=context.authority,
+                    operation=RunOperation.FULL,
+                    run_control=context.control,
+                )
+                checkpoint.publish_proof_transition()
+                checkpoint.publish_generation()
+                raise OSError("release failed after publication")
+
+            with pytest.raises(OSError, match="release failed after publication"):
+                _execute_index_attempt(publication, execute, JobMode.REBUILD)

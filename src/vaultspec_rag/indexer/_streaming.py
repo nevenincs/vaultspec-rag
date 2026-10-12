@@ -794,6 +794,10 @@ def _stream_encode_and_upsert_vault(request: VaultStreamRequest) -> dict[str, in
     # slice's worst-case padding cost.
     chunks = split_documents(request.docs, chunk_chars, run_control=run_control)
     chunk_counts = {c.doc_id: c.chunk_count for c in chunks}
+    if request.checkpoint is not None:
+        chunks = request.checkpoint.pending_chunks(
+            chunks, request.content_identities or {}
+        )
     sorted_chunks = sorted(chunks, key=lambda c: -len(vault_embed_text(c)))
 
     # Same fail-fast contract as the codebase path: refuse a run the

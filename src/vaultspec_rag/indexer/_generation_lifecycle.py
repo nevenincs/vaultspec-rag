@@ -372,7 +372,8 @@ class CodeGenerationLifecycle:
                             ContentKind.CODE,
                             affected_paths,
                         )
-                _record_breadth()
+                with checkpoint.run_policy.protected("code proof publication"):
+                    _record_breadth()
             else:
                 # The complete replacement remains private until its own
                 # stale rows are gone and its breadth has been recorded. This
@@ -388,17 +389,18 @@ class CodeGenerationLifecycle:
                     )
                 # Breadth first, pointer second - a reader must never resolve a
                 # generation whose published figure is missing.
-                publish_generation_as_served(
-                    self._root_dir,
-                    collection=build_target,
-                    record_breadth=_record_breadth,
-                )
+                with checkpoint.run_policy.protected("code served publication"):
+                    publish_generation_as_served(
+                        self._root_dir,
+                        collection=build_target,
+                        record_breadth=_record_breadth,
+                    )
+                    self._store.CODE_TABLE_NAME = build_target
                 # Both collections are complete at this instant: the old one
                 # served throughout and the new one has just reconciled. A
                 # reader mid-flight sees one or the other, never a partial
                 # index, which is what makes this assignment the swap rather
                 # than a race.
-                self._store.CODE_TABLE_NAME = build_target
                 # Route reconciliation evaluates destination evidence and
                 # deletes code points through the store's selected collection.
                 # It therefore cannot run while that selection still names the
@@ -412,9 +414,10 @@ class CodeGenerationLifecycle:
                     ContentKind.CODE,
                     include_same_kind=False,
                 )
-            published = checkpoint.publish_generation()
-            if self._publish_readiness is not None:
-                self._publish_readiness(self._root_dir, published.generation_id)
+            with checkpoint.run_policy.protected("code generation certification"):
+                published = checkpoint.publish_generation()
+                if self._publish_readiness is not None:
+                    self._publish_readiness(self._root_dir, published.generation_id)
             reporter.advance(1)
         finally:
             reporter.phase_end()

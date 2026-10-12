@@ -224,7 +224,7 @@ def _run_vault_attempt(
     from .jobs import JobProgressReporter
 
     _admit_attempt_mode(context, dispatch)
-    result: IndexResult | None = None
+    result: JobExecutionResult | None = None
     try:
         with dispatch.registry.compute_lease(dispatch.root) as lease:
             runtime = lease.runtime
@@ -235,13 +235,16 @@ def _run_vault_attempt(
                 with _observe_index_resilience(
                     context, runtime.vault_indexer, IndexResilienceSnapshot()
                 ) as publication:
-                    result = _bind_index_attempt(
-                        context,
-                        dispatch,
-                        indexer=runtime.vault_indexer,
-                        reporter=reporter,
-                    )()
-                    publication.require_published(dispatch.mode)
+                    result = _execute_index_attempt(
+                        publication,
+                        _bind_index_attempt(
+                            context,
+                            dispatch,
+                            indexer=runtime.vault_indexer,
+                            reporter=reporter,
+                        ),
+                        dispatch.mode,
+                    )
             finally:
                 context.set_resources(ResourceUpdate(writer_lock_held=False))
             dispatch.registry.peek_project(dispatch.root).graph_cache.invalidate()
@@ -249,14 +252,7 @@ def _run_vault_attempt(
         context.set_resources(ResourceUpdate(project_lease_held=False))
     if result is None:
         raise RuntimeError("vault indexing attempt ended without a result")
-    return JobExecutionResult(
-        summary=(
-            f"+{result.added} /{result.updated} "
-            f"-{result.removed} ({result.duration_ms}ms)"
-        ),
-        reuse=result.reuse,
-        drift=result.drift,
-    )
+    return result
 
 
 def _run_indexing_attempt(
@@ -319,7 +315,7 @@ def _run_indexing_attempt(
     admitted = _admitted_resilience(dispatch.source)
     context.set_resilience(admitted)
     context.control.checkpoint()
-    result: IndexResult | None = None
+    result: JobExecutionResult | None = None
     try:
         with dispatch.registry.compute_lease(dispatch.root) as lease:
             runtime = lease.runtime
@@ -334,27 +330,33 @@ def _run_indexing_attempt(
                     with _observe_index_resilience(
                         context, code_indexer, admitted
                     ) as publication:
-                        result = _bind_index_attempt(
-                            context,
-                            dispatch,
-                            indexer=code_indexer,
-                            reporter=reporter,
-                            preflight=code_preflight,
-                        )()
-                        publication.require_published(dispatch.mode)
+                        result = _execute_index_attempt(
+                            publication,
+                            _bind_index_attempt(
+                                context,
+                                dispatch,
+                                indexer=code_indexer,
+                                reporter=reporter,
+                                preflight=code_preflight,
+                            ),
+                            dispatch.mode,
+                        )
                 else:
                     document_indexer = runtime.document_indexer
                     with _observe_index_resilience(
                         context, document_indexer, admitted
                     ) as publication:
-                        result = _bind_index_attempt(
-                            context,
-                            dispatch,
-                            indexer=document_indexer,
-                            reporter=reporter,
-                            preflight=document_preflight,
-                        )()
-                        publication.require_published(dispatch.mode)
+                        result = _execute_index_attempt(
+                            publication,
+                            _bind_index_attempt(
+                                context,
+                                dispatch,
+                                indexer=document_indexer,
+                                reporter=reporter,
+                                preflight=document_preflight,
+                            ),
+                            dispatch.mode,
+                        )
             finally:
                 context.set_resources(
                     ResourceUpdate(writer_lock_held=False, pipeline_active=False)
@@ -363,10 +365,49 @@ def _run_indexing_attempt(
         context.set_resources(ResourceUpdate(project_lease_held=False))
     if result is None:
         raise RuntimeError("indexing attempt ended without a result")
+    return result
+
+
+def _execute_index_attempt(
+    publication: _LiveResiliencePublication,
+    execute: Callable[[], IndexResult],
+    mode: JobMode,
+) -> JobExecutionResult:
+    """Let certified completion win a cooperative request at its final edge."""
+    from ._job_errors import JobError
+    from .job_control import (
+        CancelRequested,
+        PauseRequested,
+        QuiesceRequested,
+        ShutdownRequested,
+    )
+
+    try:
+        result = execute()
+    except (
+        PauseRequested,
+        CancelRequested,
+        QuiesceRequested,
+        ShutdownRequested,
+    ) as signal:
+        try:
+            generation_id = publication.require_published(mode)
+        except JobError:
+            raise signal from None
+        if generation_id is None:
+            raise
+        return JobExecutionResult(
+            summary=(
+                f"Published generation {generation_id} before {signal.request.value}."
+            ),
+            published_generation_id=generation_id,
+        )
+    generation_id = publication.require_published(mode)
     skipped_suffix = (
         f" ~{result.preprocess_skipped}" if result.preprocess_skipped else ""
     )
     return JobExecutionResult(
+        published_generation_id=generation_id,
         summary=(
             f"+{result.added} /{result.updated} "
             f"-{result.removed} ({result.duration_ms}ms){skipped_suffix}"
@@ -557,7 +598,7 @@ class _LiveResiliencePublication:
                 lambda: _indexer_resilience(self._indexer, checkpoint, self._admitted),
             )
 
-    def require_published(self, mode: JobMode) -> None:
+    def require_published(self, mode: JobMode) -> str | None:
         """Refuse a returned result unless this attempt published its actual owner."""
         from ._job_errors import JobError, JobErrorKind
         from .indexer import CodebaseIndexer
@@ -590,6 +631,7 @@ class _LiveResiliencePublication:
                     f"{generation.generation_id}: "
                     f"{generation.terminal_detail or generation.terminal_state.value}",
                 )
+            return generation.generation_id
 
     def finish(self) -> None:
         """Retain final projection and detach observation when execution exits."""

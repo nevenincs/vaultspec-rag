@@ -13,10 +13,9 @@ import contextlib
 import multiprocessing
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -26,13 +25,12 @@ from ..._store_writes import workspace_volume_path
 from ...concurrency import limiter_stats
 from ...config._settings import get_config
 from ...embeddings import EmbeddingModel  # noqa: TC001
-from ...indexer import CodebaseIndexer, VaultIndexer  # noqa: TC001
+from ...indexer import CodebaseIndexer  # noqa: TC001
 from ...indexer._run_ledger_models import RunAuthority, index_run_ledger_path
 from ...indexer._vault_prep import prepare_document
 from ...job_control import (
     CancelRequested,
     ControlRequest,
-    PauseRequested,
     RunControlToken,
 )
 from ...job_models import (
@@ -72,15 +70,6 @@ _CONTROL_WAIT_SECONDS = 20.0
 # these should catch is a job that has genuinely stopped making progress.
 _MANAGED_WAIT_SECONDS = 240.0
 _CONTROL_POLL_SECONDS = 0.001
-
-
-class _RevisedVaultPublication(NamedTuple):
-    """The real rebuild state that must be visible before pause delivery."""
-
-    expected_ids: set[str]
-    document_id: str
-    metadata_before: dict[str, str]
-    marker: str
 
 
 def _managed_test_config(*, status_dir: Path | None = None) -> dict[str, object]:
@@ -636,83 +625,6 @@ def assert_current_code_state(
     for ordinal, path in enumerate(paths):
         rel_path = str(path.relative_to(indexer.root_dir)).replace("\\", "/")
         assert f"{revision}-{ordinal:03d}" in stored[rel_path]
-
-
-def _wait_for_clean_vault_publication(
-    token: RunControlToken, store: VaultStore, served_count: int
-) -> None:
-    """Wait for the protected span, with every served point still readable.
-
-    A clean rebuild replaces in place: it upserts over the live points and
-    purges what the new corpus no longer holds only once the stream has
-    proved the replacement whole. So the collection is never emptied, and
-    waiting for an empty one waits forever. Requiring the served count
-    instead binds that promise - reinstating an up-front drop takes the
-    count to zero here and this never returns.
-    """
-    deadline = time.monotonic() + _CONTROL_WAIT_SECONDS
-    while time.monotonic() < deadline:
-        state = token.snapshot()
-        if state.protected_depth == 1 and store.count() == served_count:
-            return
-        time.sleep(_CONTROL_POLL_SECONDS)
-    raise AssertionError(
-        "clean rebuild did not reach its protected span with the served "
-        f"points intact: count={store.count()}, expected {served_count}"
-    )
-
-
-def pause_clean_vault_rebuild(
-    indexer: VaultIndexer,
-    store: VaultStore,
-    token: RunControlToken,
-    gpu_lock: threading.Lock,
-    served_count: int,
-) -> None:
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        gpu_lock.acquire()
-        try:
-            rebuild = executor.submit(
-                indexer.full_index,
-                True,
-                reporter=NullProgressReporter(),
-                run_control=token,
-            )
-            _wait_for_clean_vault_publication(token, store, served_count)
-            assert token.request_pause()
-            pending = token.snapshot()
-            assert pending.desired is ControlRequest.PAUSE
-            assert pending.delivered is None
-            assert pending.protected_depth == 1
-            gpu_lock.release()
-            with pytest.raises(PauseRequested):
-                rebuild.result(timeout=_CONTROL_WAIT_SECONDS)
-        finally:
-            if gpu_lock.locked():
-                gpu_lock.release()
-
-
-def assert_revised_vault_publication(
-    indexer: VaultIndexer,
-    store: VaultStore,
-    publication: _RevisedVaultPublication,
-    token: RunControlToken,
-) -> None:
-    assert get_all_ids(store) == publication.expected_ids
-    metadata_after = published_content_identities(
-        indexer.root_dir, PublicSourceType.VAULT
-    )
-    assert set(metadata_after) == publication.expected_ids
-    assert (
-        metadata_after[publication.document_id]
-        != publication.metadata_before[publication.document_id]
-    )
-    stored_document = store.get_by_id(publication.document_id)
-    assert stored_document is not None
-    assert publication.marker in str(stored_document["content"])
-    final = token.snapshot()
-    assert final.delivered is ControlRequest.PAUSE
-    assert final.protected_depth == 0
 
 
 class AbortAfterFirstCommitReporter(NullProgressReporter):
