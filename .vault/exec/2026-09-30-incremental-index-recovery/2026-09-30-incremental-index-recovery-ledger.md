@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#incremental-index-recovery'
 date: '2026-09-30'
-modified: '2026-10-04'
+modified: '2026-10-12'
 body_schema: 'body-v2'
-body_hash: 'sha256:03169f5e4efe895061016eaa391ffaa9be3d110a3fa2e316365ca6587a7efa50'
+body_hash: 'sha256:6b845448b87b86ab4bf74747715061b9bf8ddb8b65604d87e6f769a63a3098f5'
 related:
   - "[[2026-09-30-incremental-index-recovery-plan]]"
 ---
@@ -140,6 +140,22 @@ related:
 - `S04` `verify:` `Final shared just test-all with four Windows workers: 7110 passed/7 platform skips, exit0 at executable tree72edafee; TEMP/vaultspec-monitor-push-test-all-four-workers-20261004.log` -> `pass`
 - `S04` `verify:` `Full just check-all and build-all exit0 at tree947c0513; unchanged Python/frontend/deps, final workflow actionlint and full CPU workflow guards pass` -> `pass`
 - `S04` `verify:` `Applicable audit-deps, dev check and verified native monitor build pass; all guard mutations restored` -> `pass`
+- `S06` `M` `src/vaultspec_rag/job_manager/_persistence.py`
+- `S06` `M` `src/vaultspec_rag/job_manager/_control.py`
+- `S06` `M` `src/vaultspec_rag/job_manager/_execution.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_job_contracts_persistence.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_job_manager_transitions.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_job_manager_degradation.py`
+- `S06` `M` `src/vaultspec_rag/tests/integration/test_jobs_registry_recovery.py`
+- `S06` `M` `src/vaultspec_rag/tests/integration/test_service_job_control_pause_restart.py`
+- `S06` `verify:` `pytest persistence transitions registry recovery: 162 tests` -> `pass`
+- `S06` `verify:` `pytest service job control pause restart: all 3 cases across full and focused runs` -> `pass`
+- `S06` `verify:` `ruff check src/vaultspec_rag` -> `pass`
+- `S06` `verify:` `ruff format --check src/vaultspec_rag` -> `pass`
+- `S06` `verify:` `ty check changed Python files` -> `pass`
+- `S06` `verify:` `basedpyright changed Python files` -> `pass`
+- `S06` `verify:` `clock rollback guard mutations: intended red then restored green` -> `pass`
+- `S06` `by:` `vaultspec-high-executor`
 
 ## Notes
 

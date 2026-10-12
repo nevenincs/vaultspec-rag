@@ -16,11 +16,13 @@ from .. import job_persistence as _job_persistence
 from ..job_models import (
     DesiredJobState,
     JobAttempt,
+    JobOperation,
     JobOutcome,
     JobOutcomeStatus,
     JobSnapshot,
     JobState,
     JobTimestamps,
+    active_work_identity,
 )
 from ..job_models import (
     capabilities_for_state as _capabilities_for_state,
@@ -49,8 +51,8 @@ logger = logging.getLogger("vaultspec_rag.jobs")
 # last durable write triggers a flush, so the progress on disk lags the newest
 # published progress by less than one budget (plus at most one in-flight write
 # skipped by the single-flight guard). That is acceptable because an
-# interrupted job's exact progress number is advisory - restore surfaces the
-# job as interrupted and the next attempt reconciles from durable checkpoints -
+# interrupted job's exact progress number is advisory - the next attempt
+# reconciles from durable checkpoints -
 # while its state transitions, which are the contract, always persist
 # synchronously before their call returns.
 PROGRESS_FLUSH_BUDGET_SECONDS = 0.2
@@ -64,9 +66,22 @@ _NEWER_BUILD_SUFFIX = "from-newer-build"
 
 
 class JobManagerPersistence(JobManagerState):
-    def _restore_snapshot_locked(self, snapshot: JobSnapshot, *, now: float) -> None:
+    if TYPE_CHECKING:
+
+        def _queue_resumed_attempt_locked(
+            self, managed: ManagedJob, *, now: float
+        ) -> None: ...
+
+    def _restore_snapshot_locked(
+        self, snapshot: JobSnapshot, *, now: float, recover_shutdown: bool = False
+    ) -> None:
         """Restore one validated snapshot with no live execution resources."""
-        resumable = snapshot.state.is_idle
+        recoverable = (
+            snapshot.spec.operation is JobOperation.INDEX
+            and snapshot.spec.source.is_corpus
+            and (snapshot.state.is_live_attempt or recover_shutdown)
+        )
+        resumable = snapshot.state.is_idle or recoverable
         restored_runtime = (
             self._process_runtime_snapshot()
             if resumable
@@ -92,6 +107,30 @@ class JobManagerPersistence(JobManagerState):
         )
         if resumable:
             self._active[snapshot.id] = managed
+            if snapshot.desired_state is DesiredJobState.RUNNING and (
+                recoverable or snapshot.state is JobState.PAUSED
+            ):
+                self._queue_resumed_attempt_locked(managed, now=now)
+            elif recoverable:
+                cancelled = snapshot.desired_state is DesiredJobState.CANCELLED
+                self._replace_snapshot_locked(
+                    managed,
+                    SnapshotTransition(
+                        state=JobState.CANCELLED if cancelled else JobState.PAUSED,
+                        desired_state=snapshot.desired_state,
+                        now=now,
+                        finished_at=now if cancelled else None,
+                        control_acknowledged_at=(
+                            now
+                            if snapshot.timestamps.control_requested_at is not None
+                            else None
+                        ),
+                        result=None,
+                        error_kind=None,
+                    ),
+                )
+                if cancelled:
+                    self._archive_terminal_locked(managed)
             return
         if snapshot.state.is_live_attempt:
             self._active[snapshot.id] = managed
@@ -121,8 +160,34 @@ class JobManagerPersistence(JobManagerState):
             *(job for job in restored_jobs if job.state.is_terminal),
             *(job for job in restored_jobs if not job.state.is_terminal),
         ]
+        active_identities = {
+            active_work_identity(job.spec)
+            for job in restored_jobs
+            if not job.state.is_terminal
+        }
+        retried_parents = {
+            job.attempt.parent_job_id
+            for job in restored_jobs
+            if job.attempt.parent_job_id is not None
+        }
+        latest = {
+            active_work_identity(job.spec): job.id
+            for job in sorted(restored_jobs, key=lambda job: job.timestamps.created_at)
+        }
         for snapshot in restore_order:
-            self._restore_snapshot_locked(snapshot, now=now)
+            # Active ownership and explicit retry lineage outrank wall time:
+            # a clock rollback cannot authorize replaying a retry's parent.
+            # Creation order only breaks ties in otherwise unclaimed history.
+            recover_shutdown = (
+                snapshot.state is JobState.INTERRUPTED
+                and snapshot.error_kind == "service_shutdown"
+                and active_work_identity(snapshot.spec) not in active_identities
+                and snapshot.id not in retried_parents
+                and latest[active_work_identity(snapshot.spec)] == snapshot.id
+            )
+            self._restore_snapshot_locked(
+                snapshot, now=now, recover_shutdown=recover_shutdown
+            )
 
     def _trim_restored_history_locked(self) -> None:
         """Apply the configured terminal bound to restored history."""

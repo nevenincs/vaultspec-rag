@@ -14,6 +14,7 @@ from ..indexer._run_ledger_models import RunAuthority
 from ..job_manager.manager import JobManager
 from ..job_models import (
     DesiredJobState,
+    IndexResilienceSnapshot,
     JobAttempt,
     JobInitiator,
     JobMode,
@@ -24,6 +25,7 @@ from ..job_models import (
     JobSpec,
     JobState,
     JobTimestamps,
+    ResumeStrategy,
     capabilities_for_state,
 )
 from ..job_persistence import (
@@ -817,3 +819,134 @@ class TestPersistedJobStateLeavesNoDebris:
         assert isinstance(raised.value.__cause__, cause)
         assert _temporaries(tmp_path) == []
         assert not path.exists()
+
+
+@pytest.mark.parametrize(
+    "source", [JobSource.CODE, JobSource.VAULT, JobSource.DOCUMENT]
+)
+@pytest.mark.parametrize(
+    "state", [JobState.RUNNING, JobState.INTERRUPTED, JobState.PAUSED]
+)
+def test_restart_requeues_owned_interruption_once(
+    tmp_path: Path, source: JobSource, state: JobState
+) -> None:
+    """Durable restart keeps the exact work and checkpoint, without new job IDs."""
+    path = tmp_path / "jobs.json"
+    snapshot = replace(
+        _snapshot_in_state(state, spec=_spec(source=source, mode=JobMode.REBUILD)),
+        desired_state=DesiredJobState.RUNNING,
+        error_kind="service_shutdown" if state is JobState.INTERRUPTED else None,
+        resilience=IndexResilienceSnapshot(
+            generation_id="build-1", committed_units=200
+        ),
+    )
+    save_persisted_state(path, _generation(snapshot))
+    for _ in range(2):
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(), state_path=path
+        )
+        assert manager.restore_persisted().code == "job_state_restored"
+        resumed = manager.get(snapshot.id)
+        assert resumed is not None
+        assert resumed.state is JobState.QUEUED
+        assert resumed.spec == snapshot.spec
+        assert resumed.resilience == snapshot.resilience
+        assert resumed.attempt.number == 2
+        assert resumed.attempt.resume_strategy is ResumeStrategy.RECONCILE
+        assert resumed.timestamps.finished_at is None
+        assert resumed.error_kind is None
+        assert [job.id for job in manager.active()] == [snapshot.id]
+        assert load_persisted_state(path).jobs == (resumed,)
+
+
+@pytest.mark.parametrize(
+    ("state", "desired", "expected"),
+    [
+        (JobState.PAUSING, DesiredJobState.PAUSED, JobState.PAUSED),
+        (JobState.CANCELLING, DesiredJobState.CANCELLED, JobState.CANCELLED),
+        (JobState.PAUSED, DesiredJobState.PAUSED, JobState.PAUSED),
+        (JobState.INTERRUPTED, DesiredJobState.RUNNING, JobState.INTERRUPTED),
+        (JobState.FAILED, DesiredJobState.RUNNING, JobState.FAILED),
+    ],
+)
+def test_restart_respects_operator_intent_and_failure(
+    tmp_path: Path, state: JobState, desired: DesiredJobState, expected: JobState
+) -> None:
+    """Only service-owned interruptions automatically continue.
+
+    Mutation-proved: bypassing desired intent queues paused/cancelled work;
+    removing the shutdown classifier queues generic interruption history.
+    Both fail the state assertion below and pass with their guards restored.
+    """
+    path = tmp_path / "jobs.json"
+    snapshot = replace(_snapshot_in_state(state), desired_state=desired)
+    save_persisted_state(path, _generation(snapshot))
+    manager = JobManager(quiesce_controller=ServiceQuiesceController(), state_path=path)
+    assert manager.restore_persisted().code == "job_state_restored"
+    restored = manager.get(snapshot.id)
+    assert restored is not None
+    assert restored.state is expected
+    assert restored.desired_state is desired
+
+
+def test_restart_does_not_revive_shutdown_parent_with_later_retry(
+    tmp_path: Path,
+) -> None:
+    """A retry already owns continuation; startup must not create a second writer.
+
+    The clock-rollback regression below proves ownership and lineage take
+    precedence over creation timestamps.
+    """
+    path = tmp_path / "jobs.json"
+    parent = replace(
+        _snapshot_in_state(JobState.INTERRUPTED), error_kind="service_shutdown"
+    )
+    child = replace(
+        _snapshot_in_state(JobState.QUEUED, job_id="retry"),
+        attempt=JobAttempt(number=1, parent_job_id=parent.id),
+        timestamps=JobTimestamps(created_at=2500, state_changed_at=2500),
+    )
+    save_persisted_state(path, _generation(parent, child))
+    manager = JobManager(quiesce_controller=ServiceQuiesceController(), state_path=path)
+    assert manager.restore_persisted().code == "job_state_restored"
+    assert [job.id for job in manager.active()] == [child.id]
+    assert [job.id for job in manager.terminal()] == [parent.id]
+
+
+@pytest.mark.parametrize(
+    ("child_state", "linked"),
+    [(JobState.QUEUED, True), (JobState.QUEUED, False), (JobState.FAILED, True)],
+)
+def test_restart_fences_shutdown_parent_despite_clock_rollback(
+    tmp_path: Path, child_state: JobState, linked: bool
+) -> None:
+    """Durable ownership and retry lineage outrank wall-clock creation order.
+
+    Regression-proved against the timestamp-only implementation: the older
+    shutdown parent incorrectly returned to active in all three cases.
+    """
+    path = tmp_path / "jobs.json"
+    parent = replace(
+        _snapshot_in_state(JobState.INTERRUPTED), error_kind="service_shutdown"
+    )
+    child = replace(
+        _snapshot_in_state(
+            child_state, job_id="after-clock-rollback", spec=parent.spec
+        ),
+        attempt=JobAttempt(number=1, parent_job_id=parent.id if linked else None),
+        timestamps=JobTimestamps(
+            created_at=500,
+            state_changed_at=500,
+            finished_at=600 if child_state.is_terminal else None,
+        ),
+    )
+    save_persisted_state(path, _generation(parent, child))
+    for _ in range(2):
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(), state_path=path
+        )
+        assert manager.restore_persisted().code == "job_state_restored"
+        expected_active = [] if child_state.is_terminal else [child.id]
+        assert [job.id for job in manager.active()] == expected_active
+        retained = manager.get(parent.id)
+        assert retained is not None and retained.state is JobState.INTERRUPTED
