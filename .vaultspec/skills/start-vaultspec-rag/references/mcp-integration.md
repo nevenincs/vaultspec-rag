@@ -1,0 +1,51 @@
+# MCP adapter and assistant setup
+
+Model-free stdio adapter exposes search, file/resource and administration handlers over compatible service transport. Root resolution, response validation and read-only filtering are distinct boundaries.
+
+Read when: MCP tools/resources; stdio lifetime; roots; assistant setup.
+
+## Modules
+
+| Module                                                                                                                             | Responsibility                                                                                                                                                                                                    | Evidence                                        |
+| ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| [docs/mcp.md](../../../../docs/mcp.md)                                                                                             | Documents stdio/root/HTTP delegation, twelve tools, read-only schema withholding, assistant setup, troubleshooting, and process lifetime.                                                                         | [s1-0012](installation-provisioning-part-02.md) |
+| [src/vaultspec_rag/mcp/__init__.py](../../../../src/vaultspec_rag/mcp/__init__.py)                                                 | Imports resource/tool registration modules and exposes them with the shared server; decorator-triggered registration follows from imports and handlers.                                                           | [s1-0062](mcp-integration-part-01.md)           |
+| [src/vaultspec_rag/mcp/\_mcp.py](../../../../src/vaultspec_rag/mcp/_mcp.py)                                                        | Constructs the shared VaultSpec Search MCPServer with local package version; daemon-version alignment is stated intent.                                                                                           | [s1-0062](mcp-integration-part-01.md)           |
+| [src/vaultspec_rag/mcp/\_resources.py](../../../../src/vaultspec_rag/mcp/_resources.py)                                            | Registers vault document retrieval with mapped resource errors and an analyze_feature prompt that asks for design/implementation comparison.                                                                      | [s1-0062](mcp-integration-part-01.md)           |
+| [src/vaultspec_rag/mcp/\_roots.py](../../../../src/vaultspec_rag/mcp/_roots.py)                                                    | Accepts an explicit nonblank root or named-root helper and resolves a workspace target, returning structured project_root_unresolved failures.                                                                    | [s1-0062](mcp-integration-part-01.md)           |
+| [src/vaultspec_rag/mcp/\_tools.py](../../../../src/vaultspec_rag/mcp/_tools.py)                                                    | Registers domain/combined searches, retrieval, reindex/status/clean tools; validates readiness envelopes, delegates compatible service calls and filters by read-only annotations.                                | [s1-0062](mcp-integration-part-01.md)           |
+| [src/vaultspec_rag/tests/test_mcp_conformance_surface.py](../../../../src/vaultspec_rag/tests/test_mcp_conformance_surface.py)     | Tests tools/schemas/annotations, root resolution, code admission, resources, identity, and empty-404 handling. Its read-only-surface docstring conflicts with expected destructive clean tools.                   | [s1-0102](mcp-integration-part-02.md)           |
+| [src/vaultspec_rag/tests/test_mcp_import_isolation.py](../../../../src/vaultspec_rag/tests/test_mcp_import_isolation.py)           | Defines AST import-boundary checks and fresh-interpreter expectations excluding named heavyweight ML/vector-store imports from MCP.                                                                               | [s1-0102](mcp-integration-part-02.md)           |
+| [src/vaultspec_rag/tests/test_mcp_no_local_fallback.py](../../../../src/vaultspec_rag/tests/test_mcp_no_local_fallback.py)         | Tests service-down remediation, successful and stale-token-retry loopback calls without heavy imports, SearchResults envelopes, and invalid preference refusal; down-call and registered-call inventories differ. | [s1-0103](mcp-integration-part-03.md)           |
+| [src/vaultspec_rag/tests/test_mcp_project_root_contract.py](../../../../src/vaultspec_rag/tests/test_mcp_project_root_contract.py) | Tests explicit/environment/CWD root precedence, blank fallback and remediation, server validator acceptance, optional signatures for twelve tools, and absence of old blank forwarding.                           | [s1-0103](mcp-integration-part-03.md)           |
+
+## Selective evidence parts
+
+Choose the part for the files or behavior you need; do not load every part.
+
+- [s1-0001](installation-provisioning-part-01.md): .env.example, .gitattributes, .gitignore, .mdformat.toml, .nvmrc, .pymarkdown.json, .python-version, .release-please-manifest.json, .vaultragignore, LICENSE, README.md, RELEASING.md.
+- [s1-0012](installation-provisioning-part-02.md): installation.md, mcp.md, preprocessing-hooks.md.
+- [s1-0013](service-lifecycle-part-01.md): provisioning.md, query-craft.md, search-and-index.md, service-discovery.md, service-mode.md.
+- [s1-0062](mcp-integration-part-01.md): __init__.py, \_mcp.py, \_resources.py, \_roots.py, \_tools.py.
+- [s1-0069](service-lifecycle-part-06.md): __init__.py, __main__.py, \_auth.py, \_http_boundary.py, \_lifecycle.py, \_lifespan.py, \_main.py, \_models.py.
+- [s1-0102](mcp-integration-part-02.md): test_machine_discovery_resolution.py, test_machine_lock_presence.py, test_machine_pressure.py, test_machine_singleton_reclaim.py, test_managed_install.py, test_managed_log_sink.py, test_markdown_passages.py, test_marker_discipline.py, test_mcp_conformance_surface.py, test_mcp_import_isolation.py.
+- [s1-0103](mcp-integration-part-03.md): test_mcp_no_local_fallback.py, test_mcp_project_root_contract.py, test_metrics.py, test_mixin_declarations.py, test_model_download_child_shadowing.py, test_model_fetch.py, test_model_fetch_bounds.py, test_model_fetch_checked.py, test_model_hub_endpoint.py.
+- [s1-0117](service-lifecycle-part-13.md): test_search_timeout.py, test_search_unit.py, test_served_pointer_validation.py, test_server.py, test_server_doctor.py, test_server_document_models.py, test_server_entry_environment_refusal.py, test_server_launch_shapes.py.
+- [s1-0118](service-lifecycle-part-14.md): test_server_routes.py, test_service_cleanup_callers.py, test_service_discovery_schema.py, test_service_env_preflight.py, test_service_environment.py, test_service_launcher_lifetime.py, test_service_lifecycle_helpers.py, test_service_preflight_cli.py.
+
+## Connections
+
+- [Resident service, discovery and transport](service-lifecycle.md): The lightweight adapter resolves compatible enrolled roots and forwards through service transport. Evidence: s1-0062 MCP adapter; s1-0074 discovery/transport; s1-0102/0103 static conformance/root tests.
+- [Search, ranking and availability](search-retrieval.md): MCP search/resource handlers validate service responses and retain domain filtering/result contracts. Evidence: s1-0062 handlers; s1-0103 static roots/resources; s1-0147 static surface parity.
+
+## Limits and reconciliations
+
+Findings describe the inspected snapshot. External dependency internals and operational outcomes were not verified. Test assertions and recorded benchmark results do not establish a current passing run.
+
+- Documentation and static expected-tool sets describe twelve tools; stale five-tool/read-only prose is inconsistent. The compact implementation summary does not provide an exact registration inventory or runtime count.
+- Mutating handlers and read-only schema filtering are distinct; destructive clean annotations in static contracts contradict blanket read-only descriptions.
+- The stdio lifetime helper imports package/Core helpers; literal stdlib-only wording is unsupported, although heavy MCP/torch/store imports were not observed there.
+- Documentation ambiguity: docs/service-mode.md:451-463 describes ungated GET /health returning service_token, while docs/service-discovery.md:155-157 says unauthenticated /health omits service_token; conditional authentication behavior is unresolved. Source-backed server/client evidence resolves the response contract: no-credential health is anonymous, presented invalid credentials are rejected, and service_token is included only for authenticated health. Discovery publication is token-bearing separately; conflicting guide wording remains a documentation limitation.
+- Cross-group documentation about /health authentication/token exposure must preserve anonymous no-credential success, invalid presented-credential rejection and authenticated-only service_token response. Discovery publication is token-bearing separately. Resolve health wording using \_lifespan.py:1361-1459, \_auth.py:24-71 and client/discovery evidence: anonymous no-credential success, rejection of invalid presented credentials, authenticated-only response token and separate token-bearing discovery.
+- No MCP registered tool inventory/count is established in this group; HTTP construction is REST and stdio optionally prunes mutating tools. Route MCP inventory to s1-0062 implementation plus s1-0102/0103 and s1-0146 static contracts. Compact evidence provides handlers/read-only filtering and twelve-name expectations but no exact inspected registration inventory or runtime count.
+- MCP conformance docstring describes read-only retrieval/search/refresh, but its expected tools include clean_documents and clean_all with destructive/idempotent annotations. Destructive clean handlers/annotations and read-only filtering are separate boundaries. Blanket read-only conformance prose conflicts with expected clean tools; neither docs nor expected sets prove a runtime inventory.

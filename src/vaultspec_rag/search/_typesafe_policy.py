@@ -24,7 +24,7 @@ _REQUEST_BYTES = 64_000
 _SESSION_SECONDS = 10.0
 
 
-def classification_window[T: (SearchResult, DocumentSearchResult)](
+def classification_window[T: SearchResult | DocumentSearchResult](
     results: list[T], top_k: int
 ) -> list[T]:
     """Select full-content evidence after local ranking, not before retrieval.
@@ -235,9 +235,7 @@ class ClassificationSession:
             judgments[index] = _judgment(evaluation, index, clause_count)
         return judgments
 
-    def rank[T: (SearchResult, DocumentSearchResult)](
-        self, results: list[T]
-    ) -> list[T]:
+    def rank[T: SearchResult | DocumentSearchResult](self, results: list[T]) -> list[T]:
         """Soft-rank all candidates; uncertainty prevents drops, not score updates."""
         started = time.monotonic()
         judgments: dict[int, tuple[bool, float]] = {}
