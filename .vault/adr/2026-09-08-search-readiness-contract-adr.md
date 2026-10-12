@@ -11,12 +11,13 @@ related:
   - "[[2026-06-11-server-bound-search-production-readiness-adr]]"
   - '[[2026-09-23-status-messages-research]]'
   - '[[2026-09-23-status-messages-adr]]'
+  - '[[2026-10-12-destructive-rebuild-lifecycle-adr]]'
 supersedes:
   - '2026-06-11-search-freshness-and-empty-results-adr'
   - '2026-07-21-search-index-availability-adr'
-modified: '2026-09-23'
+modified: '2026-10-12'
 body_schema: 'body-v2'
-body_hash: 'sha256:13395da9e038e8f38043709b3a3caf8ea86f5b1734c278c385737cca8b4fb106'
+body_hash: 'sha256:63289954fd38aa170e6d5a24bc9d65ba4346e13fdba6f3f890dbb25d1e5e1806'
 ---
 
 # `search-readiness-contract` adr: `canonical search readiness and bounded freshness waits` | (**status:** `accepted`)
@@ -54,6 +55,14 @@ and the cross-surface inventory are in `2026-09-08-search-readiness-contract-res
   generation and changes immediate behavior into a global outage/serialization point.
 
 ## Constraints
+
+### 2026-10-12: reset-first rebuild and progressive search
+
+The user confirmed on 2026-10-12 that rebuilding must continue to serve indexing and search. `2026-10-12-destructive-rebuild-lifecycle-adr` replaces any implication below that only a previously completed generation can supply useful updating results. During an explicit rebuild the old index is deleted; the serving generation is the new partial build and is separate from completed publication. Compatible nonempty current-epoch results remain successful with `availability=usable`, `freshness=updating`, and `absence_authority=non_authoritative`. A request crossing reset returns a bounded retry or typed transition rather than old-generation results.
+
+The existing non-authoritative empty-result rule, combined-source accounting, immediate default, caller-selected bounded freshness waits, and service-owned classification remain binding. Partial completeness state persists across job failure or pause; job terminality never manufactures an authoritative empty result. An open publication receipt cannot become a whole-rebuild search blockade.
+
+### Retained original ruling, subject to the amendment above
 
 - Reuse canonical job, generation, controller, integrity, and combined-outcome authorities; do not
   create another registry, generation verdict, or adapter classifier.

@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#large-index-resilience'
 date: '2026-07-21'
-modified: '2026-10-03'
-body_hash: 'sha256:e82d15916dc5a5304e8f875161785cccd5f2b0a3dc2a5ab85301458c3019e741'
+modified: '2026-10-12'
+body_hash: 'sha256:b84c77078f0539c4c3b8bfa5852a28fcfc950784c8b2641825c8ea42ced8835d'
 related:
   - "[[2026-07-21-large-index-resilience-research]]"
   - "[[2026-07-21-large-index-resilience-reference]]"
@@ -15,6 +15,7 @@ related:
   - "[[2026-07-21-index-backpressure-storage-hygiene-adr]]"
   - "[[2026-07-21-service-job-control-adr]]"
   - '[[2026-07-21-large-index-resilience-s01-config-audit]]'
+  - '[[2026-10-12-destructive-rebuild-lifecycle-adr]]'
 ---
 
 # `large-index-resilience` adr: `durable resumable and resource-bounded indexing` | (**status:** `accepted`)
@@ -78,6 +79,12 @@ ADR continues to own job lifecycle and operator APIs.
   idempotent recovery, and turns retry, liveness, and memory failures into typed outcomes.
 
 ## Constraints
+
+### 2026-10-12: reset-first rebuild and progressive search
+
+The user authorized a discarded old index with searchable new progress on 2026-10-12. `2026-10-12-destructive-rebuild-lifecycle-adr` replaces the constraint and D7 wording protecting the entire interval from drop through final publication, and the consequence suggesting shadow publication as its remedy. Only reset and individual indivisible storage/ledger transitions are protected. After empty-target creation, pause and cancellation can acknowledge at durable unit boundaries, leaving an explicitly incomplete new index searchable. A new rebuild resets; recovery of the same reset-complete generation preserves its confirmed new units. Generation fencing prevents obsolete attempts from writing after a later reset. Single-consumer GPU discipline, weighted memory bounds, the corpus floor, SQLite concurrency, storage-before-checkpoint ordering, and no-progress policy remain binding.
+
+### Retained original ruling, subject to the amendment above
 
 - Exactly one in-process GPU consumer performs indexing forward passes. No second consumer,
   CUDA-stream parallelism, or process-local GPU worker is introduced.

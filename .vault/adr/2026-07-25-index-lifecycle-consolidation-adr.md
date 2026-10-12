@@ -3,13 +3,14 @@ tags:
   - '#adr'
   - '#index-lifecycle-consolidation'
 date: '2026-07-25'
-modified: '2026-07-25'
-body_hash: 'sha256:4382a8186670ebc444a53fe28ad2432e3221efaff25c257ae09ecc519f6d8258'
+modified: '2026-10-12'
+body_hash: 'sha256:9edef220e48240028d81e28f7542a32e4564a95968ac522892d0ec43cfc92ea6'
 related:
   - "[[2026-07-25-document-index-drift-parity-adr]]"
   - "[[2026-07-21-code-document-index-boundary-adr]]"
   - "[[2026-07-21-managed-log-contract-adr]]"
   - '[[2026-07-25-index-lifecycle-consolidation-research]]'
+  - '[[2026-10-12-destructive-rebuild-lifecycle-adr]]'
 ---
 
 # `index-lifecycle-consolidation` adr: `one shared run lifecycle for every index entry point` | (**status:** `accepted`)
@@ -69,6 +70,12 @@ silent ever since, and nothing in the suite noticed.
   concern, and the boundary record exists to keep them apart.
 
 ## Constraints
+
+### 2026-10-12: reset-first rebuild and progressive search
+
+The user authorized a uniform rebuild lifecycle on 2026-10-12. `2026-10-12-destructive-rebuild-lifecycle-adr` adds one source-neutral reset/recovery/completion coordinator shared by code, vault, and documents; per-domain producers no longer choose different rebuild semantics. The wrapper specified here continues to own event emission and activity stamps and takes no new lock. Mutation authority is owned by the rebuild coordinator and the existing writer/storage boundaries. Also, the earlier incremental-to-full delegation clause below is no longer permitted under `2026-09-07-explicit-reindex-authority-adr`: an incremental request requiring full work returns the typed refusal. Source-specific parsing and payload behavior remain independent.
+
+### Retained original ruling, subject to the amendment above
 
 - The wrapper takes no lock and owns no lock ordering. The code and vault paths
   call it under their writer lock; the document path takes its writer lock

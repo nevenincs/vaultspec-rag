@@ -3,13 +3,14 @@ tags:
   - '#adr'
   - '#storage-conformance'
 date: '2026-07-25'
-modified: '2026-09-30'
-body_hash: 'sha256:84e6ad3b961e5b5eb952ab9511752179b797d9509113713b704c159f5c9eee21'
+modified: '2026-10-12'
+body_hash: 'sha256:4d467a82a274e6cbe8bbe6b41b942b037b2975ae50824fb891fcc56aebcbd86e'
 related:
   - "[[2026-07-25-storage-conformance-research]]"
   - "[[2026-06-26-storage-schema-contract-adr]]"
   - "[[2026-07-24-worktree-index-reuse-adr]]"
   - '[[2026-09-30-sparseencode-adr]]'
+  - '[[2026-10-12-destructive-rebuild-lifecycle-adr]]'
 ---
 
 # `storage-conformance` adr: `prove a collection was built by the models the code expects` | (**status:** `accepted`)
@@ -94,6 +95,12 @@ logging. The point of the decision is that a non-conforming index changes what t
 service tells its operator.
 
 ## Constraints
+
+### 2026-10-12: reset-first rebuild and progressive search
+
+The user authorized reset-first rebuilds and concurrent search on 2026-10-12. `2026-10-12-destructive-rebuild-lifecycle-adr` replaces the reference to an unchanged non-destructive rebuild policy in D4 and the rebuild-specific premise that old and new vectors must coexist. Explicit reset removes the old collection before replacement ingestion, and ensure/conformance caches are invalidated at that boundary. The empty replacement receives its actual current model and geometry identity at creation; fresh compatible points are searchable before final completeness publication. Geometry and sparse-vocabulary refusals, matching-geometry dense disagreement outside reset, and refusal to relabel old data remain binding.
+
+### Retained original ruling, subject to the amendment above
 
 - No change inside the code indexer, the run ledger, or the run checkpoint. Those
   modules are mid-refactor under an in-flight plan and a concurrent edit would

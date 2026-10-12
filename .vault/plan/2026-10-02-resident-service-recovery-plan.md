@@ -8,7 +8,6 @@ related:
   - '[[2026-09-07-explicit-reindex-authority-adr]]'
   - '[[2026-09-08-adaptive-watcher-control-adr]]'
   - '[[2026-09-08-incremental-publication-cost-adr]]'
-  - '[[2026-07-25-non-destructive-index-publication-adr]]'
   - '[[2026-07-13-index-drift-hardening-adr]]'
   - '[[2026-09-30-sparseencode-adr]]'
   - '[[2026-07-25-storage-conformance-adr]]'
@@ -33,9 +32,10 @@ related:
   - '[[2026-07-24-worktree-index-reuse-adr]]'
   - '[[2026-07-29-encode-batch-adaptivity-adr]]'
   - '[[2026-06-30-qdrant-store-resilience-adr]]'
-modified: '2026-10-04'
+  - '[[2026-10-12-destructive-rebuild-lifecycle-adr]]'
+modified: '2026-10-12'
 body_schema: body-v2
-body_hash: 'sha256:8efd8bc1c04b635247d3f041e80b71025b2e505ad3e4e35fe4733e92e2c1779e'
+body_hash: 'sha256:672c8996e78e7f202ba7eca01e5c7e50ce332c923cda9f88202e5d53cea033fc'
 ---
 
 # `resident-service-recovery` plan
@@ -43,6 +43,8 @@ body_hash: 'sha256:8efd8bc1c04b635247d3f041e80b71025b2e505ad3e4e35fe4733e92e2c17
 ## Description
 
 Approved 2026-10-02
+
+Decision coverage amended 2026-10-12 under the user's explicit architecture revision. `2026-10-12-destructive-rebuild-lifecycle-adr` now governs future explicit rebuilds: discard the selected old index, then serve the new partial index throughout ingestion. The former `2026-07-25-non-destructive-index-publication-adr` is superseded. Mentions of non-destructive publication, shadow targets, and preserved served collections below describe completed incident work under its then-current ruling; they do not authorize that design for new implementation. The runtime transition is sequenced in `2026-10-12-destructive-rebuild-lifecycle-plan`. This coverage amendment changes no Step state or historical verification and does not itself perform another resident reset or rollout.
 
 The user explicitly authorized fixing all defects discovered in the resident-service incident, continuing investigation, and managing rollout from this checkout. The explicit-reindex and adaptive-watcher decisions govern S01, publication-cost and non-destructive-publication govern S02 and S04, and index-drift detection governs S03 under the later explicit-reindex boundary. Deployment respects live CI resource ownership. S04 includes explicit admitted rebuild jobs for affected roots when their existing proof is incompatible.
 

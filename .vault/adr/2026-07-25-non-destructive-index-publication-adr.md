@@ -1,10 +1,8 @@
 ---
 tags:
-  - '#adr'
-  - '#non-destructive-index-publication'
+  - "#adr"
+  - "#non-destructive-index-publication"
 date: '2026-07-25'
-modified: '2026-07-25'
-body_hash: 'sha256:f3cae5aa336f4692b0ef04981d928ae91ffa5c0a1417d238b4374b451ccd9225'
 related:
   - "[[2026-07-25-non-destructive-index-publication-research]]"
   - "[[2026-07-25-index-completeness-guard-adr]]"
@@ -12,9 +10,12 @@ related:
   - "[[2026-07-21-search-index-availability-adr]]"
   - "[[2026-07-21-large-index-resilience-adr]]"
   - "[[2026-07-25-index-resume-drift-race-adr]]"
+superseded_by: '2026-10-12-destructive-rebuild-lifecycle-adr'
+modified: '2026-10-12'
+body_hash: 'sha256:62f47b7b662951e5474e3373206fb3f8daba30abc7870f602b77d11933613145'
 ---
 
-# `non-destructive-index-publication` adr: `publish a rebuilt index without destroying the served one` | (**status:** `accepted`)
+# `non-destructive-index-publication` adr: `publish a rebuilt index without destroying the served one` | (**status:** `superseded`)
 
 ## Problem Statement
 
