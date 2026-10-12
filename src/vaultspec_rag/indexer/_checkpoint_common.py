@@ -471,41 +471,47 @@ class RunCheckpointBase:
             parents = ledger.publication_evidence_for_paths(
                 receipt.compatibility_key, ordered[start : start + FETCH_BATCH]
             )
-            for rel_path, parent in parents.items():
-                mutations = [
-                    item for item in receipt.mutations if item.unit.rel_path == rel_path
-                ]
-                if not mutations or any(
-                    item.state is not ProofMutationState.CONFIRMED for item in mutations
-                ):
-                    raise RunLedgerStateError(
-                        f"publication replay has unresolved parent path {rel_path!r}"
-                    )
-                upserts = [
-                    item.unit
-                    for item in mutations
-                    if item.unit.kind is CommitUnitKind.UPSERT
-                ]
-                new = RunCheckpointBase._new_evidence(rel_path, tuple(upserts))
-                if new is not None:
-                    validate_publication_mutation_group(
-                        (CommitUnitKind.UPSERT, rel_path),
-                        upserts,
-                        expected_points=frozenset(new.point_ids),
-                        expected_content=new.content_identity,
-                    )
-                else:
-                    deleted = [
-                        item.unit
-                        for item in mutations
-                        if item.unit.kind is CommitUnitKind.DELETE_PATH
-                    ]
-                    validate_publication_mutation_group(
-                        (CommitUnitKind.DELETE_PATH, rel_path),
-                        deleted,
-                        expected_points=frozenset(parent.point_ids),
-                        expected_content=None,
-                    )
+            for parent in parents.values():
+                RunCheckpointBase._assert_replayed_parent_path(receipt, parent)
+
+    @staticmethod
+    def _assert_replayed_parent_path(
+        receipt: PublicationReceipt, parent: ProofEvidence
+    ) -> None:
+        """Require a complete replacement or deletion of one parent path."""
+        rel_path = parent.rel_path
+        mutations = [
+            item for item in receipt.mutations if item.unit.rel_path == rel_path
+        ]
+        if not mutations or any(
+            item.state is not ProofMutationState.CONFIRMED for item in mutations
+        ):
+            raise RunLedgerStateError(
+                f"publication replay has unresolved parent path {rel_path!r}"
+            )
+        upserts = [
+            item.unit for item in mutations if item.unit.kind is CommitUnitKind.UPSERT
+        ]
+        new = RunCheckpointBase._new_evidence(rel_path, tuple(upserts))
+        if new is not None:
+            validate_publication_mutation_group(
+                (CommitUnitKind.UPSERT, rel_path),
+                upserts,
+                expected_points=frozenset(new.point_ids),
+                expected_content=new.content_identity,
+            )
+        else:
+            deleted = [
+                item.unit
+                for item in mutations
+                if item.unit.kind is CommitUnitKind.DELETE_PATH
+            ]
+            validate_publication_mutation_group(
+                (CommitUnitKind.DELETE_PATH, rel_path),
+                deleted,
+                expected_points=frozenset(parent.point_ids),
+                expected_content=None,
+            )
 
     @staticmethod
     def _complete_mutation_streams(
@@ -1069,25 +1075,23 @@ class RunCheckpointBase:
                 - {delta.rel_path for delta in deltas}
             )
         )
+        for rel_path in unchanged:
+            units = [
+                item.unit
+                for item in receipt.mutations
+                if item.unit.rel_path == rel_path
+                and item.unit.kind is CommitUnitKind.UPSERT
+            ]
+            old = old_by_path.get(rel_path)
+            if old is None or self._new_evidence(rel_path, tuple(units)) != old:
+                raise RunLedgerStateError("replayed no-op does not restore its parent")
+            validate_publication_mutation_group(
+                (CommitUnitKind.UPSERT, rel_path),
+                units,
+                expected_points=frozenset(old.point_ids),
+                expected_content=old.content_identity,
+            )
         if unchanged:
-            for rel_path in unchanged:
-                units = [
-                    item.unit
-                    for item in receipt.mutations
-                    if item.unit.rel_path == rel_path
-                    and item.unit.kind is CommitUnitKind.UPSERT
-                ]
-                old = old_by_path.get(rel_path)
-                if old is None or self._new_evidence(rel_path, tuple(units)) != old:
-                    raise RunLedgerStateError(
-                        "replayed no-op does not restore its parent"
-                    )
-                validate_publication_mutation_group(
-                    (CommitUnitKind.UPSERT, rel_path),
-                    units,
-                    expected_points=frozenset(old.point_ids),
-                    expected_content=old.content_identity,
-                )
             receipt = self.ledger.discard_restored_publication_paths(
                 receipt.receipt_id, unchanged
             )

@@ -5,7 +5,7 @@ tags:
 date: '2026-10-12'
 modified: '2026-10-12'
 body_schema: 'body-v2'
-body_hash: 'sha256:30530e6c7ab847ff25cba3642cb58001065aa5d0fc2c7b9113697f885e1e39d1'
+body_hash: 'sha256:d17f5891ee2fc4e397db12af8a8225ef37d3e1aad9761d5a58de6b1b3f4011de'
 related:
   - "[[2026-10-12-service-graph-plan]]"
 ---
@@ -111,8 +111,17 @@ related:
 - `S04` `verify:` `frontend lint format types build` -> `pass`
 - `S04` `verify:` `package gates with failed Markdown and links corrected and rerun` -> `pass`
 - `S04` `verify:` `core PR 606 Linux Windows lint CodeQL merge gate and merge` -> `pass`
+- `S04` `M` `src/vaultspec_rag/indexer/_run_ledger_commits.py`
+- `S04` `M` `src/vaultspec_rag/indexer/_run_ledger_runtime.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_index_run_ledger_publication_receipts.py`
+- `S04` `A` `src/vaultspec_rag/indexer/_run_ledger_recovery.py`
+- `S04` `verify:` `corrected package complexipy Ruff and Pylint each exit 0` -> `pass`
+- `S04` `verify:` `recovery owner extraction 145 covering tests` -> `pass`
+- `S04` `verify:` `confirmation guard mutation fails then three restored states pass` -> `pass`
+- `S04` `verify:` `recovery changed-file format ty basedpyright each exit 0` -> `pass`
 
 ## Notes
 
 - `S04` Full Python suite, browser rendering, package gates and PR CI verification remain in progress; S04 stays open.
 - `S04` All local failures resolved in focused reruns. Full PR matrix still required; S04 remains open.
+- `S04` Corrects prior missed aggregate complexity failures. Required remote matrix remains pending; requested release follows verified PR merge.

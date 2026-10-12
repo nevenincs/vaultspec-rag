@@ -4,7 +4,7 @@ tags:
   - '#service-graph'
 date: '2026-04-02'
 modified: '2026-10-12'
-body_hash: 'sha256:2333ac7519306c23091570ca166ab7ee587caf125190a45f7174aa133477040d'
+body_hash: 'sha256:5a579fb5f7090550a3ab554e7368a8ea03bd2df47d29b23834f47ac1309245bf'
 related:
   - '[[2026-04-02-service-graph-adr]]'
   - '[[2026-04-02-service-graph-phase1-plan]]'
@@ -887,3 +887,31 @@ matrix before merge. S04 remains open for that required verification.
 
 Core PR 606 passed Linux lint/full tests, Windows library tests, CodeQL and its
 merge gate, then merged into main as 575a8e7cf0c969690ea439d54cf5bba5b1d6d54f.
+
+### release-gate-correction | low | Local recovery gates pass; remote matrix pending
+
+The earlier S04 claim that every package lint dimension had passing evidence was
+incorrect: the original aggregate log contained three complexipy failures that
+were missed when its results were reconciled. The release-proposal gate exposed
+the same failures. This entry corrects that claim rather than relabeling the log.
+
+Replay finalization no longer adds an unnecessary enclosing condition around an
+empty-safe loop. Batched parent validation delegates one parent's complete
+replacement/deletion check to a focused owner. Ledger recovery, reset intent and
+confirmed compensation now have one canonical mixin, inherited directly by
+RunLedger; implementations were removed from the overlong commit module.
+Restored-path classification retains unaffected payloads and ordinals and rejects
+unconfirmed compensation before any database mutation. No threshold was changed.
+
+Review against 4ff95502 found no changed transaction boundary or weakened storage
+confirmation check. Package complexipy, Ruff and Pylint each exited 0; Pylint
+reported 10.00/10. Changed format, ty and basedpyright exited 0. The post-extraction
+suite passed 145 tests. A three-state compensation guard passed, failed at the
+intended assertions when its confirmation check was removed in memory, then
+passed after restoration. Scores are 18 for replay finalization, 3 for batched
+parent validation, 11 per parent and 14 for restored-path discard.
+
+Logs: s04-recovery-extraction-tests.log, s04-recovery-package-pylint.log,
+s04-complexity-final.log and s04-restoration-guard mutation/restored logs under the
+existing .vault/data/engine-data directory. All corrections stay in RAG PR 603;
+the final remote matrix remains required before merge and S04 closure.

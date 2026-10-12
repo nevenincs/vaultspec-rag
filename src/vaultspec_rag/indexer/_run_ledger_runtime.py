@@ -52,6 +52,7 @@ from ._run_ledger_publication_identity import (
 from ._run_ledger_publication_proofs import RunLedgerPublicationProofMethods
 from ._run_ledger_publication_reads import RunLedgerPublicationReadMethods
 from ._run_ledger_publication_receipts import RunLedgerPublicationReceiptMethods
+from ._run_ledger_recovery import RunLedgerRecoveryMethods
 
 __all__ = ["RunLedger", "set_aside_unsupported_ledger"]
 
@@ -83,6 +84,7 @@ class RunLedger(
     RunLedgerPublicationReadMethods,
     RunLedgerPublicationReceiptMethods,
     RunLedgerCommitMethods,
+    RunLedgerRecoveryMethods,
     RunLedgerFileMethods,
     RunLedgerFinalizationMethods,
 ):
