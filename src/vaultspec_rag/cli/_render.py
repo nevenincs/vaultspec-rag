@@ -28,6 +28,7 @@ from .._operator_commands import (
 from ..commands._models import SYNC_COUNTERS, InstallReport, UninstallReport
 from ..operator_state._installation import ComputeCapability
 from ..operator_state._service import ServiceLifecycle
+from ..torch_config._constants import TorchConfigAction
 from ._cli_format import _counted_unit
 
 if TYPE_CHECKING:
@@ -802,7 +803,11 @@ def _render_provider_and_torch_sections(
     _render_provider_sync(report)
     _render_mcp_extra(report)
     tc_action = report.torch_config_action
-    _plain(f"PyTorch configuration: {_action_label(tc_action)}")
+    # An installation with no project declaration has no torch configuration,
+    # so it is told nothing about one. The line said "not found", which reads
+    # as something missing that ought to be there.
+    if str(getattr(tc_action, "value", tc_action)) != TorchConfigAction.ABSENT.value:
+        _plain(f"PyTorch configuration: {_action_label(tc_action)}")
     td_action = report.torch_direct_dep_action
     if td_action not in ("skipped",):
         td_location = report.torch_direct_dep_location

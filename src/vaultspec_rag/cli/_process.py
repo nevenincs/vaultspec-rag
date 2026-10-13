@@ -541,6 +541,7 @@ def _may_carry_launch_witness(name: object) -> bool:
 class _ServiceSpawnOptions(_ServiceChildEnvOptions, total=False):
     timeout: float | None
     cleanup_timeout: float
+    interpreter: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -550,6 +551,12 @@ class _ServiceSpawnRequest:
     child_env: _ServiceChildEnvRequest
     timeout: float | None = None
     cleanup_timeout: float = 15.0
+    #: The interpreter the daemon runs under. The caller names it because the
+    #: environment that can serve is not always the one that launched: a start
+    #: whose launcher cannot run the GPU-only service selects the managed
+    #: runtime and hands its interpreter over here. Left out, the launching
+    #: environment's own interpreter is used.
+    interpreter: str | None = None
 
 
 def _spawn_service(
@@ -573,6 +580,7 @@ def _spawn_service(
             ),
             options.get("timeout"),
             float(options.get("cleanup_timeout", 15.0)),
+            options.get("interpreter"),
         )
     )
 
@@ -629,7 +637,9 @@ def _spawn_service_request(request: _ServiceSpawnRequest) -> int:
     launch_token = uuid.uuid4().hex
     if deadline is not None and deadline <= time.monotonic():
         raise TimeoutError("service spawn received no remaining startup budget")
-    cmd = _service_launch_command(_resolve_daemon_interpreter(), port, launch_token)
+    cmd = _service_launch_command(
+        request.interpreter or _resolve_daemon_interpreter(), port, launch_token
+    )
     env = _build_service_child_env(request.child_env)
     working_directory = _service_working_directory()
     # Owner-only log, refusing a pre-planted symlink at the path where the

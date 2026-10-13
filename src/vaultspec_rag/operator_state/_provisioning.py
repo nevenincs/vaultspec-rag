@@ -41,6 +41,7 @@ __all__ = [
     "ToolReceiptVerdict",
     "classify_tool_receipt",
     "cuda_remediation",
+    "declares_a_project",
     "durable_upgrade_commands",
     "environment_python_request",
     "host_install_command",
@@ -676,31 +677,38 @@ def _metal_remediation(interpreter: str) -> CudaRemediation:
     )
 
 
+def declares_a_project(interpreter: str) -> bool:
+    """Whether a project declaration governs *interpreter*'s environment.
+
+    The environment's directory name does not answer this: a virtual
+    environment called ``.venv`` is just as often a bare ``pip install`` with
+    no project at all, and the project repair - which writes the CUDA index
+    into a declaration and syncs from it - does nothing there. The
+    declaration beside the environment is what makes that repair apply.
+    """
+    return (environment_root(interpreter).parent / "pyproject.toml").is_file()
+
+
 def _project_remediation(interpreter: str, *, project: bool) -> CudaRemediation:
     """Repair an environment no tool receipt governs.
 
-    A project environment is served by the project surfaces, which write the
-    CUDA index into the project and keep it across syncs. Anything else has no
-    durable surface to write to, so it is offered the in-place repair that
-    works in any environment, and told where the durable one lives.
+    A project is served by the project surfaces, which write the CUDA index
+    into its declaration and keep it across syncs; the two commands that do
+    that are one line, because running the first alone resolves a CPU build
+    again. An environment with no declaration has no durable surface to write
+    to, so it is offered the in-place repair that works anywhere.
     """
     if project:
+        command = "vaultspec-rag install && uv sync --reinstall-package torch"
         return CudaRemediation(
             kind=CudaRepairKind.PROJECT_ENVIRONMENT,
-            steps=(
-                "Provision the GPU torch build in this project: "
-                "vaultspec-rag install, then uv sync --reinstall-package torch.",
-            ),
+            steps=(f"Provision the GPU torch build in this project: {command}",),
+            repair_commands=(command,),
         )
     command = inplace_cuda_command(interpreter)
     return CudaRemediation(
         kind=CudaRepairKind.PROJECT_ENVIRONMENT,
-        steps=(
-            f"Provision the GPU torch build in this environment: {command}",
-            "In a project, vaultspec-rag install writes the CUDA index into "
-            "pyproject.toml and uv sync --reinstall-package torch applies it, "
-            "so the build survives a resolve.",
-        ),
+        steps=(f"Provision the GPU torch build in this environment: {command}",),
         repair_commands=(command,),
     )
 
@@ -742,25 +750,24 @@ def cuda_remediation(
         if env_kind is None
         else env_kind
     )
-    if kind is RuntimeEnvKind.PROJECT_VENV or kind is RuntimeEnvKind.OTHER:
-        return _project_remediation(
-            interpreter, project=kind is RuntimeEnvKind.PROJECT_VENV
-        )
-    repair = tool_repair_commands(interpreter)
-    upgrade = tool_upgrade_commands(interpreter)
     if kind is RuntimeEnvKind.UVX_EPHEMERAL:
+        # Nothing here is the operator's to repair, and nothing may be: uv
+        # owns this environment and replaces it when it likes. The service
+        # does not run in it at all, so the only thing to say is the command
+        # that starts the service in the environment it does run in.
         return CudaRemediation(
             kind=CudaRepairKind.EPHEMERAL_ENVIRONMENT,
             steps=(
-                "Install the tool itself, so the environment that serves is "
-                "the one carrying the GPU build:",
-                *repair,
-                RESTART_NOTE,
+                f"The service does not run in this environment; "
+                f"`{server_start_command()}` runs it from its own GPU runtime.",
             ),
-            repair_commands=repair,
-            upgrade_commands=upgrade,
-            restart_step=RESTART_NOTE,
         )
+    if kind is RuntimeEnvKind.PROJECT_VENV or kind is RuntimeEnvKind.OTHER:
+        return _project_remediation(
+            interpreter, project=declares_a_project(interpreter)
+        )
+    repair = tool_repair_commands(interpreter)
+    upgrade = tool_upgrade_commands(interpreter)
     return CudaRemediation(
         kind=CudaRepairKind.TOOL_ENVIRONMENT,
         steps=(

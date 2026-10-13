@@ -75,6 +75,21 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "many times the underlying method actually runs; the real "
         "classification and checkpoint logic execute unchanged on every call",
     ),
+    "test_service_runtime.py": (
+        4,
+        "the three inputs of creating the service's own GPU environment, each "
+        "staged where it is produced and nowhere else: the uv subprocess, "
+        "which would download several gigabytes per test; the origin of the "
+        "launching distribution, which in this checkout is a working tree the "
+        "runtime refuses to reproduce, so no test of what happens afterwards "
+        "could run at all; and the wait for the build lock, shortened so the "
+        "contended case does not sit for twenty seconds. The filesystem, the "
+        "lock, the staging directory, the rename, the completion record and "
+        "the judgement are all real throughout - the judgement through the "
+        "suite's own pinned child-probe answer - and the integration test in "
+        "the same module creates a runtime with the real uv from a wheel built "
+        "out of this checkout, with nothing staged but that origin",
+    ),
     "test_search_conformance_refusal.py": (
         1,
         "the model-free count path a registry exposes never checks storage "
@@ -594,7 +609,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "be",
     ),
     "conftest.py": (
-        4,
+        5,
         "install's torch and provisioning steps and the release-mismatch advice "
         "all branch on whether this is a host or a client installation, and the "
         "role is read from the distributions the running interpreter holds. The "
@@ -613,7 +628,13 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "because the machine's own anchors may be held by a live service, a "
         "test must never contend for them, and an ownership claim outlives "
         "the test that took it; only their location is substituted, and "
-        "claiming, lending and refusing run unchanged",
+        "claiming, lending and refusing run unchanged. The machine's own "
+        "accelerator is pinned the same way and for the same reason as the "
+        "two readings above: whether anything on this machine can run the "
+        "service decides whether an environment that cannot run it itself is "
+        "still provisioned for, and no test can give a runner a GPU or take "
+        "one away from a workstation; the reading alone is replaced, and it "
+        "is exercised against the real machine in the hardware tests",
     ),
     "test_server.py": (
         5,

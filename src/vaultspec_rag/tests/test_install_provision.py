@@ -249,13 +249,17 @@ class TestInstallProvisionWiring:
         assert models.action == ProvisionAction.SKIPPED
         assert "opted out" in models.detail
 
-    def test_torch_is_opted_out_of_the_front_door(
+    def test_torch_is_reported_by_the_install_step_and_not_again(
         self, consumer_workspace: Path, isolated_status_dir: Path
     ) -> None:
+        """Enrollment configures torch; the front door adds no second row.
+
+        The front door's row for the step it did not run said only that it had
+        not run it, which reads as a dependency this install left unsatisfied -
+        and, disagreeing with the rows beside it, made the whole run's outcome
+        "mixed". The report's own torch fields carry the real applied state.
+        """
         _ = isolated_status_dir
-        # Enrollment configures torch directly; the front door must not
-        # re-run it, so its torch result is an honest opted-out skip while
-        # the report's own torch fields carry the real applied state.
         report = install_run(
             path=consumer_workspace,
             provision=True,
@@ -265,9 +269,7 @@ class TestInstallProvisionWiring:
         )
         outcome = report.provision_outcome
         assert outcome is not None
-        torch = result_for(outcome, ProvisionStep.TORCH)
-        assert torch is not None
-        assert torch.action == ProvisionAction.SKIPPED
+        assert result_for(outcome, ProvisionStep.TORCH) is None
         assert report.torch_config_action == "applied"
 
     def test_dry_run_provision_previews_without_persisting(
@@ -306,7 +308,8 @@ class TestInstallProvisionWiring:
         assert isinstance(steps, list)
         entries = cast("list[dict[str, object]]", steps)
         seen = {entry["step"] for entry in entries}
-        assert seen == {"torch", "models", "qdrant"}
+        # No torch row: the install's own step configured it and reports it.
+        assert seen == {"models", "qdrant"}
 
     def test_no_provision_to_dict_provisioning_is_none(
         self, consumer_workspace: Path, isolated_status_dir: Path

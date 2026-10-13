@@ -276,6 +276,10 @@ class EnvVar(StrEnum):
     TRANSFORMERS_NO_ADVISORY_WARNINGS = "TRANSFORMERS_NO_ADVISORY_WARNINGS"
     TRANSFORMERS_VERBOSITY = "TRANSFORMERS_VERBOSITY"
     PYTORCH_ENABLE_MPS_FALLBACK = "PYTORCH_ENABLE_MPS_FALLBACK"
+    # The uv executable uv itself names to its children. It is the only
+    # reading that is right when a machine carries more than one uv: the one
+    # running the command is the one the operator invoked.
+    UV = "UV"
     UV_CACHE_DIR = "UV_CACHE_DIR"
     UV_TOOL_DIR = "UV_TOOL_DIR"
     VIRTUAL_ENV = "VIRTUAL_ENV"

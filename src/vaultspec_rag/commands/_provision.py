@@ -122,7 +122,6 @@ class _ProvisionRequest:
 class _TorchProvisionRequest:
     target: Path
     dry_run: bool
-    skip: set[str]
     configure_torch: bool
     assume_yes: bool
     sync_after: bool
@@ -316,11 +315,19 @@ def unable_skip(
     verdict, so one command asks once; a caller that has not leaves it out
     and the judgement is made here.
 
-    A client is told it needs nothing. A host that cannot run the service yet
-    is told why, what repairs it, and that a start fetches what was skipped:
-    this is the ordinary state of a project whose torch configuration was
-    just written and not yet synced, and it is not a failure.
+    A client is told it needs nothing, because the host installation that
+    runs the service holds both.
+
+    A host whose own torch cannot serve is a different case since the service
+    gained its own environment: the daemon runs from the managed runtime
+    instead, and the model files and the Qdrant server it will need are the
+    same ones. So the question is no longer what this environment can do but
+    whether anything on this machine can serve, which is what its accelerator
+    answers. A machine with no supported one is told that, and told that a
+    start fetches what was skipped once there is something to fetch it for.
     """
+    from ..operator_state._hardware import read_hardware
+    from ..operator_state._installation import HardwarePresence
     from ..operator_state._service_environment import judge_service_environment
 
     judged = judge_service_environment() if environment is None else environment
@@ -328,14 +335,15 @@ def unable_skip(
         return None
     if judged.is_client:
         return ProvisionStepResult(step, ProvisionAction.SKIPPED, _CLIENT_SKIP)
-    repair = judged.capability.remediation
+    hardware = read_hardware().presence
+    if hardware in {HardwarePresence.NVIDIA_GPU, HardwarePresence.APPLE_SILICON}:
+        return None
     return ProvisionStepResult(
         step,
         ProvisionAction.SKIPPED,
-        f"not fetched, because this environment cannot run the service yet: "
-        f"{judged.reason}. "
-        + (f"{repair} " if repair else "")
-        + "`vaultspec-rag server start` fetches it once the environment is ready",
+        f"not fetched, because no service can run on this machine: "
+        f"{hardware.label}. "
+        "`vaultspec-rag server start` fetches it on a machine that has one",
     )
 
 
@@ -502,20 +510,25 @@ def _provision_dependencies(request: _ProvisionRequest) -> ProvisionOutcome:
     skip = {s.lower() for s in (skip or set())}
     outcome = ProvisionOutcome(dry_run=dry_run)
 
-    outcome.steps.append(
-        client_skip(ProvisionStep.TORCH)
-        or _provision_torch(
-            _TorchProvisionRequest(
-                target,
-                dry_run,
-                skip,
-                configure_torch,
-                assume_yes,
-                sync_after,
-                confirm,
+    # The torch step reports nothing at all where there is nothing for it to
+    # do: it configures a project declaration, and an installation without one
+    # has no phase to report. A row saying so was read as a dependency this
+    # run had failed to satisfy, and it alone made every such run's aggregate
+    # outcome "mixed".
+    if torch_configuration_is_reportable(target, skip):
+        outcome.steps.append(
+            client_skip(ProvisionStep.TORCH)
+            or _provision_torch(
+                _TorchProvisionRequest(
+                    target,
+                    dry_run,
+                    configure_torch,
+                    assume_yes,
+                    sync_after,
+                    confirm,
+                )
             )
         )
-    )
 
     # Judged after the torch step, which may be what makes this environment
     # able to run the service, and once for both fetches.
@@ -543,6 +556,19 @@ def _provision_dependencies(request: _ProvisionRequest) -> ProvisionOutcome:
     return outcome
 
 
+def torch_configuration_is_reportable(target: Path, skip: set[str]) -> bool:
+    """Whether this run has any torch configuration to report.
+
+    It has none when the dedicated install step already ran it - that step
+    reports it under its own heading, and a second row describing the same
+    step is a duplicate - and none when there is no project declaration to
+    configure at all, which is every tool and pip installation.
+    """
+    if ProvisionStep.TORCH in skip:
+        return False
+    return (target / "pyproject.toml").is_file()
+
+
 def _provision_torch(request: _TorchProvisionRequest) -> ProvisionStepResult:
     """Run the torch-config step and map it onto the shared vocabulary.
 
@@ -552,11 +578,13 @@ def _provision_torch(request: _TorchProvisionRequest) -> ProvisionStepResult:
     True) unless ``sync_after`` actually ran the sync. The front door must
     surface this heterogeneity honestly, distinct from a fetched binary's
     terminal ``downloaded``.
+
+    Reached only where there is a configuration to report; see
+    :func:`torch_configuration_is_reportable`.
     """
     (
         target,
         dry_run,
-        skip,
         configure_torch,
         assume_yes,
         sync_after,
@@ -564,30 +592,19 @@ def _provision_torch(request: _TorchProvisionRequest) -> ProvisionStepResult:
     ) = (
         request.target,
         request.dry_run,
-        request.skip,
         request.configure_torch,
         request.assume_yes,
         request.sync_after,
         request.confirm,
     )
-    if not configure_torch or ProvisionStep.TORCH in skip:
-        # Distinguish the two skip reasons so the report is not misread as an
-        # operator opt-out when torch was simply configured by the dedicated step.
-        if ProvisionStep.TORCH in skip:
-            detail = (
-                "torch configuration handled by the dedicated PyTorch step "
-                "(it patches pyproject.toml; see 'PyTorch configuration' above) - "
-                "not re-run here"
-            )
-        else:
-            detail = (
-                "torch configuration skipped by request - pyproject.toml was not "
-                "patched with the cu130 index and source pin"
-            )
+    if not configure_torch:
         return ProvisionStepResult(
             step=ProvisionStep.TORCH,
             action=ProvisionAction.SKIPPED,
-            detail=detail,
+            detail=(
+                "torch configuration skipped by request - pyproject.toml was not "
+                "patched with the cu130 index and source pin"
+            ),
         )
 
     from ..torch_config._constants import TorchConfigAction

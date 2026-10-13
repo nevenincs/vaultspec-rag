@@ -170,10 +170,10 @@ def _apply_torch_install_state(
 ) -> None:
     """Apply the install action selected by an already-inspected TOML state."""
     if state == TorchConfigState.NO_PROJECT_FILE:
+        # No warning: a tool or pip installation has no project declaration by
+        # design, and nothing about this run went wrong. The action records
+        # the absence for the report, which prints no torch section for it.
         report.torch_config_action = TorchConfigAction.ABSENT
-        report.warnings.append(
-            f"no pyproject.toml at {pyproject}; skipped torch-config patch"
-        )
     elif state == TorchConfigState.CANONICAL:
         _handle_canonical_state(
             pyproject,

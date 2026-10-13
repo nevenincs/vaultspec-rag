@@ -53,9 +53,8 @@ def gpu_stack_missing_message(missing: str) -> str:
 
 
 ACCELERATOR_REQUIRED_MESSAGE = (
-    "Supported accelerator required: neither CUDA nor Apple MPS is available. "
-    "vaultspec-rag never runs inference on CPU. Install the supported torch "
-    "build on a CUDA-capable or Apple silicon machine."
+    "Supported accelerator required: neither CUDA nor Apple MPS is available "
+    "to this torch build, and vaultspec-rag never runs inference on CPU."
 )
 
 MPS_FALLBACK_MESSAGE = (

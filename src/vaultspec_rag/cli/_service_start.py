@@ -11,7 +11,6 @@ in ``--json`` mode reads exactly one envelope.
 from __future__ import annotations
 
 import os
-import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -25,6 +24,7 @@ if TYPE_CHECKING:
 
     from ..commands._provision import BackendDecision, ProvisionStepResult
     from ..operator_state._service_environment import ServiceEnvironment
+    from ..service_runtime import ManagedRuntime, ServiceRuntimeError
 
     # Click types ``Context.params`` as ``dict[str, Any]`` because the keys
     # and value types are only known once a command's options are parsed at
@@ -55,12 +55,6 @@ from .._process_probe import pid_alive
 from ..config._settings import get_config
 from ..config._types import EnvVar
 from ..operator_state._installation import ComputeCapability
-from ..operator_state._provisioning import cuda_remediation
-from ..operator_state._topology import (
-    RuntimeEnvKind,
-    classify_environment,
-    environment_root,
-)
 from ..serviceclient._compat import (
     VERSION_ERROR_MISMATCH,
     ServiceVersionVerdict,
@@ -109,9 +103,7 @@ from ._status_labels import (
 )
 
 __all__ = [
-    "_caller_ephemeral_warning",
     "_daemon_is_serving",
-    "_ephemeral_env_warning",
     "_existing_service_running",
     "_fail_start",
     "_start_success",
@@ -140,6 +132,9 @@ class _PreparedServiceRequest:
     #: workspace .env of its own, so any credential one holds has to be
     #: resolved here and handed over in the child's environment.
     root: Path
+    #: The interpreter the daemon runs under: the launching environment's, or
+    #: the managed runtime's when the launcher cannot serve.
+    interpreter: str
 
 
 #: Everything the start wait must cover BEYOND the qdrant readiness budget:
@@ -186,8 +181,11 @@ class _ServiceReadinessRequest:
     log_path: Path
     json_mode: bool
     started_at: float
-    env_warnings: tuple[str, ...] = ()
     progress: StartupStatusReporter | None = None
+    #: The managed runtime serving this start, or ``None`` when the launching
+    #: environment serves it. Carried into the one start envelope, because a
+    #: broker must be able to see that the daemon runs somewhere else.
+    runtime: ManagedRuntime | None = None
     #: Resolved per request rather than per import, so the environment an
     #: operator sets for this start is the environment the wait is drawn
     #: from. A default_factory rather than a literal because there is no
@@ -615,74 +613,93 @@ def _fail_start(
     )
 
 
-def _preflight_daemon_accelerator(
-    interpreter: str, *, json_mode: bool
-) -> ServiceEnvironment:
-    """Fail fast if the daemon interpreter cannot run the GPU-only service.
+@dataclass(frozen=True, slots=True)
+class _SelectedEnvironment:
+    """The environment this start will run the daemon in.
 
-    The daemon inherits this interpreter and is GPU-only, so a missing /
-    CPU-only / no-accelerator torch should fail legibly here rather than as a background
-    model-load crash. The service does not provision its own python environment.
-    A check that could not finish is logged and allowed to proceed, leaving the
-    spawn-and-detect path as the backstop.
+    Attributes:
+        interpreter: The interpreter the spawn must use.
+        environment: What that interpreter can do, for the dependency step
+            that follows: it fetches for the environment this start accepted
+            and asks nothing a second time.
+        runtime: The managed runtime serving this start, or ``None`` when the
+            launching environment serves it.
+    """
 
-    Returns:
-        The judgement, for the dependency step that follows: it fetches for
-        the environment this start accepted and asks nothing a second time.
+    interpreter: str
+    environment: ServiceEnvironment
+    runtime: ManagedRuntime | None
+
+
+def _select_service_environment(
+    interpreter: str, *, json_mode: bool, progress: StartupStatusReporter
+) -> _SelectedEnvironment:
+    """Resolve the environment the daemon will run in, creating one if needed.
+
+    The launching environment is judged exactly as it always was, and serves
+    the daemon when it can - except from a uvx cache environment, which uv
+    prunes and replaces under a daemon that would outlive the run. Everything
+    else runs from the managed runtime: a client installation, a CPU-only
+    torch, or no torch at all is a reason to build the service its own
+    environment rather than a reason to refuse the operator.
+
+    A check that could not finish does not refuse. It is logged and the start
+    proceeds, leaving the spawn-and-detect path as the backstop.
     """
     from ..operator_state._service_environment import judge_service_environment
+    from ..service_runtime import (
+        ServiceInterpreterSource,
+        ServiceRuntimeError,
+        ensure_service_runtime,
+        planned_service_interpreter,
+    )
 
-    environment = judge_service_environment(interpreter)
-    if not environment.can_run_service:
-        raise _fail_unusable_environment(
-            interpreter,
-            environment.capability,
-            environment.reason,
-            json_mode=json_mode,
+    launching = judge_service_environment(interpreter)
+    if (
+        planned_service_interpreter(launching).source
+        is ServiceInterpreterSource.LAUNCHING
+    ):
+        _log_inconclusive_capability(launching)
+        return _SelectedEnvironment(interpreter, launching, None)
+    progress.stage("Resolving the environment that runs the service...")
+    try:
+        runtime = ensure_service_runtime(stage=progress.stage)
+    except ServiceRuntimeError as exc:
+        raise _fail_service_runtime(exc, json_mode=json_mode) from exc
+    if not json_mode and runtime.created:
+        _print_lifecycle_lines(
+            f"Service runtime: created for this release at {runtime.directory}"
         )
+    _log_inconclusive_capability(runtime.environment)
+    return _SelectedEnvironment(runtime.interpreter, runtime.environment, runtime)
+
+
+def _log_inconclusive_capability(environment: ServiceEnvironment) -> None:
+    """Record a capability check that did not reach a verdict, and proceed."""
     if environment.capability is not ComputeCapability.READY:
         logger.warning(
             "daemon torch pre-flight inconclusive for %s (%s); proceeding",
-            interpreter,
+            environment.interpreter,
             environment.reason,
         )
-    return environment
 
 
-def _fail_unusable_environment(
-    interpreter: str,
-    capability: ComputeCapability,
-    reason: str,
-    *,
-    json_mode: bool,
+def _fail_service_runtime(
+    failure: ServiceRuntimeError, *, json_mode: bool
 ) -> typer.Exit:
-    """Render the refusal for an environment that cannot run the service.
+    """Render the refusal for a managed runtime that cannot be used.
 
-    One renderer for both halves of the judgement - the installation role
-    read in this process and the capability the daemon interpreter reports -
-    so a client is told the same thing whichever of them refuses it.
+    One sentence of cause and at most one command, because there is exactly
+    one thing to do about each of these: install uv, install a release that
+    can be reproduced, fix the accelerator, or start again.
     """
-    kind = classify_environment(environment_root(interpreter))
-    next_actions: tuple[str, ...]
-    if capability.fixed_by_torch_reinstall:
-        next_actions = cuda_remediation(interpreter, env_kind=kind).steps
-    else:
-        remediation = capability.remediation
-        if remediation is None:
-            raise AssertionError(f"{capability} blocks a start without a remedy")
-        next_actions = (remediation,)
     return _fail_start(
         json_mode,
-        error="service_env_no_gpu",
+        error=failure.code,
         message="Service start failed",
-        human_lines=(
-            f"Service interpreter: {interpreter} ({kind.label})",
-            f"That environment cannot run the GPU-only service: {reason}.",
-            "The service runs in the environment that launches it and does "
-            "not provision its own python.",
-        ),
-        next_actions=next_actions,
-        detail=reason,
+        human_lines=(failure.cause,),
+        next_actions=() if failure.command is None else (failure.command,),
+        detail=failure.detail,
     )
 
 
@@ -815,19 +832,12 @@ def _guard_start_preconditions(port: int, json_mode: bool) -> None:
         )
 
 
-def _attach_existing_service(
-    json_mode: bool,
-    caller_warnings: tuple[str, ...],
-) -> bool:
+def _attach_existing_service(json_mode: bool) -> bool:
     """Attach to an owned serving daemon and emit the idempotent outcome."""
     existing = _existing_service_running()
     if existing is None:
         return False
-    if caller_warnings and not json_mode:
-        _print_lifecycle_lines(*caller_warnings)
-    attach_extra: dict[str, object] = (
-        {"warnings": list(caller_warnings)} if caller_warnings else {}
-    )
+    attach_extra: dict[str, object] = {}
     existing_pid = existing.pid
     attach_extra["typesafe"] = existing.typesafe
     existing_port = existing.port
@@ -926,6 +936,7 @@ def _spawn_prepared_service(request: _PreparedServiceRequest) -> int:
             local_only=request.backend.local_only,
             preprocess_mode=request.preprocess_forward,
             root=request.root,
+            interpreter=request.interpreter,
         )
     except DaemonBreakawayError as exc:
         raise _fail_start(
@@ -976,15 +987,8 @@ def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None
         # guards so the friendly path is no longer shadowed by the port-guard
         # exit 1 - a supervising broker attaches instead of seeing a gateway
         # fault.
-        # The attach paths below never resolve a daemon interpreter, so the
-        # daemon-side ephemeral warning cannot fire for them. The caller's own
-        # env is the condition that matters here: an operator invoking from a
-        # uvx cache env still walks into the forced-reinstall trap, and
-        # `already_running` is the outcome a long-lived daemon returns almost
-        # every time.
         progress.stage("Checking for a service already running...")
-        caller_warnings = _caller_ephemeral_warning()
-        if _attach_existing_service(json_mode, caller_warnings):
+        if _attach_existing_service(json_mode):
             return
 
         # A live owned daemon that stamped ``warming`` holds the machine lock
@@ -997,21 +1001,21 @@ def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None
             return
 
         # Everything from here on starts a daemon, so the environment that
-        # would run it is judged before anything is fetched or written for
-        # it. The judgement comes ahead of the port and machine guards, whose
-        # probes can create a lock file, and ahead of the binary check. A
-        # client or a host whose torch cannot serve is refused with nothing
-        # provisioned and nothing written.
+        # would run it is resolved before anything is fetched or written for
+        # it. It comes ahead of the port and machine guards, whose probes can
+        # create a lock file, and ahead of the binary check, so a start that
+        # has no environment to run in has provisioned and written nothing.
         interpreter = _resolve_daemon_interpreter()
-        env_warnings = _ephemeral_env_warning(interpreter)
-        if env_warnings and not json_mode:
-            _print_lifecycle_lines(*env_warnings)
         # A client is answered from the distributions this environment holds,
         # at no cost. A host is asked in a child of the daemon interpreter,
         # which imports torch there: the single longest pre-spawn stall (its
-        # own timeout is 60s).
+        # own timeout is 60s). A launcher that cannot serve is answered with
+        # the managed runtime, which the first such start creates.
         progress.stage("Checking accelerator support in the service environment...")
-        environment = _preflight_daemon_accelerator(interpreter, json_mode=json_mode)
+        selected = _select_service_environment(
+            interpreter, json_mode=json_mode, progress=progress
+        )
+        environment = selected.environment
 
         progress.stage("Checking the port and machine singleton...")
         _guard_start_preconditions(options.port, json_mode)
@@ -1046,6 +1050,7 @@ def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None
             preprocess_forward=preprocess_forward,
             json_mode=json_mode,
             root=resolved_root,
+            interpreter=selected.interpreter,
         )
         pid = _spawn_prepared_service(start_request)
         _write_service_status(pid, options.port)
@@ -1056,59 +1061,33 @@ def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None
                 log_path=log_path,
                 json_mode=json_mode,
                 started_at=t0,
-                env_warnings=env_warnings,
                 progress=progress,
+                runtime=selected.runtime,
             )
         )
+        # Only a start the runtime served reclaims the older ones, so the
+        # sweep can never remove the environment a daemon is running from.
+        # The wait above raises on every outcome but a serving daemon.
+        if selected.runtime is not None:
+            _reclaim_superseded_runtimes()
 
 
-def _ephemeral_env_warning(interpreter: str) -> tuple[str, ...]:
-    """Warning lines when the daemon interpreter is a uvx ephemeral cache env.
+def _reclaim_superseded_runtimes() -> None:
+    """Remove the runtimes of older releases, after one of ours has served.
 
-    A uvx run silently falls back to a cached ephemeral environment when the
-    installed tool env is broken (e.g. a forced reinstall failed mid-removal
-    because the running service held the Scripts dir) or the request does not
-    match the installed spec. Nothing else distinguishes that env from the
-    installed tool, so the start surface names it loudly. Returns ``()`` for
-    every other environment kind.
+    The outcome has already been emitted, so nothing here may print or raise:
+    reclaiming disk space is not something a successful start reports, and a
+    sweep that could not run is retried by the next one.
     """
-    kind = classify_environment(environment_root(interpreter))
-    if kind is not RuntimeEnvKind.UVX_EPHEMERAL:
-        return ()
-    return (
-        "WARNING: the service interpreter is a uvx EPHEMERAL cache "
-        "environment - not the installed tool:",
-        f"  {interpreter}",
-        "uvx falls back to a cached environment when the installed tool env "
-        "is broken or the request does not match it.",
-        *cuda_remediation(interpreter, env_kind=kind).steps,
-    )
+    from ..service_runtime import remove_superseded_runtimes
 
-
-def _caller_ephemeral_warning(interpreter: str | None = None) -> tuple[str, ...]:
-    """Warning lines when *this* CLI process runs from a uvx ephemeral env.
-
-    Distinct from :func:`_ephemeral_env_warning`, which describes the daemon
-    interpreter of a service being spawned. On the attach paths no daemon is
-    spawned and the running service may be entirely healthy, so the subject is
-    the caller: a forced reinstall from here still fails mid-removal while the
-    service holds the Scripts dir. Returns ``()`` for every other env kind.
-
-    ``interpreter`` defaults to the running interpreter; it is a parameter so
-    the classification can be exercised against real path shapes.
-    """
-    resolved = sys.executable if interpreter is None else interpreter
-    kind = classify_environment(environment_root(resolved))
-    if kind is not RuntimeEnvKind.UVX_EPHEMERAL:
-        return ()
-    return (
-        "WARNING: this command is running from a uvx EPHEMERAL cache "
-        "environment - not the installed tool:",
-        f"  {resolved}",
-        "The already-running service was started from a different "
-        "environment; this env disappears when the uvx run ends.",
-        *cuda_remediation(resolved, env_kind=kind).steps,
-    )
+    try:
+        removed = remove_superseded_runtimes()
+    except Exception:
+        logger.debug("superseded service runtimes were not reclaimed", exc_info=True)
+        return
+    for directory in removed:
+        logger.info("removed superseded service runtime %s", directory)
 
 
 def _daemon_is_serving(health: dict[str, object]) -> bool:
@@ -1245,10 +1224,10 @@ def _emit_start_succeeded(
     serving_pid = _health_service_pid(health, request.pid)
     _update_service_metadata(_status_metadata_from_health(health, pid=serving_pid))
     startup_s = time.perf_counter() - request.started_at
-    extra: dict[str, object] = (
-        {"warnings": list(request.env_warnings)} if request.env_warnings else {}
-    )
+    extra: dict[str, object] = {}
     extra["typesafe"] = health_typesafe(health)
+    if request.runtime is not None:
+        extra["runtime"] = request.runtime.to_dict()
     raw_status = health.get("status")
     health_status = raw_status if isinstance(raw_status, str) and raw_status else ""
     reason_lines: tuple[str, ...] = ()
@@ -1269,6 +1248,11 @@ def _emit_start_succeeded(
             address_line(request.port),
             f"Startup: {startup_s:.1f}s",
             f"Log: {request.log_path}",
+            *(
+                ()
+                if request.runtime is None
+                else (f"Runtime: {request.runtime.directory}",)
+            ),
             *reason_lines,
         ),
         pid=serving_pid,

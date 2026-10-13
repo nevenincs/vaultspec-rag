@@ -73,6 +73,7 @@ _EXTERNAL: Final = frozenset(
         EnvVar.TRANSFORMERS_VERBOSITY,
         EnvVar.DISABLE_SAFETENSORS_CONVERSION,
         EnvVar.PYTORCH_ENABLE_MPS_FALLBACK,
+        EnvVar.UV,
         EnvVar.UV_CACHE_DIR,
         EnvVar.UV_TOOL_DIR,
         EnvVar.VIRTUAL_ENV,
@@ -279,6 +280,10 @@ _DESCRIPTIONS: Final[Mapping[EnvVar, str]] = {
         "PyTorch's documented fallback from an unimplemented Metal operator "
         "to the processor. Read with PyTorch's own reading of it - the exact "
         "value 1 - because the behaviour behind it is PyTorch's."
+    ),
+    EnvVar.UV: (
+        "The uv executable, as uv names it to its children. Read to create "
+        "the service's own GPU environment with the uv the operator invoked."
     ),
     EnvVar.UV_CACHE_DIR: (
         "uv's cache location. Read to tell an ephemeral cache environment "
