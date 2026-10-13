@@ -54,6 +54,8 @@ The draft completeness gate requires all target archives to contain the monitor,
 
 Publication order remains the accepted release standard. Public acquisition extends to every shipped monitor target and launches checksum-verified downloaded bytes after publication. A reviewed committed pin catalog binds release tag, source revision, target archive SHA256 and monitor executable SHA256; verify before extraction and immediately before launch, with HTTPS/redirect/host checks and explicit member extraction. Live SHA256SUMS and bundle hashes are additional consistency checks. A tag without reviewed pins is unverified and fails closed; generated pin proposals do not authorize themselves. The public launch probe follows the reviewed pin handoff, while native build proof still gates the draft. The exact catalog owner/path and review handoff must be made concrete within this commitment before rollout.
 
+Wheel installations obtain the same finalized monitor bytes through `server start` provisioning from a per-target monitor-only release archive, verified against digests the release pipeline generates into the wheel, under `2026-10-13-monitor-provisioning-adr`.
+
 ### Authorized reconciliation of accepted records
 
 Approval covers these reconciliations. Apply each before its dependent implementation while preserving concurrent accepted lifecycle amendments.

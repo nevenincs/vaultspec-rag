@@ -5,7 +5,7 @@ tags:
 date: '2026-10-13'
 modified: '2026-10-13'
 body_schema: 'body-v2'
-body_hash: 'sha256:f7f7b30388f48024f8acc02fdcb65852a8f913e4ca436055086fc27b06dc3730'
+body_hash: 'sha256:6c3a34b0425bf00c9b49fd5a72b0fd3cfb4613bf52c82b3d2801638d7cef7a07'
 related:
   - "[[2026-10-13-monitor-provisioning-reference]]"
   - "[[2026-10-02-monitor-delivery-adr]]"
@@ -15,7 +15,7 @@ related:
   - "[[2026-10-05-qdrant-provisioning-trust-adr]]"
 ---
 
-# `monitor-provisioning` adr: `Provision the compiled monitor on server start from pins carried in the wheel` | (**status:** `proposed`)
+# `monitor-provisioning` adr: `Provision the compiled monitor on server start from pins carried in the wheel` | (**status:** `accepted`)
 
 ## Problem Statement
 
@@ -23,6 +23,7 @@ A host installed from PyPI, as a standalone uv tool or a project dependency, can
 
 ## Considerations
 
+- Approved 2026-10-13: after reviewing the fully automatic revision, the user replied "good plan and execute". This authorizes the decision, the reconciliation of the three accepted records and the rule wording below, and implementation.
 - The monitor is mandatory for a managed start and must stay so; a service without its monitor is not the delivered product (`2026-10-02-monitor-lifecycle-adr`).
 - Qdrant already solves the same problem for a native binary outside the Python environment: automatic provisioning on `server start`, a managed directory, archive and executable digests, verification before extraction and before every spawn, and no PATH tier (`2026-10-05-qdrant-provisioning-trust-adr`). Its transport and verification primitives are generic (`2026-10-13-monitor-provisioning-reference`, Reusable provisioning primitives).
 - The monitor is a same-repository release product, so no human can review its digests before the wheel ships; release-product trust is attestation-based (`2026-10-09-automatic-merge-gate-autonomous-release-adr`).
@@ -56,9 +57,9 @@ Source of bytes. The download location follows the Qdrant pattern: a shipped def
 
 Scope. This record does not change monitor lifecycle, allocation, readiness, parent-pipe shutdown, access capability or bridge behaviour, and does not change release-product admission or the bundle contents beyond the consistency check above. Toolchain pins stay reviewed committed constants.
 
-### Proposed reconciliation of accepted records
+### Reconciliation of accepted records
 
-Applied only once this record is accepted.
+Authorized with this record's acceptance.
 
 - `2026-10-02-monitor-lifecycle-adr`, Constraints: replace "Resolve an explicit absolute `VAULTSPEC_RAG_MONITOR_BINARY` override, otherwise the installed command on PATH." with "Resolve the executable as `2026-10-13-monitor-provisioning-adr` orders it: the installation's own pinned sibling, then the automatically provisioned managed install, with an optional paired operator override; each is digest-verified before spawn and PATH is not searched." Replace "Package installation and verified binary acquisition belong to delivery; this launcher performs no download or provisioning." with "The launcher performs no download; host `server start` provisioning acquires and verifies the executable before the launcher runs, under `2026-10-13-monitor-provisioning-adr`."
 - `2026-09-11-binary-release-bundles-adr`, Constraints: append to the version-checked-wheel bullet: "The native monitor compile precedes the wheel build so the wheel can carry its generated digests; the bundle then consumes that wheel and those monitor bytes and must match the wheel's pins, under `2026-10-13-monitor-provisioning-adr`." Append to the raw-target-names bullet: "A per-target monitor-only archive is also published as a release asset for wheel-installation provisioning; it is not a channel install unit."
