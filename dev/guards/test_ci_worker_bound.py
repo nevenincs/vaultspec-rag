@@ -18,6 +18,7 @@ from typing import Any, cast
 import pytest
 
 from dev.guards import _workflows as workflows
+from dev.guards._ci_names import Workflow
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
 
@@ -67,18 +68,13 @@ def test_no_workflow_or_job_declares_a_bound_the_runner_would_replace() -> None:
     )
 
 
-def test_every_suite_step_on_a_fleet_runner_bounds_its_own_workers() -> None:
+def test_every_suite_step_bounds_its_own_workers() -> None:
     """Each step that runs the parallel suite carries the bound itself.
 
     Mutation proof: deleting the ``env:`` from the Windows suite step made
     this fail naming that step; restoring it made this pass.
     """
-    steps = [
-        (job, step)
-        for job in workflows.load_jobs()
-        if any("self-hosted" in labels for labels in job.runners)
-        for step in _suite_steps(job)
-    ]
+    steps = [(job, step) for job in workflows.load_jobs() for step in _suite_steps(job)]
     assert steps, f"no step runs `just {SUITE_RECIPE}`; this guard checks nothing"
     unbounded = [
         f"{job.workflow}:{job.job_id}: {step.get('name')}"
@@ -88,4 +84,26 @@ def test_every_suite_step_on_a_fleet_runner_bounds_its_own_workers() -> None:
     assert not unbounded, (
         f"these steps run the suite with one worker per admitted CPU, because "
         f"they do not set {BOUND} themselves:\n" + "\n".join(unbounded)
+    )
+
+
+def test_windows_correctness_has_a_private_vm_and_child_headroom() -> None:
+    """Host applications cannot consume the correctness job's TCP port pool.
+
+    Mutation proof: restoring shared-host labels fails the VM assertion;
+    raising the worker count to four fails the headroom assertion. Restoring
+    the isolated two-worker configuration passes both.
+    """
+    job = next(
+        job
+        for job in workflows.load_jobs(Workflow.MERGE_GATE)
+        if job.job_id == "tests-windows"
+    )
+    assert job.runners == (("windows-2025",),), (
+        "Windows correctness requires a fresh Windows VM with its own TCP port pool"
+    )
+    steps = _suite_steps(job)
+    assert len(steps) == 1, "the Windows correctness suite must run exactly once"
+    assert _env(steps[0]).get(BOUND) == "2", (
+        "Windows correctness must reserve CPU headroom for child processes"
     )

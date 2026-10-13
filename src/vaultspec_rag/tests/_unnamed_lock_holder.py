@@ -17,6 +17,8 @@ import sys
 import time
 from typing import TYPE_CHECKING
 
+from .._machine_lock import machine_lock_path
+
 if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
@@ -32,11 +34,10 @@ import time
 from pathlib import Path
 
 from vaultspec_rag._anchor_claim import claim_anchor
-from vaultspec_rag._machine_lock import machine_lock_path
 
 ready = Path(sys.argv[1])
 stop = Path(sys.argv[2])
-claim = claim_anchor(machine_lock_path(), pid_record=True, create_parent=True)
+claim = claim_anchor(Path(sys.argv[3]), pid_record=True, create_parent=True)
 assert claim.descriptor is not None, claim
 # A body no writer will ever turn into an owner record.
 os.lseek(claim.descriptor, 0, os.SEEK_SET)
@@ -52,14 +53,21 @@ while not stop.exists():
 def unnamed_machine_lock_holder(control_dir: Path) -> Generator[int]:
     """Hold the configured machine lock with an unreadable owner record.
 
-    The child inherits this process's environment, so the configured (and in
-    tests, isolated) machine lock path is the one it claims. Yields the
-    child's pid; the OS lock stays held until the context exits.
+    Resolve the configured lock path in the parent so the holder does not
+    reread workspace settings or run unrelated Git probes before claiming it.
+    Yields the child's pid; the OS lock stays held until the context exits.
     """
     ready = control_dir / "unnamed-holder-ready"
     stop = control_dir / "unnamed-holder-stop"
     process = subprocess.Popen(
-        [sys.executable, "-c", _UNNAMED_HOLDER_SRC, str(ready), str(stop)],
+        [
+            sys.executable,
+            "-c",
+            _UNNAMED_HOLDER_SRC,
+            str(ready),
+            str(stop),
+            str(machine_lock_path()),
+        ],
         stderr=subprocess.PIPE,
         text=True,
     )

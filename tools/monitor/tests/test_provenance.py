@@ -67,8 +67,9 @@ def test_admission_binds_certificate_to_repository_workflow_tag_and_source(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Mutation proof: renaming source-digest failed the exact flag assertion
-    (exit 1); restoring it passed (exit 0).
+    """Mutation proof: adding signer-workflow beside cert-identity fails the
+    exact flag assertion; restoring the valid command passes. Renaming
+    source-digest also failed that assertion; restoration passed.
     """
     archive, spec = _archive(tmp_path)
     captured: list[list[str]] = []
@@ -87,7 +88,6 @@ def test_admission_binds_certificate_to_repository_workflow_tag_and_source(
     tag = VAULTSPEC_RAG.tag_for(VERSION)
     assert flags == {
         "--repo": "nevenincs/vaultspec-rag",
-        "--signer-workflow": "nevenincs/vaultspec-rag/.github/workflows/binaries.yml",
         "--cert-identity": f"https://github.com/nevenincs/vaultspec-rag/.github/workflows/binaries.yml@refs/tags/{tag}",
         "--source-ref": f"refs/tags/{tag}",
         "--source-digest": REVISION,

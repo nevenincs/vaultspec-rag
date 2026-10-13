@@ -8,6 +8,7 @@ it is the same one on each platform, so it lives here once.
 from __future__ import annotations
 
 import os
+import re
 import sys
 from typing import TYPE_CHECKING
 
@@ -16,8 +17,8 @@ if TYPE_CHECKING:
 
 
 def assert_private_file(path: Path) -> None:
-    # Disabling private creation failed the DACL assertions for both publishers
-    # and replacement of a public file; restoration passed.
+    # Mutations granting Everyone access, allowing inheritance, or adding an
+    # extra ACE fail the owner/shape assertions; restoring creation passes.
     if sys.platform != "win32":
         assert path.stat().st_mode & 0o777 == 0o600
         assert path.stat().st_uid == os.getuid()
@@ -36,8 +37,15 @@ def assert_private_file(path: Path) -> None:
         ctypes.c_void_p,
     )
     api.ConvertSecurityDescriptorToStringSecurityDescriptorW.restype = wintypes.BOOL
+    api.ConvertStringSidToSidW.argtypes = (
+        wintypes.LPCWSTR,
+        ctypes.POINTER(ctypes.c_void_p),
+    )
+    api.ConvertStringSidToSidW.restype = wintypes.BOOL
     descriptor = ctypes.c_void_p()
     text = ctypes.c_wchar_p()
+    trustee = ctypes.c_void_p()
+    trustee_text = ctypes.c_wchar_p()
     try:
         result = api.GetNamedSecurityInfoW(
             str(path), 1, 4, None, None, None, None, ctypes.byref(descriptor)
@@ -46,7 +54,16 @@ def assert_private_file(path: Path) -> None:
         assert api.ConvertSecurityDescriptorToStringSecurityDescriptorW(
             descriptor, 1, 4, ctypes.byref(text), None
         )
-        assert text.value == f"D:P(A;;FA;;;{_current_user_sid(api, kernel32)})"
+        owner = _current_user_sid(api, kernel32)
+        # Account aliases and auto-inheritance bookkeeping vary by host. The
+        # DACL must remain protected, with one uninherited full-access ACE.
+        match = re.fullmatch(r"D:P(?:AR)?(?:AI)?\(A;;FA;;;([^()]+)\)", text.value or "")
+        assert match is not None, f"not a protected single-owner DACL: {text.value}"
+        assert api.ConvertStringSidToSidW(match[1], ctypes.byref(trustee))
+        assert api.ConvertSidToStringSidW(trustee, ctypes.byref(trustee_text))
+        assert trustee_text.value == owner, "the DACL grants access to another account"
     finally:
+        kernel32.LocalFree(trustee_text)
+        kernel32.LocalFree(trustee)
         kernel32.LocalFree(text)
         kernel32.LocalFree(descriptor)

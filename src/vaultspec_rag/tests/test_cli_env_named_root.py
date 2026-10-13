@@ -290,7 +290,7 @@ def test_env_naming_a_non_workspace_is_refused_not_ignored(
     )
     message = _refusal_message(result)
     assert f"{EnvVar.RAG_ROOT.value} names" in message, message
-    assert _unwrapped(str(workspaces.bare)) in message, message
+    assert _unwrapped(str(workspaces.bare.resolve())) in message, message
 
 
 class TestTheEnvironmentValueItself:

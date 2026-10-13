@@ -84,8 +84,8 @@ jobs:
           HEAD_BRANCH: ${{ steps.release.outputs.pr && fromJSON(steps.release.outputs.pr).headBranchName || '' }}
         run: gh workflow run devserver.yml --repo "$GITHUB_REPOSITORY" --ref "$HEAD_BRANCH"
 
-      # Bot PR events are held for approval. The full dispatch proves the final
-      # head and then releases its held gate, which reports that exact proof.
+      # Bot PR events run no checks. The trusted dispatch proves the final
+      # generated head and reports the required full verdict on that commit.
       - name: Dispatch the merge gate for the release pull request
         if: steps.release.outputs.pr
         env:
@@ -100,8 +100,7 @@ jobs:
           gh workflow run merge-gate.yml \
             --repo "${GITHUB_REPOSITORY}" \
             --ref "${HEAD_BRANCH}" \
-            --field ref="${HEAD_BRANCH}" \
-            --field scope=full
+            --field ref="${HEAD_BRANCH}"
 
   candidate:
     name: "Check: Release candidate (Linux)"
@@ -180,6 +179,7 @@ jobs:
       contents: read
       actions: write
       pull-requests: write
+      security-events: write
     with:
       ref: ${{ needs.candidate.outputs.sha }}
 

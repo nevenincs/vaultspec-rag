@@ -87,8 +87,6 @@ def admit_archive(archive: Path, spec: BundleSpec, producer: str) -> DeliveryPro
             str(archive),
             "--repo",
             REPOSITORY,
-            "--signer-workflow",
-            SIGNER_WORKFLOW,
             "--cert-identity",
             f"https://github.com/{SIGNER_WORKFLOW}@refs/tags/{tag}",
             "--source-ref",

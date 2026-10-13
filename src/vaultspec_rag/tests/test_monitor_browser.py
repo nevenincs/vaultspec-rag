@@ -125,7 +125,11 @@ def _post(
 
 def _response(request: urllib.request.Request) -> tuple[int, dict[str, object]]:
     try:
-        response = urllib.request.urlopen(request, timeout=8)
+        # Inventory can spawn the owner CLI; its production deadline is
+        # longer than a short HTTP probe, and its response owns the verdict.
+        response = urllib.request.urlopen(
+            request, timeout=CHILD_PROCESS_TIMEOUT_SECONDS
+        )
     except urllib.error.HTTPError as error:
         response = error
     with response:

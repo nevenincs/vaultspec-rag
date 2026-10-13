@@ -75,10 +75,6 @@ def test_the_gate_refuses_an_untrusted_authors_commit_by_name() -> None:
     verdict step makes this fail on the missing refusal; restoring it makes
     this pass.
     """
-    raw_gate = workflows.document(Workflow.MERGE_GATE)["jobs"][GATE_JOB]
-    assert raw_gate["env"]["ASSOCIATION"] == (
-        "${{ github.event.pull_request.author_association }}"
-    ), "the gate no longer reads the pull request author's association"
     gate = next(
         job
         for job in workflows.load_jobs(Workflow.MERGE_GATE)
@@ -91,19 +87,19 @@ def test_the_gate_refuses_an_untrusted_authors_commit_by_name() -> None:
             if step.get("name") == "Every full check passed on this commit"
         )["run"]
     )
-    marker = 'case "${ASSOCIATION}" in OWNER | COLLABORATOR) ;;'
-    assert marker in script, (
-        "the gate no longer refuses a commit by an author who is neither the "
-        "owner nor a collaborator"
-    )
-    refusal = script.index(marker)
-    assert script.index("head_sha=$HEAD_SHA") < refusal, (
-        "an untrusted author's commit a collaborator's ci:full already proved "
-        "must keep its verdict"
-    )
-    assert refusal < script.index("nothing has measured"), (
-        "an untrusted author's commit must be refused by name, not told to push"
-    )
+    assert "applies $FULL_RUN_LABEL" not in script
+    context = {
+        "github.repository": "owner/repo",
+        "github.event.pull_request.head.repo.full_name": "owner/repo",
+        "github.event.pull_request.author_association": "CONTRIBUTOR",
+        "github.event.pull_request.draft": False,
+        "github.event.action": "labeled",
+        "github.event.label.name": "ci:full",
+    }
+    assert (
+        workflows.evaluate(gate.condition or "true", "pull_request", context)
+        is workflows.FALSE
+    ), "an untrusted author must never reach the gate"
 
 
 def test_the_gate_refuses_a_forks_pull_request() -> None:

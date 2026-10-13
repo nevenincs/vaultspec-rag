@@ -145,6 +145,66 @@ def _reads_token(step: dict[str, object], token: str) -> bool:
     return isinstance(value, str) and f"secrets.{token}" in value
 
 
+def test_macos_full_suite_and_its_preparation_are_gating() -> None:
+    """A failed macOS suite or its setup must fail the hardware job.
+
+    Mutation proof: deleting each required step fails its presence assertion;
+    changing each condition fails its condition assertion; making each step
+    advisory fails its gating assertion. Reversing preparation and suite order
+    fails the order assertion. Restoring after every mutation passes.
+    """
+    job = next(
+        job for job in workflows.load_jobs(Workflow.HARDWARE) if job.job_id == "mps"
+    )
+    assert not job.continue_on_error, "the macOS hardware job is advisory"
+    required = (
+        ("uses", "actions/setup-node@"),
+        ("run", "npm ci"),
+        ("run", "just build-monitor-test"),
+        ("run", "just test-python"),
+    )
+    indices: list[int] = []
+    for field, value in required:
+        matches = [
+            (index, step)
+            for index, step in enumerate(job.steps)
+            if (
+                str(step.get(field, "")).startswith(value)
+                if field == "uses"
+                else _run(step) == value
+            )
+        ]
+        assert len(matches) == 1, f"macOS requires exactly one {value} step"
+        index, step = matches[0]
+        assert step.get("if") == "inputs.macos_full_suite", (
+            f"macOS {value} must run for the full suite"
+        )
+        assert not step.get("continue-on-error"), f"macOS {value} is advisory"
+        indices.append(index)
+    assert indices == sorted(indices), "macOS preparation must precede the suite"
+
+
+def test_default_accelerator_dispatch_runs_both_tiers() -> None:
+    """A default dispatch must reach both accelerator jobs.
+
+    Changing the default to macos fails the selected-job assertion naming cuda;
+    restoring macos-and-gpu passes.
+    """
+    triggers = workflows.triggers(workflows.document(Workflow.CHEAP_LANE))
+    assert isinstance(triggers, dict)
+    dispatch = triggers["workflow_dispatch"]
+    tier = dispatch["inputs"]["tier"]["default"]
+    selected = {
+        job.job_id
+        for job in workflows.load_jobs(Workflow.HARDWARE)
+        if workflows.evaluate(
+            job.condition or "true", "workflow_dispatch", {"inputs.tier": tier}
+        )
+        is workflows.TRUE
+    }
+    assert selected == {"mps", "cuda"}, f"default dispatch runs {sorted(selected)}"
+
+
 def test_accelerator_recipes_live_only_in_the_hardware_workflow() -> None:
     """No workflow but the hardware one runs an accelerator tier itself.
 

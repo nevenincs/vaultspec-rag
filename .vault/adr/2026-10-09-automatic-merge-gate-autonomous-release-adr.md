@@ -10,9 +10,9 @@ related:
   - "[[2026-10-09-automatic-merge-gate-core-orchestration-reference]]"
 supersedes:
   - '2026-09-21-automatic-merge-gate-adr'
-modified: '2026-10-09'
+modified: '2026-10-13'
 body_schema: 'body-v2'
-body_hash: 'sha256:1b406e09732406c70314824086d4349fd01eb9af2bdf10ae03a85b35f5ba17e4'
+body_hash: 'sha256:606f8d82e0c441b8ea2502fee0dc1aaa8fcbc62e1664690d6d9a58532bdb82c5'
 ---
 
 # `automatic-merge-gate` adr: `Merge starts an autonomous verified release` | (**status:** `accepted`)
@@ -54,3 +54,41 @@ The maintainer's merge approves the release source and workflow. GitHub/Sigstore
 ## Consequences
 
 One human release action remains. Release PRs wait for real full checks and Dev Server proof. Build/publication failures leave a draft and report failure. Old releases without attestations fail the new public acquisition verifier; they are not silently admitted from live checksums. Attestation availability and the admitted runner fleet become part of the release trust boundary. Administrator bypass remains a separate repository setting and is not changed by workflow code.
+
+## Ready pull-request proof, amended 2026-10-13
+
+Authorized 2026-10-13: the maintainer requested that CI jobs actually run on pull requests, that the causes of skipping and failures be fixed, and that normal CI require less maintenance.
+
+Every ready same-repository pull request from an admitted author must automatically run full lint, both supported Linux interpreter suites, Windows correctness, and the dependency audit on opening, reopening, synchronization, and readiness. A fresh head receives fresh proof; manually dispatching a full run or cycling a label is recovery, never a normal prerequisite. Draft and untrusted-code admission remain unchanged.
+
+Light lint, skipped suites, and a successful partial dispatch cannot authorize the required merge check. An unrelated label can preserve only the newest completed verdict on the same head after confirming that all five full measuring jobs passed. A newer failed or cancelled proof cannot be replaced by an older green result. The full job condition is shared by full lint and the correctness suites to prevent per-job policy drift.
+
+This replaces the ordinary ready-PR light-only synchronization policy retained from the superseded 2026-09-21 decision. Release proof, accelerator admission, and the external required check name remain unchanged. Windows correctness uses an isolated hosted VM with child-process headroom; dedicated accelerator runners continue to serve hardware proof.
+
+Grounding: `.github/workflows/merge-gate.yml` jobs `lint`, `tests`, `tests-windows`, `dependency-audit`, and `gate`; `dev/guards/test_ci_lanes.py`; PR #604. At head 897a7b24, PR run 38378550261 passed light lint while every full measuring job skipped, even though full dispatch 38378599399 failed seven Windows tests. That is insufficient merge evidence. At head 13eca2c0, automatic PR run 38385969699 admitted every full measuring job without a label or dispatch.
+
+## Authorized CI enforcement amendment
+
+Amended 2026-10-13: the maintainer explicitly required fixing CI failures,
+verifying every trusted ready PR head in full, and preventing workarounds.
+Foreign-fork and untrusted-author PRs run no checks and cannot merge.
+This supersedes the prior light-dispatch and human-label admission exceptions,
+and the held-bot-PR approval step. Trusted release automation still dispatches
+full proof of its own generated branch after the final write.
+
+Every trusted ready PR update runs full lint, both Linux Python versions,
+the Windows correctness suite, dependency audit and the three CodeQL languages.
+The aggregate also requires the canonical Dev Server result on the same SHA.
+A skipped untrusted aggregate uses a different context from the required check,
+so it cannot satisfy protection. No light input or job can authorize merge.
+The shared Dev Server template follows the same author restriction.
+Manual accelerator CI selects both macOS and CUDA by default; macOS suite and
+setup failures are gating. Hardware remains in its trusted schedule, dispatch
+and release lanes. The administrator bypass is removed from protect-main.
+GitHub automatic CodeQL setup is retired when the guarded replacement is deployed.
+
+The provenance correction keeps the exact certificate identity, repository,
+tag, source and signer digests, while removing the mutually exclusive
+signer-workflow flag. Windows verification compares actual owner SID and protected
+ACL semantics, resolves canonical paths, and refuses image metadata from exited
+processes. Tests retain the real Windows handles needed to prove that refusal.

@@ -12,11 +12,11 @@ transport reads its credential from protected local discovery.
 
 from __future__ import annotations
 
-import http.server
 import json
 import os
 import threading
 import typing
+from http.server import ThreadingHTTPServer
 
 import pytest
 from textual.app import App, ComposeResult
@@ -235,7 +235,7 @@ class _StatusService:
                 else:
                     self._route(path)
 
-        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         _replace_service_status(
