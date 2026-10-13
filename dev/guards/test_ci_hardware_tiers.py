@@ -145,6 +145,22 @@ def _reads_token(step: dict[str, object], token: str) -> bool:
     return isinstance(value, str) and f"secrets.{token}" in value
 
 
+def test_macos_full_suite_and_its_preparation_are_gating() -> None:
+    """A failed macOS suite or its setup must fail the hardware job.
+
+    Mutation proof: making the suite step advisory fails the assertion naming
+    that step; restoring the workflow passes.
+    """
+    job = next(
+        job for job in workflows.load_jobs(Workflow.HARDWARE) if job.job_id == "mps"
+    )
+    steps = [step for step in job.steps if step.get("if") == "inputs.macos_full_suite"]
+    assert any(_run(step) == "just test-python" for step in steps)
+    assert not job.continue_on_error, "the macOS hardware job is advisory"
+    advisory = [step.get("name") for step in steps if step.get("continue-on-error")]
+    assert not advisory, f"macOS full-suite steps are advisory: {advisory}"
+
+
 def test_accelerator_recipes_live_only_in_the_hardware_workflow() -> None:
     """No workflow but the hardware one runs an accelerator tier itself.
 
