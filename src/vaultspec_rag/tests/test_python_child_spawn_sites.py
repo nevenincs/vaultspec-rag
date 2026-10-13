@@ -117,6 +117,12 @@ _SITES: dict[str, _Site] = {
         {"subprocess.run": 1},
         "uv sync in the target project, on the operator's request",
     ),
+    "service_runtime.py::_run_uv": _Site(
+        _Starts.NATIVE,
+        {"subprocess.run": 1},
+        "uv, creating the service's own GPU environment; uv chooses how it "
+        "runs its own interpreter",
+    ),
     "indexer/_chunk_producer.py::CodeChunkProducer.produce_singles": _Site(
         _Starts.POOL,
         {"multiprocessing.get_context": 1},
@@ -219,6 +225,10 @@ _FOUND_BY: dict[str, tuple[str, str]] = {
     ),
     "commands/_uv_sync.py::_run_uv_sync_torch": (
         "commands/_uv_sync.py::_run_uv_sync_torch",
+        "uv",
+    ),
+    "service_runtime.py::_run_uv": (
+        "service_runtime.py::uv_executable",
         "uv",
     ),
     "monitor_process.py::MonitorProcess.start": (

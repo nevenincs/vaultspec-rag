@@ -38,6 +38,7 @@ from ..commands._provision import (
 from ..config._paths import persist_local_only, read_persisted_local_only
 from ..config._types import EnvVar
 from ..operator_state._installation import ComputeCapability, InstallRole
+from ..service_runtime import ERROR_RUNTIME_UNSUPPORTED
 from ._cli_helpers import app, runner
 from ._model_cache_seed import STAND_IN_DENSE, STAND_IN_RERANKER, seed_model_cache
 from .conftest import managed_env, pin_daemon_capability, pin_install_role
@@ -292,12 +293,17 @@ class TestAHostThatCannotRunTheServiceYet:
     def test_start_refuses_before_it_looks_at_the_port_or_the_machine(
         self, managed: Path, empty_cache: Path
     ) -> None:
-        """The judgement comes ahead of every guard that can write.
+        """The environment is resolved ahead of every guard that can write.
 
-        The start is aimed at a port something else holds, so a start that
-        reached the port guard first fails for the port instead.
+        A host whose torch cannot use the GPU no longer refuses the operator:
+        the daemon would run from the managed runtime instead. This checkout
+        is a working tree, which no requirement reproduces, so the runtime
+        cannot be created and that is the refusal - and it still arrives
+        before anything is written. The start is aimed at a port something
+        else holds, so a start that reached the port guard first fails for the
+        port instead.
 
-        Mutation check: with the judgement moved back after the port and
+        Mutation check: with the resolution moved back after the port and
         machine guards, the start fails as ``port_in_use`` and the error
         assertion fails; restoring passes.
         """
@@ -309,7 +315,7 @@ class TestAHostThatCannotRunTheServiceYet:
 
         assert result.exit_code == 1, result.output
         payload = cast("dict[str, object]", json.loads(result.stdout))
-        assert payload["error"] == "service_env_no_gpu"
+        assert payload["error"] == ERROR_RUNTIME_UNSUPPORTED
         assert not managed.exists(), _tree(managed.parent)
 
 

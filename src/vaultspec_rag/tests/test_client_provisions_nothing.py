@@ -32,7 +32,8 @@ from ..commands._install import install_run
 from ..commands._provision import ProvisionStep
 from ..config._paths import read_persisted_local_only
 from ..config._types import EnvVar
-from ..operator_state._installation import ComputeCapability
+from ..operator_state._provisioning import host_install_command
+from ..service_runtime import ERROR_RUNTIME_UNSUPPORTED
 from ._cli_helpers import app, runner
 from ._model_cache_seed import STAND_IN_DENSE, STAND_IN_RERANKER, seed_model_cache
 from ._qdrant_provision_seam import record_qdrant_provisioning
@@ -92,17 +93,20 @@ def test_start_is_refused_before_anything_is_provisioned(
     isolated_singleton_dirs: Path,
     tmp_path: Path,
 ) -> None:
-    """``server start`` judges the role before it does anything else.
+    """``server start`` resolves what would serve before it does anything else.
 
-    The start is aimed at a port something else holds. The port guard is the
-    first thing after the role, and everything a start fetches or spawns comes
-    after the guard, so a client that is refused as a client - rather than for
-    the port - was judged before any of it. The occupied port is also what
-    keeps a regressed run from going on to spawn a daemon on this machine.
+    A client environment never runs the daemon, so the start looks to the
+    managed runtime instead of refusing the operator - and this checkout is a
+    working tree, which no requirement reproduces, so the runtime cannot be
+    created and that is the refusal. What the test proves is the ordering: the
+    start is aimed at a port something else holds, the port guard is the first
+    thing after the environment is resolved, and everything a start fetches or
+    spawns comes after the guard. The occupied port is also what keeps a
+    regressed run from going on to spawn a daemon on this machine.
 
-    Mutation check: with the refusal removed from the start command, or moved
-    after the dependency fetch, the start reaches the port guard first and
-    fails as ``port_in_use`` - failing the error assertion. Restoring it
+    Mutation check: with the resolution removed from the start command, or
+    moved after the dependency fetch, the start reaches the port guard first
+    and fails as ``port_in_use`` - failing the error assertion. Restoring it
     passes.
     """
     del isolated_singleton_dirs
@@ -127,9 +131,12 @@ def test_start_is_refused_before_anything_is_provisioned(
     assert result.exit_code == 1, result.output
     payload = cast("dict[str, object]", json.loads(result.stdout))
     assert payload["ok"] is False
-    assert payload["error"] == "service_env_no_gpu"
+    assert payload["error"] == ERROR_RUNTIME_UNSUPPORTED
     data = cast("dict[str, object]", payload["data"])
-    assert data["detail"] == ComputeCapability.NOT_APPLICABLE.label
+    # One cause, one command, and no claim that the operator's environment is
+    # the thing to repair: it never was.
+    assert data["next_actions"] == [host_install_command()]
+    assert "direct_url.json records" in str(data["detail"])
 
 
 def test_install_provisions_nothing_with_every_step_left_on(
