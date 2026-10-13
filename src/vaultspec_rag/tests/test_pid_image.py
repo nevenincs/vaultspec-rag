@@ -29,6 +29,7 @@ MUTATION PROOF, each run in one uninterrupted sequence and restored:
 from __future__ import annotations
 
 import contextlib
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -105,9 +106,12 @@ def test_the_psutil_route_reads_a_departed_process_as_unreadable() -> None:
 
     assert _psutil_image_path(child.pid) is None
     assert _psutil_image_name(child.pid) is None
+    assert pid_image_path(child.pid) is None
 
 
-@pytest.mark.parametrize("reader", [_psutil_image_path, _psutil_image_name])
+@pytest.mark.parametrize(
+    "reader", [_psutil_image_path, _psutil_image_name, pid_image_path]
+)
 def test_windows_exited_process_metadata_is_not_a_live_image(
     reader: Callable[[int], str | None],
 ) -> None:
@@ -118,6 +122,9 @@ def test_windows_exited_process_metadata_is_not_a_live_image(
     varies with Windows cleanup timing. The real natural-exit test above
     complements this deterministic policy check. Restore the OS view before
     the real hardware-anchor fixtures tear down.
+
+    Removing the public Windows liveness guard failed the None assertion;
+    restoring it passed, including all three readers.
     """
     import psutil
 
@@ -140,7 +147,9 @@ def test_windows_exited_process_metadata_is_not_a_live_image(
         monkeypatch.setattr(_process_probe.sys, "platform", "win32")
         monkeypatch.setattr(_process_probe, "pid_alive", exited)
         monkeypatch.setattr(psutil, "Process", retained)
-        assert reader(1234) is None
+        # Use a readable process object so removing the public Win32 guard
+        # returns real image metadata despite the substituted exited verdict.
+        assert reader(os.getpid()) is None
 
 
 def test_a_live_process_image_is_readable_on_this_platform() -> None:

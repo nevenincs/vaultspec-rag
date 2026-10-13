@@ -258,6 +258,8 @@ def pid_image_path(pid: int) -> str | None:
         return None
     if sys.platform != "win32":
         return _posix_image_path(pid)
+    if not pid_alive(pid):
+        return None
     import ctypes
     from ctypes import wintypes
 

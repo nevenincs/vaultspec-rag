@@ -12,6 +12,7 @@ outside the tree. :data:`~dev.guards._ci_names.GATE_CHECK` is its value.
 
 from __future__ import annotations
 
+from typing import cast
 from urllib.parse import unquote
 
 import pytest
@@ -90,6 +91,7 @@ def test_the_gate_carries_the_name_branch_protection_requires() -> None:
 
     Mutation proof: renaming the gate job to ``Check: Merge verdict (Linux)``
     made this fail naming both strings; restoring the name made it pass.
+    Renaming GATE_CHECK alone also failed this assertion; restoration passed.
     """
     gate = _gate()
     assert gate.name == GATE_NAME_EXPRESSION, (
@@ -139,7 +141,8 @@ def test_the_label_is_spelled_once_for_the_steps_that_read_it() -> None:
     this fail naming that step; reading ``$FULL_RUN_LABEL`` made it pass.
     """
     document = workflows.document(Workflow.MERGE_GATE)
-    declared = (document.get("env") or {}).get(LABEL_ENV)
+    environment = cast("dict[str, object]", document.get("env") or {})
+    declared = environment.get(LABEL_ENV)
     assert declared == FULL_RUN_LABEL, (
         f"{Workflow.MERGE_GATE} declares `env.{LABEL_ENV}` as {declared!r}; "
         f"the canon says {FULL_RUN_LABEL!r}."

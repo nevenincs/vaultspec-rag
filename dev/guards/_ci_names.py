@@ -48,12 +48,15 @@ class Workflow(StrEnum):
 #: The product owned workflow names start with, so their runs group together.
 PRODUCT = "RAG"
 
+#: The check required by protect-main; renaming it also requires a ruleset update.
+GATE_CHECK = "Check: Merge gate (Linux)"
+
 GATE_NAME_EXPRESSION = (
     "${{ github.event_name == 'pull_request' && "
     "(github.event.pull_request.head.repo.full_name != github.repository || "
     "(github.event.pull_request.author_association != 'OWNER' && "
     "github.event.pull_request.author_association != 'COLLABORATOR')) && "
-    "'Admission withheld (Linux)' || 'Check: Merge gate (Linux)' }}"
+    f"'Admission withheld (Linux)' || '{GATE_CHECK}' }}}}"
 )
 
 # Shared workflows retain their owner's name in every consumer repository.
@@ -88,7 +91,6 @@ SAME_REPO_CLAUSE = "github.event.pull_request.head.repo.full_name == github.repo
 #: The one check ``protect-main`` requires on a pull request's head commit.
 #: The ruleset's context is a repository setting outside the tree, so a change
 #: here is a settings change too.
-GATE_CHECK = "Check: Merge gate (Linux)"
 
 #: The workflow-level ``env`` key that carries :data:`FULL_RUN_LABEL` into the
 #: steps that read it, so a step never retypes the label.

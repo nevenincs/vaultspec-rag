@@ -343,6 +343,11 @@ def test_pr_verdict_requires_full_proof() -> None:
     assert "jobs?filter=all&per_page=100" in script
     assert "jobs=$(gh api --paginate " in script
     assert "sort -t $'\\t' -k1,1 -k2,2nr -k3,3nr" in script
+    # Removing the history loop failed this assertion; restoration passed.
+    assert "while read -r run previous; do" in script
+    assert 'if [ "$previous" != "success" ]; then' in script
+    assert 'if require_full_run "$run"; then' in script
+    assert "sort -k1,1nr" in script
 
 
 def test_dispatch_cannot_select_partial_merge_proof() -> None:
@@ -350,7 +355,9 @@ def test_dispatch_cannot_select_partial_merge_proof() -> None:
     for event in ("workflow_dispatch", "workflow_call"):
         trigger = _triggers()[event]
         assert isinstance(trigger, dict)
-        assert set(trigger["inputs"]) == {"ref"}
+        inputs = cast("dict[object, object]", trigger)["inputs"]
+        assert isinstance(inputs, dict)
+        assert set(cast("dict[object, object]", inputs)) == {"ref"}
     assert "lint-light" not in _jobs()
 
 

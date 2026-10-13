@@ -486,11 +486,20 @@ jobs:
           # earned by this exact commit. This run is still in progress, so
           # filtering to completed runs excludes it without comparing ids.
           workflow=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq '.workflow_id')
-          previous=$(gh api \
+          history=$(gh api --paginate \
             "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?head_sha=$HEAD_SHA&per_page=100" \
-            --jq '[.workflow_runs[] | select(.status == "completed")]
-                  | sort_by(.id) | last | "\(.id // 0) \(.conclusion // "none")"')
-          read -r run previous <<< "$previous"
+            --jq '.workflow_runs[] | select(.status == "completed") | [.id, .conclusion] | @tsv')
+          previous=none
+          while read -r run previous; do
+            if [ "$previous" != "success" ]; then
+              echo "::error::an intervening run on $HEAD_SHA ended in $previous"
+              exit 1
+            fi
+            if require_full_run "$run"; then
+              break
+            fi
+            previous=none
+          done < <(printf '%s\n' "$history" | sort -k1,1nr)
           if [ "$previous" = "success" ]; then
             require_full_run "$run" || { echo "::error::the last run on $HEAD_SHA lacks full measured proof"; exit 1; }
             echo "the last full run on $HEAD_SHA passed"
