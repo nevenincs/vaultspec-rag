@@ -1,60 +1,12 @@
 name: RAG Merge Gate
 
-# EVERYTHING A CHANGE MUST PASS, AND WHEN IT PAYS FOR IT.
-#
-# This is the pull request's CI workflow and the only workflow whose verdict
-# main requires. The cost follows the pull request's state:
-#
-# - A draft runs nothing. It is unfinished by declaration and cannot merge.
-# - Opening, reopening, updating or marking a ready pull request runs the full gate:
-#   every gating dimension, both Linux interpreters, the full Windows suite
-#   and the dependency audit.
-# - Every ready pull-request head must pass the full gate before merge.
-#   Light lint is available only through an explicit recovery dispatch.
-# - `ci:full` runs the full gate on demand, on a draft or on a ready head.
-# - A push to main runs the full gate on the commit that landed. Release
-#   Please refreshes the release proposal only after that run succeeds, so a
-#   regression can reach main but never a release.
-# - Release proposals always run the full gate, including Dev Server proof
-#   on their exact SHA. Other dispatches may ask for light lint. The release
-#   cut calls the full gate on the exact merged commit before tagging it.
-# - The weekly schedule runs only the dependency audit: main's tree was
-#   measured when it landed, but an advisory can be published against an
-#   unchanged lock at any time.
-#
-# WHY ONE REQUIRED CHECK HOLDS. Branch protection requires only
-# `Check: Merge gate (Linux)` on the pull request's head commit.
-#
-# - Any label also starts this workflow, and a job skipped by its `if:` counts
-#   as a PASSED required check. So the gate runs on every non-draft event: an
-#   unrelated label can only preserve the newest verdict this commit already
-#   earned, never mint one.
-# - The gate skips on a draft. A draft cannot merge, and marking it ready runs
-#   the full gate on the same head before it can.
-# - A cancelled run still runs the gate (`always()`), which then fails. A
-#   skipped gate there would read as a pass on a commit nothing measured.
-#
-# Branch protection also requires the branch to be up to date with main, so
-# the tree that passed is the tree that merges.
-#
-# AND IT HOLDS FOR EVERYONE EXCEPT THE PERSON MERGING. The ruleset lists the
-# Admin role as a bypass actor, and the only account with write access here
-# holds that role, so the merge box offers an override on every one of these
-# conditions. This gate is a discipline a maintainer keeps, not a wall that
-# keeps them. Remove the bypass actor to make these enforced guarantees.
-#
-# Pull requests from forks are refused: re-open an outside change from a
-# branch in this repository.
-#
-# ONLY TRUSTED AUTHORS REACH THE FLEET. A pull request runs its jobs on the
-# self-hosted fleet only when its author is the owner or a collaborator, or
-# once a user - never a bot - has applied `ci:full` to it, which takes triage
-# rights. Everyone else, Dependabot included, runs nothing here until a
-# collaborator has read the change, and the gate refuses the commit until
-# then. A fork's pull request runs the fork's own copy of this file, so for
-# forks these conditions only back up the repository's requirement that an
-# outside contributor's runs be approved; for every other author they are the
-# control itself.
+# Trusted ready PRs run every measuring job on each head. Drafts run nothing
+# unless their trusted author requests ci:full. A label never admits an
+# external author or a fork. The withheld job has a different name because
+# GitHub treats a skipped required check as successful.
+# Main pushes, reusable calls and dispatches require full proof; the weekly
+# audit checks newly published advisories against the unchanged lock.
+# The aggregate also requires the canonical Dev Server verdict on the same SHA.
 on:
   pull_request:
     branches: [main]
@@ -67,11 +19,6 @@ on:
         description: Git ref to validate
         required: true
         type: string
-      scope:
-        description: "full: every gating job. light: the light lint only."
-        required: false
-        default: full
-        type: string
   schedule:
     - cron: "47 5 * * 3"
   workflow_dispatch:
@@ -80,14 +27,6 @@ on:
         description: Git ref to validate (defaults to the dispatched ref)
         required: false
         type: string
-      scope:
-        description: "full: every gating job. light: the light lint only."
-        required: false
-        default: full
-        type: choice
-        options:
-          - full
-          - light
 
 permissions:
   contents: read
@@ -128,14 +67,13 @@ jobs:
     # carries that workflow's event, a dispatch, and runs the full gate.
     if: &full_gate >-
       github.event_name == 'push' ||
-      (github.event_name == 'workflow_dispatch' &&
-       (inputs.scope != 'light' || github.ref_name == 'release-please--branches--main--components--vaultspec-rag')) ||
+      github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
+       (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'COLLABORATOR') &&
        ((github.event.action == 'labeled' && github.event.label.name == 'ci:full' &&
          github.event.sender.type == 'User') ||
         (github.event.pull_request.draft == false &&
-         (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'COLLABORATOR') &&
          (github.event.action == 'opened' ||
           github.event.action == 'reopened' ||
           github.event.action == 'synchronize' ||
@@ -187,55 +125,6 @@ jobs:
 
       - name: Every gating dimension
         run: just check-all
-
-  lint-light:
-    name: "Check: Light lint (Linux)"
-    # Explicit lightweight recovery only; this job cannot prove a PR head.
-    # Release proposals always take the full path.
-    if: >-
-      github.event_name == 'workflow_dispatch' && inputs.scope == 'light' &&
-      github.ref_name != 'release-please--branches--main--components--vaultspec-rag'
-    timeout-minutes: 140
-    runs-on: [self-hosted, Linux, X64, build]
-    env:
-      CI_EXEC_BUDGET_MINUTES: 20
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-          ref: ${{ inputs.ref || github.sha }}
-
-      - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version-file: .python-version
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-        with:
-          prune-cache: false
-          enable-cache: false
-
-      - name: Set up just
-        uses: taiki-e/install-action@6012bba2f8e3e666a2b212f8823c06831704ce92 # just
-        with:
-          tool: just@1.38.0
-
-      - name: Initialize the worktree
-        run: just init
-
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          package-manager-cache: false
-          node-version-file: .nvmrc
-
-      - name: Restore frontend dependencies
-        run: npm ci
-
-      - name: The light gating dimensions
-        run: just check-light
 
   tests:
     name: "Test: Correctness suite (Linux, ${{ matrix.python-version }})"
@@ -393,14 +282,13 @@ jobs:
     if: >-
       github.event_name == 'push' ||
       github.event_name == 'schedule' ||
-      (github.event_name == 'workflow_dispatch' &&
-       (inputs.scope != 'light' || github.ref_name == 'release-please--branches--main--components--vaultspec-rag')) ||
+      github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
+       (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'COLLABORATOR') &&
        ((github.event.action == 'labeled' && github.event.label.name == 'ci:full' &&
          github.event.sender.type == 'User') ||
         (github.event.pull_request.draft == false &&
-         (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'COLLABORATOR') &&
          (github.event.action == 'opened' ||
           github.event.action == 'reopened' ||
           github.event.action == 'synchronize' ||
@@ -440,14 +328,49 @@ jobs:
       - name: Python dependency vulnerability audit
         run: just audit-deps
 
+  code-scanning:
+    name: "Check: Code scanning (Linux, ${{ matrix.language }})"
+    if: *full_gate
+    runs-on: [self-hosted, Linux, X64, build]
+    timeout-minutes: 150
+    env:
+      CI_EXEC_BUDGET_MINUTES: 30
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [actions, javascript-typescript, python]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref || github.sha }}
+      - name: Initialize code scanning
+        uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+      - name: Analyze code
+        uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
+        with:
+          category: /language:${{ matrix.language }}
+
   gate:
-    name: "Check: Merge gate (Linux)"
-    needs: [lint, lint-light, tests, tests-windows, dependency-audit]
+    # A skipped untrusted job must never report the required merge context.
+    name: >-
+      ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || (github.event.pull_request.author_association != 'OWNER' && github.event.pull_request.author_association != 'COLLABORATOR')) && 'Admission withheld (Linux)' || 'Check: Merge gate (Linux)' }}
+    needs: [lint, tests, tests-windows, dependency-audit, code-scanning]
     # `always()`, never `!cancelled()`: see the header on why a skipped gate
     # would pass a commit nothing measured. Only a draft skips it, unless
     # `ci:full` was pressed on it.
     if: >-
       always() &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'COLLABORATOR'))) &&
       !(github.event_name == 'pull_request' &&
         github.event.pull_request.draft == true &&
         !(github.event.action == 'labeled' && github.event.label.name == 'ci:full'))
@@ -469,15 +392,12 @@ jobs:
       DRAFT: ${{ github.event.pull_request.draft }}
       PR: ${{ github.event.pull_request.number }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-      HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
       HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-      AUTHOR: ${{ github.event.pull_request.user.login }}
-      ASSOCIATION: ${{ github.event.pull_request.author_association }}
       LINT: ${{ needs.lint.result }}
-      LIGHT: ${{ needs.lint-light.result }}
       TESTS: ${{ needs.tests.result }}
       WINDOWS: ${{ needs.tests-windows.result }}
       AUDIT: ${{ needs.dependency-audit.result }}
+      SCANNING: ${{ needs.code-scanning.result }}
     steps:
       # Same-repository only: a fork's token cannot edit labels, so a
       # maintainer removes the label by hand there.
@@ -498,10 +418,10 @@ jobs:
         if: >-
           (github.event_name == 'workflow_dispatch' &&
            github.ref_name == 'release-please--branches--main--components--vaultspec-rag') ||
-          github.event_name == 'push'
+          github.event_name == 'push' || github.event_name == 'pull_request'
         env:
-          PROOF_SHA: ${{ inputs.ref || github.sha }}
-          PROOF_EVENT: ${{ github.event_name == 'push' && 'push' || 'workflow_dispatch' }}
+          PROOF_SHA: ${{ github.event.pull_request.head.sha || inputs.ref || github.sha }}
+          PROOF_EVENT: ${{ github.event_name == 'push' && 'push' || github.event_name == 'pull_request' && 'pull_request' || 'workflow_dispatch' }}
         run: |
           set -euo pipefail
           if ! [[ "$PROOF_SHA" =~ ^[0-9a-f]{40}$ ]]; then
@@ -528,14 +448,14 @@ jobs:
             echo "::error::pull requests from forks are refused; re-open the change from a branch in this repository"
             exit 1
           fi
-          echo "lint=${LINT} light=${LIGHT} linux=${TESTS} windows=${WINDOWS} audit=${AUDIT} draft=${DRAFT:-n/a}"
+          echo "lint=${LINT} linux=${TESTS} windows=${WINDOWS} audit=${AUDIT} scanning=${SCANNING} draft=${DRAFT:-n/a}"
           # A measuring job that ran and did not pass fails the gate, whatever
           # path this event took.
           for job in "Check: Full lint (Linux)=${LINT}" \
-                     "Check: Light lint (Linux)=${LIGHT}" \
                      "Test: Correctness suite (Linux)=${TESTS}" \
                      "Test: Full suite (Windows)=${WINDOWS}" \
-                     "Check: Dependency advisories (Linux)=${AUDIT}"; do
+                     "Check: Dependency advisories (Linux)=${AUDIT}" \
+                     "Check: Code scanning (Linux)=${SCANNING}"; do
             case "${job##*=}" in success | skipped) ;; *)
               echo "::error::${job%=*} ended '${job##*=}'"
               exit 1 ;;
@@ -544,11 +464,11 @@ jobs:
           require_full_run() {
             local measured
             measured=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$1/jobs?per_page=100" \
-              --jq '[.jobs[] | select(.name == "Check: Full lint (Linux)" or .name == "Test: Correctness suite (Linux, 3.13)" or .name == "Test: Correctness suite (Linux, 3.14)" or .name == "Test: Full suite (Windows)" or .name == "Check: Dependency advisories (Linux)")] | length == 5 and all(.[]; .conclusion == "success")')
+              --jq '[.jobs[] | select(.name == "Check: Full lint (Linux)" or .name == "Test: Correctness suite (Linux, 3.13)" or .name == "Test: Correctness suite (Linux, 3.14)" or .name == "Test: Full suite (Windows)" or .name == "Check: Dependency advisories (Linux)" or .name == "Check: Code scanning (Linux, actions)" or .name == "Check: Code scanning (Linux, javascript-typescript)" or .name == "Check: Code scanning (Linux, python)")] | length == 8 and all(.[]; .conclusion == "success")')
             [ "$measured" = true ]
           }
-          full="${LINT} ${TESTS} ${WINDOWS} ${AUDIT}"
-          if [ "${full}" = "success success success success" ]; then
+          full="${LINT} ${TESTS} ${WINDOWS} ${AUDIT} ${SCANNING}"
+          if [ "${full}" = "success success success success success" ]; then
             echo "every full check passed in this run"
             exit 0
           fi
@@ -556,25 +476,8 @@ jobs:
             echo "the scheduled dependency audit passed"
             exit 0
           fi
-          if [ "${EVENT}" != "pull_request" ] || [ "${LIGHT} ${full}" != "skipped skipped skipped skipped skipped" ]; then
-            echo "::error::the checks this event requires did not all run (lint=${LINT} light=${LIGHT} linux=${TESTS} windows=${WINDOWS} audit=${AUDIT})"
-            exit 1
-          fi
-          if [ "$AUTHOR" = "github-actions[bot]" ] && [ "$HEAD_BRANCH" = "release-please--branches--main--components--vaultspec-rag" ]; then
-            for _ in $(seq 1 20); do
-              previous=$(gh api \
-                "repos/$GITHUB_REPOSITORY/actions/workflows/merge-gate.yml/runs?event=workflow_dispatch&head_sha=$HEAD_SHA&per_page=100" \
-                --jq '.workflow_runs | sort_by(.id) | last | "\(.id // 0) \(.status // "missing") \(.conclusion // "none")"')
-              read -r run status conclusion <<< "$previous"
-              if [ "$status" = completed ]; then
-                [ "$conclusion" = success ] || { echo "::error::release proposal full dispatch ended $conclusion"; exit 1; }
-                require_full_run "$run" || { echo "::error::release proposal lacks full measured proof on $HEAD_SHA"; exit 1; }
-                echo "full dispatched checks proved release proposal $HEAD_SHA"
-                exit 0
-              fi
-              sleep 3
-            done
-            echo "::error::release proposal has no completed full proof on $HEAD_SHA"
+          if [ "${EVENT}" != "pull_request" ] || [ "${full}" != "skipped skipped skipped skipped skipped" ]; then
+            echo "::error::the checks this event requires did not all run (lint=${LINT} linux=${TESTS} windows=${WINDOWS} audit=${AUDIT} scanning=${SCANNING})"
             exit 1
           fi
           # An unrelated label can preserve only the newest completed verdict
@@ -591,41 +494,9 @@ jobs:
             echo "the last full run on $HEAD_SHA passed"
             exit 0
           fi
-          # An untrusted author's commit ran nothing, so no earlier verdict can
-          # exist unless a collaborator's full-run label proved it; refuse it
-          # by name.
-          case "${ASSOCIATION}" in OWNER | COLLABORATOR) ;; *)
-            echo "::error::pull requests by ${AUTHOR} (${ASSOCIATION}) run nothing on the self-hosted fleet; a collaborator reviews the change and applies $FULL_RUN_LABEL to run it"
-            exit 1 ;;
-          esac
           if [ "$previous" = "none" ]; then
             echo "::error::nothing has measured $HEAD_SHA yet; push to it, mark the pull request ready for review, or add $FULL_RUN_LABEL"
           else
             echo "::error::the last run on $HEAD_SHA ended in $previous; push a fix, or add $FULL_RUN_LABEL to run the full gate again"
           fi
           exit 1
-
-      - name: Approve the proven release proposal checks
-        if: >-
-          github.event_name == 'workflow_dispatch' &&
-          github.ref_name == 'release-please--branches--main--components--vaultspec-rag' &&
-          (inputs.ref == '' || inputs.ref == github.ref_name || inputs.ref == github.sha)
-        env:
-          SHA: ${{ github.sha }}
-          BRANCH: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          proposal=$(gh pr list --repo "$GITHUB_REPOSITORY" --base main --state open \
-            --head "$BRANCH" --label "autorelease: pending" \
-            --json number,headRefOid,author \
-            --jq '.[] | select(.author.is_bot and .author.login == "app/github-actions") | "\(.number) \(.headRefOid)"')
-          [ -n "$proposal" ] || exit 0
-          read -r number head <<< "$proposal"
-          [ "$head" = "$SHA" ] || exit 0
-          held=$(gh api --paginate \
-            "repos/$GITHUB_REPOSITORY/actions/workflows/merge-gate.yml/runs?event=pull_request&head_sha=$SHA&status=action_required&per_page=100" \
-            --jq '.workflow_runs[].id')
-          for run in $held; do
-            gh api --method POST "repos/$GITHUB_REPOSITORY/actions/runs/$run/approve" --silent
-            echo "approved the held gate of proven release proposal #$number at $SHA"
-          done

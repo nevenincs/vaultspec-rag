@@ -22,7 +22,7 @@ def test_shared_devserver_matches_adopted_source() -> None:
     script = Path(__file__).resolve().parents[1] / "devserver.py"
     source = script.read_bytes().replace(b"\r\n", b"\n")
     assert hashlib.sha256(source).hexdigest() == (
-        "401d866c5ff2bc355066becb0c799815ab61b904f1c288e7b44cda155aff2355"
+        "16304c6d1d1395bd763a15d5a36755da430941cc7a4958a2418556b144ee0ca2"
     ), "The lifecycle script differs from the adopted shared source."
 
 
@@ -57,7 +57,7 @@ def test_shared_workflow_matches_adopted_template() -> None:
         (("CONTRIBUTOR", False, "owner/repo", "opened", "", "User"), workflows.FALSE),
         (("NONE", False, "owner/repo", "opened", "", "Bot"), workflows.FALSE),
         (("OWNER", False, "outside/fork", "opened", "", "User"), workflows.FALSE),
-        (("NONE", True, "owner/repo", "labeled", "ci:full", "User"), workflows.TRUE),
+        (("NONE", True, "owner/repo", "labeled", "ci:full", "User"), workflows.FALSE),
         (("NONE", False, "owner/repo", "labeled", "ci:full", "Bot"), workflows.FALSE),
         (
             ("NONE", False, "outside/fork", "labeled", "ci:full", "User"),

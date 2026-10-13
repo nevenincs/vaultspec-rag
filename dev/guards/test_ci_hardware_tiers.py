@@ -184,6 +184,27 @@ def test_macos_full_suite_and_its_preparation_are_gating() -> None:
     assert indices == sorted(indices), "macOS preparation must precede the suite"
 
 
+def test_default_accelerator_dispatch_runs_both_tiers() -> None:
+    """A default dispatch must reach both accelerator jobs.
+
+    Changing the default to macos fails the selected-job assertion naming cuda;
+    restoring macos-and-gpu passes.
+    """
+    triggers = workflows.triggers(workflows.document(Workflow.CHEAP_LANE))
+    assert isinstance(triggers, dict)
+    dispatch = triggers["workflow_dispatch"]
+    tier = dispatch["inputs"]["tier"]["default"]
+    selected = {
+        job.job_id
+        for job in workflows.load_jobs(Workflow.HARDWARE)
+        if workflows.evaluate(
+            job.condition or "true", "workflow_dispatch", {"inputs.tier": tier}
+        )
+        is workflows.TRUE
+    }
+    assert selected == {"mps", "cuda"}, f"default dispatch runs {sorted(selected)}"
+
+
 def test_accelerator_recipes_live_only_in_the_hardware_workflow() -> None:
     """No workflow but the hardware one runs an accelerator tier itself.
 

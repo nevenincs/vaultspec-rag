@@ -126,6 +126,8 @@ jobs:
     if: >-
       github.event_name != 'pull_request' ||
       (github.event.pull_request.head.repo.full_name == github.repository &&
+      (github.event.pull_request.author_association == 'OWNER' ||
+      github.event.pull_request.author_association == 'COLLABORATOR') &&
       ((github.event.action == 'labeled' && github.event.label.name == 'ci:full' &&
       github.event.sender.type == 'User') ||
       (github.event.pull_request.draft == false &&
@@ -139,7 +141,6 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          package-manager-cache: false
           node-version-file: .nvmrc
       - name: Set up just
         uses: taiki-e/install-action@6012bba2f8e3e666a2b212f8823c06831704ce92 # just
@@ -147,9 +148,6 @@ jobs:
           tool: just@1.38.0
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-        with:
-          enable-cache: false
-          prune-cache: false
       - run: just dev ci
 """
 

@@ -21,6 +21,7 @@ from dev.guards._ci_names import (
     FULL_RUN_LABEL,
     GATE_CHECK,
     GATE_JOB,
+    GATE_NAME_EXPRESSION,
     LABEL_ENV,
     SAME_REPO_CLAUSE,
     Workflow,
@@ -91,7 +92,7 @@ def test_the_gate_carries_the_name_branch_protection_requires() -> None:
     made this fail naming both strings; restoring the name made it pass.
     """
     gate = _gate()
-    assert gate.name == GATE_CHECK, (
+    assert gate.name == GATE_NAME_EXPRESSION, (
         f"the gate is named {gate.name!r}; the canon composes "
         f"{GATE_CHECK!r}, and `protect-main` requires that string on every "
         "pull request's head commit. Change the ruleset in the same breath."

@@ -48,6 +48,14 @@ class Workflow(StrEnum):
 #: The product owned workflow names start with, so their runs group together.
 PRODUCT = "RAG"
 
+GATE_NAME_EXPRESSION = (
+    "${{ github.event_name == 'pull_request' && "
+    "(github.event.pull_request.head.repo.full_name != github.repository || "
+    "(github.event.pull_request.author_association != 'OWNER' && "
+    "github.event.pull_request.author_association != 'COLLABORATOR')) && "
+    "'Admission withheld (Linux)' || 'Check: Merge gate (Linux)' }}"
+)
+
 # Shared workflows retain their owner's name in every consumer repository.
 SHARED_WORKFLOW_NAMES = {
     Workflow.DEVSERVER: "Dev server",
