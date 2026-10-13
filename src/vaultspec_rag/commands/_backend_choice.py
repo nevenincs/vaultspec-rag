@@ -132,8 +132,14 @@ def save_backend_choice(
         return SavedBackend(
             saved=False,
             local_only=None,
-            detail="not saved: a client installation does not choose the "
-            "backend of the service; the host installation that runs it does.",
+            # The service reads the choice `server start` saves, which is where
+            # a client names it, so say where rather than why not.
+            detail=(
+                "not saved by a client installation; run "
+                "`vaultspec-rag server start --local-only` to choose it."
+                if run.local_only
+                else f"not saved by a client installation. {_plain_start_backend()}"
+            ),
         )
     elif run.local_only:
         if _persist_runtime_selection(run.report, True):

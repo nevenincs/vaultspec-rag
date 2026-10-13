@@ -456,6 +456,9 @@ class TestAClientLeavesNoDirectoryBehind:
         assert backend is not None
         assert backend.saved is False
         assert "client installation" in backend.detail
+        # The declined flag is pointed at the start that saves it; the plain
+        # branch's sentence names no --local-only and fails here.
+        assert "`vaultspec-rag server start --local-only`" in backend.detail
 
 
 @pytest.mark.usefixtures("inference_host")
