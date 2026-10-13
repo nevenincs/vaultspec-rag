@@ -92,6 +92,11 @@ _SITES: dict[str, _Site] = {
         {"subprocess.Popen": 2},
         "the resident service on Windows; the command is its caller's",
     ),
+    "cli/_service_restart.py::_run_verb": _Site(
+        _Starts.PYTHON,
+        {"subprocess.run": 1},
+        "the canonical stop and start verbs, from module_command",
+    ),
     "commands/_mcp_topology.py::_restore_junction": _Site(
         _Starts.NATIVE,
         {"subprocess.run": 1},
@@ -181,6 +186,10 @@ _BUILT_BY: dict[str, tuple[str, str]] = {
     ),
     "cli/_process.py::_spawn_windows": (
         "cli/_process.py::_service_launch_command",
+        "module_command",
+    ),
+    "cli/_service_restart.py::_run_verb": (
+        "cli/_service_restart.py::_run_verb",
         "module_command",
     ),
     "commands/_model_download.py::_run": (

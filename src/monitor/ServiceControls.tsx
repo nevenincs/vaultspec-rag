@@ -26,6 +26,7 @@ export function ServiceControls({
   stale,
   unreachable,
   onRefresh,
+  onRestartingChange,
 }: {
   health?: RecordValue;
   state?: RecordValue;
@@ -33,9 +34,10 @@ export function ServiceControls({
   stale: boolean;
   unreachable: boolean;
   onRefresh: () => void;
+  onRestartingChange: (restarting: boolean) => void;
 }) {
   const [pending, setPending] = useState("");
-  const [confirm, setConfirm] = useState(false);
+  const [confirm, setConfirm] = useState<"" | "stop" | "restart">("");
   const [feedback, setFeedback] = useState<{
     failed: boolean;
     message: string;
@@ -48,20 +50,26 @@ export function ServiceControls({
   const send = async (action: string) => {
     if (busy.current) return;
     busy.current = true;
-    setConfirm(false);
+    setConfirm("");
     setPending(action);
     setFeedback(undefined);
+    if (action === "restart") onRestartingChange(true);
     try {
       const result = await request(
-        ["start", "stop"].includes(action)
+        ["start", "stop", "restart"].includes(action)
           ? `/lifecycle/${action}`
           : `/${action}`,
         { method: "POST", body: "{}" },
-        action === "start" ? 905000 : 125000,
+        action === "restart" ? 1085000 : action === "start" ? 905000 : 125000,
       );
       setFeedback({
         failed: false,
-        message: text(result.message, "Service action completed."),
+        message: text(
+          result.message,
+          action === "restart"
+            ? "The service restarted."
+            : "Service action completed.",
+        ),
       });
     } catch (error) {
       setFeedback(
@@ -78,6 +86,7 @@ export function ServiceControls({
     } finally {
       busy.current = false;
       setPending("");
+      if (action === "restart") onRestartingChange(false);
       onRefresh();
     }
   };
@@ -85,18 +94,25 @@ export function ServiceControls({
     <Stack gap={3}>
       <Grid narrow className="monitor-grid monitor-control-grid">
         <Column sm={2} md={2} lg={4}>
-          <Button
-            size="lg"
-            kind="primary"
-            disabled={
-              Boolean(pending) ||
-              unreachable ||
-              (!stopped && Boolean(health) && !stale)
-            }
-            onClick={() => void send("start")}
-          >
-            Start service
-          </Button>
+          {stopped ? (
+            <Button
+              size="lg"
+              kind="primary"
+              disabled={Boolean(pending) || unreachable}
+              onClick={() => void send("start")}
+            >
+              Start service
+            </Button>
+          ) : (
+            <Button
+              size="lg"
+              kind="primary"
+              disabled={Boolean(pending) || unreachable || !health || stale}
+              onClick={() => setConfirm("restart")}
+            >
+              Restart service
+            </Button>
+          )}
         </Column>
         <Column sm={2} md={2} lg={4}>
           <Button
@@ -143,7 +159,7 @@ export function ServiceControls({
             size="lg"
             kind="danger--tertiary"
             disabled={Boolean(pending) || !health || stopped || stale}
-            onClick={() => setConfirm(true)}
+            onClick={() => setConfirm("stop")}
           >
             Stop service
           </Button>
@@ -158,7 +174,7 @@ export function ServiceControls({
           subtitle="Another process, such as a GPU test run, borrowed the GPU and paused the service. It resumes on its own when that process finishes."
         />
       )}
-      {pending && (
+      {pending && pending !== "restart" && (
         <InlineLoading description={`${pending} service requested…`} />
       )}
       {feedback && (
@@ -171,12 +187,25 @@ export function ServiceControls({
         />
       )}
       <Modal
-        open={confirm}
+        open={confirm === "restart"}
+        modalHeading="Restart the RAG service?"
+        primaryButtonText="Restart service"
+        secondaryButtonText="Cancel"
+        onRequestClose={() => setConfirm("")}
+        onRequestSubmit={() => void send("restart")}
+      >
+        <p>
+          Active work stops while the service restarts. This page stays open and
+          reconnects on its own when the service is ready.
+        </p>
+      </Modal>
+      <Modal
+        open={confirm === "stop"}
         danger
         modalHeading="Stop the RAG service?"
         primaryButtonText="Stop service"
         secondaryButtonText="Cancel"
-        onRequestClose={() => setConfirm(false)}
+        onRequestClose={() => setConfirm("")}
         onRequestSubmit={() => void send("stop")}
       >
         <p>

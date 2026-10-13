@@ -73,6 +73,7 @@ from ._routes_jobs import (
     _parse_since_seconds,
     sort_job_records,
 )
+from ._routes_monitor import monitor_handoff_route
 from ._routes_operator import enroll_repository_route, repositories_route
 from ._routes_quiesce import pause_service_route, resume_service_route
 from ._routes_registry import (
@@ -1132,6 +1133,7 @@ ROUTES: list[Route] = [
     Route("/watcher/start", start_watcher_route, methods=["POST"]),
     Route("/watcher/stop", stop_watcher_route, methods=["POST"]),
     Route("/watcher/reconfigure", reconfigure_watcher_route, methods=["POST"]),
+    Route("/monitor/handoff", monitor_handoff_route, methods=["POST"]),
     Route("/pause", pause_service_route, methods=["POST"]),
     Route("/resume", resume_service_route, methods=["POST"]),
     Route("/service-state", get_service_state_route, methods=["GET"]),

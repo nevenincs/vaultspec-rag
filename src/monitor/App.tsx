@@ -127,6 +127,7 @@ export function App() {
     }
   }, [themeSetting]);
   const [paused, setPaused] = useState(false);
+  const [restarting, setRestarting] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [indexOptions, setIndexOptions] = useState(defaultListOptions);
   const [queryOptions, setQueryOptions] = useState(defaultListOptions);
@@ -351,11 +352,22 @@ export function App() {
                       stale={Boolean(service.error || state.error)}
                       unreachable={unreachable}
                       onRefresh={refreshNow}
+                      onRestartingChange={setRestarting}
                     />
                   </div>
                   {["repositories", "storage"].includes(
                     page,
-                  ) ? null : unreachable ? (
+                  ) ? null : restarting ? (
+                    <Tile id="service-state-notice">
+                      <Stack gap={3}>
+                        <InlineLoading description="Restarting the service…" />
+                        <p>
+                          This page stays open and reconnects on its own when
+                          the service is ready.
+                        </p>
+                      </Stack>
+                    </Tile>
+                  ) : unreachable ? (
                     <Tile id="service-state-notice">
                       <Stack gap={3}>
                         <InlineLoading description="Waiting for the service…" />
