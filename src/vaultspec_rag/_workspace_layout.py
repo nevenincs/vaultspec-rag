@@ -1,10 +1,9 @@
 """Where the vaultspec workspace keeps its files, relative to a project root.
 
 The directory name was spelled thirty-one times across five modules, and the
-names inside it fared no better - ``rules`` seven times, ``mcps`` six,
-``mcp-ownership.json`` four. Nothing owned the layout, so installing it,
-projecting it, uninstalling it and seeding a synthetic copy of it each carried
-their own idea of what it contains.
+names inside it fared no better - ``rules`` seven times, ``mcps`` six. Nothing
+owned the layout, so installing it, projecting it, uninstalling it and seeding a
+synthetic copy of it each carried their own idea of what it contains.
 
 Everything here is RELATIVE to a project root, because both shapes the callers
 use need that: the topology module holds these as module constants and
@@ -22,7 +21,6 @@ from __future__ import annotations
 from pathlib import Path
 
 __all__ = [
-    "MCP_OWNERSHIP_MANIFEST",
     "PROVIDERS_MANIFEST",
     "VAULT_DATA_DIR",
     "VAULT_DIR",
@@ -55,7 +53,6 @@ WORKSPACE_SKILLS = WORKSPACE_DIR / "skills"
 #: The manifests the install and topology paths read and write.
 WORKSPACE_MANIFEST = WORKSPACE_DIR / "workspace.json"
 PROVIDERS_MANIFEST = WORKSPACE_DIR / "providers.json"
-MCP_OWNERSHIP_MANIFEST = WORKSPACE_DIR / "mcp-ownership.json"
 
 
 def workspace_directories() -> tuple[Path, ...]:

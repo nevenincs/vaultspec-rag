@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import stat
 import subprocess
@@ -11,8 +10,10 @@ from contextvars import Context
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Protocol
 
+from vaultspec_core.core.enums import McpScope
+from vaultspec_core.core.mcps import ownership_path
 from vaultspec_core.core.types import (
     init_paths,
 )
@@ -21,7 +22,6 @@ from .._atomic_write import replace_atomically
 from .._plain_directory import require_plain_parents
 from .._program_lookup import Where, find_program
 from .._workspace_layout import (
-    MCP_OWNERSHIP_MANIFEST,
     PROVIDERS_MANIFEST,
     VAULT_DATA_DIR,
     WORKSPACE_DIR,
@@ -150,6 +150,10 @@ class RequiredMcpTopology:
     identities: tuple[tuple[Path, _FileIdentity], ...]
     links: tuple[_RequiredLink, ...]
     mcp_sources: tuple[Path, ...]
+    #: Core's ownership sidecar for this root. It lives in the operator's home,
+    #: outside the workspace, so it is a node of the transaction but not a file
+    #: of any projection of the workspace.
+    host_ownership: Path
     _owned_nodes: dict[str, list[_OwnedNode]] = field(
         default_factory=dict,
         init=False,
@@ -157,8 +161,14 @@ class RequiredMcpTopology:
     )
 
     @property
-    def disenrollment_links(self) -> tuple[_RequiredLink, ...]:
-        """Return links whose own logical node can be changed by RAG removal."""
+    def writable_links(self) -> tuple[_RequiredLink, ...]:
+        """Return links whose own logical node RAG may write or remove.
+
+        A canonical source RAG does not own is only ever read, by Core, so its
+        link is left exactly as it is for the whole transaction: Core resolves
+        consent by where a source really lives, and replacing the link with a
+        regular file would move it to a path nobody approved.
+        """
         extra_sources = {
             _normalized(path)
             for path in self.mcp_sources
@@ -204,7 +214,7 @@ class RequiredMcpTopology:
             )
 
         try:
-            for linked in self.links:
+            for linked in self.writable_links:
                 payload = _regular_payload(linked.target_node, linked.target)
                 _remove_transaction_node(linked.path)
                 self._record_owned_node(
@@ -231,6 +241,8 @@ class RequiredMcpTopology:
         destination.mkdir(parents=True, exist_ok=True)
         linked = {_normalized(item.path): item for item in self.links}
         for path, snapshot in self.nodes:
+            if path == self.host_ownership:
+                continue
             projected = destination / path.relative_to(self.root)
             required_link = linked.get(_normalized(path))
             effective = (
@@ -238,18 +250,22 @@ class RequiredMcpTopology:
             )
             restore_file_snapshot(projected, effective)
 
-    def capture_expected_projection(self, projection: Path) -> None:
-        """Journal exact replay output as the only transaction-owned post-state."""
+    def capture_expected_projection(
+        self,
+        projection: Path,
+        host_ownership: NodeSnapshot | None = None,
+    ) -> None:
+        """Journal exact replay output as the only transaction-owned post-state.
+
+        *host_ownership* is the sidecar the replay left, translated back to this
+        root: the replay wrote it into a private home, not into *projection*.
+        """
         self._owned_nodes.clear()
         for path, original in self.nodes:
-            projected = projection / path.relative_to(self.root)
-            expected = file_snapshot(projected)
-            if path == self.root / MCP_OWNERSHIP_MANIFEST:
-                expected = _rebase_ownership_snapshot(
-                    expected,
-                    projection=projection,
-                    destination=self.root,
-                )
+            if path == self.host_ownership:
+                expected = original if host_ownership is None else host_ownership
+            else:
+                expected = file_snapshot(projection / path.relative_to(self.root))
             if expected != original:
                 self._owned_nodes.setdefault(_normalized(path), []).append(
                     _OwnedNode(expected, None)
@@ -262,7 +278,7 @@ class RequiredMcpTopology:
         published: list[tuple[_RequiredLink, NodeSnapshot, _FileIdentity]] = []
         try:
             final_nodes: list[tuple[_RequiredLink, NodeSnapshot]] = []
-            for linked in self.links:
+            for linked in self.writable_links:
                 _require_unchanged(linked.target, linked.target_node)
                 _require_identity(linked.target, linked.target_identity)
                 final = file_snapshot(linked.path)
@@ -341,7 +357,6 @@ class RequiredMcpTopology:
 _REQUIRED_MCP_STATIC_RELATIVE_PATHS = (
     Path(".mcp.json"),
     Path(".codex") / "config.toml",
-    MCP_OWNERSHIP_MANIFEST,
     PROVIDERS_MANIFEST,
     WORKSPACE_MANIFEST,
     Path("pyproject.toml"),
@@ -469,55 +484,6 @@ def _translate_projection_path(path: Path, projection: Path, root: Path) -> Path
     return root / path.relative_to(projection)
 
 
-def _rebase_ownership_snapshot(
-    snapshot: NodeSnapshot,
-    *,
-    projection: Path,
-    destination: Path,
-) -> NodeSnapshot:
-    """Translate Core's replay-root ownership paths to real workspace paths."""
-    if snapshot.kind is not SnapshotKind.FILE or not isinstance(
-        snapshot.payload, bytes
-    ):
-        return snapshot
-    try:
-        parsed = cast("object", json.loads(snapshot.payload.decode("utf-8")))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return snapshot
-    if not isinstance(parsed, dict):
-        return snapshot
-    state = cast("dict[str, object]", parsed)
-    targets = state.get("targets")
-    if not isinstance(targets, dict):
-        return snapshot
-    target_records = cast("dict[str, object]", targets)
-
-    projection_root = projection.resolve()
-    destination_root = destination.resolve()
-    changed = False
-    for raw_record in target_records.values():
-        if not isinstance(raw_record, dict):
-            continue
-        record = cast("dict[str, object]", raw_record)
-        raw_path = record.get("path")
-        if not isinstance(raw_path, str):
-            continue
-        try:
-            relative = Path(raw_path).relative_to(projection_root)
-        except ValueError:
-            continue
-        record["path"] = str((destination_root / relative).resolve())
-        changed = True
-    if not changed:
-        return snapshot
-    payload = (json.dumps(state, indent=2, sort_keys=True) + "\n").encode("utf-8")
-    return NodeSnapshot(
-        kind=SnapshotKind.FILE,
-        payload=payload,
-        mode=snapshot.mode,
-    )
-
-
 def required_mcp_paths(target: Path) -> tuple[Path, ...]:
     """Return native state plus every canonical source Core will reconcile."""
     root = Path(os.path.abspath(target))
@@ -579,6 +545,16 @@ def inspect_required_mcp_topology(target: Path) -> RequiredMcpTopology:
             identity = _regular_identity(lock_path)
             _reject_hard_links(lock_path, identity)
             identities.append((lock_path, identity))
+    host_ownership = ownership_path(root, McpScope.PROJECT)
+    host_snapshot = file_snapshot(host_ownership)
+    if host_snapshot.kind not in {SnapshotKind.ABSENT, SnapshotKind.FILE}:
+        raise OSError(
+            f"unsafe MCP ownership state at {host_ownership}: expected a regular "
+            f"file or absent node, found {host_snapshot.kind.name.lower()}"
+        )
+    nodes.append((host_ownership, host_snapshot))
+    if host_snapshot.kind is SnapshotKind.FILE:
+        identities.append((host_ownership, _regular_identity(host_ownership)))
     return RequiredMcpTopology(
         root=root,
         nodes=tuple(nodes),
@@ -587,6 +563,7 @@ def inspect_required_mcp_topology(target: Path) -> RequiredMcpTopology:
         mcp_sources=tuple(
             path for path in required if path.parent == root / WORKSPACE_MCPS
         ),
+        host_ownership=host_ownership,
     )
 
 

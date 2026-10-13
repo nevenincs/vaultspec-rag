@@ -16,6 +16,7 @@ from vaultspec_core.core.commands import (
     sync_provider,
 )
 from vaultspec_core.core.enums import (
+    McpScope,
     Tool,
 )
 from vaultspec_core.core.manifest import (
@@ -24,6 +25,7 @@ from vaultspec_core.core.manifest import (
 )
 from vaultspec_core.core.mcps import (
     mcp_sync,
+    ownership_path,
 )
 from vaultspec_core.core.workspace_mode import (
     dependency_leak_advisory,
@@ -32,7 +34,6 @@ from vaultspec_core.core.workspace_mode import (
 )
 
 from .._workspace_layout import (
-    MCP_OWNERSHIP_MANIFEST,
     PROVIDERS_MANIFEST,
     WORKSPACE_DIR,
     WORKSPACE_MANIFEST,
@@ -42,6 +43,12 @@ from ..operator_state import _compute
 from ..operator_state._installation import InstallRole
 from ..torch_config._constants import TorchConfigAction
 from ._mcp_extra import reconcile_mcp_extra
+from ._mcp_host_state import (
+    HostProjection,
+    carry_consent,
+    expected_authority_ownership,
+    projected_core_home,
+)
 from ._mcp_topology import (
     LINKED_NODES_NOT_REMOVABLE,
     NodeSnapshot,
@@ -80,6 +87,7 @@ if TYPE_CHECKING:
     from vaultspec_core.core.enums import (
         InstallMode,
     )
+    from vaultspec_core.core.workspace_mode import ResolvedMode
 
     from ._models import ConfirmFn
     from ._provision import ProvisionProgress
@@ -301,7 +309,7 @@ def _fresh_provider_transaction_paths(target: Path) -> tuple[Path, ...]:
     manifest = target / PROVIDERS_MANIFEST
     claude = target / ".mcp.json"
     codex = target / ".codex" / "config.toml"
-    ownership = target / MCP_OWNERSHIP_MANIFEST
+    ownership = ownership_path(target, McpScope.PROJECT)
     files = (manifest, claude, codex, ownership)
     return (
         *files,
@@ -460,7 +468,7 @@ def _mcp_preview_projection(
         projected_vaultspec = projection / WORKSPACE_DIR
         projected_vaultspec.mkdir()
 
-        for name in ("providers.json", "workspace.json", "mcp-ownership.json"):
+        for name in ("providers.json", "workspace.json"):
             _copy_preview_node(
                 source_vaultspec / name,
                 projected_vaultspec / name,
@@ -512,12 +520,19 @@ class _ProjectMcpReconciliationRequest:
     mode: InstallMode
     mode_flipped: bool
     fresh_providers: tuple[Tool, ...] | None
+    host: HostProjection | None
 
 
 def _reconcile_project_mcp(request: _ProjectMcpReconciliationRequest) -> None:
     """Run Core's project MCP reconciliation against one concrete target."""
     projected_mode_transition = request.dry_run and request.mode_flipped
     try:
+        if request.host is not None:
+            carry_consent(
+                request.host,
+                mode=request.mode,
+                enrolled=request.fresh_providers,
+            )
         result = mcp_sync(
             dry_run=request.dry_run and not projected_mode_transition,
             force=request.force,
@@ -563,6 +578,7 @@ class _CoreSyncRequest:
     upgrade: bool
     mode_flipped: bool
     fresh_providers: tuple[Tool, ...] | None
+    host: HostProjection | None = None
 
 
 def _run_core_sync(request: _CoreSyncRequest) -> None:
@@ -600,47 +616,38 @@ def _run_core_sync(request: _CoreSyncRequest) -> None:
         return
 
     @contextmanager
-    def sync_target() -> Generator[Path]:
+    def sync_target() -> Generator[tuple[Path, HostProjection | None]]:
         if dry_run:
-            with _mcp_preview_projection(
-                target,
-                install_mcp=install_mcp,
-                force=force,
-                upgrade=upgrade,
-                mode=mode,
-            ) as projection:
-                yield projection
+            with (
+                _mcp_preview_projection(
+                    target,
+                    install_mcp=install_mcp,
+                    force=force,
+                    upgrade=upgrade,
+                    mode=mode,
+                ) as projection,
+                projected_core_home(target, projection) as host,
+            ):
+                yield projection, host
         else:
-            yield target
+            yield target, request.host
 
-    with sync_target() as mcp_target:
+    with sync_target() as (mcp_target, host):
+        reconciliation = _ProjectMcpReconciliationRequest(
+            mcp_target,
+            target,
+            report,
+            dry_run,
+            force,
+            mode,
+            mode_flipped,
+            fresh_providers,
+            host,
+        )
         if dry_run:
-            Context().run(
-                _reconcile_project_mcp,
-                _ProjectMcpReconciliationRequest(
-                    mcp_target,
-                    target,
-                    report,
-                    dry_run,
-                    force,
-                    mode,
-                    mode_flipped,
-                    fresh_providers,
-                ),
-            )
+            Context().run(_reconcile_project_mcp, reconciliation)
         else:
-            _reconcile_project_mcp(
-                _ProjectMcpReconciliationRequest(
-                    mcp_target,
-                    target,
-                    report,
-                    dry_run,
-                    force,
-                    mode,
-                    mode_flipped,
-                    fresh_providers,
-                )
-            )
+            _reconcile_project_mcp(reconciliation)
 
     _finish_fresh_provider_enrollment(
         _FreshProviderEnrollmentRequest(
@@ -834,6 +841,9 @@ class _InstallRunRequest:
     #: several gigabytes with no output reads as a hang.
     provision_progress: ProvisionProgress | None = None
     tool_torch_repair_outcome: ToolTorchRepairOutcome | None = None
+    #: Set only on a replay: the workspace whose ownership and approvals the
+    #: replay borrows, and the private core home it runs under.
+    host: HostProjection | None = None
 
 
 class _InstallRunOptions(TypedDict, total=False):
@@ -931,7 +941,7 @@ def _install_run(request: _InstallRunRequest) -> InstallReport:
         message = topology_preflight_failure(exc)
         record_mcp_failure(failure, message)
         return failure
-    if not request.install_mcp and topology.disenrollment_links:
+    if not request.install_mcp and topology.writable_links:
         message = LINKED_NODES_NOT_REMOVABLE
         record_mcp_failure(failure, message)
         return failure
@@ -957,23 +967,26 @@ def _install_run(request: _InstallRunRequest) -> InstallReport:
     with tempfile.TemporaryDirectory(prefix="vaultspec-rag-mcp-replay-") as raw:
         replay_target = Path(raw) / "workspace"
         topology.populate_projection(replay_target)
-        Context().run(
-            _install_run_unchecked,
-            replace(
-                request,
-                path=replay_target,
-                dry_run=False,
-                skip=set(skip_tokens),
-                configure_torch=False,
-                assume_yes=True,
-                sync_after=False,
-                confirm=None,
-                provision=False,
-                repair_tool_torch=False,
-                tool_torch_repair_outcome=repair_outcome,
-            ),
-        )
-        topology.capture_expected_projection(replay_target)
+        with projected_core_home(target, replay_target) as host:
+            Context().run(
+                _install_run_unchecked,
+                replace(
+                    request,
+                    path=replay_target,
+                    dry_run=False,
+                    skip=set(skip_tokens),
+                    configure_torch=False,
+                    assume_yes=True,
+                    sync_after=False,
+                    confirm=None,
+                    provision=False,
+                    repair_tool_torch=False,
+                    tool_torch_repair_outcome=repair_outcome,
+                    host=host,
+                ),
+            )
+            replayed_ownership = expected_authority_ownership(host)
+        topology.capture_expected_projection(replay_target, replayed_ownership)
 
     try:
         topology.materialize()
@@ -1018,6 +1031,23 @@ def _tool_repair_outcome(
             stream=request.stream_repair,
         )
     )
+
+
+def _resolve_install_mode(
+    target: Path,
+    mode: InstallMode | None,
+    *,
+    upgrade: bool,
+    skip: set[str],
+) -> ResolvedMode:
+    """Resolve the mode an install of *target* renders rag's launch in."""
+    if upgrade:
+        return infer_rag_upgrade_mode(
+            target,
+            mode,
+            allow_mcp_status=not bool({"core", "mcp"} & skip),
+        )
+    return resolve_rag_mode(target, mode)
 
 
 def _install_run_unchecked(request: _InstallRunRequest) -> InstallReport:
@@ -1145,15 +1175,7 @@ def _install_run_unchecked(request: _InstallRunRequest) -> InstallReport:
     # deployed MCP shape; a fresh install resolves at provision time. The
     # provenance rides along so the dependency-leak advisory fires only when
     # this run is the one electing dependency mode, not on a persisted read.
-    resolved = (
-        infer_rag_upgrade_mode(
-            target,
-            mode,
-            allow_mcp_status=not bool({"core", "mcp"} & skip),
-        )
-        if upgrade
-        else resolve_rag_mode(target, mode)
-    )
+    resolved = _resolve_install_mode(target, mode, upgrade=upgrade, skip=skip)
 
     vaultspec_dir = target / WORKSPACE_DIR
 
@@ -1223,6 +1245,7 @@ def _install_run_unchecked(request: _InstallRunRequest) -> InstallReport:
             upgrade,
             mcp_mode_flipped,
             fresh_mcp_providers,
+            request.host,
         )
     )
 

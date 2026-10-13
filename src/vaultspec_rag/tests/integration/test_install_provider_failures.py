@@ -13,18 +13,23 @@ from vaultspec_core.core.manifest import (
 )
 
 from ...commands._uninstall import uninstall_run
+from .._mcp_consent import approve_install_launches
 from ._install_helpers import (
     _CONSUMER_PYPROJECT,
     _RAG_MCP_REL,
     _RAG_SKILL_REL,
     _install,
+    host_ownership,
     install_report,
     read_codex_mcp,
     read_mcp_json,
     workspace_inventory,
 )
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.usefixtures("isolated_mcp_trust_home"),
+]
 
 
 class TestProviderFailureContract:
@@ -32,7 +37,8 @@ class TestProviderFailureContract:
         self, fresh_workspace: Path
     ) -> None:
         write_manifest(fresh_workspace, {"claude", "codex"})
-        ownership = fresh_workspace / ".vaultspec" / "mcp-ownership.json"
+        ownership = host_ownership(fresh_workspace)
+        ownership.parent.mkdir(parents=True)
         ownership.write_text("{not-json", encoding="utf-8")
 
         report = _install(fresh_workspace)
@@ -55,6 +61,7 @@ class TestProviderFailureContract:
         codex_config = fresh_workspace / ".codex" / "config.toml"
         codex_config.parent.mkdir()
         codex_config.write_text('invalid = "unterminated', encoding="utf-8")
+        approve_install_launches(fresh_workspace, install_mcp=True)
 
         runner = CliRunner()
         result = runner.invoke(
@@ -100,7 +107,7 @@ class TestProviderFailureContract:
 
         from ...cli import app
 
-        ownership = installed_workspace / ".vaultspec" / "mcp-ownership.json"
+        ownership = host_ownership(installed_workspace)
         ownership.write_text("{not-json", encoding="utf-8")
         discovery_skill = installed_workspace / _RAG_SKILL_REL
         discovery_skill.unlink()
@@ -131,14 +138,16 @@ class TestProviderFailureContract:
         pyproject = fresh_workspace / "pyproject.toml"
         pyproject.write_text(_CONSUMER_PYPROJECT, encoding="utf-8")
         _install(fresh_workspace, mode=InstallMode.DEPENDENCY)
-        ownership = fresh_workspace / ".vaultspec" / "mcp-ownership.json"
+        ownership = host_ownership(fresh_workspace)
         ownership.write_text("{not-json", encoding="utf-8")
         before = workspace_inventory(fresh_workspace)
+        ownership_before = ownership.read_bytes()
 
         report = uninstall_run(path=fresh_workspace, force=True)
 
         assert report.mcp_sync_failed
         assert workspace_inventory(fresh_workspace) == before
+        assert ownership.read_bytes() == ownership_before
 
     @pytest.mark.parametrize(
         ("failure_kind", "expected_action"),

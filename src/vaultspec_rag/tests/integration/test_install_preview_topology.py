@@ -22,6 +22,7 @@ from ._install_helpers import (
     _install,
     _node_signature,
     create_windows_junction,
+    host_ownership,
     install_report,
     read_codex_mcp,
     read_mcp_json,
@@ -29,7 +30,10 @@ from ._install_helpers import (
     workspace_inventory,
 )
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.usefixtures("isolated_mcp_trust_home"),
+]
 
 
 class TestInstallPreviewTopology:
@@ -109,16 +113,6 @@ class TestInstallPreviewTopology:
                     'command = "operator-drift"',
                     1,
                 ),
-                encoding="utf-8",
-            )
-        elif relative == Path(".vaultspec") / "mcp-ownership.json":
-            state = cast(
-                "dict[str, dict[str, object]]",
-                json.loads(linked_target.read_text(encoding="utf-8")),
-            )
-            del state["targets"]["claude:project"]
-            linked_target.write_text(
-                json.dumps(state, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
         elif relative == Path(".vaultspec") / "providers.json":
@@ -246,13 +240,22 @@ class TestInstallPreviewTopology:
         self,
         fresh_workspace: Path,
     ) -> None:
+        """A failed run restores the ownership sidecar it half-rewrote, exactly.
+
+        The replay's own sidecar, translated back to this root, is the only
+        post-state the transaction owns. Proven able to fail: ignoring what the
+        replay wrote leaves the half-rewritten sidecar in place and fails the
+        inventory assertion; restoring it passes.
+        """
         _install(fresh_workspace, mode=InstallMode.TOOL)
-        ownership = fresh_workspace / ".vaultspec" / "mcp-ownership.json"
+        ownership = host_ownership(fresh_workspace)
         state = cast(
             "dict[str, dict[str, object]]",
             json.loads(ownership.read_text(encoding="utf-8")),
         )
-        del state["targets"]["claude:project"]
+        del state["targets"][
+            next(key for key in state["targets"] if key.startswith("claude:project:"))
+        ]
         ownership.write_text(
             json.dumps(state, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
@@ -583,26 +586,36 @@ class TestInstallPreviewTopology:
         assert _node_signature(node) == signature
         assert node.read_bytes() == original
 
-    def test_materialize_write_failure_restores_just_removed_link(
+    def test_unowned_source_link_is_left_in_place_for_the_whole_transaction(
         self,
         fresh_workspace: Path,
     ) -> None:
+        """A source RAG never writes stays a link from materialization to commit.
+
+        Core resolves approval by where a source really lives, so swapping the
+        link for a regular copy would move it to a path nobody approved. Proven
+        able to fail: materializing every link replaces the source with a
+        regular file and fails the first signature assertion; restoring the
+        writable-link filter passes.
+        """
         from ...commands._mcp_topology import inspect_required_mcp_topology
 
         source_dir = fresh_workspace / ".vaultspec" / "mcps"
         source_dir.mkdir(parents=True)
         target = fresh_workspace / ".vaultspec" / "operator-extra.json"
         target.write_bytes(b'{"command": "operator", "args": []}\n')
-        source = source_dir / ("operator-" + "x" * 225 + ".json")
+        source = source_dir / "operator-extra.builtin.json"
         source.symlink_to(os.path.relpath(target, source.parent))
         signature = _node_signature(source)
         topology = inspect_required_mcp_topology(fresh_workspace)
 
-        with pytest.raises(OSError):
-            topology.materialize()
+        topology.materialize()
 
         assert _node_signature(source) == signature
         assert source.read_bytes() == target.read_bytes()
+        assert not topology.finish(commit=True)
+        assert _node_signature(source) == signature
+        assert target.read_bytes() == b'{"command": "operator", "args": []}\n'
 
     def test_link_target_race_is_preserved_on_commit_refusal(
         self,
@@ -800,11 +813,11 @@ class TestInstallPreviewTopology:
         fresh_workspace: Path,
     ) -> None:
         _install(fresh_workspace, mode=InstallMode.TOOL)
-        ownership = fresh_workspace / ".vaultspec" / "mcp-ownership.json"
+        workspace = fresh_workspace / ".vaultspec" / "workspace.json"
         providers = fresh_workspace / ".vaultspec" / "providers.json"
-        ownership.unlink()
-        ownership.symlink_to(providers.name)
-        signature = _node_signature(ownership)
+        workspace.unlink()
+        workspace.symlink_to(providers.name)
+        signature = _node_signature(workspace)
         providers_before = providers.read_bytes()
 
         preview = _install(fresh_workspace, dry_run=True, upgrade=True)
@@ -813,7 +826,7 @@ class TestInstallPreviewTopology:
         assert preview.mcp_sync_failed and applied.mcp_sync_failed
         assert preview.mcp_errors == applied.mcp_errors
         assert "overlaps a required MCP node" in " ".join(preview.mcp_errors)
-        assert _node_signature(ownership) == signature
+        assert _node_signature(workspace) == signature
         assert providers.read_bytes() == providers_before
 
     @pytest.mark.parametrize(

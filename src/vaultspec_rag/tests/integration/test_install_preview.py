@@ -23,10 +23,12 @@ from vaultspec_core.core.types import (
 )
 
 from ...commands._install import install_run
+from .._mcp_consent import approve_install_launches
 from ._install_helpers import (
     _install,
     _node_signature,
     create_windows_junction,
+    host_ownership,
     install_report,
     read_codex_mcp,
     read_mcp_json,
@@ -34,7 +36,10 @@ from ._install_helpers import (
     workspace_inventory,
 )
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.usefixtures("isolated_mcp_trust_home"),
+]
 
 
 class TestDryRunInstall:
@@ -74,6 +79,12 @@ class TestDryRunInstall:
     def test_fresh_mcp_dry_run_reports_native_additions_without_writing(
         self, fresh_workspace: Path
     ) -> None:
+        """A preview plans the enrollment the operator approved, writing nothing.
+
+        Proven able to fail: a preview that carries no approvals into its
+        projection reports every launch skipped and fails the ``added == 1``
+        assertion; restoring it passes.
+        """
         before = workspace_file_bytes(fresh_workspace)
         locks_before = sorted(fresh_workspace.rglob("*.lock"))
 
@@ -179,6 +190,7 @@ class TestDryRunInstall:
         fresh_workspace = tmp_path / "fresh"
         fresh_workspace.mkdir()
         fresh_before = workspace_file_bytes(fresh_workspace)
+        approve_install_launches(fresh_workspace, install_mcp=True)
         add_result = runner.invoke(
             app,
             [
@@ -238,11 +250,9 @@ class TestDryRunInstall:
         target = tmp_path / "preview"
         target.mkdir()
         if malformed_ownership:
-            (target / ".vaultspec").mkdir()
-            (target / ".vaultspec" / "mcp-ownership.json").write_text(
-                "{not-json",
-                encoding="utf-8",
-            )
+            ownership = host_ownership(target)
+            ownership.parent.mkdir(parents=True)
+            ownership.write_text("{not-json", encoding="utf-8")
         report = _install(target, dry_run=True)
 
         assert report.mcp_sync_failed is malformed_ownership
