@@ -170,7 +170,10 @@ def test_doctor_reports_the_holders_in_both_output_modes(
 
     assert "pid 4321" in human.stdout
     assert "vaultspec-rag service on port 8776" in human.stdout
-    assert "vaultspec-rag server stop --port 8776" in human.stdout
+    # Doctor runs with no repair pending, so the restart that moves a holder
+    # onto a repaired build is advice for a state that is not present.
+    # Passing the remedy through to the holder line fails here.
+    assert "vaultspec-rag server stop --port 8776" not in human.stdout
     assert "with its launcher, pid 4320" in human.stdout
     reported = envelope["data"]["environment_holders"]
     assert reported["holders"][0]["pid"] == 4321

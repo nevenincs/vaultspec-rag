@@ -575,6 +575,7 @@ def _render_environment_holders(report: dict[str, object]) -> None:
                 _holder_role(holder.get("role")),
                 launcher_pid=launcher if isinstance(launcher, int) else None,
                 port=port if isinstance(port, int) else None,
+                remedy=False,
             )
         )
     total = snapshot.get("total")
