@@ -10,8 +10,10 @@ related:
   - '[[2026-10-13-service-runtime-audit]]'
 modified: '2026-10-13'
 body_schema: body-v2
-body_hash: 'sha256:3e9ad512e7e47a7e4b88efdc12a45c9fb64a3f0cb9f6f5d118bb60a0f92f7478'
+body_hash: 'sha256:d49a85b037be833a77a1e25a0a8a3bb83e813fab6193080dd4a88e2338275f09'
 ---
+
+<!-- RETIRED: S05 -->
 
 # `service-runtime` plan
 
@@ -21,7 +23,7 @@ Every install route starts the service with one command, and every refusal names
 
 Approved 2026-10-13. Basis: the user's "fix all", in reply to a lab report listing these defects and proposing this work, including the service-runtime decision.
 
-Make every install route start the service with one command, and make every install, start, doctor and status message one cause and one command. `2026-10-13-service-runtime-adr` governs S02 and S03 (the managed runtime and the messaging rule). `2026-06-24-service-doctor-liveness-adr` governs S04. S05 and S06 are routine corrections within settled decisions. The defects are recorded in `2026-10-13-service-runtime-audit`. Monitor provisioning (the audit's wheel-start finding) is owned by `2026-10-13-monitor-provisioning-plan` in another lane and is out of scope here; S07 verifies against whichever monitor state has landed.
+Make every install route start the service with one command, and make every install, start, doctor and status message one cause and one command. `2026-10-13-service-runtime-adr` governs S02 and S03 (the managed runtime and the messaging rule). `2026-06-24-service-doctor-liveness-adr` governs S04. S06 is a routine correction within settled decisions. S05 (workspace MCP registration on install) was handed to another session at the user's assignment, with this lane's findings; its identifier is retired. The defects are recorded in `2026-10-13-service-runtime-audit`. Monitor provisioning (the audit's wheel-start finding) is owned by `2026-10-13-monitor-provisioning-plan` in another lane and is out of scope here; S07 verifies against whichever monitor state has landed.
 
 ## Steps
 
@@ -29,13 +31,12 @@ Make every install route start the service with one command, and make every inst
 - [ ] `S02` - provision a managed service runtime and select it when the launching environment cannot serve; `src/vaultspec_rag/cli/_process.py`.
 - [ ] `S03` - collapse every install and start refusal to one cause and one command; `src/vaultspec_rag/operator_state/_provisioning.py`.
 - [x] `S04` - make server doctor and status report a failed or absent service truthfully; `src/vaultspec_rag/cli/_service_doctor.py`.
-- [ ] `S05` - restore workspace MCP registration and vault links on install; `src/vaultspec_rag/commands/_install.py`.
 - [ ] `S06` - trim install and start help to user-facing options and rewrite the install docs around one command; `src/vaultspec_rag/cli/_install.py`.
 - [ ] `S07` - verify every install route in the clean-machine GPU lab on Linux and Windows; `X:/project/vaultspec-rag-lab`.
 
 ## Parallelization
 
-S02, S04 and S05 run in parallel in separate worktrees with disjoint write ownership. S03 follows S02 because both edit `src/vaultspec_rag/cli/_service_start.py`. S06 follows S03 so the docs describe final behaviour. S07 runs last. Files owned by the monitor-provisioning lane are never edited here: `src/vaultspec_rag/monitor_process.py`, `src/vaultspec_rag/_program_lookup.py`, `src/vaultspec_rag/qdrant_runtime/`, the monitor step in `src/vaultspec_rag/commands/_provision.py`, workflows, `tools/monitor`, `tools/packaging` and `tools/binaries`.
+S02 and S04 run in parallel in separate worktrees with disjoint write ownership. S03 follows S02 because both edit `src/vaultspec_rag/cli/_service_start.py`. S06 follows S03 so the docs describe final behaviour. S07 runs last. Files owned by the monitor-provisioning lane are never edited here: `src/vaultspec_rag/monitor_process.py`, `src/vaultspec_rag/_program_lookup.py`, `src/vaultspec_rag/qdrant_runtime/`, the monitor step in `src/vaultspec_rag/commands/_provision.py`, workflows, `tools/monitor`, `tools/packaging` and `tools/binaries`.
 
 ## Verification
 
