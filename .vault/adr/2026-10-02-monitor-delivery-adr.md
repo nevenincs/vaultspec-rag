@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#monitor-delivery'
 date: '2026-10-02'
-modified: '2026-10-09'
+modified: '2026-10-13'
 body_schema: 'body-v2'
-body_hash: 'sha256:23f25ab68226cacd3a3c4f685f0e41c8daf0a967af603dce31347335ee267837'
+body_hash: 'sha256:bb862d05b93d1a3996bc5c4f7667c058067502e146c4ff760666cf2cf5d6f486'
 related:
   - "[[2026-10-02-monitor-delivery-reference]]"
   - "[[2026-10-02-monitor-delivery-research]]"
