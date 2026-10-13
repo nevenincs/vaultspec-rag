@@ -191,6 +191,7 @@ None.
 | `--upgrade` | boolean | no | off | Refresh bundled rules and integration files even if present. |
 | `--dry-run` | boolean | no | off | Preview changes without writing. |
 | `--force` | boolean | no | off | Overwrite setup files that already exist. |
+| `--mode` | choice | no | - | How your AI assistant launches vaultspec-rag: 'tool', or from this project's environment as a 'dependency' or 'dev' dependency. Detected from pyproject.toml when omitted. |
 | `--yes`, `-y` | boolean | no | off | Answer yes to setup prompts, for runs without a terminal. |
 | `--provision`, `--no-provision` | boolean | no | on | Download the search models and the Qdrant server now (default). With --no-provision, `server start` downloads them instead. |
 | `--mcp`, `--no-mcp` | boolean | no | on | Connect your AI assistant through MCP (default). With --no-mcp, only the command line is set up. |

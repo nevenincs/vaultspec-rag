@@ -163,17 +163,13 @@ class _InstallCommand(TyperCommand):
                 ),
                 TyperOption(
                     param_decls=["--mode"],
-                    hidden=True,
                     type=TyperChoice([member.value for member in InstallMode]),
                     default=None,
                     help=(
-                        "Provisioning mode: 'tool' (default, launched via uvx), "
-                        "'dependency' (a runtime project dependency resolved "
-                        "through the project's own venv, ships in built "
-                        "distributions), or 'dev' (the default dev dependency "
-                        "group; renders like dependency but "
-                        "does not ship in built distributions). Auto-detected from "
-                        "pyproject.toml when omitted."
+                        "How your AI assistant launches vaultspec-rag: 'tool', "
+                        "or from this project's environment as a 'dependency' "
+                        "or 'dev' dependency. Detected from pyproject.toml when "
+                        "omitted."
                     ),
                 ),
                 TyperOption(

@@ -403,7 +403,6 @@ class TestHelpCleanup:
             "--sync",
             "--skip-models",
             "--skip-qdrant",
-            "--mode",
             "--no-hints",
         ):
             assert internal not in result.output, internal
@@ -423,8 +422,6 @@ class TestHelpCleanup:
                 "--skip-models",
                 "--skip-qdrant",
                 "--no-hints",
-                "--mode",
-                "tool",
                 "--help",
             ],
         )
