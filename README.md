@@ -43,14 +43,6 @@ vaultspec-rag has two parts. A background service runs the search models on your
 The `vaultspec-rag` command and your AI assistant send it requests. One service serves
 every repository on the machine.
 
-1. **Install the host** once per machine. It carries the service and its GPU packages.
-1. **Set up each repository** you want to search, then start the service.
-1. **Index and search.**
-
-Already running a host, and a Python project needs vaultspec-rag as a dependency? Add
-a [client](#add-a-client-to-a-python-project) instead. A client has no GPU packages and
-sends every request to the host's service.
-
 ### What you need
 
 - An NVIDIA GPU with CUDA on Windows or Linux, or Apple silicon on macOS.
@@ -58,72 +50,35 @@ sends every request to the host's service.
 - 16 GiB of system memory and 12 GiB of free GPU memory for the default profile. The
   smaller `embedded-local` profile needs 8 GiB and 6 GiB; see
   [Configuration](#configuration).
-- [uv](https://docs.astral.sh/uv/getting-started/installation/). vaultspec-rag
-  supports Python 3.13 and 3.14, and uv downloads an interpreter if needed.
-- A few gigabytes of disk for a one-time model download.
+- [uv](https://docs.astral.sh/uv/getting-started/installation/).
+- About 10 GB of free disk for the GPU packages and the models, downloaded once.
 
-### Install the host
-
-On Windows x64, or Linux x86_64 or aarch64 with glibc 2.28 or newer:
+### Install and start
 
 ```bash
-uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]" --index https://download.pytorch.org/whl/cu130 --index-strategy unsafe-first-match
+uv tool install "vaultspec-rag[mcp]"
 ```
 
-On Apple silicon:
+Then, from the root of each repository you want to search:
 
 ```bash
-uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]"
-```
-
-The two extras do different jobs:
-
-- `[gpu]` adds PyTorch and the model libraries. The service needs them.
-- `[mcp]` adds the adapter your AI assistant launches. Installing it here means the
-  assistant runs the same release as the service.
-
-The two `--index` options keep the CUDA build of PyTorch on every later
-`uv tool upgrade`. If uv says its tool directory isn't on your `PATH`, run
-`uv tool update-shell` and open a new terminal.
-
-### Download public models
-
-Search uses three public models from Hugging Face. The sparse encoder,
-[`Linkup-Platform/linkup-sparseup-embed-v1`](https://huggingface.co/Linkup-Platform/linkup-sparseup-embed-v1),
-uses ModernBERT SPARSEUP to match terms such as function names. Model acquisition
-needs no account setup. The first repository setup downloads the model files;
-later repositories reuse the cache.
-
-Existing indexes created before version 0.6.0 need a full rebuild after upgrading
-the host and restarting its service:
-
-```bash
-vaultspec-rag --target <repository> index --rebuild --type all
-```
-
-Run this for every indexed repository; the changed sparse vocabulary cannot mix
-with previously stored vectors.
-
-### Set up each repository
-
-From the root of each repository you want to search:
-
-```bash
-vaultspec-rag install --no-torch-config
-```
-
-Setup connects your AI assistant and creates the `.vault/` folder for decision records.
-The first run also downloads the models and Qdrant, the index server; later
-repositories reuse them. If either is still missing when you start the service,
-`server start` downloads it then. `--no-torch-config` leaves the repository's own PyTorch
-settings alone, because the host carries its own.
-
-Start the service and check it:
-
-```bash
+vaultspec-rag install
 vaultspec-rag server start
-vaultspec-rag server doctor
 ```
+
+`install` connects your AI assistant, creates the `.vault/` folder for decision
+records, and downloads the search models and Qdrant, the index server. Later
+repositories reuse them.
+
+The first `server start` sets up the service's own GPU environment, with the CUDA
+build of PyTorch, and then waits until the service is ready. That takes a few minutes
+once; later starts take seconds. After you upgrade vaultspec-rag, the next start sets
+up the new release and removes the old one.
+
+To try it without installing anything, run `uvx vaultspec-rag server start` instead.
+
+If uv says its tool directory isn't on your `PATH`, run `uv tool update-shell` and open
+a new terminal.
 
 `server start` also launches the local browser monitor and prints its `Monitor:`
 URL. Open that URL on the service's machine. The compiled `vaultspec-rag-monitor`
@@ -142,38 +97,38 @@ If it reports a problem, the
 [troubleshooting guide](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/installation.md#when-something-goes-wrong)
 explains each finding.
 
+### Models and upgrades
+
+Search uses three public models from Hugging Face, which need no account. The sparse
+encoder,
+[`Linkup-Platform/linkup-sparseup-embed-v1`](https://huggingface.co/Linkup-Platform/linkup-sparseup-embed-v1),
+uses ModernBERT SPARSEUP to match terms such as function names.
+
+Indexes created before version 0.6.0 need a full rebuild after the upgraded service
+starts, once for every indexed repository, because the sparse vocabulary changed:
+
+```bash
+vaultspec-rag --target <repository> index --rebuild --type all
+```
+
 ### Add a client to a Python project
 
-A client puts vaultspec-rag in a project's own environment, so collaborators get it with
-`uv sync`. It has no GPU packages. Each collaborator still needs a host on their own
-machine at the release the project pins, because a client refuses a service from
-another release.
+A project can list vaultspec-rag as a dependency, so collaborators get it with
+`uv sync`. From the project root:
 
-1. On the host, read the release from the `Service release:` line:
+```bash
+uv add --dev "vaultspec-rag[mcp]"
+uv run vaultspec-rag install
+uv run vaultspec-rag server start
+```
 
-   ```bash
-   vaultspec-rag server status --verbose
-   ```
+The project's environment gets no GPU packages. `server start` runs the service from its
+own GPU environment, at the release the project pins. For the command line alone, add
+`vaultspec-rag` without `[mcp]` and run `install --no-mcp`.
 
-1. From the project root, add the client at that release. With `[mcp]`, your AI
-   assistant can search too:
-
-   ```bash
-   uv add --dev "vaultspec-rag[mcp]==<release>"
-   uv run vaultspec-rag install --mode dev
-   ```
-
-   For the command line alone, leave out the extra and add `--no-mcp`:
-
-   ```bash
-   uv add --dev "vaultspec-rag==<release>"
-   uv run vaultspec-rag install --mode dev --no-mcp
-   ```
-
-1. Check it with `uv run vaultspec-rag server doctor`. Its release line should end in
-   `(matches this client)`.
-
-Prefix client commands with `uv run`. Start and stop the service from the host.
+One service runs per machine, and a client only talks to a service of its own release.
+When a service from another release is running, `server start` says so and prints the
+command that replaces it.
 
 > [!TIP]
 > Without a Python toolchain, use a

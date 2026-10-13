@@ -17,7 +17,7 @@ from ..torch_config._index import CU130_INDEX_URL
 
 pytestmark = pytest.mark.unit
 
-_README = Path(__file__).resolve().parents[3] / "README.md"
+_INSTALLATION_GUIDE = Path(__file__).resolve().parents[3] / "docs" / "installation.md"
 
 
 @pytest.mark.parametrize("platform_name", ["win32", "linux"])
@@ -37,7 +37,9 @@ def test_apple_silicon_takes_the_standard_wheel() -> None:
     )
 
 
-def test_the_readme_hands_out_the_product_s_own_commands() -> None:
-    readme = _README.read_text(encoding="utf-8")
-    assert host_install_command("win32") in readme
-    assert host_install_command("darwin") in readme
+def test_the_installation_guide_hands_out_the_product_s_own_commands() -> None:
+    guide = _INSTALLATION_GUIDE.read_text(encoding="utf-8")
+    # Mutation proof: editing either command string in the guide so it no
+    # longer matches host_install_command's rendering fails this assertion.
+    assert host_install_command("win32") in guide
+    assert host_install_command("darwin") in guide
