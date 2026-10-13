@@ -17,11 +17,11 @@ configuration.
 
 ## Entry points
 
-| Command                                                    | Purpose                                                          |
-| ---------------------------------------------------------- | ---------------------------------------------------------------- |
-| `vaultspec-core`                                           | Workspace management, vault operations, sync.                    |
-| `vaultspec-core-mcp`                                       | Console script launching the stdio MCP server.                   |
-| `uv run --no-sync python -m vaultspec_core.mcp_server.app` | Module invocation of the MCP server (Windows-safe, never syncs). |
+| Command                                                       | Purpose                                                                                |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `vaultspec-core`                                              | Workspace management, vault operations, sync.                                          |
+| `vaultspec-core-mcp`                                          | Console script launching the stdio MCP server.                                         |
+| `uv run --no-sync python -P -m vaultspec_core.mcp_server.app` | Module invocation of the MCP server (Windows-safe, never syncs, no cwd on `sys.path`). |
 
 ## Global options
 
@@ -52,20 +52,8 @@ hand-edit between the markers.
 
 <!-- vaultspec:generated:begin unreleased-surface -->
 
-Measured against `0.2.6`, the latest published release when this reference was
-generated. What follows is not in that release. The list is computed from the surface
-recorded from that release's published distribution; it is never hand-maintained.
-
-Commands:
-
-- `vaultspec-core project context`
-- `vaultspec-core review context`
-
-Flags on commands the release already has:
-
-- `vaultspec-core install` - `--env`, `--env-file`
-- `vaultspec-core spec reference snapshot` - `--record`
-- `vaultspec-core vault adr crossref` - `--body-file`
+Measured against `0.3.5`, the latest published release when this reference was
+generated: every command, flag, and tool documented here is in it.
 
 <!-- vaultspec:generated:end unreleased-surface -->
 
@@ -370,6 +358,8 @@ hand-edit between the markers.
 - `vaultspec-core spec mcps remove` - Remove a canonical MCP server definition.
 - `vaultspec-core spec mcps sync` - Reconcile canonical definitions into provider-native
   enrollment.
+- `vaultspec-core spec mcps trust` - Approve exact MCP commands for enrollment after
+  reviewing them at a terminal.
 - `vaultspec-core spec mcps uninstall` - Remove Vaultspec-owned provider-native MCP
   enrollment.
 
@@ -1061,10 +1051,10 @@ between that record and the live surface, which is why no version caveat in thes
 documents is hand-written. The record is never captured from a source tree. `--emit`
 prints this build's own surface, which is how the published distribution is read back
 inside an isolated install after publication; `--record FILE` writes such a document as
-the record, refusing a malformed one; `--verify FILE` compares such a document against
-the committed record and exits non-zero when they differ. Without a flag the verb only
-reports the recorded version. The three modes are mutually exclusive. `--json` applies
-throughout.
+the record with explicit `--development` consent, refusing a malformed one;
+`--verify FILE` compares such a document against the committed record and exits non-zero
+when they differ. Without a flag the verb only reports the recorded version. The three
+modes are mutually exclusive. `--json` applies throughout.
 
 ### vaultspec-core spec mcps
 
@@ -1083,6 +1073,11 @@ enrollment. Providers are `all`, `claude`, `antigravity`, and `codex`; scopes ar
 | `uninstall` | `[PROVIDER] [--scope SCOPE] [--dry-run] [--force] [--json] [--target PATH]`           | Remove only Vaultspec-owned native enrollment.                      |
 
 The default provider is `all` and the default scope is `project`.
+`vaultspec-core spec mcps trust [PROVIDER]` approves exact MCP commands after review and
+confirmation at an interactive terminal. `--source-from-cwd` approves definitions from
+the current working directory for a top-level `vaultspec-core sync` invocation; use
+`--target PATH` to select the destination and `--scope SCOPE` to select enrollment
+scope. `--revoke` withdraws existing grants; uninstall removes deployed entries.
 `vaultspec-core spec mcps sync --force` adopts or replaces a same-name external entry;
 `vaultspec-core spec mcps sync --prune` removes owned enrollment whose canonical source
 was deleted. `uninstall` preserves canonical definitions and external host entries.
@@ -1139,6 +1134,12 @@ the working directory or from where the package is installed, and no variant
 running interpreter lives inside the workspace, and the owning package's own resolved
 install mode for that workspace is `dependency` or `dev`. A globally installed tool run
 against a cloned repository never reads that repository's `.env`.
+
+No `.env` file is ever committed, this one or any other: dotenv files hold secrets. The
+managed `.gitignore` block ignores every `.env` and `.env.*` file at any depth, leaving
+only `.env.example` templates committable; the commit gate refuses one that is
+force-added; and `vaultspec-core doctor` warns when the Git index already tracks one. A
+tracked `.env` needs `git rm --cached` and every secret it held rotated.
 
 Booleans read one vocabulary: `1`, `true`, `yes` or `on` against `0`, `false`, `no` or
 `off`, case-folded and stripped. A blank value is unset, not off, and falls through to

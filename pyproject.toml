@@ -142,7 +142,6 @@ dev = [
   "ty>=0.0.15",
   "vulture>=2.16",
   "xenon>=0.9.3",
-  "vaultspec-rag[mcp]",
 ]
 # The local inference stack is a group of its own, apart from `dev`, because
 # the gates and the accelerator-free suite never load a model: a job that runs
@@ -538,8 +537,3 @@ known_first_party = ["vaultspec_rag"]
   # by falling back to a plain download with no progress bar. Declaring it
   # would make a genuinely optional import look mandatory.
   DEP003 = ["tqdm"]
-
-[tool.vaultspec-rag.mcp-extra]
-added = true
-location = "[dependency-groups].dev"
-managed = "vaultspec-rag[mcp]"
