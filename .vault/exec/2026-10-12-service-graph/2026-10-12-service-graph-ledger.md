@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#service-graph'
 date: '2026-10-12'
-modified: '2026-10-12'
+modified: '2026-10-13'
 body_schema: 'body-v2'
-body_hash: 'sha256:d17f5891ee2fc4e397db12af8a8225ef37d3e1aad9761d5a58de6b1b3f4011de'
+body_hash: 'sha256:96eea0266b335f67d4bd11a23e84ce051b39b7f33049ac0cc7a7fb7335a82c55'
 related:
   - "[[2026-10-12-service-graph-plan]]"
 ---
@@ -119,9 +119,12 @@ related:
 - `S04` `verify:` `recovery owner extraction 145 covering tests` -> `pass`
 - `S04` `verify:` `confirmation guard mutation fails then three restored states pass` -> `pass`
 - `S04` `verify:` `recovery changed-file format ty basedpyright each exit 0` -> `pass`
+- `S04` `verify:` `RAG Merge Gate 38303455264 attempt 2, runtime 7e3ccf33: Linux 3.13 8100 passed, Linux 3.14 8099 passed, Windows 8158 passed, package lint and dependency audit` -> `pass`
+- `S04` `verify:` `Dev Server 38303455322 and CodeQL on recovery head 7e3ccf33` -> `pass`
 
 ## Notes
 
 - `S04` Full Python suite, browser rendering, package gates and PR CI verification remain in progress; S04 stays open.
 - `S04` All local failures resolved in focused reruns. Full PR matrix still required; S04 remains open.
 - `S04` Corrects prior missed aggregate complexity failures. Required remote matrix remains pending; requested release follows verified PR merge.
+- `S04` Original Windows inventory HTTP timeout retained in attempt 1; complete Windows rerun passed without code or guard changes. All required S04 runtime verification now passes; release preparation remains pending.

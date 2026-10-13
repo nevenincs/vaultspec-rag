@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#service-graph'
 date: '2026-04-02'
-modified: '2026-10-12'
-body_hash: 'sha256:5a579fb5f7090550a3ab554e7368a8ea03bd2df47d29b23834f47ac1309245bf'
+modified: '2026-10-13'
+body_hash: 'sha256:a56928c6f65707dde44e91899d7584595d513ab2d4e3fb8e87c6dde4db6a8305'
 related:
   - '[[2026-04-02-service-graph-adr]]'
   - '[[2026-04-02-service-graph-phase1-plan]]'
@@ -915,3 +915,23 @@ Logs: s04-recovery-extraction-tests.log, s04-recovery-package-pylint.log,
 s04-complexity-final.log and s04-restoration-guard mutation/restored logs under the
 existing .vault/data/engine-data directory. All corrections stay in RAG PR 603;
 the final remote matrix remains required before merge and S04 closure.
+
+### final-ci-acceptance | low | PASS: Recovery and graph integration satisfy the full matrix
+
+The reviewed runtime and tests are unchanged from recovery commit
+7e3ccf3311a9e66296ef823543d2536dbf63ab3b. Existing integrated review,
+145 covering tests, package gates, and mutation evidence remain applicable.
+RAG Merge Gate run 38303455264 completed successfully on 2026-10-13:
+Linux Python 3.13 passed 8,100 tests with 47 platform skips; Linux Python
+3.14 passed 8,099 with 48 platform skips; Windows passed 8,158 with 15
+platform skips. Package lint and dependency advisories passed. The Windows
+rerun retained the passing Linux jobs; its original isolated HTTP inventory
+timeout is preserved in attempt 1, and the complete Windows rerun passed
+without modifying the test, timeout, or guard. Dev Server run 38303455322
+and CodeQL on the same head also passed.
+
+Verdict PASS for S04. No unresolved critical or high finding remains. This
+checkpoint changes development records only; its own Markdown checks and
+required PR gate must pass before merge. Release preparation still needs
+the published core graph dependency, release proposal verification, both
+accelerator tiers, all four native bundles, provenance, and PyPI publication.
