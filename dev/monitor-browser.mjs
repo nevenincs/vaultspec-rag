@@ -72,6 +72,9 @@ try {
       "--no-default-browser-check",
       "--remote-debugging-port=0",
       `--user-data-dir=${directory}`,
+      // Kept with failed-test artifacts so a loopback connection failure
+      // includes the socket error, not just the browser's generic verdict.
+      `--log-net-log=${join(directory, "network-log.json")}`,
       "about:blank",
     ],
     { windowsHide: true, stdio: ["ignore", "ignore", "inherit"] },
