@@ -20,10 +20,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from .. import _gpu_admission
+from .. import _gpu_admission, _gpu_owner
 from .._anchor_claim import (
     AnchorOutcome,
     claim_anchor,
+    hardware_anchor_path,
     observe_existing_anchor,
     release_anchor_claim,
 )
@@ -97,6 +98,19 @@ def test_anchor_locations_ignore_every_variable_a_process_can_change(
     # configuration gives a second process an anchor of its own.
     assert _resolved_under(relocated) == unchanged
     assert len(unchanged) == 2
+
+
+def test_the_real_anchor_marker_lifts_the_session_wide_redirect() -> None:
+    # Catches the opt-out leaving the session-wide redirect in place: every
+    # assertion this module makes about where the machine's anchors resolve
+    # would then be made about a private directory.
+    # Mutation: left the redirect in place for a marked test. Observed this
+    # assertion fail with the owner anchor resolving inside the session's
+    # directory; restoring the lift passed.
+    assert _gpu_owner.gpu_owner_anchor_path() == hardware_anchor_path("gpu-owner.lock")
+    assert _gpu_admission.load_window_lock_path() == hardware_anchor_path(
+        "gpu-load-window.lock"
+    )
 
 
 @pytest.fixture

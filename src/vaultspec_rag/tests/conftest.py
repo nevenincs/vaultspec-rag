@@ -6,7 +6,7 @@ import typing
 from contextlib import contextmanager
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, NamedTuple, TypedDict
 
 import pytest
 
@@ -323,6 +323,25 @@ def client_installation(monkeypatch: pytest.MonkeyPatch) -> None:
     pin_install_role(monkeypatch, InstallRole.CLIENT)
 
 
+class MachineAnchorResolvers(NamedTuple):
+    """The machine's own anchor resolvers, as shipped, before any pin replaced them."""
+
+    owner: Callable[[], Path]
+    load_window: Callable[[], Path]
+
+
+def _install_anchor_resolvers(
+    monkeypatch: pytest.MonkeyPatch,
+    owner: Callable[[], Path],
+    load_window: Callable[[], Path],
+) -> None:
+    """Make the two places a process asks for a hardware anchor answer with these."""
+    from .. import _gpu_admission, _gpu_owner
+
+    monkeypatch.setattr(_gpu_owner, "gpu_owner_anchor_path", owner)
+    monkeypatch.setattr(_gpu_admission, "load_window_lock_path", load_window)
+
+
 def pin_hardware_anchors(monkeypatch: pytest.MonkeyPatch, directory: Path) -> None:
     """Resolve the machine's hardware anchors inside *directory*.
 
@@ -333,21 +352,74 @@ def pin_hardware_anchors(monkeypatch: pytest.MonkeyPatch, directory: Path) -> No
     the test set out to observe. Such a child calls this itself, as the suite
     does for its own process.
     """
-    from .. import _gpu_admission, _gpu_owner
-
-    monkeypatch.setattr(
-        _gpu_owner, "gpu_owner_anchor_path", lambda: directory / "gpu-owner.lock"
-    )
-    monkeypatch.setattr(
-        _gpu_admission,
-        "load_window_lock_path",
+    _install_anchor_resolvers(
+        monkeypatch,
+        lambda: directory / "gpu-owner.lock",
         lambda: directory / "gpu-load-window.lock",
     )
 
 
+def _release_owner_claim(anchor: Path) -> None:
+    """Let go of the ownership claim this process took on *anchor*, if it took one."""
+    from .. import _gpu_owner
+    from .._anchor_claim import release_anchor_claim
+
+    with _gpu_owner._guard:
+        descriptor = _gpu_owner._held.pop(str(anchor), None)
+    if descriptor is not None:
+        release_anchor_claim(descriptor, pid_record=True)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def session_hardware_anchors(
+    tmp_path_factory: TempPathFactory,
+) -> Generator[MachineAnchorResolvers]:
+    """Keep every fixture above function scope off the machine's hardware anchors.
+
+    The per-test redirect below is function-scoped, and pytest builds a
+    module-, class- or session-scoped fixture before any function-scoped one.
+    A fixture that indexes a corpus or loads a model therefore asked the
+    machine's own anchor, outside any redirect, and was answered only by the
+    loan the borrowing session holds. Once the anchor was free - the resident
+    service restarting under a running lane is enough - the same ask claimed
+    it, and the claim outlived the test that happened to be first in line,
+    which the guard below then failed for it.
+
+    So the redirect is laid down for the whole session, into a directory of its
+    own, and a test narrows it to its own ``tmp_path`` or, for one that asserts
+    where the real anchors resolve, lifts it. Yields the resolvers as shipped
+    so that test can put them back. Any ownership claim a fixture took on the
+    session's anchor is released with the session.
+
+    Mutation checks, each run alone and then restored. Removed the session-wide
+    redirect: the module- and session-scoped resolution tests each failed on the
+    assertion naming the machine anchor they resolved, and the marker test still
+    passed. Left the redirect in place for a ``real_hardware_anchor`` test
+    instead of lifting it: the marker test failed on the owner anchor resolving
+    inside the session's directory rather than the machine's, and the two scope
+    tests still passed. Restoring either left all three passing.
+    """
+    from .. import _gpu_admission, _gpu_owner
+
+    shipped = MachineAnchorResolvers(
+        owner=_gpu_owner.gpu_owner_anchor_path,
+        load_window=_gpu_admission.load_window_lock_path,
+    )
+    directory = tmp_path_factory.mktemp("hardware-anchors")
+    with pytest.MonkeyPatch.context() as session_patch:
+        pin_hardware_anchors(session_patch, directory)
+        try:
+            yield shipped
+        finally:
+            _release_owner_claim(directory / "gpu-owner.lock")
+
+
 @pytest.fixture(autouse=True)
 def gpu_owner_anchor(
-    request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    session_hardware_anchors: MachineAnchorResolvers,
 ) -> Generator[Path]:
     """Point every machine-hardware anchor a test reaches at a private file.
 
@@ -362,19 +434,20 @@ def gpu_owner_anchor(
 
     Only where the anchors live is replaced; claiming, lending and refusing run
     unchanged, and there is no such redirection outside the suite. A test that
-    asserts where the real ones resolve opts out with ``real_hardware_anchor``.
+    asserts where the real ones resolve opts out with ``real_hardware_anchor``,
+    which puts back the resolvers the session-wide redirect replaced.
     """
-    from .. import _gpu_owner
-    from .._anchor_claim import release_anchor_claim
-
     anchor = tmp_path / "gpu-owner.lock"
-    if "real_hardware_anchor" not in request.keywords:
+    if "real_hardware_anchor" in request.keywords:
+        _install_anchor_resolvers(
+            monkeypatch,
+            session_hardware_anchors.owner,
+            session_hardware_anchors.load_window,
+        )
+    else:
         pin_hardware_anchors(monkeypatch, tmp_path)
     yield anchor
-    with _gpu_owner._guard:
-        descriptor = _gpu_owner._held.pop(str(anchor), None)
-    if descriptor is not None:
-        release_anchor_claim(descriptor, pid_record=True)
+    _release_owner_claim(anchor)
 
 
 @pytest.fixture(autouse=True)
