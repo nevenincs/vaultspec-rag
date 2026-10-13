@@ -66,14 +66,14 @@ vaultspec-rag install
 vaultspec-rag server start
 ```
 
-`install` connects your AI assistant, creates the `.vault/` folder for decision
-records, and downloads the search models and Qdrant, the index server. Later
-repositories reuse them.
+`install` connects your AI assistant and creates the `.vault/` folder for decision
+records.
 
-The first `server start` sets up the service's own GPU environment, with the CUDA
-build of PyTorch, and then waits until the service is ready. That takes a few minutes
-once; later starts take seconds. After you upgrade vaultspec-rag, the next start sets
-up the new release and removes the old one.
+The first `server start` sets up the service's own GPU environment with the CUDA build
+of PyTorch, downloads the search models and Qdrant, the index server, and waits until
+the service is ready. That takes a few minutes once; later starts, from any repository,
+take seconds. After you upgrade vaultspec-rag, the next start sets up the new release
+and removes the old one.
 
 To try it without installing anything, run `uvx vaultspec-rag server start` instead.
 

@@ -231,9 +231,9 @@ class _InstallCommand(TyperCommand):
                     default=True,
                     is_flag=True,
                     help=(
-                        "Download the search models and the Qdrant server now "
-                        "(default). With --no-provision, `server start` downloads "
-                        "them instead."
+                        "Download the search models and the Qdrant server now, "
+                        "when this installation carries the GPU packages "
+                        "(default). Otherwise `server start` downloads them."
                     ),
                 ),
                 TyperOption(
@@ -328,10 +328,9 @@ class _InstallCommand(TyperCommand):
     cls=_InstallCommand,
     help=(
         "Set up vaultspec-rag in this repository.\n\n"
-        "Connects your AI assistant, creates the .vault/ folder, and downloads "
-        "the search models and the Qdrant server, each checked against digests "
-        "pinned in vaultspec-rag. Then run `vaultspec-rag server start`. Exits "
-        "non-zero when a step failed."
+        "Connects your AI assistant and creates the .vault/ folder. Then run "
+        "`vaultspec-rag server start`, which downloads what the service still "
+        "needs. Exits non-zero when a step failed."
     ),
 )
 def handle_install() -> None:

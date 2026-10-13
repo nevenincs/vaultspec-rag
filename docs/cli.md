@@ -173,7 +173,7 @@ vaultspec-rag clean
 
 ## install
 
-Set up vaultspec-rag in this repository. Connects your AI assistant, creates the .vault/ folder, and downloads the search models and the Qdrant server, each checked against digests pinned in vaultspec-rag. Then run `vaultspec-rag server start`. Exits non-zero when a step failed.
+Set up vaultspec-rag in this repository. Connects your AI assistant and creates the .vault/ folder. Then run `vaultspec-rag server start`, which downloads what the service still needs. Exits non-zero when a step failed.
 
 ```bash
 vaultspec-rag install
@@ -193,7 +193,7 @@ None.
 | `--force` | boolean | no | off | Overwrite setup files that already exist. |
 | `--mode` | choice | no | - | How your AI assistant launches vaultspec-rag: 'tool', or from this project's environment as a 'dependency' or 'dev' dependency. Detected from pyproject.toml when omitted. |
 | `--yes`, `-y` | boolean | no | off | Answer yes to setup prompts, for runs without a terminal. |
-| `--provision`, `--no-provision` | boolean | no | on | Download the search models and the Qdrant server now (default). With --no-provision, `server start` downloads them instead. |
+| `--provision`, `--no-provision` | boolean | no | on | Download the search models and the Qdrant server now, when this installation carries the GPU packages (default). Otherwise `server start` downloads them. |
 | `--mcp`, `--no-mcp` | boolean | no | on | Connect your AI assistant through MCP (default). With --no-mcp, only the command line is set up. |
 | `--local-only` | boolean | no | off | Keep the index in an on-disk store instead of the Qdrant server, for CI, offline or small projects. `server start` remembers the choice. |
 | `--json` | boolean | no | off | Emit JSON for scripts instead of human text. |
