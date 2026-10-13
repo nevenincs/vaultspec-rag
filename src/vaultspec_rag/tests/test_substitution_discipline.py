@@ -31,6 +31,15 @@ _NEEDLES = ("monkeypatch." + "setattr", "monkeypatch." + "delattr")
 # real). The reason belongs at the call site too; it is repeated here so a
 # reader hitting a failure learns what bar a new entry has to clear.
 _ALLOWED: dict[str, tuple[int, str]] = {
+    "test_pid_image.py": (
+        3,
+        "the unit case selects the Windows branch, reports a dead PID and "
+        "supplies retained image metadata because the Windows kernel does not "
+        "retain that metadata repeatably after a real child exits. This proves "
+        "the liveness rejection independently of cleanup timing; the companion "
+        "cases still probe real live and naturally exited children. All three "
+        "substitutions restore before machine-safety fixture teardown",
+    ),
     # Reducing this bound to zero failed count growth; exact restoration passed.
     "integration/_shutdown_storage_control.py": (
         1,
