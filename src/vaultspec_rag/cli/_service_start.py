@@ -258,13 +258,13 @@ class _ServiceStartCommand(TyperCommand):
                     default=False,
                     is_flag=True,
                     help=(
-                        "Use the on-disk local store instead of the default managed "
-                        "Qdrant server. This is the first-class opt-out for CI, "
-                        "offline, and small-project hosts."
+                        "Keep the index in an on-disk store instead of the Qdrant "
+                        "server, for CI, offline or small projects."
                     ),
                 ),
                 TyperOption(
                     param_decls=["--qdrant/--no-qdrant"],
+                    hidden=True,
                     default=None,
                     is_flag=True,
                     help=(
@@ -277,6 +277,7 @@ class _ServiceStartCommand(TyperCommand):
                 ),
                 TyperOption(
                     param_decls=["--qdrant-auto-provision/--no-qdrant-auto-provision"],
+                    hidden=True,
                     default=None,
                     is_flag=True,
                     help=(
@@ -289,6 +290,7 @@ class _ServiceStartCommand(TyperCommand):
                 ),
                 TyperOption(
                     param_decls=["--no-preprocess"],
+                    hidden=True,
                     default=False,
                     is_flag=True,
                     help=(
@@ -944,15 +946,10 @@ def _spawn_prepared_service(request: _PreparedServiceRequest) -> int:
     "start",
     cls=_ServiceStartCommand,
     help=(
-        "Start the background search service. Defaults to the managed Qdrant "
-        "server backend (server mode); pass --local-only for the on-disk store. "
-        "Before the service is started, a host installation fetches what it "
-        "needs and does not have: the model files, each checked against "
-        "digests compiled into vaultspec-rag, and the managed Qdrant server, "
-        "unless that download is switched off. A client installation is "
-        "refused and fetches nothing. A fetch that fails stops the start "
-        "with its cause and its remedy. Waits until the service is ready and "
-        "records how the CLI can reach it."
+        "Start the background search service.\n\n"
+        "The first start downloads what the service needs and does not have "
+        "yet, each checked against digests pinned in vaultspec-rag, then waits "
+        "until the service is ready. Later starts download nothing."
     ),
 )
 def service_start() -> None:

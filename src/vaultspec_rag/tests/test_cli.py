@@ -388,11 +388,54 @@ class TestHelpCleanup:
     def test_install_help_clean(self):
         result = runner.invoke(app, ["install", "--help"])
         assert result.exit_code == 0, result.output
-        assert "Set up vaultspec-rag in a workspace" in result.output
+        assert "Set up vaultspec-rag in this repository" in result.output
         assert "Emit JSON for scripts" in result.output
         # The help is wrapped to the terminal, so the sentence is read with
         # its line breaks folded.
-        assert "use --yes or --no-torch-config" in " ".join(result.output.split())
+        assert "Then run `vaultspec-rag server start`" in " ".join(
+            result.output.split()
+        )
+        # Un-hiding --torch-config fails this loop on that name.
+        for internal in (
+            "--torch-config",
+            "--tool-repair",
+            "--torch-group",
+            "--sync",
+            "--skip-models",
+            "--skip-qdrant",
+            "--mode",
+            "--no-hints",
+        ):
+            assert internal not in result.output, internal
+
+    def test_install_hidden_options_still_parse(self):
+        # Hiding an option from the help must not remove it: scripts that
+        # pass it keep working. Click rejects an unknown option while parsing,
+        # before the eager --help callback runs, so a clean exit proves each
+        # hidden option is still accepted. Renaming --skip-models fails it
+        # with a usage error.
+        result = runner.invoke(
+            app,
+            [
+                "install",
+                "--no-torch-config",
+                "--no-tool-repair",
+                "--skip-models",
+                "--skip-qdrant",
+                "--no-hints",
+                "--mode",
+                "tool",
+                "--help",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+
+    def test_server_start_help_hides_backend_internals(self):
+        result = runner.invoke(app, ["server", "start", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "--local-only" in result.output
+        for internal in ("--qdrant-auto-provision", "--no-qdrant", "--no-preprocess"):
+            assert internal not in result.output, internal
         for forbidden in (
             "Torch-config gating",
             "MCP source files",

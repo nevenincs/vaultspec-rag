@@ -173,7 +173,7 @@ vaultspec-rag clean
 
 ## install
 
-Set up vaultspec-rag in a workspace. Creates the required workspace folders, installs bundled rules and integration files, and syncs the files used by supported tools. By default, install also provisions the external dependencies the server-first default needs - the embedding/reranker models and the pinned Qdrant server binary - and ensures the optional MCP extra so the agent-facing MCP search surface can run, and asks before changing PyTorch package configuration. Use --local-only for the minimal local backend (skips the binary), the finer --skip-models/--skip-qdrant flags for partial opt-out, --no-mcp for a CLI-only workspace without the mcp dependency, and --no-provision to set up the workspace only; use --yes or --no-torch-config for non-interactive runs. The model files and the Qdrant server are each checked against digests compiled into vaultspec-rag before they are used. A client installation is given neither, and a host that cannot run the service yet gets them from server start once it can. Exits non-zero when a step it was asked to run failed.
+Set up vaultspec-rag in this repository. Connects your AI assistant, creates the .vault/ folder, and downloads the search models and the Qdrant server, each checked against digests pinned in vaultspec-rag. Then run `vaultspec-rag server start`. Exits non-zero when a step failed.
 
 ```bash
 vaultspec-rag install
@@ -190,21 +190,12 @@ None.
 | `--target`, `-t` | directory | no | - | Workspace path (default: current working directory). |
 | `--upgrade` | boolean | no | off | Refresh bundled rules and integration files even if present. |
 | `--dry-run` | boolean | no | off | Preview changes without writing. |
-| `--force` | boolean | no | off | Override existing files. Never answers the torch-config confirmation prompt; use --yes for that. |
-| `--skip` | str | no | () | Skip a component (repeatable). |
-| `--mode` | choice | no | - | Provisioning mode: 'tool' (default, launched via uvx), 'dependency' (a runtime project dependency resolved through the project's own venv, ships in built distributions), or 'dev' (the default dev dependency group; renders like dependency but does not ship in built distributions). Auto-detected from pyproject.toml when omitted. |
-| `--torch-config`, `--no-torch-config` | boolean | no | on | Configure the CUDA PyTorch package source in pyproject.toml. --no-torch-config takes precedence over --yes. |
-| `--tool-repair`, `--no-tool-repair` | boolean | no | on | Check whether a persistent uv tool environment holds a processor-only torch build, and report the command that repairs it. Nothing is installed or replaced by this check. --no-tool-repair skips it entirely. |
-| `--torch-group` | str | no | - | Place the managed CUDA torch direct-dependency under the PEP 735 [dependency-groups].NAME surface instead of [project].dependencies, so a dev-only consumer does not leak torch into its published requirements. Defaults the group name to 'dev' when passed without a value. Omit the flag entirely to keep the historic [project].dependencies placement. The group must be enabled for the resolve (`uv sync --group NAME`) for the cu130 pin to apply. |
-| `--yes`, `-y` | boolean | no | off | Skip the PyTorch configuration prompt. Required for non-interactive installs unless --no-torch-config is used. |
-| `--sync` | boolean | no | off | Run `uv sync --reinstall-package torch` after PyTorch configuration changes are applied. |
-| `--provision`, `--no-provision` | boolean | no | on | Provision external dependencies (models and the Qdrant server binary) after enrollment. On by default; --no-provision sets up the workspace only. |
-| `--mcp`, `--no-mcp` | boolean | no | on | Enroll the agent-facing MCP search surface and reconcile its optional dependency at RAG's existing project placement. On by default; --no-mcp sets up a CLI-only workspace without the mcp dependency (and, on Windows, without pywin32). |
-| `--local-only` | boolean | no | off | Use the on-disk store instead of the supervised Qdrant server: skips the Qdrant binary download and persists the local backend so `server start` honours it. The minimal / CI / air-gapped alternative to the server-first default. |
-| `--skip-models` | boolean | no | off | Skip the embedding/reranker model provisioning step. |
-| `--skip-qdrant` | boolean | no | off | Skip the Qdrant server binary provisioning step. |
+| `--force` | boolean | no | off | Overwrite setup files that already exist. |
+| `--yes`, `-y` | boolean | no | off | Answer yes to setup prompts, for runs without a terminal. |
+| `--provision`, `--no-provision` | boolean | no | on | Download the search models and the Qdrant server now (default). With --no-provision, `server start` downloads them instead. |
+| `--mcp`, `--no-mcp` | boolean | no | on | Connect your AI assistant through MCP (default). With --no-mcp, only the command line is set up. |
+| `--local-only` | boolean | no | off | Keep the index in an on-disk store instead of the Qdrant server, for CI, offline or small projects. `server start` remembers the choice. |
 | `--json` | boolean | no | off | Emit JSON for scripts instead of human text. |
-| `--no-hints` | boolean | no | off | Suppress next-step advisory hints. |
 
 ## uninstall
 
@@ -476,7 +467,7 @@ None.
 
 ## server start
 
-Start the background search service. Defaults to the managed Qdrant server backend (server mode); pass --local-only for the on-disk store. Before the service is started, a host installation fetches what it needs and does not have: the model files, each checked against digests compiled into vaultspec-rag, and the managed Qdrant server, unless that download is switched off. A client installation is refused and fetches nothing. A fetch that fails stops the start with its cause and its remedy. Waits until the service is ready and records how the CLI can reach it.
+Start the background search service. The first start downloads what the service needs and does not have yet, each checked against digests pinned in vaultspec-rag, then waits until the service is ready. Later starts download nothing.
 
 Also starts the managed browser monitor. Its port begins at the actual
 backend port plus one and increments until free: `--port 9000` first
@@ -513,10 +504,7 @@ None.
 | `--updates`, `--no-updates` | boolean | no | - | Enable or disable automatic index updates when files change (default: enabled). |
 | `--update-delay-ms` | int | no | - | Delay before indexing a burst of file changes, in milliseconds. |
 | `--repeat-update-delay-s` | float | no | - | Minimum wait before automatically updating a project again, in seconds. |
-| `--local-only` | boolean | no | off | Use the on-disk local store instead of the default managed Qdrant server. This is the first-class opt-out for CI, offline, and small-project hosts. |
-| `--qdrant`, `--no-qdrant` | boolean | no | - | Select the managed Qdrant server for this start, or decline it. --qdrant overrides a saved or exported local-only choice for this run without rewriting it; --local-only still wins when both are given. Unset leaves the current setting in force. |
-| `--qdrant-auto-provision`, `--no-qdrant-auto-provision` | boolean | no | - | Download and verify the managed Qdrant server when it is missing (default: enabled). With --no-qdrant-auto-provision, start prints the install command instead. Unset leaves the VAULTSPEC_RAG_QDRANT_AUTO_PROVISION setting in force. |
-| `--no-preprocess` | boolean | no | off | Kill switch: the service loads no document-preprocessing rules for any root (forwards VAULTSPEC_RAG_PREPROCESS=off). |
+| `--local-only` | boolean | no | off | Keep the index in an on-disk store instead of the Qdrant server, for CI, offline or small projects. |
 | `--json` | boolean | no | off | Emit one structured JSON outcome. An already-running owned service is the success `already_running` (exit 0), so a supervising broker can attach rather than treating it as a fault. |
 
 ## server stop
