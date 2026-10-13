@@ -1,7 +1,7 @@
 """One automatic pull-request workflow owns merge readiness.
 
-A draft runs nothing. Opening or readying a pull request runs every merge
-gate; a push to it runs the light lint; the commit that lands on main runs
+A draft runs nothing. Every ready pull-request head runs every merge
+gate; the commit that lands on main runs
 every gate again. A release dispatch reaches the same workflow, so the
 required context has one implementation for contributor and bot-authored
 branches.
@@ -14,7 +14,7 @@ from typing import Any, cast
 import pytest
 
 from dev.guards import _workflows as workflows
-from dev.guards._ci_names import GATE_CHECK, GATE_JOB, Workflow
+from dev.guards._ci_names import GATE_JOB, GATE_NAME_EXPRESSION, Workflow
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
 
@@ -25,11 +25,11 @@ PULL_REQUEST_TYPES = [
     "ready_for_review",
     "labeled",
 ]
-FULL_JOBS = frozenset({"lint", "tests", "tests-windows", "dependency-audit"})
-LIGHT_JOBS = frozenset({"lint-light"})
+FULL_JOBS = frozenset(
+    {"lint", "tests", "tests-windows", "dependency-audit", "code-scanning"}
+)
 GATE_RECIPES = {
     "check-all": frozenset({"linux"}),
-    "check-light": frozenset({"linux"}),
     "test-python": frozenset({"linux", "windows"}),
     "audit-deps": frozenset({"linux"}),
 }
@@ -75,8 +75,8 @@ def test_pull_request_heads_start_the_gate_automatically() -> None:
 def test_the_gate_is_reusable_and_measures_every_main_commit() -> None:
     """Release automation can call the gate, and every commit on main runs it.
 
-    A pull-request push is proven by the light lint only, so the commit that
-    lands is what the full gate measures; Release Please waits on that run.
+    Both the merge candidate and the landed commit receive full proof;
+    Release Please waits on the landed commit's run.
 
     Mutation proof: dropping the ``push`` trigger makes this fail on the
     missing main push; restoring it makes this pass.
@@ -93,17 +93,14 @@ def test_the_gate_is_reusable_and_measures_every_main_commit() -> None:
 _HOME = "owner/repo"
 
 #: ``(label, event, payload, jobs that must run)``. Every other measuring job
-#: must skip. ``scope`` is a dispatch's choice input; a call carries none.
+#: must skip.
 _SCENARIOS: tuple[tuple[str, str, dict[str, object], frozenset[str]], ...] = (
     ("push to main", "push", {}, FULL_JOBS),
-    ("dispatch", "workflow_dispatch", {"scope": "full"}, FULL_JOBS),
-    ("dispatch without a scope", "workflow_dispatch", {"scope": None}, FULL_JOBS),
-    ("light dispatch", "workflow_dispatch", {"scope": "light"}, LIGHT_JOBS),
+    ("dispatch", "workflow_dispatch", {}, FULL_JOBS),
     (
-        "release cannot request light proof",
+        "release dispatch",
         "workflow_dispatch",
         {
-            "scope": "light",
             "ref_name": "release-please--branches--main--components--vaultspec-rag",
         },
         FULL_JOBS,
@@ -131,7 +128,7 @@ _SCENARIOS: tuple[tuple[str, str, dict[str, object], frozenset[str]], ...] = (
         "push to a ready pull request",
         "pull_request",
         {"action": "synchronize", "draft": False, "head": _HOME},
-        LIGHT_JOBS,
+        FULL_JOBS,
     ),
     (
         "draft opened",
@@ -202,7 +199,7 @@ _SCENARIOS: tuple[tuple[str, str, dict[str, object], frozenset[str]], ...] = (
             "head": _HOME,
             "author": "CONTRIBUTOR",
         },
-        FULL_JOBS,
+        frozenset(),
     ),
     (
         "a bot pressed ci:full",
@@ -233,7 +230,6 @@ def _bindings(payload: dict[str, object]) -> dict[str, object]:
         "github.event.pull_request.head.repo.full_name": payload.get("head", ""),
         "github.event.pull_request.author_association": payload.get("author", "OWNER"),
         "github.event.sender.type": payload.get("sender", "User"),
-        "inputs.scope": payload.get("scope"),
         "github.ref_name": payload.get("ref_name", "feature"),
     }
 
@@ -246,15 +242,12 @@ def _bindings(payload: dict[str, object]) -> dict[str, object]:
 def test_pull_request_state_selects_the_cost_tier(
     event: str, payload: dict[str, object], expected: frozenset[str]
 ) -> None:
-    """Drafts run nothing, opening or readying runs everything, a push runs
-    the light lint, and a fork or an unrelated label starts nothing.
+    """Drafts run nothing; every ready head runs everything automatically.
 
     Mutation proof: replacing the ``tests`` job's draft comparison with
-    ``true`` made the draft cases fail naming ``tests``; adding
-    ``synchronize`` to the full lanes' actions made the push case fail naming
-    every full job; restoring each made every case pass.
-    Changing the release branch's full-scope override failed the release light
-    dispatch case (exit 1); exact restoration passed the 21 cases (exit 0).
+    ``true`` made the draft cases fail naming ``tests``. Removing
+    ``synchronize`` from the full condition fails the push case naming the
+    missing full jobs; restoration passes.
     """
     running = {
         job_id
@@ -282,7 +275,7 @@ def test_the_gate_needs_every_measuring_job_and_skips_only_a_draft() -> None:
     gate = jobs.get(GATE_JOB)
     assert isinstance(gate, dict)
     raw = cast("dict[object, object]", gate)
-    assert raw.get("name") == GATE_CHECK
+    assert raw.get("name") == GATE_NAME_EXPRESSION
     needs = raw.get("needs")
     needed: set[str] = (
         set(cast("list[str]", needs)) if isinstance(needs, list) else set()
@@ -298,7 +291,13 @@ def test_the_gate_needs_every_measuring_job_and_skips_only_a_draft() -> None:
     findings: list[str] = []
     for label, event, payload, _expected in _SCENARIOS:
         verdict = workflows.evaluate(condition, event, _bindings(payload))
-        skips = payload.get("draft") is True and payload.get("label") != "ci:full"
+        untrusted = event == "pull_request" and (
+            payload.get("head") != _HOME
+            or payload.get("author", "OWNER") not in {"OWNER", "COLLABORATOR"}
+        )
+        skips = untrusted or (
+            payload.get("draft") is True and payload.get("label") != "ci:full"
+        )
         if skips and verdict is not workflows.FALSE:
             findings.append(f"{label}: the gate runs on a draft ({verdict})")
         if not skips and verdict is workflows.FALSE:
@@ -318,6 +317,75 @@ def test_the_gate_runs_every_check_on_every_platform() -> None:
     assert not findings, "The merge gate lost required coverage.\n\n" + "\n".join(
         findings
     )
+
+
+def test_pr_verdict_requires_full_proof() -> None:
+    """Light or skipped jobs cannot authorize a PR head.
+
+    Mutation proof: restoring light-lint authorization fails the light-verdict
+    assertion; deleting the historical measured-job check fails the prior-proof
+    assertion. Restoration after each mutation passes.
+    """
+    script = next(
+        str(step["run"])
+        for step in _jobs()[GATE_JOB]["steps"]
+        if step.get("name") == "Every full check passed on this commit"
+    )
+    assert '${LIGHT}" = "success"' not in script, (
+        "light lint must never authorize the merge gate"
+    )
+    prior = script.split('if [ "$previous" = "success" ]; then', 1)[1].split("fi", 1)[0]
+    assert 'require_full_run "$run" ||' in prior, (
+        "a prior success must prove that every full job actually passed"
+    )
+    assert 'if ($4 != "success") failed=1' in script
+    assert "exit(failed || count != 8)" in script
+    assert "jobs?filter=all&per_page=100" in script
+    assert "jobs=$(gh api --paginate " in script
+    assert "sort -t $'\\t' -k1,1 -k2,2nr -k3,3nr" in script
+    # Removing the history loop failed this assertion; restoration passed.
+    assert "while read -r run previous; do" in script
+    assert 'if [ "$previous" != "success" ]; then' in script
+    assert 'if require_full_run "$run"; then' in script
+    assert "sort -k1,1nr" in script
+
+
+def test_dispatch_cannot_select_partial_merge_proof() -> None:
+    """Restoring a scope input or light job fails admission."""
+    for event in ("workflow_dispatch", "workflow_call"):
+        trigger = _triggers()[event]
+        assert isinstance(trigger, dict)
+        inputs = cast("dict[object, object]", trigger)["inputs"]
+        assert isinstance(inputs, dict)
+        assert set(cast("dict[object, object]", inputs)) == {"ref"}
+    assert "lint-light" not in _jobs()
+
+
+@pytest.mark.parametrize("author", ["CONTRIBUTOR", "NONE", "FIRST_TIMER"])
+@pytest.mark.parametrize("head", [_HOME, "stranger/repo"])
+def test_untrusted_pull_requests_never_run_even_with_a_full_label(
+    author: str, head: str
+) -> None:
+    """Removing author admission fails a named measuring-job assertion."""
+    payload: dict[str, object] = {
+        "action": "labeled",
+        "label": "ci:full",
+        "head": head,
+        "author": author,
+        "draft": False,
+    }
+    for job_id, body in _jobs().items():
+        assert (
+            workflows.evaluate(str(body["if"]), "pull_request", _bindings(payload))
+            is workflows.FALSE
+        ), f"untrusted PR reaches {job_id}"
+    withheld = GATE_NAME_EXPRESSION.removeprefix("${{ ").split(
+        " && 'Admission withheld (Linux)'", 1
+    )[0]
+    assert (
+        workflows.evaluate(withheld, "pull_request", _bindings(payload))
+        is workflows.TRUE
+    ), "a skipped external PR must not report the required context"
 
 
 @pytest.mark.parametrize("job_id", ["tests", "tests-windows"])

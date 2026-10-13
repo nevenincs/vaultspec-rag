@@ -12,6 +12,7 @@ outside the tree. :data:`~dev.guards._ci_names.GATE_CHECK` is its value.
 
 from __future__ import annotations
 
+from typing import cast
 from urllib.parse import unquote
 
 import pytest
@@ -21,6 +22,7 @@ from dev.guards._ci_names import (
     FULL_RUN_LABEL,
     GATE_CHECK,
     GATE_JOB,
+    GATE_NAME_EXPRESSION,
     LABEL_ENV,
     SAME_REPO_CLAUSE,
     Workflow,
@@ -89,9 +91,10 @@ def test_the_gate_carries_the_name_branch_protection_requires() -> None:
 
     Mutation proof: renaming the gate job to ``Check: Merge verdict (Linux)``
     made this fail naming both strings; restoring the name made it pass.
+    Renaming GATE_CHECK alone also failed this assertion; restoration passed.
     """
     gate = _gate()
-    assert gate.name == GATE_CHECK, (
+    assert gate.name == GATE_NAME_EXPRESSION, (
         f"the gate is named {gate.name!r}; the canon composes "
         f"{GATE_CHECK!r}, and `protect-main` requires that string on every "
         "pull request's head commit. Change the ruleset in the same breath."
@@ -138,7 +141,8 @@ def test_the_label_is_spelled_once_for_the_steps_that_read_it() -> None:
     this fail naming that step; reading ``$FULL_RUN_LABEL`` made it pass.
     """
     document = workflows.document(Workflow.MERGE_GATE)
-    declared = (document.get("env") or {}).get(LABEL_ENV)
+    environment = cast("dict[str, object]", document.get("env") or {})
+    declared = environment.get(LABEL_ENV)
     assert declared == FULL_RUN_LABEL, (
         f"{Workflow.MERGE_GATE} declares `env.{LABEL_ENV}` as {declared!r}; "
         f"the canon says {FULL_RUN_LABEL!r}."

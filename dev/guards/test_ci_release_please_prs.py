@@ -74,7 +74,7 @@ def test_release_please_dispatches_the_gate_after_its_last_branch_write() -> Non
     assert "gh workflow run merge-gate.yml" in run
     assert '--ref "${HEAD_BRANCH}"' in run
     assert '--field ref="${HEAD_BRANCH}"' in run
-    assert "--field scope=full" in run
+    assert "--field scope=" not in run
 
 
 def test_main_push_selects_either_a_proposal_or_an_automatic_cut() -> None:
@@ -114,6 +114,9 @@ def test_the_cut_proves_the_head_before_it_releases() -> None:
     assert "if" not in candidate
     gate = _job("prove-gate")
     assert gate.get("uses") == f"./.github/workflows/{GATE_WORKFLOW}"
+    assert gate["permissions"].get("security-events") == "write", (
+        "the reusable code-scanning job cannot elevate its caller's token"
+    )
     options = gate.get("with")
     assert isinstance(options, dict)
     assert "scope" not in cast("dict[object, object]", options), (
@@ -197,14 +200,13 @@ def test_release_readiness_requires_dev_server_and_releases_held_checks() -> Non
     assert "head_sha=$PROOF_SHA" in proof
     assert '"completed success") exit 0' in proof
     assert "completed*)" in proof and "exit 1" in proof
-    approve = str(steps["Approve the proven release proposal checks"]["run"])
-    assert '.author.is_bot and .author.login == "app/github-actions"' in approve
-    assert '[ "$head" = "$SHA" ]' in approve
-    assert "head_sha=$SHA&status=action_required" in approve
-    assert "actions/runs/$run/approve" in approve
+    assert "Approve the proven release proposal checks" not in steps
+    assert "github.event_name == 'pull_request'" in str(
+        steps["Require the release dev server proof on this exact commit"]["if"]
+    )
     verdict = str(steps["Every full check passed on this commit"]["run"])
-    assert "event=workflow_dispatch&head_sha=$HEAD_SHA" in verdict
-    assert 'length == 5 and all(.[]; .conclusion == "success")' in verdict
+    assert 'if ($4 != "success") failed=1' in verdict
+    assert "exit(failed || count != 8)" in verdict
 
 
 def test_release_result_refuses_a_skipped_selected_path() -> None:

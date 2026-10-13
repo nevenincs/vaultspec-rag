@@ -29,6 +29,7 @@ MUTATION PROOF, each run in one uninterrupted sequence and restored:
 from __future__ import annotations
 
 import contextlib
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -36,6 +37,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from .. import _process_probe
 from .._process_probe import (
     _psutil_image_name,
     _psutil_image_path,
@@ -45,7 +47,7 @@ from .._process_probe import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Callable, Generator
 
 pytestmark = [pytest.mark.unit]
 
@@ -92,12 +94,62 @@ def test_the_psutil_route_names_a_live_process_by_its_short_name() -> None:
 
 def test_the_psutil_route_reads_a_departed_process_as_unreadable() -> None:
     """A process that is gone is unknown, and asking about it does not raise."""
-    with _sleeping_child() as child:
-        pass
+    # Keep Popen's Windows handle open after a natural exit: the OS may still
+    # return image metadata through it, which must not count as a live image.
+    child = subprocess.Popen(
+        [sys.executable, "-c", "pass"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    child.wait(timeout=30)
     assert child.returncode is not None, "premise: the child has been ended"
 
     assert _psutil_image_path(child.pid) is None
     assert _psutil_image_name(child.pid) is None
+    assert pid_image_path(child.pid) is None
+
+
+@pytest.mark.parametrize(
+    "reader", [_psutil_image_path, _psutil_image_name, pid_image_path]
+)
+def test_windows_exited_process_metadata_is_not_a_live_image(
+    reader: Callable[[int], str | None],
+) -> None:
+    """Removing the Windows liveness guard fails the None assertion.
+
+    Windows may retain image metadata for an exited process while a handle
+    remains open. That response cannot occur on POSIX, and its availability
+    varies with Windows cleanup timing. The real natural-exit test above
+    complements this deterministic policy check. Restore the OS view before
+    the real hardware-anchor fixtures tear down.
+
+    Removing the public Windows liveness guard failed the None assertion;
+    restoring it passed, including all three readers.
+    """
+    import psutil
+
+    class RetainedMetadata:
+        def exe(self) -> str:
+            return "C:/Python/python.exe"
+
+        def name(self) -> str:
+            return "python.exe"
+
+    def exited(_pid: int) -> bool:
+        return False
+
+    def retained(_pid: int) -> RetainedMetadata:
+        return RetainedMetadata()
+
+    # Restore the process-global platform before the anchor-safety fixtures
+    # inspect this machine during teardown.
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(_process_probe.sys, "platform", "win32")
+        monkeypatch.setattr(_process_probe, "pid_alive", exited)
+        monkeypatch.setattr(psutil, "Process", retained)
+        # Use a readable process object so removing the public Win32 guard
+        # returns real image metadata despite the substituted exited verdict.
+        assert reader(os.getpid()) is None
 
 
 def test_a_live_process_image_is_readable_on_this_platform() -> None:

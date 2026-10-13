@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import socket
 import subprocess
 import sys
 import urllib.parse
@@ -14,6 +13,7 @@ import pytest
 from ..config._types import EnvVar
 from ..monitor_inventory import read_inventory
 from ..storage_manifest import manifest_path, record_root
+from ._ports import refused_loopback_port
 from .conftest import managed_env
 from .test_monitor_browser import _read
 from .test_monitor_browser import browser_bridge as browser_bridge
@@ -31,6 +31,12 @@ def inventory_storage(tmp_path: Path) -> Iterator[Path]:
     storage = tmp_path / "storage"
     with managed_env(**{EnvVar.QDRANT_STORAGE_DIR.value: str(storage)}):
         yield storage
+
+
+@pytest.fixture
+def absent_service_port() -> Iterator[int]:
+    with refused_loopback_port() as port:
+        yield port
 
 
 def _collection(directory: Path, name: str, contents: bytes) -> None:
@@ -66,7 +72,10 @@ def _seed_inventory(tmp_path: Path) -> tuple[Path, Path, str, str, Path]:
 
 @pytest.mark.parametrize("discovery", ["missing", "stale"])
 def test_stopped_bridge_reads_attributed_disk_inventory_without_writes(
-    browser_bridge: tuple[str, Path], tmp_path: Path, discovery: str
+    browser_bridge: tuple[str, Path],
+    tmp_path: Path,
+    discovery: str,
+    absent_service_port: int,
 ) -> None:
     access, status_directory = browser_bridge
     root, gone, prefix, gone_prefix, storage = _seed_inventory(tmp_path)
@@ -74,11 +83,8 @@ def test_stopped_bridge_reads_attributed_disk_inventory_without_writes(
     if discovery == "missing":
         discovery_path.unlink()
     else:
-        with socket.socket() as unused:
-            unused.bind(("127.0.0.1", 0))
-            absent_port = int(unused.getsockname()[1])
         discovery_path.write_text(
-            json.dumps({"port": absent_port, "service_token": "private"}),
+            json.dumps({"port": absent_service_port, "service_token": "private"}),
             encoding="utf-8",
         )
     before_status = _files(status_directory)

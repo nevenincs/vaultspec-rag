@@ -6,7 +6,7 @@ name: RAG Hardware Tiers
 # - The release cut in `release-please.yml` requires both tiers to pass on
 #   the exact head it merges, before the release commit is tagged.
 # - `ci.yml` runs them on schedule and on dispatch against the commit it was
-#   started for, and adds the advisory macOS full suite.
+#   started for, and adds the macOS full suite.
 #
 # Every precondition the tiers read is provisioned here, inside the job that
 # reads it: the public model cache, the pinned Qdrant
@@ -30,7 +30,7 @@ on:
         type: string
         default: macos-and-gpu
       macos_full_suite:
-        description: Also run the advisory accelerator-free suite on macOS
+        description: Also run the accelerator-free suite on macOS
         required: false
         type: boolean
         default: false
@@ -91,11 +91,10 @@ jobs:
         run: just init
 
       # The suite's monitor tests drive the Vite toolchain and the compiled
-      # monitor, as the merge gate's suites do. Advisory with the suite they
-      # serve, so a failed build here never withholds the MPS guard.
+      # monitor, as the merge gate's suites do. A preparation failure must
+      # fail the job rather than leave browser checks silently unexercised.
       - name: Set up Node for local monitor route tests
         if: inputs.macos_full_suite
-        continue-on-error: true
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           package-manager-cache: false
@@ -103,25 +102,20 @@ jobs:
 
       - name: Restore monitor dependencies for installed-browser checks
         if: inputs.macos_full_suite
-        continue-on-error: true
         run: npm ci
 
       - name: Compile the native monitor for lifecycle tests
         if: inputs.macos_full_suite
-        continue-on-error: true
         run: just build-monitor-test
 
-      # ADVISORY, through `continue-on-error`. The macOS suite has never been
-      # fully triaged; it flips to gating by deleting that flag once its
-      # failure count reaches zero. Ratchet down, never up. Releases do not run
-      # it: the MPS guard below is the release's Apple silicon claim.
+      # Scheduled and dispatched full suites gate their job. Releases do not
+      # run this suite: the MPS guard below is the release's Apple silicon claim.
       #
       # Four workers, as in the merge gate, and set on the step for the same
       # reason: a value exported by the runner's own hook replaces one declared
       # for the job.
       - name: Run tests
         if: inputs.macos_full_suite
-        continue-on-error: true
         env:
           PYTEST_XDIST_AUTO_NUM_WORKERS: "4"
         run: just test-python
