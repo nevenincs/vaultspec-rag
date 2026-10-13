@@ -58,8 +58,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _CLIENT_SKIP = (
-    "not needed by a client installation; the host installation that runs "
-    "the service provides it"
+    "not needed by a client installation; `vaultspec-rag server start` "
+    "downloads it for the service"
 )
 
 #: Why the Qdrant step fetches nothing when the on-disk store is the backend.
@@ -327,7 +327,6 @@ def unable_skip(
     start fetches what was skipped once there is something to fetch it for.
     """
     from ..operator_state._hardware import read_hardware
-    from ..operator_state._installation import HardwarePresence
     from ..operator_state._service_environment import judge_service_environment
 
     judged = judge_service_environment() if environment is None else environment
@@ -336,7 +335,7 @@ def unable_skip(
     if judged.is_client:
         return ProvisionStepResult(step, ProvisionAction.SKIPPED, _CLIENT_SKIP)
     hardware = read_hardware().presence
-    if hardware in {HardwarePresence.NVIDIA_GPU, HardwarePresence.APPLE_SILICON}:
+    if hardware.supports_the_service:
         return None
     return ProvisionStepResult(
         step,

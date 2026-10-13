@@ -74,6 +74,33 @@ def _plain_start_backend() -> str:
     return f"A plain `vaultspec-rag server start` runs no Qdrant server: {unneeded}."
 
 
+def _no_service_environment(launching: ServiceEnvironment) -> str | None:
+    """Why nothing can run the service yet, or ``None`` when something can.
+
+    Asked of the interpreter a ``server start`` would run the daemon from,
+    not of the one this install runs in: a launcher with no accelerator stack
+    of its own is served by the managed runtime, and recording no backend for
+    it would leave the start it is about to make with no choice to read.
+
+    A runtime that has still to be created is not a refusal either, so long
+    as the machine has an accelerator that runtime could use. That is the
+    same question the fetches ask, and it is about the machine rather than
+    about any environment on it: a runtime built where nothing can serve
+    could not run the service either.
+    """
+    from ..operator_state._compute import ProbeDepth
+    from ..operator_state._hardware import read_hardware
+    from ..service_runtime import planned_service_environment
+
+    planned = planned_service_environment(launching, ProbeDepth.METADATA)
+    if planned.runtime_required:
+        presence = read_hardware().presence
+        return None if presence.supports_the_service else presence.label
+    if planned.environment.can_run_service:
+        return None
+    return planned.environment.reason
+
+
 def save_backend_choice(
     run: _Run,
     outcome: ProvisionOutcome,
@@ -87,9 +114,11 @@ def save_backend_choice(
     yet and whatever happened to the fetches: the usual project flow is this
     command, then a sync, then a plain start, and that start must not download
     a server the operator already declined. The absence of the flag names
-    nothing. It is recorded as server mode only when this environment can run
-    the service and nothing failed, because a run that could not provision has
-    not chosen server mode and must not leave a record saying it did.
+    nothing. It is recorded as server mode only when the service has an
+    environment to run in - this one, the managed runtime, or the runtime the
+    first start creates - and nothing failed, because a run that could not
+    provision has not chosen server mode and must not leave a record saying
+    it did.
 
     A client never writes the choice: it is read by the host installation's
     start, and a client writing it would override the host's. A preview
@@ -114,10 +143,10 @@ def save_backend_choice(
                 detail=f"saved: local-only. {_plain_start_backend()}",
             )
         reason = "not saved: the choice could not be written (see the warning)."
-    elif not environment.can_run_service:
+    elif (blocked := _no_service_environment(environment)) is not None:
         reason = (
-            "not saved: this environment cannot run the service yet "
-            f"({environment.reason}), so no backend was chosen for it."
+            f"not saved: the service has no environment that can run it yet "
+            f"({blocked}), so no backend was chosen for it."
         )
     elif not outcome.ok:
         reason = (

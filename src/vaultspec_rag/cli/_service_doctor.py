@@ -32,7 +32,6 @@ from ..commands._mode import RAG_DISTRIBUTION_NAME
 from ..operator_state._holders import HolderRole, holder_line
 from ..operator_state._provisioning import (
     classify_tool_receipt,
-    cuda_remediation,
     upgrade_commands_for_mode,
 )
 from ..operator_state._service import ServiceLifecycle
@@ -59,7 +58,8 @@ from ._render import (
 )
 
 if TYPE_CHECKING:
-    from ..operator_state._installation import ComputeCapability
+    from ..operator_state._models import ComputeReport
+    from ..service_runtime import PlannedService
 
 
 @server_root_app.command(
@@ -100,22 +100,23 @@ def service_doctor(
     and labelled either way, so what is provisioned is still visible beside
     the live truth. Mutates nothing.
     """
-    from ..operator_state._compute import ProbeDepth
-    from ..operator_state._environment_probe import probe_interpreter
-
-    interpreter = _resolve_daemon_interpreter()
-    compute = probe_interpreter(interpreter, ProbeDepth.VERIFY).compute
+    launching = _resolve_daemon_interpreter()
+    planned, compute = _planned_service(launching)
     # The holders that matter are the ones holding the environment the
-    # service would run in, which is not necessarily this command's own.
+    # service would run in, which is not necessarily this command's own, and
+    # which is nobody's environment at all until a runtime exists.
     # The deep check: this is the one command that proves the model cache
     # without starting the service, so it pays for hashing it.
     report = get_readiness(
-        holders_root=environment_root(interpreter),
+        holders_root=(
+            None if planned.runtime_required else environment_root(planned.interpreter)
+        ),
         compute=compute,
         verify_models=True,
     )
     service = _live_service_axis()
-    mode = _mode_floor_axis(_resolve_doctor_target(ctx))
+    mode = _mode_floor_axis(_resolve_doctor_target(ctx), planned, launching)
+    runtime = _service_runtime_axis(planned)
     overall_ready, status = _overall_readiness(report, service)
     next_action = _doctor_next_action(status)
     if json_output:
@@ -127,21 +128,56 @@ def service_doctor(
             "dependencies": report.get("dependencies"),
             "service": service,
             "mode": mode,
-            "interpreter": interpreter,
+            "interpreter": planned.interpreter,
             "environment_holders": report.get("environment_holders"),
-            "compute_repair": _compute_repair_steps(interpreter, compute.capability),
-            "receipt": _receipt_axis(interpreter),
+            "service_runtime": runtime,
+            "receipt": _receipt_axis(planned),
             "next_action": next_action,
         }
         _emit_json(overall_ready, "server doctor", data=envelope)
     else:
         _render_readiness(report, service, overall_ready, status)
-        _render_receipt_axis(interpreter)
-        _render_compute_repair(interpreter, compute.capability)
+        _render_service_runtime_axis(runtime)
+        _render_receipt_axis(planned)
         _render_environment_holders(report)
         _render_mode_floor_axis(mode)
         _print_next_action(next_action)
     raise typer.Exit(code=_doctor_exit_code(overall_ready, service, mode))
+
+
+def _planned_service(launching: str) -> tuple[PlannedService, ComputeReport]:
+    """Judge the environment the daemon would run in, and report its compute.
+
+    One probe for the launching environment, and one more only when a
+    runtime would serve - each a child of the interpreter it judges, so this
+    command still never imports torch. A runtime that does not exist yet is
+    reported as unchecked rather than as the launcher's verdict: what the
+    launcher's torch is says nothing about what the runtime will hold, and a
+    launcher that cannot serve is no longer a defect to repair.
+    """
+    from ..operator_state._compute import ProbeDepth
+    from ..operator_state._environment_probe import probe_interpreter
+    from ..operator_state._installation import ComputeCapability
+    from ..operator_state._models import ComputeReport
+    from ..operator_state._service_environment import (
+        ServiceEnvironment,
+        judge_foreign_environment,
+    )
+    from ..service_runtime import planned_service_environment
+
+    probed: dict[str, ComputeReport] = {}
+
+    def judge(interpreter: str) -> ServiceEnvironment:
+        report = probe_interpreter(interpreter, ProbeDepth.VERIFY).compute
+        probed[interpreter] = report
+        return judge_foreign_environment(interpreter, probed=report)
+
+    planned = planned_service_environment(judge(launching), judge=judge)
+    if planned.runtime_required:
+        return planned, ComputeReport(
+            capability=ComputeCapability.UNKNOWN, detail=_RUNTIME_PENDING
+        )
+    return planned, probed[planned.interpreter]
 
 
 def _doctor_exit_code(
@@ -321,7 +357,9 @@ def _resolve_doctor_target(ctx: typer.Context) -> Path:
         return named_target or Path.cwd()
 
 
-def _mode_floor_axis(target: Path) -> dict[str, object] | None:
+def _mode_floor_axis(
+    target: Path, planned: PlannedService, launching: str
+) -> dict[str, object] | None:
     """Compute rag's provisioning mode-and-floor axis, read-only.
 
     Reports the ``vaultspec-rag`` entry in the shared per-package
@@ -341,6 +379,11 @@ def _mode_floor_axis(target: Path) -> dict[str, object] | None:
     Args:
         target: Workspace root directory whose ``.vaultspec/workspace.json`` is
             read.
+        planned: Where the daemon would run, which decides whether the
+            upgrade sequence has to keep this installation's own accelerator
+            build or only take the newer release.
+        launching: The interpreter of the installation being upgraded, which
+            is this one whether or not the daemon runs from it.
 
     Returns:
         A labelled block with ``declared_mode``, ``mode_mismatch``,
@@ -375,10 +418,11 @@ def _mode_floor_axis(target: Path) -> dict[str, object] | None:
         "version_floor": floor.value,
         "version_floor_running": running,
         "version_floor_minimum": minimum,
-        # Computed here so the envelope and the rendered block read one
-        # value, and so the daemon interpreter is resolved once.
+        # Computed here so the envelope and the rendered block read one value.
         "upgrade_commands": list(
-            upgrade_commands_for_mode(declared_mode, _resolve_daemon_interpreter())
+            upgrade_commands_for_mode(
+                declared_mode, launching, serves=planned.launcher_serves
+            )
         ),
     }
 
@@ -401,13 +445,68 @@ def _render_readiness(
     _render_dependency_axis(report)
 
 
-def _receipt_axis(interpreter: str) -> dict[str, object] | None:
+#: Why the environment the daemon would run in has nothing to report yet.
+_RUNTIME_PENDING = "the service runtime does not exist yet"
+
+
+def _service_runtime_axis(planned: PlannedService) -> dict[str, object] | None:
+    """Say where the daemon would run from, when that is not this environment.
+
+    ``None`` for a launcher that serves the daemon itself: there is no
+    runtime in that story, and a row about one would be a warning for a
+    state that is not present.
+
+    A runtime that has still to be created is not a defect of anything the
+    operator installed, so it is reported as one sentence naming the one
+    command that creates it, and it is kept out of the dependency rows the
+    top-line verdict folds in: nothing about a live, healthy service becomes
+    untrue because a runtime it does not use is absent.
+    """
+    if planned.launcher_serves:
+        return None
+    if planned.runtime_required:
+        return {
+            "source": str(planned.source),
+            "ready": False,
+            "label": (
+                f"not ready - the first `{server_start_command()}` creates the "
+                f"environment the service runs in"
+            ),
+        }
+    return {
+        "source": str(planned.source),
+        "ready": True,
+        "label": f"ready - the service runs from {planned.interpreter}",
+    }
+
+
+def _render_service_runtime_axis(axis: dict[str, object] | None) -> None:
+    """Report where the daemon would run from, when a runtime is involved."""
+    if axis is None:
+        return
+    ready = bool(axis.get("ready"))
+    _styled(
+        ("Service runtime:", HEADING),
+        (f" {axis.get('label', '?')}", GOOD if ready else WARN),
+        soft_wrap=True,
+    )
+
+
+def _receipt_axis(planned: PlannedService) -> dict[str, object] | None:
     """What an upgrade of this installation would resolve, or ``None``.
 
     Only a uv tool installation has a receipt to judge. Everything else
     resolves from a project or from nothing, and reporting a verdict about a
     file that does not exist would be an invented fact.
+
+    An installation the daemon does not run from has no receipt worth a row
+    either: what its next upgrade resolves for torch decides nothing about a
+    service that runs from its own environment, and the fix would be a repair
+    of something that is not broken.
     """
+    if not planned.launcher_serves:
+        return None
+    interpreter = planned.interpreter
     kind = classify_environment(environment_root(interpreter))
     if kind is not RuntimeEnvKind.UV_TOOL:
         return None
@@ -420,9 +519,9 @@ def _receipt_axis(interpreter: str) -> dict[str, object] | None:
     }
 
 
-def _render_receipt_axis(interpreter: str) -> None:
+def _render_receipt_axis(planned: PlannedService) -> None:
     """Report what the next upgrade of this installation would resolve."""
-    axis = _receipt_axis(interpreter)
+    axis = _receipt_axis(planned)
     if axis is None:
         return
     raw = axis["fix"]
@@ -437,32 +536,6 @@ def _render_receipt_axis(interpreter: str) -> None:
     for command in commands:
         # Soft-wrapped: a folded command is not one an operator can paste.
         _styled("    ", (str(command), COMMAND), soft_wrap=True)
-
-
-def _compute_repair_steps(interpreter: str, capability: ComputeCapability) -> list[str]:
-    """The repair for this interpreter, or nothing when there is none to run.
-
-    Only a defect a new torch wheel fixes has a provisioning repair. A
-    missing device or a refused accelerator policy is answered by the
-    capability's own remediation, which the readiness line already carries.
-    """
-    if not capability.fixed_by_torch_reinstall:
-        return []
-    return list(cuda_remediation(interpreter).steps)
-
-
-def _render_compute_repair(interpreter: str, capability: ComputeCapability) -> None:
-    """Print the exact repair for the interpreter the service would run in.
-
-    The compute capability's own remediation says this command prints it,
-    and status renders that sentence, so it has to be true here.
-    """
-    steps = _compute_repair_steps(interpreter, capability)
-    if not steps:
-        return
-    _heading(f"Repair for {interpreter}:")
-    for step in steps:
-        _styled("  ", (step, COMMAND), soft_wrap=True)
 
 
 def _render_environment_holders(report: dict[str, object]) -> None:

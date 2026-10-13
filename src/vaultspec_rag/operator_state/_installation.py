@@ -52,6 +52,18 @@ class HardwarePresence(StrEnum):
             HardwarePresence.UNKNOWN: "not detected",
         }[self]
 
+    @property
+    def supports_the_service(self) -> bool:
+        """Whether this machine has an accelerator the service could use.
+
+        Only a positively detected one. The service is GPU-only, and it runs
+        from its own environment when the one in front of it cannot serve, so
+        this is the question that decides whether anything here is worth
+        fetching gigabytes for. A read that found nothing and one that could
+        not tell are both answered no.
+        """
+        return self in {HardwarePresence.NVIDIA_GPU, HardwarePresence.APPLE_SILICON}
+
 
 class ComputeCapability(StrEnum):
     """Whether an environment can run inference, and if not, exactly why.

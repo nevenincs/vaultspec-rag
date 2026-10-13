@@ -34,6 +34,7 @@ from ..qdrant_runtime._resolve import (
     resolve_binary,
 )
 from ..qdrant_runtime._spawn_trust import verify_resolved_binary
+from ..service_runtime import planned_service_environment
 from ..serviceclient._discovery import read_service_status
 from ._app import JsonMode, server_qdrant_app
 from ._process import _resolve_daemon_interpreter
@@ -152,8 +153,11 @@ def qdrant_install(
             # The judgement starts an interpreter and imports torch in it,
             # which takes seconds; saying so keeps the wait from reading as a
             # hang.
-            progress.stage("Checking that this environment can run the service...")
-            environment = judge_service_environment(_resolve_daemon_interpreter())
+            progress.stage("Checking the environment that runs the service...")
+            interpreter = _resolve_daemon_interpreter()
+            environment = planned_service_environment(
+                judge_service_environment(interpreter)
+            ).environment
             report = provision_qdrant_binary(
                 upgrade=upgrade,
                 dry_run=dry_run,
@@ -244,20 +248,27 @@ def _server_unneeded() -> str | None:
     """Say why nothing here needs a managed Qdrant server, or ``None``.
 
     Status names the install command for a missing server, so it asks what
-    the install command itself asks before fetching one: can this environment
-    run the service, and does the selected backend run a server at all. An
-    environment or a backend with no use for the server is told that, and is
-    not sent to a command that would decline.
+    the install command itself asks before fetching one: can the environment
+    that would run the daemon run the service, and does the selected backend
+    run a server at all. An environment or a backend with no use for the
+    server is told that, and is not sent to a command that would decline.
+
+    The question is put to the interpreter a start would serve from, which is
+    the managed runtime's whenever this one cannot serve: a launcher without
+    an accelerator stack of its own is not a reason to call the server
+    unneeded.
 
     The capability is read from installed versions only. This is a status
     view, and the deeper check costs the seconds of a torch import.
     """
     from ..operator_state._compute import ProbeDepth
 
-    environment = judge_service_environment(
-        _resolve_daemon_interpreter(), ProbeDepth.METADATA
+    interpreter = _resolve_daemon_interpreter()
+    planned = planned_service_environment(
+        judge_service_environment(interpreter, ProbeDepth.METADATA),
+        ProbeDepth.METADATA,
     )
-    unable = unable_skip(ProvisionStep.QDRANT, environment)
+    unable = unable_skip(ProvisionStep.QDRANT, planned.environment)
     if unable is not None:
         return unable.detail
     return managed_server_unneeded(get_config())

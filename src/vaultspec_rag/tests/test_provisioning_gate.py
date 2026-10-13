@@ -216,6 +216,12 @@ class TestAHostThatCannotRunTheServiceItself:
     ) -> None:
         """No flag named a backend, and nothing was provisioned for one.
 
+        The reason is the run, not the environment: a launcher whose own torch
+        cannot serve is served by the managed runtime, so what withholds the
+        choice here is a provisioning run that did not finish - this
+        fixture's offline cache and closed release source - and the sentence
+        says that rather than naming the environment.
+
         Mutation check: with the choice saved for any host installation, as it
         was, the marker reads ``False`` and the first assertion fails;
         restoring passes.
@@ -235,7 +241,8 @@ class TestAHostThatCannotRunTheServiceItself:
         assert backend is not None
         assert backend.saved is False
         assert backend.local_only is None
-        assert _CANNOT_RUN in backend.detail
+        assert "provisioning did not finish" in backend.detail
+        assert _CANNOT_RUN not in backend.detail
         assert "runs the managed Qdrant server" in backend.detail
 
     def test_install_keeps_an_explicit_local_only_choice(

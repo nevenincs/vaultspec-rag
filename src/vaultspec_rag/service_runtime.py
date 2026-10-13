@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, cast
 from ._program_lookup import Where, find_program
 from ._store_locks import FileLock
 from .config._types import EnvVar
+from .operator_state._compute import ProbeDepth
 from .operator_state._provisioning import (
     CU130_INDEX_STRATEGY,
     HOST_PYTHON,
@@ -66,12 +67,14 @@ __all__ = [
     "RUNTIME_RECORD_NAME",
     "RUNTIME_REQUEST",
     "ManagedRuntime",
+    "PlannedService",
     "RuntimeRequirement",
     "ServiceInterpreterPlan",
     "ServiceInterpreterSource",
     "ServiceRuntimeError",
     "ensure_service_runtime",
     "install_arguments",
+    "planned_service_environment",
     "planned_service_interpreter",
     "remove_superseded_runtimes",
     "runtime_interpreter",
@@ -305,6 +308,93 @@ def planned_service_interpreter(
         )
     return ServiceInterpreterPlan(
         ServiceInterpreterSource.RUNTIME_REQUIRED, None, release_runtime_dir()
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PlannedService:
+    """The environment a ``server start`` would run the daemon in, judged.
+
+    What every surface that reports on the service asks for, so none of them
+    judges the environment it happens to run in and then describes it as the
+    service's.
+
+    Attributes:
+        source: Where the interpreter comes from.
+        interpreter: The interpreter whose facts a surface reports: the
+            runtime's when one would serve, and the launcher's when a runtime
+            would have to be created first, that being the only interpreter
+            there is to name.
+        environment: What that interpreter can do. For
+            ``RUNTIME_REQUIRED`` it is the launcher's own verdict, which is
+            what decided that a runtime is needed, and says nothing about
+            what the runtime will hold.
+        runtime_dir: This release's runtime directory, for the two sources
+            that involve one.
+    """
+
+    source: ServiceInterpreterSource
+    interpreter: str
+    environment: ServiceEnvironment
+    runtime_dir: Path | None = None
+
+    @property
+    def launcher_serves(self) -> bool:
+        """Whether the daemon would run from the environment that was judged.
+
+        The reading that decides whether repairing that environment changes
+        anything about the service: when it does not, no surface offers the
+        repair.
+        """
+        return self.source is ServiceInterpreterSource.LAUNCHING
+
+    @property
+    def runtime_required(self) -> bool:
+        """Whether the first ``server start`` has a runtime to create.
+
+        Not a refusal, and never a defect of anything the operator installed:
+        a surface that reads this reports the one command that creates the
+        runtime, and nothing about the environment in front of it.
+        """
+        return self.source is ServiceInterpreterSource.RUNTIME_REQUIRED
+
+
+def planned_service_environment(
+    launching: ServiceEnvironment,
+    depth: ProbeDepth = ProbeDepth.VERIFY,
+    *,
+    judge: Callable[[str], ServiceEnvironment] | None = None,
+) -> PlannedService:
+    """Judge the interpreter that would run the daemon, creating nothing.
+
+    Asks :func:`planned_service_interpreter` where the daemon would run, and
+    then asks that interpreter what it can do - the runtime's own child, never
+    this process's installation, because whether the launcher happens to be a
+    client or to carry a CPU-only torch says nothing about the runtime.
+
+    Args:
+        launching: The judgement the caller already made of its own
+            environment, so one command probes it once.
+        depth: How far the runtime's own check goes, when there is a runtime
+            to check.
+        judge: How to ask one interpreter what it can do, for a caller that
+            needs the full probe report of that same child. The default asks
+            for the verdict alone.
+    """
+    from .operator_state._service_environment import judge_foreign_environment
+
+    plan = planned_service_interpreter(launching)
+    if plan.source is ServiceInterpreterSource.RUNTIME and plan.interpreter is not None:
+        environment = (
+            judge_foreign_environment(plan.interpreter, depth)
+            if judge is None
+            else judge(plan.interpreter)
+        )
+        return PlannedService(
+            plan.source, plan.interpreter, environment, plan.runtime_dir
+        )
+    return PlannedService(
+        plan.source, launching.interpreter, launching, plan.runtime_dir
     )
 
 

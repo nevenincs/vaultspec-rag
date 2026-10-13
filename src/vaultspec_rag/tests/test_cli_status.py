@@ -37,6 +37,7 @@ from ._cli_helpers import (
 )
 from ._http_stubs import QuietHandler
 from ._scaffold import make_workspace
+from .conftest import pin_daemon_capability, pin_install_role
 
 if typing.TYPE_CHECKING:
     from collections.abc import Generator
@@ -1058,6 +1059,9 @@ class TestTheReceiptLineOnStatus:
     runs perfectly until the next upgrade resolves a CPU build over it, and
     status reported only the build in front of it - so the one moment an
     operator could have acted passed in silence.
+
+    Said only of an installation the daemon runs from; that it is withheld
+    from one the daemon does not is covered where the plan is.
     """
 
     @staticmethod
@@ -1079,6 +1083,10 @@ class TestTheReceiptLineOnStatus:
             "vaultspec_rag.cli._process._resolve_daemon_interpreter",
             lambda: interpreter,
         )
+        # The line is about an installation the daemon runs from, so this one
+        # has to be able to serve for the receipt to matter at all.
+        pin_install_role(monkeypatch, InstallRole.HOST)
+        pin_daemon_capability(monkeypatch, ComputeCapability.READY)
 
         lines = _status._receipt_lines()
 

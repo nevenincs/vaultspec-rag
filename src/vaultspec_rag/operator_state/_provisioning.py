@@ -632,7 +632,9 @@ def restart_service_command() -> str:
     return f"{server_stop_command()} && {server_start_command()}"
 
 
-def upgrade_commands_for_mode(mode: str, interpreter: str) -> tuple[str, ...]:
+def upgrade_commands_for_mode(
+    mode: str, interpreter: str, *, serves: bool = True
+) -> tuple[str, ...]:
     """The commands that upgrade an installation declared in *mode*, in order.
 
     A project installation is upgraded through its own lockfile, whatever
@@ -640,8 +642,16 @@ def upgrade_commands_for_mode(mode: str, interpreter: str) -> tuple[str, ...]:
     sequence, which is more than one command whenever its receipt does not
     yet carry the CUDA source. *mode* is the declared provisioning mode as it
     is recorded in the workspace declaration.
+
+    *serves* says whether the daemon runs from this installation. One it does
+    not run from is upgraded by uv's own verb alone: its receipt decides
+    nothing there, because the service's accelerator stack lives in its own
+    environment, and the step that brings a receipt onto the cycle would be a
+    repair of something that is not broken.
     """
     if mode == "tool":
+        if not serves:
+            return durable_upgrade_commands()
         return tool_upgrade_commands(interpreter)
     return (f"uv sync --upgrade-package {Requirement(_HOST_TOOL_REQUEST).name}",)
 

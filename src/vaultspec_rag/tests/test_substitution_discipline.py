@@ -514,12 +514,24 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "that it could not tell - indistinguishable, to an assertion about "
         "content, from finding no holder",
     ),
+    "test_runtime_aware_surfaces.py": (
+        1,
+        "redirects the daemon interpreter at a purpose-built tool "
+        "installation, because the line under test is about an installation "
+        "with a receipt that records no CUDA source, and the interpreter "
+        "running the suite has no receipt to give it one. Everything else is "
+        "the real resolver, the real runtime directory and the real verbs; "
+        "what a child interpreter can do comes from the suite's own pinned "
+        "answer, which is what lets one machine reach both the launcher that "
+        "serves and the launcher that cannot",
+    ),
     "test_doctor_repair_and_holders.py": (
-        16,
+        14,
         "substitutes the interpreter probe, the daemon interpreter and the "
         "holder scan across three cases. The probe starts a child "
-        "interpreter and imports torch in it, so a CPU-only build cannot be "
-        "provoked on a GPU host and the defect branch would never run. The "
+        "interpreter and imports torch in it, so an environment that can "
+        "serve cannot be provoked on a runner without a GPU and the rows "
+        "under test would describe the wrong plan. The "
         "daemon interpreter is redirected at a purpose-built environment "
         "because the point of the assertion is that the verb asks about that "
         "environment rather than its own, which is untestable while the two "
