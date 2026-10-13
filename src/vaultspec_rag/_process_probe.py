@@ -311,6 +311,10 @@ def _psutil_image_path(pid: int) -> str | None:
     """
     import psutil
 
+    # Windows retains readable image metadata while another process holds a
+    # handle to an exited process. It is not evidence of a live image.
+    if sys.platform == "win32" and not pid_alive(pid):
+        return None
     try:
         image = psutil.Process(pid).exe()
     except psutil.Error as exc:
@@ -327,6 +331,8 @@ def _psutil_image_name(pid: int) -> str | None:
     """
     import psutil
 
+    if sys.platform == "win32" and not pid_alive(pid):
+        return None
     try:
         name = psutil.Process(pid).name()
     except psutil.Error as exc:
