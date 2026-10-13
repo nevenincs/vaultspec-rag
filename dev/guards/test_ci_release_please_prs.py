@@ -205,7 +205,8 @@ def test_release_readiness_requires_dev_server_and_releases_held_checks() -> Non
         steps["Require the release dev server proof on this exact commit"]["if"]
     )
     verdict = str(steps["Every full check passed on this commit"]["run"])
-    assert 'length == 8 and all(.[]; .conclusion == "success")' in verdict
+    assert 'if ($4 != "success") failed=1' in verdict
+    assert "exit(failed || count != 8)" in verdict
 
 
 def test_release_result_refuses_a_skipped_selected_path() -> None:

@@ -462,10 +462,12 @@ jobs:
             esac
           done
           require_full_run() {
-            local measured
-            measured=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$1/jobs?per_page=100" \
-              --jq '[.jobs[] | select(.name == "Check: Full lint (Linux)" or .name == "Test: Correctness suite (Linux, 3.13)" or .name == "Test: Correctness suite (Linux, 3.14)" or .name == "Test: Full suite (Windows)" or .name == "Check: Dependency advisories (Linux)" or .name == "Check: Code scanning (Linux, actions)" or .name == "Check: Code scanning (Linux, javascript-typescript)" or .name == "Check: Code scanning (Linux, python)")] | length == 8 and all(.[]; .conclusion == "success")')
-            [ "$measured" = true ]
+            local jobs
+            jobs=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$1/jobs?filter=all&per_page=100" \
+              --jq '.jobs[] | select(.name == "Check: Full lint (Linux)" or .name == "Test: Correctness suite (Linux, 3.13)" or .name == "Test: Correctness suite (Linux, 3.14)" or .name == "Test: Full suite (Windows)" or .name == "Check: Dependency advisories (Linux)" or .name == "Check: Code scanning (Linux, actions)" or .name == "Check: Code scanning (Linux, javascript-typescript)" or .name == "Check: Code scanning (Linux, python)") | [.name, .run_attempt, .id, .conclusion] | @tsv') || return 1
+            # Combine every page, with the newest attempt first for each name.
+            printf '%s\n' "$jobs" | sort -t $'\t' -k1,1 -k2,2nr -k3,3nr | \
+              awk -F '\t' '!seen[$1]++ { count++; if ($4 != "success") failed=1 } END { exit(failed || count != 8) }'
           }
           full="${LINT} ${TESTS} ${WINDOWS} ${AUDIT} ${SCANNING}"
           if [ "${full}" = "success success success success success" ]; then

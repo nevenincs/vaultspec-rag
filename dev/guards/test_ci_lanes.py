@@ -338,7 +338,11 @@ def test_pr_verdict_requires_full_proof() -> None:
     assert 'require_full_run "$run" ||' in prior, (
         "a prior success must prove that every full job actually passed"
     )
-    assert 'length == 8 and all(.[]; .conclusion == "success")' in script
+    assert 'if ($4 != "success") failed=1' in script
+    assert "exit(failed || count != 8)" in script
+    assert "jobs?filter=all&per_page=100" in script
+    assert "jobs=$(gh api --paginate " in script
+    assert "sort -t $'\\t' -k1,1 -k2,2nr -k3,3nr" in script
 
 
 def test_dispatch_cannot_select_partial_merge_proof() -> None:
