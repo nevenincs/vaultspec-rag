@@ -10,7 +10,7 @@ related:
   - '[[2026-10-13-service-runtime-audit]]'
 modified: '2026-10-13'
 body_schema: body-v2
-body_hash: 'sha256:b4b1ed1404bee4dd50ce92670eda049bf9dc14063c1eb843b626725b7934d085'
+body_hash: 'sha256:b815be4fea159822188b3518d867e0427c0e452e2cd531fa645c3c3288bb2579'
 ---
 
 <!-- RETIRED: S05 -->
@@ -31,7 +31,7 @@ Make every install route start the service with one command, and make every inst
 - [x] `S02` - provision a managed service runtime and select it when the launching environment cannot serve; `src/vaultspec_rag/cli/_process.py`.
 - [x] `S03` - collapse every install and start refusal to one cause and one command; `src/vaultspec_rag/operator_state/_provisioning.py`.
 - [x] `S04` - make server doctor and status report a failed or absent service truthfully; `src/vaultspec_rag/cli/_service_doctor.py`.
-- [ ] `S06` - trim install and start help to user-facing options and rewrite the install docs around one command; `src/vaultspec_rag/cli/_install.py`.
+- [x] `S06` - trim install and start help to user-facing options and rewrite the install docs around one command; `src/vaultspec_rag/cli/_install.py`.
 - [ ] `S07` - verify every install route in the clean-machine GPU lab on Linux and Windows; `X:/project/vaultspec-rag-lab`.
 
 ## Parallelization

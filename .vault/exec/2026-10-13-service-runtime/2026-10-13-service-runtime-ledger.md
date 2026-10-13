@@ -5,7 +5,7 @@ tags:
 date: '2026-10-13'
 modified: '2026-10-13'
 body_schema: 'body-v2'
-body_hash: 'sha256:33c99587cc83c0f74da63755460e16fc12f586ce08ef1752432b5d04207768a8'
+body_hash: 'sha256:3621754e9968db8498294b278f9d5a1461dcc0a83590835e8491f912cd16d7db'
 related:
   - "[[2026-10-13-service-runtime-plan]]"
 ---
@@ -68,3 +68,32 @@ related:
 - `S03` `M` `src/vaultspec_rag/tests/test_cli.py`
 - `S03` `M` `docs/cli.md`
 - `S03` `verify:` `merged unit lane, 7872 pass; failures only the vite-less monitor tests` -> `pass`
+- `S04` `M` `src/vaultspec_rag/cli/_service_lifecycle.py`
+- `S04` `M` `src/vaultspec_rag/cli/_service_qdrant.py`
+- `S04` `M` `src/vaultspec_rag/commands/_backend_choice.py`
+- `S04` `M` `src/vaultspec_rag/commands/_provision.py`
+- `S04` `M` `src/vaultspec_rag/operator_state/_installation.py`
+- `S04` `M` `src/vaultspec_rag/operator_state/_provisioning.py`
+- `S04` `M` `src/vaultspec_rag/operator_state/_service_environment.py`
+- `S04` `M` `src/vaultspec_rag/service_runtime.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_doctor_repair_and_holders.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_provisioning_gate.py`
+- `S04` `A` `src/vaultspec_rag/tests/test_runtime_aware_surfaces.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S04` `verify:` `unit lane 7890 pass, only vite-less monitor failures` -> `pass`
+- `S04` `by:` `vaultspec-high-executor`
+- `S06` `M` `README.md`
+- `S06` `M` `docs/cli.md`
+- `S06` `M` `docs/getting-started.md`
+- `S06` `M` `docs/glossary.md`
+- `S06` `M` `docs/installation.md`
+- `S06` `M` `src/vaultspec_rag/cli/_install.py`
+- `S06` `M` `src/vaultspec_rag/commands/_torch_flow.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_cli.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_host_install_command.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_install_torch_config.py`
+- `S06` `verify:` `install, cli, docs and host-install-command suites` -> `pass`
+
+## Notes
+
+- `S04` doctor, status, qdrant and backend choice read the planned service interpreter
