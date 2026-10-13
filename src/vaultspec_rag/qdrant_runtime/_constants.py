@@ -25,7 +25,6 @@ from typing import TYPE_CHECKING, Final
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from .._sync_vocabulary import ProvisionAction
 
 #: Pinned Qdrant server release. Must stay on the same minor line as
 #: the locked qdrant-client (1.19.x as of this pin).
@@ -157,47 +156,6 @@ MANIFEST_FILENAME: Final[str] = "manifest.json"
 MANIFEST_SOURCE_DOWNLOAD: Final = "download"
 MANIFEST_SOURCE_ARCHIVE: Final = "archive"
 MANIFEST_SOURCE_UNRECORDED: Final = "unrecorded"
-
-
-@dataclass
-class ProvisionReport:
-    """Structured outcome of one provisioning run.
-
-    Attributes:
-        action: A :class:`ProvisionAction` member naming the
-            outcome. ``StrEnum`` members compare equal to their string
-            values, so JSON consumers can filter on ``"created"``.
-        version: The pinned server version the run targeted.
-        asset: The release asset name for this platform.
-        url: The upstream download URL (informational; empty when nothing
-            was or would be fetched).
-        binary: Path the active binary lives at (or would live at for
-            a dry run).
-        sha256: The committed digest the run verified (or would
-            verify).
-        message: Human-readable detail, mandatory for ``skipped`` and
-            ``failed``.
-    """
-
-    action: ProvisionAction
-    version: str = QDRANT_SERVER_VERSION
-    asset: str = ""
-    url: str = ""
-    binary: Path | None = None
-    sha256: str = ""
-    message: str = ""
-
-    def to_dict(self) -> dict[str, object]:
-        """Return a JSON-serialisable view of this report."""
-        return {
-            "action": str(self.action),
-            "version": self.version,
-            "asset": self.asset,
-            "url": self.url,
-            "binary": str(self.binary) if self.binary else None,
-            "sha256": self.sha256,
-            "message": self.message,
-        }
 
 
 class BinarySource(StrEnum):

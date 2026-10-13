@@ -34,7 +34,8 @@ from ..commands._models import InstallReport
 from ..commands._tool_torch import _run_repair
 from ..commands._uv_sync import _run_uv_sync_torch
 from ..config._types import EnvVar
-from ..monitor_process import MonitorProcess, _resolve_monitor_executable
+from ..monitor_process import MonitorProcess
+from ..monitor_runtime._errors import MonitorError
 from ..operator_state._hardware import read_hardware
 from ..qdrant_runtime._resolve import reap_qdrant_orphan
 from ._planted_programs import (
@@ -143,42 +144,25 @@ def test_the_monitor_is_not_started_from_the_working_directory(
 ) -> None:
     """Starting the monitor finds none rather than the checkout's.
 
-    The monitor is started on every service start. Shown to fail by
-    resolving it with the standard lookup again: the planted program is
+    The monitor is started on every service start, and what admits one is a
+    digest, so a program of the right name proves nothing. Shown to fail by
+    resolving it with a bare-name lookup again: the planted program is
     started as the monitor and the first assertion fires. Passes with the
-    lookup restored.
+    resolution restored.
     """
     del isolated_singleton_dirs
     ran = plant_marking_program(checkout, "vaultspec-rag-monitor")
 
     with (
         managed_env(**{EnvVar.MONITOR_BINARY.value: None}),
-        pytest.raises(RuntimeError) as refused,
+        pytest.raises(MonitorError) as refused,
     ):
         MonitorProcess(free_loopback_port()).start(timeout=20)
 
     assert not ran.exists(), "the working directory's monitor was started"
-    assert "executable is required" in str(refused.value)
-
-
-def test_a_monitor_beside_the_installation_is_found_without_path(
-    checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The monitor that ships beside this package's commands needs no ``PATH``.
-
-    The running program is stood in for by a directory of its own, so the
-    test plants nothing in the real environment.
-    """
-    plant_marking_program(checkout, "vaultspec-rag-monitor")
-    bundle = tmp_path / "bundle"
-    bundle.mkdir()
-    plant_marking_program(bundle, "vaultspec-rag-monitor")
-    monkeypatch.setattr(sys, "executable", str(bundle / "vaultspec-rag"))
-
-    with managed_env(**{EnvVar.MONITOR_BINARY.value: None}):
-        resolved = _resolve_monitor_executable()
-
-    assert resolved.parent == bundle.resolve()
+    # Whatever this checkout can say about its own monitor, nothing it says
+    # is about the one in the working directory.
+    assert refused.value.error.startswith("monitor_")
 
 
 @_windows_only

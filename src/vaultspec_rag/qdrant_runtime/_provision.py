@@ -75,6 +75,7 @@ from ..native_binary._install import (
     open_staging,
     stream_sha256,
 )
+from ..native_binary._report import ProvisionReport
 from ._constants import (
     MANIFEST_FILENAME,
     MANIFEST_SOURCE_ARCHIVE,
@@ -83,7 +84,6 @@ from ._constants import (
     QDRANT_ASSET_SHA256,
     QDRANT_EXECUTABLE_SHA256,
     QDRANT_SERVER_VERSION,
-    ProvisionReport,
 )
 from ._managed_install import InstallState, ManagedInstall, classify_managed_binary
 
@@ -472,6 +472,7 @@ def _healthy_report(
     # An upgrade finds nothing to do here either: the executable already is
     # the pinned one, and a version bump installs to a new directory.
     return ProvisionReport(
+        version=QDRANT_SERVER_VERSION,
         action=ProvisionAction.UNCHANGED,
         asset=healthy.asset,
         url=_asset_url(release_base_url, healthy.asset),
@@ -719,6 +720,7 @@ def _install(request: _InstallRequest) -> ProvisionReport:
     except _INSTALL_FAILURES as exc:
         logger.error("qdrant provisioning failed: %s", exc)
         return ProvisionReport(
+            version=QDRANT_SERVER_VERSION,
             action=ProvisionAction.FAILED,
             asset=request.asset,
             url=url,
@@ -735,6 +737,7 @@ def _install(request: _InstallRequest) -> ProvisionReport:
         else ProvisionAction.CREATED
     )
     return ProvisionReport(
+        version=QDRANT_SERVER_VERSION,
         action=action,
         asset=request.asset,
         url=url,
@@ -811,7 +814,11 @@ def _plan(
     if request.archive is not None:
         unusable = _unusable_archive(request.archive, request.version_dir)
         if unusable is not None:
-            return ProvisionReport(action=ProvisionAction.FAILED, message=unusable)
+            return ProvisionReport(
+                action=ProvisionAction.FAILED,
+                version=QDRANT_SERVER_VERSION,
+                message=unusable,
+            )
     existing = classify_managed_binary(request.version_dir / binary_filename())
     source = get_config()
     if existing.state is InstallState.HEALTHY:
@@ -828,6 +835,7 @@ def _plan(
     unwritable = existing.state in (InstallState.OBSTRUCTED, InstallState.ACCOMPANIED)
     if unwritable or (replaceable and not request.upgrade):
         return ProvisionReport(
+            version=QDRANT_SERVER_VERSION,
             action=ProvisionAction.FAILED,
             binary=existing.binary,
             message=existing.refusal,
@@ -837,7 +845,11 @@ def _plan(
     except UnsupportedPlatformError as exc:
         # An outcome, not a crash: every caller is owed a report, and this
         # host is never handed another architecture's build.
-        return ProvisionReport(action=ProvisionAction.FAILED, message=str(exc))
+        return ProvisionReport(
+            action=ProvisionAction.FAILED,
+            version=QDRANT_SERVER_VERSION,
+            message=str(exc),
+        )
     return _InstallRequest(
         url=_asset_url(source.qdrant_release_base_url, asset),
         redirect_hosts=source.qdrant_download_hosts,
@@ -869,6 +881,7 @@ def _preview(planned: _ManifestRepair | _InstallRequest) -> ProvisionReport:
     if local is not None:
         origin = f"read {planned.asset} from the local archive {local}"
     return ProvisionReport(
+        version=QDRANT_SERVER_VERSION,
         action=ProvisionAction.DRY_RUN,
         asset=planned.asset,
         url="" if local is not None else planned.url,
@@ -976,6 +989,7 @@ def _run_exclusively(
             break
         if claim.fault is not None:
             return ProvisionReport(
+                version=QDRANT_SERVER_VERSION,
                 action=ProvisionAction.FAILED,
                 message=(
                     f"Could not take the Qdrant provisioning lock at {lock_path}: "
@@ -991,6 +1005,7 @@ def _run_exclusively(
         remaining = wait_seconds - (time.monotonic() - started)
         if remaining <= 0:
             return ProvisionReport(
+                version=QDRANT_SERVER_VERSION,
                 action=ProvisionAction.FAILED,
                 message=(
                     f"{holder[0].upper()}{holder[1:]} was still provisioning the "

@@ -33,11 +33,11 @@ from ..native_binary._install import (
     extract_verified_archive,
     file_sha256,
 )
+from ..native_binary._report import ProvisionReport
 from ..qdrant_runtime._constants import (
     MANIFEST_FILENAME,
     QDRANT_ASSET_SHA256,
     QDRANT_SERVER_VERSION,
-    ProvisionReport,
 )
 from ..qdrant_runtime._provision import (
     _LOCK_FILENAME,
@@ -656,7 +656,9 @@ def _hold_lock(version_dir: Path) -> int:
 
 
 def _installed() -> ProvisionReport:
-    return ProvisionReport(action=ProvisionAction.CREATED)
+    return ProvisionReport(
+        action=ProvisionAction.CREATED, version=QDRANT_SERVER_VERSION
+    )
 
 
 def _silent(_line: str) -> None:

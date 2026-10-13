@@ -146,10 +146,6 @@ _SETTING_KEYS: Final[Mapping[EnvVar, str]] = {
 #: neither a settings key nor an entry here fails the totality check below,
 #: so a new name cannot land undescribed.
 _DESCRIPTIONS: Final[Mapping[EnvVar, str]] = {
-    EnvVar.MONITOR_BINARY: (
-        "Absolute path to the compiled monitor executable, overriding the "
-        "installed vaultspec-rag-monitor command on PATH."
-    ),
     EnvVar.MONITOR_PYTHON: (
         "The initialized daemon's absolute Python interpreter, handed to its "
         "monitor child for canonical service commands; not an operator setting."

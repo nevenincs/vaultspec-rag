@@ -464,6 +464,12 @@ ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "qdrant_auto_provision": EnvVar.QDRANT_AUTO_PROVISION,
     "qdrant_release_base_url": EnvVar.QDRANT_RELEASE_BASE_URL,
     "qdrant_download_hosts": EnvVar.QDRANT_DOWNLOAD_HOSTS,
+    # The monitor an operator supplies instead of this release's, and where
+    # this release's own monitor archive is fetched from.
+    "monitor_binary": EnvVar.MONITOR_BINARY,
+    "monitor_binary_sha256": EnvVar.MONITOR_BINARY_SHA256,
+    "monitor_release_base_url": EnvVar.MONITOR_RELEASE_BASE_URL,
+    "monitor_download_hosts": EnvVar.MONITOR_DOWNLOAD_HOSTS,
     # Scheduled storage maintenance (auto-prune) knobs.
     "storage_autoprune": EnvVar.STORAGE_AUTOPRUNE,
     "storage_autoprune_interval_minutes": EnvVar.STORAGE_AUTOPRUNE_INTERVAL_MINUTES,
@@ -620,6 +626,9 @@ SETTING_BOUNDS: dict[str, _SettingBound] = {
     # download.
     "qdrant_release_base_url": _HTTPS_SOURCE_URL,
     "qdrant_download_hosts": _DOWNLOAD_HOSTS,
+    # The monitor's archive source, held to the same shapes.
+    "monitor_release_base_url": _HTTPS_SOURCE_URL,
+    "monitor_download_hosts": _DOWNLOAD_HOSTS,
     # Model hub endpoint, held to the same shape as the binary's source.
     "hf_endpoint": _HTTPS_SOURCE_URL,
     "model_fetch_deadline_seconds": _POSITIVE_NUMBER,
@@ -627,6 +636,7 @@ SETTING_BOUNDS: dict[str, _SettingBound] = {
     # is not a digest could never match a hashed file, so it is refused here
     # instead of surfacing as a mismatch at the first spawn.
     "qdrant_binary_sha256": _SHA256_DIGEST,
+    "monitor_binary_sha256": _SHA256_DIGEST,
     # Model revisions. A full commit id and nothing else: a branch or a tag
     # is a name that moves, so admitting one would let configuration unpin a
     # model while appearing to pin it.

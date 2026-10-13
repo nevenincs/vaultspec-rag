@@ -1,8 +1,9 @@
 """Find a helper program by name without consulting the working directory.
 
-This package runs a handful of programs it does not ship: the monitor, the
-graphics driver's query tool, the package manager, and a few operating-system
-tools. Naming one and leaving the rest to the operating system is not safe.
+This package runs a handful of programs it does not build in Python: the
+monitor, the graphics driver's query tool, the package manager, and a few
+operating-system tools. Naming one and leaving the rest to the operating
+system is not safe.
 On Windows a bare program name is looked for in the working directory before
 anywhere else, both by the process-creation call and by the standard
 library's lookup, which adds the working directory even to a search path it
@@ -13,7 +14,9 @@ checkout supply the program.
 A program is therefore always run by an absolute path, found here, in the
 places its caller says it belongs:
 
-* beside this installation's own programs, for what ships with it;
+* beside this installation's own programs, for what ships with it. The
+  monitor is looked for there and nowhere else, and only its content decides
+  whether what is found may run;
 * the operating system's own directories, for operating-system tools, which
   must not be answered by a same-named port earlier on ``PATH``;
 * the absolute entries of ``PATH``, for a tool the operator installed.

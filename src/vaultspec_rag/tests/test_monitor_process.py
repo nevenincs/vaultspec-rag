@@ -10,6 +10,7 @@ import subprocess
 import sys
 from contextlib import contextmanager
 from dataclasses import asdict
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -24,15 +25,16 @@ from ..monitor_process import (
     MonitorIdentity,
     MonitorProcess,
     _access_link_port,
-    _resolve_monitor_executable,
     stop_recorded_monitor,
 )
+from ..monitor_runtime._errors import MonitorError
+from ..monitor_runtime._resolve import MONITOR_BINARY_INVALID, resolve_monitor
+from ..native_binary._install import file_sha256
 from ._child_signal import PROCESS_TIMEOUT_SECONDS
 from .conftest import managed_env
 
 if TYPE_CHECKING:
     from collections.abc import Generator
-    from pathlib import Path
 
 pytestmark = pytest.mark.unit
 
@@ -79,9 +81,18 @@ def test_monitor_start_failure_rolls_back_child_and_assignment(
     """Disabling process reset failed the rollback assertion (exit 1);
     restoring it passed this test (exit 0).
     """
+    # The operator route, because it is the one a test can point at a real
+    # executable: the interpreter stands in for a monitor and exits at once.
+    # Its digest is declared as an operator declares one, and the launch
+    # hashes the file before it runs it.
     with (
         _ports() as listeners,
-        managed_env(**{EnvVar.MONITOR_BINARY.value: sys.executable}),
+        managed_env(
+            **{
+                EnvVar.MONITOR_BINARY.value: sys.executable,
+                EnvVar.MONITOR_BINARY_SHA256.value: file_sha256(Path(sys.executable)),
+            }
+        ),
     ):
         monitor = MonitorProcess(listeners[0].getsockname()[1])
         with pytest.raises(RuntimeError, match="exited before becoming ready"):
@@ -98,40 +109,53 @@ def test_allocator_advances_past_occupied_backend_neighbors() -> None:
         assert next_available_port(backend + 1) == backend + 3
 
 
+_A_DIGEST = "0123456789abcdef" * 4
+
+
 def test_monitor_rejects_relative_executable_override() -> None:
-    """Accepting a relative override failed the error assertion (exit 1);
-    restoring the absolute-path guard passed this test (exit 0).
+    """An override the working directory could answer is never resolved.
+
+    Mutation: accepted a relative path. Observed this test fail on the
+    ``monitor_binary_invalid`` code, with the relative path resolved.
+    Restored; passes.
     """
     with (
-        managed_env(**{EnvVar.MONITOR_BINARY.value: "vaultspec-rag-monitor.exe"}),
-        pytest.raises(RuntimeError, match="override must be absolute"),
+        managed_env(
+            **{
+                EnvVar.MONITOR_BINARY.value: "vaultspec-rag-monitor.exe",
+                EnvVar.MONITOR_BINARY_SHA256.value: _A_DIGEST,
+            }
+        ),
+        pytest.raises(MonitorError) as refused,
     ):
-        _resolve_monitor_executable()
+        resolve_monitor()
+
+    assert refused.value.error == MONITOR_BINARY_INVALID
+    assert "is not an absolute path" in str(refused.value)
 
 
-def test_monitor_rejects_missing_compiled_executable(
+def test_monitor_rejects_an_override_that_is_not_there(
     isolated_singleton_dirs: Path,
 ) -> None:
-    """Removing file admission failed the error assertion (exit 1);
-    restoring it passed this test (exit 0).
+    """A named executable that does not exist is refused, never fallen back on.
+
+    Mutation: dropped the regular-file check. Observed this test fail on the
+    ``monitor_binary_invalid`` code. Restored; passes.
     """
     missing = isolated_singleton_dirs / "missing-monitor.exe"
     with (
-        managed_env(**{EnvVar.MONITOR_BINARY.value: str(missing)}),
-        pytest.raises(RuntimeError, match="compiled monitor executable is missing"),
+        managed_env(
+            **{
+                EnvVar.MONITOR_BINARY.value: str(missing),
+                EnvVar.MONITOR_BINARY_SHA256.value: _A_DIGEST,
+            }
+        ),
+        pytest.raises(MonitorError) as refused,
     ):
-        _resolve_monitor_executable()
+        resolve_monitor()
 
-
-def test_monitor_requires_installed_compiled_command() -> None:
-    """Accepting a missing command failed the error assertion (exit 1);
-    restoring command admission passed this test (exit 0).
-    """
-    with (
-        managed_env(PATH="", **{EnvVar.MONITOR_BINARY.value: ""}),
-        pytest.raises(RuntimeError, match=r"compiled .* executable is required"),
-    ):
-        _resolve_monitor_executable()
+    assert refused.value.error == MONITOR_BINARY_INVALID
+    assert "is not an existing regular file" in str(refused.value)
 
 
 @pytest.mark.parametrize(

@@ -221,10 +221,6 @@ _FOUND_BY: dict[str, tuple[str, str]] = {
         "commands/_uv_sync.py::_run_uv_sync_torch",
         "uv",
     ),
-    "monitor_process.py::MonitorProcess.start": (
-        "monitor_process.py::_resolve_monitor_executable",
-        "vaultspec-rag-monitor",
-    ),
     "operator_state/_hardware.py::query_hardware": (
         "operator_state/_hardware.py::read_hardware",
         "nvidia-smi",
@@ -237,6 +233,11 @@ _FOUND_BY: dict[str, tuple[str, str]] = {
 
 #: Native sites whose program is never looked up by name.
 _NOT_LOOKED_UP: dict[str, str] = {
+    "monitor_process.py::MonitorProcess.start": (
+        "an absolute path the resolver admits only when its content is the "
+        "executable this release pins, checked again while the file is held "
+        "as the process is created"
+    ),
     "qdrant_runtime/_spawn_trust.py::spawn_verified": (
         "an absolute path the resolver refuses unless it is one, checked "
         "against its pinned digest before and as the process is created"

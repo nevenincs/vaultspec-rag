@@ -33,6 +33,7 @@ from importlib.metadata import Distribution, PackageNotFoundError
 from typing import TYPE_CHECKING, Final, cast
 
 from ._assets import monitor_archive_name, monitor_executable_name
+from ._errors import MonitorError
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -137,20 +138,13 @@ class Installation:
     development: bool
 
 
-class MonitorPinError(RuntimeError):
+class MonitorPinError(MonitorError):
     """The monitor digests this installation would use are not usable.
 
     Nothing here tells anyone to obtain, configure or point at a monitor:
     obtaining it is automatic, and a condition that stops it is reported as
     what it is.
-
-    Attributes:
-        error: A stable machine-readable code naming why, for envelopes.
     """
-
-    def __init__(self, error: str, message: str) -> None:
-        super().__init__(message)
-        self.error = error
 
 
 def this_installation() -> Installation:

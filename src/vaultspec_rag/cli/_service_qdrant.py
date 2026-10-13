@@ -22,11 +22,9 @@ from ..commands._provision import (
     unable_skip,
 )
 from ..config._settings import get_config
+from ..native_binary._report import ProvisionReport
 from ..operator_state._service_environment import judge_service_environment
-from ..qdrant_runtime._constants import (
-    QDRANT_SERVER_VERSION,
-    ProvisionReport,
-)
+from ..qdrant_runtime._constants import QDRANT_SERVER_VERSION
 from ..qdrant_runtime._provision import provisioned_versions
 from ..qdrant_runtime._resolve import (
     QdrantBinaryError,

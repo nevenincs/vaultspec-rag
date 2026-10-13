@@ -48,8 +48,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ..config._settings import VaultSpecConfigWrapper
+    from ..native_binary._report import ProvisionReport
     from ..operator_state._service_environment import ServiceEnvironment
-    from ..qdrant_runtime._constants import ProvisionReport
     from ..qdrant_runtime._resolve import QdrantBinaryError
     from ._model_fetch import ModelRepoResult
     from ._models import ConfirmFn, InstallReport
@@ -1027,9 +1027,14 @@ def provision_qdrant_binary(
     """
     unable = unable_skip(ProvisionStep.QDRANT, environment)
     if unable is not None:
-        from ..qdrant_runtime._constants import ProvisionReport
+        from ..native_binary._report import ProvisionReport
+        from ..qdrant_runtime._constants import QDRANT_SERVER_VERSION
 
-        return ProvisionReport(action=unable.action, message=unable.detail)
+        return ProvisionReport(
+            action=unable.action,
+            version=QDRANT_SERVER_VERSION,
+            message=unable.detail,
+        )
 
     from ..qdrant_runtime._provision import provision
 
