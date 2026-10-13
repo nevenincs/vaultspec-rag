@@ -34,13 +34,13 @@ _ALLOWED: dict[str, tuple[int, str]] = {
     # Reducing this bound to two failed count growth; restoration passed.
     "test_pid_image.py": (
         3,
-        "isolates the policy rejecting known-exited Windows image metadata: "
-        "POSIX cannot expose retained Windows handles, and Windows cleanup "
-        "timing cannot guarantee that psutil still returns their metadata. "
-        "The OS view, exited verdict and retained metadata are scoped to this "
-        "unit assertion and restored before real fixture teardown. A separate "
-        "real natural-exit test retains the Windows Popen handle and exercises "
-        "the actual OS probe",
+        "the unit case selects the Windows branch, reports a dead PID and "
+        "supplies retained image metadata because the Windows kernel does not "
+        "retain that metadata repeatably after a real child exits. This proves "
+        "the liveness rejection independently of cleanup timing; the companion "
+        "cases still probe real live and naturally exited children. All three "
+        "substitutions restore before machine-safety fixture teardown. POSIX "
+        "cannot expose retained Windows handles for this policy check",
     ),
     # Reducing this bound to zero failed count growth; exact restoration passed.
     "integration/_shutdown_storage_control.py": (

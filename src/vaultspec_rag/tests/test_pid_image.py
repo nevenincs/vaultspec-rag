@@ -134,6 +134,8 @@ def test_windows_exited_process_metadata_is_not_a_live_image(
     def retained(_pid: int) -> RetainedMetadata:
         return RetainedMetadata()
 
+    # Restore the process-global platform before the anchor-safety fixtures
+    # inspect this machine during teardown.
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(_process_probe.sys, "platform", "win32")
         monkeypatch.setattr(_process_probe, "pid_alive", exited)
