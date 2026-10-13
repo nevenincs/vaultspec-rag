@@ -10,7 +10,7 @@ related:
   - '[[2026-10-13-service-runtime-audit]]'
 modified: '2026-10-13'
 body_schema: body-v2
-body_hash: 'sha256:f75dfd5544aef83cea76d7c0437f7da7701298a5a5cfb30fa9643cb61389a467'
+body_hash: 'sha256:3e9ad512e7e47a7e4b88efdc12a45c9fb64a3f0cb9f6f5d118bb60a0f92f7478'
 ---
 
 # `service-runtime` plan
@@ -28,7 +28,7 @@ Make every install route start the service with one command, and make every inst
 - [x] `S01` - record the lab audit, accept the service-runtime ADR, and reconcile the amended ADRs; `.vault/adr/2026-10-13-service-runtime-adr.md`.
 - [ ] `S02` - provision a managed service runtime and select it when the launching environment cannot serve; `src/vaultspec_rag/cli/_process.py`.
 - [ ] `S03` - collapse every install and start refusal to one cause and one command; `src/vaultspec_rag/operator_state/_provisioning.py`.
-- [ ] `S04` - make server doctor and status report a failed or absent service truthfully; `src/vaultspec_rag/cli/_service_doctor.py`.
+- [x] `S04` - make server doctor and status report a failed or absent service truthfully; `src/vaultspec_rag/cli/_service_doctor.py`.
 - [ ] `S05` - restore workspace MCP registration and vault links on install; `src/vaultspec_rag/commands/_install.py`.
 - [ ] `S06` - trim install and start help to user-facing options and rewrite the install docs around one command; `src/vaultspec_rag/cli/_install.py`.
 - [ ] `S07` - verify every install route in the clean-machine GPU lab on Linux and Windows; `X:/project/vaultspec-rag-lab`.
