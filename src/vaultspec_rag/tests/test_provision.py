@@ -419,6 +419,7 @@ class TestFrontDoorComposition:
             ProvisionStep.TORCH,
             ProvisionStep.MODELS,
             ProvisionStep.QDRANT,
+            ProvisionStep.MONITOR,
         }
         # The skipped model step is still represented, so the report is
         # complete rather than silently dropping opted-out dependencies.

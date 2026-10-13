@@ -154,7 +154,12 @@ def test_the_monitor_is_not_started_from_the_working_directory(
     ran = plant_marking_program(checkout, "vaultspec-rag-monitor")
 
     with (
-        managed_env(**{EnvVar.MONITOR_BINARY.value: None}),
+        managed_env(
+            **{
+                EnvVar.MONITOR_BINARY.value: None,
+                EnvVar.MONITOR_BINARY_SHA256.value: None,
+            }
+        ),
         pytest.raises(MonitorError) as refused,
     ):
         MonitorProcess(free_loopback_port()).start(timeout=20)

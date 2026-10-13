@@ -18,6 +18,9 @@ It reports, per dependency, whether it is provisioned and usable:
 - **qdrant**: where does the qdrant binary resolve from (managed /
   operator-supplied / absent), and - when server mode is the effective
   backend - would a start accept it, and is the supervised child live?
+- **monitor**: is a monitor this installation may run in place, and where
+  does it resolve from? Obtained automatically, so the dimension reports
+  whether it is there and nothing for anyone to do about it.
 
 This is a *report*, not a fixer: it performs no provisioning, no
 download, and no mutation. It is bounded to the known dependency set
@@ -111,7 +114,7 @@ class DependencyReadiness:
 
     Attributes:
         name: The dependency this node describes (``"torch"`` /
-            ``"models"`` / ``"qdrant"``).
+            ``"models"`` / ``"qdrant"`` / ``"monitor"``).
         status: The bounded :class:`ReadinessStatus` outcome.
         detail: Human-readable summary. For ``NOT_READY`` it names what
             is missing; informational otherwise.
@@ -200,7 +203,7 @@ class ReadinessReport:
 
     Attributes:
         dependencies: One node per dependency, in report order
-            (torch, models, qdrant).
+            (torch, models, qdrant, monitor).
         server_mode: Whether the supervised server backend is the
             effective runtime backend at report time. Carried so a
             consumer can explain why the qdrant liveness dimension is
@@ -293,7 +296,7 @@ def compute_readiness(
 
     Returns:
         A :class:`ReadinessReport` with one node per known dependency
-        (torch, models, qdrant), in that order.
+        (torch, models, qdrant, monitor), in that order.
     """
     from .config._settings import get_config
 
@@ -306,6 +309,7 @@ def compute_readiness(
             _torch_readiness(judged),
             _models_readiness(verify=verify_models, capability=judged.capability),
             _qdrant_readiness(server_mode=server_mode, capability=judged.capability),
+            _monitor_readiness(judged.capability),
         ],
         server_mode=server_mode,
         environment_holders=(
@@ -714,4 +718,64 @@ def _qdrant_readiness(
         status=ReadinessStatus.READY,
         detail=f"qdrant binary resolves from {source}",
         info=info,
+    )
+
+
+def _monitor_readiness(
+    capability: ComputeCapability = ComputeCapability.READY,
+) -> DependencyReadiness:
+    """Report whether this installation's monitor is installed and admissible.
+
+    The monitor is obtained automatically, so this dimension has one
+    blocking answer and no remedy to name: either a monitor this
+    installation may run is in place, or it is not and the next start
+    obtains it again. The resolver is asked, which hashes the executable it
+    finds, so this is a read with a cost and no mutation: nothing is
+    downloaded, extracted or written.
+
+    A client installation never runs the service, so nothing is looked for
+    and nothing is missing.
+    """
+    from .monitor_runtime._errors import MonitorError
+    from .monitor_runtime._resolve import resolve_monitor
+
+    if capability is ComputeCapability.NOT_APPLICABLE:
+        return DependencyReadiness(
+            name="monitor",
+            status=ReadinessStatus.READY,
+            detail=_CLIENT_NEEDS_NONE,
+            info={"monitor_source": "not_needed", "monitor_path": None},
+        )
+    try:
+        resolved = resolve_monitor()
+    except MonitorError as exc:
+        return DependencyReadiness(
+            name="monitor",
+            status=ReadinessStatus.NOT_READY,
+            detail=str(exc),
+            info={
+                "monitor_source": "invalid",
+                "monitor_path": None,
+                "monitor_error": exc.error,
+            },
+        )
+    if resolved is None:
+        return DependencyReadiness(
+            name="monitor",
+            status=ReadinessStatus.NOT_READY,
+            detail=(
+                "no monitor is installed for this release, so the service "
+                "would start without its frontend; the next start obtains it"
+            ),
+            info={"monitor_source": "absent", "monitor_path": None},
+        )
+    return DependencyReadiness(
+        name="monitor",
+        status=ReadinessStatus.READY,
+        detail=f"monitor resolves from {resolved.source}",
+        info={
+            "monitor_source": str(resolved.source),
+            "monitor_path": str(resolved.path),
+            "monitor_version": resolved.version,
+        },
     )

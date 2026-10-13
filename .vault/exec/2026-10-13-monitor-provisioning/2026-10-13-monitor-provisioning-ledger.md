@@ -5,7 +5,7 @@ tags:
 date: '2026-10-13'
 modified: '2026-10-13'
 body_schema: 'body-v2'
-body_hash: 'sha256:fcafea852049b6185328c6efa8e5b4b65f34aa65c3309c6f247dc3e339efe539'
+body_hash: 'sha256:6d8663e380d20eae5dbb7797b2fee4112b6316458e76c8caeaccac151a8fa87e'
 related:
   - "[[2026-10-13-monitor-provisioning-plan]]"
 ---
@@ -140,6 +140,23 @@ related:
 - `S03` `verify:` `uv run --no-sync python -m dev lint markdown` -> `pass`
 - `S03` `verify:` `uv run --no-sync python -m dev lint docs-conventions` -> `pass`
 - `S03` `by:` `implementation-engineer-high`
+- `S04` `M` `src/vaultspec_rag/commands/_provision.py`
+- `S04` `M` `src/vaultspec_rag/cli/_render.py`
+- `S04` `M` `src/vaultspec_rag/_readiness.py`
+- `S04` `M` `src/vaultspec_rag/monitor_runtime/_provision.py`
+- `S04` `A` `src/vaultspec_rag/tests/test_monitor_provision_step.py`
+- `S04` `M` `src/vaultspec_rag/tests/conftest.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_provision.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_readiness.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_install_provision.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_program_lookup_sites.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_server_doctor.py`
+- `S04` `verify:` `uv run --no-sync ruff check src tools dev conftest.py` -> `pass`
+- `S04` `verify:` `uv run --no-sync ruff format --check src tools dev conftest.py` -> `pass`
+- `S04` `verify:` `uv run --no-sync ty check src tools dev conftest.py` -> `pass`
+- `S04` `verify:` `uv run --no-sync pytest -m unit -k 'start or provision or readiness or install or doctor or client or monitor or model_fetch or render or health or status' (1810 passed, 8 pre-existing environment failures)` -> `pass`
+- `S04` `verify:` `uv run --no-sync python -m dev lint markdown` -> `pass`
+- `S04` `by:` `implementation-engineer-high`
 
 ## Notes
 
@@ -151,3 +168,7 @@ related:
 - `S03` Deliberate difference from the Qdrant provisioner: monitor provisioning takes no cross-process lock. Two runs each stage under a unique name and install with one atomic replace of a file both verified against the same digest, so the loser costs a wasted download and nothing else; a lock would have to be held across a download to save only bytes. Recorded for review.
 - `S03` Three more orientation documents under .vaultspec/skills/start-vaultspec-rag/references/ now link to tools/binaries/native.py, which this Step deleted, so the documentation link check fails on 17 such links in all. Those files are user-owned policy sources and were left untouched.
 - `S03` Adding the three new monitor environment variables required documenting them in .env.example and docs/configuration.md, which the repository's own coverage, parity and reference gates demand of any declared variable. The monitor rows of docs/configuration.md are therefore already written; S06 owns the removal of manual monitor setup elsewhere in the docs.
+- `S04` Guard proofs run as break, run alone, fail on the named assertion, restore, pass: asking the provisioner before the installation role; judging a client installation after resolving in the readiness row; and removing the monitor's label from the provisioning summary.
+- `S04` Eight tests in two modules fail on this machine with or without this change, because the machine has neither a compiled monitor nor a running Vite dev server: `test_monitor_access.py's` four Vite cases, and `test_monitor_process_integration.py's` four compiled-lifecycle cases, whose own precondition already required a monitor this checkout does not build. S06 makes the development recipes build one.
+- `S04` The monitor step exposed a defect in the S03 provisioner: it asked for the release pins before asking whether an operator had already named a monitor, so an operator-supplied monitor could not satisfy provisioning at all. The entry point now asks about the operator's own executable first, verifies it, and consults no pin in that case.
+- `S04` The suite needed a monitor the way it needs a server binary. A session fixture names one through the operator settings, which is a production route and not a substitution; the monitor's own tests clear both settings for their own blocks, so the release's resolution is still exercised.

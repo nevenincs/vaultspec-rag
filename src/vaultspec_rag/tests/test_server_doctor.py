@@ -118,14 +118,14 @@ def test_doctor_json_envelope_carries_both_axes(
     assert result.exit_code == 0
 
 
-def test_doctor_json_dependency_axis_is_bounded_three_dimensions(
+def test_doctor_json_dependency_axis_is_bounded_to_the_known_dependencies(
     isolated_status_dir: Path,
 ) -> None:
     _ = isolated_status_dir
     result = runner.invoke(app, ["server", "doctor", "--json"])
     data = json.loads(result.stdout)["data"]
     names = [dep["name"] for dep in data["dependencies"]]
-    assert names == ["torch", "models", "qdrant"]
+    assert names == ["torch", "models", "qdrant", "monitor"]
     assert isinstance(data["dependencies_ready"], bool)
     assert isinstance(data["server_mode"], bool)
     assert isinstance(data["ready"], bool)

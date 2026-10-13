@@ -67,7 +67,6 @@ from ._errors import MonitorError
 from ._launch import verify_monitor
 from ._pins import MonitorPin, monitor_pin
 from ._resolve import (
-    MonitorSource,
     managed_monitor_path,
     managed_monitor_root,
     monitor_target,
@@ -79,7 +78,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterable
     from pathlib import Path
 
-    from ._resolve import ResolvedMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -326,20 +324,6 @@ def _install(request: _InstallRequest) -> ProvisionReport:
     )
 
 
-def _installed_monitor(pin: MonitorPin) -> ResolvedMonitor | None:
-    """Return the monitor already in use here, or ``None`` when none is.
-
-    The operator's own executable counts: when one is named, nothing is
-    provisioned for this release, because the operator decided what runs.
-
-    Raises:
-        MonitorError: When the operator settings cannot name an executable,
-            or when something installed cannot be read.
-    """
-    operator = operator_monitor()
-    return operator if operator is not None else resolve_pinned_monitor(pin)
-
-
 def retire_superseded(version: str) -> list[str]:
     """Remove every managed monitor install that is not *version*'s.
 
@@ -395,6 +379,23 @@ def provision_monitor(
         refusal of the pins or of the platform.
     """
     try:
+        operator = operator_monitor()
+        if operator is not None:
+            # The operator decided what runs, so this release's own digests
+            # are not consulted and nothing is obtained. The file is hashed
+            # here, because resolution returns it without doing so.
+            verify_monitor(operator)
+            return ProvisionReport(
+                action=ProvisionAction.UNCHANGED,
+                version="",
+                binary=operator.path,
+                sha256=operator.sha256,
+                message=(
+                    f"The {_SUBJECT} at {operator.path} is the one the "
+                    "operator settings name, verified against the digest "
+                    "they declare for it; nothing was obtained."
+                ),
+            )
         pin = monitor_pin(monitor_target())
     except MonitorError as exc:
         return ProvisionReport(
@@ -436,12 +437,7 @@ def provision_pinned_monitor(
 
     target_path = managed_monitor_path(pin.version, pin.target)
     try:
-        installed = _installed_monitor(pin)
-        if installed is not None and installed.source is MonitorSource.OPERATOR_SETTING:
-            # Resolution returns an operator executable without hashing it,
-            # so this is where "already installed" becomes a claim anything
-            # vouches for.
-            verify_monitor(installed)
+        installed = resolve_pinned_monitor(pin)
     except MonitorError as exc:
         return ProvisionReport(
             action=ProvisionAction.FAILED,

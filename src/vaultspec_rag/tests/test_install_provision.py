@@ -306,7 +306,7 @@ class TestInstallProvisionWiring:
         assert isinstance(steps, list)
         entries = cast("list[dict[str, object]]", steps)
         seen = {entry["step"] for entry in entries}
-        assert seen == {"torch", "models", "qdrant"}
+        assert seen == {"torch", "models", "qdrant", "monitor"}
 
     def test_no_provision_to_dict_provisioning_is_none(
         self, consumer_workspace: Path, isolated_status_dir: Path

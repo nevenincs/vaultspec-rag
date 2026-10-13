@@ -303,6 +303,42 @@ def pin_daemon_capability(
     monkeypatch.setattr(_environment_probe, "probe_interpreter", answer)
 
 
+@pytest.fixture(scope="session", autouse=True)
+def stand_in_monitor(tmp_path_factory: pytest.TempPathFactory) -> Generator[Path]:
+    """Stage a monitor for the session, named through the operator settings.
+
+    Every host start and every install now provisions a monitor, as each
+    provisions model files and a server binary. The monitor a release
+    provides is fetched from a release source no unit test contacts, and the
+    digests that admit one are generated into a release artifact, so a
+    checkout has neither. The operator settings are the supported way to name
+    an executable that exists, so the session names one of its own and those
+    runs find a monitor already in place and verify it.
+
+    Staged for the session, like the managed directories themselves. A test
+    about the monitor clears both settings for its own block, which is what
+    puts the release's own resolution back in play.
+
+    Yields:
+        The executable named.
+    """
+    import hashlib
+
+    from ..config._types import EnvVar
+
+    monitor = tmp_path_factory.mktemp("monitor") / "vaultspec-rag-monitor"
+    monitor.write_bytes(b"#!a stand-in monitor" * 32)
+    with managed_env(
+        **{
+            EnvVar.MONITOR_BINARY.value: str(monitor),
+            EnvVar.MONITOR_BINARY_SHA256.value: hashlib.sha256(
+                monitor.read_bytes()
+            ).hexdigest(),
+        }
+    ):
+        yield monitor
+
+
 @pytest.fixture
 def inference_host(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make this installation read as an inference host that can serve.

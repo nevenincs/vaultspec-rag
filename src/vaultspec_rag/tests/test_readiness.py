@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 
 pytestmark = [pytest.mark.unit]
 
-_DIMENSIONS = ("torch", "models", "qdrant")
+_DIMENSIONS = ("torch", "models", "qdrant", "monitor")
 
 #: Both operator binary settings cleared. They outrank the managed install, so
 #: a pair in the developer's own environment would decide the dimension.
@@ -139,8 +139,8 @@ class TestComputeReadinessShape:
     def test_report_is_bounded_to_the_known_dependency_set(self) -> None:
         report = compute_readiness()
         names = [dep.name for dep in report.dependencies]
-        # Bounded and ordered: exactly the three known dependencies, no
-        # accretion into a general health console.
+        # Bounded and ordered: exactly the known dependencies, no accretion
+        # into a general health console.
         assert names == list(_DIMENSIONS)
 
     def test_every_dimension_carries_a_bounded_status(self) -> None:

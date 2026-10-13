@@ -155,12 +155,16 @@ class ProvisionStep(StrEnum):
     """The external dependencies the front door provisions.
 
     Each member is also the canonical token a caller passes in the
-    ``skip`` set to opt that step out (e.g. ``skip={"torch"}``).
+    ``skip`` set to opt that step out (e.g. ``skip={"torch"}``) - except
+    the monitor, which has no opt-out at all: a service without its
+    monitor is not the delivered product, and nothing about obtaining it
+    is anyone's to turn off.
     """
 
     TORCH = "torch"
     MODELS = "models"
     QDRANT = "qdrant"
+    MONITOR = "monitor"
 
 
 @dataclass
@@ -430,20 +434,21 @@ def provision_dependencies(
     target: Path,
     **options: Unpack[_ProvisionOptions],
 ) -> ProvisionOutcome:
-    """Provision torch, models, and the Qdrant binary behind one door."""
+    """Provision torch, the models, the Qdrant binary and the monitor."""
     return _provision_dependencies(_ProvisionRequest(target, **options))
 
 
 def _provision_dependencies(request: _ProvisionRequest) -> ProvisionOutcome:
-    """Provision torch, models, and the Qdrant binary behind one door.
+    """Provision torch, the models, the Qdrant binary and the monitor.
 
     Opt-out by default: every step runs unless opted out. ``local_only``
     is the headline escape hatch - it skips the Qdrant binary step (the
     runtime selection of the local store is the caller's concern). The
     finer ``skip`` set drops individual steps by their
     :class:`ProvisionStep` token (``"torch"`` / ``"models"`` /
-    ``"qdrant"``). Each step delegates to its existing backend, is
-    idempotent, and honours ``dry_run``.
+    ``"qdrant"``); the monitor has no token, because a service without its
+    monitor is not the delivered product. Each step delegates to its
+    existing backend, is idempotent, and honours ``dry_run``.
 
     The Qdrant step also follows the backend the settings select: an
     exported local-only choice, a server mode switched off, or the address
@@ -538,6 +543,9 @@ def _provision_dependencies(request: _ProvisionRequest) -> ProvisionOutcome:
             environment=environment,
             progress=progress,
         )
+    )
+    outcome.steps.append(
+        _provision_monitor(dry_run=dry_run, environment=environment, progress=progress)
     )
 
     return outcome
@@ -777,12 +785,13 @@ def ensure_runtime_dependencies(
 ) -> ProvisionOutcome:
     """Fetch what a daemon needs and does not have, before it is spawned.
 
-    The narrower entry ``server start`` uses: the two fetch-and-go
-    dependencies, in the order the daemon needs them, through the same steps
-    ``install`` runs. Torch is not among them - the environment that runs the
-    daemon is judged, never changed, by a start. The sequence stops at the
-    first step that fails, so a host that cannot get its models is not also
-    sent to download a server it cannot use yet.
+    The narrower entry ``server start`` uses: the fetch-and-go dependencies,
+    in the order the daemon needs them, through the same steps ``install``
+    runs. Torch is not among them - the environment that runs the daemon is
+    judged, never changed, by a start. The sequence stops at the first step
+    that fails, so a host that cannot get its models is not also sent to
+    download a server it cannot use yet, nor a monitor for a service it has
+    no server to run.
 
     Args:
         environment: The start's own judgement of the interpreter that will
@@ -805,16 +814,65 @@ def ensure_runtime_dependencies(
     outcome.steps.append(models)
     if models.action == ProvisionAction.FAILED:
         return outcome
+    qdrant = _provision_qdrant(
+        dry_run=False,
+        unneeded=server_unneeded,
+        environment=environment,
+        auto_provision=qdrant_auto_provision,
+        progress=progress,
+    )
+    outcome.steps.append(qdrant)
+    if qdrant.action == ProvisionAction.FAILED:
+        return outcome
     outcome.steps.append(
-        _provision_qdrant(
-            dry_run=False,
-            unneeded=server_unneeded,
-            environment=environment,
-            auto_provision=qdrant_auto_provision,
-            progress=progress,
-        )
+        _provision_monitor(dry_run=False, environment=environment, progress=progress)
     )
     return outcome
+
+
+def _provision_monitor(
+    *,
+    dry_run: bool,
+    environment: ServiceEnvironment,
+    progress: ProvisionProgress | None = None,
+) -> ProvisionStepResult:
+    """Ensure this release's monitor is installed, obtaining it if it is not.
+
+    The monitor is obtained exactly as the models and the server binary are:
+    on a host, without being asked for, reported in the same vocabulary. A
+    client installation never runs the service and is told it needs none,
+    which is the answer that holds whatever else was asked for, so it is
+    given first.
+
+    There is no opt-out and no reason an outcome could name for anyone to go
+    and get one: the provisioner's message says what happened and that the
+    next start tries again.
+    """
+    unable = unable_skip(ProvisionStep.MONITOR, environment)
+    if unable is not None:
+        return unable
+    from ..monitor_runtime._provision import (
+        MONITOR_PROVISION_FAILED,
+        provision_monitor,
+    )
+    from ..native_binary._download import no_progress
+
+    report = provision_monitor(
+        dry_run=dry_run,
+        on_progress=no_progress if progress is None else progress.stage,
+    )
+    if report.action == ProvisionAction.FAILED:
+        return ProvisionStepResult(
+            step=ProvisionStep.MONITOR,
+            action=ProvisionAction.FAILED,
+            detail=report.message,
+            code=MONITOR_PROVISION_FAILED,
+        )
+    return ProvisionStepResult(
+        step=ProvisionStep.MONITOR,
+        action=report.action,
+        detail=report.message,
+    )
 
 
 def _provision_qdrant(
