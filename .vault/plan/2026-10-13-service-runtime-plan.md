@@ -10,7 +10,7 @@ related:
   - '[[2026-10-13-service-runtime-audit]]'
 modified: '2026-10-13'
 body_schema: body-v2
-body_hash: 'sha256:d49a85b037be833a77a1e25a0a8a3bb83e813fab6193080dd4a88e2338275f09'
+body_hash: 'sha256:83c82f785566d1e93fa6616a599bc4092e92b748c2f58e168bd869a89511774d'
 ---
 
 <!-- RETIRED: S05 -->
