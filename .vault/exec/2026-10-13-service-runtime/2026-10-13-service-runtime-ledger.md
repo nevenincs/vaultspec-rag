@@ -5,7 +5,7 @@ tags:
 date: '2026-10-13'
 modified: '2026-10-13'
 body_schema: 'body-v2'
-body_hash: 'sha256:3621754e9968db8498294b278f9d5a1461dcc0a83590835e8491f912cd16d7db'
+body_hash: 'sha256:744a9a709bae3c36b41dd74be862479ab172ab7765198e08f43dbbbf4af50530'
 related:
   - "[[2026-10-13-service-runtime-plan]]"
 ---
@@ -93,7 +93,10 @@ related:
 - `S06` `M` `src/vaultspec_rag/tests/test_host_install_command.py`
 - `S06` `M` `src/vaultspec_rag/tests/test_install_torch_config.py`
 - `S06` `verify:` `install, cli, docs and host-install-command suites` -> `pass`
+- `S07` `verify:` `lab linux readme route: install, start, doctor ready, search after rebuild` -> `pass`
+- `S07` `verify:` `lab linux uvx-local and client routes: start, doctor ready` -> `pass`
 
 ## Notes
 
 - `S04` doctor, status, qdrant and backend choice read the planned service interpreter
+- `S07` Monitor replaced by a lab-only readiness stand-in until the compiled monitor ships; Windows sandbox not run while the operator's service owns the GPU; first index needs --rebuild (audit first-index)
