@@ -6,9 +6,10 @@ tags:
 date: '2026-10-13'
 modified: '2026-10-13'
 body_schema: 'body-v2'
-body_hash: 'sha256:d1d4d8f20f64f232c048978e30f579e25b74a86d4d0a6b40662ebbe04decc38d'
+body_hash: 'sha256:007673f6af396290cf121bfda1f2029520db1f17be6b40c89d3d6f75cb013ae5'
 related:
   - '[[2026-10-13-monitor-provisioning-adr]]'
+  - '[[2026-10-13-monitor-provisioning-plan]]'
   - '[[2026-10-13-monitor-provisioning-reference]]'
 ---
 
@@ -20,7 +21,11 @@ Auto-generated index of all documents tagged with `#monitor-provisioning`.
 
 ### adr
 
-- `2026-10-13-monitor-provisioning-adr` - `monitor-provisioning` adr: `Provision the compiled monitor on server start from pins carried in the wheel` | (**status:** `proposed`)
+- `2026-10-13-monitor-provisioning-adr` - `monitor-provisioning` adr: `Provision the compiled monitor on server start from pins carried in the wheel` | (**status:** `accepted`)
+
+### plan
+
+- `2026-10-13-monitor-provisioning-plan` - `monitor-provisioning` plan
 
 ### reference
 
