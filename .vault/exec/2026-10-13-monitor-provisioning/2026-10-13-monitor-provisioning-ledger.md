@@ -5,7 +5,7 @@ tags:
 date: '2026-10-13'
 modified: '2026-10-13'
 body_schema: 'body-v2'
-body_hash: 'sha256:6d8663e380d20eae5dbb7797b2fee4112b6316458e76c8caeaccac151a8fa87e'
+body_hash: 'sha256:775da68347579d4cb5a70e5b600c49489119b9f34f7f106454ff4b804eec37e5'
 related:
   - "[[2026-10-13-monitor-provisioning-plan]]"
 ---
@@ -157,6 +157,25 @@ related:
 - `S04` `verify:` `uv run --no-sync pytest -m unit -k 'start or provision or readiness or install or doctor or client or monitor or model_fetch or render or health or status' (1810 passed, 8 pre-existing environment failures)` -> `pass`
 - `S04` `verify:` `uv run --no-sync python -m dev lint markdown` -> `pass`
 - `S04` `by:` `implementation-engineer-high`
+- `S05` `M` `.github/workflows/publish.yml`
+- `S05` `M` `.github/workflows/binaries.yml`
+- `S05` `M` `justfile`
+- `S05` `M` `tools/monitor/pins.py`
+- `S05` `M` `tools/monitor/release.py`
+- `S05` `M` `tools/packaging/bundles.py`
+- `S05` `M` `tools/conftest.py`
+- `S05` `M` `tools/packaging/tests/test_bundles.py`
+- `S05` `M` `tools/monitor/tests/test_pins.py`
+- `S05` `M` `tools/monitor/tests/test_release.py`
+- `S05` `M` `tools/monitor/tests/test_provenance.py`
+- `S05` `M` `tools/binaries/tests/test_release_workflow.py`
+- `S05` `verify:` `uv run --no-sync ruff check src tools dev conftest.py` -> `pass`
+- `S05` `verify:` `uv run --no-sync ruff format --check src tools dev conftest.py` -> `pass`
+- `S05` `verify:` `uv run --no-sync ty check the changed tools modules and their tests` -> `pass`
+- `S05` `verify:` `uv run --no-sync python -m dev.actionlint, the pinned actionlint over every workflow` -> `pass`
+- `S05` `verify:` `uv run --no-sync pytest tools dev (415 passed, 4 skipped)` -> `pass`
+- `S05` `verify:` `uv run --no-sync pytest the citation, marker, pointer, monitor-pin and monitor-runtime suites (206 passed)` -> `pass`
+- `S05` `by:` `implementation-engineer-high`
 
 ## Notes
 
@@ -172,3 +191,8 @@ related:
 - `S04` Eight tests in two modules fail on this machine with or without this change, because the machine has neither a compiled monitor nor a running Vite dev server: `test_monitor_access.py's` four Vite cases, and `test_monitor_process_integration.py's` four compiled-lifecycle cases, whose own precondition already required a monitor this checkout does not build. S06 makes the development recipes build one.
 - `S04` The monitor step exposed a defect in the S03 provisioner: it asked for the release pins before asking whether an operator had already named a monitor, so an operator-supplied monitor could not satisfy provisioning at all. The entry point now asks about the operator's own executable first, verifies it, and consults no pin in that case.
 - `S04` The suite needed a monitor the way it needs a server binary. A session fixture names one through the operator settings, which is a production route and not a substitution; the monitor's own tests clear both settings for their own blocks, so the release's resolution is still exercised.
+- `S05` S05 Guard proofs run as break, run alone, fail on the named assertion, restore, pass: removing the bundle's monitor-pin comparison (five refusal cases, DID NOT RAISE); removing the monitor archive's single-member check; dropping the generator-shape validation from the wheel pin reader; returning partial digests instead of refusing an unfinalized target; dropping the executable digest comparison in the staging step; hashing the archive in place of the wheel's pinned archive digest before extraction; moving the pin generation after the package build; removing the monitor archive download from the attestation job; removing the per-target monitor archive requirement from the draft gate; and removing the checksum verification from the monitor archive fetch.
+- `S05` S05 The monitors now reach the bundle lane as public release assets rather than as a cross-run artifact handoff: the lane that builds the wheel compiles, finalizes, packs and attaches them, and the bundle lane takes each target's archive off the draft checked against SHA256SUMS exactly as it already takes the wheel, then verifies it against that wheel's own pin before extracting. One attestation call covers the four bundles and the four monitor archives. The frontend digest, which the bundle lane no longer builds, travels to it as a validated dispatch input.
+- `S05` S05 A rehearsal of the bundle lane keeps its own frontend job and gains a per-target monitor job, both reaching only a rehearsal, and generates release-provenance pins into the unpublished wheel it builds in that run, so the pin comparison runs for real instead of being waived. The binary-bundle decision allows that equivalent same-run handoff. The alternative, a rehearsal that cannot build a bundle at all, would have removed a maintainer capability nothing authorized removing.
+- `S05` S05 RELEASING.md's local reproduction sequence is now stale: it builds the wheel before the monitor, does not generate pins, and calls the bundle recipe without the wheel directory. Left to S06, which owns the documentation.
+- `S05` S05 acquisition.yml and tools/packaging/validate.py needed no change. Public acquisition still admits bundle archives only, which the plan leaves unchanged, and channel pointers already refuse a monitor archive because the buildable set is the bundle names, which is what 'not a channel install unit' requires.

@@ -13,7 +13,7 @@ related:
   - '[[2026-10-09-automatic-merge-gate-autonomous-release-adr]]'
 modified: '2026-10-13'
 body_schema: body-v2
-body_hash: 'sha256:21a2d5e12b290f5e3fe2e5cfa75109e88c20c24bb2f64f641fb1ed156de978c6'
+body_hash: 'sha256:44966c51fece86018ae2b423fc6ecfeeb08016a86952fedaae01177482b7f2f6'
 ---
 
 # `monitor-provisioning` plan
@@ -34,7 +34,7 @@ Ownership boundary: peer session main-bf, on branch fix/install-ux, owns the `se
 - [x] `S02` - Define the generated monitor pin module, its loader and its generator; `src/vaultspec_rag pin loader, tools/monitor pin generator, pyproject.toml hatch artifacts inclusion, .gitignore, and tests`.
 - [x] `S03` - Provision, resolve and verify the monitor at runtime with the PATH tier removed; `new monitor runtime module, src/vaultspec_rag/monitor_process.py, src/vaultspec_rag/_program_lookup.py callers, src/vaultspec_rag/config/_types.py, _registry.py and _schema.py, and tests`.
 - [x] `S04` - Run the monitor step in server start and install provisioning and report it on the readiness dependency axis; `src/vaultspec_rag/commands/_provision.py, src/vaultspec_rag/cli/_render.py, src/vaultspec_rag/_readiness.py monitor entry only, and tests`.
-- [ ] `S05` - Compile the monitor before the wheel, publish monitor-only archives and check bundle pins against the wheel; `.github/workflows/publish.yml, binaries.yml and acquisition.yml, tools/monitor/build.py and release.py, tools/packaging/bundles.py and validate.py, justfile release recipes, and tests`.
+- [x] `S05` - Compile the monitor before the wheel, publish monitor-only archives and check bundle pins against the wheel; `.github/workflows/publish.yml, binaries.yml and acquisition.yml, tools/monitor/build.py and release.py, tools/packaging/bundles.py and validate.py, justfile release recipes, and tests`.
 - [ ] `S06` - Make development monitor setup automatic and drop manual monitor setup from the docs; `justfile build-monitor recipes, tools/monitor/build.py test mode, .github/workflows/merge-gate.yml test jobs, docs/service-mode.md, docs/configuration.md, docs/installation.md monitor lines, dev/generate_cli_reference.py and docs/cli.md`.
 - [ ] `S07` - Review the integrated provisioning, release and documentation changes; `monitor-provisioning audit`.
 

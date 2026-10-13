@@ -12,17 +12,30 @@ an artifact without it provisions no monitor at all.
 from __future__ import annotations
 
 import tomllib
+import zipfile
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from tools.monitor.pins import PINS_PATH, GeneratedPins, digests_for, render, write
+from tools.monitor.pins import (
+    PINS_PATH,
+    WHEEL_PINS_MEMBER,
+    GeneratedPins,
+    WheelPinsError,
+    digests_for,
+    read_wheel_pins,
+    render,
+    staged_digests,
+    write,
+)
+from tools.packaging.products import MONITOR_EXECUTABLE, VAULTSPEC_RAG
+from vaultspec_rag.monitor_runtime._assets import monitor_archive_name
 from vaultspec_rag.monitor_runtime._pins import PINS_MODULE, PinProvenance
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
 pytestmark = pytest.mark.unit
 
@@ -166,3 +179,99 @@ class TestTheGeneratedModuleReachesTheArtifacts:
         """
         for name, artifacts in self._declared_artifacts():
             assert PINS_PATH.as_posix() in artifacts, name
+
+
+class TestWhatABuiltWheelSays:
+    """Reading the pins back out of the artifact that will act on them."""
+
+    def test_the_pins_a_wheel_carries_are_the_ones_generated_into_it(
+        self, tmp_path: Path, pinned_wheel: Callable[..., Path]
+    ) -> None:
+        """One release, one statement of it, however it is read.
+
+        The pipeline checks a built wheel against the monitors it published,
+        and it must read what an installation of that wheel will read.
+        """
+        wheel = pinned_wheel(
+            tmp_path, "1.2.3", {_TARGET: "b" * 64}, {_TARGET: "a" * 64}
+        )
+
+        assert read_wheel_pins(wheel) == _RELEASE
+
+    @pytest.mark.parametrize(
+        ("member", "source", "message"),
+        [
+            pytest.param(None, "", "carries no", id="no module"),
+            pytest.param(
+                WHEEL_PINS_MEMBER,
+                "PROVENANCE: Final[str] = 'rumour'\n",
+                "provenance",
+                id="unknown provenance",
+            ),
+            pytest.param(
+                WHEEL_PINS_MEMBER,
+                "PROVENANCE: Final[str] = 'release'\n",
+                "RELEASE_VERSION",
+                id="no version",
+            ),
+            pytest.param(
+                WHEEL_PINS_MEMBER,
+                (
+                    "PROVENANCE: Final[str] = 'release'\n"
+                    "RELEASE_VERSION: Final[str] = '1.2.3'\n"
+                    "ARCHIVE_SHA256: Final[dict[str, str]] = {'t': 'nope'}\n"
+                    "EXECUTABLE_SHA256: Final[dict[str, str]] = {'t': 'nope'}\n"
+                ),
+                "unusable pins",
+                id="not digests",
+            ),
+        ],
+    )
+    def test_a_wheel_the_generator_would_not_have_written_is_refused(
+        self, tmp_path: Path, member: str | None, source: str, message: str
+    ) -> None:
+        """Refused rather than read past, because the reader refuses it too.
+
+        Mutation proof: dropping the ``render`` validation from
+        ``read_wheel_pins`` made the not-digests case fail with ``DID NOT
+        RAISE``; restoring it passed.
+        """
+        wheel = tmp_path / "vaultspec_rag-1.2.3-py3-none-any.whl"
+        with zipfile.ZipFile(wheel, "w") as archive:
+            archive.writestr(member or "vaultspec_rag/__init__.py", source)
+
+        with pytest.raises(WheelPinsError, match=message):
+            read_wheel_pins(wheel)
+
+
+class TestWhatTheReleasePipelineStages:
+    def test_every_shipped_target_must_have_been_finalized(
+        self, tmp_path: Path
+    ) -> None:
+        """A release pins every target it ships, or the generator refuses.
+
+        A wheel missing one target's digests cannot provision a monitor
+        there, and nothing later supplies it.
+
+        Mutation proof: returning the digests found instead of raising made
+        this fail on the refusal assertion; restoring the raise passed.
+        """
+        version = "1.2.3"
+        for target in VAULTSPEC_RAG.supported_targets[:-1]:
+            (tmp_path / monitor_archive_name(version, target)).write_bytes(b"archive")
+            (
+                tmp_path / VAULTSPEC_RAG.asset_name(MONITOR_EXECUTABLE, target)
+            ).write_bytes(b"monitor")
+
+        with pytest.raises(FileNotFoundError, match="no finalized monitor"):
+            staged_digests(tmp_path, version)
+
+        last = VAULTSPEC_RAG.supported_targets[-1]
+        (tmp_path / monitor_archive_name(version, last)).write_bytes(b"archive")
+        (tmp_path / VAULTSPEC_RAG.asset_name(MONITOR_EXECUTABLE, last)).write_bytes(
+            b"monitor"
+        )
+        archives, executables = staged_digests(tmp_path, version)
+
+        assert archives.keys() == executables.keys()
+        assert set(archives) == set(VAULTSPEC_RAG.supported_targets)
