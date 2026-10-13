@@ -11,7 +11,6 @@ in ``--json`` mode reads exactly one envelope.
 from __future__ import annotations
 
 import os
-import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -56,12 +55,6 @@ from .._process_probe import pid_alive
 from ..config._settings import get_config
 from ..config._types import EnvVar
 from ..operator_state._installation import ComputeCapability
-from ..operator_state._provisioning import cuda_remediation
-from ..operator_state._topology import (
-    RuntimeEnvKind,
-    classify_environment,
-    environment_root,
-)
 from ..serviceclient._compat import (
     VERSION_ERROR_MISMATCH,
     ServiceVersionVerdict,
@@ -110,9 +103,7 @@ from ._status_labels import (
 )
 
 __all__ = [
-    "_caller_ephemeral_warning",
     "_daemon_is_serving",
-    "_ephemeral_env_warning",
     "_existing_service_running",
     "_fail_start",
     "_start_success",
@@ -190,7 +181,6 @@ class _ServiceReadinessRequest:
     log_path: Path
     json_mode: bool
     started_at: float
-    env_warnings: tuple[str, ...] = ()
     progress: StartupStatusReporter | None = None
     #: The managed runtime serving this start, or ``None`` when the launching
     #: environment serves it. Carried into the one start envelope, because a
@@ -840,19 +830,12 @@ def _guard_start_preconditions(port: int, json_mode: bool) -> None:
         )
 
 
-def _attach_existing_service(
-    json_mode: bool,
-    caller_warnings: tuple[str, ...],
-) -> bool:
+def _attach_existing_service(json_mode: bool) -> bool:
     """Attach to an owned serving daemon and emit the idempotent outcome."""
     existing = _existing_service_running()
     if existing is None:
         return False
-    if caller_warnings and not json_mode:
-        _print_lifecycle_lines(*caller_warnings)
-    attach_extra: dict[str, object] = (
-        {"warnings": list(caller_warnings)} if caller_warnings else {}
-    )
+    attach_extra: dict[str, object] = {}
     existing_pid = existing.pid
     attach_extra["typesafe"] = existing.typesafe
     existing_port = existing.port
@@ -1007,15 +990,8 @@ def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None
         # guards so the friendly path is no longer shadowed by the port-guard
         # exit 1 - a supervising broker attaches instead of seeing a gateway
         # fault.
-        # The attach paths below never resolve a daemon interpreter, so the
-        # daemon-side ephemeral warning cannot fire for them. The caller's own
-        # env is the condition that matters here: an operator invoking from a
-        # uvx cache env still walks into the forced-reinstall trap, and
-        # `already_running` is the outcome a long-lived daemon returns almost
-        # every time.
         progress.stage("Checking for a service already running...")
-        caller_warnings = _caller_ephemeral_warning()
-        if _attach_existing_service(json_mode, caller_warnings):
+        if _attach_existing_service(json_mode):
             return
 
         # A live owned daemon that stamped ``warming`` holds the machine lock
@@ -1028,15 +1004,11 @@ def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None
             return
 
         # Everything from here on starts a daemon, so the environment that
-        # would run it is judged before anything is fetched or written for
-        # it. The judgement comes ahead of the port and machine guards, whose
-        # probes can create a lock file, and ahead of the binary check. A
-        # client or a host whose torch cannot serve is refused with nothing
-        # provisioned and nothing written.
+        # would run it is resolved before anything is fetched or written for
+        # it. It comes ahead of the port and machine guards, whose probes can
+        # create a lock file, and ahead of the binary check, so a start that
+        # has no environment to run in has provisioned and written nothing.
         interpreter = _resolve_daemon_interpreter()
-        env_warnings = _ephemeral_env_warning(interpreter)
-        if env_warnings and not json_mode:
-            _print_lifecycle_lines(*env_warnings)
         # A client is answered from the distributions this environment holds,
         # at no cost. A host is asked in a child of the daemon interpreter,
         # which imports torch there: the single longest pre-spawn stall (its
@@ -1092,7 +1064,6 @@ def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None
                 log_path=log_path,
                 json_mode=json_mode,
                 started_at=t0,
-                env_warnings=env_warnings,
                 progress=progress,
                 runtime=selected.runtime,
             )
@@ -1120,55 +1091,6 @@ def _reclaim_superseded_runtimes() -> None:
         return
     for directory in removed:
         logger.info("removed superseded service runtime %s", directory)
-
-
-def _ephemeral_env_warning(interpreter: str) -> tuple[str, ...]:
-    """Warning lines when the daemon interpreter is a uvx ephemeral cache env.
-
-    A uvx run silently falls back to a cached ephemeral environment when the
-    installed tool env is broken (e.g. a forced reinstall failed mid-removal
-    because the running service held the Scripts dir) or the request does not
-    match the installed spec. Nothing else distinguishes that env from the
-    installed tool, so the start surface names it loudly. Returns ``()`` for
-    every other environment kind.
-    """
-    kind = classify_environment(environment_root(interpreter))
-    if kind is not RuntimeEnvKind.UVX_EPHEMERAL:
-        return ()
-    return (
-        "WARNING: the service interpreter is a uvx EPHEMERAL cache "
-        "environment - not the installed tool:",
-        f"  {interpreter}",
-        "uvx falls back to a cached environment when the installed tool env "
-        "is broken or the request does not match it.",
-        *cuda_remediation(interpreter, env_kind=kind).steps,
-    )
-
-
-def _caller_ephemeral_warning(interpreter: str | None = None) -> tuple[str, ...]:
-    """Warning lines when *this* CLI process runs from a uvx ephemeral env.
-
-    Distinct from :func:`_ephemeral_env_warning`, which describes the daemon
-    interpreter of a service being spawned. On the attach paths no daemon is
-    spawned and the running service may be entirely healthy, so the subject is
-    the caller: a forced reinstall from here still fails mid-removal while the
-    service holds the Scripts dir. Returns ``()`` for every other env kind.
-
-    ``interpreter`` defaults to the running interpreter; it is a parameter so
-    the classification can be exercised against real path shapes.
-    """
-    resolved = sys.executable if interpreter is None else interpreter
-    kind = classify_environment(environment_root(resolved))
-    if kind is not RuntimeEnvKind.UVX_EPHEMERAL:
-        return ()
-    return (
-        "WARNING: this command is running from a uvx EPHEMERAL cache "
-        "environment - not the installed tool:",
-        f"  {resolved}",
-        "The already-running service was started from a different "
-        "environment; this env disappears when the uvx run ends.",
-        *cuda_remediation(resolved, env_kind=kind).steps,
-    )
 
 
 def _daemon_is_serving(health: dict[str, object]) -> bool:
@@ -1305,9 +1227,7 @@ def _emit_start_succeeded(
     serving_pid = _health_service_pid(health, request.pid)
     _update_service_metadata(_status_metadata_from_health(health, pid=serving_pid))
     startup_s = time.perf_counter() - request.started_at
-    extra: dict[str, object] = (
-        {"warnings": list(request.env_warnings)} if request.env_warnings else {}
-    )
+    extra: dict[str, object] = {}
     extra["typesafe"] = health_typesafe(health)
     if request.runtime is not None:
         extra["runtime"] = request.runtime.to_dict()

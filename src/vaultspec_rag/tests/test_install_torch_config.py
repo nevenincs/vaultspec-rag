@@ -82,12 +82,18 @@ class TestInstallTorchConfig:
         assert _sha(consumer_workspace / "pyproject.toml") == sha_after_first
 
     def test_install_on_workspace_without_pyproject(self, tmp_path: Path) -> None:
+        """Absent, and silent about it.
+
+        A tool or pip installation has no project declaration, so a warning
+        naming the one that is missing describes a normal state as a problem.
+        The action still records the absence, which is what keeps the report
+        from printing a torch section at all.
+        """
         ws = tmp_path / "no-pyproject"
         ws.mkdir()
         report = install_run(path=ws, assume_yes=True)
         assert report.torch_config_action == "absent"
-        # Warning text names the missing pyproject.
-        assert any("pyproject.toml" in w for w in report.warnings)
+        assert not any("pyproject.toml" in w for w in report.warnings), report.warnings
 
     def test_install_with_customised_block_reports_conflict(
         self, tmp_path: Path

@@ -14,8 +14,6 @@ from .._operator_commands import server_doctor_command
 
 __all__ = ["ComputeCapability", "HardwarePresence", "InstallRole"]
 
-_DOCTOR = f"`{server_doctor_command()}` prints the exact command for this environment."
-
 
 class InstallRole(StrEnum):
     """Whether this environment carries the inference stack.
@@ -105,25 +103,29 @@ class ComputeCapability(StrEnum):
     @property
     def remediation(self) -> str | None:
         """What the operator should do, or ``None`` when nothing is needed."""
+        from .._operator_commands import server_start_command
         from ._provisioning import host_install_command
 
         install = f"`{host_install_command()}`"
+        # An environment that carries no usable torch is not a reason to stop:
+        # the service runs from its own GPU runtime, which a start creates. So
+        # each of these names one command, and it is the one that gets the
+        # operator served rather than a second diagnostic to run first.
+        start = f"`{server_start_command()}` runs the service from its own GPU runtime."
         return {
             ComputeCapability.NOT_APPLICABLE: (
-                "Start the service from the host installation. To make this "
-                f"machine a host, install it with {install}."
+                f"This installation is a client; {start}"
             ),
             ComputeCapability.READY: None,
             ComputeCapability.BUILD_PRESENT: None,
             ComputeCapability.TORCH_MISSING: (
-                f"Install the GPU build with {install}. {_DOCTOR}"
+                f"To run inference in this environment, install the GPU build "
+                f"with {install}."
             ),
             ComputeCapability.TORCH_IMPORT_FAILED: (
-                f"Reinstall torch in this environment. {_DOCTOR}"
+                f"Reinstall torch in this environment, or {start}"
             ),
-            ComputeCapability.CPU_ONLY_BUILD: (
-                f"Replace torch with its CUDA build. {_DOCTOR}"
-            ),
+            ComputeCapability.CPU_ONLY_BUILD: start,
             ComputeCapability.NO_DEVICE: (
                 "Check the GPU driver with `nvidia-smi`, then start the service again."
             ),

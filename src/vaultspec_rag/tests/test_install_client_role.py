@@ -134,7 +134,13 @@ def test_a_client_provisions_nothing_and_keeps_the_host_backend_choice(
     assert read_persisted_local_only() is False
     outcome = report.provision_outcome
     assert outcome is not None
-    assert {result.step for result in outcome.steps} == set(ProvisionStep)
+    # Two rows, not three: install runs the torch configuration as its own
+    # step and reports it under its own heading, and the second row the front
+    # door used to add for the same step said only that it had not re-run it.
+    assert {result.step for result in outcome.steps} == {
+        ProvisionStep.MODELS,
+        ProvisionStep.QDRANT,
+    }
     assert all(result.action == ProvisionAction.SKIPPED for result in outcome.steps)
     assert all("client installation" in result.detail for result in outcome.steps)
 

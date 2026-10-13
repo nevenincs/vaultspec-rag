@@ -99,7 +99,7 @@ def _metadata_capability(torch_version: str, platform: str) -> ComputeCapability
 
 def classify_torch(torch_module: ModuleType) -> ComputeReport:
     """Classify an already-imported torch against the accelerator contract."""
-    from .._gpu import resolve_accelerator
+    from .._gpu import ACCELERATOR_REQUIRED_MESSAGE, resolve_accelerator
 
     version = str(getattr(torch_module, "__version__", "")) or None
     cuda_build = getattr(torch_module.version, "cuda", None)
@@ -114,8 +114,14 @@ def classify_torch(torch_module: ModuleType) -> ComputeReport:
             capability = ComputeCapability.NO_DEVICE
         else:
             capability = ComputeCapability.CPU_ONLY_BUILD
+        # The capability's own label already states this, and the detail is
+        # rendered after it in parentheses: carrying our own sentence here put
+        # the same cause on screen twice, once inside the other, and three
+        # times over once each surface added its own copy. A diagnosis from
+        # somewhere else is still worth carrying.
+        detail = None if str(exc) == ACCELERATOR_REQUIRED_MESSAGE else str(exc)
         return ComputeReport(
-            capability=capability, torch_version=version, detail=str(exc)
+            capability=capability, torch_version=version, detail=detail
         )
     memory_mib = None
     if context.backend == "cuda":

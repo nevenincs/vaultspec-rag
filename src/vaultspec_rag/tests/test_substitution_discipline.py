@@ -609,7 +609,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "be",
     ),
     "conftest.py": (
-        4,
+        5,
         "install's torch and provisioning steps and the release-mismatch advice "
         "all branch on whether this is a host or a client installation, and the "
         "role is read from the distributions the running interpreter holds. The "
@@ -628,7 +628,13 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "because the machine's own anchors may be held by a live service, a "
         "test must never contend for them, and an ownership claim outlives "
         "the test that took it; only their location is substituted, and "
-        "claiming, lending and refusing run unchanged",
+        "claiming, lending and refusing run unchanged. The machine's own "
+        "accelerator is pinned the same way and for the same reason as the "
+        "two readings above: whether anything on this machine can run the "
+        "service decides whether an environment that cannot run it itself is "
+        "still provisioned for, and no test can give a runner a GPU or take "
+        "one away from a workstation; the reading alone is replaced, and it "
+        "is exercised against the real machine in the hardware tests",
     ),
     "test_server.py": (
         5,

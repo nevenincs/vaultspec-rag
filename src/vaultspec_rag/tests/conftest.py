@@ -29,7 +29,11 @@ from vaultspec_core.config import (
 from ..config._settings import VaultSpecConfigWrapper as VaultSpecConfig
 from ..config._settings import get_config
 from ..config._types import EnvVar
-from ..operator_state._installation import ComputeCapability, InstallRole
+from ..operator_state._installation import (
+    ComputeCapability,
+    HardwarePresence,
+    InstallRole,
+)
 from ..progress import NullProgressReporter
 from ._committed_pins import pin_table_drift
 from ._config_fixtures import reset_config as reset_rag_config
@@ -301,6 +305,28 @@ def pin_daemon_capability(
         )
 
     monkeypatch.setattr(_environment_probe, "probe_interpreter", answer)
+
+
+def pin_hardware_presence(
+    monkeypatch: pytest.MonkeyPatch, presence: HardwarePresence
+) -> None:
+    """Substitute which accelerator this machine has.
+
+    The third machine fact the suite cannot change, beside the installation
+    role and what the daemon interpreter can do. Whether anything on this
+    machine can run the service decides whether an environment that cannot
+    run it itself is still provisioned for - the managed runtime would serve
+    it - and neither lane can be made into the other: a GPU workstation always
+    answers that it has one and an accelerator-free runner never does. Only
+    the reading is replaced; every consumer of it runs unchanged, and the
+    reading itself is exercised against this machine in the hardware tests.
+    """
+    from ..operator_state import _hardware
+    from ..operator_state._models import HardwareReading
+
+    monkeypatch.setattr(
+        _hardware, "read_hardware", lambda: HardwareReading(presence=presence)
+    )
 
 
 @pytest.fixture

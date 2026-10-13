@@ -168,7 +168,13 @@ def test_install_provisions_nothing_with_every_step_left_on(
     assert calls == [], "a client install reached the Qdrant provisioner"
     outcome = report.provision_outcome
     assert outcome is not None
-    assert {result.step for result in outcome.steps} == set(ProvisionStep)
+    # Two rows, not three: install runs the torch configuration as its own
+    # step and reports it under its own heading, and the second row the front
+    # door used to add for the same step said only that it had not re-run it.
+    assert {result.step for result in outcome.steps} == {
+        ProvisionStep.MODELS,
+        ProvisionStep.QDRANT,
+    }
     for result in outcome.steps:
         assert result.action == ProvisionAction.SKIPPED, result
         assert _NOT_NEEDED in result.detail, result
