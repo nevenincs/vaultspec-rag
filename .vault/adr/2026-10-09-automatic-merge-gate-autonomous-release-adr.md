@@ -14,6 +14,7 @@ modified: '2026-10-13'
 body_schema: 'body-v2'
 body_hash: 'sha256:606f8d82e0c441b8ea2502fee0dc1aaa8fcbc62e1664690d6d9a58532bdb82c5'
 ---
+
 # `automatic-merge-gate` adr: `Merge starts an autonomous verified release` | (**status:** `accepted`)
 
 ## Problem Statement

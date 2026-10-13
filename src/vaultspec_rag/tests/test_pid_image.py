@@ -109,12 +109,15 @@ def test_the_psutil_route_reads_a_departed_process_as_unreadable() -> None:
 
 @pytest.mark.parametrize("reader", [_psutil_image_path, _psutil_image_name])
 def test_windows_exited_process_metadata_is_not_a_live_image(
-    reader: Callable[[int], str | None], monkeypatch: pytest.MonkeyPatch
+    reader: Callable[[int], str | None],
 ) -> None:
     """Removing the Windows liveness guard fails the None assertion.
 
     Windows may retain image metadata for an exited process while a handle
-    remains open. Model that OS response independently of its cleanup timing.
+    remains open. That response cannot occur on POSIX, and its availability
+    varies with Windows cleanup timing. The real natural-exit test above
+    complements this deterministic policy check. Restore the OS view before
+    the real hardware-anchor fixtures tear down.
     """
     import psutil
 
@@ -125,11 +128,17 @@ def test_windows_exited_process_metadata_is_not_a_live_image(
         def name(self) -> str:
             return "python.exe"
 
-    monkeypatch.setattr(_process_probe.sys, "platform", "win32")
-    monkeypatch.setattr(_process_probe, "pid_alive", lambda _pid: False)
-    monkeypatch.setattr(psutil, "Process", lambda _pid: RetainedMetadata())
+    def exited(_pid: int) -> bool:
+        return False
 
-    assert reader(1234) is None
+    def retained(_pid: int) -> RetainedMetadata:
+        return RetainedMetadata()
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(_process_probe.sys, "platform", "win32")
+        monkeypatch.setattr(_process_probe, "pid_alive", exited)
+        monkeypatch.setattr(psutil, "Process", retained)
+        assert reader(1234) is None
 
 
 def test_a_live_process_image_is_readable_on_this_platform() -> None:
