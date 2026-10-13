@@ -416,8 +416,7 @@ jobs:
 
       - name: Require the release dev server proof on this exact commit
         if: >-
-          (github.event_name == 'workflow_dispatch' &&
-           github.ref_name == 'release-please--branches--main--components--vaultspec-rag') ||
+          github.event_name == 'workflow_dispatch' ||
           github.event_name == 'push' || github.event_name == 'pull_request'
         env:
           PROOF_SHA: ${{ github.event.pull_request.head.sha || inputs.ref || github.sha }}
@@ -467,7 +466,7 @@ jobs:
               --jq '.jobs[] | select(.name == "Check: Full lint (Linux)" or .name == "Test: Correctness suite (Linux, 3.13)" or .name == "Test: Correctness suite (Linux, 3.14)" or .name == "Test: Full suite (Windows)" or .name == "Check: Dependency advisories (Linux)" or .name == "Check: Code scanning (Linux, actions)" or .name == "Check: Code scanning (Linux, javascript-typescript)" or .name == "Check: Code scanning (Linux, python)") | [.name, .run_attempt, .id, .conclusion] | @tsv') || return 1
             # Combine every page, with the newest attempt first for each name.
             printf '%s\n' "$jobs" | sort -t $'\t' -k1,1 -k2,2nr -k3,3nr | \
-              awk -F '\t' '!seen[$1]++ { count++; if ($4 != "success") failed=1 } END { exit(failed || count != 8) }'
+              awk -F '\t' '!seen[$1]++ { count++; if ($4 != "skipped") measured=1; if ($4 != "success") failed=1 } END { if (count && !measured) exit 2; exit(failed || count != 8) }'
           }
           full="${LINT} ${TESTS} ${WINDOWS} ${AUDIT} ${SCANNING}"
           if [ "${full}" = "success success success success success" ]; then
@@ -486,28 +485,27 @@ jobs:
           # earned by this exact commit. This run is still in progress, so
           # filtering to completed runs excludes it without comparing ids.
           workflow=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq '.workflow_id')
-          history=$(gh api --paginate \
-            "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?head_sha=$HEAD_SHA&per_page=100" \
-            --jq '.workflow_runs[] | select(.status == "completed") | [.id, .conclusion] | @tsv')
-          previous=none
-          while read -r run previous; do
+          previous_runs=$(gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?head_sha=$HEAD_SHA&status=completed&per_page=100" \
+            --jq '.workflow_runs[] | [.id, .conclusion] | @tsv')
+          # Preservation-only successes carry the earlier proof forward. Stop
+          # at any intervening failure, cancellation or invalid measured run.
+          while IFS=$'\t' read -r run previous; do
+            [ -n "$run" ] || continue
             if [ "$previous" != "success" ]; then
-              echo "::error::an intervening run on $HEAD_SHA ended in $previous"
+              echo "::error::the last proof chain on $HEAD_SHA ended in $previous; run the full gate again"
               exit 1
             fi
             if require_full_run "$run"; then
-              break
+              echo "the last full run on $HEAD_SHA passed"
+              exit 0
+            else
+              proof=$?
             fi
-            previous=none
-          done < <(printf '%s\n' "$history" | sort -k1,1nr)
-          if [ "$previous" = "success" ]; then
-            require_full_run "$run" || { echo "::error::the last run on $HEAD_SHA lacks full measured proof"; exit 1; }
-            echo "the last full run on $HEAD_SHA passed"
-            exit 0
-          fi
-          if [ "$previous" = "none" ]; then
-            echo "::error::nothing has measured $HEAD_SHA yet; push to it, mark the pull request ready for review, or add $FULL_RUN_LABEL"
-          else
-            echo "::error::the last run on $HEAD_SHA ended in $previous; push a fix, or add $FULL_RUN_LABEL to run the full gate again"
-          fi
+            if [ "$proof" -ne 2 ]; then
+              echo "::error::run $run lacks complete measured proof on $HEAD_SHA"
+              exit 1
+            fi
+          done < <(printf '%s\n' "$previous_runs" | sort -t $'\t' -k1,1nr)
+          echo "::error::nothing has fully measured $HEAD_SHA; push to it, mark it ready, or add $FULL_RUN_LABEL"
           exit 1
