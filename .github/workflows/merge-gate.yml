@@ -6,11 +6,11 @@ name: RAG Merge Gate
 # main requires. The cost follows the pull request's state:
 #
 # - A draft runs nothing. It is unfinished by declaration and cannot merge.
-# - Opening, reopening or marking a pull request ready runs the full gate:
+# - Opening, reopening, updating or marking a ready pull request runs the full gate:
 #   every gating dimension, both Linux interpreters, the full Windows suite
 #   and the dependency audit.
-# - A push to a ready pull request runs the light lint only, and the gate
-#   passes on it. The full gate runs again on the commit that lands on main.
+# - Every ready pull-request head must pass the full gate before merge.
+#   Light lint is available only through an explicit recovery dispatch.
 # - `ci:full` runs the full gate on demand, on a draft or on a ready head.
 # - A push to main runs the full gate on the commit that landed. Release
 #   Please refreshes the release proposal only after that run succeeds, so a
@@ -126,7 +126,7 @@ jobs:
     # A fork's pull request never runs here: the workflow it would run is the
     # fork's own. The gate refuses it instead. A call from another workflow
     # carries that workflow's event, a dispatch, and runs the full gate.
-    if: >-
+    if: &full_gate >-
       github.event_name == 'push' ||
       (github.event_name == 'workflow_dispatch' &&
        (inputs.scope != 'light' || github.ref_name == 'release-please--branches--main--components--vaultspec-rag')) ||
@@ -138,6 +138,7 @@ jobs:
          (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'COLLABORATOR') &&
          (github.event.action == 'opened' ||
           github.event.action == 'reopened' ||
+          github.event.action == 'synchronize' ||
           github.event.action == 'ready_for_review'))))
     timeout-minutes: 160
     runs-on: [self-hosted, Linux, X64, build]
@@ -189,20 +190,11 @@ jobs:
 
   lint-light:
     name: "Check: Light lint (Linux)"
-    # The push path of a ready pull request, and Release Please's regenerated
-    # branch. It never runs beside the full lint: the two conditions exclude
-    # each other, and the full lint's aggregate already contains every
-    # dimension this one runs.
-    # A fork's pull request never runs here: the workflow it would run is the
-    # fork's own. The gate refuses it instead.
+    # Explicit lightweight recovery only; this job cannot prove a PR head.
+    # Release proposals always take the full path.
     if: >-
-      (github.event_name == 'workflow_dispatch' && inputs.scope == 'light' &&
-       github.ref_name != 'release-please--branches--main--components--vaultspec-rag') ||
-      (github.event_name == 'pull_request' &&
-       github.event.pull_request.head.repo.full_name == github.repository &&
-       github.event.action == 'synchronize' &&
-       github.event.pull_request.draft == false &&
-       (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'COLLABORATOR'))
+      github.event_name == 'workflow_dispatch' && inputs.scope == 'light' &&
+      github.ref_name != 'release-please--branches--main--components--vaultspec-rag'
     timeout-minutes: 140
     runs-on: [self-hosted, Linux, X64, build]
     env:
@@ -249,19 +241,7 @@ jobs:
     name: "Test: Correctness suite (Linux, ${{ matrix.python-version }})"
     # A fork's pull request never runs here: the workflow it would run is the
     # fork's own. The gate refuses it instead.
-    if: >-
-      github.event_name == 'push' ||
-      (github.event_name == 'workflow_dispatch' &&
-       (inputs.scope != 'light' || github.ref_name == 'release-please--branches--main--components--vaultspec-rag')) ||
-      (github.event_name == 'pull_request' &&
-       github.event.pull_request.head.repo.full_name == github.repository &&
-       ((github.event.action == 'labeled' && github.event.label.name == 'ci:full' &&
-         github.event.sender.type == 'User') ||
-        (github.event.pull_request.draft == false &&
-         (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'COLLABORATOR') &&
-         (github.event.action == 'opened' ||
-          github.event.action == 'reopened' ||
-          github.event.action == 'ready_for_review'))))
+    if: *full_gate
     timeout-minutes: 165
     runs-on: [self-hosted, Linux, X64]
     strategy:
@@ -347,19 +327,7 @@ jobs:
     name: "Test: Full suite (Windows)"
     # A fork's pull request never runs here: the workflow it would run is the
     # fork's own. The gate refuses it instead.
-    if: >-
-      github.event_name == 'push' ||
-      (github.event_name == 'workflow_dispatch' &&
-       (inputs.scope != 'light' || github.ref_name == 'release-please--branches--main--components--vaultspec-rag')) ||
-      (github.event_name == 'pull_request' &&
-       github.event.pull_request.head.repo.full_name == github.repository &&
-       ((github.event.action == 'labeled' && github.event.label.name == 'ci:full' &&
-         github.event.sender.type == 'User') ||
-        (github.event.pull_request.draft == false &&
-         (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'COLLABORATOR') &&
-         (github.event.action == 'opened' ||
-          github.event.action == 'reopened' ||
-          github.event.action == 'ready_for_review'))))
+    if: *full_gate
     timeout-minutes: 136
     runs-on: windows-2025
     env:
@@ -435,6 +403,7 @@ jobs:
          (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'COLLABORATOR') &&
          (github.event.action == 'opened' ||
           github.event.action == 'reopened' ||
+          github.event.action == 'synchronize' ||
           github.event.action == 'ready_for_review'))))
     timeout-minutes: 135
     runs-on: [self-hosted, Linux, X64]
@@ -572,13 +541,15 @@ jobs:
               exit 1 ;;
             esac
           done
+          require_full_run() {
+            local measured
+            measured=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$1/jobs?per_page=100" \
+              --jq '[.jobs[] | select(.name == "Check: Full lint (Linux)" or .name == "Test: Correctness suite (Linux, 3.13)" or .name == "Test: Correctness suite (Linux, 3.14)" or .name == "Test: Full suite (Windows)" or .name == "Check: Dependency advisories (Linux)")] | length == 5 and all(.[]; .conclusion == "success")')
+            [ "$measured" = true ]
+          }
           full="${LINT} ${TESTS} ${WINDOWS} ${AUDIT}"
           if [ "${full}" = "success success success success" ]; then
             echo "every full check passed in this run"
-            exit 0
-          fi
-          if [ "${LIGHT}" = "success" ] && [ "${full}" = "skipped skipped skipped skipped" ]; then
-            echo "the light lint passed; the full gate runs on this change when it lands on main"
             exit 0
           fi
           if [ "${EVENT}" = "schedule" ] && [ "${AUDIT}" = "success" ]; then
@@ -597,9 +568,7 @@ jobs:
               read -r run status conclusion <<< "$previous"
               if [ "$status" = completed ]; then
                 [ "$conclusion" = success ] || { echo "::error::release proposal full dispatch ended $conclusion"; exit 1; }
-                measured=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?per_page=100" \
-                  --jq '[.jobs[] | select(.name == "Check: Full lint (Linux)" or .name == "Test: Correctness suite (Linux, 3.13)" or .name == "Test: Correctness suite (Linux, 3.14)" or .name == "Test: Full suite (Windows)" or .name == "Check: Dependency advisories (Linux)")] | length == 5 and all(.[]; .conclusion == "success")')
-                [ "$measured" = true ] || { echo "::error::release proposal lacks full measured proof on $HEAD_SHA"; exit 1; }
+                require_full_run "$run" || { echo "::error::release proposal lacks full measured proof on $HEAD_SHA"; exit 1; }
                 echo "full dispatched checks proved release proposal $HEAD_SHA"
                 exit 0
               fi
@@ -615,9 +584,11 @@ jobs:
           previous=$(gh api \
             "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?head_sha=$HEAD_SHA&per_page=100" \
             --jq '[.workflow_runs[] | select(.status == "completed")]
-                  | sort_by(.id) | last | .conclusion // "none"')
+                  | sort_by(.id) | last | "\(.id // 0) \(.conclusion // "none")"')
+          read -r run previous <<< "$previous"
           if [ "$previous" = "success" ]; then
-            echo "the last run on $HEAD_SHA passed"
+            require_full_run "$run" || { echo "::error::the last run on $HEAD_SHA lacks full measured proof"; exit 1; }
+            echo "the last full run on $HEAD_SHA passed"
             exit 0
           fi
           # An untrusted author's commit ran nothing, so no earlier verdict can
