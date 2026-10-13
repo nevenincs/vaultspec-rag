@@ -5,7 +5,7 @@ tags:
 date: '2026-10-13'
 modified: '2026-10-13'
 body_schema: 'body-v2'
-body_hash: 'sha256:eda7238344b8335de00532a5bcf1ab6ca490c0c0e8c463fe983a988f1528e711'
+body_hash: 'sha256:c00f13e5716ef8e6e74c2ee48119f6e19fe35b8a4857fab2246ba4562c31a2cd'
 related: []
 ---
 
@@ -49,6 +49,18 @@ A uv-tool host install printed "PyTorch configuration: not found", "PyTorch: ski
 
 `install` reported "MCP server 'vaultspec-rag' is not approved for claude (project)" and skipped registration, and a peer session's full run shows about 81 install integration failures where `.mcp.json` and the `.vault` links are never created.
 
+### first-index | high | The first index of a new repository fails until `--rebuild` is passed
+
+In a clean Linux container on `fix/install-ux`, the README route reached a ready service, and `vaultspec-rag index --type all` (the next action `status` names) queued three incremental jobs that all failed: vault and documents with "publication proof does not exist; an explicit rebuild is required" (`src/vaultspec_rag/_publication_state.py:101-106`), code with "storage no longer backs the published code index metadata". `index --rebuild --type code` then built the index and search returned `src/retry.py`. Incremental refusal on missing proof is decided (`2026-09-08-incremental-publication-cost-adr`, `2026-10-12-destructive-rebuild-lifecycle-adr`: incremental cannot escalate to a rebuild), and no record decides what the first index of a never-indexed root is. The watcher's automatic reindex reaches the same refusal for a new root.
+
+### doctor-holder-advice | low | Doctor told a fresh service to restart for a new build
+
+`server doctor` printed "restart it with `vaultspec-rag server stop --port 8766` then `vaultspec-rag server start --port 8766` to pick up the new build" for the service it had just started (`src/vaultspec_rag/operator_state/_holders.py:67-87`). The remedy belongs to an in-place repair, and none was pending. Fixed on this branch.
+
+### client-backend-line | low | A client install pointed backend choice at a host it no longer needs
+
+"not saved: a client installation does not choose the backend of the service; the host installation that runs it does" (`src/vaultspec_rag/commands/_backend_choice.py:130-137`) after the README route, which has no separate host. Fixed on this branch.
+
 ## Recommendations
 
 - wheel-start: implement `2026-10-13-monitor-provisioning-adr`.
@@ -57,3 +69,4 @@ A uv-tool host install printed "PyTorch configuration: not found", "PyTorch: ski
 - doctor-false-ready: restore `2026-06-24-service-doctor-liveness-adr`; include every start dependency, and exit non-zero when a start would fail.
 - status-next-action, install-noise and help-surface: routine corrections within settled decisions.
 - mcp-trust: diagnose against the current vaultspec-core trust contract.
+- first-index: decide whether the first index of a root that has never published is an implicit full build, or whether the next action names `index --rebuild`; it is an amendment to `2026-10-12-destructive-rebuild-lifecycle-adr`.
