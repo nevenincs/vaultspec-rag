@@ -5,7 +5,7 @@ tags:
 date: '2026-10-13'
 modified: '2026-10-13'
 body_schema: 'body-v2'
-body_hash: 'sha256:3ea855e552d9f7d89d48a54bd0e0959f32318dd03bf8cbe0274f34125d807b5b'
+body_hash: 'sha256:6e6e4f4e72ad6866447bd63ba37e69bb43e95baf8106ffc097617338201263f0'
 related:
   - "[[2026-10-13-monitor-provisioning-plan]]"
 ---
@@ -80,8 +80,35 @@ related:
 - `S01` `verify:` `uv run --no-sync ty check src tools dev conftest.py` -> `pass`
 - `S01` `verify:` `uv run --no-sync pytest test_qdrant_* test_provision test_managed_install test_start_provisioning test_cli_progress_surfaces test_config_operator_binary tools/binaries/tests tools/monitor/tests -q` -> `pass`
 - `S01` `by:` `implementation-engineer-high`
+- `S02` `A` `src/vaultspec_rag/native_binary/_targets.py`
+- `S02` `A` `src/vaultspec_rag/monitor_runtime/__init__.py`
+- `S02` `A` `src/vaultspec_rag/monitor_runtime/_assets.py`
+- `S02` `A` `src/vaultspec_rag/monitor_runtime/_pins.py`
+- `S02` `A` `tools/monitor/pins.py`
+- `S02` `A` `tools/monitor/tests/test_pins.py`
+- `S02` `A` `src/vaultspec_rag/tests/test_monitor_pins.py`
+- `S02` `D` `tools/binaries/native.py`
+- `S02` `M` `tools/binaries/build_pyapp.py`
+- `S02` `M` `tools/binaries/bun_toolchain.py`
+- `S02` `M` `tools/monitor/acquire.py`
+- `S02` `M` `tools/monitor/build.py`
+- `S02` `M` `tools/monitor/offline.py`
+- `S02` `M` `tools/monitor/release.py`
+- `S02` `M` `tools/monitor/smoke.py`
+- `S02` `M` `tools/packaging/bundles.py`
+- `S02` `M` `tools/packaging/products.py`
+- `S02` `M` `pyproject.toml`
+- `S02` `M` `.gitignore`
+- `S02` `verify:` `uv run --no-sync ruff check src tools dev conftest.py` -> `pass`
+- `S02` `verify:` `uv run --no-sync ruff format --check src tools dev conftest.py` -> `pass`
+- `S02` `verify:` `uv run --no-sync ty check src tools dev conftest.py` -> `pass`
+- `S02` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_monitor_pins.py tools/monitor/tests tools/binaries/tests -q` -> `pass`
+- `S02` `verify:` `uv build --wheel --sdist, then both artifacts listed carrying vaultspec_rag/monitor_runtime/_generated_pins.py` -> `pass`
+- `S02` `by:` `implementation-engineer-high`
 
 ## Notes
 
 - `S01` The lift moved two modules, so five orientation documents under .vaultspec/skills/start-vaultspec-rag/references/ now link to `src/vaultspec_rag/qdrant_runtime/_download.py` and `_executable_hold.py,` which no longer exist, and the documentation link check fails on 14 such links. Those files are user-owned policy sources and were left untouched.
 - `S01` No managed-install state machine was lifted beyond the digest, staging and single-member extraction primitives: the free-space admission, the atomic replace remedy, the provisioning lock and the manifest carry Qdrant-specific wording and stay with their owner. The transport and the executable hold moved because they name nothing Qdrant-specific and a second owner would have had to import across runtime packages.
+- `S02` Guard proofs run as break, run alone, fail on the named assertion, restore, pass: an absent pin module returning an empty pin; dropping the provenance half of the admissibility check; comparing only the major version; accepting any string as a digest; importing the pin module by bare name instead of its package-dotted name; treating an absent direct-URL record as a development install; writing the generated file before rendering it; and removing the wheel target's artifacts entry. The major-version mutation first passed, so the version case was parametrized with the preceding patch release and the mutation re-run; the artifacts mutation first failed on a KeyError, so the reader was given a default and the mutation re-run.
+- `S02` The pin loader judges a development installation from the PEP 610 direct-URL record: a record naming a directory is a local source install, no record or an archive record is a built artifact, and an unparseable record counts as a built artifact because that is the answer that refuses a development pin.

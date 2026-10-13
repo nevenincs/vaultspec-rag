@@ -182,6 +182,14 @@ packages = ["src/vaultspec_rag"]
 # Excluding here changes no gate - `just test-python` and `just test-gpu` both
 # run pytest against the checkout, never the installed copy.
 exclude = ["src/vaultspec_rag/tests"]
+# The monitor digests are generated into the package rather than committed: a
+# digest in version control would outlive the artifact it describes. They are
+# therefore ignored by version control, and hatchling honours that ignore when
+# it collects files, so the one artifact a wheel most needs to carry would be
+# the one it leaves out. Naming it here puts it back, and only when it exists:
+# a source build that never generated one still produces a wheel, and that
+# wheel provisions no monitor rather than trusting an absent pin.
+artifacts = ["src/vaultspec_rag/monitor_runtime/_generated_pins.py"]
 
 # The companion-owned builtins (the rule and MCP definition) ship as
 # committed package data under ``src/vaultspec_rag/builtins/``, mirroring
@@ -189,6 +197,11 @@ exclude = ["src/vaultspec_rag/tests"]
 # both the sdist and the wheel through ``packages`` above, so no
 # force-include indirection is needed. Only the standalone assets, which
 # live outside the package, still need an explicit sdist include.
+[tool.hatch.build.targets.sdist]
+# The sdist carries the generated monitor digests for the same reason the
+# wheel does: a wheel built from it is the artifact that verifies the monitor.
+artifacts = ["src/vaultspec_rag/monitor_runtime/_generated_pins.py"]
+
 [tool.hatch.build.targets.sdist.force-include]
 "assets/logo.png" = "assets/logo.png"
 

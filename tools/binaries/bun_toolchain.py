@@ -11,14 +11,13 @@ from tools.binaries.bun_pins import (
     BUN_RELEASE,
     BUN_VERSION,
 )
-from tools.binaries.native import host_target_triple
 from tools.binaries.release_hosts import GITHUB_RELEASE_REDIRECT_HOSTS
-from tools.packaging.products import executable_filename
 from vaultspec_rag.native_binary._download import download_https
 from vaultspec_rag.native_binary._install import (
     extract_verified_archive,
     verify_native_binary,
 )
+from vaultspec_rag.native_binary._targets import executable_filename, host_target
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -26,7 +25,7 @@ if TYPE_CHECKING:
 
 def provision_bun(cache: Path, target: str) -> Path:
     """Use native compilation so Bun cannot acquire an unreviewed cross target."""
-    if target not in BUN_ARCHIVES or target != host_target_triple():
+    if target not in BUN_ARCHIVES or target != host_target():
         raise ValueError(f"Bun compilation must use a supported native host: {target}")
     directory = cache.resolve() / BUN_VERSION / target
     directory.mkdir(parents=True, exist_ok=True)

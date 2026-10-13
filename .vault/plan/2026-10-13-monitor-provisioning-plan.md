@@ -13,7 +13,7 @@ related:
   - '[[2026-10-09-automatic-merge-gate-autonomous-release-adr]]'
 modified: '2026-10-13'
 body_schema: body-v2
-body_hash: 'sha256:8ae10116a8fd6f075fad2d240cacd3a10ca11e76de1b0b1cb92b67252c2b2759'
+body_hash: 'sha256:6e88ee2d0561f697f0848c9f96d3fd9e636b82c6cf277b4724d25cf0c7d1892d'
 ---
 
 # `monitor-provisioning` plan
@@ -31,7 +31,7 @@ Ownership boundary: peer session main-bf, on branch fix/install-ux, owns the `se
 ## Steps
 
 - [x] `S01` - Lift the native-binary install primitives both binaries need into one shared owner and repoint Qdrant at it; `src/vaultspec_rag/qdrant_runtime/ managed-install, spawn-trust and provision seams, the new shared owner module, and their tests`.
-- [ ] `S02` - Define the generated monitor pin module, its loader and its generator; `src/vaultspec_rag pin loader, tools/monitor pin generator, pyproject.toml hatch artifacts inclusion, .gitignore, and tests`.
+- [x] `S02` - Define the generated monitor pin module, its loader and its generator; `src/vaultspec_rag pin loader, tools/monitor pin generator, pyproject.toml hatch artifacts inclusion, .gitignore, and tests`.
 - [ ] `S03` - Provision, resolve and verify the monitor at runtime with the PATH tier removed; `new monitor runtime module, src/vaultspec_rag/monitor_process.py, src/vaultspec_rag/_program_lookup.py callers, src/vaultspec_rag/config/_types.py, _registry.py and _schema.py, and tests`.
 - [ ] `S04` - Run the monitor step in server start and install provisioning and report it on the readiness dependency axis; `src/vaultspec_rag/commands/_provision.py, src/vaultspec_rag/cli/_render.py, src/vaultspec_rag/_readiness.py monitor entry only, and tests`.
 - [ ] `S05` - Compile the monitor before the wheel, publish monitor-only archives and check bundle pins against the wheel; `.github/workflows/publish.yml, binaries.yml and acquisition.yml, tools/monitor/build.py and release.py, tools/packaging/bundles.py and validate.py, justfile release recipes, and tests`.

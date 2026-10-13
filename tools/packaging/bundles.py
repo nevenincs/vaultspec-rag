@@ -24,12 +24,8 @@ from tools.binaries.build_pyapp import (
     PYTHON_VERSION,
 )
 from tools.binaries.bun_pins import BUN_VERSION
-from tools.packaging.products import (
-    MONITOR_EXECUTABLE,
-    VAULTSPEC_RAG,
-    Product,
-    is_windows_target,
-)
+from tools.packaging.products import MONITOR_EXECUTABLE, VAULTSPEC_RAG, Product
+from vaultspec_rag.native_binary._targets import is_windows_target
 
 MANIFEST_NAME = "manifest.json"
 LICENSE_NAME = "LICENSE"

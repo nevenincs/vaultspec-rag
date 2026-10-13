@@ -9,13 +9,13 @@ from pathlib import Path
 from typing import cast
 
 from tools.binaries.build_pyapp import sole_wheel, validate_project_wheel
-from tools.binaries.native import host_target_triple
 from tools.monitor.offline import probe_offline
 from tools.monitor.smoke import installed_browser, probe
 from tools.packaging.bundles import SMOKE_NAME, BundleError, BundleSpec, verify_bundle
 from tools.packaging.checksums import read_checksums, require
 from tools.packaging.products import MONITOR_EXECUTABLE, VAULTSPEC_RAG
 from vaultspec_rag.native_binary._install import file_sha256
+from vaultspec_rag.native_binary._targets import host_target
 
 ROOT = Path(__file__).resolve().parents[2]
 OWNER_MODULES = (
@@ -45,7 +45,7 @@ def verify_release_wheel(wheel: Path, version: str, source: Path) -> None:
 def native_smoke(
     tag: str, revision: str, target: str, raw: Path, *, os_offline: bool = False
 ) -> None:
-    if target != host_target_triple():
+    if target != host_target():
         raise BundleError("Monitor evidence requires the native declared target")
     name = VAULTSPEC_RAG.asset_name(MONITOR_EXECUTABLE, target)
     binary = raw / name

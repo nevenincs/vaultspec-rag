@@ -64,10 +64,10 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from tools.binaries.native import host_target_triple
 from tools.binaries.torch_channel import pip_extra_args
 from tools.binaries.windows_icon import product_version_info, stamp_icon_and_version
 from tools.packaging import products
+from vaultspec_rag.native_binary._targets import host_target, is_windows_target
 
 # Pinned PyApp crate version. Bumping this changes the bootstrapper and the
 # embedded python-build-standalone distributions it selects, so it is an
@@ -459,7 +459,7 @@ def main() -> int:
     args = parser.parse_args()
 
     version = args.version if args.version else version_from_tag(args.tag)
-    target = args.target if args.target else host_target_triple()
+    target = args.target if args.target else host_target()
     if args.wheel and args.wheel_dir:
         raise WheelError("pass --wheel or --wheel-dir, not both")
     project_wheel = args.wheel
@@ -478,7 +478,7 @@ def main() -> int:
             raw = build_one(binary, version, target, workdir, project_wheel)
             asset = outdir / asset_name(binary, target)
             shutil.copy2(raw, asset)
-            if products.is_windows_target(target):
+            if is_windows_target(target):
                 stamp_icon_and_version(
                     asset,
                     APPLICATION_ICON,

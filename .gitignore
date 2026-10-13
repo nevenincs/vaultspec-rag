@@ -207,3 +207,9 @@ test-results/
 # Private VaultSpec environment (never commit)
 /.vaultspec/.env
 /.vaultspec/.env.*
+
+# Monitor digests the release pipeline and the development setup generate into
+# the package. A digest in version control would outlive the artifact it
+# describes; the build backend includes this file in the wheel and the sdist
+# whenever one is present.
+/src/vaultspec_rag/monitor_runtime/_generated_pins.py

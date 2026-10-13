@@ -20,7 +20,6 @@ from tools.binaries.build_pyapp import (
 )
 from tools.binaries.bun_pins import BUN_EXECUTABLES, BUN_VERSION
 from tools.binaries.bun_toolchain import provision_bun
-from tools.binaries.native import host_target_triple
 from tools.binaries.windows_icon import product_version_info, stamp_icon_and_version
 from tools.monitor.frontend import (
     MANIFEST,
@@ -34,6 +33,7 @@ from tools.packaging.products import (
     is_windows_target,
 )
 from vaultspec_rag.native_binary._install import file_sha256, verify_native_binary
+from vaultspec_rag.native_binary._targets import host_target
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -162,7 +162,7 @@ def compile_monitor(
     identity: Frontend,
     frontend_sha256: str,
 ) -> Path:
-    target = host_target_triple()
+    target = host_target()
     if target not in VAULTSPEC_RAG.supported_targets:
         raise ValueError(f"Unsupported native monitor host: {target}")
     identity = validate_frontend(frontend, identity, manifest_sha256=frontend_sha256)
