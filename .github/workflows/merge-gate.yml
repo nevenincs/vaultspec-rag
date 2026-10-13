@@ -317,7 +317,7 @@ jobs:
       - name: Compile the native monitor for lifecycle tests
         run: just build-monitor-test
 
-      # Four workers, as on Windows. The store-heavy tests carry deadlines of
+      # Four workers. The store-heavy tests carry deadlines of
       # their own, and on the slower Linux runner, with one worker per core,
       # several of them ran at or past those deadlines and a different one
       # failed from run to run. Measured there, this bound takes a third to a
@@ -337,6 +337,9 @@ jobs:
   # anyway. The full accelerator-free suite runs here: it already includes the
   # provisioning proofs, and running only their subset would let every other
   # Windows-specific path, lock and process behaviour land untested.
+  # Each correctness job gets a fresh VM and its own TCP port pool. Sharing
+  # the developer workstation lets unrelated applications exhaust the pool
+  # while browser tests are using loopback, even with CPU headroom reserved.
   #
   # uv fetches the interpreter named by UV_PYTHON, which is what the suite
   # runs under.
@@ -358,7 +361,7 @@ jobs:
           github.event.action == 'reopened' ||
           github.event.action == 'ready_for_review'))))
     timeout-minutes: 136
-    runs-on: [self-hosted, Windows, X64]
+    runs-on: windows-2025
     env:
       UV_PYTHON: "3.13"
     steps:
@@ -405,19 +408,11 @@ jobs:
       - name: Compile the native monitor for lifecycle tests
         run: just build-monitor-test
 
-      # Native monitors, browsers and owner-witness children need scheduling
-      # headroom alongside pytest. The runner admits this job with a hard cap
-      # on the CPU of its whole process tree, so the workers are held below
-      # that cap and the children they start get the rest. With one worker
-      # per admitted CPU a child waited tens of seconds to start or to exit,
-      # and a different child-bounded test failed from run to run.
-      #
-      # Set HERE, on the step. The runner's admission hook exports its own
-      # value for this variable, one worker per CPU it admitted, after the
-      # job's `env:` is read, and that export wins over a job-level value.
+      # Two workers on the four-CPU VM leave scheduling capacity for native
+      # monitors, browsers and owner-witness children alongside pytest.
       - name: Run full test suite
         env:
-          PYTEST_XDIST_AUTO_NUM_WORKERS: "4"
+          PYTEST_XDIST_AUTO_NUM_WORKERS: "2"
         run: just test-python
 
   dependency-audit:

@@ -152,12 +152,12 @@ class _RootOptions:
 def version_callback(value: bool) -> None:
     """Print the installed vaultspec-rag version and exit."""
     if value:
-        import importlib.metadata
+        from importlib import metadata
 
         try:
-            version = importlib.metadata.version("vaultspec-rag")
+            version = metadata.version("vaultspec-rag")
             _cli.console.print(f"vaultspec-rag v{version}")
-        except importlib.metadata.PackageNotFoundError:
+        except metadata.PackageNotFoundError:
             _cli.console.print("vaultspec-rag (unknown version)")
         raise typer.Exit()
 
