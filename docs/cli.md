@@ -250,7 +250,7 @@ None.
 
 ## server doctor
 
-Report readiness across two axes: installed dependencies (torch, models, qdrant binary) and the live service (a running daemon's health). A dead daemon is reported as not ready. Each pinned model's cached files are hashed against the digests compiled into this tool, which reads several gigabytes and takes a few seconds; a model with no such digests is reported as unpinned.
+Report readiness across two axes: installed dependencies (torch, models, qdrant binary) and the live service (a running daemon's health). A dead or absent daemon is reported as not ready, with exactly one command to resolve it. Each pinned model's cached files are hashed against the digests compiled into this tool, which reads several gigabytes and takes a few seconds; a model with no such digests is reported as unpinned.
 
 ```bash
 vaultspec-rag server doctor
@@ -505,6 +505,8 @@ None.
 | `--update-delay-ms` | int | no | - | Delay before indexing a burst of file changes, in milliseconds. |
 | `--repeat-update-delay-s` | float | no | - | Minimum wait before automatically updating a project again, in seconds. |
 | `--local-only` | boolean | no | off | Keep the index in an on-disk store instead of the Qdrant server, for CI, offline or small projects. |
+| `--qdrant`, `--no-qdrant` | boolean | no | - | Use the managed Qdrant server for this start even when --local-only was saved, without changing the saved choice. |
+| `--qdrant-auto-provision`, `--no-qdrant-auto-provision` | boolean | no | - | Download the Qdrant server when it is missing (default). With --no-qdrant-auto-provision, start stops and prints the install command instead. Overrides VAULTSPEC_RAG_QDRANT_AUTO_PROVISION for this run. |
 | `--json` | boolean | no | off | Emit one structured JSON outcome. An already-running owned service is the success `already_running` (exit 0), so a supervising broker can attach rather than treating it as a fault. |
 
 ## server stop

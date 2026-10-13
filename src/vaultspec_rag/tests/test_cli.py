@@ -434,8 +434,7 @@ class TestHelpCleanup:
         result = runner.invoke(app, ["server", "start", "--help"])
         assert result.exit_code == 0, result.output
         assert "--local-only" in result.output
-        for internal in ("--qdrant-auto-provision", "--no-qdrant", "--no-preprocess"):
-            assert internal not in result.output, internal
+        assert "--no-preprocess" not in result.output
         for forbidden in (
             "Torch-config gating",
             "MCP source files",

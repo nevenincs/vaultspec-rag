@@ -262,28 +262,22 @@ class _ServiceStartCommand(TyperCommand):
                 ),
                 TyperOption(
                     param_decls=["--qdrant/--no-qdrant"],
-                    hidden=True,
                     default=None,
                     is_flag=True,
                     help=(
-                        "Select the managed Qdrant server for this start, or "
-                        "decline it. --qdrant overrides a saved or exported "
-                        "local-only choice for this run without rewriting it; "
-                        "--local-only still wins when both are given. Unset "
-                        "leaves the current setting in force."
+                        "Use the managed Qdrant server for this start even when "
+                        "--local-only was saved, without changing the saved choice."
                     ),
                 ),
                 TyperOption(
                     param_decls=["--qdrant-auto-provision/--no-qdrant-auto-provision"],
-                    hidden=True,
                     default=None,
                     is_flag=True,
                     help=(
-                        "Download and verify the managed Qdrant server when it "
-                        "is missing (default: enabled). With "
-                        "--no-qdrant-auto-provision, start prints the install "
-                        "command instead. Unset leaves the "
-                        f"{EnvVar.QDRANT_AUTO_PROVISION.value} setting in force."
+                        "Download the Qdrant server when it is missing (default). "
+                        "With --no-qdrant-auto-provision, start stops and prints "
+                        "the install command instead. Overrides "
+                        f"{EnvVar.QDRANT_AUTO_PROVISION.value} for this run."
                     ),
                 ),
                 TyperOption(
