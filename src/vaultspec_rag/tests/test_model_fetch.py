@@ -1046,6 +1046,7 @@ def test_what_another_process_fetched_meanwhile_is_not_fetched_again(
         waiting = subprocess.Popen(
             [sys.executable, "-c", FETCH_IN_A_FRESH_INTERPRETER],
             env=child_environment(hub, cache),
+            cwd=tmp_path,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,

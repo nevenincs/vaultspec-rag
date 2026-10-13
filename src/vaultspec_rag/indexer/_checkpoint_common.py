@@ -34,6 +34,7 @@ from functools import partial
 from typing import TYPE_CHECKING, ClassVar, Protocol, Self
 
 from .. import store_schema
+from .._context_scope import bind_context
 from .._job_errors import JobError, JobErrorKind
 from .._operator_commands import IndexCommandOptions, index_command
 from .._store_writes import workspace_volume_path
@@ -87,7 +88,9 @@ if TYPE_CHECKING:
     ]
 
 
-_CHECKPOINT_PROGRESS_OBSERVER: ContextVar[CheckpointProgressObserver | None] = (
+# The first observation registers the actual checkpoint; later observations
+# carry confirmed durable progress for that same attempt.
+checkpoint_progress_observer: ContextVar[CheckpointProgressObserver | None] = (
     ContextVar("checkpoint_progress_observer", default=None)
 )
 
@@ -95,9 +98,10 @@ __all__ = [
     "PublicationExecution",
     "RunCheckpointBase",
     "RunOpenRequest",
+    "checkpoint_progress_observer",
     "classify_interrupted_generation",
     "configuration_fingerprint",
-    "observe_checkpoint_progress",
+    "publish_checkpoint",
 ]
 
 
@@ -117,22 +121,6 @@ def publication_replay_paths() -> frozenset[str]:
     """Paths that this writer must replace even when source hashes reverted."""
     replay = _PUBLICATION_REPLAY.get()
     return replay.paths if replay is not None else frozenset()
-
-
-@contextmanager
-def observe_checkpoint_progress(
-    observer: CheckpointProgressObserver,
-) -> Generator[None]:
-    """Bind newly opened checkpoints to one exact attempt's observation.
-
-    The initial notification carries no progress snapshot: it registers the
-    actual checkpoint. Subsequent notifications follow confirmed durable work.
-    """
-    token = _CHECKPOINT_PROGRESS_OBSERVER.set(observer)
-    try:
-        yield
-    finally:
-        _CHECKPOINT_PROGRESS_OBSERVER.reset(token)
 
 
 class RunOpenRequest(Protocol):
@@ -247,7 +235,7 @@ class RunCheckpointBase:
     _embedding_schema: ClassVar[int]
 
     def __post_init__(self) -> None:
-        observer = _CHECKPOINT_PROGRESS_OBSERVER.get()
+        observer = checkpoint_progress_observer.get()
         if observer is not None:
             self.run_policy.set_durable_progress_observer(partial(observer, self))
             observer(self, None)
@@ -423,7 +411,7 @@ class RunCheckpointBase:
         delete_points: Callable[[list[str]], None],
         replay_source: Callable[[], object],
     ) -> None:
-        from .._publication_state import publication_recovery_reads
+        from .._publication_state import publication_recovery_receipt
 
         paths = tuple(
             sorted(
@@ -448,14 +436,14 @@ class RunCheckpointBase:
         receipt = ledger.reopen_publication_after_storage_reset(
             receipt.receipt_id, paths
         )
-        token = _PUBLICATION_REPLAY.set(
-            _PublicationReplay(receipt, frozenset(paths), delete_points)
-        )
-        try:
-            with publication_recovery_reads(receipt):
-                replay_source()
-        finally:
-            _PUBLICATION_REPLAY.reset(token)
+        with (
+            bind_context(
+                _PUBLICATION_REPLAY,
+                _PublicationReplay(receipt, frozenset(paths), delete_points),
+            ),
+            bind_context(publication_recovery_receipt, receipt),
+        ):
+            replay_source()
         pending = ledger.active_publication_receipt(receipt.compatibility_key)
         if pending is not None:
             if pending.mutations:
@@ -483,41 +471,47 @@ class RunCheckpointBase:
             parents = ledger.publication_evidence_for_paths(
                 receipt.compatibility_key, ordered[start : start + FETCH_BATCH]
             )
-            for rel_path, parent in parents.items():
-                mutations = [
-                    item for item in receipt.mutations if item.unit.rel_path == rel_path
-                ]
-                if not mutations or any(
-                    item.state is not ProofMutationState.CONFIRMED for item in mutations
-                ):
-                    raise RunLedgerStateError(
-                        f"publication replay has unresolved parent path {rel_path!r}"
-                    )
-                upserts = [
-                    item.unit
-                    for item in mutations
-                    if item.unit.kind is CommitUnitKind.UPSERT
-                ]
-                new = RunCheckpointBase._new_evidence(rel_path, tuple(upserts))
-                if new is not None:
-                    validate_publication_mutation_group(
-                        (CommitUnitKind.UPSERT, rel_path),
-                        upserts,
-                        expected_points=frozenset(new.point_ids),
-                        expected_content=new.content_identity,
-                    )
-                else:
-                    deleted = [
-                        item.unit
-                        for item in mutations
-                        if item.unit.kind is CommitUnitKind.DELETE_PATH
-                    ]
-                    validate_publication_mutation_group(
-                        (CommitUnitKind.DELETE_PATH, rel_path),
-                        deleted,
-                        expected_points=frozenset(parent.point_ids),
-                        expected_content=None,
-                    )
+            for parent in parents.values():
+                RunCheckpointBase._assert_replayed_parent_path(receipt, parent)
+
+    @staticmethod
+    def _assert_replayed_parent_path(
+        receipt: PublicationReceipt, parent: ProofEvidence
+    ) -> None:
+        """Require a complete replacement or deletion of one parent path."""
+        rel_path = parent.rel_path
+        mutations = [
+            item for item in receipt.mutations if item.unit.rel_path == rel_path
+        ]
+        if not mutations or any(
+            item.state is not ProofMutationState.CONFIRMED for item in mutations
+        ):
+            raise RunLedgerStateError(
+                f"publication replay has unresolved parent path {rel_path!r}"
+            )
+        upserts = [
+            item.unit for item in mutations if item.unit.kind is CommitUnitKind.UPSERT
+        ]
+        new = RunCheckpointBase._new_evidence(rel_path, tuple(upserts))
+        if new is not None:
+            validate_publication_mutation_group(
+                (CommitUnitKind.UPSERT, rel_path),
+                upserts,
+                expected_points=frozenset(new.point_ids),
+                expected_content=new.content_identity,
+            )
+        else:
+            deleted = [
+                item.unit
+                for item in mutations
+                if item.unit.kind is CommitUnitKind.DELETE_PATH
+            ]
+            validate_publication_mutation_group(
+                (CommitUnitKind.DELETE_PATH, rel_path),
+                deleted,
+                expected_points=frozenset(parent.point_ids),
+                expected_content=None,
+            )
 
     @staticmethod
     def _complete_mutation_streams(
@@ -1081,25 +1075,23 @@ class RunCheckpointBase:
                 - {delta.rel_path for delta in deltas}
             )
         )
+        for rel_path in unchanged:
+            units = [
+                item.unit
+                for item in receipt.mutations
+                if item.unit.rel_path == rel_path
+                and item.unit.kind is CommitUnitKind.UPSERT
+            ]
+            old = old_by_path.get(rel_path)
+            if old is None or self._new_evidence(rel_path, tuple(units)) != old:
+                raise RunLedgerStateError("replayed no-op does not restore its parent")
+            validate_publication_mutation_group(
+                (CommitUnitKind.UPSERT, rel_path),
+                units,
+                expected_points=frozenset(old.point_ids),
+                expected_content=old.content_identity,
+            )
         if unchanged:
-            for rel_path in unchanged:
-                units = [
-                    item.unit
-                    for item in receipt.mutations
-                    if item.unit.rel_path == rel_path
-                    and item.unit.kind is CommitUnitKind.UPSERT
-                ]
-                old = old_by_path.get(rel_path)
-                if old is None or self._new_evidence(rel_path, tuple(units)) != old:
-                    raise RunLedgerStateError(
-                        "replayed no-op does not restore its parent"
-                    )
-                validate_publication_mutation_group(
-                    (CommitUnitKind.UPSERT, rel_path),
-                    units,
-                    expected_points=frozenset(old.point_ids),
-                    expected_content=old.content_identity,
-                )
             receipt = self.ledger.discard_restored_publication_paths(
                 receipt.receipt_id, unchanged
             )
@@ -1277,3 +1269,16 @@ class RunCheckpointBase:
             self.generation_id,
             FileState.indexed(rel_path, self._content_kind, source_digest),
         )
+
+
+def publish_checkpoint(
+    checkpoint: RunCheckpointBase,
+    root_dir: Path,
+    notify: Callable[[Path, str], object] | None,
+) -> None:
+    """Notify readiness only after proof and generation are durable."""
+    with checkpoint.run_policy.protected("proof certification"):
+        checkpoint.publish_proof_transition()
+        published = checkpoint.publish_generation()
+        if notify is not None:
+            notify(root_dir, published.generation_id)

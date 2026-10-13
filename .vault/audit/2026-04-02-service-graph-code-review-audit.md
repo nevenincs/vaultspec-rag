@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#service-graph'
 date: '2026-04-02'
-modified: '2026-10-12'
-body_hash: 'sha256:04935a5387a1e4ddf4ea7c60f892d19d0ff5902285f2be8b3dbfd8eb2e580cb5'
+modified: '2026-10-13'
+body_hash: 'sha256:a56928c6f65707dde44e91899d7584595d513ab2d4e3fb8e87c6dde4db6a8305'
 related:
   - '[[2026-04-02-service-graph-adr]]'
   - '[[2026-04-02-service-graph-phase1-plan]]'
@@ -806,3 +806,132 @@ The installed uv service environment matches all six changed runtime SHA256 hash
 Live vault server times were 3.289 seconds initially and 0.587 seconds on repetition;
 graph ranking took 0.864 and 0.156 milliseconds. The repeat used five TypeSafe cache
 hits and no TypeSafe network requests. Earlier S01/S02 verification remains applicable.
+
+### full-ci-reconciliation | low | PENDING full matrix for S04
+
+The user authorized preserving already-landed work and completing remaining fixes
+through one RAG PR, reusing core PR 606. Base 9b0764fd is already on remote main;
+this follow-up neither undoes those commits nor presents them as an unmerged diff.
+
+Full Windows CI on that base reported 64 failures, 37 setup errors, 8,053 passes
+and 15 platform skips. Root causes include enrollment context escaping to later
+operations, tests that predated core 0.3.5 executable consent and host-local
+ownership, obsolete refusal expectations after automatic recovery, duplicate
+publication/context helpers, and unreviewed graph-test substitutions. The local
+environment initially had core 0.3.2; it was aligned to the locked 0.3.5 before
+reproducing or validating integration corrections.
+
+Install and uninstall now run in private execution contexts. Installation tests
+grant exact canonical launch snapshots in isolated homes and inspect the canonical
+ownership path. They preserve the production consent boundary and safe Python
+launch flag. Recovery assertions now exercise actual resumed work, durable proof
+ordering and queued restart lineage. Publication and context binding each have one
+canonical implementation. Graph race tests execute real graph builders, observed
+with root-specific profiling barriers, and backoff uses a real invalid workspace.
+No substitution allowlist was expanded.
+
+Focused verification: 103 install/workspace tests, 92 recovery/publication tests,
+29 graph tests and two substitution-discipline guards passed. The enrollment
+context test passed separately. Thirteen doctor tests passed; browser tests were
+initially skipped because frontend dependencies were absent, so those dependencies
+are being restored for actual browser verification. The browser parent now allows
+its child's existing bounded startup retries instead of expiring during attempt
+two. No rendering assertion was removed.
+
+Nine mutation guards failed at their named assertions and passed after restoration:
+five graph lifecycle/ranking guards, recovery context reset, publication notification
+ordering, and both enrollment entry-point context boundaries. Graph/recovery worker
+lint, format, ty, basedpyright and production Pylint passed; integrated package
+checks and the full correctness lane are in progress. A loopback placeholder URL
+in the landed capability reference was rewritten as endpoint prose, and the
+recovery audit's missing Markdown separator was restored.
+
+Review scope is the whole recovery/graph integration plus dependency adaptation.
+No destructive index operation, service reinstall or service restart is part of S04.
+Core PR 606 contains the canonical graph implementation and portability fixes.
+Its Windows suite and CodeQL passed; Linux gate checks remain pending.
+
+### full-ci-reconciliation-final | low | Local verification complete; PR matrix pending
+
+Reviewed the S04 working-tree diff against 9b0764fd as one integration change.
+No unresolved high or critical code finding remains. The full local CPU lane
+completed with 8,145 passes, 16 platform skips, five failures and four setup errors.
+The setup errors required the compiled monitor artifact; the canonical verified
+compiler produced it and all four lifecycle tests then passed. All eleven browser
+rendering tests also passed.
+
+The five model-fetch failures came from subprocesses inheriting the developer
+checkout: dotenv discovery launched six Git probes, invalidating process counts
+and allowing the deliberate child-kill test to target Git. Test subprocesses now
+use their existing temporary workspace. The two affected model-fetch modules
+passed 34 cases, with their remaining explicit Popen corrected and passing in a
+separate rerun. All five bound tests passed. Existing process-count, cache reuse,
+termination and network isolation assertions remain intact. These are test
+isolation corrections, not production download-policy changes.
+
+All package lint dimensions now have passing evidence: Ruff, format, ty,
+basedpyright, Pylint, complexity, nesting, imports, workflow, TOML, citations,
+documentation conventions/version/reference, vault structure and frontend lint,
+format, types and build. Failed Markdown and link dimensions were corrected and
+rerun over their affected scope. Ten generated capability references needed
+literal filename escaping or repaired code spans; no lint rule was weakened.
+The full vault check reported only two pre-existing modified-stamp warnings in
+unrelated records. Final links: 6,562 passing, zero errors, 32 configured exclusions.
+The new model test edits passed Ruff, format, ty, basedpyright and helper Pylint.
+Earlier focused and mutation evidence remains applicable to unchanged runtime code.
+
+Evidence logs are in the existing .vault/data/engine-data directory under s04-.
+The full local run is preserved as failed evidence, with focused passing reruns;
+it is not relabeled as an all-green single run. The PR must pass the full remote
+matrix before merge. S04 remains open for that required verification.
+
+Core PR 606 passed Linux lint/full tests, Windows library tests, CodeQL and its
+merge gate, then merged into main as 575a8e7cf0c969690ea439d54cf5bba5b1d6d54f.
+
+### release-gate-correction | low | Local recovery gates pass; remote matrix pending
+
+The earlier S04 claim that every package lint dimension had passing evidence was
+incorrect: the original aggregate log contained three complexipy failures that
+were missed when its results were reconciled. The release-proposal gate exposed
+the same failures. This entry corrects that claim rather than relabeling the log.
+
+Replay finalization no longer adds an unnecessary enclosing condition around an
+empty-safe loop. Batched parent validation delegates one parent's complete
+replacement/deletion check to a focused owner. Ledger recovery, reset intent and
+confirmed compensation now have one canonical mixin, inherited directly by
+RunLedger; implementations were removed from the overlong commit module.
+Restored-path classification retains unaffected payloads and ordinals and rejects
+unconfirmed compensation before any database mutation. No threshold was changed.
+
+Review against 4ff95502 found no changed transaction boundary or weakened storage
+confirmation check. Package complexipy, Ruff and Pylint each exited 0; Pylint
+reported 10.00/10. Changed format, ty and basedpyright exited 0. The post-extraction
+suite passed 145 tests. A three-state compensation guard passed, failed at the
+intended assertions when its confirmation check was removed in memory, then
+passed after restoration. Scores are 18 for replay finalization, 3 for batched
+parent validation, 11 per parent and 14 for restored-path discard.
+
+Logs: s04-recovery-extraction-tests.log, s04-recovery-package-pylint.log,
+s04-complexity-final.log and s04-restoration-guard mutation/restored logs under the
+existing .vault/data/engine-data directory. All corrections stay in RAG PR 603;
+the final remote matrix remains required before merge and S04 closure.
+
+### final-ci-acceptance | low | PASS: Recovery and graph integration satisfy the full matrix
+
+The reviewed runtime and tests are unchanged from recovery commit
+7e3ccf3311a9e66296ef823543d2536dbf63ab3b. Existing integrated review,
+145 covering tests, package gates, and mutation evidence remain applicable.
+RAG Merge Gate run 38303455264 completed successfully on 2026-10-13:
+Linux Python 3.13 passed 8,100 tests with 47 platform skips; Linux Python
+3.14 passed 8,099 with 48 platform skips; Windows passed 8,158 with 15
+platform skips. Package lint and dependency advisories passed. The Windows
+rerun retained the passing Linux jobs; its original isolated HTTP inventory
+timeout is preserved in attempt 1, and the complete Windows rerun passed
+without modifying the test, timeout, or guard. Dev Server run 38303455322
+and CodeQL on the same head also passed.
+
+Verdict PASS for S04. No unresolved critical or high finding remains. This
+checkpoint changes development records only; its own Markdown checks and
+required PR gate must pass before merge. Release preparation still needs
+the published core graph dependency, release proposal verification, both
+accelerator tiers, all four native bundles, provenance, and PyPI publication.

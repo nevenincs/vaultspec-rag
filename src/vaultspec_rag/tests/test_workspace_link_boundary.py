@@ -15,11 +15,13 @@ from __future__ import annotations
 import json
 import os
 import re
+from contextvars import copy_context
 from pathlib import Path
 from typing import Unpack
 
 import pytest
 from typer.testing import CliRunner
+from vaultspec_core.core.types import workspace_ctx
 
 from .._plain_directory import LinkedDirectoryError
 from ..builtins import list_builtins, seed_builtins
@@ -410,3 +412,16 @@ def test_an_unlinked_workspace_still_installs_and_uninstalls(workspace: Path) ->
     assert not (workspace / _VAULT / "data").exists()
     assert not (workspace / _WORKSPACE / "runtime").exists()
     assert (workspace / _VAULT).is_dir()
+
+
+def test_enrollment_restores_the_callers_workspace_context(workspace: Path) -> None:
+    """A later redirect cannot poison callers through an enrollment's context.
+
+    Removing either entry point's Context.run fails its identity assertion;
+    the restored entry points pass with real install/uninstall operations.
+    """
+    before = copy_context().get(workspace_ctx)
+    _install(workspace, skip={"mcp"})
+    assert copy_context().get(workspace_ctx) is before
+    uninstall_run(path=workspace, force=True, skip={"mcp"})
+    assert copy_context().get(workspace_ctx) is before

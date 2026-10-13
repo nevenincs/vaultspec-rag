@@ -31,6 +31,7 @@ from vaultspec_core.core.commands import (
 )
 from vaultspec_core.core.enums import (
     InstallMode,
+    McpScope,
 )
 from vaultspec_core.core.exceptions import (
     VaultSpecError,
@@ -42,6 +43,7 @@ from vaultspec_core.core.manifest import (
 from vaultspec_core.core.mcps import (
     render_mcp_definition_for_mode,
 )
+from vaultspec_core.core.mcps_ownership import ownership_path
 from vaultspec_core.core.workspace_mode import (
     PackageDeclaration,
     dependency_leak_advisory,
@@ -59,11 +61,12 @@ from ..commands._mode import (
 from ..config._paths import persist_local_only, read_persisted_local_only
 from ..config._types import EnvVar
 from ._config_fixtures import reset_config
+from ._mcp_consent import approve_workspace_launches
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = [pytest.mark.unit]
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("isolated_mcp_trust_home")]
 
 #: The leak advisory rag emits names rag's own distribution, not core's, so the
 #: text is package-correct on a companion install.
@@ -74,13 +77,17 @@ _RAG_LEAK_ADVISORY = dependency_leak_advisory(RAG_DISTRIBUTION_NAME)
 # launch the module through the governed project's own venv (``uv run``), tool
 # mode through an ephemeral ``uvx --from`` invocation. ``dev`` renders
 # byte-identically to ``dependency``.
-_DEP_LAUNCH = ("uv", ["run", "--no-sync", "python", "-m", SERVER_LAUNCH_MARKER[1]])
+_DEP_LAUNCH = (
+    "uv",
+    ["run", "--no-sync", "python", "-P", "-m", SERVER_LAUNCH_MARKER[1]],
+)
 _TOOL_LAUNCH = (
     "uvx",
     [
         "--from",
         f"{RAG_DISTRIBUTION_NAME}[mcp]",
         "python",
+        "-P",
         "-m",
         SERVER_LAUNCH_MARKER[1],
     ],
@@ -123,6 +130,7 @@ def _install(
         write_manifest(ws, providers)
     elif not read_manifest(ws):
         write_manifest(ws, {"claude"})
+    approve_workspace_launches(ws, mode)
     return install_run(
         path=ws,
         mode=mode,
@@ -206,7 +214,7 @@ def test_dual_provider_reinstall_is_byte_stable(
     tracked = (
         ws / ".mcp.json",
         ws / ".codex" / "config.toml",
-        ws / ".vaultspec" / "mcp-ownership.json",
+        ownership_path(ws, McpScope.PROJECT),
     )
     before = {path: path.read_bytes() for path in tracked}
 
@@ -374,6 +382,7 @@ def test_mixed_configuration_preserves_sibling_and_renders_each_mode(
     )
 
     core_install_run(path=ws, provider="all", mode=InstallMode.DEPENDENCY)
+    approve_workspace_launches(ws, InstallMode.TOOL)
     _install(ws, mode=InstallMode.TOOL)
 
     core_decl = read_package_declaration(ws, "vaultspec-core")

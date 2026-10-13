@@ -1,7 +1,13 @@
 """Unit tests for vault document chunking, grouping, and graph nudges."""
 
-from pathlib import Path
-from typing import ClassVar
+from __future__ import annotations
+
+import sys
+from typing import TYPE_CHECKING, ClassVar
+
+if TYPE_CHECKING:
+    from pathlib import Path
+    from types import FrameType
 
 import pytest
 
@@ -222,17 +228,28 @@ class TestBoundedGraphNudge:
 
 
 @pytest.mark.unit
-def test_absent_graph_preserves_semantic_ranking(monkeypatch: pytest.MonkeyPatch):
-    from unittest.mock import Mock
+def test_absent_graph_preserves_semantic_ranking():
+    from vaultspec_core.graph import VaultGraph
 
     from ..search._models import ParsedQuery
 
-    constructor = Mock(side_effect=AssertionError("query rebuilt the graph"))
-    monkeypatch.setattr("vaultspec_core.graph.VaultGraph", constructor)
+    calls = 0
+
+    def observe(frame: FrameType, event: str, _arg: object) -> None:
+        nonlocal calls
+        if frame.f_code is VaultGraph.__init__.__code__ and event == "call":
+            calls += 1
+
     results = [_result("target", 0.75)]
-    assert (
-        rerank_with_graph(results, ParsedQuery(text="q", filters={}), graph=None)
-        is results
-    )
+    previous = sys.getprofile()
+    sys.setprofile(observe)
+    try:
+        assert (
+            rerank_with_graph(results, ParsedQuery(text="q", filters={}), graph=None)
+            is results
+        )
+    finally:
+        sys.setprofile(previous)
     assert results[0].score == 0.75
-    constructor.assert_not_called()
+    # Building a real graph in rerank_with_graph failed here; restoration passed.
+    assert calls == 0, "query rebuilt the graph"

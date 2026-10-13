@@ -40,6 +40,7 @@ from ._run_ledger_test_support import (
     ledger_test_seeded_publication_lineage,
     ledger_test_unit,
 )
+from ._sqlite_state import assert_sqlite_unchanged, sqlite_contents
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -608,3 +609,49 @@ def test_sealed_receipt_commit_is_exact_atomic_and_replayable(
     finally:
         connection.close()
     assert ledger.commit_publication_receipt(receipt.receipt_id) == committed
+
+
+@pytest.mark.parametrize("state", list(ProofMutationState))
+def test_restored_paths_require_confirmation_and_preserve_other_mutations(
+    tmp_path: Path, state: ProofMutationState
+) -> None:
+    ledger, key, _parent_id, successor_id = ledger_test_seeded_publication_lineage(
+        tmp_path, ()
+    )
+    receipt = ledger.reserve_publication_receipt(
+        key,
+        successor_id,
+        expected_parent_revision=ledger.publication_proof(key).revision,
+    )
+    units = [ledger_test_unit(f"src/{name}.py", 0, 1) for name in ("a", "b", "c")]
+    prepared = [
+        ledger.prepare_publication_mutation(receipt.receipt_id, unit) for unit in units
+    ]
+    restored = units[1]
+    if state is not ProofMutationState.PREPARED:
+        ledger.mark_publication_mutation_applied(receipt.receipt_id, restored)
+    if state is ProofMutationState.CONFIRMED:
+        ledger.confirm_publication_mutation(receipt.receipt_id, restored)
+    before = sqlite_contents(ledger.path)
+    # Removing confirmation admission failed both exact refusals; restoring
+    # it passed while confirmed compaction preserved the remaining journal.
+    if state is not ProofMutationState.CONFIRMED:
+        with pytest.raises(
+            RunLedgerStateError, match=r"^restored paths must be storage confirmed$"
+        ):
+            ledger.discard_restored_publication_paths(
+                receipt.receipt_id, (restored.rel_path,)
+            )
+        assert_sqlite_unchanged(ledger.path, before)
+        return
+
+    remaining = ledger.discard_restored_publication_paths(
+        receipt.receipt_id, (restored.rel_path,)
+    )
+    assert remaining.mutations == (prepared[0], replace(prepared[2], ordinal=1))
+    reopened = RunLedger(ledger.path)
+    assert reopened.active_publication_receipt(key) == remaining
+    next_mutation = reopened.prepare_publication_mutation(
+        receipt.receipt_id, ledger_test_unit("src/d.py", 0, 1)
+    )
+    assert next_mutation.ordinal == 2

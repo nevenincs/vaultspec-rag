@@ -7,9 +7,9 @@ tier: L1
 related:
   - '[[2026-04-02-service-graph-adr]]'
   - '[[2026-03-07-vaultgraph-cache-adr]]'
-modified: '2026-10-12'
+modified: '2026-10-13'
 body_schema: body-v2
-body_hash: 'sha256:5e972ba98734da8c6fba999c19b981e4336538756cd8775f2ca19b06f855a409'
+body_hash: 'sha256:f5052dcbc62d26332a92910b563ecd8e0c816c3898fc83077100217f5403b460'
 ---
 
 # `service-graph` plan
@@ -31,10 +31,18 @@ storage deletion is required for this work.
 - [x] `S01` - Remove synchronous graph construction from search and verify lifecycle races and live latency; `src/vaultspec_rag/graph_cache.py, search, service.py, _service_eviction.py, tests`.
 - [x] `S02` - Profile and optimize canonical graph calculation separately while preserving graph and filesystem safety semantics; `vaultspec-core/src/vaultspec_core graph, config, core/corpus_io.py and covering tests`.
 - [x] `S03` - Profile cold graph construction with py-spy and process I/O, CPU, memory and handles; optimize measured work and verify cache and filesystem safety; `vaultspec-core/src/vaultspec_core/core/corpus_io.py, graph, config, scanner, covering tests and dev profiling instrument`.
+- [x] `S04` - Repair integration failures exposed by full CI and verify the combined recovery and graph changes through one RAG pull request; `src/vaultspec_rag tests and affected canonical runtime owners, existing execution records`.
 
 ## Parallelization
 
 Sequential: finish and verify S01 before graph-calculation changes in S02.
+
+S04 uses parallel workers with disjoint ownership. Delegate recovery/checkpoint
+integration tests and duplicate publication helpers to one worker; delegate graph
+test substitution-discipline corrections to a second worker. The coordinator owns
+install/workspace integration, shared configuration fixtures, browser failures,
+package gates, records and the single RAG PR. Workers report targeted checks and
+never commit shared records. Integrate before full-suite validation.
 
 ## Verification
 
@@ -52,3 +60,8 @@ S03: capture py-spy stacks and process CPU, I/O, RSS and handles on the real cor
 Compare controlled cold runs, measure cached loads and PageRank separately, preserve
 path safety and handle ownership with mutation-proven guards, run covering tests and
 configured gates, and verify installed runtime hashes and live service searches.
+
+S04 is authorized by the user's request to preserve landed work, correct CI and land
+verified changes through PRs. Preserve existing recovery, path-security and graph
+contracts. Diagnose the actual failed branches; do not weaken guards. Run targeted
+regressions, package gates and the full CI matrix. Reuse existing core PR 606.

@@ -54,6 +54,15 @@ def _force_machine_singleton_test_paths(paths: Mapping[str, str]) -> None:
     reset_rag_config()
 
 
+@pytest.fixture
+def isolated_mcp_trust_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep executable grants made by enrollment tests away from operator state."""
+    home = tmp_path / "mcp-home"
+    home.mkdir()
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("HOME", str(home))
+
+
 @pytest.fixture(scope="session", autouse=True)
 def isolated_machine_singleton_dirs(
     host_provisioned_qdrant_source: tuple[Path, Path] | None,

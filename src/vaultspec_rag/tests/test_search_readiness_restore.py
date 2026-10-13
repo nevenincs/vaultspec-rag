@@ -20,6 +20,7 @@ from .._public_search import _combined_source_fact
 from .._search_state import AbsenceAuthority, FreshnessWaitPolicy, SearchFreshness
 from .._source_types import INDEX_SOURCES, PublicSourceType
 from .._store_writes import workspace_volume_path
+from ..indexer._checkpoint_common import publish_checkpoint
 from ..indexer._document_checkpoint import DocumentRunCheckpoint
 from ..indexer._document_indexer import DocumentIndexer
 from ..indexer._run_ledger_models import (
@@ -396,7 +397,7 @@ async def test_resumed_document_noop_waits_for_actual_parent_publication(
         assert checkpoint.publish_proof_transition() == 0
         assert ledger.publication_proof(key).generation_id == parent
         assert not await readiness.published_at_least((target,), timeout_seconds=0)
-        indexer._publish_generation(checkpoint)
+        publish_checkpoint(checkpoint, indexer.root_dir, indexer._publish_readiness)
         assert checkpoint.generation.terminal_state is RunTerminalState.SUCCEEDED
         assert await readiness.published_at_least((target,), timeout_seconds=0)
         admission = await _admit_requested_freshness(request, registry)

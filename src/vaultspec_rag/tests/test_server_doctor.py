@@ -33,11 +33,12 @@ from vaultspec_core.core.workspace_mode import (
 from ..api import get_readiness
 from ..cli import app
 from ..commands._install import install_run
+from ._mcp_consent import approve_workspace_launches
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = [pytest.mark.unit]
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("isolated_mcp_trust_home")]
 
 runner = CliRunner()
 
@@ -55,6 +56,7 @@ def _install_rag_workspace(tmp_path: Path, mode: InstallMode) -> Path:
     ws.mkdir()
     (ws / "pyproject.toml").write_text(_PROJECT_WITH_RAG, encoding="utf-8", newline="")
     write_manifest(ws, {"claude"})
+    approve_workspace_launches(ws, mode)
     install_run(
         path=ws,
         mode=mode,

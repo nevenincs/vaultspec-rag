@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
 import pytest
 
 from .._search_state import FreshnessWaitPolicy
 from .._source_types import PublicSourceType
+from ..indexer._checkpoint_common import publish_checkpoint
 from ..indexer._content_policy import RootContentPolicy, SourceProfileVersion
-from ..indexer._document_indexer import DocumentIndexer
 from ..indexer._generation_lifecycle import (
     CodeGenerationBindings,
     CodeGenerationLifecycle,
@@ -24,6 +24,7 @@ from ..indexer._resolved_policy import (
 )
 from ..indexer._run_checkpoint import CodeRunConfiguration
 from ..indexer._run_ledger_models import RunAuthority, RunOperation
+from ..indexer._run_policy import RunPolicy
 from ..job_control import NO_RUN_CONTROL
 from ..job_manager.manager import JobManager
 from ..job_models import (
@@ -510,6 +511,12 @@ class _DocumentCheckpointCollaborator:
     generation_id: str
     events: list[str]
     publish_calls: int = 0
+    run_policy: RunPolicy = field(
+        default_factory=lambda: RunPolicy(no_progress_timeout_seconds=60)
+    )
+
+    def publish_proof_transition(self) -> None:
+        self.events.append("proof-publish")
 
     def publish_generation(self) -> _PublishedGeneration:
         self.publish_calls += 1
@@ -520,26 +527,31 @@ class _DocumentCheckpointCollaborator:
 async def test_document_publish_boundary_notifies_exactly_once(tmp_path: Path) -> None:
     events: list[str] = []
     notifications: list[tuple[Path, str]] = []
-    indexer = DocumentIndexer.__new__(DocumentIndexer)
-    indexer.root_dir = tmp_path
 
     def notify(root: Path, generation: str) -> None:
         events.append("readiness-notify")
         notifications.append((root, generation))
 
-    indexer._publish_readiness = notify
     checkpoint = _DocumentCheckpointCollaborator("documents-published", events)
 
-    indexer._publish_generation(cast("DocumentRunCheckpoint", checkpoint))
+    publish_checkpoint(cast("DocumentRunCheckpoint", checkpoint), tmp_path, notify)
 
+    # Moving notification before generation commit failed this exact order;
+    # restoring the canonical publication order passed.
     assert checkpoint.publish_calls == 1
-    assert events == ["durable-publish", "readiness-notify"]
+    assert events == ["proof-publish", "durable-publish", "readiness-notify"]
     assert notifications == [(tmp_path, "documents-published")]
 
 
 @dataclass(slots=True)
 class _FailingDocumentCheckpointCollaborator:
     publish_calls: int = 0
+    run_policy: RunPolicy = field(
+        default_factory=lambda: RunPolicy(no_progress_timeout_seconds=60)
+    )
+
+    def publish_proof_transition(self) -> None:
+        pass
 
     def publish_generation(self) -> _PublishedGeneration:
         self.publish_calls += 1
@@ -550,17 +562,14 @@ async def test_document_publish_failure_propagates_without_notification(
     tmp_path: Path,
 ) -> None:
     notifications: list[tuple[Path, str]] = []
-    indexer = DocumentIndexer.__new__(DocumentIndexer)
-    indexer.root_dir = tmp_path
 
     def notify(root: Path, generation: str) -> None:
         notifications.append((root, generation))
 
-    indexer._publish_readiness = notify
     checkpoint = _FailingDocumentCheckpointCollaborator()
 
     with pytest.raises(OSError, match="durable checkpoint publication failed"):
-        indexer._publish_generation(cast("DocumentRunCheckpoint", checkpoint))
+        publish_checkpoint(cast("DocumentRunCheckpoint", checkpoint), tmp_path, notify)
 
     assert checkpoint.publish_calls == 1
     assert notifications == []
