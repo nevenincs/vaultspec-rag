@@ -18,7 +18,7 @@ from ..index_profiles import get_index_support_profile
 from ..job_control import NO_RUN_CONTROL
 from ..store_runtime import StorageGeometryError
 from . import _chunk_worker, _preprocess_glue, _stat_gate
-from ._checkpoint_common import PublicationExecution
+from ._checkpoint_common import PublicationExecution, publish_checkpoint
 from ._content_discovery import CodeContentDiscovery, validate_admitted_sources
 from ._content_policy import ContentKind, RootContentPolicy
 from ._document_checkpoint import (
@@ -844,21 +844,13 @@ class DocumentIndexer:
                     policy,
                     ContentKind.DOCUMENT,
                 )
-            self._publish_generation(checkpoint)
+            publish_checkpoint(checkpoint, self.root_dir, self._publish_readiness)
             reporter.advance(1)
         finally:
             reporter.phase_end()
         return self._finish_result(
             _DocumentResultDetails(started, 0, 0, 0, 0, 0, []),
         )
-
-    def _publish_generation(self, checkpoint: DocumentRunCheckpoint) -> None:
-        """Publish durable generation state, then notify the service authority."""
-        with checkpoint.run_policy.protected("document proof certification"):
-            checkpoint.publish_proof_transition()
-            published = checkpoint.publish_generation()
-            if self._publish_readiness is not None:
-                self._publish_readiness(self.root_dir, published.generation_id)
 
     def _finish_result(
         self,
@@ -1273,7 +1265,7 @@ class DocumentIndexer:
                     policy,
                     ContentKind.DOCUMENT,
                 )
-                self._publish_generation(checkpoint)
+                publish_checkpoint(checkpoint, self.root_dir, self._publish_readiness)
         return self._finish_result(
             _DocumentResultDetails(
                 started,
@@ -1479,7 +1471,7 @@ class DocumentIndexer:
                         policy,
                         ContentKind.DOCUMENT,
                     )
-                self._publish_generation(checkpoint)
+                publish_checkpoint(checkpoint, self.root_dir, self._publish_readiness)
             return self._finish_result(
                 _DocumentResultDetails(
                     started,

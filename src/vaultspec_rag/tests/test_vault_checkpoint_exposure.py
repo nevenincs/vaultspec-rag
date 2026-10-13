@@ -11,9 +11,10 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from .._context_scope import bind_context
 from ..config._settings import get_config
 from ..config._types import EnvVar
-from ..indexer._checkpoint_common import RunCheckpointBase, observe_checkpoint_progress
+from ..indexer._checkpoint_common import RunCheckpointBase, checkpoint_progress_observer
 from ..indexer._run_ledger_models import RunAuthority, RunOperation, RunTerminalState
 from ..indexer._run_ledger_publication_identity import compatibility_for_signature
 from ..indexer._vault_checkpoint import VaultRunCheckpoint
@@ -82,7 +83,7 @@ def observed_vault_checkpoints() -> Generator[list[VaultRunCheckpoint]]:
         if snapshot is None:
             checkpoints.append(checkpoint)
 
-    with observe_checkpoint_progress(observe):
+    with bind_context(checkpoint_progress_observer, observe):
         yield checkpoints
 
 

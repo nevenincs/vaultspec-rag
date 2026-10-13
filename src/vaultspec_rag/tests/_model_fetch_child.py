@@ -12,14 +12,13 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from ..config._types import EnvVar
 from ._child_signal import CHILD_PROCESS_TIMEOUT_SECONDS
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from ._loopback_model_hub import LoopbackModelHub
 
 __all__ = [
@@ -162,6 +161,10 @@ def run_child(script: str, env: dict[str, str]) -> subprocess.CompletedProcess[s
     return subprocess.run(
         [sys.executable, "-c", script],
         env=env,
+        # Use the test's existing workspace, not the developer checkout:
+        # checkout dotenv discovery starts Git probes that are unrelated to
+        # downloads and can be mistaken for the child being deliberately killed.
+        cwd=Path(env["HF_HUB_CACHE"]).parent,
         capture_output=True,
         text=True,
         encoding="utf-8",

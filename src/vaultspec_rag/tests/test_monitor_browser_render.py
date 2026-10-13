@@ -56,7 +56,10 @@ class Browser:
 
     def wait_ready(self, diagnostic_path: Path) -> None:
         try:
-            ready = json.loads(self.answers.get(timeout=60))
+            # Startup includes debugger discovery and up to three page loads
+            # (45 s for the document plus 10 s for its first draw each). The
+            # command-response budget would kill the second permitted attempt.
+            ready = json.loads(self.answers.get(timeout=300))
         except queue.Empty:
             diagnostic = diagnostic_path.read_text(encoding="utf-8", errors="replace")
             pytest.fail(f"Browser startup did not complete: {diagnostic}")

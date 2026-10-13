@@ -11,6 +11,7 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, assert_never
 
+from ._context_scope import bind_context
 from ._units import bytes_to_mib
 from .indexer._run_ledger_models import RunAuthority
 from .job_manager.models import JobAttemptContext, JobExecutionResult, ResourceUpdate
@@ -658,12 +659,12 @@ def _observe_index_resilience(
 ) -> Generator[_LiveResiliencePublication]:
     """Bind real checkpoint notifications and final facts to this attempt."""
     from .indexer import CodebaseIndexer, DocumentIndexer
-    from .indexer._checkpoint_common import observe_checkpoint_progress
+    from .indexer._checkpoint_common import checkpoint_progress_observer
 
     if isinstance(indexer, (CodebaseIndexer, DocumentIndexer)):
         indexer.reset_memory_telemetry()
     publication = _LiveResiliencePublication(context, indexer, admitted)
-    with observe_checkpoint_progress(publication):
+    with bind_context(checkpoint_progress_observer, publication):
         try:
             yield publication
         finally:

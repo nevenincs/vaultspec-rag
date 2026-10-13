@@ -23,6 +23,7 @@ from ...job_control import RunControlToken
 from ...job_manager.manager import JobManager
 from ...job_manager.models import ResourceUpdate
 from ...job_models import (
+    DesiredJobState,
     JobInitiator,
     JobMode,
     JobOperation,
@@ -30,6 +31,7 @@ from ...job_models import (
     JobSource,
     JobSpec,
     JobState,
+    ResumeStrategy,
 )
 from ...server._lifespan import _start_job_manager
 from ...service import ServiceRegistry
@@ -349,15 +351,18 @@ class TestManagedJobQuarantine:
                 state_path=state_path,
             )
             assert restarted.restore_persisted().code == "job_state_restored"
-            interrupted = restarted.get(created.job.id)
-            assert interrupted is not None
-            assert interrupted.state is JobState.INTERRUPTED
-            stamps = interrupted.timestamps
-            assert stamps.finished_at is not None
-            # Removing the floor in `ordered_stamp` puts the interrupt's raw
-            # `time.time()` an hour behind creation and fails these two.
+            resumed = restarted.get(created.job.id)
+            assert resumed is not None
+            assert resumed.state is JobState.QUEUED
+            assert resumed.desired_state is DesiredJobState.RUNNING
+            assert resumed.attempt.number == 2
+            assert resumed.attempt.resumed_from_attempt == 1
+            assert resumed.attempt.resume_strategy is ResumeStrategy.RECONCILE
+            stamps = resumed.timestamps
+            assert stamps.finished_at is None
+            # Removing ordered_stamp's floor writes a queued resume an hour
+            # before creation, violating both this order and loader validation.
             assert stamps.state_changed_at >= stamps.created_at
-            assert stamps.finished_at >= stamps.created_at
 
             # The record the next start actually reads, through the loader
             # that start uses. Unfloored, this raises "state change predates

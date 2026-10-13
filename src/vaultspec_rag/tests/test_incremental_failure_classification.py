@@ -170,22 +170,24 @@ def test_confirmed_incremental_failure_is_classified_and_fenced(case: _Case) -> 
         ProofReadConflictError, match=r"^an open receipt prevents proof certification$"
     ):
         _current_proof(case)
-    # The unchanged recovery owner must refuse a nonempty, unsealed delta.
-    with pytest.raises(
-        JobError,
-        match=(
-            r"^full_reindex_required: interrupted publication has no "
-            r"complete storage-confirmed delta; "
-            r"run vaultspec-rag index --rebuild --type code$"
-        ),
-    ) as retry:
-        case.run()
-    assert retry.value.error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
-    assert checkpoint.ledger.generation(checkpoint.generation_id) == generation
-    assert _failure_count(checkpoint) == 1
-    assert checkpoint.ledger.active_publication_receipt(receipt.compatibility_key) == (
-        receipt
+    # Retry must recover the unsealed delta through the canonical source
+    # pipeline, then make its publication readable without a rebuild.
+    result = case.run()
+    recovered = case.checkpoint
+    assert result.total > 0
+    assert recovered.ledger.generation(recovered.generation_id).terminal_state is (
+        RunTerminalState.SUCCEEDED
     )
+    assert _current_proof(case) == recovered.generation_id
+    assert (
+        recovered.ledger.active_publication_receipt(receipt.compatibility_key) is None
+    )
+    assert case.indexer.store.get_all_code_ids() == confirmed_ids
+    # An unchanged retry must stay published and avoid opening another run.
+    noop = case.run()
+    assert noop.added == noop.updated == noop.removed == 0
+    assert case.checkpoint is recovered
+    assert _current_proof(case) == recovered.generation_id
 
 
 def test_incremental_success_and_noop_keep_published_generation(case: _Case) -> None:

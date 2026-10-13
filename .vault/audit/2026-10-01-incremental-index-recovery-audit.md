@@ -9,6 +9,7 @@ body_hash: 'sha256:58f9f21cfa17fc4e74736340818cafa9b15ec173ce886739082931a7657ed
 related:
   - "[[2026-09-30-incremental-index-recovery-plan]]"
 ---
+
 # `incremental-index-recovery` audit: `Integrated incremental indexing recovery review`
 
 ## Scope

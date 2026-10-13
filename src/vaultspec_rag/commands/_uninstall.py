@@ -357,7 +357,7 @@ def uninstall_run(
 ) -> UninstallReport:
     """Remove vaultspec-rag enrollment from a workspace."""
     validate_rag_skip(options.get("skip") or set())
-    return _uninstall_run(_UninstallRequest(path=path, **options))
+    return Context().run(_uninstall_run, _UninstallRequest(path=path, **options))
 
 
 def _uninstall_run(request: _UninstallRequest) -> UninstallReport:
