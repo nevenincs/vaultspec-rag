@@ -25,3 +25,8 @@ def published_content_identities(
         path: evidence.content_identity
         for path, evidence in read_all_publication_evidence(snapshot).items()
     }
+
+
+def published_retained_points(root: Path, source: PublicSourceType) -> int:
+    """Return the point total committed authority says storage retains."""
+    return acquire_publication_snapshot(root, source).proof.aggregate.retained_points
