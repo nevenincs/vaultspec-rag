@@ -29,6 +29,10 @@ import pytest
 from .._anchor_claim import claim_anchor, record_claim_owner, release_anchor_claim
 from .._sync_vocabulary import ProvisionAction
 from ..config._types import EnvVar
+from ..native_binary._install import (
+    extract_verified_archive,
+    file_sha256,
+)
 from ..qdrant_runtime._constants import (
     MANIFEST_FILENAME,
     QDRANT_ASSET_SHA256,
@@ -42,8 +46,6 @@ from ..qdrant_runtime._provision import (
     _plan,
     _ProvisionRequest,
     _run_exclusively,
-    extract_verified_archive,
-    file_sha256,
     provision,
 )
 from ..qdrant_runtime._resolve import (
@@ -443,7 +445,9 @@ class TestArchiveExtraction:
         dest = tmp_path / "out"
         dest.mkdir()
 
-        binary, digest = extract_verified_archive(archive, file_sha256(archive), dest)
+        binary, digest = extract_verified_archive(
+            archive, file_sha256(archive), dest, binary_name=binary_filename()
+        )
 
         assert binary == dest / binary_filename()
         assert binary.read_bytes() == NEW_EXECUTABLE

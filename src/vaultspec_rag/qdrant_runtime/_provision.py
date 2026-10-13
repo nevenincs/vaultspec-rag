@@ -37,11 +37,9 @@ volume filled in between, is one failed outcome like any other.
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import logging
 import os
 import shutil
-import stat
 import sys
 import tarfile
 import time
@@ -50,7 +48,6 @@ import zlib
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import IO, TYPE_CHECKING
 
 from .._atomic_write import (
@@ -62,6 +59,22 @@ from .._rmtree import remove_tree
 from .._store_writes import classify_write_error, free_bytes
 from .._sync_vocabulary import ProvisionAction
 from .._units import human_bytes
+from ..native_binary._download import (
+    DownloadError,
+    DownloadFailure,
+    DownloadLimits,
+    Progress,
+    download_https,
+    no_progress,
+)
+from ..native_binary._install import (
+    STAGING_SUFFIX,
+    ChecksumMismatchError,
+    archive_member,
+    mark_executable,
+    open_staging,
+    stream_sha256,
+)
 from ._constants import (
     MANIFEST_FILENAME,
     MANIFEST_SOURCE_ARCHIVE,
@@ -70,31 +83,24 @@ from ._constants import (
     QDRANT_ASSET_SHA256,
     QDRANT_EXECUTABLE_SHA256,
     QDRANT_SERVER_VERSION,
-    STAGING_SUFFIX,
     ProvisionReport,
-)
-from ._download import (
-    DownloadError,
-    DownloadFailure,
-    DownloadLimits,
-    download_https,
-    no_progress,
 )
 from ._managed_install import InstallState, ManagedInstall, classify_managed_binary
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterable
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "ChecksumMismatchError",
     "clean_provisioned",
-    "extract_verified_archive",
-    "file_sha256",
     "provision",
     "provisioned_versions",
 ]
+
+#: What progress lines call the program this module installs.
+_SUBJECT = "Qdrant server"
 
 _COPY_CHUNK_BYTES = 1 << 20
 _DOWNLOAD_LIMITS = DownloadLimits()
@@ -129,87 +135,12 @@ _INSTALL_FAILURES = (
 )
 
 
-class ChecksumMismatchError(RuntimeError):
-    """Raised when an artifact does not hash to its committed SHA256 digest.
-
-    Nothing from the artifact is kept or installed once this is raised.
-    """
-
-    def __init__(self, name: str, expected: str, actual: str) -> None:
-        self.expected = expected
-        self.actual = actual
-        super().__init__(
-            f"SHA256 mismatch for {name}: expected {expected}, got {actual}. "
-            "Nothing from it was kept or installed. The upstream asset may "
-            "have been replaced, or the committed pin is stale."
-        )
-
-
 class _InsufficientSpaceError(RuntimeError):
     """The managed directory's volume cannot hold what an install would write.
 
     Raised before the bytes in question are transferred or extracted, so
     nothing has been written on its account.
     """
-
-
-def _stream_sha256(handle: IO[bytes]) -> str:
-    """Return the hex SHA256 of everything in *handle*, read from its start."""
-    handle.seek(0)
-    digest = hashlib.sha256()
-    while chunk := handle.read(_COPY_CHUNK_BYTES):
-        digest.update(chunk)
-    return digest.hexdigest()
-
-
-def file_sha256(path: Path) -> str:
-    """Return the hex SHA256 digest of *path*'s content."""
-    with path.open("rb") as handle:
-        return _stream_sha256(handle)
-
-
-def verify_native_binary(binary: Path, expected_sha256: str) -> None:
-    """Rehash a regular executable immediately before a supervised launch."""
-    if (
-        binary.is_symlink()
-        or not binary.is_file()
-        or file_sha256(binary) != expected_sha256
-    ):
-        raise RuntimeError(f"Native executable pin mismatch: {binary}")
-
-
-def _open_destination(path: Path) -> IO[bytes]:
-    """Open *path* for writing without following a pre-planted symlink.
-
-    A local attacker who can pre-create a symlink at the destination could
-    otherwise redirect the write outside the directory the caller chose. We
-    unlink any existing symlink and open with ``O_NOFOLLOW`` where available,
-    owner-only.
-    """
-    if path.is_symlink():
-        path.unlink()
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
-    return os.fdopen(os.open(path, flags, 0o600), "wb")
-
-
-def _open_staging(directory: Path, label: str) -> tuple[Path, IO[bytes]]:
-    """Create a uniquely named staging file in *directory*, open read-write.
-
-    The name carries the pid and a random token and the file is created
-    exclusively, so the open fails rather than following or truncating
-    anything already planted at that name. Staging beside the destination
-    keeps the final move a rename within one volume, which is what makes it
-    atomic.
-    """
-    path = directory / f".{label}.{os.getpid()}.{os.urandom(6).hex()}{STAGING_SUFFIX}"
-    flags = (
-        os.O_RDWR
-        | os.O_CREAT
-        | os.O_EXCL
-        | getattr(os, "O_BINARY", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-    )
-    return path, os.fdopen(os.open(path, flags, 0o600), "w+b")
 
 
 @dataclass(frozen=True)
@@ -242,7 +173,7 @@ class _InstallRequest:
     local_archive: Path | None = None
     limits: DownloadLimits = _DOWNLOAD_LIMITS
     reserve_bytes: int = _FREE_SPACE_RESERVE_BYTES
-    open_staging: Callable[[Path, str], tuple[Path, IO[bytes]]] = _open_staging
+    open_staging: Callable[[Path, str], tuple[Path, IO[bytes]]] = open_staging
 
 
 _INSTALL_COMMAND = "vaultspec-rag server qdrant install"
@@ -325,157 +256,6 @@ def _discard(paths: Iterable[Path]) -> None:
             path.unlink(missing_ok=True)
 
 
-def _zip_member(zf: zipfile.ZipFile, target_name: str) -> zipfile.ZipInfo | None:
-    """Return the one regular *target_name* entry of *zf*, or ``None``."""
-    matches = [
-        info
-        for info in zf.infolist()
-        if Path(info.filename.replace("\\", "/")).name == target_name
-    ]
-    if len(matches) != 1:
-        return None
-    info = matches[0]
-    if info.is_dir() or stat.S_IFMT(info.external_attr >> 16) not in (
-        0,
-        stat.S_IFREG,
-    ):
-        return None
-    return info
-
-
-def _tar_member(tf: tarfile.TarFile, target_name: str) -> tarfile.TarInfo | None:
-    """Return the one regular *target_name* entry of *tf*, or ``None``."""
-    matches = [
-        member
-        for member in tf.getmembers()
-        if Path(member.name.replace("\\", "/")).name == target_name
-    ]
-    if len(matches) != 1 or not matches[0].isfile():
-        return None
-    return matches[0]
-
-
-@contextmanager
-def _binary_member(
-    archive: IO[bytes], archive_name: str, target_name: str
-) -> Generator[tuple[IO[bytes], int]]:
-    """Yield a reader over the one regular executable member of *archive*.
-
-    The reader comes with the member's uncompressed size, as the archive
-    records it, so a caller can know what extraction will write before it
-    writes any of it.
-
-    Handles both the Windows ``.zip`` (single ``qdrant.exe`` entry)
-    and the Unix ``.tar.gz`` (single ``qdrant`` entry) shapes. Only
-    the executable member is read - any other entry is ignored - and the
-    member is matched by basename, so a path embedded in the archive never
-    decides where anything is written.
-
-    The archive is read through the caller's open handle rather than reopened
-    by path, so the bytes extracted are the bytes that handle was hashed from.
-    The member is validated before the reader is yielded, so a caller that
-    opens its destination inside the block never creates one for an archive
-    that is refused.
-
-    Raises:
-        ValueError: When *target_name* is not a bare filename.
-        RuntimeError: When the archive does not hold exactly one regular
-            member of that name.
-    """
-    if (
-        not target_name
-        or target_name in {".", ".."}
-        or Path(target_name).name != target_name
-        or "\\" in target_name
-    ):
-        raise ValueError("The executable name must be a basename")
-    invalid_member = RuntimeError(
-        f"Archive {archive_name} requires one regular {target_name} member"
-    )
-    archive.seek(0)
-    if archive_name.endswith(".zip"):
-        with zipfile.ZipFile(archive) as zf:
-            info = _zip_member(zf, target_name)
-            if info is None:
-                raise invalid_member
-            with zf.open(info) as source:
-                yield source, info.file_size
-        return
-    with tarfile.open(fileobj=archive, mode="r:gz") as tf:
-        member = _tar_member(tf, target_name)
-        source = tf.extractfile(member) if member is not None else None
-        if member is None or source is None:
-            raise invalid_member
-        with source:
-            yield source, member.size
-
-
-def _mark_executable(path: Path) -> None:
-    """Make *path* runnable by its owner, and by nobody else."""
-    if sys.platform != "win32":
-        # Owner-only rwx: the service runs as one user; a world-executable
-        # managed binary needlessly widens who can run it on a shared host.
-        path.chmod(0o700)
-
-
-def extract_verified_archive(
-    archive: Path,
-    expected_sha256: str,
-    dest_dir: Path,
-    *,
-    on_progress: Callable[[str], None] = no_progress,
-    binary_name: str | None = None,
-) -> tuple[Path, str]:
-    """Verify *archive* against *expected_sha256*, then extract.
-
-    Verification strictly precedes extraction; on mismatch the archive
-    is deleted and :class:`ChecksumMismatchError` raised, so a
-    tampered artifact is never unpacked. The archive is opened once and both
-    hashed and extracted through that handle, so the file cannot be swapped
-    between the two.
-
-    Args:
-        archive: The downloaded release archive.
-        expected_sha256: The committed digest to verify against.
-        dest_dir: Directory to place the extracted binary in.
-        on_progress: Sink announcing each stage; reporting only, and the
-            verify-then-extract order it describes is the order enforced
-            below.
-        binary_name: The executable member to extract; the qdrant
-            executable for this platform when omitted.
-
-    Returns:
-        ``(binary_path, binary_sha256)`` for the extracted executable.
-
-    Raises:
-        ChecksumMismatchError: On digest mismatch (archive deleted).
-    """
-    if binary_name is None:
-        from ._resolve import binary_filename
-
-        binary_name = binary_filename()
-    binary = dest_dir / binary_name
-    with archive.open("rb") as handle:
-        on_progress("Verifying the Qdrant download checksum...")
-        actual = _stream_sha256(handle)
-        verified = actual.lower() == expected_sha256.lower()
-        if verified:
-            on_progress("Extracting the Qdrant server...")
-            with (
-                _binary_member(handle, archive.name, binary_name) as (source, _),
-                _open_destination(binary) as out,
-            ):
-                shutil.copyfileobj(source, out, _COPY_CHUNK_BYTES)
-    if not verified:
-        # Removed only once the handle above is closed: an open file cannot
-        # be unlinked on Windows.
-        archive.unlink(missing_ok=True)
-        raise ChecksumMismatchError(archive.name, expected_sha256, actual)
-    _mark_executable(binary)
-    on_progress("Verifying the extracted Qdrant server...")
-    return binary, file_sha256(binary)
-
-
 def _replace_executable(staged: Path, target: Path, *, rerun: str) -> None:
     """Move a verified staging file onto the installed name in one step.
 
@@ -486,7 +266,7 @@ def _replace_executable(staged: Path, target: Path, *, rerun: str) -> None:
         RuntimeError: On Windows, when another process holds *target* open.
         OSError: When the replace fails for any other reason.
     """
-    _mark_executable(staged)
+    mark_executable(staged)
     try:
         replace_atomically(staged, target)
     except PermissionError as exc:
@@ -544,7 +324,7 @@ def _verified_archive(
             on_progress(
                 f"Verifying {request.local_archive} against the pinned checksum..."
             )
-            actual = _stream_sha256(archive)
+            actual = stream_sha256(archive)
             if actual.lower() != request.archive_sha256.lower():
                 raise _WrongArchiveError(request, actual)
             yield archive
@@ -561,22 +341,22 @@ def _verified_archive(
         # Asked only of a body nothing in the transfer says is complete. The
         # digest is the one thing here that can tell a cut transfer from a
         # finished one, so it is what answers.
-        return _stream_sha256(received).lower() == request.archive_sha256.lower()
+        return stream_sha256(received).lower() == request.archive_sha256.lower()
 
     archive_path, archive = request.open_staging(request.version_dir, request.asset)
     staged.append(archive_path)
     with archive:
         logger.info("Downloading %s", request.url)
-        on_progress(f"Downloading the Qdrant server ({request.asset})...")
+        on_progress(f"Downloading the {_SUBJECT} ({request.asset})...")
         download_https(
             request.url,
             archive,
             redirect_hosts=request.redirect_hosts,
-            on_progress=on_progress,
+            progress=Progress(_SUBJECT, on_progress),
             limits=replace(request.limits, admit=admit, whole=whole),
         )
-        on_progress("Verifying the Qdrant download checksum...")
-        actual = _stream_sha256(archive)
+        on_progress(f"Verifying the {_SUBJECT} download checksum...")
+        actual = stream_sha256(archive)
         if actual.lower() != request.archive_sha256.lower():
             raise ChecksumMismatchError(request.asset, request.archive_sha256, actual)
         yield archive
@@ -607,8 +387,8 @@ def _stage_verified_executable(request: _InstallRequest, staged: list[Path]) -> 
 
     name = binary_filename()
     with _verified_archive(request, staged) as archive:
-        request.on_progress("Extracting the Qdrant server...")
-        with _binary_member(archive, request.asset, name) as (source, size):
+        request.on_progress(f"Extracting the {_SUBJECT}...")
+        with archive_member(archive, request.asset, name) as (source, size):
             _require_free_space(request, archive_bytes=0, executable_bytes=size)
             executable_path, executable = request.open_staging(
                 request.version_dir, name
@@ -616,8 +396,8 @@ def _stage_verified_executable(request: _InstallRequest, staged: list[Path]) -> 
             staged.append(executable_path)
             with executable:
                 shutil.copyfileobj(source, executable, _COPY_CHUNK_BYTES)
-                request.on_progress("Verifying the extracted Qdrant server...")
-                actual = _stream_sha256(executable)
+                request.on_progress(f"Verifying the extracted {_SUBJECT}...")
+                actual = stream_sha256(executable)
     if actual.lower() != request.executable_sha256.lower():
         raise ChecksumMismatchError(
             f"the {name} member of {request.asset}", request.executable_sha256, actual
@@ -928,7 +708,7 @@ def _install(request: _InstallRequest) -> ProvisionReport:
         request.version_dir.mkdir(parents=True, exist_ok=True)
         executable = _stage_verified_executable(request, staged)
         _replace_executable(executable, target, rerun=_install_command(request))
-        request.on_progress("Recording the installed Qdrant server...")
+        request.on_progress(f"Recording the installed {_SUBJECT}...")
         _write_manifest(
             request.version_dir,
             asset=request.asset,

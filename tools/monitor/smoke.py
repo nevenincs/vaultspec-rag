@@ -22,7 +22,7 @@ from urllib.request import Request
 from tools.binaries.build_pyapp import glibc_version, required_symbol_versions
 from tools.binaries.native import host_target_triple
 from vaultspec_rag._loopback_http import LOOPBACK_OPENER
-from vaultspec_rag.qdrant_runtime._provision import verify_native_binary
+from vaultspec_rag.native_binary._install import verify_native_binary
 
 
 def isolated_environment(directory: Path) -> dict[str, str]:

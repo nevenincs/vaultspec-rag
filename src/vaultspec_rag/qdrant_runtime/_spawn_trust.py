@@ -36,8 +36,8 @@ from typing import TYPE_CHECKING
 
 from .._win32 import WIN_CREATE_NEW_PROCESS_GROUP, WIN_CREATE_NO_WINDOW
 from ..config._types import EnvVar
+from ..native_binary._hold import HeldExecutable, held_executable
 from ._constants import QDRANT_SERVER_VERSION, BinarySource, ResolvedBinary
-from ._executable_hold import HeldExecutable, held_executable
 from ._managed_install import (
     InstallState,
     classify_managed_binary,

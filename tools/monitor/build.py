@@ -33,7 +33,7 @@ from tools.packaging.products import (
     VAULTSPEC_RAG,
     is_windows_target,
 )
-from vaultspec_rag.qdrant_runtime._provision import file_sha256, verify_native_binary
+from vaultspec_rag.native_binary._install import file_sha256, verify_native_binary
 
 ROOT = Path(__file__).resolve().parents[2]
 

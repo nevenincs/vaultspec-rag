@@ -6,9 +6,10 @@ tags:
 date: '2026-10-13'
 modified: '2026-10-13'
 body_schema: 'body-v2'
-body_hash: 'sha256:007673f6af396290cf121bfda1f2029520db1f17be6b40c89d3d6f75cb013ae5'
+body_hash: 'sha256:c071912613fb29c5c558d108aad5dc685e7a14ccf636f00ef69dca7a02271833'
 related:
   - '[[2026-10-13-monitor-provisioning-adr]]'
+  - '[[2026-10-13-monitor-provisioning-ledger]]'
   - '[[2026-10-13-monitor-provisioning-plan]]'
   - '[[2026-10-13-monitor-provisioning-reference]]'
 ---
@@ -22,6 +23,10 @@ Auto-generated index of all documents tagged with `#monitor-provisioning`.
 ### adr
 
 - `2026-10-13-monitor-provisioning-adr` - `monitor-provisioning` adr: `Provision the compiled monitor on server start from pins carried in the wheel` | (**status:** `accepted`)
+
+### exec
+
+- `2026-10-13-monitor-provisioning-ledger` - `monitor-provisioning` ledger
 
 ### plan
 

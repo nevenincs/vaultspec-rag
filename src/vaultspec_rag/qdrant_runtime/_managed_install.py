@@ -42,13 +42,13 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from .._atomic_write import is_temporary_sibling
+from ..native_binary._hold import held_executable
+from ..native_binary._install import STAGING_SUFFIX
 from ._constants import (
     MANIFEST_FILENAME,
     QDRANT_EXECUTABLE_SHA256,
     QDRANT_SERVER_VERSION,
-    STAGING_SUFFIX,
 )
-from ._executable_hold import held_executable
 
 if TYPE_CHECKING:
     from pathlib import Path

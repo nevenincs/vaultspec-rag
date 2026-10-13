@@ -15,7 +15,7 @@ from tools.monitor.smoke import installed_browser, probe
 from tools.packaging.bundles import SMOKE_NAME, BundleError, BundleSpec, verify_bundle
 from tools.packaging.checksums import read_checksums, require
 from tools.packaging.products import MONITOR_EXECUTABLE, VAULTSPEC_RAG
-from vaultspec_rag.qdrant_runtime._provision import file_sha256
+from vaultspec_rag.native_binary._install import file_sha256
 
 ROOT = Path(__file__).resolve().parents[2]
 OWNER_MODULES = (

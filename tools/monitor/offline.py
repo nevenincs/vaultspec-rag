@@ -19,7 +19,7 @@ from tools.binaries.bun_toolchain import provision_bun
 from tools.binaries.native import host_target_triple
 from tools.monitor.smoke import probe
 from vaultspec_rag._fd_lock import lock_fd_exclusive, unlock_fd
-from vaultspec_rag.qdrant_runtime._provision import verify_native_binary
+from vaultspec_rag.native_binary._install import verify_native_binary
 
 if TYPE_CHECKING:
     from collections.abc import Generator
