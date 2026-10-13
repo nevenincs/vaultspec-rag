@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import os
 import stat
+import sys
 from threading import Thread
 from typing import TYPE_CHECKING, cast
 
@@ -24,6 +25,8 @@ from vaultspec_core.core.enums import (
 
 from ..commands._install import install_run
 from ..commands._uninstall import uninstall_run
+from ..config._types import EnvVar
+from ..operator_state._topology import environment_root
 from ..torch_config import _inspect, _mutate
 from ..torch_config._constants import TorchConfigState
 
@@ -72,6 +75,27 @@ class TestInstallTorchConfig:
             path=consumer_workspace, configure_torch=False, assume_yes=True
         )
         assert report.torch_config_action == "disabled"
+        assert _sha(consumer_workspace / "pyproject.toml") == sha_before
+
+    def test_install_from_a_tool_environment_leaves_pyproject_alone(
+        self, consumer_workspace: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A uv tool host never syncs from the repository it sets up.
+
+        ``UV_TOOL_DIR`` above this interpreter's environment is how uv marks a
+        tool environment whose receipt is unreadable, so the real classifier
+        reads the running interpreter as a tool. Dropping the tool clause from
+        the torch gate fails the action assertion with ``applied``.
+        """
+        monkeypatch.setenv(
+            EnvVar.UV_TOOL_DIR.value,
+            str(environment_root(sys.executable).parent),
+        )
+        sha_before = _sha(consumer_workspace / "pyproject.toml")
+        report = install_run(
+            path=consumer_workspace, assume_yes=True, repair_tool_torch=False
+        )
+        assert report.torch_config_action == "not_applicable"
         assert _sha(consumer_workspace / "pyproject.toml") == sha_before
 
     def test_install_idempotent_on_second_run(self, consumer_workspace: Path) -> None:

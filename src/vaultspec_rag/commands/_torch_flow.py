@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import logging
+import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ..operator_state import _compute
 from ..operator_state._installation import InstallRole
+from ..operator_state._topology import (
+    RuntimeEnvKind,
+    classify_environment,
+    environment_root,
+)
 from ..torch_config import _direct_dep, _inspect, _mutate
 from ..torch_config._constants import (
     DIRECT_TORCH_REQUIREMENT,
@@ -118,6 +124,17 @@ def _handle_customised_state(pyproject: Path, report: InstallReport) -> None:
     )
 
 
+def _runs_from_a_project_environment() -> bool:
+    """Whether this interpreter could belong to the target's own project.
+
+    A uv tool environment or a uvx cache environment is never synced from the
+    target's ``pyproject.toml``, so a torch block written there would change a
+    user-owned file without affecting the torch this installation runs.
+    """
+    kind = classify_environment(environment_root(sys.executable))
+    return kind not in {RuntimeEnvKind.UV_TOOL, RuntimeEnvKind.UVX_EPHEMERAL}
+
+
 def _run_torch_config_install(
     *,
     target: Path,
@@ -126,9 +143,11 @@ def _run_torch_config_install(
 ) -> None:
     """Apply the cu130 torch-config patch to the consumer pyproject.
 
-    Only an inference host is configured. A client installation (no ``gpu``
-    extra) sends every search to the service and never needs torch, so it is
-    neither prompted nor patched and the pyproject is left untouched.
+    Only an inference host running from an environment the target's project
+    could own is configured. A client installation (no ``gpu`` extra) sends
+    every search to the service and never needs torch, and a tool or uvx host
+    never syncs from the target, so neither is prompted nor patched and the
+    pyproject is left untouched.
 
     Decisions are recorded on ``report``. The body converts the
     raise-paths from :mod:`vaultspec_rag.torch_config`
@@ -140,7 +159,10 @@ def _run_torch_config_install(
     """
     if not options.configure_torch:
         report.torch_config_action = TorchConfigAction.DISABLED
-    elif _compute.installed_role()[0] is InstallRole.CLIENT:
+    elif (
+        _compute.installed_role()[0] is InstallRole.CLIENT
+        or not _runs_from_a_project_environment()
+    ):
         report.torch_config_action = TorchConfigAction.NOT_APPLICABLE
     else:
         pyproject = target / "pyproject.toml"
