@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react";
-import { request, type RecordValue } from "./model";
+import { MonitorUnreachableError, request, type RecordValue } from "./model";
 
-export type Observation<T> = { data?: T; observedAt?: number; error?: string };
+export type Observation<T> = {
+  data?: T;
+  observedAt?: number;
+  error?: string;
+  unreachable?: boolean;
+};
 type StoredObservation<T> = Observation<T> & { path: string };
 
 /** One bounded, non-overlapping observer. Scope changes cancel the old owner. */
@@ -37,6 +42,7 @@ export function usePolling<T>(
               error instanceof Error
                 ? error.message
                 : "Unable to load data from the service.",
+            unreachable: error instanceof MonitorUnreachableError,
           }));
         }
       } finally {

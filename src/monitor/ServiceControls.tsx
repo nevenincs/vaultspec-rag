@@ -8,19 +8,30 @@ import {
   Modal,
   Stack,
 } from "@carbon/react";
-import { object, request, text, type RecordValue } from "./model";
+import {
+  MonitorUnreachableError,
+  object,
+  request,
+  text,
+  type RecordValue,
+} from "./model";
+
+const stoppedWithMonitor =
+  "The service stopped, and this monitor closed with it. Run `vaultspec-rag server start` to start it again.";
 
 export function ServiceControls({
   health,
   state,
   lifecycle,
   stale,
+  unreachable,
   onRefresh,
 }: {
   health?: RecordValue;
   state?: RecordValue;
   lifecycle?: RecordValue;
   stale: boolean;
+  unreachable: boolean;
   onRefresh: () => void;
 }) {
   const [pending, setPending] = useState("");
@@ -32,6 +43,7 @@ export function ServiceControls({
   const busy = useRef(false);
   const quiesce = object(state?.quiesce);
   const mode = text(quiesce.state, text(health?.status, "unknown"));
+  const borrowed = quiesce.borrower_bound === true;
   const stopped = lifecycle?.state === "stopped" && (!health || stale);
   const send = async (action: string) => {
     if (busy.current) return;
@@ -49,20 +61,20 @@ export function ServiceControls({
       );
       setFeedback({
         failed: false,
-        message: text(
-          result.message,
-          text(
-            result.status,
-            text(object(result.data).status, "Service action completed."),
-          ),
-        ),
+        message: text(result.message, "Service action completed."),
       });
     } catch (error) {
-      setFeedback({
-        failed: true,
-        message:
-          error instanceof Error ? error.message : "Service action failed.",
-      });
+      setFeedback(
+        action === "stop" && error instanceof MonitorUnreachableError
+          ? { failed: false, message: stoppedWithMonitor }
+          : {
+              failed: true,
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "Service action failed.",
+            },
+      );
     } finally {
       busy.current = false;
       setPending("");
@@ -77,7 +89,9 @@ export function ServiceControls({
             size="lg"
             kind="primary"
             disabled={
-              Boolean(pending) || (!stopped && Boolean(health) && !stale)
+              Boolean(pending) ||
+              unreachable ||
+              (!stopped && Boolean(health) && !stale)
             }
             onClick={() => void send("start")}
           >
@@ -110,6 +124,7 @@ export function ServiceControls({
               !health ||
               stopped ||
               stale ||
+              borrowed ||
               ![
                 "quiesced",
                 "paused",
@@ -134,6 +149,15 @@ export function ServiceControls({
           </Button>
         </Column>
       </Grid>
+      {borrowed && (
+        <InlineNotification
+          lowContrast
+          hideCloseButton
+          kind="info"
+          title="Paused for a GPU borrower"
+          subtitle="Another process, such as a GPU test run, borrowed the GPU and paused the service. It resumes on its own when that process finishes."
+        />
+      )}
       {pending && (
         <InlineLoading description={`${pending} service requested…`} />
       )}
@@ -156,8 +180,8 @@ export function ServiceControls({
         onRequestSubmit={() => void send("stop")}
       >
         <p>
-          Active work will stop. You can start the service again from this
-          monitor.
+          Active work will stop, and this monitor closes with the service. Run{" "}
+          <code>vaultspec-rag server start</code> to start it again.
         </p>
       </Modal>
     </Stack>
