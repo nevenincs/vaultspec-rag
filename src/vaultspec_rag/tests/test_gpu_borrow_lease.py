@@ -947,3 +947,78 @@ def test_a_refusal_the_service_named_reaches_the_operator_unchanged() -> None:
 
     assert "could not lend it the GPU" in refused
     assert "did not acknowledge" not in refused
+
+
+def test_a_resume_that_found_no_service_is_not_called_a_refusal() -> None:
+    """A service that is gone has no pause to clear, and must not read as one.
+
+    "The service did not acknowledge borrower resume" was the whole message for
+    every outcome, so a session that ended after its service had been stopped
+    read exactly like a service that refused the resume - and sent the reader to
+    the refusal log lines of an unrelated request. Nothing answered, and the
+    message has to say that.
+
+    Mutation check: answered ``None`` with the generic sentence, the shape this
+    had. Observed the first assertion fail on "could not be reached" being
+    absent from it; the stopped-service coordinator test fails on the same
+    assertion.
+    """
+    from ..cli._gpu_lease import _resume_refusal_message
+
+    gone = _resume_refusal_message(None)
+
+    assert "could not be reached" in gone
+    assert "comes up running" in gone
+    assert "did not acknowledge" not in gone
+
+
+def test_a_resume_refusal_the_service_named_reaches_the_operator_unchanged() -> None:
+    """A service that refuses the resume says why, and only it can.
+
+    A different borrower holding the pause and a lease the service could not
+    verify both come back as the same non-running answer, with opposite
+    remedies. The service names which one; this side must not replace the name
+    with a sentence true of both.
+
+    Mutation check: dropped the named-refusal branch. Observed this assertion
+    fail on the still-held sentence arriving instead of the service's own; the
+    refused-resume coordinator test fails on "does not match the live lease".
+    """
+    from ..cli._gpu_lease import _resume_refusal_message
+
+    refused = _resume_refusal_message(
+        {
+            "ok": False,
+            "status": "borrower_lease_mismatch",
+            "error": "borrower_lease_mismatch",
+            "message": (
+                "A different borrower already holds this pause, so this "
+                "capability cannot act on it."
+            ),
+            "quiesce": _envelope(state="quiesced", borrower_bound=True),
+        }
+    )
+
+    assert refused == (
+        "A different borrower already holds this pause, so this capability "
+        "cannot act on it."
+    )
+
+
+def test_a_resume_that_left_the_service_held_names_the_state_it_is_in() -> None:
+    """An answer without a named refusal still says what the service is doing.
+
+    Mutation check: dropped the state branch. Observed this assertion fail on
+    the generic sentence arriving with no state in it.
+    """
+    from ..cli._gpu_lease import _resume_refusal_message
+
+    held = _resume_refusal_message(
+        {"ok": False, "quiesce": _envelope(state="warming", admissions_open=False)}
+    )
+    assert "'warming'" in held
+
+    assert (
+        _resume_refusal_message({"ok": False})
+        == "The service did not acknowledge borrower resume."
+    )

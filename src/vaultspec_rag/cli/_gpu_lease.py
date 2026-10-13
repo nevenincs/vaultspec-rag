@@ -93,21 +93,18 @@ def run_with_borrowed_gpu(
         failure = exc
         raise
     finally:
-        if not pause_attempted or (
-            port is not None and _resume_is_acknowledged(lease, port)
-        ):
+        refusal = (
+            _resume_refusal(lease, port)
+            if pause_attempted and port is not None
+            else None
+        )
+        if refusal is None:
             release_gpu_borrow_lease(lease)
-        elif failure is None:
-            raise BorrowGPUError(
-                _RESUME_UNACKNOWLEDGED,
-                "The service did not acknowledge borrower resume; the GPU "
-                "borrower lease is retained until this process exits.",
-            )
         else:
             raise BorrowGPUError(
                 _RESUME_UNACKNOWLEDGED,
-                "The service did not acknowledge borrower resume; the GPU "
-                "borrower lease is retained until this process exits.",
+                f"{refusal} The GPU borrower lease is retained until this "
+                "process exits.",
             ) from failure
 
 
@@ -171,8 +168,12 @@ def _borrower_args(lease: GPUBorrowLease) -> dict[str, object]:
     return {"borrower_capability": lease.capability}
 
 
-def _resume_is_acknowledged(lease: GPUBorrowLease, port: int) -> bool:
-    """Return whether the matching authenticated resume reached running."""
+def _resume_refusal(lease: GPUBorrowLease, port: int) -> str | None:
+    """Return why the matching authenticated resume did not reach running.
+
+    ``None`` is the acknowledged resume: the service answered, said it is
+    running, and no longer holds this borrower's pause.
+    """
     result = _try_http_admin(
         "resume_service",
         _borrower_args(lease),
@@ -180,7 +181,42 @@ def _resume_is_acknowledged(lease: GPUBorrowLease, port: int) -> bool:
         timeout=get_search_timeout(None),
     )
     _reject_unrecognised_quiesce(result, verb="resume")
-    return _acknowledged_transition(result, QuiesceState.RUNNING)
+    if _acknowledged_transition(result, QuiesceState.RUNNING):
+        return None
+    return _resume_refusal_message(result)
+
+
+def _resume_refusal_message(result: dict[str, object] | None) -> str:
+    """Explain a resume that did not reach running, from what came back.
+
+    "The service did not acknowledge borrower resume" is true of every
+    outcome and therefore says nothing about which one happened. Two of them
+    have opposite remedies. A service that is gone has no pause left to clear
+    and comes back running, so there is nothing to retry. One that answered
+    and refused is still holding its pause for a reason only it can name. An
+    answer that never arrived reads as the second unless it is told apart
+    from it.
+    """
+    if result is None:
+        return (
+            "The service could not be reached to resume it: nothing is "
+            "listening on its port, so it stopped, or is restarting, while "
+            "this session held the GPU. A service that starts afterwards "
+            "comes up running, with no pause to clear."
+        )
+    named = _named_refusal(result)
+    if named is not None:
+        return named
+    quiesce = result.get("quiesce")
+    if (
+        _is_exact_quiesce_snapshot(quiesce)
+        and quiesce["state"] != QuiesceState.RUNNING.value
+    ):
+        return (
+            "The service answered the borrower resume but is still "
+            f"{quiesce['state']!r}."
+        )
+    return "The service did not acknowledge borrower resume."
 
 
 def _pause_refusal_message(result: dict[str, object] | None) -> str:

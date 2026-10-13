@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import os
+import secrets
 import subprocess
 import sys
 import threading
@@ -13,9 +15,11 @@ from typing import TYPE_CHECKING, NamedTuple
 import pytest
 import uvicorn
 
+from .._anchor_claim import publish_anchor_record
 from ..cli._gpu_lease import BorrowGPUError, run_with_borrowed_gpu
 from ..config._paths import SERVICE_STATUS_FILENAME
 from ..gpu_borrow_lease import (
+    _LEASE_RECORD_WIDTH,
     acquire_gpu_borrow_lease,
     gpu_borrow_lease_path,
     release_gpu_borrow_lease,
@@ -260,7 +264,11 @@ def test_coordinator_refuses_a_real_cross_process_borrower_then_observes_release
 def test_unacknowledged_resume_retains_lease_until_the_borrower_exits(
     isolated_singleton_dirs: Path,
 ) -> None:
-    """A failed resume retains the real lease, so a child cannot borrow early."""
+    """A failed resume retains the real lease, so a child cannot borrow early.
+
+    Mutation check: answered an unreachable service with the generic sentence.
+    Observed the "could not be reached" assertion fail on it.
+    """
     error: BorrowGPUError | None = None
     with _production_routes(isolated_singleton_dirs) as routes:
 
@@ -279,6 +287,7 @@ def test_unacknowledged_resume_retains_lease_until_the_borrower_exits(
 
     assert error is not None
     assert error.error == "borrow_gpu_resume_unacknowledged"
+    assert "could not be reached" in str(error)
     try:
         assert _child_borrower_lease_outcome() == "contended"
     finally:
@@ -286,6 +295,52 @@ def test_unacknowledged_resume_retains_lease_until_the_borrower_exits(
         assert retained_lease is not None
         release_gpu_borrow_lease(retained_lease)
     assert _child_borrower_lease_outcome() == "acquired"
+
+
+def test_a_refused_resume_reports_the_refusal_the_service_named(
+    isolated_singleton_dirs: Path,
+) -> None:
+    """A resume the service answers and refuses says why, in the service's words.
+
+    The lease record is rewritten while the work runs, so the service meets a
+    live lock whose recorded capability is not the one the coordinator sends.
+    That is a real refusal over the real route, and it is the opposite of the
+    stopped-service case above: the service is there, answers, and keeps its
+    pause. Both used to end in the same sentence.
+
+    Mutation check: dropped the named-refusal branch of the resume message.
+    Observed the "does not match the live lease" assertion fail, with the
+    service's own sentence replaced by one that only names its state.
+    """
+    error: BorrowGPUError | None = None
+    foreign = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b"=")
+    with _production_routes(isolated_singleton_dirs):
+
+        def replace_the_lease_record() -> None:
+            held = acquire_gpu_borrow_lease()
+            assert held is not None
+            publish_anchor_record(
+                held.descriptor,
+                {"pid": os.getpid(), "capability": foreign.decode("ascii")},
+                width=_LEASE_RECORD_WIDTH,
+            )
+
+        try:
+            run_with_borrowed_gpu(requested_port=None, work=replace_the_lease_record)
+        except BorrowGPUError as exc:
+            error = exc
+
+    try:
+        assert error is not None
+        assert error.error == "borrow_gpu_resume_unacknowledged"
+        assert "does not match the live lease" in str(error)
+        assert "could not be reached" not in str(error)
+        assert "did not acknowledge" not in str(error)
+        assert "retained until this process exits" in str(error)
+    finally:
+        retained_lease = acquire_gpu_borrow_lease()
+        assert retained_lease is not None
+        release_gpu_borrow_lease(retained_lease)
 
 
 def test_borrower_coordinator_imports_without_torch() -> None:
