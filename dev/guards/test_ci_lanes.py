@@ -324,6 +324,9 @@ def test_pr_verdict_requires_full_proof() -> None:
     Mutation proof: restoring light-lint authorization fails the light-verdict
     assertion; deleting the historical measured-job check fails the prior-proof
     assertion. Restoration after each mutation passes.
+    Restricting jobs to the latest attempt, dropping page aggregation, or
+    taking the first attempt fails the corresponding rerun assertion;
+    restoration passes each.
     """
     script = next(
         str(step["run"])
@@ -337,7 +340,15 @@ def test_pr_verdict_requires_full_proof() -> None:
     assert 'require_full_run "$run" ||' in prior, (
         "a prior success must prove that every full job actually passed"
     )
-    assert 'length == 5 and all(.[]; .conclusion == "success")' in script
+    assert 'if ($4 != "success") failed=1' in script
+    assert "exit(failed || count != 5)" in script
+    assert "jobs?filter=all&per_page=100" in script, (
+        "proof must include jobs that passed before a partial rerun"
+    )
+    assert "jobs=$(gh api --paginate " in script, "proof must combine every jobs page"
+    assert "sort -t $'\\t' -k1,1 -k2,2nr -k3,3nr" in script, (
+        "proof must use the latest attempt of each required job"
+    )
 
 
 @pytest.mark.parametrize("job_id", ["tests", "tests-windows"])

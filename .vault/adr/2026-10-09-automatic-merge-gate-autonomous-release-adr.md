@@ -10,9 +10,9 @@ related:
   - "[[2026-10-09-automatic-merge-gate-core-orchestration-reference]]"
 supersedes:
   - '2026-09-21-automatic-merge-gate-adr'
-modified: '2026-10-09'
+modified: '2026-10-13'
 body_schema: 'body-v2'
-body_hash: 'sha256:1b406e09732406c70314824086d4349fd01eb9af2bdf10ae03a85b35f5ba17e4'
+body_hash: 'sha256:850146218c4ee5be215bfe0fff137f5a51dd51c181c7b4950dd6ed14324c11d0'
 ---
 
 # `automatic-merge-gate` adr: `Merge starts an autonomous verified release` | (**status:** `accepted`)
@@ -54,3 +54,15 @@ The maintainer's merge approves the release source and workflow. GitHub/Sigstore
 ## Consequences
 
 One human release action remains. Release PRs wait for real full checks and Dev Server proof. Build/publication failures leave a draft and report failure. Old releases without attestations fail the new public acquisition verifier; they are not silently admitted from live checksums. Attestation availability and the admitted runner fleet become part of the release trust boundary. Administrator bypass remains a separate repository setting and is not changed by workflow code.
+
+## Ready pull-request proof, amended 2026-10-13
+
+Authorized 2026-10-13: the maintainer requested that CI jobs actually run on pull requests, that the causes of skipping and failures be fixed, and that normal CI require less maintenance.
+
+Every ready same-repository pull request from an admitted author must automatically run full lint, both supported Linux interpreter suites, Windows correctness, and the dependency audit on opening, reopening, synchronization, and readiness. A fresh head receives fresh proof; manually dispatching a full run or cycling a label is recovery, never a normal prerequisite. Draft and untrusted-code admission remain unchanged.
+
+Light lint, skipped suites, and a successful partial dispatch cannot authorize the required merge check. An unrelated label can preserve only the newest completed verdict on the same head after confirming that all five full measuring jobs passed. A newer failed or cancelled proof cannot be replaced by an older green result. The full job condition is shared by full lint and the correctness suites to prevent per-job policy drift.
+
+This replaces the ordinary ready-PR light-only synchronization policy retained from the superseded 2026-09-21 decision. Release proof, accelerator admission, and the external required check name remain unchanged. Windows correctness uses an isolated hosted VM with child-process headroom; dedicated accelerator runners continue to serve hardware proof.
+
+Grounding: `.github/workflows/merge-gate.yml` jobs `lint`, `tests`, `tests-windows`, `dependency-audit`, and `gate`; `dev/guards/test_ci_lanes.py`; PR #604. At head 897a7b24, PR run 38378550261 passed light lint while every full measuring job skipped, even though full dispatch 38378599399 failed seven Windows tests. That is insufficient merge evidence. At head 13eca2c0, automatic PR run 38385969699 admitted every full measuring job without a label or dispatch.

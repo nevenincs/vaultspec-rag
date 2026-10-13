@@ -38,9 +38,11 @@ def _release_please_steps(job_id: str) -> list[dict[object, object]]:
     assert isinstance(steps, list)
     return [
         cast("dict[object, object]", step)
-        for step in steps
+        for step in cast("list[object]", steps)
         if isinstance(step, dict)
-        and str(step.get("uses", "")).startswith("googleapis/release-please-action@")
+        and str(cast("dict[object, object]", step).get("uses", "")).startswith(
+            "googleapis/release-please-action@"
+        )
     ]
 
 
@@ -62,8 +64,11 @@ def test_release_please_dispatches_the_gate_after_its_last_branch_write() -> Non
     steps = raw.get("steps")
     assert isinstance(steps, list)
     named = {
-        str(step.get("name")): (index, step)
-        for index, step in enumerate(steps)
+        str(cast("dict[object, object]", step).get("name")): (
+            index,
+            cast("dict[object, object]", step),
+        )
+        for index, step in enumerate(cast("list[object]", steps))
         if isinstance(step, dict)
     }
     assert DISPATCH_STEP in named
@@ -121,7 +126,9 @@ def test_the_cut_proves_the_head_before_it_releases() -> None:
     )
     assert _job("prove-hardware").get("uses") == "./.github/workflows/hardware.yml"
     needs = _job("cut").get("needs")
-    needed = set(cast("list[str]", needs)) if isinstance(needs, list) else set()
+    needed: set[str] = (
+        set(cast("list[str]", needs)) if isinstance(needs, list) else set()
+    )
     missing = {"candidate", "prove-gate", "prove-hardware"} - needed
     assert not missing, f"the cut releases without {sorted(missing)}"
     releases = _release_please_steps("cut")
@@ -204,7 +211,9 @@ def test_release_readiness_requires_dev_server_and_releases_held_checks() -> Non
     assert "actions/runs/$run/approve" in approve
     verdict = str(steps["Every full check passed on this commit"]["run"])
     assert "event=workflow_dispatch&head_sha=$HEAD_SHA" in verdict
-    assert 'length == 5 and all(.[]; .conclusion == "success")' in verdict
+    assert 'require_full_run "$run" ||' in verdict
+    assert 'if ($4 != "success") failed=1' in verdict
+    assert "exit(failed || count != 5)" in verdict
 
 
 def test_release_result_refuses_a_skipped_selected_path() -> None:
