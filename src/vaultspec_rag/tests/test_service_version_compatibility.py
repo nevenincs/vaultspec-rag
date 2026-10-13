@@ -450,7 +450,13 @@ def test_an_unreadable_status_file_degrades_rather_than_reads_absent() -> None:
 
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_doctor_exits_non_zero_for_a_running_foreign_release() -> None:
-    """A foreign daemon lifts the doctor's exit code, as a dead one does."""
+    """A foreign daemon lifts the doctor's exit code, as a dead one does.
+
+    ``overall_ready`` is passed in as ``True`` for both cases to isolate the
+    release gate from the live-service and dependency axes it is layered
+    over: this proves the foreign-release check alone, regardless of what
+    the rest of the doctor computed.
+    """
     from ..cli._service_doctor import _doctor_exit_code
 
     compatible: dict[str, object] = {
@@ -464,21 +470,25 @@ def test_doctor_exits_non_zero_for_a_running_foreign_release() -> None:
         "version_compatible": False,
     }
 
-    assert _doctor_exit_code(compatible, None) == 0
-    assert _doctor_exit_code(foreign, None) == 1
+    assert _doctor_exit_code(True, compatible, None) == 0
+    assert _doctor_exit_code(True, foreign, None) == 1
 
 
 def test_doctor_ignores_the_release_when_no_daemon_was_observed() -> None:
-    """A pre-install run has no daemon to compare, and must stay exit 0.
+    """The foreign-release gate must never fire over a daemon never observed.
 
-    ``version_compatible`` is absent rather than False there, and the gate keys
-    on ``is False`` for exactly that reason.
+    ``version_compatible`` is absent rather than False there, and the gate
+    keys on ``is False`` for exactly that reason. ``overall_ready=True`` is
+    passed in to isolate this gate: a real absent daemon already makes
+    ``overall_ready`` False on its own (asserted separately on
+    ``_overall_readiness`), which is a different reason to exit non-zero
+    than a foreign release.
     """
     from ..cli._service_doctor import _doctor_exit_code
 
     absent: dict[str, object] = {"present": False, "live": False}
 
-    assert _doctor_exit_code(absent, None) == 0
+    assert _doctor_exit_code(True, absent, None) == 0
 
 
 # ---------------------------------------------------------------------------

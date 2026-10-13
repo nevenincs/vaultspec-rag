@@ -103,6 +103,33 @@ class TestReadinessReportModel:
         )
         assert one_missing.ready is False
 
+    def test_ready_counts_not_applicable_as_non_blocking(self) -> None:
+        """A client's "not needed" rows must not keep the aggregate unready.
+
+        Mutation check: requiring every row to be exactly ``READY`` (dropping
+        ``NOT_APPLICABLE`` from the non-blocking set) reads a client
+        installation, whose rows are all "not needed", as perpetually
+        unready and fails the first assertion; restoring the non-blocking
+        set passes. A row that is genuinely missing still blocks.
+        """
+        client_all_not_applicable = ReadinessReport(
+            dependencies=[
+                DependencyReadiness("torch", ReadinessStatus.NOT_APPLICABLE),
+                DependencyReadiness("models", ReadinessStatus.NOT_APPLICABLE),
+                DependencyReadiness("qdrant", ReadinessStatus.NOT_APPLICABLE),
+            ]
+        )
+        assert client_all_not_applicable.ready is True
+
+        still_missing_one = ReadinessReport(
+            dependencies=[
+                DependencyReadiness("torch", ReadinessStatus.NOT_APPLICABLE),
+                DependencyReadiness("models", ReadinessStatus.NOT_READY),
+                DependencyReadiness("qdrant", ReadinessStatus.NOT_APPLICABLE),
+            ]
+        )
+        assert still_missing_one.ready is False
+
     def test_empty_report_is_not_ready(self) -> None:
         assert ReadinessReport().ready is False
 
@@ -150,6 +177,7 @@ class TestComputeReadinessShape:
                 ReadinessStatus.READY,
                 ReadinessStatus.NOT_READY,
                 ReadinessStatus.UNKNOWN,
+                ReadinessStatus.NOT_APPLICABLE,
             }
 
     def test_report_round_trips_through_json(self) -> None:
@@ -180,12 +208,12 @@ class TestComputeReadinessShape:
         }
         assert [d["name"] for d in restored["dependencies"]] == list(_DIMENSIONS)
         assert restored["schema"]["version"] == _STORAGE_SCHEMA_VERSION
-        # Degraded reasons are the detail strings of the non-ready dimensions,
-        # so the two views can never disagree.
+        # Degraded reasons are the detail strings of the non-ready, applicable
+        # dimensions, so the two views can never disagree.
         assert restored["degraded_reasons"] == [
             dep["detail"]
             for dep in restored["dependencies"]
-            if dep["status"] != "ready" and dep["detail"]
+            if dep["status"] not in {"ready", "not_applicable"} and dep["detail"]
         ]
 
 
@@ -235,6 +263,10 @@ class TestTorchDimension:
     def test_a_client_without_torch_is_ready_not_broken(self) -> None:
         """A torch-free client never asked for an accelerator.
 
+        Its absence is reported not applicable rather than ready: a client
+        cannot start the service either way, and a "ready" label there would
+        say otherwise.
+
         Mutation check: mapping every non-ready capability to not-ready reports
         this client as broken and fails the status assertion; restoring the
         client branch passes.
@@ -243,7 +275,7 @@ class TestTorchDimension:
             ComputeReport(capability=ComputeCapability.NOT_APPLICABLE)
         )
 
-        assert torch_dep.status is ReadinessStatus.READY
+        assert torch_dep.status is ReadinessStatus.NOT_APPLICABLE
         assert "client" in torch_dep.detail
 
     def test_torch_dimension_does_not_force_a_model_load(self) -> None:

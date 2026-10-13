@@ -98,11 +98,28 @@ class ReadinessStatus(StrEnum):
             client is not importable). Distinct from ``NOT_READY`` so a
             missing prerequisite is not misreported as a broken
             dependency.
+        NOT_APPLICABLE: this installation never needs the dependency (a
+            client installation needing no torch, model cache, or Qdrant
+            binary of its own). Distinct from ``READY`` so a row that says
+            nothing is required is never read as a signal that this
+            installation can itself start the service; it never blocks the
+            aggregate :attr:`ReadinessReport.ready`, the same as ``READY``.
     """
 
     READY = "ready"
     NOT_READY = "not_ready"
     UNKNOWN = "unknown"
+    NOT_APPLICABLE = "not_applicable"
+
+
+#: Statuses that never block the aggregate readiness verdict: a dependency
+#: this installation does not need is as little an obstacle as one that is
+#: provisioned, but it must never be rendered or counted as the same thing
+#: as "this installation can itself answer requests" - see ``READY`` vs
+#: ``NOT_APPLICABLE`` above.
+_NON_BLOCKING_STATUSES = frozenset(
+    {ReadinessStatus.READY, ReadinessStatus.NOT_APPLICABLE}
+)
 
 
 @dataclass
@@ -215,9 +232,14 @@ class ReadinessReport:
 
     @property
     def ready(self) -> bool:
-        """True when every known dependency dimension is ``READY``."""
+        """True when every dependency is ``READY`` or ``NOT_APPLICABLE``.
+
+        Generic over whatever rows :func:`compute_readiness` reports: a new
+        dependency row is folded in automatically, with no change here,
+        because this checks every row's status rather than naming any one.
+        """
         return bool(self.dependencies) and all(
-            dep.status == ReadinessStatus.READY for dep in self.dependencies
+            dep.status in _NON_BLOCKING_STATUSES for dep in self.dependencies
         )
 
     def dimension(self, name: str) -> DependencyReadiness | None:
@@ -246,7 +268,7 @@ class ReadinessReport:
         degraded_reasons = [
             dep.detail
             for dep in self.dependencies
-            if dep.status is not ReadinessStatus.READY and dep.detail
+            if dep.status not in _NON_BLOCKING_STATUSES and dep.detail
         ]
 
         return {
@@ -361,10 +383,12 @@ def _torch_readiness(compute: ComputeReport) -> DependencyReadiness:
         status = ReadinessStatus.READY
         detail = f"{str(compute.backend).upper()} available on {compute.device_name}"
     else:
-        # A client never needs torch, so its absence is ready rather than a
-        # defect; a build nobody has verified is not yet known either way.
+        # A client never needs torch, so its absence is not applicable
+        # rather than a defect - and never "ready", which would read as this
+        # installation being able to start the service; a build nobody has
+        # verified is not yet known either way.
         if capability is ComputeCapability.NOT_APPLICABLE:
-            status = ReadinessStatus.READY
+            status = ReadinessStatus.NOT_APPLICABLE
         elif capability.is_defect:
             status = ReadinessStatus.NOT_READY
         else:
@@ -469,7 +493,7 @@ def _models_readiness(
     if capability is ComputeCapability.NOT_APPLICABLE:
         return DependencyReadiness(
             name="models",
-            status=ReadinessStatus.READY,
+            status=ReadinessStatus.NOT_APPLICABLE,
             detail=_CLIENT_NEEDS_NONE,
             info={"repos": {}},
         )
@@ -632,9 +656,18 @@ def _qdrant_readiness(
         server_mode=server_mode, capability=capability, remote=state.mode == "remote"
     )
     if unneeded is not None:
+        # Only the client case is "not applicable" - this installation never
+        # runs a server binary, whatever backend is configured. The
+        # local-only and already-remote cases are a real "ready": this
+        # machine's chosen backend genuinely needs no binary of its own.
+        status = (
+            ReadinessStatus.NOT_APPLICABLE
+            if capability is ComputeCapability.NOT_APPLICABLE
+            else ReadinessStatus.READY
+        )
         return DependencyReadiness(
             name="qdrant",
-            status=ReadinessStatus.READY,
+            status=status,
             detail=unneeded,
             info={
                 "binary_source": "not_needed",

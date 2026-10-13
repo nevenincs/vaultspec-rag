@@ -74,6 +74,10 @@ def _rows(capability: ComputeCapability) -> dict[str, DependencyReadiness]:
 def test_a_client_is_told_it_needs_neither_and_is_not_called_unready() -> None:
     """A client's report has nothing missing, because it needs nothing.
 
+    Its rows read "not applicable", not "ready": a client cannot itself
+    start the service, and a "ready" row would say otherwise. Not applicable
+    still never counts as unready - it does not block the aggregate.
+
     Mutation check: with the client answer removed from the models row, that
     row reads not ready and names the missing repositories, and the status
     assertion fails for ``models``. With it removed from the Qdrant row, that
@@ -83,7 +87,7 @@ def test_a_client_is_told_it_needs_neither_and_is_not_called_unready() -> None:
     rows = _rows(ComputeCapability.NOT_APPLICABLE)
 
     for name, row in rows.items():
-        assert row.status == ReadinessStatus.READY, (name, row.detail)
+        assert row.status == ReadinessStatus.NOT_APPLICABLE, (name, row.detail)
         assert _CLIENT in row.detail, (name, row.detail)
     assert rows["models"].info == {"repos": {}}
     assert rows["qdrant"].info["binary_source"] == "not_needed"

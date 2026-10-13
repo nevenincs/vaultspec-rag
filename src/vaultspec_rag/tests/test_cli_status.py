@@ -266,12 +266,41 @@ class TestStatusCommand:
             _view(
                 {"storage_path": "data", "vault_count": 3, "code_count": 0},
                 _installation(_compute(ComputeCapability.READY)),
+                # A running service: the index-selector next action is what
+                # is under test here, not the no-service case, which has its
+                # own test below.
+                service_port=8766,
             )
         )
 
         lines = _plain_lines(capsys.readouterr().out)
         next_action_index = lines.index("Next action:")
         assert lines[next_action_index + 1] == "vaultspec-rag index --type code"
+
+    def test_status_next_action_starts_the_service_when_none_is_running(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """With no service running, the next action starts it, not indexing.
+
+        An empty index would otherwise select `index --type all`, which
+        fails with no service to index into. Mutation check: computing the
+        next action from the index counts alone regardless of whether a
+        service answered - the pre-fix behaviour - offers
+        `vaultspec-rag index --type all` here and fails the assertion;
+        checking for a running service first passes.
+        """
+        from ..cli._status import _render_status_text
+
+        _render_status_text(
+            _view(
+                {"storage_path": "data", "vault_count": 0, "code_count": 0},
+                _installation(_compute(ComputeCapability.READY)),
+            )
+        )
+
+        lines = _plain_lines(capsys.readouterr().out)
+        next_action_index = lines.index("Next action:")
+        assert lines[next_action_index + 1] == "vaultspec-rag server start"
 
     def test_verbose_adds_the_detail_the_overview_leaves_out(
         self, capsys: pytest.CaptureFixture[str]
