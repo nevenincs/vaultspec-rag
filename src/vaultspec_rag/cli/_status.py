@@ -9,7 +9,11 @@ from typing import TYPE_CHECKING, Annotated, NoReturn, cast
 import typer
 
 from .._job_values import count
-from .._operator_commands import index_command, server_status_command
+from .._operator_commands import (
+    index_command,
+    server_start_command,
+    server_status_command,
+)
 from .._source_types import PublicSourceType
 from ..operator_state._installation import ComputeCapability
 from ..operator_state._models import (
@@ -359,7 +363,13 @@ def _render_status_text(view: _StatusView, *, verbose: bool = False) -> None:
         _plain(line, soft_wrap=True)
     if service_port is not None:
         _plain(f"Service details: {server_status_command(service_port)}")
-    _print_next_action(_status_next_action(vault_count, code_count, document_count))
+        next_action = _status_next_action(vault_count, code_count, document_count)
+    else:
+        # Nothing is running to index into, so the first action is starting
+        # the service, not indexing - reuses the same command builder
+        # `server status` offers for a stopped service.
+        next_action = server_start_command()
+    _print_next_action(next_action)
 
 
 def _emit_status_json(view: _StatusView) -> None:
