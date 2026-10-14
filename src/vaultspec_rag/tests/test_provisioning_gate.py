@@ -11,7 +11,9 @@ decline.
 
 Two inputs are pinned, as everywhere in the suite: the installation role and
 the answer of the interpreter that would run the daemon. Everything else is
-real. The model cache is an empty directory the test owns with the hub's
+real, including the machine's accelerator, which is read rather than pinned:
+the cases that depend on it assert the branch that reading puts the machine
+in. The model cache is an empty directory the test owns with the hub's
 offline switch set, and the Qdrant release source is a closed loopback port,
 so a command that wrongly reached either fetch fails where it stands, in
 seconds, without a request leaving the machine - and the Qdrant provisioner's
@@ -37,17 +39,14 @@ from ..commands._provision import (
 )
 from ..config._paths import persist_local_only, read_persisted_local_only
 from ..config._types import EnvVar
-from ..operator_state._installation import (
-    ComputeCapability,
-    HardwarePresence,
-    InstallRole,
-)
+from ..operator_state._hardware import read_hardware
+from ..operator_state._installation import ComputeCapability, InstallRole
 from ._cli_helpers import app, runner
 from ._model_cache_seed import STAND_IN_DENSE, STAND_IN_RERANKER, seed_model_cache
 from .conftest import (
+    SERVING_HARDWARE,
     managed_env,
     pin_daemon_capability,
-    pin_hardware_presence,
     pin_install_role,
 )
 
@@ -131,18 +130,6 @@ def full_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def machine_with_a_gpu(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A machine something can serve on, whatever this runner has."""
-    pin_hardware_presence(monkeypatch, HardwarePresence.NVIDIA_GPU)
-
-
-@pytest.fixture
-def machine_without_an_accelerator(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A machine nothing can serve on, whatever this runner has."""
-    pin_hardware_presence(monkeypatch, HardwarePresence.NONE)
-
-
-@pytest.fixture
 def unready_host(monkeypatch: pytest.MonkeyPatch) -> None:
     """Hold the inference library with a torch that cannot use a GPU.
 
@@ -170,31 +157,43 @@ def _step(outcome: ProvisionOutcome, step: ProvisionStep) -> ProvisionStepResult
     return next(result for result in outcome.steps if result.step == step)
 
 
-@pytest.mark.usefixtures("unready_host", "machine_with_a_gpu")
+@pytest.mark.usefixtures("unready_host")
 class TestAHostThatCannotRunTheServiceItself:
     """Every provisioning surface, from one environment that cannot serve.
 
-    The machine can: it has a supported accelerator, so a start runs the
-    service from the managed runtime, and what that runtime will need is
-    fetched here rather than withheld from it.
+    What each surface does depends on the machine, because the daemon does not
+    run in this environment: a start runs the service from the managed runtime.
+    Where the machine has a supported accelerator that runtime could serve, so
+    what it will need is fetched here rather than withheld from it. Where
+    nothing on the machine could serve, a runtime built there could not either,
+    so nothing is fetched, nothing is written, and the reason names the
+    machine rather than the environment.
+
+    The machine is the one the suite runs on, read as the product reads it, and
+    each case asserts exactly what that reading implies. A workstation proves
+    the first branch and an accelerator-free runner the second.
     """
 
-    def test_install_provisions_for_the_runtime_that_will_serve(
+    def test_install_fetches_for_a_runtime_only_where_one_could_serve(
         self, workspace: Path, managed: Path, empty_cache: Path
     ) -> None:
-        """Both fetches are entered, because something here will serve.
+        """Both fetches follow whether anything on this machine could serve.
 
-        The environment's own torch cannot run the service, but the daemon
-        does not run in it: a start runs the service from the managed runtime,
-        and the model files and the Qdrant server that runtime needs are these
-        ones. So neither step is skipped. Both are reached and both report
-        their own failure here, which is what this fixture's empty offline
-        cache and closed release source are for: a step that was skipped
-        reports neither.
+        On a machine that could, both are entered and both report their own
+        failure here, which is what this fixture's empty offline cache and
+        closed release source are for: a step that was skipped reports
+        neither. On one that could not, both are skipped with the reason and
+        the command that fetches, and the managed directory is never created.
 
-        Mutation check: gating the two steps on what this environment can do
-        again answers both ``skipped`` and fails the first assertion.
+        Mutation check (a machine that serves): gating the two steps on what
+        this environment can do, with no question about the machine, answers
+        both ``skipped`` and fails the first assertion on ``skipped``. The
+        branch for a machine that cannot serve is the accelerator-free lane's:
+        here it was shown only to fail, on the skipped assertion, when forced
+        onto a machine that can.
         """
+        presence = read_hardware().presence
+
         report = install_run(
             path=workspace, provision=True, configure_torch=False, assume_yes=True
         )
@@ -202,12 +201,22 @@ class TestAHostThatCannotRunTheServiceItself:
         outcome = _outcome(report)
         for step in (ProvisionStep.MODELS, ProvisionStep.QDRANT):
             result = _step(outcome, step)
-            assert result.action == ProvisionAction.FAILED, result.detail
-            assert _CANNOT_RUN not in result.detail
-            assert _NO_SERVICE_HERE not in result.detail
-        assert not outcome.ok
-        # The provisioner was entered, which is what left this behind.
-        assert managed.exists()
+            if presence in SERVING_HARDWARE:
+                assert result.action == ProvisionAction.FAILED, result.detail
+                assert _CANNOT_RUN not in result.detail
+                assert _NO_SERVICE_HERE not in result.detail
+            else:
+                assert result.action == ProvisionAction.SKIPPED, result.detail
+                assert _NO_SERVICE_HERE in result.detail
+                assert presence.label in result.detail
+                assert _START_FETCHES in result.detail
+        if presence in SERVING_HARDWARE:
+            assert not outcome.ok
+            # The provisioner was entered, which is what left this behind.
+            assert managed.exists()
+        else:
+            assert outcome.ok, "a skip for a machine with no GPU is not a failure"
+            assert not managed.exists(), _tree(managed.parent)
         assert _tree(empty_cache) == []
 
     def test_install_does_not_record_server_mode_as_chosen(
@@ -215,34 +224,42 @@ class TestAHostThatCannotRunTheServiceItself:
     ) -> None:
         """No flag named a backend, and nothing was provisioned for one.
 
-        The reason is the run, not the environment: a launcher whose own torch
-        cannot serve is served by the managed runtime, so what withholds the
-        choice here is a provisioning run that did not finish - this
-        fixture's offline cache and closed release source - and the sentence
-        says that rather than naming the environment.
+        Where the machine could serve, the reason is the run, not the
+        environment: a launcher whose own torch cannot serve is served by the
+        managed runtime, so what withholds the choice is a provisioning run
+        that did not finish - this fixture's offline cache and closed release
+        source. Where nothing on the machine could, the sentence names the
+        machine's accelerator, and nothing at all was written.
 
         Mutation check: with the choice saved for any host installation, as it
         was, the marker reads ``False`` and the first assertion fails;
         restoring passes.
         """
         del empty_cache
+        presence = read_hardware().presence
+
         report = install_run(
             path=workspace, provision=True, configure_torch=False, assume_yes=True
         )
 
-        # The choice is what must not be written. The managed directory is a
-        # different question, and the fetch this run now makes for the runtime
-        # legitimately creates it; the machine that can serve nothing proves
-        # the untouched-directory half.
+        # The choice is what must not be written. Whether the managed directory
+        # exists is the fetch's own question, and differs by branch below.
         assert read_persisted_local_only() is None
         assert "local-only.json" not in _tree(managed)
         backend = _outcome(report).backend
         assert backend is not None
         assert backend.saved is False
         assert backend.local_only is None
-        assert "provisioning did not finish" in backend.detail
         assert _CANNOT_RUN not in backend.detail
         assert "runs the managed Qdrant server" in backend.detail
+        if presence in SERVING_HARDWARE:
+            assert "provisioning did not finish" in backend.detail
+        else:
+            assert (
+                f"no environment that can run it yet ({presence.label})"
+                in backend.detail
+            )
+            assert not managed.exists(), _tree(managed.parent)
 
     def test_install_keeps_an_explicit_local_only_choice(
         self, workspace: Path, managed: Path, empty_cache: Path
@@ -275,56 +292,96 @@ class TestAHostThatCannotRunTheServiceItself:
         assert "runs no Qdrant server" in backend.detail
         assert LOCAL_STORE_SELECTED in backend.detail
 
-    def test_warmup_fetches_for_the_runtime_too(
+    def test_warmup_fetches_for_a_runtime_only_where_one_could_serve(
         self, managed: Path, empty_cache: Path
     ) -> None:
-        """The fetch is entered and fails on the offline cache, not skipped.
+        """On a machine that could serve the fetch is entered and fails.
 
-        Mutation check: gating the model step on what this environment can do
-        again exits zero with nothing fetched, and the exit assertion fails.
+        It fails on the offline cache rather than being skipped. Where nothing
+        on the machine could serve, it is skipped and exits cleanly, and writes
+        nothing.
+
+        Mutation check (a machine that serves): gating the model step on what
+        this environment can do again exits zero with nothing fetched, and the
+        exit assertion fails.
         """
-        del managed
+        presence = read_hardware().presence
+
         result = runner.invoke(app, ["server", "warmup"])
 
         output = " ".join(result.output.split())
-        assert result.exit_code == 1, result.output
-        assert "not in the local cache" in output
-        assert _NO_SERVICE_HERE not in output
+        if presence in SERVING_HARDWARE:
+            assert result.exit_code == 1, result.output
+            assert "not in the local cache" in output
+            assert _NO_SERVICE_HERE not in output
+        else:
+            assert result.exit_code == 0, result.output
+            assert _NO_SERVICE_HERE in output
+            assert not managed.exists()
         assert _tree(empty_cache) == []
 
-    def test_the_qdrant_install_verb_fetches_for_the_runtime_too(
+    def test_the_qdrant_install_verb_fetches_for_a_runtime_only_where_one_could_serve(
         self, managed: Path, empty_cache: Path
     ) -> None:
-        """Entered, and failing on the closed source rather than skipping.
+        """Entered and failing on the closed source, or skipped and clean.
 
-        Mutation check: gating the verb on what this environment can do again
-        answers ``skipped`` and exits zero, failing both assertions.
+        Mutation check (a machine that serves): gating the verb on what this
+        environment can do again answers ``skipped`` and exits zero, failing
+        both assertions on the failure.
         """
         del empty_cache
+        presence = read_hardware().presence
+
         result = runner.invoke(app, ["server", "qdrant", "install", "--json"])
 
-        assert result.exit_code == 1, result.output
         payload = cast("dict[str, object]", json.loads(result.stdout))
-        assert payload["ok"] is False
-        assert payload["error"] == "qdrant_provision_failed"
-        assert managed.exists()
+        if presence in SERVING_HARDWARE:
+            assert result.exit_code == 1, result.output
+            assert payload["ok"] is False
+            assert payload["error"] == "qdrant_provision_failed"
+            assert managed.exists()
+        else:
+            assert result.exit_code == 0, result.output
+            data = cast("dict[str, object]", payload["data"])
+            assert payload["ok"] is True
+            assert data["action"] == "skipped"
+            assert _NO_SERVICE_HERE in str(data["message"])
+            assert not managed.exists(), _tree(managed.parent)
 
-    def test_qdrant_status_names_the_install_it_now_needs(
+    def test_qdrant_status_names_the_install_only_where_the_server_is_needed(
         self, managed: Path, empty_cache: Path
     ) -> None:
-        """The server is needed here after all, so the next action says so.
+        """A machine that could serve needs the server, so the next action says so.
 
-        Mutation check: gating status on what this environment can do again
-        prints "Not needed here" and no next action, failing both assertions.
+        Where nothing on the machine could serve, status says the server is
+        not needed here, gives the reason, and sends nobody to install it.
+
+        Mutation check (a machine that serves): gating status on what this
+        environment can do again prints "Not needed here" and no next action,
+        failing both assertions.
         """
         del empty_cache
-        del managed
+        presence = read_hardware().presence
+
         human = runner.invoke(app, ["server", "qdrant", "status"])
+        structured = runner.invoke(app, ["server", "qdrant", "status", "--json"])
 
         output = " ".join(human.output.split())
         assert human.exit_code == 0, human.output
-        assert "Next action: vaultspec-rag server qdrant install" in output
-        assert "Not needed here:" not in output
+        envelope = cast("dict[str, object]", json.loads(structured.stdout))
+        data = cast("dict[str, object]", envelope["data"])
+        if presence in SERVING_HARDWARE:
+            assert "Next action: vaultspec-rag server qdrant install" in output
+            assert "Not needed here:" not in output
+            assert data["server_unneeded"] is None
+        else:
+            assert "Executable: not installed" in output
+            assert "Not needed here:" in output
+            assert _NO_SERVICE_HERE in output
+            assert "Next action" not in output
+            assert "server qdrant install" not in output
+            assert _NO_SERVICE_HERE in str(data["server_unneeded"])
+            assert not managed.exists()
 
     def test_a_start_the_port_guard_refuses_fetches_nothing_for_a_runtime(
         self, managed: Path, empty_cache: Path
@@ -337,7 +394,7 @@ class TestAHostThatCannotRunTheServiceItself:
         machine guards - this start is aimed at a port something else holds,
         and is refused for the port, having written nothing. Which
         environment would serve is still decided first; deciding costs
-        nothing.
+        nothing, and does not depend on the machine.
 
         Mutation check: creating the runtime while the environment is
         resolved, ahead of the guards, refuses this checkout as a working
@@ -352,70 +409,6 @@ class TestAHostThatCannotRunTheServiceItself:
         assert result.exit_code == 1, result.output
         payload = cast("dict[str, object]", json.loads(result.stdout))
         assert payload["error"] == "port_in_use"
-        assert not managed.exists(), _tree(managed.parent)
-
-
-@pytest.mark.usefixtures("unready_host", "machine_without_an_accelerator")
-class TestAMachineThatCanRunNoServiceAtAll:
-    """Nothing is fetched where no environment on the machine could serve.
-
-    The managed runtime is no answer here: a runtime built on a machine with
-    no supported accelerator could not run the service either. So the skip and
-    its reason stay, and they name the machine rather than the environment.
-    """
-
-    def test_install_fetches_nothing_and_says_why(
-        self, workspace: Path, managed: Path, empty_cache: Path
-    ) -> None:
-        """Mutation check: dropping the accelerator question answers both
-        steps by entering them, which fails on the offline cache and the
-        closed source; the skipped assertions then fail on ``failed``.
-        """
-        report = install_run(
-            path=workspace, provision=True, configure_torch=False, assume_yes=True
-        )
-
-        outcome = _outcome(report)
-        for step in (ProvisionStep.MODELS, ProvisionStep.QDRANT):
-            result = _step(outcome, step)
-            assert result.action == ProvisionAction.SKIPPED, result.detail
-            assert _NO_SERVICE_HERE in result.detail
-            assert HardwarePresence.NONE.label in result.detail
-            assert _START_FETCHES in result.detail
-        assert outcome.ok, "a skip for a machine with no GPU is not a failure"
-        assert not managed.exists(), _tree(managed.parent)
-        assert _tree(empty_cache) == []
-
-    def test_warmup_fetches_nothing_and_exits_cleanly(
-        self, managed: Path, empty_cache: Path
-    ) -> None:
-        """Mutation check: dropping the accelerator question reaches the
-        offline cache, exits 1, and fails the exit assertion.
-        """
-        result = runner.invoke(app, ["server", "warmup"])
-
-        output = " ".join(result.output.split())
-        assert result.exit_code == 0, result.output
-        assert _NO_SERVICE_HERE in output
-        assert not managed.exists()
-        assert _tree(empty_cache) == []
-
-    def test_the_qdrant_install_verb_fetches_nothing(
-        self, managed: Path, empty_cache: Path
-    ) -> None:
-        """Mutation check: dropping the accelerator question enters the
-        provisioner, which fails on the closed source and leaves its lock
-        file behind; the action assertion fails on ``failed``.
-        """
-        del empty_cache
-        result = runner.invoke(app, ["server", "qdrant", "install", "--json"])
-
-        assert result.exit_code == 0, result.output
-        payload = cast("dict[str, object]", json.loads(result.stdout))
-        data = cast("dict[str, object]", payload["data"])
-        assert payload["ok"] is True
-        assert data["action"] == "skipped"
-        assert _NO_SERVICE_HERE in str(data["message"])
         assert not managed.exists(), _tree(managed.parent)
 
 

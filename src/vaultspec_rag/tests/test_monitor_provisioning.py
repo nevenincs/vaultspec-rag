@@ -34,7 +34,6 @@ from ..monitor_runtime import _provision as monitor_provision
 from ..monitor_runtime._assets import monitor_archive_name, monitor_executable_name
 from ..monitor_runtime._pins import MonitorPin, PinProvenance
 from ..monitor_runtime._provision import (
-    provision_monitor,
     provision_pinned_monitor,
     retire_superseded,
 )
@@ -48,6 +47,7 @@ from ._loopback_tls import (
     send_bytes,
     trusted_loopback_sources,
 )
+from ._separate_installation import INSTALLED_FROM_A_WHEEL, build_installation
 from ._stand_in_release import build_archive, sha256_hex
 from .conftest import managed_env
 
@@ -78,6 +78,17 @@ _INSTRUCTIONS = re.compile(
     r"add .* to PATH|build the monitor)\b",
     re.IGNORECASE,
 )
+
+
+#: Run in a separate installation: the entry point every command uses.
+_PROVISION_THE_MONITOR = """
+import json
+
+from vaultspec_rag.monitor_runtime._provision import provision_monitor
+
+report = provision_monitor()
+print(json.dumps({"action": str(report.action), "message": report.message}))
+"""
 
 
 def _archive(executable: bytes = _MONITOR) -> bytes:
@@ -162,10 +173,10 @@ def _install_from(
     return report, source.requests
 
 
-def _no_instruction(report: ProvisionReport) -> None:
-    """Hold an outcome to saying nothing anyone is meant to act on."""
-    assert not _INSTRUCTIONS.search(report.message), report.message
-    assert EnvVar.MONITOR_BINARY.value not in report.message
+def _no_instruction(message: str) -> None:
+    """Hold an outcome's message to saying nothing anyone is meant to act on."""
+    assert not _INSTRUCTIONS.search(message), message
+    assert EnvVar.MONITOR_BINARY.value not in message
 
 
 @pytest.mark.usefixtures("managed")
@@ -254,7 +265,7 @@ class TestWhatIsRefused:
         assert "not what this release published" in report.message
         assert "Verifying the monitor download checksum..." in lines
         assert "Extracting the monitor..." not in lines, lines
-        _no_instruction(report)
+        _no_instruction(report.message)
 
     def test_a_refusal_leaves_no_empty_directory_chain_behind(
         self, sources: LoopbackSources
@@ -300,7 +311,7 @@ class TestWhatIsRefused:
 
         assert report.action is ProvisionAction.FAILED
         assert not managed_monitor_path(pin.version, pin.target).exists()
-        _no_instruction(report)
+        _no_instruction(report.message)
 
     def test_a_source_that_cannot_be_reached_says_the_next_start_retries(
         self, sources: LoopbackSources
@@ -319,7 +330,7 @@ class TestWhatIsRefused:
         assert report.action is ProvisionAction.FAILED
         assert "could not reach the source" in report.message
         assert "The next start tries again." in report.message
-        _no_instruction(report)
+        _no_instruction(report.message)
 
     def test_a_source_that_has_no_such_file_installs_nothing(
         self, sources: LoopbackSources
@@ -340,7 +351,7 @@ class TestWhatIsRefused:
 
         assert report.action is ProvisionAction.FAILED
         assert "published no such file" in report.message
-        _no_instruction(report)
+        _no_instruction(report.message)
 
     def test_a_build_published_nowhere_fetches_nothing(
         self, sources: LoopbackSources
@@ -366,7 +377,7 @@ class TestWhatIsRefused:
         assert report.action is ProvisionAction.FAILED
         assert source.requests == []
         assert "published nowhere" in report.message
-        _no_instruction(report)
+        _no_instruction(report.message)
 
 
 @pytest.mark.usefixtures("managed")
@@ -511,17 +522,28 @@ def test_the_download_deadline_is_sized_for_the_monitor_s_own_bytes() -> None:
 
 @pytest.mark.usefixtures("managed")
 class TestTheEntryPointEveryCommandUses:
-    @pytest.mark.usefixtures("unpinned_installation")
     def test_an_installation_with_no_digests_reports_and_fetches_nothing(
-        self, sources: LoopbackSources
+        self, sources: LoopbackSources, tmp_path: Path
     ) -> None:
         """An installation with nothing to admit one provisions nothing.
 
-        What this installation carries is a stated input: a checkout that
-        compiled a monitor of its own carries digests for it, and this case
-        is the one that carries none.
+        A checkout that compiled a monitor of its own carries digests for it,
+        so this case runs in an installation of its own that carries none: the
+        shipped entry point, in a fresh interpreter, meeting the absence of
+        the generated digests rather than a reader told to find none. The
+        source is reachable and serves a release, so a request reaching it
+        would show.
+
+        Mutation: reported a refused pin as unchanged. Observed this test fail
+        on the action it compares, ``unchanged`` where ``failed`` is owed.
+        Restored; passes.
         """
         source = sources.serve(_responder(_archive()))
+        installed = build_installation(
+            tmp_path / "installation",
+            version=_VERSION,
+            direct_url=INSTALLED_FROM_A_WHEEL,
+        )
 
         with managed_env(
             **{
@@ -529,11 +551,11 @@ class TestTheEntryPointEveryCommandUses:
                 EnvVar.MONITOR_DOWNLOAD_HOSTS.value: LOOPBACK_HOST,
             }
         ):
-            report = provision_monitor()
+            answer = installed.run(_PROVISION_THE_MONITOR)
 
-        assert report.action is ProvisionAction.FAILED
+        assert answer["action"] == ProvisionAction.FAILED
         assert source.requests == []
-        _no_instruction(report)
+        _no_instruction(str(answer["message"]))
 
 
 def test_nothing_in_the_provisioner_names_the_operator_settings() -> None:

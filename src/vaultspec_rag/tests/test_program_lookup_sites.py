@@ -23,27 +23,22 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import threading
-import time
 from typing import TYPE_CHECKING
 
 import pytest
 
-from .._process_probe import _windows_image_matches, pid_image_path
+from tools.monitor.pins import GeneratedPins
+
+from .._process_probe import _windows_image_matches
 from .._python_child import inline_command
 from ..commands._mcp_topology import _restore_junction
 from ..commands._models import InstallReport
 from ..commands._tool_torch import _run_repair
 from ..commands._uv_sync import _run_uv_sync_torch
 from ..config._types import EnvVar
-from ..monitor_process import MonitorProcess
-from ..monitor_runtime._assets import (
-    MONITOR_PROGRAM,
-    monitor_archive_name,
-    monitor_executable_name,
-)
-from ..monitor_runtime._pins import MonitorPin, PinProvenance
-from ..monitor_runtime._resolve import managed_monitor_path, monitor_for_launch
+from ..monitor_runtime._assets import MONITOR_PROGRAM
+from ..monitor_runtime._pins import PinProvenance
+from ..monitor_runtime._resolve import managed_monitor_path
 from ..native_binary._install import file_sha256
 from ..native_binary._targets import host_target
 from ..operator_state._hardware import read_hardware
@@ -55,6 +50,7 @@ from ._planted_programs import (
     stock_search_state,
 )
 from ._ports import free_loopback_port
+from ._separate_installation import INSTALLED_FROM_A_WHEEL, build_installation
 from .conftest import managed_env
 
 if TYPE_CHECKING:
@@ -91,7 +87,56 @@ def fresh_hardware_reading() -> Generator[None]:
         read_hardware.cache_clear()
 
 
-def _install_managed_monitor() -> tuple[Path, MonitorPin]:
+_VERSION = "9.9.9"
+
+#: Run in a separate installation: start the monitor the way a service start
+#: does, and report which file was resolved and which file the started process
+#: was created from. The image is read while the process lives.
+_START_THE_MONITOR = """
+import json
+import sys
+import threading
+import time
+
+from vaultspec_rag._process_probe import pid_image_path
+from vaultspec_rag.monitor_process import MonitorProcess
+from vaultspec_rag.monitor_runtime._resolve import monitor_for_launch
+
+monitor = MonitorProcess(json.loads(sys.argv[1])[0])
+resolved = monitor_for_launch()
+images = []
+done = threading.Event()
+
+
+def read_the_image():
+    while not done.is_set():
+        started = monitor.process
+        if started is not None:
+            images.append(pid_image_path(started.pid))
+            return
+        time.sleep(0.005)
+
+
+reader = threading.Thread(target=read_the_image, name="started-image")
+reader.start()
+refused = None
+try:
+    monitor.start(timeout=3)
+except Exception as exc:
+    refused = str(exc)
+finally:
+    done.set()
+    reader.join(timeout=10)
+    monitor.stop()
+print(json.dumps({
+    "resolved": str(resolved.path),
+    "image": images[0] if images else None,
+    "refused": refused,
+}))
+"""
+
+
+def _install_managed_monitor() -> tuple[Path, GeneratedPins]:
     """Install a program where a release's managed monitor install belongs.
 
     The managed directory is machine-wide and keyed by release and target
@@ -100,30 +145,27 @@ def _install_managed_monitor() -> tuple[Path, MonitorPin]:
     no monitor of its own beside it.
 
     The program is a stock one that outlives its start and answers nothing:
-    what is under test is which file a process is created from. The pin is
-    built from the bytes installed, as a release's pin is built from the
-    bytes it published.
+    what is under test is which file a process is created from. The digests
+    are made from the bytes installed, as a release's are made from the bytes
+    it published.
 
     Returns:
-        The installed executable and the pin that admits it.
+        The installed executable and the digests of the release that
+        published it.
     """
     target = host_target()
-    version = "9.9.9"
-    directory = managed_monitor_path(version, target).parent
+    directory = managed_monitor_path(_VERSION, target).parent
     directory.mkdir(parents=True, exist_ok=True)
     installed = plant_waiting_program(directory, MONITOR_PROGRAM)
-    pin = MonitorPin(
-        provenance=PinProvenance.DEVELOPMENT,
-        version=version,
-        tag="",
-        target=target,
-        archive_name=monitor_archive_name(version, target),
-        archive_sha256="0" * 64,
-        executable_name=monitor_executable_name(target),
-        executable_sha256=file_sha256(installed),
+    pins = GeneratedPins(
+        provenance=PinProvenance.RELEASE,
+        version=_VERSION,
+        tag=f"vaultspec-rag-v{_VERSION}",
+        archives={target: "0" * 64},
+        executables={target: file_sha256(installed)},
     )
-    assert installed == managed_monitor_path(pin.version, pin.target)
-    return installed, pin
+    assert installed == managed_monitor_path(_VERSION, target)
+    return installed, pins
 
 
 def test_status_does_not_run_a_driver_tool_from_the_working_directory(
@@ -186,7 +228,7 @@ def test_install_sync_does_not_run_a_uv_from_the_working_directory(
 
 
 def test_the_monitor_is_not_started_from_the_working_directory(
-    checkout: Path, isolated_singleton_dirs: Path, monkeypatch: pytest.MonkeyPatch
+    checkout: Path, isolated_singleton_dirs: Path, tmp_path: Path
 ) -> None:
     """The monitor that starts is the file resolution named, not the plant.
 
@@ -199,6 +241,13 @@ def test_the_monitor_is_not_started_from_the_working_directory(
     lookup could answer with: a command script, which the standard lookup
     finds through ``PATHEXT``, and a native program, which a bare name handed
     to process creation starts.
+
+    The start runs in an installation of its own: an installed release whose
+    generated digests are those of the program installed here, started from
+    the working directory the plants are in. A checkout carries digests only
+    for the monitor it compiled, and those admit nothing else, so the digests
+    that admit this program are written into that installation by the
+    generator and read by the shipped reader.
 
     The installed monitor is a stock program that outlives its start and
     answers nothing, so the start ends at the wait for readiness. That is
@@ -216,8 +265,13 @@ def test_the_monitor_is_not_started_from_the_working_directory(
     del isolated_singleton_dirs
     ran = plant_marking_program(checkout, "vaultspec-rag-monitor")
     planted = plant_waiting_program(checkout, "vaultspec-rag-monitor")
-    installed, pin = _install_managed_monitor()
-    monitor = MonitorProcess(free_loopback_port())
+    installed, pins = _install_managed_monitor()
+    installation = build_installation(
+        tmp_path / "installation",
+        version=_VERSION,
+        direct_url=INSTALLED_FROM_A_WHEEL,
+        pins=pins,
+    )
 
     with managed_env(
         **{
@@ -225,50 +279,19 @@ def test_the_monitor_is_not_started_from_the_working_directory(
             EnvVar.MONITOR_BINARY_SHA256.value: None,
         }
     ):
-        # The digests of a release are what admit a monitor, and this
-        # checkout carries none until it compiles one. They are the test's
-        # stated input so that where the resolver looks, and what it admits,
-        # are production's throughout; the install above is a real file in
-        # the real managed directory.
-        def pin_for(_target: str) -> MonitorPin:
-            return pin
-
-        monkeypatch.setattr(
-            "vaultspec_rag.monitor_runtime._resolve.monitor_pin", pin_for
+        started = installation.run(
+            _START_THE_MONITOR, free_loopback_port(), cwd=checkout
         )
-        # Resolution is production's, and its answer is what the started
-        # process is held to below.
-        resolved = monitor_for_launch()
-        assert resolved.path == installed
-        images: list[str | None] = []
-        done = threading.Event()
 
-        def read_the_image() -> None:
-            """Read the image of whatever the start creates, while it lives."""
-            while not done.is_set():
-                started = monitor.process
-                if started is not None:
-                    images.append(pid_image_path(started.pid))
-                    return
-                time.sleep(0.005)
-
-        reader = threading.Thread(target=read_the_image, name="started-image")
-        reader.start()
-        refused: Exception | None = None
-        try:
-            monitor.start(timeout=3)
-        except Exception as exc:  # reported below, after the guard's own answer
-            refused = exc
-        finally:
-            done.set()
-            reader.join(timeout=10)
-            monitor.stop()
-
-    assert images and images[0] is not None, "nothing started could be identified"
-    assert os.path.normcase(images[0]) == os.path.normcase(str(resolved.path)), (
-        f"{images[0]} was started; {resolved.path} was resolved"
+    resolved = str(started["resolved"])
+    image = started["image"]
+    refused = started["refused"]
+    assert os.path.normcase(resolved) == os.path.normcase(str(installed))
+    assert image is not None, "nothing started could be identified"
+    assert os.path.normcase(str(image)) == os.path.normcase(resolved), (
+        f"{image} was started; {resolved} was resolved"
     )
-    assert os.path.normcase(images[0]) != os.path.normcase(str(planted))
+    assert os.path.normcase(str(image)) != os.path.normcase(str(planted))
     assert not ran.exists(), "the working directory's monitor was started"
     # The stand-in answers no page, so the start can only end at the wait.
     assert refused is not None

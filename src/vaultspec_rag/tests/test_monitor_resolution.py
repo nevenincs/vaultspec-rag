@@ -17,11 +17,12 @@ from __future__ import annotations
 
 import os
 import sys
-import sysconfig
-from dataclasses import replace
+from dataclasses import asdict, replace
 from typing import TYPE_CHECKING
 
 import pytest
+
+from tools.monitor.pins import GeneratedPins
 
 from ..config._types import EnvVar
 from ..monitor_runtime._assets import monitor_archive_name, monitor_executable_name
@@ -35,13 +36,13 @@ from ..monitor_runtime._resolve import (
     MONITOR_NOT_INSTALLED,
     MonitorSource,
     managed_monitor_path,
-    monitor_for_launch,
     resolve_monitor,
     resolve_pinned_monitor,
 )
 from ..native_binary._install import file_sha256
 from ..native_binary._targets import host_target
 from ._planted_programs import stock_search_state
+from ._separate_installation import INSTALLED_FROM_A_WHEEL, build_installation
 from .conftest import managed_env
 
 if TYPE_CHECKING:
@@ -57,6 +58,39 @@ _OTHER = b"#!a monitor of some other build\x00" * 64
 #: What an archive install's launcher is called on this platform.
 _LAUNCHER_SUFFIX = ".exe" if sys.platform == "win32" else ""
 
+#: Run in a separate installation: resolve the monitor a pin, passed as the
+#: one argument, admits, and report what was chosen.
+_RESOLVE_THE_PINNED_MONITOR = """
+import json
+import sys
+
+from vaultspec_rag.monitor_runtime._pins import MonitorPin, PinProvenance
+from vaultspec_rag.monitor_runtime._resolve import resolve_pinned_monitor
+
+fields = json.loads(sys.argv[1])[0]
+pin = MonitorPin(**{**fields, "provenance": PinProvenance(fields["provenance"])})
+resolved = resolve_pinned_monitor(pin)
+print(json.dumps({
+    "path": None if resolved is None else str(resolved.path),
+    "source": None if resolved is None else str(resolved.source),
+}))
+"""
+
+#: Run in a separate installation: a launch, and what it refused with.
+_LAUNCH_THE_MONITOR = """
+import json
+
+from vaultspec_rag.monitor_runtime._errors import MonitorError
+from vaultspec_rag.monitor_runtime._resolve import monitor_for_launch
+
+try:
+    monitor_for_launch()
+except MonitorError as refused:
+    print(json.dumps({"error": refused.error, "message": str(refused)}))
+else:
+    print(json.dumps({"error": None, "message": ""}))
+"""
+
 
 def _pin(executable: bytes = _MONITOR) -> MonitorPin:
     """The pin a release of *executable* would carry for this host."""
@@ -70,6 +104,17 @@ def _pin(executable: bytes = _MONITOR) -> MonitorPin:
         archive_sha256="a" * 64,
         executable_name=monitor_executable_name(target),
         executable_sha256=file_sha256_of(executable),
+    )
+
+
+def _released_as(pin: MonitorPin) -> GeneratedPins:
+    """The generated digests of the release *pin* describes, as a build writes them."""
+    return GeneratedPins(
+        provenance=pin.provenance,
+        version=pin.version,
+        tag=pin.tag,
+        archives={pin.target: pin.archive_sha256},
+        executables={pin.target: pin.executable_sha256},
     )
 
 
@@ -217,7 +262,7 @@ class TestWhatIsChosen:
 @pytest.mark.usefixtures("managed")
 class TestSeveralPlacesHoldOneName:
     def test_a_monitor_of_another_build_in_the_environment_masks_nothing(
-        self, sibling: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, sibling: Path, tmp_path: Path
     ) -> None:
         """Every place is judged by content, so their order cannot decide.
 
@@ -226,34 +271,32 @@ class TestSeveralPlacesHoldOneName:
         directory is still a file of the right name, found first. Resolving
         the first one found would hand the install that one and refuse it.
 
-        The environment's scripts directory is the one place here that is not
-        the real one. It cannot be: it is a directory of the interpreter
-        running this suite, and the only way to put a file of another build
-        in it is to write one into the environment the tests run in. The
-        launcher's directory, the lookup, both candidate files, the content
-        comparison and the resolver are real.
+        The environment is a real one built for the case: an interpreter of
+        its own, whose own scripts directory holds the older monitor, resolving
+        in a fresh interpreter beside a launcher that holds the right one and
+        states its path as a launcher does. The directory the interpreter
+        reports is the one the older monitor is put in.
 
         Mutation: offered only the first match. Observed this test fail on
-        the "not None" assertion, with nothing resolved: the older monitor
-        was the only candidate and its content is not this release's.
-        Restored; passes.
+        the answer it compares, with nothing resolved: the older monitor was
+        the only candidate and its content is not this release's. Restored;
+        passes.
         """
-        scripts = tmp_path / "scripts"
-        scripts.mkdir()
-        real_path = sysconfig.get_path
-
-        def scripts_here(name: str) -> str:
-            return str(scripts) if name == "scripts" else real_path(name)
-
-        monkeypatch.setattr(sysconfig, "get_path", scripts_here)
-        _install(scripts / monitor_executable_name(host_target()), _OTHER)
+        installed = build_installation(
+            tmp_path / "installation",
+            version=_VERSION,
+            direct_url=INSTALLED_FROM_A_WHEEL,
+            own_environment=True,
+        )
+        _install(installed.scripts / monitor_executable_name(host_target()), _OTHER)
         beside = _install(sibling / monitor_executable_name(host_target()), _MONITOR)
 
-        resolved = resolve_pinned_monitor(_pin())
+        resolved = installed.run(_RESOLVE_THE_PINNED_MONITOR, asdict(_pin()))
 
-        assert resolved is not None
-        assert resolved.path == beside.resolve()
-        assert resolved.source is MonitorSource.INSTALLATION_SIBLING
+        assert resolved == {
+            "path": str(beside.resolve()),
+            "source": str(MonitorSource.INSTALLATION_SIBLING),
+        }
 
 
 @pytest.mark.usefixtures("managed")
@@ -355,32 +398,35 @@ class TestWhatCannotBeRead:
 @pytest.mark.usefixtures("managed")
 class TestALaunchWithNothingToLaunch:
     def test_a_launch_refuses_rather_than_fetching_anything(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path
     ) -> None:
         """The launcher downloads nothing; provisioning runs before it.
 
         A launch asks the installation it runs in which digests admit a
-        monitor, rather than being handed them, so the stand-in release is
-        put where it reads them from. It cannot be driven for real here: this
-        checkout's own monitor is installed in its real scripts directory, so
-        "this release's monitor is installed nowhere" is not a state the
-        suite's own installation can be in. Everywhere resolution looks, the
-        managed directory it would find nothing in, and the refusal under
-        test are real.
+        monitor, rather than being handed them, so it runs in an installation
+        of its own: an installed release whose generated digests are those of
+        the stand-in release, in an environment whose scripts directory is
+        empty, beside a managed directory that holds nothing. This checkout's
+        own monitor is installed in the suite's scripts directory, which is
+        not that environment's, so "this release's monitor is installed
+        nowhere" is a state the installation can really be in.
+
+        Mutation: returned the unresolved answer instead of raising. Observed
+        this test fail on the error code it compares, with none raised.
+        Restored; passes.
         """
-
-        def pin_for(_target: str) -> MonitorPin:
-            return _pin()
-
-        monkeypatch.setattr(
-            "vaultspec_rag.monitor_runtime._resolve.monitor_pin", pin_for
+        installed = build_installation(
+            tmp_path / "installation",
+            version=_VERSION,
+            direct_url=INSTALLED_FROM_A_WHEEL,
+            pins=_released_as(_pin()),
+            own_environment=True,
         )
 
-        with pytest.raises(MonitorError) as refused:
-            monitor_for_launch()
+        refused = installed.run(_LAUNCH_THE_MONITOR)
 
-        assert refused.value.error == MONITOR_NOT_INSTALLED
-        assert "next start" in str(refused.value)
+        assert refused["error"] == MONITOR_NOT_INSTALLED
+        assert "next start" in str(refused["message"])
 
 
 @pytest.mark.usefixtures("managed")

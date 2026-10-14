@@ -6,7 +6,7 @@ import typing
 from contextlib import contextmanager
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, NamedTuple, TypedDict
+from typing import TYPE_CHECKING, Final, NamedTuple, TypedDict
 
 import pytest
 
@@ -307,53 +307,13 @@ def pin_daemon_capability(
     monkeypatch.setattr(_environment_probe, "probe_interpreter", answer)
 
 
-def pin_hardware_presence(
-    monkeypatch: pytest.MonkeyPatch, presence: HardwarePresence
-) -> None:
-    """Substitute which accelerator this machine has.
-
-    The third machine fact the suite cannot change, beside the installation
-    role and what the daemon interpreter can do. Whether anything on this
-    machine can run the service decides whether an environment that cannot
-    run it itself is still provisioned for - the managed runtime would serve
-    it - and neither lane can be made into the other: a GPU workstation always
-    answers that it has one and an accelerator-free runner never does. Only
-    the reading is replaced; every consumer of it runs unchanged, and the
-    reading itself is exercised against this machine in the hardware tests.
-    """
-    from ..operator_state import _hardware
-    from ..operator_state._models import HardwareReading
-
-    monkeypatch.setattr(
-        _hardware, "read_hardware", lambda: HardwareReading(presence=presence)
-    )
-
-
-@pytest.fixture
-def unpinned_installation(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
-    """An installation that can admit no monitor at all, stated rather than had.
-
-    A checkout that compiled its own monitor carries digests for it and has
-    it installed, so a case about having none cannot inherit that from
-    whatever this working copy last built. What is staged is the one fact:
-    the reader finds no generated digests. It then does everything it
-    normally does with that, so the code and the message a caller meets here
-    are the ones an installation without digests meets. Any monitor named
-    through the operator settings is cleared with it, or it would answer first.
-
-    Yields:
-        Nothing; both are staged for the test's own block.
-    """
-    from ..monitor_runtime import _pins
-
-    monkeypatch.setattr(_pins, "_generated_pins", lambda: None)
-    with managed_env(
-        **{
-            EnvVar.MONITOR_BINARY.value: None,
-            EnvVar.MONITOR_BINARY_SHA256.value: None,
-        }
-    ):
-        yield
+#: The accelerators a service can run on, as the suite states them. Tests that
+#: take a different branch on a machine with one read the machine's own answer
+#: and compare it to this rather than to the product's judgement of it, so a
+#: change to what the product counts as capable fails them.
+SERVING_HARDWARE: Final = frozenset(
+    {HardwarePresence.NVIDIA_GPU, HardwarePresence.APPLE_SILICON}
+)
 
 
 @pytest.fixture

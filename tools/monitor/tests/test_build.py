@@ -7,8 +7,10 @@ anything whose bytes are not what the pin about to be written describes.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
-from typing import TYPE_CHECKING
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -18,9 +20,7 @@ from tools.packaging.products import MONITOR_EXECUTABLE, VAULTSPEC_RAG
 from vaultspec_rag.monitor_runtime._assets import monitor_executable_name
 from vaultspec_rag.native_binary._install import file_sha256
 from vaultspec_rag.native_binary._targets import host_target
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from vaultspec_rag.tests._separate_installation import run_program
 
 pytestmark = pytest.mark.unit
 
@@ -69,14 +69,52 @@ def test_release_identity_refuses_dirty_checkout(
     assert local.lock_sha256 != committed.lock_sha256
 
 
-@pytest.fixture
-def compiled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A finalized monitor where the compiler leaves one, in a throwaway checkout.
+#: Run in a throwaway checkout: install a compiled monitor as a development
+#: build does, and report what came of it. The arguments are the compiled
+#: monitor, the version, where the programs go, and the checkout this runs in.
+_INSTALL_THE_COMPILED_MONITOR = """
+import json
+import sys
+from pathlib import Path
 
-    The checkout root is relocated so the generated pin lands in this test's
-    own directory: the real one admits the monitor this working copy runs.
+from tools.monitor import build
+
+compiled, version, programs, root = json.loads(sys.argv[1])
+assert build.ROOT == Path(root), build.ROOT
+try:
+    installed = build.install_development_monitor(
+        Path(compiled), version, Path(programs)
+    )
+except Exception as exc:
+    print(json.dumps({"raised": type(exc).__name__, "message": str(exc)}))
+else:
+    print(json.dumps({"installed": str(installed)}))
+"""
+
+
+@pytest.fixture
+def checkout(tmp_path: Path) -> Path:
+    """A throwaway checkout holding a copy of this one's release tooling.
+
+    The tooling finds its checkout by its own location, so run from this copy
+    it writes the generated pin here. The real pin, which admits the monitor
+    this working copy runs, is never reachable from the test, whether or not
+    the install under test does what it should.
     """
-    monkeypatch.setattr(build, "ROOT", tmp_path / "checkout")
+    root = tmp_path / "checkout"
+    shutil.copytree(
+        Path(build.__file__).resolve().parents[1],
+        root / "tools",
+        ignore=shutil.ignore_patterns(
+            "__pycache__", "tests", "test_*.py", "conftest.py"
+        ),
+    )
+    return root
+
+
+@pytest.fixture
+def compiled(tmp_path: Path) -> Path:
+    """A finalized monitor where the compiler leaves one."""
     raw = tmp_path / "dist-bin"
     raw.mkdir()
     binary = raw / VAULTSPEC_RAG.asset_name(MONITOR_EXECUTABLE, host_target())
@@ -84,8 +122,21 @@ def compiled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return binary
 
 
+def _install_in(checkout: Path, binary: Path, programs: Path) -> dict[str, object]:
+    """Run the development install from *checkout*, in a fresh interpreter."""
+    return run_program(
+        Path(sys.executable),
+        checkout,
+        _INSTALL_THE_COMPILED_MONITOR,
+        str(binary),
+        _VERSION,
+        str(programs),
+        str(checkout.resolve()),
+    )
+
+
 def test_the_monitor_a_checkout_compiled_is_pinned_and_installed_for_it(
-    compiled: Path, tmp_path: Path
+    compiled: Path, checkout: Path, tmp_path: Path
 ) -> None:
     """One command leaves a monitor this checkout's resolver will admit.
 
@@ -96,11 +147,12 @@ def test_the_monitor_a_checkout_compiled_is_pinned_and_installed_for_it(
     """
     programs = tmp_path / "programs"
 
-    installed = build.install_development_monitor(compiled, _VERSION, programs)
+    outcome = _install_in(checkout, compiled, programs)
 
-    assert installed == programs / monitor_executable_name(host_target())
+    installed = programs / monitor_executable_name(host_target())
+    assert outcome == {"installed": str(installed)}
     assert installed.read_bytes() == _COMPILED
-    pins = (build.ROOT / PINS_PATH).read_text(encoding="utf-8")
+    pins = (checkout / PINS_PATH).read_text(encoding="utf-8")
     assert "PROVENANCE: Final[str] = 'development'" in pins
     assert f"RELEASE_VERSION: Final[str] = {_VERSION!r}" in pins
     assert "RELEASE_TAG: Final[str] = ''" in pins
@@ -108,24 +160,29 @@ def test_the_monitor_a_checkout_compiled_is_pinned_and_installed_for_it(
 
 
 def test_bytes_the_pin_would_not_describe_are_never_installed(
-    compiled: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    compiled: Path, checkout: Path, tmp_path: Path
 ) -> None:
     """The install is held to the digest the pin will carry, before it lands.
+
+    The archive is packed from the finalized monitor staged under its release
+    name, and the digest the pin will carry is taken from the file the install
+    is told about. A file replaced between those two steps is how they differ
+    in a build; naming another file from the same directory is the same
+    disagreement, and the bytes that come out of the archive are then not the
+    ones the pin would describe.
 
     Mutation: removed the ``verify_native_binary`` call on the extracted
     executable. Observed this test fail on the nothing-installed assertion,
     with the unadmitted bytes landed under the installed name. Restored;
     passes.
     """
-    monkeypatch.setattr(
-        build,
-        "digests_for",
-        lambda archive, _executable: (file_sha256(archive), "f" * 64),
-    )
+    other = compiled.parent / "a-monitor-that-is-not-the-one-packed"
+    other.write_bytes(b"#!a monitor of some other build\x00" * 64)
     programs = tmp_path / "programs"
 
-    with pytest.raises(RuntimeError, match="pin mismatch"):
-        build.install_development_monitor(compiled, _VERSION, programs)
+    outcome = _install_in(checkout, other, programs)
 
+    assert outcome["raised"] == "RuntimeError"
+    assert "pin mismatch" in str(outcome["message"])
     assert not (programs / monitor_executable_name(host_target())).exists()
-    assert not (build.ROOT / PINS_PATH).exists()
+    assert not (checkout / PINS_PATH).exists()

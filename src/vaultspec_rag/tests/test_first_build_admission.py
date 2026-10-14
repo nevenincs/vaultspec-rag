@@ -23,6 +23,7 @@ from .._job_admission import (
 from .._source_types import PublicSourceType
 from .._store_models import CodeChunk, generation_code_collection
 from .._store_writes import workspace_volume_path
+from ..config._types import EnvVar
 from ..indexer._run_ledger_models import RunAuthority, index_run_ledger_path
 from ..job_models import (
     FIRST_BUILD_OPERATION,
@@ -35,6 +36,7 @@ from ..job_models import (
 from ..registry import get_registry
 from ._publication_assertions import publish_empty_vault_proof
 from ._state_fixtures import reset_registry
+from .conftest import managed_env
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -262,41 +264,30 @@ def test_a_ledger_that_is_not_a_database_refuses_without_a_warning(
 def test_an_unexpected_publication_failure_refuses_instead_of_raising(
     tmp_path: Path,
     isolated_registry: ServiceRegistry,
-    monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Nothing a publication read can raise reaches the caller of admission.
 
-    The run ledger converts every corruption it meets into its own typed
-    failure, so no real file reaches the branch below - which is exactly why
-    it exists, and why the read is intercepted to get there. One collaborator
-    is replaced; the classification under test runs unchanged.
+    The run ledger converts every corruption a file can carry into its own
+    typed failure, so no ledger file reaches the catch-all. A Qdrant URL that
+    cannot be parsed does: it is an operator's mistake in the environment, it
+    is read while the backend identity of the proof is compared, and it raises
+    a plain ``ValueError`` outside every set admission accounts for. The
+    ledger exists, so the read gets as far as that comparison.
 
     Mutation proven by deleting the catch-all in
-    ``_read_source_publication``: the error then leaves admission, and the
-    one HTTP request behind it fails for every domain rather than refusing
-    this one.
+    ``_read_source_publication``: the ``ValueError`` then leaves
+    ``read_source_admission`` and the one HTTP request behind it would fail
+    for every domain rather than refusing this one; restoring it passes.
     """
     del isolated_registry
-    import sqlite3
-
-    from .. import _publication_state
-
     root = tmp_path / "unexpected-failure"
-    root.mkdir()
+    publish_empty_vault_proof(root)
 
-    def raise_database_error(*_args: object, **_kwargs: object) -> object:
-        raise sqlite3.DatabaseError("database disk image is malformed")
-
-    # Admission resolves this name at call time, so replacing it here is
-    # what the production read reaches.
-    monkeypatch.setattr(
-        _publication_state,
-        "acquire_publication_snapshot",
-        raise_database_error,
-    )
-
-    with caplog.at_level("WARNING", logger="vaultspec_rag.jobs"):
+    with (
+        managed_env(**{EnvVar.QDRANT_URL.value: "http://[::1"}),
+        caplog.at_level("WARNING", logger="vaultspec_rag.jobs"),
+    ):
         reading = read_source_admission(root, PublicSourceType.CODE)
         escalated = _admit(root, source=JobSource.CODE).is_first_build
 

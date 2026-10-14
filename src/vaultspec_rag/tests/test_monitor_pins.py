@@ -15,11 +15,8 @@ metadata written to disk.
 
 from __future__ import annotations
 
-import sys
 from dataclasses import replace
-from importlib import invalidate_caches
-from importlib.metadata import PathDistribution
-from importlib.util import find_spec, module_from_spec, spec_from_file_location
+from importlib.util import module_from_spec, spec_from_file_location
 from typing import TYPE_CHECKING
 
 import pytest
@@ -37,10 +34,10 @@ from ..monitor_runtime._pins import (
     Installation,
     MonitorPinError,
     PinProvenance,
-    monitor_pin,
     read_pin,
     this_installation,
 )
+from ._separate_installation import INSTALLED_FROM_A_WHEEL, build_installation
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -71,6 +68,37 @@ _RELEASE_PINS = GeneratedPins(
 )
 #: The same digests, minted by a development build on this machine.
 _DEVELOPMENT_PINS = replace(_RELEASE_PINS, provenance=PinProvenance.DEVELOPMENT, tag="")
+
+#: Run in a separate installation: what that installation says it is.
+_JUDGE_THIS_INSTALLATION = """
+import json
+
+from vaultspec_rag.monitor_runtime._pins import this_installation
+
+installation = this_installation()
+print(json.dumps(
+    {"version": installation.version, "development": installation.development}
+))
+"""
+
+#: Run in a separate installation: whether a module of the generated pins'
+#: bare name can be found, and what asking for a pin answers regardless.
+_ASK_FOR_THE_PIN = """
+import json
+import sys
+from importlib.util import find_spec
+
+from vaultspec_rag.monitor_runtime._pins import MonitorPinError, monitor_pin
+
+findable = find_spec("_generated_pins") is not None
+try:
+    monitor_pin(json.loads(sys.argv[1])[0])
+except MonitorPinError as refused:
+    error = refused.error
+else:
+    error = None
+print(json.dumps({"findable": findable, "error": error}))
+"""
 
 
 def _written(
@@ -299,53 +327,29 @@ class TestWhereThePinsAreReadFrom:
         table found next to whatever the process was started from would
         decide what runs.
 
+        The installation is a release that carries no digests of its own, in a
+        fresh interpreter whose import path starts at a module named for the
+        generated one and holding the digests of that very release, so nothing
+        but where it sits can be what refuses it. The program reports that the
+        module is findable, or the refusal would prove nothing.
+
         Mutation: looked the module up by its bare name instead of its
-        dotted package name. Observed this test fail on the
-        ``MonitorPinError`` it expects, because the planted module answered.
+        dotted package name. Observed this test fail on the answer it
+        compares, a pin returned because the planted module answered.
         Restored; passes.
         """
-        if find_spec(PINS_MODULE) is not None:
-            pytest.skip("this checkout has generated monitor digests of its own")
-        # Named for the running installation's own version and provenance,
-        # so nothing but where it sits can be what refuses it.
-        here = this_installation()
-        planted = replace(
-            _RELEASE_PINS,
-            provenance=(
-                PinProvenance.DEVELOPMENT if here.development else PinProvenance.RELEASE
-            ),
-            version=here.version or _VERSION,
-            tag="",
+        installed = build_installation(
+            tmp_path, version=_VERSION, direct_url=INSTALLED_FROM_A_WHEEL
         )
-        write(tmp_path / "_generated_pins.py", planted)
-        # The real import path, really prepended, and put back whatever
-        # happens: the planted module has to be findable by the lookup this
-        # refuses to make, or the refusal proves nothing.
-        sys.path.insert(0, str(tmp_path))
-        invalidate_caches()
-        try:
-            with pytest.raises(MonitorPinError) as refused:
-                monitor_pin(_TARGET)
-        finally:
-            sys.path.remove(str(tmp_path))
-            invalidate_caches()
+        write(installed.root / "_generated_pins.py", _RELEASE_PINS)
 
-        assert refused.value.error == MONITOR_UNPINNED
+        answer = installed.run(_ASK_FOR_THE_PIN, _TARGET)
+
+        assert answer == {"findable": True, "error": MONITOR_UNPINNED}
 
 
 class TestWhatThisInstallationIs:
     """How an installation is judged, over real distribution metadata."""
-
-    def _distribution(self, tmp_path: Path, direct_url: str | None) -> PathDistribution:
-        info = tmp_path / "vaultspec_rag-1.2.3.dist-info"
-        info.mkdir()
-        (info / "METADATA").write_text(
-            "Metadata-Version: 2.1\nName: vaultspec-rag\nVersion: 1.2.3\n",
-            encoding="utf-8",
-        )
-        if direct_url is not None:
-            (info / "direct_url.json").write_text(direct_url, encoding="utf-8")
-        return PathDistribution(info)
 
     @pytest.mark.parametrize(
         ("direct_url", "development"),
@@ -371,32 +375,24 @@ class TestWhatThisInstallationIs:
         ],
     )
     def test_how_an_install_was_made_decides_what_it_may_accept(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        direct_url: str | None,
-        development: bool,
+        self, tmp_path: Path, direct_url: str | None, development: bool
     ) -> None:
         """Only a local-directory install counts as a development one.
 
+        Each case is an installation of its own, with the record an installer
+        would leave, judged by a fresh interpreter running in it: the metadata
+        is found the way the import system finds it, not handed over.
+
         Mutation: treated an absent direct-URL record as a development
         install. Observed the "installed from an index" case fail on the
-        development assertion, which is the case every published wheel is.
+        judgement it compares, which is the case every published wheel is.
         Restored; passes.
         """
-        distribution = self._distribution(tmp_path, direct_url)
+        installed = build_installation(tmp_path, version="1.2.3", direct_url=direct_url)
 
-        def from_name(_name: str) -> PathDistribution:
-            return distribution
+        judged = installed.run(_JUDGE_THIS_INSTALLATION)
 
-        monkeypatch.setattr(
-            "vaultspec_rag.monitor_runtime._pins.Distribution.from_name", from_name
-        )
-
-        installation = this_installation()
-
-        assert installation.version == "1.2.3"
-        assert installation.development is development
+        assert judged == {"version": "1.2.3", "development": development}
 
     def test_this_checkout_is_a_development_installation(self) -> None:
         """The judgement over the real environment this suite runs in.
