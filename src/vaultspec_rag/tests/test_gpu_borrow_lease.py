@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple, Protocol
 
 import pytest
+import typer
 from starlette.testclient import TestClient
 
 from .._anchor_claim import read_anchor_record
@@ -22,11 +23,14 @@ from .._process_probe import pid_start_time, process_lineage
 from ..config._types import EnvVar
 from ..gpu_borrow_lease import (
     BorrowerLeaseStatus,
+    BorrowerPresence,
     _read_recorded_capability,
     acquire_gpu_borrow_lease,
     borrower_lease_holder_pid,
     borrower_lease_status,
+    borrower_wire,
     gpu_borrow_lease_path,
+    observe_gpu_borrower,
     release_gpu_borrow_lease,
 )
 from ..server import ServerRouteRuntime, create_http_app
@@ -38,6 +42,7 @@ from ._child_signal import (
     child_stderr,
 )
 from ._config_fixtures import reset_config
+from ._ports import free_loopback_port
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -1128,3 +1133,217 @@ def test_a_resume_that_left_the_service_held_names_the_state_it_is_in() -> None:
         _resume_refusal_message({"ok": False})
         == "The service did not acknowledge borrower resume."
     )
+
+
+def test_observing_the_borrower_lease_names_its_holder_and_takes_nothing(
+    tmp_path: Path,
+) -> None:
+    """Looking at the lease neither takes it nor reveals what guards it.
+
+    Mutation: an observation that reports every lease absent fails the held
+    assertion; one that kept the lease it took to look fails the successor's
+    acquisition.
+    """
+    with _isolated_borrower_anchor(tmp_path):
+        assert observe_gpu_borrower().presence is BorrowerPresence.ABSENT
+        successor = acquire_gpu_borrow_lease()
+        assert successor is not None, "observing a free lease must not keep it"
+        release_gpu_borrow_lease(successor)
+
+        with _borrower_process() as borrower:
+            held = observe_gpu_borrower()
+            holder = borrower_lease_holder_pid(borrower.capability)
+            wire = json.dumps(borrower_wire(held))
+            _kill_borrower(borrower)
+            gone = observe_gpu_borrower()
+
+    assert holder is not None
+    assert held.presence is BorrowerPresence.HELD
+    assert held.holder_pid == holder
+    assert borrower.capability not in wire
+    assert gone.presence is BorrowerPresence.ABSENT
+    assert gone.holder_pid == 0
+
+
+def test_a_borrower_lease_that_cannot_be_opened_is_unverifiable_not_absent(
+    tmp_path: Path,
+) -> None:
+    """An anchor that cannot be read must not read as nobody borrowing.
+
+    A directory stands where the anchor file belongs, which no account can open
+    for locking. Mutation: reading an open failure as absence reports the
+    observation absent and fails the presence assertion.
+    """
+    with _isolated_borrower_anchor(tmp_path):
+        lease_path = gpu_borrow_lease_path()
+        lease_path.mkdir(parents=True)
+        observed = observe_gpu_borrower()
+
+    assert observed.presence is BorrowerPresence.UNVERIFIABLE
+    assert not observed.permits_service_start
+    assert str(lease_path) in observed.detail
+
+
+@pytest.mark.usefixtures("isolated_singleton_dirs", "inference_host")
+def test_server_start_is_refused_beside_a_live_borrower_in_both_modes() -> None:
+    """A start never loads models beside a borrower, and says who and what to do.
+
+    The whole sentence is the envelope's message because the monitor shows that
+    and nothing else of a failed start, and a restart relays it. The start is
+    refused before anything is fetched. Mutation: dropping the guard lets the
+    start carry on to its dependency step and fails the exit-code assertion.
+    """
+    from typer.testing import CliRunner
+
+    from ..cli import app
+
+    arguments = ["server", "start", "--local-only", "--port", str(free_loopback_port())]
+    with _borrower_process() as borrower:
+        holder = borrower_lease_holder_pid(borrower.capability)
+        as_json = CliRunner().invoke(app, [*arguments, "--json"])
+        as_text = CliRunner().invoke(app, arguments)
+
+    assert holder is not None
+    assert as_json.exit_code == 1, as_json.output
+    envelope = json.loads(as_json.stdout)
+    assert envelope["ok"] is False
+    assert envelope["error"] == "gpu_borrowed"
+    message = envelope["message"]
+    assert f"(pid {holder})" in message
+    assert "Wait for the borrower to finish, or stop it" in message
+    assert envelope["data"]["gpu_borrower"] == {
+        "state": "held",
+        "holder_pid": holder,
+        "detail": "",
+    }
+    assert borrower.capability not in as_json.output
+    assert as_text.exit_code == 1, as_text.output
+    assert message in " ".join(as_text.output.split())
+    assert borrower.capability not in as_text.output
+
+
+@pytest.mark.usefixtures("isolated_singleton_dirs")
+def test_a_start_proceeds_once_the_borrower_has_exited(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The refusal lasts exactly as long as the borrower holds the lease.
+
+    A hard-killed borrower releases it without any cleanup, so the next start is
+    not refused. Mutation: reading a free anchor file as a held lease keeps
+    refusing after the kill and fails the final call; dropping the guard fails
+    the first.
+    """
+    from ..cli._service_start import _guard_start_preconditions
+
+    port = free_loopback_port()
+    with _borrower_process() as borrower:
+        with pytest.raises(typer.Exit):
+            _guard_start_preconditions(port, True)
+        refused = json.loads(capsys.readouterr().out)
+        _kill_borrower(borrower)
+
+    assert refused["error"] == "gpu_borrowed"
+    _guard_start_preconditions(port, True)
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.usefixtures("isolated_singleton_dirs")
+def test_a_start_is_refused_when_the_borrower_lease_cannot_be_verified(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An unverifiable lease counts as held, with its own sentence.
+
+    Mutation: treating an unverifiable lease as no borrower lets the start
+    through and fails the raises assertion.
+    """
+    from ..cli._service_start import _guard_start_preconditions
+
+    with _isolated_borrower_anchor(tmp_path):
+        gpu_borrow_lease_path().mkdir(parents=True)
+        with pytest.raises(typer.Exit):
+            _guard_start_preconditions(free_loopback_port(), True)
+
+    envelope = json.loads(capsys.readouterr().out)
+    assert envelope["error"] == "gpu_borrowed"
+    assert envelope["data"]["gpu_borrower"]["state"] == "unverifiable"
+    assert "could not be verified" in envelope["message"]
+
+
+@pytest.mark.usefixtures("isolated_singleton_dirs")
+def test_a_stop_during_a_borrow_succeeds_and_names_the_borrower() -> None:
+    """Stopping is never refused for a borrower, and its envelope says what follows.
+
+    Mutation: dropping the notice leaves the success envelope without the
+    borrower and fails the gpu_borrower assertion.
+    """
+    from typer.testing import CliRunner
+
+    from ..cli import app
+
+    with _borrower_process() as borrower:
+        holder = borrower_lease_holder_pid(borrower.capability)
+        as_json = CliRunner().invoke(app, ["server", "stop", "--json"])
+        as_text = CliRunner().invoke(app, ["server", "stop"])
+
+    assert holder is not None
+    notice = (
+        f"A GPU borrower (pid {holder}) holds the GPU, so the service will not "
+        "start again until the borrower releases it."
+    )
+    assert as_json.exit_code == 0, as_json.output
+    envelope = json.loads(as_json.stdout)
+    assert envelope["ok"] is True
+    assert envelope["data"]["status"] == "already_stopped"
+    assert envelope["data"]["gpu_borrower"] == {
+        "state": "held",
+        "holder_pid": holder,
+        "detail": "",
+    }
+    assert envelope["data"]["notice"] == notice
+    assert as_text.exit_code == 0, as_text.output
+    assert notice in " ".join(as_text.output.split())
+    assert borrower.capability not in as_json.output + as_text.output
+
+
+@pytest.mark.usefixtures("isolated_singleton_dirs")
+@pytest.mark.parametrize(
+    ("status", "reports_borrower"),
+    [
+        ("stopped", True),
+        ("already_stopped", True),
+        ("cleaned", True),
+        ("reclaimed", True),
+        ("reaped", False),
+    ],
+)
+def test_every_stop_outcome_that_leaves_no_service_reports_the_borrower(
+    status: str, reports_borrower: bool, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An orphan reap says nothing about the live service, so it stays silent.
+
+    Mutation: reporting on every status fails the reaped case, and reporting on
+    fewer statuses fails the case that was dropped.
+    """
+    from ..cli._service_stop import _stop_success
+
+    with _borrower_process():
+        _stop_success(True, status=status, human_title="Service stopped")
+
+    data = json.loads(capsys.readouterr().out)["data"]
+    assert ("gpu_borrower" in data) is reports_borrower
+    assert ("notice" in data) is reports_borrower
+
+
+@pytest.mark.usefixtures("isolated_singleton_dirs")
+def test_a_stop_with_no_borrower_carries_no_borrower_fields(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The envelope only grows a borrower when there is one."""
+    from ..cli._service_stop import _stop_success
+
+    _stop_success(True, status="stopped", human_title="Service stopped", pid=7)
+
+    assert json.loads(capsys.readouterr().out)["data"] == {
+        "status": "stopped",
+        "pid": 7,
+    }

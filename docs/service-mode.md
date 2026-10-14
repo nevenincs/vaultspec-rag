@@ -384,6 +384,10 @@ Pause before maintenance that shouldn't race with indexing. To observe whether t
 uv run vaultspec-rag server preflight
 ```
 
+A GPU borrower, such as `index --borrow-gpu`, holds the service paused and the GPU
+while it works, and only it can release that pause. A borrower started right after
+another one was killed takes the pause over instead of being refused.
+
 ## Stop and restart the service
 
 ```
@@ -400,6 +404,8 @@ Stopping is safe on both platforms, and the vector store recovers either way. Th
 On Unix, `server stop` sends `SIGTERM`, which drives the daemon's own graceful shutdown. It removes the status file and stops the Qdrant child last, so the store stays reachable until the service is down. The stop escalates to `SIGKILL` if the drain window expires.
 
 On Windows, the daemon runs detached from any console, so a separate process cannot deliver `CTRL_BREAK` to it. The stop degrades to a bounded force-kill. The daemon runs none of its own teardown, so the CLI reaps the managed Qdrant child and clears the discovery pointer itself. The result is abrupt but safe.
+
+A stop is never refused for a GPU borrower. When one still holds the GPU, the outcome says so and names its process: the service will not start again until the borrower releases the GPU. `server start` is refused while a borrower holds it, with `gpu_borrowed` and the borrower's process ID; wait for the borrower to finish, or stop it, then start the service again.
 
 `server stop --json` emits one outcome envelope per exit path for scripting. Every termination writes a shutdown audit line naming the initiating process, so you can always answer who stopped the service. On Windows the CLI writes that line itself, because the force-killed daemon never runs its own shutdown record.
 

@@ -31,6 +31,7 @@ from .._process_probe import (
     server_launch_port,
     wait_for_exit,
 )
+from ..gpu_borrow_lease import borrower_stop_notice, borrower_wire, observe_gpu_borrower
 from ..serviceclient._discovery import _delete_service_status, read_service_status
 from ..serviceclient._transport import _try_http_health
 from ._app import JSON_ENVELOPE_OPTION_HELP, server_root_app
@@ -65,6 +66,11 @@ __all__ = [
 ]
 
 _STOP_COMMAND = "service.stop"
+
+#: The success outcomes after which no service is running, which is when a
+#: borrower still holding the GPU is worth reporting: the next start will be
+#: refused for it. An orphan reap says nothing about the live service.
+_NO_SERVICE_STATUSES = frozenset({"stopped", "already_stopped", "cleaned", "reclaimed"})
 
 # An operator stop waits for the daemon's own lifespan shutdown so both
 # discovery views are removed by the only lease holder authorized to remove
@@ -428,6 +434,10 @@ def _stop_success(
     An already-stopped service is a success so a supervising broker treats the
     idempotent case as satisfied rather than as a fault; that rule lives in the
     shared renderer alongside the envelope-versus-human decision.
+
+    A stop is the operator's decision and is never refused for a GPU borrower,
+    but one that leaves no service running while a borrower still holds the GPU
+    says so: the service will not start again until the borrower releases it.
     """
     from ..monitor_process import recorded_monitor_exited, stop_recorded_monitor
 
@@ -456,6 +466,13 @@ def _stop_success(
             message="Monitor stop failed",
             human_lines=("The recorded monitor process is still running.",),
         )
+    if status in _NO_SERVICE_STATUSES:
+        borrower = observe_gpu_borrower()
+        notice = borrower_stop_notice(borrower)
+        if notice is not None:
+            human_lines = (*human_lines, notice)
+            data["gpu_borrower"] = borrower_wire(borrower)
+            data["notice"] = notice
     _lifecycle_success(
         json_mode,
         command=_STOP_COMMAND,
