@@ -5,7 +5,7 @@ tags:
 date: '2026-10-13'
 modified: '2026-10-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:466f675ce6d7c5c636849524a76b86fda109dca85d829408d3ff20ae71cdfceb'
+body_hash: 'sha256:be17acd2b7f18aa93b7b01674b630a0e7832bc1ad72e898c1c1eaa88d025aba1'
 related: []
 ---
 
@@ -93,6 +93,26 @@ The tool-environment torch gate sets `not_applicable`, which `src/vaultspec_rag/
 
 `src/vaultspec_rag/cli/_render.py:809`.
 
+### admission-read-escape | medium | A corrupt run ledger escapes first-build admission as an unhandled error
+
+`src/vaultspec_rag/_job_admission.py:119-124` handles four proof errors, not `UNREADABLE_PUBLICATION_ERRORS` (`src/vaultspec_rag/_publication_state.py:43-48`), so a non-SQLite ledger raises `sqlite3.DatabaseError` through `src/vaultspec_rag/server/_routes.py:313-322` and aborts every domain of one request with a 500.
+
+### watcher-spec-duplication | low | The watcher builds its index spec outside admission
+
+`src/vaultspec_rag/watcher_execution.py:297-306` constructs the incremental spec that `index_job_spec` owns.
+
+### eager-storage-reading | low | Admission counts points for sources that have already published
+
+`src/vaultspec_rag/_job_admission.py:96-103`.
+
+### stale-docstrings | low | Doctor readiness and admission lock-order docstrings describe old behaviour
+
+`src/vaultspec_rag/cli/_service_doctor.py:192-196`, `src/vaultspec_rag/_job_admission.py:139-140`.
+
+### mcp-incremental-wording | low | MCP reindex tools say incremental and can run a first build
+
+`src/vaultspec_rag/mcp/_tools.py:634-648,673-688`.
+
 ## Recommendations
 
 - wheel-start: implement `2026-10-13-monitor-provisioning-adr`.
@@ -103,3 +123,4 @@ The tool-environment torch gate sets `not_applicable`, which `src/vaultspec_rag/
 - mcp-trust: diagnose against the current vaultspec-core trust contract.
 - first-index: decide whether the first index of a root that has never published is an implicit full build, or whether the next action names `index --rebuild`; it is an amendment to `2026-10-12-destructive-rebuild-lifecycle-adr`.
 - doctor-ready-regression through enum-duck-typing: routine corrections within `2026-10-13-service-runtime-adr`; fix on this branch.
+- admission-read-escape through mcp-incremental-wording: routine corrections under the 2026-10-14 amendment; fix on this branch, with a guard for concurrent first-build admission.

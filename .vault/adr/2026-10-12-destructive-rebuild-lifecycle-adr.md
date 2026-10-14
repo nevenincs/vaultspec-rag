@@ -20,7 +20,7 @@ supersedes:
   - '2026-07-25-non-destructive-index-publication-adr'
 modified: '2026-10-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:a9746405dad551c3967ad26dab6c6d1665625936d976ed3a2a4a846b3759bd49'
+body_hash: 'sha256:e545e470550a4a058a06d95446af225d9015b6e9a44dc036ec5669f8806b19b5'
 ---
 
 # `destructive-rebuild-lifecycle` adr: `discard the old index and search the new build as it grows` | (**status:** `accepted`)
@@ -63,7 +63,7 @@ Accepted 2026-10-12 under the user's explicit instruction to revise the architec
 
 ### Authority and selected scope
 
-A new explicit rebuild resets only the selected canonical root, backend, and source domains. Every public full-index operation has this meaning. Adapters must not reinterpret `full`, `clean`, or rebuild authority as preservation. CLI rebuild still requires an explicit source selection under `2026-05-30-cli-index-default-adr`. Ordinary incremental operations retain their bounded update semantics and cannot escalate to a rebuild, except that the first index of a new source is a full build, as the 2026-10-14 amendment above defines. Existing MCP incremental tools do not gain destructive authority.
+A new explicit rebuild resets only the selected canonical root, backend, and source domains. Every public full-index operation has this meaning. Adapters must not reinterpret `full`, `clean`, or rebuild authority as preservation. CLI rebuild still requires an explicit source selection under `2026-05-30-cli-index-default-adr`. Ordinary incremental operations retain their bounded update semantics and cannot escalate to a rebuild, except that the first index of a new source is a full build, as the 2026-10-14 amendment above defines. Existing MCP incremental tools do not gain destructive authority: a first build they admit for a new source runs with rebuild authority over a target proven empty, and deletes nothing.
 
 Admission validates the request, policy, backend ownership, and required resources before destructive work. A queued or refused job has not yet reset anything. Once an admitted rebuild enters reset, old data is discarded before any new corpus ingestion. The operation creates no backup, shadow copy, retained old generation, or deferred grace-period deletion. This is explicit operator-authorized index reset; automatic orphan maintenance keeps its separate safeguards.
 
