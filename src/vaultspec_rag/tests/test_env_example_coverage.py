@@ -57,17 +57,22 @@ _SET_BY_A_PARENT_PROCESS: Final[dict[str, str]] = {
         "tier is selected"
     ),
     "PYTEST_XDIST_WORKER": "pytest-xdist, on each worker",
+    "HOME": "the operating system, in every process's environment",
+    "USERPROFILE": "the operating system, in every process's environment on Windows",
     "GITHUB_ACTIONS": "the Actions runner, on every step",
     "RUNNER_TOOL_CACHE": "the Actions runner, on every step",
 }
 
 #: Environment accesses whose key cannot be read off the source. Each was read
 #: and found to pass on only names declared elsewhere: the first restores the
-#: variables the session saved, the second tests whichever switch it is handed.
+#: variables the session saved, the second tests whichever switch it is handed,
+#: the third points the user's home at a throwaway directory and puts back the
+#: two variables it names.
 _REVIEWED_DYNAMIC_SITES: Final = frozenset(
     {
         "conftest.py::pytest_unconfigure",
         "dev/init/__main__.py::_truthy",
+        "src/vaultspec_rag/commands/_mcp_host_state.py::_user_home",
     }
 )
 

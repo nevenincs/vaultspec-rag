@@ -214,7 +214,11 @@ class _InstallCommand(TyperCommand):
                     param_decls=["--yes", "-y"],
                     default=False,
                     is_flag=True,
-                    help="Answer yes to setup prompts, for runs without a terminal.",
+                    help=(
+                        "Answer yes to setup prompts, for runs without a terminal. "
+                        "Never approves the MCP launch: approve it at a terminal, "
+                        "or beforehand with `vaultspec-core spec mcps trust`."
+                    ),
                 ),
                 TyperOption(
                     param_decls=["--sync"],
@@ -328,7 +332,8 @@ class _InstallCommand(TyperCommand):
     cls=_InstallCommand,
     help=(
         "Set up vaultspec-rag in this repository.\n\n"
-        "Connects your AI assistant and creates the .vault/ folder. Then run "
+        "Connects your AI assistant and creates the .vault/ folder. At a "
+        "terminal it asks you to approve the MCP launch it enrolls. Then run "
         "`vaultspec-rag server start`, which downloads what the service still "
         "needs. Exits non-zero when a step failed."
     ),
@@ -376,6 +381,23 @@ def _confirmation_hook(
         json_output=json_output, environ=environ, stdin=stdin, stdout=stdout
     )
     return None if unattended else confirm
+
+
+def _ask_operator(prompt: str) -> bool:
+    """Ask the operator one yes-or-no question at the terminal.
+
+    The default is no: pressing Enter on a prompt without reading it must not
+    authorise a write, such as patching the user's ``pyproject.toml`` or
+    approving an MCP launch.
+
+    The prompt is shown as the literal text it is. A launch under review
+    carries brackets, such as ``vaultspec-rag[mcp]``, which Rich would read as
+    markup and drop from what the operator is approving.
+    """
+    from rich.prompt import Confirm
+    from rich.text import Text
+
+    return Confirm.ask(Text(prompt), default=False, console=_cli.console)
 
 
 def _report_command_failure(
@@ -502,8 +524,6 @@ def _install_next_step_hint(status: str, *, no_hints: bool) -> dict[str, object]
 def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
     """Enrol the workspace and provision dependencies for one install request."""
 
-    from rich.prompt import Confirm
-
     from ..commands._install import install_run
 
     # Honour the global ``--target`` from the root callback. Click
@@ -512,14 +532,7 @@ def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
     # the path entirely if we only read the local ``target``.
     effective_target = options.target or _global_target(ctx)
 
-    def _confirm(prompt: str) -> bool:
-        # Default-no on a destructive write - pressing Enter on the
-        # ``Patch <pyproject>?`` prompt without reading it must NOT
-        # mutate the user's pyproject. Users who want to bypass the
-        # prompt can pass ``--yes`` or ``--force``. CLI3-04.
-        return Confirm.ask(prompt, default=False, console=_cli.console)
-
-    confirm_fn = _confirmation_hook(_confirm, json_output=options.json_output)
+    confirm_fn = _confirmation_hook(_ask_operator, json_output=options.json_output)
 
     # Map the per-dependency opt-out flags onto the front door's skip
     # token set. ``--local-only`` already drops the qdrant binary in the

@@ -350,6 +350,12 @@ non-TTY session, or `--json`, never prompts: it skips the patch, reports the ski
 exits non-zero, so the gap is visible rather than silent. If the detection is wrong,
 correct it with `--mode`; see the [install command reference](cli.md#install).
 
+The setup also asks you to approve the MCP server launch it would enroll, and `--yes`
+does not answer that question: approval needs a person who has read the command, or a
+grant made beforehand with `vaultspec-core spec mcps trust`. Without one, the setup
+completes and leaves the server unenrolled. See
+[Install the MCP server](mcp.md#install-the-mcp-server).
+
 The repository setup does three things:
 
 - Adds the AI assistant integration: a rule, a skill, and the MCP server entry your

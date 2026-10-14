@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+import stat
+import sys
+from contextlib import contextmanager
 from pathlib import Path
 from threading import Event, Thread
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from vaultspec_core.core.enums import (
@@ -22,6 +25,7 @@ from ._install_helpers import (
     _install,
     _node_signature,
     create_windows_junction,
+    host_ownership,
     install_report,
     read_codex_mcp,
     read_mcp_json,
@@ -29,7 +33,40 @@ from ._install_helpers import (
     workspace_inventory,
 )
 
-pytestmark = [pytest.mark.integration]
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.usefixtures("isolated_mcp_trust_home"),
+]
+
+
+@contextmanager
+def _filesystem_refuses_removal(link: Path) -> Generator[None]:
+    """Make the filesystem itself refuse to remove *link*, then undo that.
+
+    Windows refuses to delete a read-only link. Elsewhere the permission to
+    remove an entry belongs to the directory holding it, so that directory is
+    made read-only; the superuser is not bound by it, and a test that cannot
+    produce the refusal fails rather than passing over a branch it never ran.
+    """
+    if sys.platform == "win32":
+        os.chmod(link, stat.S_IREAD, follow_symlinks=False)
+        try:
+            yield
+        finally:
+            os.chmod(link, stat.S_IWRITE | stat.S_IREAD, follow_symlinks=False)
+        return
+    if os.geteuid() == 0:
+        pytest.fail("permissions do not stop the superuser removing a link")
+    directory = link.parent
+    mode = stat.S_IMODE(directory.stat().st_mode)
+    directory.chmod(0o555)
+    try:
+        yield
+    finally:
+        directory.chmod(mode)
 
 
 class TestInstallPreviewTopology:
@@ -109,16 +146,6 @@ class TestInstallPreviewTopology:
                     'command = "operator-drift"',
                     1,
                 ),
-                encoding="utf-8",
-            )
-        elif relative == Path(".vaultspec") / "mcp-ownership.json":
-            state = cast(
-                "dict[str, dict[str, object]]",
-                json.loads(linked_target.read_text(encoding="utf-8")),
-            )
-            del state["targets"]["claude:project"]
-            linked_target.write_text(
-                json.dumps(state, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
         elif relative == Path(".vaultspec") / "providers.json":
@@ -246,13 +273,22 @@ class TestInstallPreviewTopology:
         self,
         fresh_workspace: Path,
     ) -> None:
+        """A failed run restores the ownership sidecar it half-rewrote, exactly.
+
+        The replay's own sidecar, translated back to this root, is the only
+        post-state the transaction owns. Proven able to fail: ignoring what the
+        replay wrote leaves the half-rewritten sidecar in place and fails the
+        inventory assertion; restoring it passes.
+        """
         _install(fresh_workspace, mode=InstallMode.TOOL)
-        ownership = fresh_workspace / ".vaultspec" / "mcp-ownership.json"
+        ownership = host_ownership(fresh_workspace)
         state = cast(
             "dict[str, dict[str, object]]",
             json.loads(ownership.read_text(encoding="utf-8")),
         )
-        del state["targets"]["claude:project"]
+        del state["targets"][
+            next(key for key in state["targets"] if key.startswith("claude:project:"))
+        ]
         ownership.write_text(
             json.dumps(state, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
@@ -583,26 +619,126 @@ class TestInstallPreviewTopology:
         assert _node_signature(node) == signature
         assert node.read_bytes() == original
 
-    def test_materialize_write_failure_restores_just_removed_link(
+    def test_unowned_source_link_is_left_in_place_for_the_whole_transaction(
         self,
         fresh_workspace: Path,
     ) -> None:
+        """A source RAG never writes stays a link from materialization to commit.
+
+        Core resolves approval by where a source really lives, so swapping the
+        link for a regular copy would move it to a path nobody approved. Proven
+        able to fail: materializing every link replaces the source with a
+        regular file and fails the first signature assertion; restoring the
+        writable-link filter passes.
+        """
         from ...commands._mcp_topology import inspect_required_mcp_topology
 
         source_dir = fresh_workspace / ".vaultspec" / "mcps"
         source_dir.mkdir(parents=True)
         target = fresh_workspace / ".vaultspec" / "operator-extra.json"
         target.write_bytes(b'{"command": "operator", "args": []}\n')
-        source = source_dir / ("operator-" + "x" * 225 + ".json")
+        source = source_dir / "operator-extra.builtin.json"
         source.symlink_to(os.path.relpath(target, source.parent))
         signature = _node_signature(source)
         topology = inspect_required_mcp_topology(fresh_workspace)
 
-        with pytest.raises(OSError):
-            topology.materialize()
+        topology.materialize()
 
         assert _node_signature(source) == signature
         assert source.read_bytes() == target.read_bytes()
+        assert not topology.finish(commit=True)
+        assert _node_signature(source) == signature
+        assert target.read_bytes() == b'{"command": "operator", "args": []}\n'
+
+    @staticmethod
+    def _link_both_native_configs(workspace: Path) -> tuple[Path, Path]:
+        """Make both native configs links to operator-held targets, in order."""
+        links = (workspace / ".mcp.json", workspace / ".codex" / "config.toml")
+        for link in links:
+            target = link.with_name(f"{link.name}.operator")
+            link.replace(target)
+            link.symlink_to(target.name)
+        return links
+
+    def test_a_failure_mid_materialization_restores_the_links_already_swapped(
+        self,
+        fresh_workspace: Path,
+    ) -> None:
+        """A link swapped for a copy goes back when a later link cannot be swapped.
+
+        Materialization replaces each writable link with a regular copy in turn.
+        The second native config here is one the filesystem will not let go of,
+        so the first has already been swapped when the refusal arrives. The
+        refusal must leave every link exactly as it was found, targets included.
+        Proven able to fail: dropping the rollback in the handler leaves the
+        first config a regular file and fails the first signature assertion;
+        restoring it passes.
+        """
+        from ...commands._mcp_topology import inspect_required_mcp_topology
+
+        _install(fresh_workspace, mode=InstallMode.TOOL)
+        first, second = self._link_both_native_configs(fresh_workspace)
+        signatures = (_node_signature(first), _node_signature(second))
+        targets = tuple(
+            link.with_name(f"{link.name}.operator").read_bytes()
+            for link in (first, second)
+        )
+        topology = inspect_required_mcp_topology(fresh_workspace)
+
+        with (
+            _filesystem_refuses_removal(second),
+            pytest.raises(OSError) as refusal,
+        ):
+            topology.materialize()
+
+        assert "rollback was incomplete" not in str(refusal.value)
+        assert (_node_signature(first), _node_signature(second)) == signatures
+        assert (
+            tuple(
+                link.with_name(f"{link.name}.operator").read_bytes()
+                for link in (first, second)
+            )
+            == targets
+        )
+        assert not list(fresh_workspace.rglob("*.rollback-*"))
+
+    @pytest.mark.skipif(
+        sys.platform != "win32",
+        reason="only Windows refuses to delete a read-only file",
+    )
+    def test_a_swapped_link_that_cannot_be_restored_is_reported_not_overwritten(
+        self,
+        fresh_workspace: Path,
+    ) -> None:
+        """A rollback that cannot finish says so and leaves the copy alone.
+
+        The first config's target is read-only, so its copy is read-only too
+        and cannot be removed to put the link back. The failure that started
+        the rollback is not the whole story then, and the error names both.
+        Proven able to fail: reporting only the original refusal drops the
+        phrase from the error and fails the match; restoring it passes.
+        """
+        from ...commands._mcp_topology import inspect_required_mcp_topology
+
+        _install(fresh_workspace, mode=InstallMode.TOOL)
+        first, second = self._link_both_native_configs(fresh_workspace)
+        first_target = first.with_name(f"{first.name}.operator")
+        first_bytes = first_target.read_bytes()
+        os.chmod(first_target, stat.S_IREAD)
+        topology = inspect_required_mcp_topology(fresh_workspace)
+
+        try:
+            with (
+                _filesystem_refuses_removal(second),
+                pytest.raises(OSError, match="rollback was incomplete") as refusal,
+            ):
+                topology.materialize()
+            assert str(first) in str(refusal.value)
+            assert not first.is_symlink()
+            assert first.read_bytes() == first_bytes
+        finally:
+            os.chmod(first_target, stat.S_IWRITE | stat.S_IREAD)
+            os.chmod(first, stat.S_IWRITE | stat.S_IREAD)
 
     def test_link_target_race_is_preserved_on_commit_refusal(
         self,
@@ -800,11 +936,11 @@ class TestInstallPreviewTopology:
         fresh_workspace: Path,
     ) -> None:
         _install(fresh_workspace, mode=InstallMode.TOOL)
-        ownership = fresh_workspace / ".vaultspec" / "mcp-ownership.json"
+        workspace = fresh_workspace / ".vaultspec" / "workspace.json"
         providers = fresh_workspace / ".vaultspec" / "providers.json"
-        ownership.unlink()
-        ownership.symlink_to(providers.name)
-        signature = _node_signature(ownership)
+        workspace.unlink()
+        workspace.symlink_to(providers.name)
+        signature = _node_signature(workspace)
         providers_before = providers.read_bytes()
 
         preview = _install(fresh_workspace, dry_run=True, upgrade=True)
@@ -813,7 +949,7 @@ class TestInstallPreviewTopology:
         assert preview.mcp_sync_failed and applied.mcp_sync_failed
         assert preview.mcp_errors == applied.mcp_errors
         assert "overlaps a required MCP node" in " ".join(preview.mcp_errors)
-        assert _node_signature(ownership) == signature
+        assert _node_signature(workspace) == signature
         assert providers.read_bytes() == providers_before
 
     @pytest.mark.parametrize(

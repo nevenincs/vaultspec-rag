@@ -848,6 +848,36 @@ class TestRefusedInstall:
         assert _hook(json_output=False) is _confirm
         assert _hook(json_output=True) is None
 
+    def test_a_prompt_reaches_the_operator_exactly_as_written(self) -> None:
+        """Guard assertion: bracketed text in a question survives to the terminal.
+
+        An MCP launch under review reads ``vaultspec-rag[mcp]``, and Rich
+        treats a bracketed word as markup and drops it, so the operator would
+        approve a launch other than the one that runs. A real interpreter asks
+        the real prompt over a pipe. Mutation it catches: handing Rich the
+        prompt as a string instead of as literal text, which prints
+        ``vaultspec-rag and x`` and fails the assertion on the stdout.
+        """
+        import subprocess
+
+        code = (
+            "from vaultspec_rag.cli._install import _ask_operator;"
+            "raise SystemExit(0 if _ask_operator("
+            "'run vaultspec-rag[mcp] and [bold]x[/bold]') else 3)"
+        )
+
+        completed = subprocess.run(
+            [sys.executable, "-I", "-c", code],
+            input="y\n",
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+
+        assert completed.returncode == 0, completed.stderr
+        assert "run vaultspec-rag[mcp] and [bold]x[/bold]" in completed.stdout
+
     def test_an_install_run_probes_an_interpreter_at_most_once(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
