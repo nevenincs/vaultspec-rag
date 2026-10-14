@@ -5,7 +5,7 @@ tags:
 date: '2026-10-14'
 modified: '2026-10-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:1c5c57aafa023ee82d8ef6b0d17c1e24cb98bf1413b798773add8b695d97bd7c'
+body_hash: 'sha256:ea89402138a03535785336069300cdb18832c565ffb3780b188e611eed8b2287'
 related:
   - "[[2026-10-13-monitor-provisioning-plan]]"
 ---
@@ -81,6 +81,14 @@ Re-review of `bb128a3f..63fd1c7f`. `src/vaultspec_rag/tests/test_env_example_cov
 ### final-review | low | the review passes once env-surface and staging-pid-parse are resolved
 
 `30708f0c` catalogues `PYAPP` in `.env.example` as read-only, drops the stale `GITHUB_ENV` exemption, and reads the staging pid by position. A mutation proof with an all-digit token is recorded in the ledger. `test_env_example_coverage.py` and `test_monitor_provisioning.py` were re-run: 28 passed. The sibling-unreadable finding stays open by judgement: the behaviour is fail-closed, and no falsifying test can be built on Windows. Pending verification: one built-bundle rehearsal of the launcher sibling tier. Pending on the user: `dev lint links` fails on user-owned `.vaultspec/skills/start-vaultspec-rag/references/*`, and `uv.lock` is stale at the branch base.
+
+### ci-guards | high | five repo-wide guard tests failed on PR #615 because no Step's selection ran them
+
+CI's correctness job on PR #615 failed: duplicate bodies between the monitor and Qdrant provisioners, an unconsumed `expected_monitor_sha256`, a symlink-interpreter test, and substitution accounting. Every Step had run `-k` selections, never the whole suite. Resolved by `bd50bc3b`, which converges on the integration branch's `operator_path_fault` and `whole_body_matches` and removes empty install directories after a refused install. The whole accelerator-free suite passed: 8270 passed, 0 failed.
+
+### worker-checkout | low | the fix worker ran `git checkout -- src/vaultspec_rag/native_binary/__init__.py`
+
+The `gates-run-explicitly` rule forbids checking out paths. The worker reports that only that file's whitespace-only difference was involved. The file matches HEAD.
 
 ## Recommendations
 

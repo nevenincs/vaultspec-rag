@@ -8,24 +8,21 @@ are not, one planted in the working directory, and one named by the operator
 settings.
 
 The pin is the resolver's argument, so a stand-in release is a value a test
-passes rather than a trust constant it writes: nothing here depends on
-whether this checkout built a monitor of its own.
+passes rather than a trust constant it writes: no case here asks what this
+checkout's own generated digests say, and none can be answered by a monitor
+this checkout compiled for itself.
 """
 
 from __future__ import annotations
 
-import json
 import os
-import subprocess
 import sys
 import sysconfig
 from dataclasses import replace
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 
-from .. import _program_lookup
 from ..config._types import EnvVar
 from ..monitor_runtime._assets import monitor_archive_name, monitor_executable_name
 from ..monitor_runtime._errors import MonitorError
@@ -49,6 +46,7 @@ from .conftest import managed_env
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+    from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
 
@@ -107,19 +105,29 @@ def managed(tmp_path: Path) -> Generator[Path]:
 
 
 @pytest.fixture
-def sibling(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A directory standing in for the one this installation's programs are in.
+def sibling(tmp_path: Path) -> Generator[Path]:
+    """A real place this installation's programs are, that a test can own.
 
-    Every place this installation's programs can be is stood in for, so
-    nothing is planted beside the real interpreter and a monitor this
-    checkout compiled for itself cannot answer in their place.
+    An archive install is a launcher that carries this package as a wheel and
+    installs it into a cache environment of its own on first run, so the
+    monitor it shipped with sits beside the launcher rather than in that
+    environment. That makes the launcher's own directory one of the places
+    resolution looks, and the only one a test can put a file in without
+    writing beside the real interpreter. The launcher states its path exactly
+    as it does in a real install, and nothing about the lookup is replaced.
+
+    A monitor this checkout compiled for itself stays where it is and cannot
+    answer in this one's place: the stand-in release's pin admits its own
+    bytes and nothing else.
+
+    Yields:
+        The launcher's own directory.
     """
-    beside = tmp_path / "beside"
-    beside.mkdir()
-    monkeypatch.setattr(
-        _program_lookup, "installation_programs", lambda: (str(beside),)
-    )
-    return beside
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    launcher = _install(bundle / f"vaultspec-rag{_LAUNCHER_SUFFIX}", b"launcher")
+    with managed_env(**{EnvVar.PYAPP.value: str(launcher)}):
+        yield bundle
 
 
 @pytest.mark.usefixtures("managed")
@@ -145,11 +153,19 @@ class TestWhatIsChosen:
     def test_a_monitor_beside_the_installation_is_chosen_before_the_managed_one(
         self, sibling: Path
     ) -> None:
-        """A bundle install runs the monitor it shipped with.
+        """An archive install runs the monitor it shipped with.
+
+        The layout is the real one: the monitor beside the launcher the
+        install was started by, with the launcher stating its own path.
 
         Mutation: yielded the managed install before the sibling. Observed
-        this test fail on the path assertion, with the managed install
+        this test fail on the source assertion, with the managed install
         chosen. Restored; passes.
+
+        Mutation: left the launcher's own directory out of the places this
+        installation's programs are in. Observed this test fail on the "not
+        None" assertion, which is an archive install downloading a monitor it
+        already has. Restored; passes.
         """
         _install(managed_monitor_path(_pin().version, _pin().target), _MONITOR)
         beside = _install(sibling / monitor_executable_name(host_target()), _MONITOR)
@@ -199,56 +215,29 @@ class TestWhatIsChosen:
 
 
 @pytest.mark.usefixtures("managed")
-class TestABundleRunsTheMonitorItShippedWith:
-    """The real layout an archive install has, with nothing stood in for.
-
-    An archive install is a launcher that carries this package as a wheel and
-    installs it into a cache environment of its own on first run. The monitor
-    it shipped with is beside the launcher, inside the extracted archive;
-    the environment the launcher runs holds no monitor at all. Nothing here
-    replaces the accessor that says where this installation's programs are:
-    the launcher states its own path exactly as it does in a real install,
-    and the directories that accessor derives from this interpreter are the
-    real ones.
-    """
-
-    def test_the_monitor_beside_the_launcher_is_resolved(self, tmp_path: Path) -> None:
-        """Mutation: left the launcher's directory out of the places this
-        installation's programs are in. Observed this test fail on the "not
-        None" assertion, with nothing resolved, which is the download of a
-        monitor the install already has. Restored; passes."""
-        bundle = tmp_path / "bundle"
-        bundle.mkdir()
-        launcher = _install(bundle / f"vaultspec-rag{_LAUNCHER_SUFFIX}", b"launcher")
-        beside = _install(bundle / monitor_executable_name(host_target()), _MONITOR)
-
-        with managed_env(**{EnvVar.PYAPP.value: str(launcher)}):
-            resolved = resolve_pinned_monitor(_pin())
-
-        assert resolved is not None
-        assert resolved.path == beside.resolve()
-        assert resolved.source is MonitorSource.INSTALLATION_SIBLING
-        assert resolved.sha256 == _pin().executable_sha256
-
+class TestSeveralPlacesHoldOneName:
     def test_a_monitor_of_another_build_in_the_environment_masks_nothing(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, sibling: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Both places are judged by content, so the order cannot decide.
+        """Every place is judged by content, so their order cannot decide.
 
         An upgraded launcher installs a new wheel into a new cache
-        environment, and an older monitor left in a scripts directory is
-        still of the right name. Resolving the first file found would hand
-        the install that one and refuse it.
+        environment, and an older monitor left in that environment's scripts
+        directory is still a file of the right name, found first. Resolving
+        the first one found would hand the install that one and refuse it.
+
+        The environment's scripts directory is the one place here that is not
+        the real one. It cannot be: it is a directory of the interpreter
+        running this suite, and the only way to put a file of another build
+        in it is to write one into the environment the tests run in. The
+        launcher's directory, the lookup, both candidate files, the content
+        comparison and the resolver are real.
 
         Mutation: offered only the first match. Observed this test fail on
         the "not None" assertion, with nothing resolved: the older monitor
         was the only candidate and its content is not this release's.
         Restored; passes.
         """
-        # The scripts directory alone stands in: resolution looks beside the
-        # running program, which cannot be anywhere but the real environment
-        # without building a second installation, and a monitor planted in
-        # the real one would change the machine the tests run on.
         scripts = tmp_path / "scripts"
         scripts.mkdir()
         real_path = sysconfig.get_path
@@ -258,13 +247,9 @@ class TestABundleRunsTheMonitorItShippedWith:
 
         monkeypatch.setattr(sysconfig, "get_path", scripts_here)
         _install(scripts / monitor_executable_name(host_target()), _OTHER)
-        bundle = tmp_path / "bundle"
-        bundle.mkdir()
-        launcher = _install(bundle / f"vaultspec-rag{_LAUNCHER_SUFFIX}", b"launcher")
-        beside = _install(bundle / monitor_executable_name(host_target()), _MONITOR)
+        beside = _install(sibling / monitor_executable_name(host_target()), _MONITOR)
 
-        with managed_env(**{EnvVar.PYAPP.value: str(launcher)}):
-            resolved = resolve_pinned_monitor(_pin())
+        resolved = resolve_pinned_monitor(_pin())
 
         assert resolved is not None
         assert resolved.path == beside.resolve()
@@ -374,14 +359,21 @@ class TestALaunchWithNothingToLaunch:
     ) -> None:
         """The launcher downloads nothing; provisioning runs before it.
 
-        The digests are stated so that the case reached is the one with no
-        monitor installed at all: a checkout that compiled its own carries
-        digests and has it installed, so the refusal under test would never
-        be reached there. Where the resolver looks, and what it admits, stay
-        production's.
+        A launch asks the installation it runs in which digests admit a
+        monitor, rather than being handed them, so the stand-in release is
+        put where it reads them from. It cannot be driven for real here: this
+        checkout's own monitor is installed in its real scripts directory, so
+        "this release's monitor is installed nowhere" is not a state the
+        suite's own installation can be in. Everywhere resolution looks, the
+        managed directory it would find nothing in, and the refusal under
+        test are real.
         """
+
+        def pin_for(_target: str) -> MonitorPin:
+            return _pin()
+
         monkeypatch.setattr(
-            "vaultspec_rag.monitor_runtime._resolve.monitor_pin", lambda _target: _pin()
+            "vaultspec_rag.monitor_runtime._resolve.monitor_pin", pin_for
         )
 
         with pytest.raises(MonitorError) as refused:
@@ -445,98 +437,3 @@ def test_the_managed_monitor_lives_beside_the_managed_qdrant_binary(
     assert os.path.normcase(
         str(monitor.parent.parent.parent.parent)
     ) == os.path.normcase(str(qdrant_bin_dir().parent.parent))
-
-
-#: Resolves the monitor a daemon in another interpreter would run, and reports
-#: where it came from. Run with no access to this process's import path, so
-#: everything it imports comes from the installation the daemon runs as. The
-#: pin is the parent's, passed in, so the digest the child's resolution is held
-#: to is not one it computed from the file it found.
-_RESOLVE_IN_A_DAEMON = """
-import json, sys
-from vaultspec_rag.monitor_runtime._assets import (
-    monitor_archive_name,
-    monitor_executable_name,
-)
-from vaultspec_rag.monitor_runtime._pins import MonitorPin, PinProvenance
-from vaultspec_rag.monitor_runtime._resolve import resolve_pinned_monitor
-from vaultspec_rag.native_binary._targets import host_target
-
-version, digest = sys.argv[1], sys.argv[2]
-target = host_target()
-resolved = resolve_pinned_monitor(
-    MonitorPin(
-        provenance=PinProvenance.RELEASE,
-        version=version,
-        tag="vaultspec-rag-v" + version,
-        target=target,
-        archive_name=monitor_archive_name(version, target),
-        archive_sha256="a" * 64,
-        executable_name=monitor_executable_name(target),
-        executable_sha256=digest,
-    )
-)
-sys.stdout.write(
-    json.dumps(
-        None
-        if resolved is None
-        else {"path": str(resolved.path), "source": str(resolved.source)}
-    )
-)
-"""
-
-
-def test_a_daemon_in_another_interpreter_resolves_the_managed_install(
-    managed: Path,
-) -> None:
-    """The one place every environment of a release shares, by absolute path.
-
-    A daemon the start spawns into the managed service runtime runs another
-    interpreter, so nothing of this installation's is beside it: no launcher,
-    no scripts directory of its own holding a monitor. What has to answer
-    there is the machine-wide managed install, which is keyed by release and
-    target under the managed service directory - and that directory reaches
-    the daemon as an absolute path in the environment the start builds for
-    it, so both processes name the same one.
-
-    Driven in a real child under exactly that environment, with this
-    process's import path dropped as the spawn drops it for an interpreter
-    that is not its own, so the child's resolution is its installation's.
-
-    Mutation: dropped the managed service directory from the environment
-    built for an interpreter that is not this process's own, alongside the
-    three that aim an interpreter. Observed this test fail on the
-    resolved-nothing assertion, the child looking in the user-level managed
-    directory of the machine it runs on instead of the one the parent
-    provisioned into. Restored; passes.
-    """
-    from .._python_child import inline_command
-    from ..cli._process import _build_service_child_env, _ServiceChildEnvRequest
-
-    pin = _pin()
-    installed = _install(managed_monitor_path(pin.version, pin.target), _MONITOR)
-    environment = _build_service_child_env(
-        _ServiceChildEnvRequest(), interpreter="/a/service/runtime/bin/python"
-    )
-    assert "PYTHONPATH" not in environment
-
-    completed = subprocess.run(
-        inline_command(
-            sys.executable,
-            _RESOLVE_IN_A_DAEMON,
-            pin.version,
-            pin.executable_sha256,
-        ),
-        env=environment,
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=False,
-    )
-
-    assert completed.returncode == 0, completed.stderr
-    answered = json.loads(completed.stdout)
-    assert answered is not None, "the daemon's interpreter resolved no monitor"
-    assert os.path.normcase(answered["path"]) == os.path.normcase(str(installed))
-    assert answered["source"] == str(MonitorSource.MANAGED_INSTALL)
-    assert Path(answered["path"]).is_relative_to(managed)

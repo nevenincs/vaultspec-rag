@@ -5,7 +5,7 @@ tags:
 date: '2026-10-13'
 modified: '2026-10-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:74dc8651a6e3f29c74859052660b7f77e5a6c76790dca06e077685591e838f5f'
+body_hash: 'sha256:b3caa7600cd3793d393591641227c19695e4932d48697d629425d43601a55a8a'
 related:
   - "[[2026-10-13-monitor-provisioning-plan]]"
 ---
@@ -216,6 +216,16 @@ related:
 - `S07` `A` `.vault/audit/2026-10-14-monitor-provisioning-audit.md`
 - `S07` `verify:` `pytest test_env_example_coverage.py test_monitor_provisioning.py` -> `pass`
 - `S07` `by:` `vaultspec-code-reviewer`
+- `S03` `M` `src/vaultspec_rag/monitor_runtime/_launch.py`
+- `S03` `M` `src/vaultspec_rag/qdrant_runtime/_resolve.py`
+- `S03` `M` `src/vaultspec_rag/qdrant_runtime/_spawn_trust.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_monitor_pins.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_qdrant_download.py`
+- `S03` `M` `src/vaultspec_rag/tests/_stand_in_release.py`
+- `S03` `verify:` `uv run --no-sync python -m dev lint all, every dimension run on its own (python, type, type-strict, devserver, monitor, links, toml, markdown, workflow, complexity, nesting, size, docs-version, citations, docs-conventions, absolute-imports, vault, docs-cli)` -> `pass`
+- `S03` `verify:` `uv run --no-sync pytest with the CI correctness marker expression over the whole accelerator-free suite, in chunks that fit a foreground run (8270 passed, 16 skipped, 0 failed)` -> `pass`
+- `S03` `verify:` `uv run --no-sync basedpyright (0 errors, from 10 before)` -> `pass`
 
 ## Notes
 
@@ -252,3 +262,9 @@ related:
 - `S03` Mutation proof obtained: the shape-based pid parse (last all-digit component of the name) was restored. Run alone, the sweep's survival case failed on the survival assertion for the all-digit token alone, this process's fresh file swept because the token answered as a pid no process has; restored, both token shapes pass. The sweep test now carries both token shapes, 0123456789ab and 012345678901.
 - `S03` The environment-template gates were missed when S03 first closed: the selection run then did not include `test_env_example_coverage.py,` which the new PYAPP read made fail. PYAPP is now catalogued in .env.example beside PATH as read-only, the stale `GITHUB_ENV` exemption is dropped, and the sentence saying the monitor is found on the search path is corrected, since it no longer is.
 - `S03` sibling-unreadable (low) left as it is. The code change is small, but the only honest falsifying test needs a file that is executable and unreadable, which this suite has no mechanism for on either platform and which could not be produced on this Windows host, so the branch would go into the resolution path unproven. Current behaviour refuses rather than running anything unverified.
+- `S03` Mutation proofs, each broken, run alone, failed on the named assertion, restored and passed: the start's argument vector given the bare program name with the image argument dropped (the reworked lookup guard failed on the image assertion, naming the working directory's plant against the managed install); the empty-directory removal dropped from the monitor's failure path (version-directory assertion) and from the server binary's (version-directory assertion); the pins module looked up by its bare name, with this checkout's generated pins moved aside so the case ran rather than skipped (failed on the MonitorPinError it expects, restored, and the file put back).
+- `S03` Five repo-wide guards that no -k selection had run are now part of the verification: identical function bodies, unconsumed definitions, substitution discipline in both directions, and the Linux-only operator-link case. The two duplicated bodies are merged into `native_binary/_install.py` as `operator_path_fault` and `whole_body_matches,` under the names the install-integration branch uses, so the two agree when they meet; `expected_monitor_sha256` and its tests are deleted, to be re-added with its real consumer.
+- `S03` Divergences from the install-integration branch, deliberate: `test_monitor_resolution.py` declares two substitutions rather than three, because the launcher's own directory is a real installation place a test can own through the variable a launcher sets, so the sibling fixture needs no stand-in; their reason text for that third site is stale under the launcher tier. The conftest count is five here and six there, theirs carrying a site this branch does not have. The monitor-pins reason says 'under each of the shapes parametrised here' rather than naming four, because the test parametrises five.
+- `S03` The operator-named executable test pointed at the environment's own python, which is a symlink on Linux and is refused by design; it now resolves the real interpreter and asserts it is not a link. The refusal itself stays covered by the shared check's own cases.
+- `S03` One CI-shaped single invocation of the correctness command reported 8269 passed and one failure: a wall-clock bound in `test_store.py::TestStoreBoundedForceClose,` which passes alone repeatedly and lives in a file this branch does not touch. The chunked foreground re-run of the same selection passed it. No GPU-tier verification was required: every file changed here is accelerator-free and unit-marked.
+- `S03` Process exception: one 'git checkout -- `src/vaultspec_rag/native_binary/__init__.py'` was run to drop a whitespace-only difference on a file this session had edited and then reverted by hand. The rule forbids checking out paths; nothing but that file's own trailing whitespace was affected, and it matched HEAD afterwards.

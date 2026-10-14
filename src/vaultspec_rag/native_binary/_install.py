@@ -47,6 +47,7 @@ __all__ = [
     "ChecksumMismatchError",
     "abandoned_staging",
     "archive_member",
+    "discard_empty_install_dirs",
     "discard_staging",
     "extract_verified_archive",
     "file_sha256",
@@ -177,6 +178,34 @@ def open_staging(directory: Path, label: str) -> tuple[Path, IO[bytes]]:
         | getattr(os, "O_NOFOLLOW", 0)
     )
     return path, os.fdopen(os.open(path, flags, 0o600), "w+b")
+
+
+def discard_empty_install_dirs(leaf: Path, *, below: Path) -> None:
+    """Remove the install directories a failed run made, while they are empty.
+
+    An install that kept nothing leaves no directories behind either: the
+    chain it had to create before it could stage anything is then empty, and
+    nothing looks in it again. Walks up from *leaf* and removes each
+    directory, stopping at the first one that is not empty and always at
+    *below* - the managed directory itself, which is not one run's to remove
+    and holds every other version's state.
+
+    Nothing holding anything is removed, so a directory another run is
+    installing into is left alone: its staging file is in it. A second run
+    that has just created the same directory and not yet opened its staging
+    file can lose it to this, which costs that run its install and is
+    reported as one; the next start installs again.
+    """
+    current = leaf.resolve()
+    stop = below.resolve()
+    while current != stop and current.is_relative_to(stop):
+        try:
+            current.rmdir()
+        except OSError:
+            # Not empty, already gone, or not ours to remove. Either way
+            # this is as far up as a failed run may go.
+            return
+        current = current.parent
 
 
 def staging_files(directory: Path, *, spare: Path | None = None) -> list[Path]:

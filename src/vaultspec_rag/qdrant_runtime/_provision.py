@@ -70,6 +70,7 @@ from ..native_binary._download import (
 from ..native_binary._install import (
     ChecksumMismatchError,
     archive_member,
+    discard_empty_install_dirs,
     discard_staging,
     mark_executable,
     open_staging,
@@ -699,6 +700,7 @@ def _install(request: _InstallRequest) -> ProvisionReport:
     # A local install contacts nothing, so its report names no URL.
     url = "" if local else request.url
     staged: list[Path] = []
+    installed = False
     try:
         request.version_dir.mkdir(parents=True, exist_ok=True)
         executable = _stage_verified_executable(request, staged)
@@ -711,6 +713,7 @@ def _install(request: _InstallRequest) -> ProvisionReport:
             binary_sha256=request.executable_sha256,
             source=MANIFEST_SOURCE_ARCHIVE if local else MANIFEST_SOURCE_DOWNLOAD,
         )
+        installed = True
     except _INSTALL_FAILURES as exc:
         logger.error("qdrant provisioning failed: %s", exc)
         return ProvisionReport(
@@ -723,8 +726,14 @@ def _install(request: _InstallRequest) -> ProvisionReport:
         )
     finally:
         # Reached by an interrupt as well as by a failure, so a run stopped
-        # at the keyboard strands no working file either.
+        # at the keyboard strands no working file either, nor the empty
+        # version directory it had to make to stage one. The lock lives in
+        # the directory above, which is never removed.
         discard_staging(staged)
+        if not installed:
+            discard_empty_install_dirs(
+                request.version_dir, below=request.version_dir.parent
+            )
     action = (
         ProvisionAction.UPDATED
         if request.previously != InstallState.ABSENT

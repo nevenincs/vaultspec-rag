@@ -230,8 +230,11 @@ def test_the_monitor_is_not_started_from_the_working_directory(
         # stated input so that where the resolver looks, and what it admits,
         # are production's throughout; the install above is a real file in
         # the real managed directory.
+        def pin_for(_target: str) -> MonitorPin:
+            return pin
+
         monkeypatch.setattr(
-            "vaultspec_rag.monitor_runtime._resolve.monitor_pin", lambda _target: pin
+            "vaultspec_rag.monitor_runtime._resolve.monitor_pin", pin_for
         )
         # Resolution is production's, and its answer is what the started
         # process is held to below.

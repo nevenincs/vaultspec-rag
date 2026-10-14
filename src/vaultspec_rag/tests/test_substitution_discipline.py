@@ -314,8 +314,33 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "fetch the server runs the real provisioner against a stand-in "
         "release served from a loopback source",
     ),
-    # Reducing this bound to zero failed count growth; raising it to two failed
-    # the declared-sites check; exact restoration passed.
+    "test_monitor_pins.py": (
+        1,
+        "answers the distribution lookup with a metadata directory the test "
+        "wrote, because what is under test is how an installation's own "
+        "direct-URL record decides which pins it may accept, and this "
+        "installation has exactly one such record; reinstalling this package "
+        "under each of the shapes parametrised here is not something a unit "
+        "test can do. The record is a real file read by the real metadata "
+        "reader, and the judgement over this checkout's own installation is "
+        "asserted beside it without any substitution",
+    ),
+    # Reducing this bound to one failed count growth; raising it to three
+    # failed the declared-sites check; exact restoration passed.
+    "test_monitor_resolution.py": (
+        2,
+        "one site points the environment's scripts directory at a temporary "
+        "one, because it is a directory of the interpreter running this suite "
+        "and a file of another build cannot be put in it without writing into "
+        "the environment the tests run in. The other states the release "
+        "digests for the one case that has no monitor installed at all, so "
+        "the launcher's refusal is reached on a checkout that built one too. "
+        "The place an archive install's own monitor sits - the launcher's own "
+        "directory - is driven for real through the variable a launcher sets, "
+        "so every other case here plants its monitor in a real installation "
+        "place; the lookup, the files, the digests, the managed directory and "
+        "the resolver are real throughout",
+    ),
     "test_program_lookup_sites.py": (
         1,
         "states the release digests that admit a monitor, because a checkout "
@@ -323,31 +348,6 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "a program is looked for, not about whether this machine built one. "
         "The managed install, the planted programs, the search state, the "
         "resolution and the process creation under test are all real",
-    ),
-    "test_monitor_pins.py": (
-        1,
-        "answers the distribution lookup with a metadata directory the test "
-        "wrote, because what is under test is how an installation's own "
-        "direct-URL record decides which pins it may accept, and this "
-        "installation has exactly one such record; reinstalling this package "
-        "four ways is not something a unit test can do. The record is a real "
-        "file read by the real metadata reader, and the judgement over this "
-        "checkout's own installation is asserted beside it without any "
-        "substitution",
-    ),
-    # Reducing this bound to two failed count growth; raising it to four failed
-    # the declared-sites check; exact restoration passed.
-    "test_monitor_resolution.py": (
-        3,
-        "two sites stand in for the directories this installation's own "
-        "programs are in - all of them, and the scripts directory alone - "
-        "because resolution looks beside the running program, which cannot be "
-        "anywhere but the real environment without building a second "
-        "installation, and planting a monitor in the real one would change "
-        "the machine the tests run on. The third states the release digests "
-        "for the one case that has no monitor installed at all, so the "
-        "launcher's refusal is reached on a checkout that built one too. "
-        "Every file, directory, digest and resolution step is real",
     ),
     "test_publication_scaling.py": (
         1,

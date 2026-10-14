@@ -218,11 +218,11 @@ def test_the_monitor_step_is_named_in_the_provisioning_summary() -> None:
     )
     buffer = io.StringIO()
 
+    def plain(line: str, **_: object) -> int:
+        return buffer.write(f"{line}\n")
+
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(
-            "vaultspec_rag.cli._render._plain",
-            lambda line, **_: buffer.write(f"{line}\n"),
-        )
+        patch.setattr("vaultspec_rag.cli._render._plain", plain)
         _render_provisioning_outcome(outcome)
 
     assert "  Monitor: downloaded (fetched and verified)" in buffer.getvalue()

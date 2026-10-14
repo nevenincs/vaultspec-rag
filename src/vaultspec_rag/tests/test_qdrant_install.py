@@ -333,7 +333,11 @@ class TestFailureLeavesThePreviousInstall:
         )
 
         assert report.action == ProvisionAction.FAILED
-        assert list(version_dir.iterdir()) == []
+        # Nothing kept, and no directory either: the version directory this
+        # run had to create to stage the archive is removed while it is
+        # empty. The directory above holds the provisioning lock and stays.
+        assert not version_dir.exists(), sorted(version_dir.rglob("*"))
+        assert version_dir.parent.is_dir()
 
 
 class TestInterrupt:
@@ -865,7 +869,10 @@ class TestProvisioningLock:
             report = provision()
 
         assert report.action == ProvisionAction.FAILED
-        assert list(version_dir.iterdir()) == []
+        # The killed run's file is swept, and the run that swept it kept
+        # nothing of its own, so the empty version directory goes too.
+        assert not abandoned.exists()
+        assert not version_dir.exists(), sorted(version_dir.rglob("*"))
 
 
 class TestUnsupportedPlatform:
