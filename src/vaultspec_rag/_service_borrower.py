@@ -23,6 +23,7 @@ from .service_quiesce import (
 
 if TYPE_CHECKING:
     import threading
+    from pathlib import Path
 
 logger = logging.getLogger("vaultspec_rag.service")
 
@@ -31,6 +32,7 @@ class BorrowerLeaseMixin:
     """Validates and tracks the borrower authorised to hold this service paused."""
 
     _borrower_capability: str | None
+    _gpu_owner_anchor: Path | None
     _lock: threading.RLock
     _quiesce_controller: ServiceQuiesceController
 
@@ -131,8 +133,7 @@ class BorrowerLeaseMixin:
             self._borrower_capability = capability
         return True
 
-    @staticmethod
-    def lend_gpu_to_borrower(capability: str) -> bool:
+    def lend_gpu_to_borrower(self, capability: str) -> bool:
         """Lend this service's GPU to the process holding *capability*'s lease.
 
         The service owns the GPU for as long as it runs, but it takes the
@@ -140,8 +141,10 @@ class BorrowerLeaseMixin:
         claims it here: lending is what lets the borrower and every process it
         starts load models while nothing else can, and it cannot be skipped
         because the service happens to hold nothing yet. The claim is
-        torch-free. Returns whether the loan was recorded; a borrower whose loan
-        was not must not be told the GPU is its to use.
+        torch-free. The loan is recorded on this registry's owner anchor, the
+        machine's own unless the registry was given another. Returns whether
+        the loan was recorded; a borrower whose loan was not must not be told
+        the GPU is its to use.
         """
         from ._gpu_owner import GpuOwnedError, lend_gpu, require_gpu_ownership
         from .gpu_borrow_lease import borrower_lease_holder_pid
@@ -150,11 +153,11 @@ class BorrowerLeaseMixin:
         if borrower_pid is None:
             return False
         try:
-            require_gpu_ownership()
+            require_gpu_ownership(anchor=self._gpu_owner_anchor)
         except GpuOwnedError as exc:
             logger.warning("the GPU cannot be lent to the bound borrower: %s", exc)
             return False
-        return lend_gpu(borrower_pid)
+        return lend_gpu(borrower_pid, anchor=self._gpu_owner_anchor)
 
     def clear_borrower_capability_after_resume(self, capability: str | None) -> None:
         """Clear a borrower binding only for its matching achieved resume."""

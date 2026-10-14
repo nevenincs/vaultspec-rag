@@ -83,11 +83,18 @@ class ServiceRegistry(
     per project.  Lazily loaded on first use, thread-safe.
     """
 
-    def __init__(self) -> None:
-        """Initialize the registry with empty model and project state."""
+    def __init__(self, *, gpu_owner_anchor: Path | None = None) -> None:
+        """Initialize the registry with empty model and project state.
+
+        Args:
+            gpu_owner_anchor: The GPU owner anchor this registry lends and
+                reclaims the GPU through. The machine's own anchor by default;
+                a caller that owns another anchor names it.
+        """
         from .config._settings import get_config
 
         cfg = get_config()
+        self._gpu_owner_anchor = gpu_owner_anchor
         self._model: EmbeddingModel | None = None
         self._projects: dict[Path, ProjectSlot] = {}
         # A reservation owns one bounded project seat while its root's store

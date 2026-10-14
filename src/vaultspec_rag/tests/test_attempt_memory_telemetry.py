@@ -41,7 +41,6 @@ if TYPE_CHECKING:
     from ..job_manager.state import AttemptExit
 
 __all__ = ["unloaded_model"]
-pytestmark = [pytest.mark.unit]
 
 _PRIOR_PEAK = 12_021.8
 _CURRENT_PEAK = 1_234.0
@@ -202,6 +201,7 @@ def _assert_unknown_peaks(snapshot: IndexResilienceSnapshot, message: str) -> No
     ) == (None, None, None), message
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
 @pytest.mark.asyncio
 async def test_new_checkpoint_and_terminal_peaks_belong_to_attempt(
@@ -234,6 +234,7 @@ async def test_new_checkpoint_and_terminal_peaks_belong_to_attempt(
         assert fact.support_profile == _ADMITTED.support_profile
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_preflight_refusal_retains_exception_and_unknown_memory(
     case: _Case,
@@ -281,6 +282,7 @@ async def test_preflight_refusal_retains_exception_and_unknown_memory(
             assert case.indexer._support_budget._support_profile_name is None
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("scoped", [False, True], ids=["unscoped", "empty-scope"])
 @pytest.mark.asyncio
 async def test_unchanged_attempt_owns_only_observations_it_takes(
@@ -360,6 +362,7 @@ async def test_unchanged_attempt_owns_only_observations_it_takes(
     assert next_attempt.peak_cuda_allocated_mib == _CURRENT_PEAK
 
 
+@pytest.mark.unit
 def test_code_projection_without_budget_keeps_unobserved_peaks_unknown(
     tmp_path: Path, unloaded_model: EmbeddingModel
 ) -> None:

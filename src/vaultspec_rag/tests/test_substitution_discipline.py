@@ -583,7 +583,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "be",
     ),
     "conftest.py": (
-        4,
+        2,
         "install's torch and provisioning steps and the release-mismatch advice "
         "all branch on whether this is a host or a client installation, and the "
         "role is read from the distributions the running interpreter holds. The "
@@ -597,12 +597,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "accelerator-free runner answers otherwise, and the model and Qdrant "
         "steps are gated on the answer, so a test of either side pins the "
         "child's answer alone while the judgement made of it and every "
-        "command that acts on it run unchanged. Separately, both machine "
-        "hardware anchors are pointed at private files for every test, "
-        "because the machine's own anchors may be held by a live service, a "
-        "test must never contend for them, and an ownership claim outlives "
-        "the test that took it; only their location is substituted, and "
-        "claiming, lending and refusing run unchanged",
+        "command that acts on it run unchanged",
     ),
     "test_server.py": (
         5,

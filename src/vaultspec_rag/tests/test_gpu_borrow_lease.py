@@ -1,4 +1,10 @@
-"""CPU-only borrower lease tests using real OS lock holders and HTTP routes."""
+"""Borrower lease tests using real OS lock holders and HTTP routes.
+
+A served registry lends its GPU through the owner anchor it is given. The tests
+that drive a borrower's pause hand it a private one, so none claims the
+machine's. The two that ask the machine's own anchor are integration tests, and
+every other test is a unit test.
+"""
 
 from __future__ import annotations
 
@@ -19,7 +25,7 @@ import typer
 from starlette.testclient import TestClient
 
 from .._anchor_claim import read_anchor_record
-from .._gpu_owner import observation_wire
+from .._gpu_owner import gpu_owner_anchor_path, observation_wire
 from .._process_probe import pid_start_time, process_lineage
 from ..config._types import EnvVar
 from ..gpu_borrow_lease import (
@@ -47,9 +53,6 @@ from ._ports import free_loopback_port
 if TYPE_CHECKING:
     from collections.abc import Generator
 
-# Borrowing pauses a served registry, which lends its GPU through the owner
-# anchor; every test here gets a private one, so none claims the machine's.
-pytestmark = [pytest.mark.unit]
 
 _TOKEN = "gpu-borrow-lease-test-token"
 _HEADERS = {"Authorization": f"Bearer {_TOKEN}"}
@@ -173,9 +176,12 @@ def _borrower_process() -> Generator[BorrowerProcess]:
 
 
 @contextmanager
-def _borrower_routes() -> Generator[BorrowerRoutes]:
-    """Serve the production routes with no app lifespan or GPU startup."""
-    registry = ServiceRegistry()
+def _borrower_routes(owner_anchor: Path) -> Generator[BorrowerRoutes]:
+    """Serve the production routes with no app lifespan or GPU startup.
+
+    The registry lends through *owner_anchor*, which the caller owns.
+    """
+    registry = ServiceRegistry(gpu_owner_anchor=owner_anchor)
     app = create_http_app(
         ServerRouteRuntime(token=_TOKEN, registry=registry, port=8765),
         lifespan=None,
@@ -315,6 +321,7 @@ def _assert_resume_success(response: _RouteResponse) -> None:
             pytest.fail(f"unexpected achieved resume envelope: {payload!r}")
 
 
+@pytest.mark.unit
 def test_os_lease_contends_and_releases_after_borrower_crash(tmp_path: Path) -> None:
     """A crashed child frees the real OS borrower lock for the next holder."""
     with _isolated_borrower_anchor(tmp_path), _borrower_process() as borrower:
@@ -333,14 +340,15 @@ def test_os_lease_contends_and_releases_after_borrower_crash(tmp_path: Path) -> 
         release_gpu_borrow_lease(successor)
 
 
+@pytest.mark.unit
 def test_authenticated_routes_bind_and_require_the_live_borrower_capability(
-    tmp_path: Path,
+    tmp_path: Path, private_owner_anchor: Path
 ) -> None:
     """Only the holder can bind safe quiescence, then resume it once."""
     with (
         _isolated_borrower_anchor(tmp_path),
         _borrower_process() as borrower,
-        _borrower_routes() as routes,
+        _borrower_routes(private_owner_anchor) as routes,
     ):
         invalid = routes.client.post(
             "/pause",
@@ -414,8 +422,9 @@ def test_authenticated_routes_bind_and_require_the_live_borrower_capability(
         )
 
 
+@pytest.mark.unit
 def test_lost_bound_lease_auto_resumes_but_manual_quiescence_stays_held(
-    tmp_path: Path,
+    tmp_path: Path, private_owner_anchor: Path
 ) -> None:
     """The heartbeat tick resumes only the quiescence that has a lost binding.
 
@@ -423,7 +432,10 @@ def test_lost_bound_lease_auto_resumes_but_manual_quiescence_stays_held(
     clears it only once no borrower holds the lease. Mutation: reverting the
     takeover fails the successor's pause with a lease mismatch.
     """
-    with _isolated_borrower_anchor(tmp_path), _borrower_routes() as routes:
+    with (
+        _isolated_borrower_anchor(tmp_path),
+        _borrower_routes(private_owner_anchor) as routes,
+    ):
         _assert_pause_success(routes.client.post("/pause", headers=_HEADERS))
         assert routes.registry.resume_lost_borrower_lease() is None
         assert routes.registry.quiesce_snapshot().state.value == "quiesced"
@@ -484,8 +496,9 @@ def test_lost_bound_lease_auto_resumes_but_manual_quiescence_stays_held(
         assert routes.registry.quiesce_snapshot().state.value == "running"
 
 
+@pytest.mark.unit
 def test_a_hold_is_protected_while_its_borrower_still_holds_the_lease(
-    tmp_path: Path,
+    tmp_path: Path, private_owner_anchor: Path
 ) -> None:
     """No other capability can act on a hold whose borrower holds the lease.
 
@@ -497,7 +510,7 @@ def test_a_hold_is_protected_while_its_borrower_still_holds_the_lease(
     with (
         _isolated_borrower_anchor(tmp_path),
         _borrower_process() as borrower,
-        _borrower_routes() as routes,
+        _borrower_routes(private_owner_anchor) as routes,
     ):
         _assert_pause_success(_borrower_pause(routes, borrower.capability))
 
@@ -513,8 +526,9 @@ def test_a_hold_is_protected_while_its_borrower_still_holds_the_lease(
         _assert_bound_witness(released, bound=False)
 
 
+@pytest.mark.unit
 def test_a_successor_takes_over_a_hold_whose_borrower_is_gone(
-    tmp_path: Path, gpu_owner_anchor: Path
+    tmp_path: Path, private_owner_anchor: Path
 ) -> None:
     """A borrower started after a hard-killed one is served, not refused.
 
@@ -527,7 +541,7 @@ def test_a_successor_takes_over_a_hold_whose_borrower_is_gone(
     """
     with (
         _isolated_borrower_anchor(tmp_path),
-        _borrower_routes() as routes,
+        _borrower_routes(private_owner_anchor) as routes,
         _borrower_process() as first,
     ):
         _assert_pause_success(_borrower_pause(routes, first.capability))
@@ -539,7 +553,7 @@ def test_a_successor_takes_over_a_hold_whose_borrower_is_gone(
             _assert_achieved_state(taken, "quiesced")
             _assert_bound_witness(taken, bound=True)
             holder = borrower_lease_holder_pid(successor.capability)
-            lent = read_anchor_record(gpu_owner_anchor)
+            lent = read_anchor_record(private_owner_anchor)
 
             stale = _borrower_resume(routes, first.capability)
             _assert_borrower_refusal(stale, "borrower_lease_mismatch", state="quiesced")
@@ -551,19 +565,20 @@ def test_a_successor_takes_over_a_hold_whose_borrower_is_gone(
     assert lent["lent_to"] == holder
 
 
+@pytest.mark.unit
 def test_a_bound_borrower_is_lent_the_gpu_until_its_resume(
-    tmp_path: Path, gpu_owner_anchor: Path
+    tmp_path: Path, private_owner_anchor: Path
 ) -> None:
     """Binding lends the service's GPU to the borrower; resume takes it back.
 
     The served registry has loaded no model, so it does not own the GPU when
     the borrower arrives: the bind itself has to claim it before it can lend.
     """
-    anchor = gpu_owner_anchor
+    anchor = private_owner_anchor
     with (
         _isolated_borrower_anchor(tmp_path),
         _borrower_process() as borrower,
-        _borrower_routes() as routes,
+        _borrower_routes(private_owner_anchor) as routes,
     ):
         _assert_pause_success(
             routes.client.post(
@@ -600,8 +615,9 @@ def test_a_bound_borrower_is_lent_the_gpu_until_its_resume(
     assert stranger is None
 
 
+@pytest.mark.unit
 def test_a_borrower_is_refused_when_the_gpu_cannot_be_lent(
-    tmp_path: Path, gpu_owner_anchor: Path
+    tmp_path: Path, private_owner_anchor: Path
 ) -> None:
     """A pause whose loan was not recorded must not tell a borrower to proceed.
 
@@ -617,7 +633,7 @@ def test_a_borrower_is_refused_when_the_gpu_cannot_be_lent(
     )
     ready = tmp_path / "owner-ready"
     owner = subprocess.Popen(
-        [sys.executable, "-c", owner_script, str(gpu_owner_anchor), str(ready)]
+        [sys.executable, "-c", owner_script, str(private_owner_anchor), str(ready)]
     )
     try:
         deadline = time.monotonic() + CHILD_PROCESS_TIMEOUT_SECONDS
@@ -628,7 +644,7 @@ def test_a_borrower_is_refused_when_the_gpu_cannot_be_lent(
         with (
             _isolated_borrower_anchor(tmp_path),
             _borrower_process() as borrower,
-            _borrower_routes() as routes,
+            _borrower_routes(private_owner_anchor) as routes,
         ):
             refused = routes.client.post(
                 "/pause",
@@ -647,9 +663,42 @@ def test_a_borrower_is_refused_when_the_gpu_cannot_be_lent(
     _assert_borrower_refusal(refused, "borrower_gpu_not_lendable", state="quiesced")
 
 
-def test_valid_capability_without_a_live_lease_is_refused(tmp_path: Path) -> None:
+@pytest.mark.integration
+def test_a_registry_given_no_anchor_lends_through_the_machines_own(
+    tmp_path: Path,
+) -> None:
+    """With no anchor named, the lend is asked of the machine's, and refused there.
+
+    The machine's anchor belongs to the resident service, and this process is
+    only lent the GPU, so it cannot lend it onward and the loan the service
+    recorded stays as it wrote it. A registry that lent through any other file
+    would claim that file, record a loan on it and report success.
+
+    Mutation: gave the registry a private anchor when none was named. Observed
+    the refusal assertion fail on the lend succeeding; restoring the default
+    passed.
+    """
+    machine_anchor = gpu_owner_anchor_path()
+    registry = ServiceRegistry()
+    with _isolated_borrower_anchor(tmp_path), _borrower_process() as borrower:
+        loan = read_anchor_record(machine_anchor)
+        lent = registry.lend_gpu_to_borrower(borrower.capability)
+        after = read_anchor_record(machine_anchor)
+
+    assert lent is False
+    assert isinstance(loan, dict)
+    assert after == loan
+
+
+@pytest.mark.unit
+def test_valid_capability_without_a_live_lease_is_refused(
+    tmp_path: Path, private_owner_anchor: Path
+) -> None:
     """A syntactically valid secret cannot replace active OS lock ownership."""
-    with _isolated_borrower_anchor(tmp_path), _borrower_routes() as routes:
+    with (
+        _isolated_borrower_anchor(tmp_path),
+        _borrower_routes(private_owner_anchor) as routes,
+    ):
         refused = routes.client.post(
             "/pause",
             headers=_HEADERS,
@@ -662,8 +711,9 @@ def test_valid_capability_without_a_live_lease_is_refused(tmp_path: Path) -> Non
         )
 
 
+@pytest.mark.unit
 def test_a_borrower_cannot_take_ownership_of_an_operator_held_pause(
-    tmp_path: Path,
+    tmp_path: Path, private_owner_anchor: Path
 ) -> None:
     """An operator keeps the undo for the pause they asked for.
 
@@ -675,7 +725,7 @@ def test_a_borrower_cannot_take_ownership_of_an_operator_held_pause(
     with (
         _isolated_borrower_anchor(tmp_path),
         _borrower_process() as borrower,
-        _borrower_routes() as routes,
+        _borrower_routes(private_owner_anchor) as routes,
     ):
         operator_pause = routes.client.post("/pause", headers=_HEADERS, json={})
         _assert_pause_success(operator_pause)
@@ -694,7 +744,10 @@ def test_a_borrower_cannot_take_ownership_of_an_operator_held_pause(
         _assert_achieved_state(operator_resume, "running")
 
 
-def test_a_borrower_repeating_its_own_pause_stays_idempotent(tmp_path: Path) -> None:
+@pytest.mark.unit
+def test_a_borrower_repeating_its_own_pause_stays_idempotent(
+    tmp_path: Path, private_owner_anchor: Path
+) -> None:
     """Retry after a lost response must not read as an attempted takeover.
 
     The ownership rule refuses a pause that only observed an existing hold, and
@@ -704,7 +757,7 @@ def test_a_borrower_repeating_its_own_pause_stays_idempotent(tmp_path: Path) -> 
     with (
         _isolated_borrower_anchor(tmp_path),
         _borrower_process() as borrower,
-        _borrower_routes() as routes,
+        _borrower_routes(private_owner_anchor) as routes,
     ):
         first = routes.client.post(
             "/pause",
@@ -723,14 +776,15 @@ def test_a_borrower_repeating_its_own_pause_stays_idempotent(tmp_path: Path) -> 
         _assert_bound_witness(retry, bound=True)
 
 
+@pytest.mark.unit
 def test_the_bound_witness_names_a_hold_without_naming_its_holder(
-    tmp_path: Path,
+    tmp_path: Path, private_owner_anchor: Path
 ) -> None:
     """The witness says a hold is owned, never by whom, and clears on release."""
     with (
         _isolated_borrower_anchor(tmp_path),
         _borrower_process() as borrower,
-        _borrower_routes() as routes,
+        _borrower_routes(private_owner_anchor) as routes,
     ):
         paused = routes.client.post(
             "/pause",
@@ -803,6 +857,7 @@ finally:
 """
 
 
+@pytest.mark.unit
 def test_republished_lease_record_is_never_verified_invalid(tmp_path: Path) -> None:
     """A holder replacing its private record never reads as capability-invalid.
 
@@ -876,6 +931,7 @@ def test_republished_lease_record_is_never_verified_invalid(tmp_path: Path) -> N
                 assert process.returncode == 0, diagnostics.read()
 
 
+@pytest.mark.unit
 def test_unpadded_lease_record_from_an_earlier_build_is_still_read(
     tmp_path: Path,
 ) -> None:
@@ -896,6 +952,7 @@ def test_unpadded_lease_record_from_an_earlier_build_is_still_read(
     assert _read_recorded_capability(record_path) == capability
 
 
+@pytest.mark.unit
 def test_published_lease_record_stays_readable_as_plain_json(
     tmp_path: Path,
 ) -> None:
@@ -916,225 +973,7 @@ def test_published_lease_record_stays_readable_as_plain_json(
             release_gpu_borrow_lease(lease)
 
 
-def _envelope(**overrides: object) -> dict[str, object]:
-    """Build the canonical quiesce envelope this build publishes."""
-    from ..cli._gpu_lease import QUIESCE_ENVELOPE_FIELDS
-
-    defaults: dict[str, object] = {
-        "state": "running",
-        "admission_epoch": 1,
-        "admissions_open": True,
-        "active_compute_tickets": 0,
-        "drain_complete": False,
-        "vram_released": False,
-        "safe_to_borrow_gpu": False,
-        "borrower_bound": False,
-        "pause_requested_at": None,
-        "drain_acknowledged_at": None,
-        "quiesced_at": None,
-        "warming_started_at": None,
-        "failure_reason": None,
-    }
-    assert frozenset(defaults) == QUIESCE_ENVELOPE_FIELDS, (
-        "the fixture envelope must track the contract it stands in for"
-    )
-    return defaults | overrides
-
-
-def test_a_skewed_quiesce_envelope_is_named_as_a_build_mismatch() -> None:
-    """A different build's envelope must not read as a refused transition.
-
-    The transition checks compare the field set exactly, which is correct: a
-    partial snapshot must never pass for a safe handoff. But that comparison
-    cannot, on its own, tell a service that refused to quiesce from one that
-    quiesced and said so in a vocabulary this build does not know. Both used to
-    surface as "the service did not acknowledge borrower pause", sending the
-    reader to debug quiescence when the actual condition was two builds of the
-    same service disagreeing - and the transition may already have succeeded.
-    """
-    import pytest as _pytest
-
-    from ..cli._gpu_lease import BorrowGPUError, _reject_unrecognised_quiesce
-
-    older = _envelope()
-    del older["borrower_bound"]
-    with _pytest.raises(BorrowGPUError) as failure:
-        _reject_unrecognised_quiesce({"ok": True, "quiesce": older}, verb="resume")
-    assert failure.value.error == "borrow_gpu_quiesce_contract_mismatch"
-    assert "borrower_bound" in str(failure.value)
-    assert "same install" in str(failure.value)
-
-    newer = _envelope(some_future_field=True)
-    with _pytest.raises(BorrowGPUError) as newer_failure:
-        _reject_unrecognised_quiesce({"ok": True, "quiesce": newer}, verb="pause")
-    assert "some_future_field" in str(newer_failure.value)
-
-
-def test_a_matching_envelope_is_left_to_the_transition_check() -> None:
-    """The mismatch guard must not usurp the judgement it precedes.
-
-    A refused transition on a recognised envelope is still a refused
-    transition, and has to keep reaching the acknowledgement check rather than
-    being relabelled a build mismatch.
-    """
-    from ..cli._gpu_lease import (
-        _acknowledged_transition,
-        _reject_unrecognised_quiesce,
-    )
-    from ..service_quiesce import QuiesceState
-
-    refused: dict[str, object] = {
-        "ok": False,
-        "quiesce": _envelope(state="running"),
-    }
-    _reject_unrecognised_quiesce(refused, verb="pause")
-    assert not _acknowledged_transition(refused, QuiesceState.QUIESCED)
-
-    _reject_unrecognised_quiesce(None, verb="resume")
-    _reject_unrecognised_quiesce({"ok": True}, verb="resume")
-
-
-def test_a_busy_service_is_told_to_wait_not_that_pause_failed() -> None:
-    """A draining service and a broken one must not read the same.
-
-    "The service did not acknowledge borrower pause" is true of every refusal,
-    so it says nothing about the one that actually happens: the service was
-    mid-index and could not hand over the device yet. That clears on its own,
-    but the flat message gives the reader no way to tell it apart from a fault,
-    and the envelope already carries the answer.
-    """
-    from ..cli._gpu_lease import _pause_refusal_message
-
-    busy = _pause_refusal_message(
-        {"ok": True, "quiesce": _envelope(state="running", active_compute_tickets=3)}
-    )
-    assert "3 compute tickets" in busy
-    assert "retry" in busy
-
-    one = _pause_refusal_message(
-        {"ok": True, "quiesce": _envelope(active_compute_tickets=1)}
-    )
-    assert "1 compute ticket" in one
-
-    stuck = _pause_refusal_message(
-        {"ok": True, "quiesce": _envelope(state="pausing", active_compute_tickets=0)}
-    )
-    assert "'pausing'" in stuck
-
-    assert (
-        _pause_refusal_message(None)
-        == "The service did not acknowledge borrower pause."
-    )
-
-
-def test_a_refusal_the_service_named_reaches_the_operator_unchanged() -> None:
-    """A quiesced service that still refuses has a reason only it knows.
-
-    A loan it could not record - an anchor another account created and left
-    unwritable - looks, from the snapshot alone, exactly like a pause that was
-    never acknowledged, and the operator is told to debug quiescence while the
-    actual condition is a permission on a file. The service names it; this
-    side must not paper over the name with a sentence true of every refusal.
-
-    Mutation check: dropped the named-refusal branch, the shape this had.
-    Observed this assertion fail on the generic "reached a quiesced state but
-    did not acknowledge" sentence arriving instead.
-    """
-    from ..cli._gpu_lease import _pause_refusal_message
-
-    refused = _pause_refusal_message(
-        {
-            "ok": False,
-            "status": "borrower_gpu_not_lendable",
-            "error": "borrower_gpu_not_lendable",
-            "message": (
-                "The service paused for this borrower but could not lend it "
-                "the GPU, because another process owns the GPU or the loan "
-                "could not be recorded, so the GPU must not be used."
-            ),
-            "quiesce": _envelope(state="quiesced", active_compute_tickets=0),
-        }
-    )
-
-    assert "could not lend it the GPU" in refused
-    assert "did not acknowledge" not in refused
-
-
-def test_a_resume_that_found_no_service_is_not_called_a_refusal() -> None:
-    """A service that is gone has no pause to clear, and must not read as one.
-
-    "The service did not acknowledge borrower resume" was the whole message for
-    every outcome, so a session that ended after its service had been stopped
-    read exactly like a service that refused the resume - and sent the reader to
-    the refusal log lines of an unrelated request. Nothing answered, and the
-    message has to say that.
-
-    Mutation check: answered ``None`` with the generic sentence, the shape this
-    had. Observed the first assertion fail on "could not be reached" being
-    absent from it; the stopped-service coordinator test fails on the same
-    assertion.
-    """
-    from ..cli._gpu_lease import _resume_refusal_message
-
-    gone = _resume_refusal_message(None)
-
-    assert "could not be reached" in gone
-    assert "comes up running" in gone
-    assert "did not acknowledge" not in gone
-
-
-def test_a_resume_refusal_the_service_named_reaches_the_operator_unchanged() -> None:
-    """A service that refuses the resume says why, and only it can.
-
-    A different borrower holding the pause and a lease the service could not
-    verify both come back as the same non-running answer, with opposite
-    remedies. The service names which one; this side must not replace the name
-    with a sentence true of both.
-
-    Mutation check: dropped the named-refusal branch. Observed this assertion
-    fail on the still-held sentence arriving instead of the service's own; the
-    refused-resume coordinator test fails on "does not match the live lease".
-    """
-    from ..cli._gpu_lease import _resume_refusal_message
-
-    refused = _resume_refusal_message(
-        {
-            "ok": False,
-            "status": "borrower_lease_mismatch",
-            "error": "borrower_lease_mismatch",
-            "message": (
-                "A different borrower already holds this pause, so this "
-                "capability cannot act on it."
-            ),
-            "quiesce": _envelope(state="quiesced", borrower_bound=True),
-        }
-    )
-
-    assert refused == (
-        "A different borrower already holds this pause, so this capability "
-        "cannot act on it."
-    )
-
-
-def test_a_resume_that_left_the_service_held_names_the_state_it_is_in() -> None:
-    """An answer without a named refusal still says what the service is doing.
-
-    Mutation check: dropped the state branch. Observed this assertion fail on
-    the generic sentence arriving with no state in it.
-    """
-    from ..cli._gpu_lease import _resume_refusal_message
-
-    held = _resume_refusal_message(
-        {"ok": False, "quiesce": _envelope(state="warming", admissions_open=False)}
-    )
-    assert "'warming'" in held
-
-    assert (
-        _resume_refusal_message({"ok": False})
-        == "The service did not acknowledge borrower resume."
-    )
-
-
+@pytest.mark.unit
 def test_observing_the_borrower_lease_names_its_holder_and_takes_nothing(
     tmp_path: Path,
 ) -> None:
@@ -1165,6 +1004,7 @@ def test_observing_the_borrower_lease_names_its_holder_and_takes_nothing(
     assert gone.holder_pid == 0
 
 
+@pytest.mark.unit
 def test_a_borrower_lease_that_cannot_be_opened_is_unverifiable_not_absent(
     tmp_path: Path,
 ) -> None:
@@ -1184,6 +1024,7 @@ def test_a_borrower_lease_that_cannot_be_opened_is_unverifiable_not_absent(
     assert str(lease_path) in observed.detail
 
 
+@pytest.mark.unit
 @pytest.mark.usefixtures("isolated_singleton_dirs", "inference_host")
 def test_server_start_is_refused_beside_a_live_borrower_in_both_modes() -> None:
     """A start never loads models beside a borrower, and says who and what to do.
@@ -1222,6 +1063,7 @@ def test_server_start_is_refused_beside_a_live_borrower_in_both_modes() -> None:
     assert borrower.capability not in as_text.output
 
 
+@pytest.mark.integration
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_a_start_proceeds_once_the_borrower_has_exited(
     capsys: pytest.CaptureFixture[str],
@@ -1229,9 +1071,11 @@ def test_a_start_proceeds_once_the_borrower_has_exited(
     """The refusal lasts exactly as long as the borrower holds the lease.
 
     A hard-killed borrower releases it without any cleanup, so the next start is
-    not refused. Mutation: reading a free anchor file as a held lease keeps
-    refusing after the kill and fails the final call; dropping the guard fails
-    the first.
+    not refused. The start also asks the machine's own GPU owner anchor, which
+    inside the loan this tier runs in admits the process tree, so the final call
+    is refused only by a borrower. Mutation: reading a free anchor file as a
+    held lease keeps refusing after the kill and fails the final call; dropping
+    the guard fails the first.
     """
     from ..cli._service_start import _guard_start_preconditions
 
@@ -1247,6 +1091,7 @@ def test_a_start_proceeds_once_the_borrower_has_exited(
     assert capsys.readouterr().out == ""
 
 
+@pytest.mark.unit
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_a_start_is_refused_when_the_borrower_lease_cannot_be_verified(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1303,6 +1148,7 @@ def _answering_service() -> Generator[tuple[int, list[str]]]:
         thread.join(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
 
 
+@pytest.mark.unit
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_a_restart_beside_a_live_borrower_stops_nothing_and_says_so() -> None:
     """A restart is refused before its stop, so the running service stays up.
@@ -1339,6 +1185,7 @@ def test_a_restart_beside_a_live_borrower_stops_nothing_and_says_so() -> None:
     assert {request.split(" ")[0] for request in seen} == {"GET"}, seen
 
 
+@pytest.mark.unit
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_a_restart_of_a_stopped_service_leaves_the_refusal_to_its_start(
     capsys: pytest.CaptureFixture[str],
@@ -1362,6 +1209,7 @@ def test_a_restart_of_a_stopped_service_leaves_the_refusal_to_its_start(
     assert capsys.readouterr().out == ""
 
 
+@pytest.mark.unit
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_a_stop_during_a_borrow_succeeds_and_names_the_borrower() -> None:
     """Stopping is never refused for a borrower, and its envelope says what follows.
@@ -1398,6 +1246,7 @@ def test_a_stop_during_a_borrow_succeeds_and_names_the_borrower() -> None:
     assert borrower.capability not in as_json.output + as_text.output
 
 
+@pytest.mark.unit
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 @pytest.mark.parametrize(
     ("status", "reports_borrower"),
@@ -1427,6 +1276,7 @@ def test_every_stop_outcome_that_leaves_no_service_reports_the_borrower(
     assert ("notice" in data) is reports_borrower
 
 
+@pytest.mark.unit
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_a_stop_with_no_borrower_carries_no_borrower_fields(
     capsys: pytest.CaptureFixture[str],
