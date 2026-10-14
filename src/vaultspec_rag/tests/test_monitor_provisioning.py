@@ -379,7 +379,15 @@ class TestAnUpgrade:
         assert (root / _VERSION).is_dir()
 
 
+#: The random part of a staging file's name, in both shapes it comes in. An
+#: all-digit token is one name in about two hundred and seventy, and it is the
+#: one that tells a name read by position from a name searched for something
+#: pid-shaped: searched, the token answers and the recorded pid is never seen.
+_TOKENS = ("0123456789ab", "012345678901")
+
+
 @pytest.mark.usefixtures("managed")
+@pytest.mark.parametrize("token", _TOKENS)
 class TestWhatAKilledRunLeftBehind:
     """Nothing serialises these installs, so a sweep answers to two witnesses.
 
@@ -389,23 +397,23 @@ class TestWhatAKilledRunLeftBehind:
     writing. A pid is recycled, which is why age is asked as well.
     """
 
-    def _abandon(self, pin: MonitorPin, pid: int) -> Path:
+    def _abandon(self, pin: MonitorPin, pid: int, token: str) -> Path:
         """Leave a file exactly as a run killed mid-download leaves one."""
         version_dir = managed_monitor_path(pin.version, pin.target).parent
         version_dir.mkdir(parents=True, exist_ok=True)
-        left = version_dir / f".{pin.archive_name}.{pid}.0123456789ab{STAGING_SUFFIX}"
+        left = version_dir / f".{pin.archive_name}.{pid}.{token}{STAGING_SUFFIX}"
         left.write_bytes(b"half a download from a run that was killed")
         return left
 
     def test_a_file_whose_run_is_gone_is_swept_on_the_next_install(
-        self, sources: LoopbackSources
+        self, sources: LoopbackSources, token: str
     ) -> None:
         """Mutation: dropped the sweep from the install. Observed this test
         fail on the removal assertion, the abandoned file still there after
         a successful install. Restored; passes."""
         archive = _archive()
         pin = _pin(archive)
-        left = self._abandon(pin, _DEAD_PID)
+        left = self._abandon(pin, _DEAD_PID, token)
 
         report, _ = _install_from(sources, archive, pin)
 
@@ -413,17 +421,23 @@ class TestWhatAKilledRunLeftBehind:
         assert not left.exists()
 
     def test_a_file_a_live_run_may_still_be_writing_is_left_alone(
-        self, sources: LoopbackSources
+        self, sources: LoopbackSources, token: str
     ) -> None:
         """A second run installing right now is not something to clean up.
 
         Mutation: swept every staging file found, whatever its name said.
         Observed this test fail on the survival assertion, this process's
         own fresh file removed. Restored; passes.
+
+        Mutation: read the pid as the last all-digit part of the name rather
+        than the part it is written at. Observed this test fail on the
+        survival assertion for the all-digit token alone, the token answering
+        as a pid no process has and this process's fresh file swept.
+        Restored; passes.
         """
         archive = _archive()
         pin = _pin(archive)
-        live = self._abandon(pin, os.getpid())
+        live = self._abandon(pin, os.getpid(), token)
 
         report, _ = _install_from(sources, archive, pin)
 
@@ -431,7 +445,7 @@ class TestWhatAKilledRunLeftBehind:
         assert live.exists()
 
     def test_a_live_pid_s_file_older_than_the_deadline_is_swept(
-        self, sources: LoopbackSources
+        self, sources: LoopbackSources, token: str
     ) -> None:
         """A pid is not an identity, so age is the second witness.
 
@@ -441,7 +455,7 @@ class TestWhatAKilledRunLeftBehind:
         """
         archive = _archive()
         pin = _pin(archive)
-        live = self._abandon(pin, os.getpid())
+        live = self._abandon(pin, os.getpid(), token)
         stale = time.time() - monitor_provision._DOWNLOAD_DEADLINE_SECONDS - 60
         os.utime(live, (stale, stale))
 

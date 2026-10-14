@@ -5,7 +5,7 @@ tags:
 date: '2026-10-13'
 modified: '2026-10-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:545fdb7d07d51711a35b5687f401b60be9a3243095ffaf825289f5329481bf90'
+body_hash: 'sha256:ad58ebb429a8f0a94a8ee317f28db5e828469f26d3d1cf3cad8c26399c569a90'
 related:
   - "[[2026-10-13-monitor-provisioning-plan]]"
 ---
@@ -206,6 +206,13 @@ related:
 - `S06` `verify:` `uv run --no-sync ty check src/vaultspec_rag/tests/test_program_lookup_sites.py src/vaultspec_rag/tests/_planted_programs.py` -> `pass`
 - `S06` `verify:` `uv run --no-sync python -m pytest src/vaultspec_rag/tests/test_program_lookup_sites.py src/vaultspec_rag/tests/test_program_lookup.py (23 passed)` -> `pass`
 - `S06` `by:` `vaultspec-implement-high`
+- `S03` `M` `src/vaultspec_rag/tests/test_env_example_coverage.py`
+- `S03` `verify:` `uv run --no-sync ruff check src tools dev conftest.py` -> `pass`
+- `S03` `verify:` `uv run --no-sync ruff format --check src tools dev conftest.py` -> `pass`
+- `S03` `verify:` `uv run --no-sync ty check (3 changed modules)` -> `pass`
+- `S03` `verify:` `uv run --no-sync python -m pytest src/vaultspec_rag/tests/test_env_example_coverage.py test_env_parity.py test_env_registry.py test_env_settings_centralised.py test_env_credentials.py test_configuration_doc.py dev/guards/test_env_provisioning.py (101 passed, 4 skipped)` -> `pass`
+- `S03` `verify:` `uv run --no-sync python -m pytest src/vaultspec_rag/tests -m unit -k 'monitor or provision or readiness or program_lookup or qdrant or managed_install or service_start or install or env' (1781 passed, 7 skipped)` -> `pass`
+- `S03` `verify:` `uv run --no-sync python -m dev lint docs-conventions` -> `pass`
 
 ## Notes
 
@@ -239,3 +246,6 @@ related:
 - `S03` Mutation proofs, each broken, run alone, failed on the named assertion, restored and passed: launcher directory left out of `installation_programs` (places assertion, and both bundle resolution cases on 'resolved is not None'); `find_programs` stopped at its first match (order assertion, and the masking case on 'resolved is not None'); a stated value taken as a path whenever non-empty (places assertion for marker and relative values); the install's staging sweep removed (removal assertion); the sweep given no age witness (survival assertion for a live run's fresh file); the shared download default taken (deadline assertion); the readiness refusal branch dropped `(monitor_source` assertion, 'absent' for 'unchecked').
 - `S06` Mutation proof obtained: the start's argument vector was given the bare program name and 'executable' was dropped from it. Run alone, the test failed on the image assertion, naming the working directory's planted program as what was started; restored, it passes. The plant it needs is a program that is still a process when the image is read, so the planted native program for this site waits on its standard input.
 - `S06` The guard now requires a monitor this checkout can run, as the monitor lifecycle tests already do: resolution is production's and its answer is what the started image is compared against, instead of a branch that passed when nothing was started.
+- `S03` Mutation proof obtained: the shape-based pid parse (last all-digit component of the name) was restored. Run alone, the sweep's survival case failed on the survival assertion for the all-digit token alone, this process's fresh file swept because the token answered as a pid no process has; restored, both token shapes pass. The sweep test now carries both token shapes, 0123456789ab and 012345678901.
+- `S03` The environment-template gates were missed when S03 first closed: the selection run then did not include `test_env_example_coverage.py,` which the new PYAPP read made fail. PYAPP is now catalogued in .env.example beside PATH as read-only, the stale `GITHUB_ENV` exemption is dropped, and the sentence saying the monitor is found on the search path is corrected, since it no longer is.
+- `S03` sibling-unreadable (low) left as it is. The code change is small, but the only honest falsifying test needs a file that is executable and unreadable, which this suite has no mechanism for on either platform and which could not be produced on this Windows host, so the branch would go into the resolution path unproven. Current behaviour refuses rather than running anything unverified.

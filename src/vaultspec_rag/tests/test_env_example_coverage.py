@@ -58,7 +58,6 @@ _SET_BY_A_PARENT_PROCESS: Final[dict[str, str]] = {
     ),
     "PYTEST_XDIST_WORKER": "pytest-xdist, on each worker",
     "GITHUB_ACTIONS": "the Actions runner, on every step",
-    "GITHUB_ENV": "the Actions runner, on every step",
     "RUNNER_TOOL_CACHE": "the Actions runner, on every step",
 }
 

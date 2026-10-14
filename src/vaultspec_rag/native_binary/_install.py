@@ -125,9 +125,11 @@ def open_destination(path: Path) -> IO[bytes]:
 def open_staging(directory: Path, label: str) -> tuple[Path, IO[bytes]]:
     """Create a uniquely named staging file in *directory*, open read-write.
 
-    The name carries the pid and a random token and the file is created
-    exclusively, so the open fails rather than following or truncating
-    anything already planted at that name. Staging beside the destination
+    The name carries the pid and a random token, in that order and last, so
+    that :func:`staging_pid` can read the pid back by position: a label can
+    hold dots of its own, and a token can hold nothing but digits. The file
+    is created exclusively, so the open fails rather than following or
+    truncating anything already planted at that name. Staging beside the destination
     keeps the final move a rename within one volume, which is what makes it
     atomic.
     """
@@ -163,14 +165,22 @@ def staging_files(directory: Path, *, spare: Path | None = None) -> list[Path]:
 def staging_pid(path: Path) -> int | None:
     """Return the process id recorded in a staging file's name, or ``None``.
 
-    :func:`open_staging` writes it there. ``None`` means the name carries
-    none, so nothing is known about who created the file.
+    :func:`open_staging` writes it at one place in the name - second to last,
+    before the random token - so it is read from that place and from nowhere
+    else. Searching the name for something that looks like a pid reads the
+    token instead whenever the token happens to be all digits, which a
+    twelve-character hexadecimal token is about one name in two hundred and
+    seventy. The pid it then reports belongs to no run, so a live writer's
+    file reads as abandoned and is deleted underneath it.
+
+    ``None`` means the name does not carry one where it would be, so nothing
+    is known about who created the file.
     """
     parts = path.name.removesuffix(STAGING_SUFFIX).split(".")
-    for part in reversed(parts):
-        if part.isdigit():
-            return int(part)
-    return None
+    if len(parts) < 2:
+        return None
+    recorded = parts[-2]
+    return int(recorded) if recorded.isdigit() else None
 
 
 def abandoned_staging(
