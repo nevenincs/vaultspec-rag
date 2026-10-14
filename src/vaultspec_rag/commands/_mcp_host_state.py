@@ -261,6 +261,34 @@ def launches_to_enroll(
     return launches
 
 
+def approved_launches(
+    launches: Iterable[LaunchToEnroll],
+    authority: Path,
+    *,
+    home: Path | None = None,
+) -> list[LaunchToEnroll]:
+    """Return the *launches* the operator already approved for *authority*.
+
+    Consent is asked of core itself, at the authority's own paths and in the
+    operator's home (or *home*), so a launch whose definition or rendered
+    command changed since it was approved is not among them.
+    """
+    launches = list(launches)
+    approved: list[LaunchToEnroll] = []
+    for target in {launch.target for launch in launches}:
+        group = [launch for launch in launches if launch.target == target]
+        names = approved_sources(
+            {launch.name: (launch.authority_path, launch.config) for launch in group},
+            {launch.authority_path: launch.digest for launch in group},
+            authority,
+            group[0].authority_target,
+            SyncResult(),
+            home=home,
+        )
+        approved.extend(launch for launch in group if launch.name in names)
+    return approved
+
+
 def carry_consent(
     host: HostProjection,
     *,
@@ -273,31 +301,20 @@ def carry_consent(
     home, so a launch the operator never approved stays unapproved in the
     projection and is skipped there as it will be for real.
     """
-    launches = launches_to_enroll(
-        host.authority, host.work, mode=mode, enrolled=enrolled
-    )
-    approvals: list[McpApproval] = []
-    for target in {launch.target for launch in launches}:
-        group = [launch for launch in launches if launch.target == target]
-        approved = approved_sources(
-            {launch.name: (launch.authority_path, launch.config) for launch in group},
-            {launch.authority_path: launch.digest for launch in group},
+    approvals = [
+        McpApproval.capture(
+            host.work,
+            launch.target,
+            launch.name,
+            launch.path,
+            launch.config,
+            launch.digest,
+        )
+        for launch in approved_launches(
+            launches_to_enroll(host.authority, host.work, mode=mode, enrolled=enrolled),
             host.authority,
-            group[0].authority_target,
-            SyncResult(),
             home=host.authority_home,
         )
-        approvals.extend(
-            McpApproval.capture(
-                host.work,
-                target,
-                launch.name,
-                launch.path,
-                launch.config,
-                launch.digest,
-            )
-            for launch in group
-            if launch.name in approved
-        )
+    ]
     if approvals:
         grant(approvals, home=host.home)

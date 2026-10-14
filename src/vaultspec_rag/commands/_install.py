@@ -47,6 +47,7 @@ from ._mcp_host_state import (
     HostProjection,
     carry_consent,
     expected_authority_ownership,
+    launches_to_enroll,
     projected_core_home,
 )
 from ._mcp_topology import (
@@ -62,6 +63,7 @@ from ._mcp_topology import (
     topology_materialization_failure,
     topology_preflight_failure,
 )
+from ._mcp_trust import review_rag_launch
 from ._mode import (
     RAG_DISTRIBUTION_NAME,
     infer_rag_upgrade_mode,
@@ -89,6 +91,7 @@ if TYPE_CHECKING:
     )
     from vaultspec_core.core.workspace_mode import ResolvedMode
 
+    from ._mcp_host_state import LaunchToEnroll
     from ._models import ConfirmFn
     from ._provision import ProvisionProgress
 
@@ -508,6 +511,58 @@ def _copy_preview_node(
     if snapshot.kind in {SnapshotKind.ABSENT, SnapshotKind.DIRECTORY}:
         return
     restore_file_snapshot(destination, snapshot)
+
+
+def _planned_launches(
+    request: _InstallRunRequest, target: Path
+) -> list[LaunchToEnroll]:
+    """List every launch *request* would enroll into *target*, under its real paths.
+
+    Read from the same projection a dry run plans against, so the launches are
+    those the install's own sync will be asked to enroll, before anything has
+    been written to the workspace.
+    """
+    skip = request.skip or set()
+    mode = _resolve_install_mode(
+        target, request.mode, upgrade=request.upgrade, skip=skip
+    ).mode
+    with _mcp_preview_projection(
+        target,
+        install_mcp=request.install_mcp,
+        force=request.force,
+        upgrade=request.upgrade,
+        mode=mode,
+    ) as projection:
+        return Context().run(
+            launches_to_enroll,
+            target,
+            projection,
+            mode=mode,
+            enrolled=_requested_fresh_mcp_providers(target, skip),
+        )
+
+
+def _review_rag_launch(request: _InstallRunRequest, target: Path) -> list[str]:
+    """Ask the operator to approve rag's own MCP launch, before any write.
+
+    A run that will not enrol the launch has nothing to ask. A review that
+    cannot be prepared is left to the install itself, whose sync then reports
+    the launch unapproved or fails the same way it would have.
+
+    Returns:
+        The operator-facing problems met while reviewing, if any.
+    """
+    if not request.install_mcp or {"core", "mcp"} & (request.skip or set()):
+        return []
+    try:
+        return review_rag_launch(
+            target,
+            _planned_launches(request, target),
+            confirm=request.confirm,
+            assume_yes=request.assume_yes,
+        )
+    except Exception as exc:
+        return [f"MCP approval review could not be prepared: {exc}"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -964,6 +1019,7 @@ def _install_run(request: _InstallRunRequest) -> InstallReport:
     if request.dry_run:
         return run()
 
+    review_warnings = _review_rag_launch(request, target)
     with tempfile.TemporaryDirectory(prefix="vaultspec-rag-mcp-replay-") as raw:
         replay_target = Path(raw) / "workspace"
         topology.populate_projection(replay_target)
@@ -1004,6 +1060,7 @@ def _install_run(request: _InstallRunRequest) -> InstallReport:
                 + "; ".join(rollback)
             ) from exc
         raise
+    report.warnings.extend(review_warnings)
     topology_errors = topology.finish(commit=not report.mcp_sync_failed)
     for message in topology_errors:
         record_mcp_failure(report, message)

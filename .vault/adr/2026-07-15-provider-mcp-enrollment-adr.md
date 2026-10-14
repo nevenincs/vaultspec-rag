@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#provider-mcp-enrollment'
 date: '2026-07-15'
-modified: '2026-07-27'
-body_hash: 'sha256:8b5b8b6a837a94426078f4c9b8f2ea610a5a14f000e0cf09b7ba66aee26c66f5'
+modified: '2026-10-14'
+body_hash: 'sha256:77f79dcfefa1fd937c7ebc30eed21c72c237b1c3084b205f507127f87108d182'
 related:
   - "[[2026-07-15-provider-mcp-enrollment-research]]"
   - '[[2026-07-15-provider-mcp-enrollment-audit]]'
@@ -85,6 +85,18 @@ installation modes.
   dependency resolution.
 - Tests use real temporary workspaces and real CLIs; no mocks, fakes, patches, skips, or
   mirrored business logic.
+- Amendment, 2026-10-14. Core enrolls a launch only after the operator has reviewed its
+  exact definition and launch and approved it in a record kept outside the workspace; its
+  own install grants nothing, and no flag stands in for that review. RAG's install
+  therefore asks the operator to approve RAG's own definition, and only that one, at an
+  attended terminal, and records the answer through Core's public grant. An unattended
+  run, or `--yes`, never asks and never grants: the sync skips the launch with Core's
+  message naming the command that grants it. A dry run never writes. A sibling definition
+  stays the operator's to approve with Core. The approval is the operator's decision about
+  that exact launch, so it outlives an install that fails and rolls back. Authorization:
+  the user's 2026-10-14 instruction to fix the install gaps ("fix all") authorizes this
+  refinement. It adds an operator step to enrollment and does not change which component
+  owns provider configuration.
 
 ## Implementation
 
@@ -110,6 +122,13 @@ Newly managed dependency changes carry location provenance in RAG-owned workspac
 state. Legacy placement without provenance is reported rather than silently corrected.
 Install, upgrade, mode migration, dry-run, and uninstall pass provider work through
 Core's typed lifecycle, and structured RAG reports retain Core's per-target results.
+
+Install plans the launches it will enroll from the projection a dry run uses, before
+any write and before the replay that journals rollback state, so the replay and the real
+run agree on what is approved. It shows the operator the exact definition, digest, launch
+and target of RAG's own definition, asks once, and records the answer with Core's grant.
+An approval Core already holds for the same definition and launch is reused without a
+question, and a changed definition or launch is asked about again.
 
 A managed mode transition uses the narrow `force_managed` path. An unowned same-name
 entry produces a collision and remains unchanged unless the operator explicitly forces
@@ -155,6 +174,8 @@ honestly refusing to infer ownership that older releases never recorded.
   Codex session may require restart.
 - Adding another provider becomes a Core `McpTarget` concern instead of a new RAG
   serializer.
+- An unattended install, or one run with `--yes`, completes without enrolling the server
+  until the operator grants approval with Core, then installs again.
 
 ## Codification candidates
 

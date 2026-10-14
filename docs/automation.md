@@ -263,6 +263,11 @@ skipped a step it required consent for, such as the PyTorch configuration
 patch nobody was there to approve. A failed install exits `1` like any other
 failure. See [installation](installation.md#machine-readable-output).
 
+An unattended install, or one run with `--yes`, never approves the MCP server's
+launch. It completes, leaves the server unenrolled, and names the
+`vaultspec-core spec mcps trust` command in its report; grant that once at a
+terminal, then install again. See [MCP](mcp.md#install-the-mcp-server).
+
 Code `5` is retryable; wait and re-run. The `error` field carries a code such
 as `port_unreachable`, `local_store_locked`, or `stopped`. The table above is
 the list of exit codes. The [CLI reference](cli.md) lists each command's
