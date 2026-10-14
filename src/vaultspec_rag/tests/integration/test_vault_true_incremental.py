@@ -28,12 +28,18 @@ from vaultspec_core.vaultcore import (
     scan_vault,
 )
 
+from ..._job_errors import JobError, JobErrorKind
 from ..._source_types import PublicSourceType
+from ..._store_models import VaultChunk
 from ...config._settings import get_config
+from ...job_control import NO_RUN_CONTROL
 from ...progress import NullProgressReporter
 from ...synthetic import build_synthetic_vault
 from .._config_fixtures import reset_config as reset_rag_config
-from .._publication_assertions import published_content_identities
+from .._publication_assertions import (
+    published_content_identities,
+    published_retained_points,
+)
 from .._store_fixtures import get_all_ids
 
 if TYPE_CHECKING:
@@ -110,6 +116,63 @@ def _delete_one_chunk(store: VaultStore, doc_id: str, ordinal: int) -> None:
             ),
         ),
     )
+
+
+def _add_stray_point(store: VaultStore, donor_key: str) -> None:
+    """Store one point that no vault document owns.
+
+    Fabricates the other half of a same-total substitution: a point the proof
+    never recorded, so the collection's total can be restored after
+    :func:`_delete_one_chunk` removed one. It borrows the dense vector of the
+    stored *donor_key* because its content is irrelevant - only that it is a
+    real point of the collection's geometry living under a foreign document.
+    """
+    donor = store.retrieve_donor_points(store.TABLE_NAME, [donor_key])[donor_key]
+    store.upsert_document_chunks(
+        [
+            VaultChunk(
+                doc_id="adr/stray-point",
+                ordinal=0,
+                chunk_count=1,
+                text="A point no document of this vault owns.",
+                path="adr/stray-point.md",
+                doc_type="adr",
+                feature="stray",
+                date="2026-07-29",
+                tags=["#adr", "#stray"],
+                related=[],
+                title="stray point",
+                vector=list(donor.dense),
+            )
+        ],
+        write_policy=None,
+    )
+
+
+def _index_wide_document(
+    store: VaultStore, indexer: VaultIndexer, docs_dir: Path
+) -> tuple[Path, str, set[int]]:
+    """Publish one document that splits into many chunks.
+
+    Returns the document's path, its id, and the ordinals it stores points
+    under - the shape both punctured-range guards need and neither can fake
+    with a single-chunk document.
+    """
+    wide = docs_dir / "adr" / "punctured-decision.md"
+    body = "\n\n".join(
+        f"## part {index}\n\n" + ("prose about retention. " * 60) for index in range(12)
+    )
+    _write_preserving_newlines(
+        wide,
+        "---\ntags:\n  - '#adr'\n  - '#punctured'\n"
+        "date: '2026-07-29'\nrelated:\n  []\n---\n\n"
+        f"# punctured decision\n\n{body}\n",
+    )
+    indexer.incremental_index(reporter=NullProgressReporter())
+    doc_id = "adr/punctured-decision"
+    ordinals = store.get_stored_chunk_ordinals({doc_id})[doc_id]
+    assert len(ordinals) > 2, "the fixture must split, or this proves nothing"
+    return wide, doc_id, ordinals
 
 
 def _doc_id(path: Path, docs_dir: Path) -> str:
@@ -345,17 +408,29 @@ class TestMetadataOnlyChangeSkipsTheGpu:
         """A document missing a point in the middle must not take this branch.
 
         The payload-only write addresses points by assumed ordinal. Against a
-        missing ordinal it reaches nothing and raises nothing, so the document
-        would keep a stale payload forever with every count agreeing. The
-        stored-chunk-count reading cannot see this - it is the highest ordinal
-        plus one, so a hole reports the same number as a whole document - which
-        is why the check reads the exact stored ordinals instead.
+        missing ordinal the store applies the surviving points and then
+        refuses the request, so the document would keep a half-refreshed
+        payload and meet the same hole on every retry. The stored-chunk-count
+        reading cannot see this - it is the highest ordinal plus one, so a hole
+        reports the same number as a whole document - which is why the check
+        reads the exact stored ordinals instead.
+
+        The hole is offset by a stray point elsewhere so the collection's total
+        still equals what the proof retains. That is the only way to reach this
+        check: the storage admission compares totals before any ordinal is
+        read, and refuses a shorter collection outright, so a hole that
+        shortens the total never gets this far (see the refusal guard below).
+        A same-total substitution is exactly what the cheap total cannot see.
 
         Mutation that drives this red: in ``_plan_payload_refresh``, compare
         the highest stored ordinal plus one against the chunk count instead of
         comparing the ordinal set itself - the count-based reading this check
-        replaced. The punctured document is then accepted onto the payload
-        branch and ``payload_updated == 0`` fails with ``payload_updated == 1``.
+        replaced. The punctured document is then planned onto the payload
+        branch and ``plan.deferred == {doc_id}`` fails with an empty set. The
+        plan is read first because it is the only place this mutation fails an
+        assertion: through ``incremental_index`` alone the same mutation ends
+        in the store's missing-point error escaping the call, which fails the
+        test without naming what went wrong.
 
         Note that comparing set *size* rather than the set does NOT drive it
         red: a hole makes the size disagree too. Only the max-plus-one reading
@@ -364,21 +439,7 @@ class TestMetadataOnlyChangeSkipsTheGpu:
         store, indexer = _build_vault(tmp_path, embedding_model)
         try:
             docs_dir = tmp_path / get_config().docs_dir
-            wide = docs_dir / "adr" / "punctured-decision.md"
-            body = "\n\n".join(
-                f"## part {index}\n\n" + ("prose about retention. " * 60)
-                for index in range(12)
-            )
-            _write_preserving_newlines(
-                wide,
-                "---\ntags:\n  - '#adr'\n  - '#punctured'\n"
-                "date: '2026-07-29'\nrelated:\n  []\n---\n\n"
-                f"# punctured decision\n\n{body}\n",
-            )
-            indexer.incremental_index(reporter=NullProgressReporter())
-            doc_id = "adr/punctured-decision"
-            ordinals = store.get_stored_chunk_ordinals({doc_id})[doc_id]
-            assert len(ordinals) > 2, "the fixture must split, or this proves nothing"
+            wide, doc_id, ordinals = _index_wide_document(store, indexer, docs_dir)
 
             # Punch a hole: drop exactly one middle ordinal, leaving the
             # range's reach unchanged so the count-based reading still reports
@@ -388,19 +449,38 @@ class TestMetadataOnlyChangeSkipsTheGpu:
             # shape, not about vectors.
             hole = sorted(ordinals)[1]
             _delete_one_chunk(store, doc_id, hole)
+            _add_stray_point(store, f"{doc_id}#c0")
             punctured = store.get_stored_chunk_ordinals({doc_id})[doc_id]
             assert hole not in punctured
             assert store.get_chunk_counts(doc_ids={doc_id})[doc_id] == len(ordinals), (
                 "the count reading must still look whole, or the hole is "
                 "detectable without reading the ordinals and this proves nothing"
             )
+            assert store.count() == published_retained_points(
+                tmp_path, PublicSourceType.VAULT
+            ), (
+                "the collection's total must still match its proof, or the "
+                "run is refused before any ordinal is read and this proves nothing"
+            )
 
             _add_tag(wide, "#late-curation")
+            plan = indexer._plan_payload_refresh(
+                {doc_id},
+                {doc_id: wide},
+                NullProgressReporter(),
+                run_control=NO_RUN_CONTROL,
+            )
+            assert plan.deferred == {doc_id}, (
+                "a punctured document was planned onto the payload-only branch, "
+                "where the write cannot reach its missing point"
+            )
+            assert not plan.chunks
+            assert plan.documents == 0
+
             result = indexer.incremental_index(reporter=NullProgressReporter())
 
             assert result.payload_updated == 0, (
-                "a punctured document took the payload-only branch, where the "
-                "write cannot reach its missing point"
+                "a punctured document was reported as payload-refreshed"
             )
             assert result.updated == 1, (
                 "a punctured document was neither payload-refreshed nor "
@@ -408,6 +488,9 @@ class TestMetadataOnlyChangeSkipsTheGpu:
             )
             assert store.get_stored_chunk_ordinals({doc_id})[doc_id] == ordinals, (
                 "the re-embed did not restore the missing point"
+            )
+            assert "#late-curation" in _stored_tags(store, f"{doc_id}#c{hole}"), (
+                "the restored point carries a stale payload"
             )
         finally:
             store.close()
@@ -429,6 +512,89 @@ class TestMetadataOnlyChangeSkipsTheGpu:
             indexer.incremental_index(reporter=NullProgressReporter())
 
             assert _stored_payload(store, other_id) == payload_before
+        finally:
+            store.close()
+
+
+class TestShortStorageRequiresAnExplicitRebuild:
+    """An incremental run never repairs a collection shorter than its proof."""
+
+    @pytest.mark.timeout(300)
+    @pytest.mark.parametrize("scoped", [False, True], ids=["full-scan", "scoped"])
+    def test_a_hole_that_shortens_storage_is_refused_not_repaired(
+        self, embedding_model: EmbeddingModel, tmp_path: Path, *, scoped: bool
+    ) -> None:
+        """Lost points are a rebuild decision, not an incremental one.
+
+        The proof records exactly how many points storage retains. A
+        collection holding fewer has lost data the incremental run did not
+        delete and cannot account for, and re-embedding the one document it
+        happens to be touching would repair that document while certifying
+        the rest of the collection as sound. So the run refuses, before it
+        reads or writes anything, and names the explicit rebuild that may
+        repair it. That rebuild then restores the point and the run proceeds.
+
+        Both entry points are exercised because they share one admission but
+        each must call it: the full scan and the watcher's scoped pass.
+
+        Mutations that drive this red, each restored before the next:
+
+        - In ``_assert_vault_publication_storage``, make the comparison never
+          fire. Both cases fail at ``pytest.raises`` with ``DID NOT RAISE``,
+          because the run goes on to re-embed the punctured document.
+        - Drop the ``_assert_vault_publication_storage`` call from
+          ``_incremental_index_locked``. Only the ``full-scan`` case fails.
+        - Drop it from ``_scoped_incremental_locked``. Only the ``scoped`` case
+          fails.
+        """
+        store, indexer = _build_vault(tmp_path, embedding_model)
+        try:
+            docs_dir = tmp_path / get_config().docs_dir
+            wide, doc_id, ordinals = _index_wide_document(store, indexer, docs_dir)
+
+            hole = sorted(ordinals)[1]
+            _delete_one_chunk(store, doc_id, hole)
+            punctured = store.get_stored_chunk_ordinals({doc_id})[doc_id]
+            assert hole not in punctured
+            assert store.count() < published_retained_points(
+                tmp_path, PublicSourceType.VAULT
+            ), (
+                "the deletion must leave storage shorter than its proof, or "
+                "there is nothing to refuse and this proves nothing"
+            )
+
+            _add_tag(wide, "#late-curation")
+            with pytest.raises(
+                JobError, match="vault storage is shorter than its canonical proof"
+            ) as refusal:
+                indexer.incremental_index(
+                    reporter=NullProgressReporter(),
+                    changed_paths=[wide] if scoped else None,
+                )
+
+            assert refusal.value.error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+            assert store.get_stored_chunk_ordinals({doc_id})[doc_id] == punctured, (
+                "the refused run changed the collection it declined to repair"
+            )
+            assert "#late-curation" not in _stored_tags(store, f"{doc_id}#c0"), (
+                "the refused run wrote a payload before refusing"
+            )
+
+            indexer.full_index(reporter=NullProgressReporter())
+
+            assert store.get_stored_chunk_ordinals({doc_id})[doc_id] == ordinals, (
+                "the explicit rebuild did not restore the missing point"
+            )
+            assert "#late-curation" in _stored_tags(store, f"{doc_id}#c{hole}"), (
+                "the explicit rebuild left the restored point with a stale payload"
+            )
+            settled = indexer.incremental_index(reporter=NullProgressReporter())
+            assert (
+                settled.added,
+                settled.updated,
+                settled.payload_updated,
+                settled.removed,
+            ) == (0, 0, 0, 0), "the rebuilt collection is still refused or still moving"
         finally:
             store.close()
 
