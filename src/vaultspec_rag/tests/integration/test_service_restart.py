@@ -201,6 +201,7 @@ def _running_service(tmp_path: Path) -> Generator[int]:
     is reaped once the daemon is gone, still under the daemon's own directories.
     """
     environment: dict[str, str | None] = {}
+    port = 0
     try:
         with _live_service_context(tmp_path) as (port, _status_dir, applied):
             environment = applied
@@ -208,6 +209,10 @@ def _running_service(tmp_path: Path) -> Generator[int]:
     finally:
         if environment:
             with managed_env(**environment):
+                # A restart that the test did not expect replaced the daemon
+                # the fixture started; the replacement is stopped here too.
+                if port and _port_is_listening(port):
+                    _cli("stop", port)
                 stop_recorded_monitor()
 
 
