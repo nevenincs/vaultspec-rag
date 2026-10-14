@@ -148,6 +148,51 @@ class TestIndexSummaryCLI:
             }
         ]
 
+    def test_a_queued_first_build_is_not_called_a_re_index(
+        self, tmp_path: Path
+    ) -> None:
+        """An operator indexing a new source is told it is being built.
+
+        Mutation proven by restoring the fixed "re-index" wording: the line
+        then describes an update to an index that does not exist yet.
+        """
+
+        class _FirstBuildServiceHandler(QuietHandler):
+            def do_POST(self) -> None:
+                length = int(self.headers.get("Content-Length", "0"))
+                self.rfile.read(length)
+                response = {
+                    "ok": True,
+                    "job_id": "code-first-build-job",
+                    "status": "queued",
+                    "outcome": {
+                        "job": {
+                            "spec": {
+                                "requested_mode": "incremental",
+                                "effective_mode": "first_build",
+                            }
+                        }
+                    },
+                }
+                encoded = json.dumps(response).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+
+        result = _run_index_against_service(
+            tmp_path,
+            _FirstBuildServiceHandler,
+            "code",
+            join_timeout=5.0,
+        )
+
+        assert result.exit_code == 0, result.output
+        assert _plain_lines(result.output)[0] == (
+            "Source code first build job queued on service: code-first-build-job"
+        )
+
     def test_index_all_handles_sparse_service_summary_without_unknown_text(
         self, tmp_path: Path
     ) -> None:

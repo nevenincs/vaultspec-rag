@@ -135,9 +135,9 @@ def test_recovery_writer_reads_parent_without_unfencing_other_readers(
     )
     from ..indexer._publication_proof import ProofReadConflictError
     from ..indexer._run_ledger_models import RunOperation
-    from .test_api_clean_admission import _publish_empty_vault_proof
+    from ._publication_assertions import publish_empty_vault_proof
 
-    _publish_empty_vault_proof(tmp_path)
+    publish_empty_vault_proof(tmp_path)
     parent = acquire_publication_snapshot(tmp_path, PublicSourceType.VAULT)
     ledger = parent.ledger
     generation = ledger.start_generation(
@@ -197,9 +197,9 @@ def test_recovery_read_rejects_another_receipt_owner(
     )
     from ..indexer._publication_proof import ProofReadConflictError
     from ..indexer._run_ledger_models import RunOperation
-    from .test_api_clean_admission import _publish_empty_vault_proof
+    from ._publication_assertions import publish_empty_vault_proof
 
-    _publish_empty_vault_proof(tmp_path)
+    publish_empty_vault_proof(tmp_path)
     parent = acquire_publication_snapshot(tmp_path, PublicSourceType.VAULT)
     ledger = parent.ledger
     generation = ledger.start_generation(

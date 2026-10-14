@@ -474,12 +474,20 @@ def _job_spec_from_dict(value: object) -> JobSpec:
 
     raw = _required_mapping(value, "job spec")
     mode = _optional_str(raw.get("mode"), "job mode")
+    # The served record carries the requested operation beside the effective
+    # one, so a restored first build is read back from the same pair it was
+    # written as. Equal values carry no escalation, and a record written
+    # before the field existed has none either.
+    requested = _optional_str(raw.get("requested_mode"), "job requested_mode")
     return JobSpec(
         operation=JobOperation(_required_str(raw.get("operation"), "job operation")),
         source=JobSource(_required_str(raw.get("source"), "job source")),
         project_root=_optional_str(raw.get("project_root"), "job project_root"),
         mode=JobMode(mode) if mode is not None else None,
         authority=RunAuthority(_required_str(raw.get("authority"), "job authority")),
+        requested_mode=(
+            JobMode(requested) if requested is not None and requested != mode else None
+        ),
     )
 
 

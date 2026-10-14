@@ -758,12 +758,10 @@ class ServiceRegistry(
         without paying the model-load cost - and, on a CPU-only host,
         without requiring a GPU at all.
         """
+        from ._source_types import PublicSourceType
+
         with self.lease_store(root) as store:
-            if domain == "code":
-                return store.count_code()
-            if domain == "document":
-                return store.count_document()
-            return store.count()
+            return store.count_source(PublicSourceType(domain))
 
     def vault_doc_count(self, root: Path) -> int:
         """Indexed vault-doc count for *root*, model-free (see _store_count)."""

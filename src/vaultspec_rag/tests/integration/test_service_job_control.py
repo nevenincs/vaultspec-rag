@@ -368,14 +368,18 @@ def test_reindex_compatibility_keeps_mcp_refresh_distinct_from_clean(
         job = cast("dict[str, object]", outcome["job"])
         spec = cast("dict[str, object]", job["spec"])
         initiator = cast("dict[str, object]", job["initiator"])
+        # The MCP tool asks for incremental work and still carries no clean
+        # parameter. This root has never been indexed, so admission runs that
+        # request as the source's first full build: the effective operation
+        # exceeds the requested one, and nothing is discarded to do it.
         assert spec == {
             "operation": "index",
             "source": "vault",
             "project_root": str(project_root),
-            "mode": "incremental",
-            "authority": "publication",
+            "mode": "rebuild",
+            "authority": "rebuild",
             "requested_mode": "incremental",
-            "effective_mode": "incremental",
+            "effective_mode": "first_build",
         }
         assert initiator["kind"] == "mcp"
         assert job["id"] == response["job_id"]

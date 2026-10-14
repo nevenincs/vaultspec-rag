@@ -1,0 +1,159 @@
+---
+tags:
+  - '#exec'
+  - '#service-runtime'
+date: '2026-10-13'
+modified: '2026-10-14'
+body_schema: 'body-v2'
+body_hash: 'sha256:ade92b7c7ae7df7f886fa84bad58ba07d57db7febc01e46bce7d38dbe224e0dd'
+related:
+  - "[[2026-10-13-service-runtime-plan]]"
+---
+
+# `service-runtime` ledger
+
+## Changes
+
+- `S01` `A` `.vault/audit/2026-10-13-service-runtime-audit.md`
+- `S01` `A` `.vault/adr/2026-10-13-service-runtime-adr.md`
+- `S01` `M` `.vault/adr/2026-07-14-tool-env-gpu-continuity-adr.md`
+- `S01` `M` `.vault/adr/2026-10-05-qdrant-provisioning-trust-adr.md`
+- `S01` `A` `.vault/plan/2026-10-13-service-runtime-plan.md`
+- `S01` `verify:` `vaultspec-core vault check all` -> `pass`
+- `S04` `M` `src/vaultspec_rag/_readiness.py`
+- `S04` `M` `src/vaultspec_rag/cli/_service_doctor.py`
+- `S04` `M` `src/vaultspec_rag/cli/_status.py`
+- `S04` `M` `src/vaultspec_rag/tests/integration/test_service_doctor_liveness.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_cli_status.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_readiness.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_readiness_service_environment.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_server_doctor.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_service_version_compatibility.py`
+- `S04` `verify:` `pytest doctor/readiness/status suites` -> `pass`
+- `S04` `by:` `vaultspec-standard-executor`
+- `S02` `M` `.env.example`
+- `S02` `M` `src/vaultspec_rag/cli/_process.py`
+- `S02` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S02` `M` `src/vaultspec_rag/config/_registry.py`
+- `S02` `M` `src/vaultspec_rag/config/_types.py`
+- `S02` `M` `src/vaultspec_rag/operator_state/_service_environment.py`
+- `S02` `A` `src/vaultspec_rag/service_runtime.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_client_provisions_nothing.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_provisioning_gate.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_python_child_spawn_sites.py`
+- `S02` `A` `src/vaultspec_rag/tests/test_service_runtime.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S02` `verify:` `pytest-test_service_runtime-and-runtime-build-integration` -> `pass`
+- `S02` `by:` `vaultspec-high-executor`
+- `S03` `M` `src/vaultspec_rag/_gpu.py`
+- `S03` `M` `src/vaultspec_rag/cli/_gpu_errors.py`
+- `S03` `M` `src/vaultspec_rag/cli/_render.py`
+- `S03` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S03` `M` `src/vaultspec_rag/commands/_provision.py`
+- `S03` `M` `src/vaultspec_rag/commands/_torch_flow.py`
+- `S03` `M` `src/vaultspec_rag/operator_state/_compute.py`
+- `S03` `M` `src/vaultspec_rag/operator_state/_installation.py`
+- `S03` `M` `src/vaultspec_rag/operator_state/_provisioning.py`
+- `S03` `M` `src/vaultspec_rag/tests/conftest.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_client_provisions_nothing.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_install_client_role.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_install_provision.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_install_torch_config.py`
+- `S03` `A` `src/vaultspec_rag/tests/test_one_cause_one_command.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_provisioning_gate.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_service_env_preflight.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S03` `verify:` `pytest-one-cause-one-command-and-install-suites` -> `pass`
+- `S03` `by:` `vaultspec-high-executor`
+- `S03` `M` `src/vaultspec_rag/tests/test_cli.py`
+- `S03` `M` `docs/cli.md`
+- `S03` `verify:` `merged unit lane, 7872 pass; failures only the vite-less monitor tests` -> `pass`
+- `S04` `M` `src/vaultspec_rag/cli/_service_lifecycle.py`
+- `S04` `M` `src/vaultspec_rag/cli/_service_qdrant.py`
+- `S04` `M` `src/vaultspec_rag/commands/_backend_choice.py`
+- `S04` `M` `src/vaultspec_rag/commands/_provision.py`
+- `S04` `M` `src/vaultspec_rag/operator_state/_installation.py`
+- `S04` `M` `src/vaultspec_rag/operator_state/_provisioning.py`
+- `S04` `M` `src/vaultspec_rag/operator_state/_service_environment.py`
+- `S04` `M` `src/vaultspec_rag/service_runtime.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_doctor_repair_and_holders.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_provisioning_gate.py`
+- `S04` `A` `src/vaultspec_rag/tests/test_runtime_aware_surfaces.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S04` `verify:` `unit lane 7890 pass, only vite-less monitor failures` -> `pass`
+- `S04` `by:` `vaultspec-high-executor`
+- `S06` `M` `README.md`
+- `S06` `M` `docs/cli.md`
+- `S06` `M` `docs/getting-started.md`
+- `S06` `M` `docs/glossary.md`
+- `S06` `M` `docs/installation.md`
+- `S06` `M` `src/vaultspec_rag/cli/_install.py`
+- `S06` `M` `src/vaultspec_rag/commands/_torch_flow.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_cli.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_host_install_command.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_install_torch_config.py`
+- `S06` `verify:` `install, cli, docs and host-install-command suites` -> `pass`
+- `S07` `verify:` `lab linux readme route: install, start, doctor ready, search after rebuild` -> `pass`
+- `S07` `verify:` `lab linux uvx-local and client routes: start, doctor ready` -> `pass`
+- `S04` `M` `src/vaultspec_rag/tests/test_runtime_aware_surfaces.py`
+- `S04` `verify:` `doctor ready beside a live service under a pending runtime; covering suites` -> `pass`
+- `S02` `M` `src/vaultspec_rag/operator_state/_installation.py`
+- `S02` `M` `src/vaultspec_rag/service_runtime.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_cli_server_start.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_service_runtime.py`
+- `S02` `verify:` `runtime created after the start guards; refusal offers no retry loop; child env drops interpreter variables` -> `pass`
+- `S03` `M` `src/vaultspec_rag/operator_state/_topology.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_one_cause_one_command.py`
+- `S03` `M` `src/vaultspec_rag/torch_config/_constants.py`
+- `S03` `verify:` `tool host reports no torch phase; unit lane 7896 pass, only vite-less monitor failures` -> `pass`
+- `S06` `M` `docs/automation.md`
+- `S06` `M` `docs/provisioning.md`
+- `S06` `M` `docs/service-mode.md`
+- `S06` `verify:` `docs tests 114 pass` -> `pass`
+- `S06` `by:` `vaultspec-standard-executor`
+- `S08` `M` `src/vaultspec_rag/_job_admission.py`
+- `S08` `M` `src/vaultspec_rag/cli/_index.py`
+- `S08` `M` `src/vaultspec_rag/indexer/_checkpoint_common.py`
+- `S08` `M` `src/vaultspec_rag/indexer/_generation_lifecycle.py`
+- `S08` `M` `src/vaultspec_rag/job_models.py`
+- `S08` `M` `src/vaultspec_rag/job_persistence.py`
+- `S08` `M` `src/vaultspec_rag/server/_routes.py`
+- `S08` `M` `src/vaultspec_rag/service.py`
+- `S08` `M` `src/vaultspec_rag/store_catalog.py`
+- `S08` `M` `src/vaultspec_rag/store_collections.py`
+- `S08` `M` `src/vaultspec_rag/store_runtime.py`
+- `S08` `M` `src/vaultspec_rag/tests/_publication_assertions.py`
+- `S08` `A` `src/vaultspec_rag/tests/integration/test_first_build_lifecycle.py`
+- `S08` `M` `src/vaultspec_rag/tests/integration/test_service_job_control.py`
+- `S08` `M` `src/vaultspec_rag/tests/integration/test_service_jobs_routes_mutations.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_api_clean_admission.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_cli_index_summary.py`
+- `S08` `A` `src/vaultspec_rag/tests/test_first_build_admission.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_publication_read_paths.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_served_pointer_validation.py`
+- `S08` `verify:` `first-build admission 19 unit and 7 integration (GPU lock) pass; unit lane 7916 pass, only monitor and one free-space race` -> `pass`
+- `S08` `by:` `vaultspec-high-executor`
+- `S07` `verify:` `lab linux readme, uvx-local and client after review fixes and S08: install, start, doctor ready, index, search, stop all exit 0` -> `pass`
+- `S04` `M` `src/vaultspec_rag/tests/test_model_readiness.py`
+- `S04` `verify:` `readiness, doctor and model suites 904 pass; two guards mutation-proven` -> `pass`
+- `S08` `M` `docs/mcp.md`
+- `S08` `M` `src/vaultspec_rag/api.py`
+- `S08` `M` `src/vaultspec_rag/cli/_service_doctor.py`
+- `S08` `M` `src/vaultspec_rag/indexer/_vault_prep.py`
+- `S08` `M` `src/vaultspec_rag/mcp/_tools.py`
+- `S08` `M` `src/vaultspec_rag/tests/integration/_index_job_control_support.py`
+- `S08` `M` `src/vaultspec_rag/tests/integration/test_first_build_lifecycle.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_first_build_admission.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S08` `M` `src/vaultspec_rag/watcher_execution.py`
+- `S08` `verify:` `first-build lifecycle 10 integration pass under GPU lock; job-control integration 50 pass; unit lane 7924 pass, only vite-less monitor failures` -> `pass`
+- `S07` `verify:` `lab windows readme, uvx-local, client and pip on e28998f4 with the compiled monitor: install, start, doctor, index, search, stop all exit 0` -> `pass`
+- `S07` `verify:` `lab linux readme, uvx-local, client on 873a586c: all steps exit 0` -> `pass`
+
+## Notes
+
+- `S04` doctor, status, qdrant and backend choice read the planned service interpreter
+- `S07` Monitor replaced by a lab-only readiness stand-in until the compiled monitor ships; Windows sandbox not run while the operator's service owns the GPU; first index needs --rebuild (audit first-index)
+- `S08` the in-process --borrow-gpu and api.index paths still refuse a new root; raised with the user
+- `S07` Monitor still a lab-only stand-in; Windows sandbox not run while the operator's service owns the GPU
+- `S08` in-process --borrow-gpu and api.index now build a new source too, on the user instruction

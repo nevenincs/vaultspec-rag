@@ -25,13 +25,13 @@ from typing import TYPE_CHECKING, Annotated, cast
 import typer
 from vaultspec_core.config.workspace import WorkspaceError, resolve_workspace
 
+from .._operator_commands import server_start_command
 from .._readiness import ReadinessStatus
 from ..api import get_readiness
 from ..commands._mode import RAG_DISTRIBUTION_NAME
 from ..operator_state._holders import HolderRole, holder_line
 from ..operator_state._provisioning import (
     classify_tool_receipt,
-    cuda_remediation,
     upgrade_commands_for_mode,
 )
 from ..operator_state._service import ServiceLifecycle
@@ -47,16 +47,19 @@ from ._render import (
     COMMAND,
     GOOD,
     HEADING,
+    MUTED,
     WARN,
     _emit_json,
     _heading,
     _plain,
+    _print_next_action,
     _styled,
     lifecycle_style,
 )
 
 if TYPE_CHECKING:
-    from ..operator_state._installation import ComputeCapability
+    from ..operator_state._models import ComputeReport
+    from ..service_runtime import PlannedService
 
 
 @server_root_app.command(
@@ -64,10 +67,11 @@ if TYPE_CHECKING:
     help=(
         "Report readiness across two axes: installed dependencies (torch, "
         "models, qdrant binary) and the live service (a running daemon's "
-        "health). A dead daemon is reported as not ready. Each pinned "
-        "model's cached files are hashed against the digests compiled into "
-        "this tool, which reads several gigabytes and takes a few seconds; "
-        "a model with no such digests is reported as unpinned."
+        "health). A dead or absent daemon is reported as not ready, with "
+        "exactly one command to resolve it. Each pinned model's cached "
+        "files are hashed against the digests compiled into this tool, "
+        "which reads several gigabytes and takes a few seconds; a model "
+        "with no such digests is reported as unpinned."
     ),
 )
 def service_doctor(
@@ -85,29 +89,38 @@ def service_doctor(
     The installed-dependency axis comes from the read-only reporter
     (``api.get_readiness``). The live-service axis reads the discovery file
     and, when present, derives the running daemon's state from the same
-    signals ``server status`` uses. The top-line ``ready`` is honest: when a
-    daemon is expected (a discovery file exists) but is not live and healthy,
-    ``ready`` is False with a ``degraded``/``needs-restart`` status; when no
-    daemon is expected (no discovery file), ``ready`` reflects installed
-    dependencies so a pre-install ``doctor`` still works. Mutates nothing.
+    signals ``server status`` uses. The top-line ``ready`` is honest: it is
+    True only when a live, healthy daemon answers *and* every dependency row
+    is ready (or not applicable). No discovery file at all means no service
+    is running, which is never read as ready, whatever the dependency rows
+    say - a client's own "not needed" rows must never be mistaken for "this
+    installation can answer requests". A daemon that is expected (a
+    discovery file exists) but is not live and healthy reads ``False`` with
+    a ``needs_restart`` status. The installed-dependency axis stays present
+    and labelled either way, so what is provisioned is still visible beside
+    the live truth. Mutates nothing.
     """
-    from ..operator_state._compute import ProbeDepth
-    from ..operator_state._environment_probe import probe_interpreter
-
-    interpreter = _resolve_daemon_interpreter()
-    compute = probe_interpreter(interpreter, ProbeDepth.VERIFY).compute
+    launching = _resolve_daemon_interpreter()
+    planned, compute = _planned_service(launching)
     # The holders that matter are the ones holding the environment the
-    # service would run in, which is not necessarily this command's own.
+    # service would run in, which is not necessarily this command's own, and
+    # which is nobody's environment at all until a runtime exists.
     # The deep check: this is the one command that proves the model cache
     # without starting the service, so it pays for hashing it.
     report = get_readiness(
-        holders_root=environment_root(interpreter),
+        holders_root=(
+            None if planned.runtime_required else environment_root(planned.interpreter)
+        ),
         compute=compute,
         verify_models=True,
     )
     service = _live_service_axis()
-    mode = _mode_floor_axis(_resolve_doctor_target(ctx))
-    overall_ready, status = _overall_readiness(report, service)
+    mode = _mode_floor_axis(_resolve_doctor_target(ctx), planned, launching)
+    runtime = _service_runtime_axis(planned)
+    overall_ready, status = _overall_readiness(
+        report, service, runtime_required=planned.runtime_required
+    )
+    next_action = _doctor_next_action(status)
     if json_output:
         envelope = {
             "ready": overall_ready,
@@ -117,48 +130,89 @@ def service_doctor(
             "dependencies": report.get("dependencies"),
             "service": service,
             "mode": mode,
-            "interpreter": interpreter,
+            "interpreter": planned.interpreter,
             "environment_holders": report.get("environment_holders"),
-            "compute_repair": _compute_repair_steps(interpreter, compute.capability),
-            "receipt": _receipt_axis(interpreter),
+            "service_runtime": runtime,
+            "receipt": _receipt_axis(planned),
+            "next_action": next_action,
         }
         _emit_json(overall_ready, "server doctor", data=envelope)
     else:
         _render_readiness(report, service, overall_ready, status)
-        _render_receipt_axis(interpreter)
-        _render_compute_repair(interpreter, compute.capability)
+        _render_service_runtime_axis(runtime)
+        _render_receipt_axis(planned)
         _render_environment_holders(report)
         _render_mode_floor_axis(mode)
-    raise typer.Exit(code=_doctor_exit_code(service, mode))
+        _print_next_action(next_action)
+    raise typer.Exit(code=_doctor_exit_code(overall_ready, service, mode))
+
+
+def _planned_service(launching: str) -> tuple[PlannedService, ComputeReport]:
+    """Judge the environment the daemon would run in, and report its compute.
+
+    One probe for the launching environment, and one more only when a
+    runtime would serve - each a child of the interpreter it judges, so this
+    command still never imports torch. A runtime that does not exist yet is
+    reported as unchecked rather than as the launcher's verdict: what the
+    launcher's torch is says nothing about what the runtime will hold, and a
+    launcher that cannot serve is no longer a defect to repair.
+    """
+    from ..operator_state._compute import ProbeDepth
+    from ..operator_state._environment_probe import probe_interpreter
+    from ..operator_state._installation import ComputeCapability
+    from ..operator_state._models import ComputeReport
+    from ..operator_state._service_environment import (
+        ServiceEnvironment,
+        judge_foreign_environment,
+    )
+    from ..service_runtime import planned_service_environment
+
+    probed: dict[str, ComputeReport] = {}
+
+    def judge(interpreter: str) -> ServiceEnvironment:
+        report = probe_interpreter(interpreter, ProbeDepth.VERIFY).compute
+        probed[interpreter] = report
+        return judge_foreign_environment(interpreter, probed=report)
+
+    planned = planned_service_environment(judge(launching), judge=judge)
+    if planned.runtime_required:
+        return planned, ComputeReport(
+            capability=ComputeCapability.UNKNOWN, detail=_RUNTIME_PENDING
+        )
+    return planned, probed[planned.interpreter]
 
 
 def _doctor_exit_code(
+    overall_ready: bool,
     service: dict[str, object],
     mode: dict[str, object] | None,
 ) -> int:
-    """Fold the daemon and provisioning axes into an exit code, error over warn.
+    """Fold every axis into an exit code, error over warn.
 
-    Mirrors core's ``spec doctor`` weighting for the shared per-package axis: a
-    ``vaultspec-rag`` entry running below its declared floor is an error, a
-    declared-vs-observed mode mismatch is a warning. Combined with the existing
-    dead-daemon signal (a daemon expected but not live is a warning), the highest
-    severity wins: ``2`` for any error, ``1`` for any warning, ``0`` otherwise.
-
-    A pre-install / no-daemon run with no committed rag declaration keeps exit 0
-    even when dependencies are not yet ready, preserving the informational
-    pre-install contract callers relied on; only an actionable divergence
-    (below-floor error, mode mismatch, or dead daemon) lifts the exit code.
+    ``overall_ready`` already folds in the live-service axis and, except
+    where the daemon's runtime has still to be built, every dependency row
+    ``compute_readiness`` reports (torch, models, qdrant, and any row a
+    future dependency adds). So a dead or absent daemon, and a dependency
+    that is not ready in an environment that exists, lift the exit code
+    without this function naming any one dependency. Rows describing an
+    environment a start would create are facts about the host rather than a
+    verdict on it, and the service runtime axis carries them instead.
+    Mirrors core's ``spec doctor`` weighting for the shared per-package axis
+    on top: a ``vaultspec-rag`` entry running below its declared floor is an
+    error, a declared-vs-observed mode mismatch is a warning. The highest
+    severity wins: ``2`` for any error, ``1`` for any warning or not-ready
+    verdict, ``0`` only when every axis is ready.
     """
-    dead_daemon = bool(service.get("present")) and not service.get("live")
     below_floor = mode is not None and mode.get("version_floor") == "below"
     mismatch = mode is not None and mode.get("mode_mismatch") == "mismatch"
     # A running daemon from another release is actionable in the same way the
-    # other warnings are: the operator must replace it. False only when a daemon
-    # was actually observed, so a pre-install run is unaffected.
+    # other warnings are: the operator must replace it. False only when a
+    # daemon was actually observed, so an absent daemon is unaffected - it
+    # already makes ``overall_ready`` False on its own.
     foreign_release = service.get("version_compatible") is False
     if below_floor:
         return 2
-    if dead_daemon or mismatch or foreign_release:
+    if not overall_ready or mismatch or foreign_release:
         return 1
     return 0
 
@@ -168,8 +222,9 @@ def _live_service_axis() -> dict[str, object]:
 
     Returns a labelled block describing whether a daemon that is expected to
     be running actually is. When no discovery file exists, the service is not
-    started (``present: False``) and the live axis does not constrain the
-    top-line readiness. When a discovery file exists, the same lifecycle
+    started (``present: False``), which keeps the top-line readiness False -
+    nothing is running to answer a request. When a discovery file exists, the
+    same lifecycle
     signals that back ``server status`` (PID alive, our PID, port listening,
     heartbeat fresh) derive the state, so the doctor and status never disagree.
 
@@ -242,26 +297,56 @@ def _live_service_axis() -> dict[str, object]:
 def _overall_readiness(
     report: dict[str, object],
     service: dict[str, object],
+    *,
+    runtime_required: bool,
 ) -> tuple[bool, str]:
     """Fold the two axes into an honest top-line ``(ready, status)``.
 
-    - No discovery file: the live axis is not asserted, so ``ready`` reflects
-      installed dependencies (a pre-install ``doctor`` still works), with
-      status ``ready`` / ``dependencies_not_ready``.
-    - Discovery file present and the daemon is live and healthy: ``ready`` when
-      dependencies are also ready, status ``ready`` / ``dependencies_not_ready``.
-    - Discovery file present but the daemon is not live: ``ready`` is False and
-      the status is ``needs_restart`` - a dead-but-expected daemon must never
-      read ready, regardless of installed dependencies.
+    - No discovery file at all: no service is running, so ``ready`` is
+      always False with status ``not_running`` - a ``server start`` would be
+      the first action an operator takes, so the top line never reads ready
+      on the strength of installed dependencies alone. A client's own "not
+      needed" dependency rows are exactly the case this guards: they must
+      never be mistaken for "this installation can answer requests".
+    - Discovery file present but the daemon is not live: ``ready`` is False
+      and the status is ``needs_restart`` - a dead-but-expected daemon must
+      never read ready, regardless of installed dependencies.
+    - Discovery file present and the daemon is live and healthy: ``ready``
+      when every dependency row is also ready (or not applicable), status
+      ``ready`` / ``dependencies_not_ready``. Generic over whatever rows the
+      dependency report carries.
+
+    *runtime_required* says the daemon would run from an environment that
+    does not exist yet, which is what the dependency rows then describe:
+    nothing. They are reported as facts about the environment in front of
+    the operator and kept out of this verdict, because a live, healthy
+    service answering requests does not become unready over an environment
+    it does not use - the service runtime axis is where that environment is
+    reported, and a start is what creates it.
     """
-    deps_ready = bool(report.get("ready"))
+    deps_ready = bool(report.get("ready")) or runtime_required
     if not service.get("present"):
-        return deps_ready, ("ready" if deps_ready else "dependencies_not_ready")
+        return False, "not_running"
     if not service.get("live"):
         return False, "needs_restart"
     if service.get("state") == ServiceLifecycle.STARTING:
         return False, "starting"
     return deps_ready, ("ready" if deps_ready else "dependencies_not_ready")
+
+
+def _doctor_next_action(status: str) -> str | None:
+    """Return the one command that resolves *status* on its own, or ``None``.
+
+    Only the "nothing is running" status has a single command that resolves
+    it by itself; every other not-ready status is already explained by its
+    own axis (the live-service block names the daemon's condition, and each
+    not-ready dependency row carries its own remedy as its ``detail``), so
+    naming a second command here would violate the one-cause-one-command
+    messaging constraint rather than serve it.
+    """
+    if status == "not_running":
+        return server_start_command()
+    return None
 
 
 def _resolve_doctor_target(ctx: typer.Context) -> Path:
@@ -287,7 +372,9 @@ def _resolve_doctor_target(ctx: typer.Context) -> Path:
         return named_target or Path.cwd()
 
 
-def _mode_floor_axis(target: Path) -> dict[str, object] | None:
+def _mode_floor_axis(
+    target: Path, planned: PlannedService, launching: str
+) -> dict[str, object] | None:
     """Compute rag's provisioning mode-and-floor axis, read-only.
 
     Reports the ``vaultspec-rag`` entry in the shared per-package
@@ -307,6 +394,11 @@ def _mode_floor_axis(target: Path) -> dict[str, object] | None:
     Args:
         target: Workspace root directory whose ``.vaultspec/workspace.json`` is
             read.
+        planned: Where the daemon would run, which decides whether the
+            upgrade sequence has to keep this installation's own accelerator
+            build or only take the newer release.
+        launching: The interpreter of the installation being upgraded, which
+            is this one whether or not the daemon runs from it.
 
     Returns:
         A labelled block with ``declared_mode``, ``mode_mismatch``,
@@ -341,10 +433,11 @@ def _mode_floor_axis(target: Path) -> dict[str, object] | None:
         "version_floor": floor.value,
         "version_floor_running": running,
         "version_floor_minimum": minimum,
-        # Computed here so the envelope and the rendered block read one
-        # value, and so the daemon interpreter is resolved once.
+        # Computed here so the envelope and the rendered block read one value.
         "upgrade_commands": list(
-            upgrade_commands_for_mode(declared_mode, _resolve_daemon_interpreter())
+            upgrade_commands_for_mode(
+                declared_mode, launching, serves=planned.launcher_serves
+            )
         ),
     }
 
@@ -367,13 +460,68 @@ def _render_readiness(
     _render_dependency_axis(report)
 
 
-def _receipt_axis(interpreter: str) -> dict[str, object] | None:
+#: Why the environment the daemon would run in has nothing to report yet.
+_RUNTIME_PENDING = "the service runtime does not exist yet"
+
+
+def _service_runtime_axis(planned: PlannedService) -> dict[str, object] | None:
+    """Say where the daemon would run from, when that is not this environment.
+
+    ``None`` for a launcher that serves the daemon itself: there is no
+    runtime in that story, and a row about one would be a warning for a
+    state that is not present.
+
+    A runtime that has still to be created is not a defect of anything the
+    operator installed, so it is reported as one sentence naming the one
+    command that creates it, and it is kept out of the dependency rows the
+    top-line verdict folds in: nothing about a live, healthy service becomes
+    untrue because a runtime it does not use is absent.
+    """
+    if planned.launcher_serves:
+        return None
+    if planned.runtime_required:
+        return {
+            "source": str(planned.source),
+            "ready": False,
+            "label": (
+                f"not ready - the first `{server_start_command()}` creates the "
+                f"environment the service runs in"
+            ),
+        }
+    return {
+        "source": str(planned.source),
+        "ready": True,
+        "label": f"ready - the service runs from {planned.interpreter}",
+    }
+
+
+def _render_service_runtime_axis(axis: dict[str, object] | None) -> None:
+    """Report where the daemon would run from, when a runtime is involved."""
+    if axis is None:
+        return
+    ready = bool(axis.get("ready"))
+    _styled(
+        ("Service runtime:", HEADING),
+        (f" {axis.get('label', '?')}", GOOD if ready else WARN),
+        soft_wrap=True,
+    )
+
+
+def _receipt_axis(planned: PlannedService) -> dict[str, object] | None:
     """What an upgrade of this installation would resolve, or ``None``.
 
     Only a uv tool installation has a receipt to judge. Everything else
     resolves from a project or from nothing, and reporting a verdict about a
     file that does not exist would be an invented fact.
+
+    An installation the daemon does not run from has no receipt worth a row
+    either: what its next upgrade resolves for torch decides nothing about a
+    service that runs from its own environment, and the fix would be a repair
+    of something that is not broken.
     """
+    if not planned.launcher_serves:
+        return None
+    interpreter = planned.interpreter
     kind = classify_environment(environment_root(interpreter))
     if kind is not RuntimeEnvKind.UV_TOOL:
         return None
@@ -386,9 +534,9 @@ def _receipt_axis(interpreter: str) -> dict[str, object] | None:
     }
 
 
-def _render_receipt_axis(interpreter: str) -> None:
+def _render_receipt_axis(planned: PlannedService) -> None:
     """Report what the next upgrade of this installation would resolve."""
-    axis = _receipt_axis(interpreter)
+    axis = _receipt_axis(planned)
     if axis is None:
         return
     raw = axis["fix"]
@@ -403,32 +551,6 @@ def _render_receipt_axis(interpreter: str) -> None:
     for command in commands:
         # Soft-wrapped: a folded command is not one an operator can paste.
         _styled("    ", (str(command), COMMAND), soft_wrap=True)
-
-
-def _compute_repair_steps(interpreter: str, capability: ComputeCapability) -> list[str]:
-    """The repair for this interpreter, or nothing when there is none to run.
-
-    Only a defect a new torch wheel fixes has a provisioning repair. A
-    missing device or a refused accelerator policy is answered by the
-    capability's own remediation, which the readiness line already carries.
-    """
-    if not capability.fixed_by_torch_reinstall:
-        return []
-    return list(cuda_remediation(interpreter).steps)
-
-
-def _render_compute_repair(interpreter: str, capability: ComputeCapability) -> None:
-    """Print the exact repair for the interpreter the service would run in.
-
-    The compute capability's own remediation says this command prints it,
-    and status renders that sentence, so it has to be true here.
-    """
-    steps = _compute_repair_steps(interpreter, capability)
-    if not steps:
-        return
-    _heading(f"Repair for {interpreter}:")
-    for step in steps:
-        _styled("  ", (step, COMMAND), soft_wrap=True)
 
 
 def _render_environment_holders(report: dict[str, object]) -> None:
@@ -468,6 +590,7 @@ def _render_environment_holders(report: dict[str, object]) -> None:
                 _holder_role(holder.get("role")),
                 launcher_pid=launcher if isinstance(launcher, int) else None,
                 port=port if isinstance(port, int) else None,
+                remedy=False,
             )
         )
     total = snapshot.get("total")
@@ -530,6 +653,8 @@ def _render_mode_floor_axis(mode: dict[str, object] | None) -> None:
 def _overall_label(overall_ready: bool, status: str) -> str:
     if overall_ready:
         return "ready for requests"
+    if status == "not_running":
+        return "not ready - no service is running"
     if status == "needs_restart":
         return "not ready - service needs restart"
     if status == "starting":
@@ -600,4 +725,7 @@ def _render_dependency_axis(report: dict[str, object]) -> None:
 _DEPENDENCY_STYLE = {
     ReadinessStatus.READY.value: GOOD,
     ReadinessStatus.NOT_READY.value: BAD,
+    # Muted, not green: "not applicable" is not a signal that this
+    # installation can itself run the service.
+    ReadinessStatus.NOT_APPLICABLE.value: MUTED,
 }

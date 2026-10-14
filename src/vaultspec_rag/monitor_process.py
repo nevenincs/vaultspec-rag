@@ -14,8 +14,7 @@ import sys
 import threading
 import time
 from dataclasses import asdict, dataclass, replace
-from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from urllib.parse import urlsplit
 
 from ._atomic_write import write_json_atomically
@@ -27,11 +26,15 @@ from ._process_probe import (
     send_signal,
     wait_for_exit,
 )
-from ._program_lookup import Where, find_program
 from .config._settings import managed_status_dir
 from .config._types import EnvVar
-from .qdrant_runtime._provision import file_sha256
+from .monitor_runtime._launch import confirm_launch, verified_monitor
+from .monitor_runtime._errors import MonitorError
+from .monitor_runtime._resolve import monitor_for_launch, resolve_monitor
 from .serviceclient._discovery import status_write_lock
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 _READY_PREFIX = "vaultspec.monitor.ready "
@@ -42,32 +45,6 @@ _HANDOFF_LINE = "vaultspec.monitor.handoff\n"
 #: new and starts the monitor before warming any model, so a successor that has
 #: not adopted by then is not coming.
 HANDOFF_SECONDS = 120.0
-
-
-def _resolve_monitor_executable() -> Path:
-    override = os.environ.get(EnvVar.MONITOR_BINARY.value)
-    if override:
-        executable = Path(override).expanduser()
-        if not executable.is_absolute():
-            raise RuntimeError("The monitor executable override must be absolute.")
-    else:
-        # The monitor ships in the same archive as this package's commands and
-        # is otherwise put on PATH by the operator. It is started on every
-        # service start, so it is never looked for in the directory that start
-        # was typed in.
-        installed = find_program(
-            "vaultspec-rag-monitor", Where.INSTALLATION, Where.SEARCH_PATH
-        )
-        if installed is None:
-            raise RuntimeError(
-                "The compiled vaultspec-rag-monitor executable is required. "
-                "Install it alongside vaultspec-rag or set "
-                "VAULTSPEC_RAG_MONITOR_BINARY to its absolute path."
-            )
-        executable = Path(installed).resolve()
-    if not executable.is_file():
-        raise RuntimeError(f"The compiled monitor executable is missing: {executable}")
-    return executable
 
 
 def _access_link_port(link: str) -> int:
@@ -171,14 +148,6 @@ def _read_identity(path: Path) -> MonitorIdentity | None:
     ):
         raise RuntimeError("The recorded monitor identity is invalid.")
     return identity
-
-
-def _expected_monitor_sha256() -> str | None:
-    """Digest of the executable this release would launch, or None if unknown."""
-    try:
-        return file_sha256(_resolve_monitor_executable())
-    except (OSError, RuntimeError):
-        return None
 
 
 def _terminate_verified(identity: MonitorIdentity) -> bool:
@@ -286,24 +255,31 @@ class MonitorProcess:
         if _identity_path().exists():
             raise RuntimeError("A live monitor owner is already recorded.")
         starting_port = next_available_port(self.backend_port + 1)
-        executable = _resolve_monitor_executable()
+        monitor = monitor_for_launch()
         environment = dict(os.environ)
         environment[EnvVar.PORT.value] = str(self.backend_port)
         environment[EnvVar.STATUS_DIR.value] = str(managed_status_dir())
         environment[EnvVar.MONITOR_PYTHON.value] = sys.executable
-        executable_sha256 = file_sha256(executable)
-        process = subprocess.Popen(
-            [str(executable), "--managed", "--port", str(starting_port)],
-            cwd=managed_status_dir(),
-            env=environment,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-        )
+        # The file is held across the process creation and asked again
+        # afterwards, so the monitor that runs is the one that was verified.
+        # ``executable`` names the file itself: left to the command line, a
+        # name is completed and looked for, and a sibling file runs instead.
+        with verified_monitor(monitor) as held:
+            process = subprocess.Popen(
+                [str(monitor.path), "--managed", "--port", str(starting_port)],
+                executable=held.launch_path,
+                pass_fds=held.inherited,
+                cwd=managed_status_dir(),
+                env=environment,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+            confirm_launch(monitor, held, process)
         self.process = process
         try:
             owner_start = pid_start_time(os.getpid())
@@ -318,8 +294,8 @@ class MonitorProcess:
                 process.pid,
                 child_start,
                 backend_port=self.backend_port,
-                executable=str(executable),
-                executable_sha256=executable_sha256,
+                executable=str(monitor.path),
+                executable_sha256=monitor.sha256,
             )
             self._publish_identity()
             ready: queue.Queue[str] = queue.Queue()
@@ -365,12 +341,18 @@ class MonitorProcess:
                 identity.pid, identity.start_time
             )
             owner_start = pid_start_time(os.getpid())
+            try:
+                expected = resolve_monitor()
+            except MonitorError:
+                # An executable this release cannot verify is not adopted.
+                expected = None
             if (
                 alive
                 and owner_start > 0
                 and identity.backend_port == self.backend_port
                 and _access_link_port(identity.access) == identity.port
-                and identity.executable_sha256 == _expected_monitor_sha256()
+                and expected is not None
+                and identity.executable_sha256 == expected.sha256
             ):
                 self.identity = replace(
                     identity,

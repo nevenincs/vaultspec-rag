@@ -9,7 +9,11 @@ from typing import TYPE_CHECKING, Annotated, NoReturn, cast
 import typer
 
 from .._job_values import count
-from .._operator_commands import index_command, server_status_command
+from .._operator_commands import (
+    index_command,
+    server_start_command,
+    server_status_command,
+)
 from .._source_types import PublicSourceType
 from ..operator_state._installation import ComputeCapability
 from ..operator_state._models import (
@@ -34,6 +38,7 @@ from ._status_labels import render_degradation, reranker_label
 
 if TYPE_CHECKING:
     from ..operator_state._features import PreprocessHookState
+    from ..service_runtime import PlannedService
 
 
 def _status_counts(status: dict[str, object]) -> tuple[int, int, int | None]:
@@ -250,12 +255,44 @@ def _service_lines(view: _StatusView) -> list[str]:
         f"Service installation: {view.installation.role.label}",
     ]
     local = _resolve_local_interpreter()
-    if not _same_path(view.installation.executable, local):
+    if _same_path(view.installation.executable, local):
+        return lines
+    # The interpreter a start would use is not always this one: a launcher
+    # that cannot serve runs the daemon from the managed runtime instead, so
+    # the note is asked of the plan rather than of this environment. Asked
+    # only here, where the two are already known to differ, so the common
+    # case costs no probe. Installed versions are enough for a note.
+    planned = _planned_service()
+    if planned.runtime_required:
         lines.append(
             f"Note: the running service uses {view.installation.executable}; "
-            f"a service started from here would use {local}."
+            f"a service started from here would create its own environment "
+            f"to run in first."
+        )
+    elif not _same_path(view.installation.executable, planned.interpreter):
+        lines.append(
+            f"Note: the running service uses {view.installation.executable}; "
+            f"a service started from here would use {planned.interpreter}."
         )
     return lines
+
+
+def _planned_service() -> PlannedService:
+    """Judge the environment a ``server start`` from here would run in.
+
+    At the metadata depth: every caller here is writing a note or deciding
+    whether a repair is worth naming, and neither is worth the seconds a
+    torch import in a child costs.
+    """
+    from ..operator_state._compute import ProbeDepth
+    from ..operator_state._service_environment import judge_service_environment
+    from ..service_runtime import planned_service_environment
+
+    interpreter = _resolve_local_interpreter()
+    return planned_service_environment(
+        judge_service_environment(interpreter, ProbeDepth.METADATA),
+        ProbeDepth.METADATA,
+    )
 
 
 def _feature_lines(view: _StatusView) -> list[str]:
@@ -280,6 +317,13 @@ def _receipt_lines() -> list[str]:
     an operator anything. Reading the receipt is a file read, so the check
     costs nothing on the default view; every other kind of environment has no
     receipt and no line here.
+
+    Said only about an installation the daemon actually runs from. One it
+    does not is a line with nothing behind it: the service keeps its own
+    accelerator stack, so what this installation's next upgrade resolves for
+    torch costs the operator nothing, and its fix would repair something that
+    is not broken. That reading costs a probe, so it is asked last, of the
+    one installation kind that has a receipt to lose.
     """
     from ..operator_state._provisioning import classify_tool_receipt
     from ..operator_state._topology import (
@@ -287,14 +331,15 @@ def _receipt_lines() -> list[str]:
         classify_environment,
         environment_root,
     )
-    from ._process import _resolve_daemon_interpreter
 
-    interpreter = _resolve_daemon_interpreter()
+    interpreter = _resolve_local_interpreter()
     kind = classify_environment(environment_root(interpreter))
     if kind is not RuntimeEnvKind.UV_TOOL:
         return []
     verdict = classify_tool_receipt(interpreter)
     if verdict.durable:
+        return []
+    if not _planned_service().launcher_serves:
         return []
     fix = verdict.fix(interpreter)
     if not fix:
@@ -359,7 +404,13 @@ def _render_status_text(view: _StatusView, *, verbose: bool = False) -> None:
         _plain(line, soft_wrap=True)
     if service_port is not None:
         _plain(f"Service details: {server_status_command(service_port)}")
-    _print_next_action(_status_next_action(vault_count, code_count, document_count))
+        next_action = _status_next_action(vault_count, code_count, document_count)
+    else:
+        # Nothing is running to index into, so the first action is starting
+        # the service, not indexing - reuses the same command builder
+        # `server status` offers for a stopped service.
+        next_action = server_start_command()
+    _print_next_action(next_action)
 
 
 def _emit_status_json(view: _StatusView) -> None:

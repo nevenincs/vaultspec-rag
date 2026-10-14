@@ -15,6 +15,31 @@ if TYPE_CHECKING:
     from .._source_types import PublicSourceType
 
 
+def publish_empty_vault_proof(root: Path) -> None:
+    """Complete one real empty vault publication for *root*.
+
+    The cheapest way to give a root a completed publication: a real
+    generation, opened and published through production checkpoint code,
+    whose corpus happens to be empty. Tests needing a root that is not
+    awaiting its first build take it from here.
+    """
+    from ..indexer._run_ledger_models import RunAuthority, RunOperation
+    from ..indexer._vault_checkpoint import VaultRunCheckpoint
+    from ..job_control import NO_RUN_CONTROL
+    from ..store_runtime import configured_backend_identity
+
+    root.mkdir(parents=True, exist_ok=True)
+    checkpoint = VaultRunCheckpoint.open(
+        root,
+        backend_identity=configured_backend_identity(root),
+        authority=RunAuthority.REBUILD,
+        operation=RunOperation.FULL,
+        run_control=NO_RUN_CONTROL,
+    )
+    checkpoint.publish_proof_transition()
+    checkpoint.publish_generation()
+
+
 def published_content_identities(
     root: Path,
     source: PublicSourceType,

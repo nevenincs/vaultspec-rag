@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#monitor-delivery'
 date: '2026-10-02'
-modified: '2026-10-09'
+modified: '2026-10-13'
 body_schema: 'body-v2'
-body_hash: 'sha256:23f25ab68226cacd3a3c4f685f0e41c8daf0a967af603dce31347335ee267837'
+body_hash: 'sha256:bb862d05b93d1a3996bc5c4f7667c058067502e146c4ff760666cf2cf5d6f486'
 related:
   - "[[2026-10-02-monitor-delivery-reference]]"
   - "[[2026-10-02-monitor-delivery-research]]"
@@ -53,6 +53,8 @@ Restore npm dependencies from the committed lock and run the frontend gates. Bui
 The draft completeness gate requires all target archives to contain the monitor, complete asset/version/provenance metadata, and successful native delivered-binary smoke evidence. The smoke launches finalized bytes in an isolated working directory, home and status directory with development commands unavailable and outbound networking disabled, checks readiness, all asset references, backend-unavailable behavior, occupied-port failure and bounded shutdown. A browser check renders the binary's HTTP output. Backend-control integration exercises real owners separately and cannot be replaced by shell smoke. No release/index/channel operation runs during these tests.
 
 Publication order remains the accepted release standard. Public acquisition extends to every shipped monitor target and launches checksum-verified downloaded bytes after publication. A reviewed committed pin catalog binds release tag, source revision, target archive SHA256 and monitor executable SHA256; verify before extraction and immediately before launch, with HTTPS/redirect/host checks and explicit member extraction. Live SHA256SUMS and bundle hashes are additional consistency checks. A tag without reviewed pins is unverified and fails closed; generated pin proposals do not authorize themselves. The public launch probe follows the reviewed pin handoff, while native build proof still gates the draft. The exact catalog owner/path and review handoff must be made concrete within this commitment before rollout.
+
+Wheel installations obtain the same finalized monitor bytes through `server start` provisioning from a per-target monitor-only release archive, verified against digests the release pipeline generates into the wheel, under `2026-10-13-monitor-provisioning-adr`.
 
 ### Authorized reconciliation of accepted records
 

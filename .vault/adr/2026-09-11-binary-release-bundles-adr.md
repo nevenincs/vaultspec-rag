@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#binary-release-bundles'
 date: '2026-09-11'
-modified: '2026-10-02'
+modified: '2026-10-13'
 body_schema: 'body-v2'
-body_hash: 'sha256:9a279924c903b0675f82151f1a9a722cfbaaea7553dcd72bd0afa6e4a932806e'
+body_hash: 'sha256:8fe53914e036ba44255320e6ca2d9dc257f7c75e49446d8cd3b2e475f271540a'
 related:
   - "[[2026-09-11-binary-release-bundles-rag-port-research]]"
   - "[[2026-09-11-binary-release-bundles-current-pipeline-reference]]"
@@ -37,10 +37,10 @@ RAG needs a single public contract for standalone binary downloads and package c
 - The public bundle unit is one versioned archive per supported RAG target: ZIP on Windows and TAR.GZ on Unix. It contains stable `vaultspec-rag`, `vaultspec-search-mcp` and `vaultspec-rag-monitor` executables, generated `manifest.json`, license and usage material. The manifest distinguishes the self-contained monitor frontend from the RAG accelerator/runtime bootstrap requirements.
 - The manifest carries schema, product/version/target, executable roles, sizes and hashes, source revision, runtime/build versions, and platform-floor metadata. It does not hash the enclosing archive; `SHA256SUMS` carries the completed top-level artifact digest.
 - Stable/latest may be published only when every target declared by the RAG binary matrix has a validated bundle. A missing, malformed, or incomplete target set must fail or demote the release rather than silently publish a partial stable surface.
-- Raw target-qualified names are staging details. Direct downloads and Scoop/Homebrew consume one archive and its digest per target; extraction yields stable command names.
+- Raw target-qualified names are staging details. Direct downloads and Scoop/Homebrew consume one archive and its digest per target; extraction yields stable command names. A per-target monitor-only archive is also published as a release asset for wheel-installation provisioning; it is not a channel install unit.
 - Bundle metadata is descriptive, not an offline-runtime promise. The manifest and usage material must state RAG's GPU, network, CUDA-runtime, and supported-target requirements.
 - Every byte-changing finalization operation, including Windows icon and version-resource stamping and Unix permissions, completes before per-file or top-level checksums are written.
-- The binary build must consume a version-checked wheel built from the release source (or an equivalent same-run artifact handoff), so binary contents do not depend on a race with PyPI publication. The existing Python release path remains responsible for publishing the wheel and source distribution.
+- The binary build must consume a version-checked wheel built from the release source (or an equivalent same-run artifact handoff), so binary contents do not depend on a race with PyPI publication. The existing Python release path remains responsible for publishing the wheel and source distribution. The native monitor compile precedes the wheel build so the wheel can carry its generated digests; the bundle then consumes that wheel and those monitor bytes and must match the wheel's pins, under `2026-10-13-monitor-provisioning-adr`.
 - The existing `2026-04-01-cicl-pipeline-adr` governs the established CI/release/PyPI automation. Its explicit release dispatch and checksum merge behavior are stable parent constraints for this extension; this ADR does not replace them.
 - Archive creation should use the standard library and the existing pinned build environment. No runtime or application code may depend on `.vault` documents or development-only release metadata.
 

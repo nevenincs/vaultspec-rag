@@ -12,9 +12,17 @@ from enum import StrEnum
 
 from .._operator_commands import server_doctor_command
 
-__all__ = ["ComputeCapability", "HardwarePresence", "InstallRole"]
+__all__ = [
+    "DRIVER_CHECK_COMMAND",
+    "ComputeCapability",
+    "HardwarePresence",
+    "InstallRole",
+]
 
-_DOCTOR = f"`{server_doctor_command()}` prints the exact command for this environment."
+#: What shows whether the machine's driver can see the GPU at all. Written
+#: once because it is both a sentence an operator reads and, where a refusal
+#: can offer nothing else, the bare command it hands over.
+DRIVER_CHECK_COMMAND = "nvidia-smi"
 
 
 class InstallRole(StrEnum):
@@ -53,6 +61,18 @@ class HardwarePresence(StrEnum):
             HardwarePresence.NONE: "no supported GPU detected",
             HardwarePresence.UNKNOWN: "not detected",
         }[self]
+
+    @property
+    def supports_the_service(self) -> bool:
+        """Whether this machine has an accelerator the service could use.
+
+        Only a positively detected one. The service is GPU-only, and it runs
+        from its own environment when the one in front of it cannot serve, so
+        this is the question that decides whether anything here is worth
+        fetching gigabytes for. A read that found nothing and one that could
+        not tell are both answered no.
+        """
+        return self in {HardwarePresence.NVIDIA_GPU, HardwarePresence.APPLE_SILICON}
 
 
 class ComputeCapability(StrEnum):
@@ -105,27 +125,32 @@ class ComputeCapability(StrEnum):
     @property
     def remediation(self) -> str | None:
         """What the operator should do, or ``None`` when nothing is needed."""
+        from .._operator_commands import server_start_command
         from ._provisioning import host_install_command
 
         install = f"`{host_install_command()}`"
+        # An environment that carries no usable torch is not a reason to stop:
+        # the service runs from its own GPU runtime, which a start creates. So
+        # each of these names one command, and it is the one that gets the
+        # operator served rather than a second diagnostic to run first.
+        start = f"`{server_start_command()}` runs the service from its own GPU runtime."
         return {
             ComputeCapability.NOT_APPLICABLE: (
-                "Start the service from the host installation. To make this "
-                f"machine a host, install it with {install}."
+                f"This installation is a client; {start}"
             ),
             ComputeCapability.READY: None,
             ComputeCapability.BUILD_PRESENT: None,
             ComputeCapability.TORCH_MISSING: (
-                f"Install the GPU build with {install}. {_DOCTOR}"
+                f"To run inference in this environment, install the GPU build "
+                f"with {install}."
             ),
             ComputeCapability.TORCH_IMPORT_FAILED: (
-                f"Reinstall torch in this environment. {_DOCTOR}"
+                f"Reinstall torch in this environment, or {start}"
             ),
-            ComputeCapability.CPU_ONLY_BUILD: (
-                f"Replace torch with its CUDA build. {_DOCTOR}"
-            ),
+            ComputeCapability.CPU_ONLY_BUILD: start,
             ComputeCapability.NO_DEVICE: (
-                "Check the GPU driver with `nvidia-smi`, then start the service again."
+                f"Check the GPU driver with `{DRIVER_CHECK_COMMAND}`, then start "
+                f"the service again."
             ),
             ComputeCapability.MPS_POLICY_REFUSED: (
                 "Unset PYTORCH_ENABLE_MPS_FALLBACK or set it to 0."

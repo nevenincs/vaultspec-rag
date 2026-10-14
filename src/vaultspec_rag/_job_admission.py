@@ -8,10 +8,12 @@ what an operator can act on.
 
 from __future__ import annotations
 
+import logging
 import os
 import uuid
-from dataclasses import replace
-from typing import TYPE_CHECKING
+from dataclasses import dataclass, replace
+from enum import StrEnum
+from typing import TYPE_CHECKING, Final
 
 from ._job_progress import record_progress
 from .job_control import NO_RUN_CONTROL
@@ -27,6 +29,7 @@ from .job_models import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from ._source_types import PublicSourceType
     from .index_profiles import SupportMeasurement
     from .indexer._codebase_indexer import (
         CodeIndexPreflight,
@@ -39,6 +42,216 @@ if TYPE_CHECKING:
     from .indexer._run_ledger_models import RunAuthority
     from .job_control import RunControl
     from .job_manager.manager import JobManager
+
+logger = logging.getLogger("vaultspec_rag.jobs")
+
+#: Index origins that are never escalated to a first build. Automatic
+#: convergence work converges the scope it was handed and reports a refusal
+#: rather than spending a full corpus build nobody asked for. The watcher
+#: builds its own specification and never reaches this module at all; naming
+#: it here keeps the invariant true for any adapter that does, including the
+#: HTTP routes, where the initiator is client-supplied text.
+AUTOMATIC_INDEX_ORIGINS: Final = frozenset({"watcher", "integrity"})
+
+
+class SourcePublication(StrEnum):
+    """What the run ledger says about one source's completed publications."""
+
+    #: A completed publication exists for this root, backend, and source.
+    PUBLISHED = "published"
+    #: No publication was ever completed for it.
+    ABSENT = "absent"
+    #: Publication state exists but cannot be read as this source's own:
+    #: another backend's proof, an incompatible or corrupt ledger, or a
+    #: receipt a run is holding open right now.
+    UNREADABLE = "unreadable"
+
+
+@dataclass(frozen=True, slots=True)
+class SourceAdmissionReading:
+    """The two readings that decide whether a source has ever been built.
+
+    ``stored_points`` is ``None`` when no count was taken: storage could not
+    be counted, or the publication reading already settled the question.
+    Either way it is an absence of reading rather than a reading of zero.
+    """
+
+    publication: SourcePublication
+    stored_points: int | None
+
+
+def is_new_source(reading: SourceAdmissionReading) -> bool:
+    """Return whether *reading* proves one source has never been built.
+
+    Both readings have to agree. Stored points with no completed publication
+    are exactly what the typed rebuild refusal exists for: something is in
+    that collection and no evidence says what. Publication state that cannot
+    be read is not absence either, so neither is an unreadable count.
+    """
+    return (
+        reading.publication is SourcePublication.ABSENT and reading.stored_points == 0
+    )
+
+
+def read_source_admission(
+    root: Path,
+    source: PublicSourceType,
+) -> SourceAdmissionReading:
+    """Take the never-built readings for one concrete source at admission.
+
+    The publication reading comes first and can settle the question on its
+    own: a source with a publication, or with publication state nobody can
+    read, is not new whatever storage holds. Counting storage anyway would
+    open and lock a backend to compute a number that cannot change the
+    answer, on every incremental index of every already-built source.
+    """
+    publication = _read_source_publication(root, source)
+    if publication is not SourcePublication.ABSENT:
+        return SourceAdmissionReading(publication=publication, stored_points=None)
+    return SourceAdmissionReading(
+        publication=publication,
+        stored_points=_count_stored_points(root, source),
+    )
+
+
+def _read_source_publication(
+    root: Path,
+    source: PublicSourceType,
+) -> SourcePublication:
+    """Classify the committed publication authority for one source.
+
+    Admission is reached from the HTTP routes and from the CLI and MCP
+    adapters behind them, and it answers per domain. Nothing a publication
+    read can raise may leave this function: a ledger file that is not a
+    database at all raises out of SQLite rather than as one of the typed
+    unreadable failures, and letting that through turned one
+    ``index --type all`` into a server error for every domain. Anything other
+    than a legible absence is reported as unreadable, which keeps the typed
+    refusal for that one source.
+    """
+    from ._publication_state import (
+        UNREADABLE_PUBLICATION_ERRORS,
+        acquire_publication_snapshot,
+    )
+    from .indexer._publication_proof import ProofMissingError
+
+    try:
+        acquire_publication_snapshot(root, source).validate()
+    except ProofMissingError:
+        return SourcePublication.ABSENT
+    except UNREADABLE_PUBLICATION_ERRORS:
+        return SourcePublication.UNREADABLE
+    except Exception:  # no failure to read publication may escape admission
+        logger.warning(
+            "could not read the %s publication state of %s; "
+            "treating the source as already built",
+            source.value,
+            root,
+            exc_info=True,
+        )
+        return SourcePublication.UNREADABLE
+    return SourcePublication.PUBLISHED
+
+
+def _count_stored_points(root: Path, source: PublicSourceType) -> int | None:
+    """Count the points a first build would stand over, or report none read.
+
+    The reading has to cover everything a reset of this source owns, not just
+    the collection it serves: a first build runs the reset, and the reset is
+    what would destroy an interrupted build's generation-scoped leftovers.
+    Reading the served collection alone would call a root holding those
+    points empty and then delete them.
+
+    A cold lease holds this root's store admission in the registry for the
+    whole reading, and a warm one pins the existing slot; the counts
+    themselves take only the per-collection lock of each collection they
+    read, one at a time. Any failure to reach storage - an unreadable served
+    pointer included - is reported as no reading: escalating on a count
+    nobody could take would reset a target whose contents are unknown.
+    """
+    from .registry import get_registry
+
+    try:
+        with get_registry().lease_store(root) as store:
+            return store.reset_scope_point_count(source)
+    except Exception:  # any unreachable backend is an absence of reading
+        logger.warning(
+            "could not count stored %s points for %s; "
+            "treating the source as already built",
+            source.value,
+            root,
+            exc_info=True,
+        )
+        return None
+
+
+def admits_first_build(
+    root: Path,
+    source: PublicSourceType,
+    *,
+    initiator_kind: str,
+) -> bool:
+    """Whether an explicit incremental request runs as *source*'s first build.
+
+    The one owner of that decision, for the job surfaces and the in-process
+    ones alike. A caller that asked for a rebuild never asks: it already runs
+    the full lifecycle. Automatic origins are refused before any reading is
+    taken, so watcher and integrity convergence pays nothing for this and
+    keeps its bounded scope.
+    """
+    if initiator_kind in AUTOMATIC_INDEX_ORIGINS:
+        return False
+    return is_new_source(read_source_admission(root, source))
+
+
+def index_job_spec(
+    root: Path,
+    *,
+    source: JobSource,
+    clean: bool,
+    authority: RunAuthority,
+    initiator_kind: str,
+) -> JobSpec:
+    """Return the specification admission creates for one index request.
+
+    An explicit incremental request for a source that has never been built is
+    admitted as that source's first full build. There is no publication for
+    the incremental path to reconcile against, so it can only refuse; the
+    first build runs the same reset-first lifecycle a rebuild runs, with
+    nothing to discard. The requested mode is retained on the specification so
+    the job record reports what was asked for next to what runs. Anything
+    short of never-built keeps the typed refusal, and automatic origins are
+    never escalated.
+    """
+    from .indexer._run_ledger_models import RunAuthority as _RunAuthority
+
+    requested = JobMode.REBUILD if clean else JobMode.INCREMENTAL
+    spec = JobSpec(
+        operation=JobOperation.INDEX,
+        source=source,
+        project_root=str(root),
+        mode=requested,
+        authority=authority,
+    )
+    if requested is JobMode.REBUILD or not source.is_corpus:
+        return spec
+    from ._source_types import PublicSourceType as _Source
+
+    if not admits_first_build(
+        root,
+        _Source(source.value),
+        initiator_kind=initiator_kind,
+    ):
+        return spec
+    logger.info(
+        "admitting the first %s index of %s as a full build", source.value, root
+    )
+    return replace(
+        spec,
+        mode=JobMode.REBUILD,
+        authority=_RunAuthority.REBUILD,
+        requested_mode=requested,
+    )
 
 
 def admit_index_job(
@@ -64,12 +277,12 @@ def admit_index_job(
     command = commands[source]
     requested_id = uuid.uuid4().hex
     outcome = manager.create(
-        JobSpec(
-            operation=JobOperation.INDEX,
+        index_job_spec(
+            resolved_root,
             source=source,
-            project_root=str(resolved_root),
-            mode=JobMode.REBUILD if clean else JobMode.INCREMENTAL,
+            clean=clean,
             authority=authority,
+            initiator_kind=initiator_kind,
         ),
         JobInitiator(
             kind=initiator_kind,

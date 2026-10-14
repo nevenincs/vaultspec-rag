@@ -25,11 +25,11 @@ from pathlib import Path
 
 import pytest
 
+from ..native_binary._hold import held_executable
+from ..native_binary._install import file_sha256
 from ..qdrant_runtime import _spawn_trust, _supervise
 from ..qdrant_runtime._constants import BinarySource, ResolvedBinary
-from ..qdrant_runtime._executable_hold import held_executable
 from ..qdrant_runtime._managed_install import classify_managed_binary
-from ..qdrant_runtime._provision import file_sha256
 from ..qdrant_runtime._resolve import QdrantBinaryError
 from ..qdrant_runtime._spawn_trust import verify_resolved_binary
 from ..qdrant_runtime._supervise import QdrantSupervisor

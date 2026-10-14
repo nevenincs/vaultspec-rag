@@ -1,0 +1,254 @@
+---
+tags:
+  - '#exec'
+  - '#monitor-provisioning'
+date: '2026-10-13'
+modified: '2026-10-14'
+body_schema: 'body-v2'
+body_hash: 'sha256:74dc8651a6e3f29c74859052660b7f77e5a6c76790dca06e077685591e838f5f'
+related:
+  - "[[2026-10-13-monitor-provisioning-plan]]"
+---
+
+# `monitor-provisioning` ledger
+
+## Changes
+
+- `S01` `A` `src/vaultspec_rag/native_binary/__init__.py`
+- `S01` `A` `src/vaultspec_rag/native_binary/_install.py`
+- `S01` `R` `src/vaultspec_rag/qdrant_runtime/_download.py` -> `src/vaultspec_rag/native_binary/_download.py`
+- `S01` `R` `src/vaultspec_rag/qdrant_runtime/_executable_hold.py` -> `src/vaultspec_rag/native_binary/_hold.py`
+- `S01` `M` `src/vaultspec_rag/qdrant_runtime/_constants.py`
+- `S01` `M` `src/vaultspec_rag/qdrant_runtime/_managed_install.py`
+- `S01` `M` `src/vaultspec_rag/qdrant_runtime/_provision.py`
+- `S01` `M` `src/vaultspec_rag/qdrant_runtime/_spawn_trust.py`
+- `S01` `M` `src/vaultspec_rag/tests/_fake_qdrant_binary.py`
+- `S01` `M` `src/vaultspec_rag/tests/_qdrant_provision_seam.py`
+- `S01` `M` `src/vaultspec_rag/tests/integration/test_helpers_qdrant_mirror.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_cli_progress_surfaces.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_provision.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_qdrant_download.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_qdrant_download_faults.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_qdrant_executable_hold.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_qdrant_install.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_qdrant_offline_install.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_qdrant_restart_accounting.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_qdrant_runtime.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_qdrant_spawn_trust.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_qdrant_store_format.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_start_provisioning.py`
+- `S01` `M` `tools/binaries/bun_toolchain.py`
+- `S01` `M` `tools/binaries/tests/test_bun_toolchain.py`
+- `S01` `M` `tools/monitor/acquire.py`
+- `S01` `M` `tools/monitor/build.py`
+- `S01` `M` `tools/monitor/frontend.py`
+- `S01` `M` `tools/monitor/linux_exec.py`
+- `S01` `M` `tools/monitor/offline.py`
+- `S01` `M` `tools/monitor/provenance.py`
+- `S01` `M` `tools/monitor/release.py`
+- `S01` `M` `tools/monitor/smoke.py`
+- `S01` `M` `tools/monitor/tests/test_frontend.py`
+- `S01` `M` `tools/qdrant_pin_digests.py`
+- `S01` `verify:` `uv run --no-sync ruff check src tools dev conftest.py` -> `pass`
+- `S01` `verify:` `uv run --no-sync ruff format --check src tools dev conftest.py` -> `pass`
+- `S01` `verify:` `uv run --no-sync ty check src tools dev conftest.py` -> `pass`
+- `S01` `verify:` `uv run --no-sync pytest test_qdrant_* test_provision test_managed_install test_start_provisioning test_cli_progress_surfaces test_config_operator_binary tools/binaries/tests tools/monitor/tests -q` -> `pass`
+- `S01` `by:` `implementation-engineer-high`
+- `S02` `A` `src/vaultspec_rag/native_binary/_targets.py`
+- `S02` `A` `src/vaultspec_rag/monitor_runtime/__init__.py`
+- `S02` `A` `src/vaultspec_rag/monitor_runtime/_assets.py`
+- `S02` `A` `src/vaultspec_rag/monitor_runtime/_pins.py`
+- `S02` `A` `tools/monitor/pins.py`
+- `S02` `A` `tools/monitor/tests/test_pins.py`
+- `S02` `A` `src/vaultspec_rag/tests/test_monitor_pins.py`
+- `S02` `D` `tools/binaries/native.py`
+- `S02` `M` `tools/binaries/build_pyapp.py`
+- `S02` `M` `tools/binaries/bun_toolchain.py`
+- `S02` `M` `tools/monitor/acquire.py`
+- `S02` `M` `tools/monitor/build.py`
+- `S02` `M` `tools/monitor/offline.py`
+- `S02` `M` `tools/monitor/release.py`
+- `S02` `M` `tools/monitor/smoke.py`
+- `S02` `M` `tools/packaging/bundles.py`
+- `S02` `M` `tools/packaging/products.py`
+- `S02` `M` `pyproject.toml`
+- `S02` `M` `.gitignore`
+- `S02` `verify:` `uv run --no-sync ruff check src tools dev conftest.py` -> `pass`
+- `S02` `verify:` `uv run --no-sync ruff format --check src tools dev conftest.py` -> `pass`
+- `S02` `verify:` `uv run --no-sync ty check src tools dev conftest.py` -> `pass`
+- `S02` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_monitor_pins.py tools/monitor/tests tools/binaries/tests -q` -> `pass`
+- `S02` `verify:` `uv build --wheel --sdist, then both artifacts listed carrying vaultspec_rag/monitor_runtime/_generated_pins.py` -> `pass`
+- `S02` `by:` `implementation-engineer-high`
+- `S03` `A` `src/vaultspec_rag/monitor_runtime/_errors.py`
+- `S03` `A` `src/vaultspec_rag/monitor_runtime/_resolve.py`
+- `S03` `A` `src/vaultspec_rag/monitor_runtime/_provision.py`
+- `S03` `A` `src/vaultspec_rag/monitor_runtime/_launch.py`
+- `S03` `A` `src/vaultspec_rag/native_binary/_report.py`
+- `S03` `A` `src/vaultspec_rag/tests/test_monitor_resolution.py`
+- `S03` `A` `src/vaultspec_rag/tests/test_monitor_provisioning.py`
+- `S03` `M` `src/vaultspec_rag/monitor_runtime/_pins.py`
+- `S03` `M` `src/vaultspec_rag/monitor_process.py`
+- `S03` `M` `src/vaultspec_rag/_program_lookup.py`
+- `S03` `M` `src/vaultspec_rag/config/_types.py`
+- `S03` `M` `src/vaultspec_rag/config/_settings.py`
+- `S03` `M` `src/vaultspec_rag/config/_schema.py`
+- `S03` `M` `src/vaultspec_rag/config/_registry.py`
+- `S03` `M` `src/vaultspec_rag/qdrant_runtime/_constants.py`
+- `S03` `M` `src/vaultspec_rag/qdrant_runtime/_provision.py`
+- `S03` `M` `src/vaultspec_rag/cli/_service_qdrant.py`
+- `S03` `M` `src/vaultspec_rag/commands/_provision.py`
+- `S03` `M` `src/vaultspec_rag/tests/_qdrant_provision_seam.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_config_operator_binary.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_monitor_process.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_program_lookup_sites.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_python_child_spawn_sites.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_qdrant_install.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_qdrant_install_recovery.py`
+- `S03` `M` `.env.example`
+- `S03` `M` `docs/configuration.md`
+- `S03` `verify:` `uv run --no-sync ruff check src tools dev conftest.py` -> `pass`
+- `S03` `verify:` `uv run --no-sync ruff format --check src tools dev conftest.py` -> `pass`
+- `S03` `verify:` `uv run --no-sync ty check src tools dev conftest.py` -> `pass`
+- `S03` `verify:` `uv run --no-sync pytest monitor and config suites (328 tests)` -> `pass`
+- `S03` `verify:` `uv run --no-sync pytest qdrant install, runtime, cli, provisioning and tools suites (311 tests)` -> `pass`
+- `S03` `verify:` `uv run --no-sync python -m dev lint markdown` -> `pass`
+- `S03` `verify:` `uv run --no-sync python -m dev lint docs-conventions` -> `pass`
+- `S03` `by:` `implementation-engineer-high`
+- `S04` `M` `src/vaultspec_rag/commands/_provision.py`
+- `S04` `M` `src/vaultspec_rag/cli/_render.py`
+- `S04` `M` `src/vaultspec_rag/_readiness.py`
+- `S04` `M` `src/vaultspec_rag/monitor_runtime/_provision.py`
+- `S04` `A` `src/vaultspec_rag/tests/test_monitor_provision_step.py`
+- `S04` `M` `src/vaultspec_rag/tests/conftest.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_provision.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_readiness.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_install_provision.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_program_lookup_sites.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_server_doctor.py`
+- `S04` `verify:` `uv run --no-sync ruff check src tools dev conftest.py` -> `pass`
+- `S04` `verify:` `uv run --no-sync ruff format --check src tools dev conftest.py` -> `pass`
+- `S04` `verify:` `uv run --no-sync ty check src tools dev conftest.py` -> `pass`
+- `S04` `verify:` `uv run --no-sync pytest -m unit -k 'start or provision or readiness or install or doctor or client or monitor or model_fetch or render or health or status' (1810 passed, 8 pre-existing environment failures)` -> `pass`
+- `S04` `verify:` `uv run --no-sync python -m dev lint markdown` -> `pass`
+- `S04` `by:` `implementation-engineer-high`
+- `S05` `M` `.github/workflows/publish.yml`
+- `S05` `M` `.github/workflows/binaries.yml`
+- `S05` `M` `justfile`
+- `S05` `M` `tools/monitor/pins.py`
+- `S05` `M` `tools/monitor/release.py`
+- `S05` `M` `tools/packaging/bundles.py`
+- `S05` `M` `tools/conftest.py`
+- `S05` `M` `tools/packaging/tests/test_bundles.py`
+- `S05` `M` `tools/monitor/tests/test_pins.py`
+- `S05` `M` `tools/monitor/tests/test_release.py`
+- `S05` `M` `tools/monitor/tests/test_provenance.py`
+- `S05` `M` `tools/binaries/tests/test_release_workflow.py`
+- `S05` `verify:` `uv run --no-sync ruff check src tools dev conftest.py` -> `pass`
+- `S05` `verify:` `uv run --no-sync ruff format --check src tools dev conftest.py` -> `pass`
+- `S05` `verify:` `uv run --no-sync ty check the changed tools modules and their tests` -> `pass`
+- `S05` `verify:` `uv run --no-sync python -m dev.actionlint, the pinned actionlint over every workflow` -> `pass`
+- `S05` `verify:` `uv run --no-sync pytest tools dev (415 passed, 4 skipped)` -> `pass`
+- `S05` `verify:` `uv run --no-sync pytest the citation, marker, pointer, monitor-pin and monitor-runtime suites (206 passed)` -> `pass`
+- `S05` `by:` `implementation-engineer-high`
+- `S06` `M` `justfile`
+- `S06` `M` `tools/monitor/build.py`
+- `S06` `M` `tools/monitor/tests/test_build.py`
+- `S06` `M` `src/vaultspec_rag/_program_lookup.py`
+- `S06` `M` `src/vaultspec_rag/tests/conftest.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_monitor_process_integration.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_monitor_resolution.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_monitor_pins.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_monitor_provisioning.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_monitor_provision_step.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_program_lookup_sites.py`
+- `S06` `M` `.github/workflows/merge-gate.yml`
+- `S06` `M` `.github/workflows/hardware.yml`
+- `S06` `M` `dev/guards/test_ci_lanes.py`
+- `S06` `M` `dev/guards/test_ci_hardware_tiers.py`
+- `S06` `M` `dev/generate_cli_reference.py`
+- `S06` `M` `docs/cli.md`
+- `S06` `M` `docs/service-mode.md`
+- `S06` `M` `docs/installation.md`
+- `S06` `M` `RELEASING.md`
+- `S06` `verify:` `uv run --no-sync ruff check src tools dev conftest.py` -> `pass`
+- `S06` `verify:` `uv run --no-sync ruff format --check src tools dev conftest.py` -> `pass`
+- `S06` `verify:` `uv run --no-sync ty check the changed package, tools, dev and test modules` -> `pass`
+- `S06` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests -m unit -k 'monitor or provision or readiness or program_lookup' (476 passed, 2 skipped)` -> `pass`
+- `S06` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_monitor_process_integration.py against the compiled monitor (4 passed)` -> `pass`
+- `S06` `verify:` `uv run --no-sync pytest tools/monitor/tests tools/packaging/tests (132 passed)` -> `pass`
+- `S06` `verify:` `uv run --no-sync pytest dev/guards/test_ci_lanes.py dev/guards/test_ci_hardware_tiers.py (45 passed)` -> `pass`
+- `S06` `verify:` `uv run --no-sync python -m dev lint markdown` -> `pass`
+- `S06` `verify:` `uv run --no-sync python -m dev lint docs-conventions` -> `pass`
+- `S06` `verify:` `uv run --no-sync python -m dev lint docs-cli` -> `pass`
+- `S06` `verify:` `uv run --no-sync python -m dev.actionlint` -> `pass`
+- `S06` `by:` `implementation-engineer-high`
+- `S03` `M` `src/vaultspec_rag/monitor_runtime/_resolve.py`
+- `S03` `M` `src/vaultspec_rag/monitor_runtime/_provision.py`
+- `S03` `M` `src/vaultspec_rag/native_binary/_install.py`
+- `S03` `M` `src/vaultspec_rag/_readiness.py`
+- `S03` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S03` `M` `tools/binaries/build_pyapp.py`
+- `S03` `M` `tools/binaries/tests/test_build_pyapp.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_program_lookup.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_monitor_resolution.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_monitor_provisioning.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_monitor_provision_step.py`
+- `S03` `verify:` `uv run --no-sync ruff check src tools dev conftest.py` -> `pass`
+- `S03` `verify:` `uv run --no-sync ruff format --check src tools dev conftest.py` -> `pass`
+- `S03` `verify:` `uv run --no-sync ty check (15 changed files)` -> `pass`
+- `S03` `verify:` `uv run --no-sync python -m pytest src/vaultspec_rag/tests -m unit -k 'monitor or provision or readiness or program_lookup or qdrant or managed_install or service_start or install' (1283 passed)` -> `pass`
+- `S03` `verify:` `uv run --no-sync python -m pytest tools (246 passed)` -> `pass`
+- `S03` `verify:` `uv run --no-sync python -m dev lint docs-cli` -> `pass`
+- `S03` `by:` `vaultspec-implement-high`
+- `S06` `M` `src/vaultspec_rag/tests/_planted_programs.py`
+- `S06` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/tests/test_program_lookup_sites.py src/vaultspec_rag/tests/_planted_programs.py` -> `pass`
+- `S06` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/tests/test_program_lookup_sites.py src/vaultspec_rag/tests/_planted_programs.py` -> `pass`
+- `S06` `verify:` `uv run --no-sync ty check src/vaultspec_rag/tests/test_program_lookup_sites.py src/vaultspec_rag/tests/_planted_programs.py` -> `pass`
+- `S06` `verify:` `uv run --no-sync python -m pytest src/vaultspec_rag/tests/test_program_lookup_sites.py src/vaultspec_rag/tests/test_program_lookup.py (23 passed)` -> `pass`
+- `S06` `by:` `vaultspec-implement-high`
+- `S03` `M` `src/vaultspec_rag/tests/test_env_example_coverage.py`
+- `S03` `verify:` `uv run --no-sync ruff check src tools dev conftest.py` -> `pass`
+- `S03` `verify:` `uv run --no-sync ruff format --check src tools dev conftest.py` -> `pass`
+- `S03` `verify:` `uv run --no-sync ty check (3 changed modules)` -> `pass`
+- `S03` `verify:` `uv run --no-sync python -m pytest src/vaultspec_rag/tests/test_env_example_coverage.py test_env_parity.py test_env_registry.py test_env_settings_centralised.py test_env_credentials.py test_configuration_doc.py dev/guards/test_env_provisioning.py (101 passed, 4 skipped)` -> `pass`
+- `S03` `verify:` `uv run --no-sync python -m pytest src/vaultspec_rag/tests -m unit -k 'monitor or provision or readiness or program_lookup or qdrant or managed_install or service_start or install or env' (1781 passed, 7 skipped)` -> `pass`
+- `S03` `verify:` `uv run --no-sync python -m dev lint docs-conventions` -> `pass`
+- `S07` `A` `.vault/audit/2026-10-14-monitor-provisioning-audit.md`
+- `S07` `verify:` `pytest test_env_example_coverage.py test_monitor_provisioning.py` -> `pass`
+- `S07` `by:` `vaultspec-code-reviewer`
+
+## Notes
+
+- `S01` The lift moved two modules, so five orientation documents under .vaultspec/skills/start-vaultspec-rag/references/ now link to `src/vaultspec_rag/qdrant_runtime/_download.py` and `_executable_hold.py,` which no longer exist, and the documentation link check fails on 14 such links. Those files are user-owned policy sources and were left untouched.
+- `S01` No managed-install state machine was lifted beyond the digest, staging and single-member extraction primitives: the free-space admission, the atomic replace remedy, the provisioning lock and the manifest carry Qdrant-specific wording and stay with their owner. The transport and the executable hold moved because they name nothing Qdrant-specific and a second owner would have had to import across runtime packages.
+- `S02` Guard proofs run as break, run alone, fail on the named assertion, restore, pass: an absent pin module returning an empty pin; dropping the provenance half of the admissibility check; comparing only the major version; accepting any string as a digest; importing the pin module by bare name instead of its package-dotted name; treating an absent direct-URL record as a development install; writing the generated file before rendering it; and removing the wheel target's artifacts entry. The major-version mutation first passed, so the version case was parametrized with the preceding patch release and the mutation re-run; the artifacts mutation first failed on a KeyError, so the reader was given a default and the mutation re-run.
+- `S02` The pin loader judges a development installation from the PEP 610 direct-URL record: a record naming a directory is a local source install, no record or an archive record is a built artifact, and an unparseable record counts as a built artifact because that is the answer that refuses a development pin.
+- `S03` Guard proofs run as break, run alone, fail on the named assertion, restore, pass: yielding the managed install before the installation sibling; admitting a candidate without comparing its content; adding the PATH tier back to the sibling lookup; swallowing a half-set operator pair; dropping the digest comparison from the launch hold; skipping that comparison for an empty digest; reporting nothing as installed whatever is at the installed name; moving the archive digest comparison after the extraction; dropping the executable digest comparison; retiring every version including the one in use; and naming the operator path variable in a download failure. The PATH mutation first passed, because the planted program failed the digest check instead, so the test was rewritten to plant the pinned content and the mutation re-run; the extract-before-verify mutation first passed, because nothing is kept either way, so the test was given the reported stage order and the mutation re-run.
+- `S03` Deliberate difference from the Qdrant provisioner: monitor provisioning takes no cross-process lock. Two runs each stage under a unique name and install with one atomic replace of a file both verified against the same digest, so the loser costs a wasted download and nothing else; a lock would have to be held across a download to save only bytes. Recorded for review.
+- `S03` Three more orientation documents under .vaultspec/skills/start-vaultspec-rag/references/ now link to tools/binaries/native.py, which this Step deleted, so the documentation link check fails on 17 such links in all. Those files are user-owned policy sources and were left untouched.
+- `S03` Adding the three new monitor environment variables required documenting them in .env.example and docs/configuration.md, which the repository's own coverage, parity and reference gates demand of any declared variable. The monitor rows of docs/configuration.md are therefore already written; S06 owns the removal of manual monitor setup elsewhere in the docs.
+- `S04` Guard proofs run as break, run alone, fail on the named assertion, restore, pass: asking the provisioner before the installation role; judging a client installation after resolving in the readiness row; and removing the monitor's label from the provisioning summary.
+- `S04` Eight tests in two modules fail on this machine with or without this change, because the machine has neither a compiled monitor nor a running Vite dev server: `test_monitor_access.py's` four Vite cases, and `test_monitor_process_integration.py's` four compiled-lifecycle cases, whose own precondition already required a monitor this checkout does not build. S06 makes the development recipes build one.
+- `S04` The monitor step exposed a defect in the S03 provisioner: it asked for the release pins before asking whether an operator had already named a monitor, so an operator-supplied monitor could not satisfy provisioning at all. The entry point now asks about the operator's own executable first, verifies it, and consults no pin in that case.
+- `S04` The suite needed a monitor the way it needs a server binary. A session fixture names one through the operator settings, which is a production route and not a substitution; the monitor's own tests clear both settings for their own blocks, so the release's resolution is still exercised.
+- `S05` S05 Guard proofs run as break, run alone, fail on the named assertion, restore, pass: removing the bundle's monitor-pin comparison (five refusal cases, DID NOT RAISE); removing the monitor archive's single-member check; dropping the generator-shape validation from the wheel pin reader; returning partial digests instead of refusing an unfinalized target; dropping the executable digest comparison in the staging step; hashing the archive in place of the wheel's pinned archive digest before extraction; moving the pin generation after the package build; removing the monitor archive download from the attestation job; removing the per-target monitor archive requirement from the draft gate; and removing the checksum verification from the monitor archive fetch.
+- `S05` S05 The monitors now reach the bundle lane as public release assets rather than as a cross-run artifact handoff: the lane that builds the wheel compiles, finalizes, packs and attaches them, and the bundle lane takes each target's archive off the draft checked against SHA256SUMS exactly as it already takes the wheel, then verifies it against that wheel's own pin before extracting. One attestation call covers the four bundles and the four monitor archives. The frontend digest, which the bundle lane no longer builds, travels to it as a validated dispatch input.
+- `S05` S05 A rehearsal of the bundle lane keeps its own frontend job and gains a per-target monitor job, both reaching only a rehearsal, and generates release-provenance pins into the unpublished wheel it builds in that run, so the pin comparison runs for real instead of being waived. The binary-bundle decision allows that equivalent same-run handoff. The alternative, a rehearsal that cannot build a bundle at all, would have removed a maintainer capability nothing authorized removing.
+- `S05` S05 RELEASING.md's local reproduction sequence is now stale: it builds the wheel before the monitor, does not generate pins, and calls the bundle recipe without the wheel directory. Left to S06, which owns the documentation.
+- `S05` S05 acquisition.yml and tools/packaging/validate.py needed no change. Public acquisition still admits bundle archives only, which the plan leaves unchanged, and channel pointers already refuse a monitor archive because the buildable set is the bundle names, which is what 'not a channel install unit' requires.
+- `S06` The development monitor installs beside this installation's own programs, the environment's scripts directory, rather than into the managed directory. The managed directory is unreachable from the test suite: the session redirects the status directory to a temporary root and an operator-directory guard refuses the real one, so a monitor installed there could never be the one the lifecycle tests run. The scripts directory is the resolver's installation-sibling tier, which the decision already admits for an installation that carries its own monitor, and it is interpreter-local, so one checkout's monitor never answers for another's.
+- `S06` just build-monitor is now the one recipe that produces a usable monitor: it builds the frontend, compiles the native monitor, packs the same provisioning archive a release publishes, verifies it before and after extraction, installs the executable, and writes the development pin. just build-monitor-test was its duplicate under another name and is removed; the four workflow steps and two CI guards that named it now name build-monitor.
+- `S06` Guard proofs run as break, run alone, fail on the named assertion, restore, pass: removing the extracted-executable digest check in the development install (failed on the nothing-installed assertion, with the unadmitted bytes landed); deleting the monitor build step from the merge gate's tests job; and deleting it from the hardware CUDA tier.
+- `S06` `test_the_monitor_is_not_started_from_the_working_directory` could not be re-proved by mutation on this host. With a monitor installed beside the interpreter, process creation searches that directory first, and with it removed nothing resolves, so no spawn happens; the planted program is a command script, which a bare-name process creation never completes to. Tried the bare-name spawn mutation in both configurations, including one seeding the isolated managed directory, and the assertion did not fire in either. The assertion is asserted on every outcome path and the resolution it guards was not changed by this Step. Recorded for review.
+- `S06` Three test premises were ambient and are now stated: the no-digests provisioning case, the no-monitor start and readiness cases, and the pins-on-the-import-path case. A checkout that compiled its own monitor carries digests and has one installed, so those cases staged no-digests through a shared `unpinned_installation` fixture, which makes the pins reader find none and clears the session's stand-in; the two skip guards now ask importlib for the module's spec rather than sys.modules, which only answered after some other test had imported it.
+- `S06` The sibling fixture in `test_monitor_resolution.py` stood in for only one of the two installation program directories, so this checkout's real monitor answered first once one was installed. It now stands in for `installation_programs,` a new public accessor in `_program_lookup` that both the lookup and the development installer read, so where a program of ours is installed has one spelling.
+- `S06` tools/monitor/build.py imports `installation_programs` inside the development branch. The release operations in that module run under an interpreter with no site packages, which a guard asserts, and reaching that accessor loads the package's settings and its vaultspec-core dependency. The branch was exercised by running just build-monitor.
+- `S06` The documentation link check still fails on the 17 links in .vaultspec/skills/start-vaultspec-rag/references/ recorded under S01 and S03. Those files are user-owned policy sources and were left untouched; the failure awaits the user.
+- `S03` Launcher tier confirmed on a real launcher: a PyApp 0.29.0 build of the repo's pin with `PYAPP_PASS_LOCATION=1` exports PYAPP as its own absolute path while sys.executable is the cache environment's; with the 90 MB compiled monitor beside that launcher and the venv copy moved aside, the readiness row reported `monitor_source` 'installed' at the launcher's path and fetched nothing.
+- `S03` Path correction: the fix needs `tools/binaries/build_pyapp.py,` outside S03's stated paths. Without `PYAPP_PASS_LOCATION` the launcher exports the bare marker '1' and no mechanism states the launcher's path, so the sibling tier cannot see a bundle's own monitor.
+- `S03` Mutation proofs, each broken, run alone, failed on the named assertion, restored and passed: launcher directory left out of `installation_programs` (places assertion, and both bundle resolution cases on 'resolved is not None'); `find_programs` stopped at its first match (order assertion, and the masking case on 'resolved is not None'); a stated value taken as a path whenever non-empty (places assertion for marker and relative values); the install's staging sweep removed (removal assertion); the sweep given no age witness (survival assertion for a live run's fresh file); the shared download default taken (deadline assertion); the readiness refusal branch dropped `(monitor_source` assertion, 'absent' for 'unchecked').
+- `S06` Mutation proof obtained: the start's argument vector was given the bare program name and 'executable' was dropped from it. Run alone, the test failed on the image assertion, naming the working directory's planted program as what was started; restored, it passes. The plant it needs is a program that is still a process when the image is read, so the planted native program for this site waits on its standard input.
+- `S06` The guard now requires a monitor this checkout can run, as the monitor lifecycle tests already do: resolution is production's and its answer is what the started image is compared against, instead of a branch that passed when nothing was started.
+- `S03` Mutation proof obtained: the shape-based pid parse (last all-digit component of the name) was restored. Run alone, the sweep's survival case failed on the survival assertion for the all-digit token alone, this process's fresh file swept because the token answered as a pid no process has; restored, both token shapes pass. The sweep test now carries both token shapes, 0123456789ab and 012345678901.
+- `S03` The environment-template gates were missed when S03 first closed: the selection run then did not include `test_env_example_coverage.py,` which the new PYAPP read made fail. PYAPP is now catalogued in .env.example beside PATH as read-only, the stale `GITHUB_ENV` exemption is dropped, and the sentence saying the monitor is found on the search path is corrected, since it no longer is.
+- `S03` sibling-unreadable (low) left as it is. The code change is small, but the only honest falsifying test needs a file that is executable and unreadable, which this suite has no mechanism for on either platform and which could not be produced on this Windows host, so the branch would go into the resolution path unproven. Current behaviour refuses rather than running anything unverified.

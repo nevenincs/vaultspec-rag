@@ -22,14 +22,14 @@ from tools.binaries.build_pyapp import (
     GLIBC_FLOOR,
     PYAPP_VERSION,
     PYTHON_VERSION,
+    sole_wheel,
 )
 from tools.binaries.bun_pins import BUN_VERSION
-from tools.packaging.products import (
-    MONITOR_EXECUTABLE,
-    VAULTSPEC_RAG,
-    Product,
-    is_windows_target,
-)
+from tools.monitor.pins import WheelPinsError, read_wheel_pins
+from tools.packaging.products import MONITOR_EXECUTABLE, VAULTSPEC_RAG, Product
+from vaultspec_rag.monitor_runtime._assets import monitor_archive_name
+from vaultspec_rag.monitor_runtime._pins import PinProvenance
+from vaultspec_rag.native_binary._targets import is_windows_target
 
 MANIFEST_NAME = "manifest.json"
 LICENSE_NAME = "LICENSE"
@@ -67,6 +67,27 @@ class ArchiveFile:
 
 
 @dataclass(frozen=True)
+class BundleSources:
+    """Everything one bundle is built out of, beside its own identity.
+
+    The wheel is one of those inputs rather than a detail of the build: it
+    carries the digests deciding which monitor an installation of this bundle
+    may run, so the monitor packed beside it is checked against them.
+
+    Attributes:
+        raw_dir: Where the finalized target-qualified executables were staged.
+        wheel: The release wheel the bundle's commands carry.
+        repo_root: The producer checkout, for the licence and the lock.
+        revision: The producer commit; read from *repo_root* when absent.
+    """
+
+    raw_dir: Path
+    wheel: Path
+    repo_root: Path
+    revision: str | None = None
+
+
+@dataclass(frozen=True)
 class BundleSpec:
     """The product, version, and target that define one public bundle."""
 
@@ -78,6 +99,16 @@ class BundleSpec:
     def archive_name(self) -> str:
         """Return the public archive name for this bundle."""
         return self.product.bundle_name(self.version, self.target)
+
+    @property
+    def monitor_archive(self) -> str:
+        """Return the monitor-only provisioning archive's name for this target."""
+        return monitor_archive_name(self.version, self.target)
+
+    @property
+    def monitor_member(self) -> str:
+        """Return the monitor executable's name inside either archive."""
+        return self.product.executable_name(MONITOR_EXECUTABLE, self.target)
 
 
 def _sha256(path: Path) -> str:
@@ -344,20 +375,22 @@ def _stage_files(
     return tuple(members)
 
 
-def build_bundle(
-    spec: BundleSpec,
-    raw_dir: Path,
-    output_dir: Path,
-    repo_root: Path,
-    revision: str | None = None,
-) -> Path:
-    """Build one target archive and its checksum sidecar."""
+def build_bundle(spec: BundleSpec, sources: BundleSources, output_dir: Path) -> Path:
+    """Build one target archive and its checksum sidecar.
+
+    Args:
+        spec: The product, version and target this bundle is for.
+        sources: Where this bundle's inputs lie and what produced them.
+        output_dir: Where the public archive and its sidecar are written.
+    """
     product = spec.product
     target = spec.target
+    raw_dir = sources.raw_dir
+    repo_root = sources.repo_root
     if not product.serves(target):
         raise BundleError(f"{product.name} does not support target {target}")
     output_dir.mkdir(parents=True, exist_ok=True)
-    revision = revision or source_revision(repo_root)
+    revision = sources.revision or source_revision(repo_root)
     with tempfile.TemporaryDirectory(prefix="bundle-", dir=output_dir) as temporary:
         root = Path(temporary) / "contents"
         root.mkdir()
@@ -371,11 +404,11 @@ def build_bundle(
             report = json.loads((raw_dir / SMOKE_NAME).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise BundleError("monitor smoke evidence is missing or invalid") from exc
-        evidence = verify_monitor_evidence(
-            report, spec, revision, _sha256(monitor.source)
-        )
+        monitor_digest = _sha256(monitor.source)
+        evidence = verify_monitor_evidence(report, spec, revision, monitor_digest)
         if evidence["lock_sha256"] != _sha256(repo_root / "package-lock.json"):
             raise BundleError("monitor smoke lock differs from the producer checkout")
+        verify_monitor_pins(sources.wheel, spec, monitor_digest)
         manifest_path = root / MANIFEST_NAME
         manifest_path.write_bytes(_manifest(spec, revision, members, evidence))
         archive_members = (
@@ -392,13 +425,153 @@ def build_bundle(
         temporary_archive.replace(archive)
 
     verify_bundle(archive, spec)
+    _write_archive_checksum(archive)
+    return archive
+
+
+def _write_archive_checksum(archive: Path) -> Path:
+    """Write the deterministic sidecar the release checksum aggregate reads."""
     checksum = archive.with_name(archive.name + ".sha256")
     checksum.write_text(
         f"{_sha256(archive)}  {archive.name}\n",
         encoding="utf-8",
         newline="",
     )
+    return checksum
+
+
+def verify_monitor_pins(wheel: Path, spec: BundleSpec, monitor_sha256: str) -> None:
+    """Refuse a bundle whose monitor is not the one its own wheel admits.
+
+    A bundle carries both halves of the monitor contract: the executable
+    beside the commands, and - inside the wheel those commands run - the
+    digests deciding which monitor bytes an installation may run. If they
+    disagree, the bundle's own launcher refuses the monitor shipped next to
+    it and provisions another copy instead, which is a release defect rather
+    than a runtime condition.
+
+    Args:
+        wheel: The release wheel this bundle carries.
+        spec: The product, version and target being packaged.
+        monitor_sha256: The digest of the monitor staged into the bundle.
+
+    Raises:
+        BundleError: As :func:`admitted_monitor_pins` does, and when the
+            staged monitor is not the one the wheel admits.
+    """
+    _, pinned = admitted_monitor_pins(wheel, spec)
+    if pinned != monitor_sha256:
+        raise BundleError(
+            f"bundled monitor for {spec.target} is {monitor_sha256}, and its "
+            f"wheel admits {pinned}"
+        )
+
+
+def admitted_monitor_pins(wheel: Path, spec: BundleSpec) -> tuple[str, str]:
+    """Return the archive and monitor digests *wheel* admits for this target.
+
+    These are the digests an installation of that wheel verifies against
+    before it extracts an archive and before it runs the executable inside
+    it, so the release pipeline uses the same two when it hands those bytes
+    on. Read out of the built artifact rather than from anything restated
+    about it.
+
+    Raises:
+        BundleError: When the wheel carries no usable release pins, carries
+            development pins, pins another version, or pins nothing for this
+            target.
+    """
+    try:
+        pins = read_wheel_pins(wheel)
+    except WheelPinsError as exc:
+        raise BundleError(f"bundled wheel admits no monitor: {exc}") from exc
+    if pins.provenance is not PinProvenance.RELEASE:
+        raise BundleError(
+            f"bundled wheel carries {pins.provenance} monitor digests; a "
+            "release bundle carries the digests its own release published"
+        )
+    if pins.version != spec.version:
+        raise BundleError(
+            f"bundled wheel admits the monitor of release {pins.version}, "
+            f"and this bundle is {spec.version}"
+        )
+    if spec.target not in pins.executables:
+        raise BundleError(
+            f"bundled wheel admits no monitor for {spec.target}; it admits "
+            f"{sorted(pins.executables)}"
+        )
+    return pins.archives[spec.target], pins.executables[spec.target]
+
+
+def build_monitor_archive(spec: BundleSpec, raw_dir: Path, output_dir: Path) -> Path:
+    """Pack one finalized monitor as its provisioning archive and sidecar.
+
+    The archive carries the monitor and nothing else: an installation fetches
+    it to obtain that one executable, and extracts the single member by
+    basename. Written with the same deterministic, timestamp-free writers as
+    the public bundles, so two runs over one finalized monitor produce one
+    archive.
+
+    Args:
+        spec: The product, version and target the monitor was built for.
+        raw_dir: Where the finalized target-qualified monitor was staged.
+        output_dir: Where the archive and its sidecar are written.
+
+    Raises:
+        BundleError: When the finalized monitor is missing, or when the
+            archive just written does not carry exactly its one member.
+    """
+    source = raw_dir / spec.product.asset_name(MONITOR_EXECUTABLE, spec.target)
+    if source.is_symlink() or not source.is_file():
+        raise BundleError(f"missing finalized monitor: {source}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="monitor-", dir=output_dir) as temporary:
+        staged = Path(temporary) / spec.monitor_member
+        shutil.copy2(source, staged)
+        if not is_windows_target(spec.target):
+            staged.chmod(0o755)
+        member = BundleFile(staged, spec.monitor_member, "executable")
+        temporary_archive = Path(temporary) / spec.monitor_archive
+        if is_windows_target(spec.target):
+            _zip_archive(temporary_archive, (member,))
+        else:
+            _tar_archive(temporary_archive, (member,))
+        archive = output_dir / spec.monitor_archive
+        temporary_archive.replace(archive)
+
+    verify_monitor_archive(archive, spec)
+    _write_archive_checksum(archive)
     return archive
+
+
+def verify_monitor_archive(archive: Path, spec: BundleSpec) -> bytes:
+    """Return the monitor payload of a provisioning archive, or refuse it.
+
+    Raises:
+        BundleError: When the archive is named for another release or target,
+            is missing, or carries anything but the one monitor member in its
+            canonical executable mode.
+    """
+    if archive.name != spec.monitor_archive:
+        raise BundleError(
+            f"monitor archive is named {archive.name!r}; expected "
+            f"{spec.monitor_archive!r}"
+        )
+    if not archive.is_file():
+        raise BundleError(f"missing monitor archive: {archive}")
+    contents = _archive_contents(archive, spec.target)
+    if set(contents) != {spec.monitor_member}:
+        raise BundleError(
+            f"monitor archive carries {sorted(contents)}; expected only "
+            f"{spec.monitor_member!r}"
+        )
+    member = contents[spec.monitor_member]
+    if member.mode != EXECUTABLE_MODE:
+        raise BundleError(
+            f"monitor archive mode for {spec.monitor_member} is "
+            f"{member.mode:#05o}; expected {EXECUTABLE_MODE:#05o}"
+        )
+    return member.payload
 
 
 def _archive_contents(archive: Path, target: str) -> dict[str, ArchiveFile]:
@@ -632,6 +805,12 @@ def main() -> int:
         "--source-revision",
         help="checked-out source revision; defaults to git rev-parse HEAD",
     )
+    parser.add_argument(
+        "--wheel-dir",
+        type=Path,
+        default=Path("dist"),
+        help="directory holding the release wheel the bundle carries",
+    )
     args = parser.parse_args()
     if args.verify is not None:
         if args.target is None or (args.tag is None and args.version is None):
@@ -658,10 +837,13 @@ def main() -> int:
     )
     archive = build_bundle(
         BundleSpec(VAULTSPEC_RAG, version, args.target),
-        args.raw_dir,
+        BundleSources(
+            args.raw_dir,
+            sole_wheel(args.wheel_dir),
+            args.repo_root,
+            args.source_revision,
+        ),
         args.outdir,
-        args.repo_root,
-        args.source_revision,
     )
     print(f"built {archive} ({archive.stat().st_size} bytes)")
     print(f"  {archive.with_name(archive.name + '.sha256')}")

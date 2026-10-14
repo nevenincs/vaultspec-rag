@@ -247,8 +247,12 @@ def test_publish_attaches_packages_before_dispatching_binaries(repo_root: Path) 
     temporary workflow copy failed the ordering assertion; restoration passed.
     """
     downstream = _load(repo_root, "publish.yml")["jobs"]
-    assert downstream["build"]["needs"] == "resolve-target"
-    assert downstream["github-release"]["needs"] == ["resolve-target", "smoke-test"]
+    assert downstream["build"]["needs"] == ["resolve-target", "monitor"]
+    assert downstream["github-release"]["needs"] == [
+        "resolve-target",
+        "smoke-test",
+        "frontend",
+    ]
     attach = downstream["github-release"]["steps"]
     scripts = [str(step.get("run", "")) for step in attach]
     upload = next(i for i, run in enumerate(scripts) if "gh release upload" in run)
@@ -257,17 +261,18 @@ def test_publish_attaches_packages_before_dispatching_binaries(repo_root: Path) 
     )
     assert upload < dispatch
     assert '--field target_sha="${TARGET_SHA}"' in scripts[dispatch]
+    assert '--field frontend_sha256="${FRONTEND_SHA256}"' in scripts[dispatch]
 
     downstream = (repo_root / ".github" / "workflows" / "publish.yml").read_text(
         encoding="utf-8"
     )
     draft = downstream.index("- name: Ensure a draft release exists for the tag")
-    attach = downstream.index("- name: Attach wheel, sdist, and checksums")
+    attach = downstream.index("- name: Attach wheel, sdist, monitor archives, and")
     dispatch = downstream.index("- name: Trigger Binaries workflow")
     dispatch_section = downstream[dispatch:]
     assert "--draft" in downstream[draft:attach]
     assert "--verify-tag" in downstream[draft:attach]
-    assert "needs: [resolve-target, smoke-test]" in downstream
+    assert "needs: [resolve-target, smoke-test, frontend]" in downstream
     assert draft < attach < dispatch
     assert "gh workflow run binaries.yml \\" in dispatch_section
     assert '--field tag="${TAG}"' in dispatch_section
@@ -449,10 +454,21 @@ def test_package_index_publication_uses_the_proven_drafts_packages(
         assert "publish-pypi" not in _upstream(jobs, job_id), job_id
     assert jobs["build"]["if"] == "${{ inputs.stage != 'package-index' }}"
     index_stage = {"admit-package-index", "publish-pypi", "publish-release"}
+    # The release stage is one chain around the package build: the monitor
+    # jobs feed it, because the wheel carries their digests, and everything
+    # else consumes it. The package-index stage must reach none of them, so a
+    # job on either side of the build carries the same skip condition.
+    before_build = {"frontend", "monitor"}
     for job_id in jobs:
         if job_id in {"resolve-target", "build"} | index_stage:
             continue
         assert "publish-pypi" not in _upstream(jobs, job_id), job_id
+        if job_id in before_build:
+            assert job_id in _upstream(jobs, "build"), job_id
+            assert jobs[job_id]["if"] == "${{ inputs.stage != 'package-index' }}", (
+                job_id
+            )
+            continue
         assert "build" in _upstream(jobs, job_id), job_id
 
     binaries = _workflow(repo_root)
@@ -577,34 +593,70 @@ def test_checksum_merge_reads_legacy_names_bare(repo_root: Path, workflow: str) 
 def test_monitor_frontend_is_built_once_and_native_proof_precedes_publication(
     repo_root: Path,
 ) -> None:
-    jobs = _load(repo_root, "binaries.yml")["jobs"]
-    frontend = jobs["frontend"]
+    """One Vite build per release, and the proof before the publication.
+
+    The frontend and the native monitors belong to the lane that builds the
+    wheel, because the wheel carries their digests. A rehearsal reaches no
+    release, so it builds its own in the binaries lane - and those jobs run
+    for a rehearsal and nothing else.
+
+    Mutation proof: taking the rehearsal condition off the binaries frontend
+    job made this fail on that condition assertion; restoring it passed.
+    Moving the native smoke after the bundle step failed the ordered
+    admission assertion; restoring the order passed.
+    """
+    publish = _load(repo_root, "publish.yml")["jobs"]
+    frontend = publish["frontend"]
     assert "matrix" not in frontend
-    assert set(frontend["needs"]) == {"validate", "wheel"}
-    assert set(jobs["build"]["needs"]) == {"validate", "wheel", "frontend"}
+    assert frontend["needs"] == "resolve-target"
     front_scripts = "\n".join(str(s.get("run", "")) for s in frontend["steps"])
     assert front_scripts.count("just release-monitor-frontend") == 1
     assert "npm ci" in front_scripts
     assert "sha256sum package-lock.json" in front_scripts
     assert "sha256sum dist-monitor-frontend/frontend.json" in front_scripts
-    build_steps = jobs["build"]["steps"]
-    download = next(
+
+    monitor = publish["monitor"]
+    assert set(monitor["needs"]) == {"resolve-target", "frontend"}
+    handoff = next(
         s
-        for s in build_steps
+        for s in monitor["steps"]
         if s.get("name") == "Download the common frontend handoff"
     )
-    assert download["with"]["name"] == "${{ needs.frontend.outputs.artifact }}"
-    scripts = [str(s.get("run", "")) for s in build_steps]
+    assert handoff["with"]["name"] == "${{ needs.frontend.outputs.artifact }}"
+    monitor_scripts = [str(s.get("run", "")) for s in monitor["steps"]]
     compile_index = next(
-        i for i, run in enumerate(scripts) if "just release-monitor " in run
+        i for i, run in enumerate(monitor_scripts) if "just release-monitor " in run
+    )
+    pack = next(
+        i
+        for i, run in enumerate(monitor_scripts)
+        if "just release-monitor-archive " in run
+    )
+    assert compile_index < pack
+    assert "FRONTEND_SHA256" in monitor_scripts[compile_index]
+
+    # A rehearsal, and only a rehearsal, repeats that handoff in this lane.
+    binaries = _load(repo_root, "binaries.yml")["jobs"]
+    for job_id in ("frontend", "monitor"):
+        assert binaries[job_id]["if"] == "${{ inputs.rehearse }}", job_id
+    rehearsed = "\n".join(str(s.get("run", "")) for s in binaries["monitor"]["steps"])
+    assert "just release-monitor " in rehearsed
+    assert "just release-monitor-archive " in rehearsed
+
+    build_steps = binaries["build"]["steps"]
+    assert set(binaries["build"]["needs"]) == {"validate", "wheel"}
+    scripts = [str(s.get("run", "")) for s in build_steps]
+    # No second compile: the bundles carry the monitor the release published.
+    assert not any("just release-monitor " in run for run in scripts)
+    assert not any("release-monitor-frontend" in run for run in scripts)
+    stage = next(
+        i for i, run in enumerate(scripts) if "just release-monitor-bytes " in run
     )
     smoke = next(i for i, run in enumerate(scripts) if "release native-smoke " in run)
     bundle = next(i for i, run in enumerate(scripts) if "just release-bundle " in run)
     # Deleting or moving native smoke must fail this ordered admission assertion.
-    assert compile_index < smoke < bundle
-    assert "FRONTEND_SHA256" in scripts[compile_index]
-    assert not any("release-monitor-frontend" in run for run in scripts)
-    release_scripts = [str(s.get("run", "")) for s in jobs["release"]["steps"]]
+    assert stage < smoke < bundle
+    release_scripts = [str(s.get("run", "")) for s in binaries["release"]["steps"]]
     verify = next(
         i for i, run in enumerate(release_scripts) if "release verify-set " in run
     )
@@ -612,15 +664,145 @@ def test_monitor_frontend_is_built_once_and_native_proof_precedes_publication(
         i for i, run in enumerate(release_scripts) if "gh release upload " in run
     )
     assert verify < upload
-    draft = jobs["verify-release-assets"]["steps"]
+    draft = binaries["verify-release-assets"]["steps"]
     gate = next(
         s
         for s in draft
         if s.get("name") == "Require every declared target on the draft release"
     )
     assert "release verify-set " in gate["run"]
-    wheel = jobs["wheel"]["steps"]
+    wheel = binaries["wheel"]["steps"]
     assert any("release wheel " in str(s.get("run", "")) for s in wheel)
+
+
+def test_the_monitors_are_compiled_and_pinned_before_the_wheel_is_built(
+    repo_root: Path,
+) -> None:
+    """The package carries digests of monitors that already exist.
+
+    A wheel installation obtains its monitor by verifying a download against
+    digests the wheel carries, so the monitors are compiled, finalized and
+    packed first and the generator runs before the build. A wheel built
+    before them could only carry digests of nothing.
+
+    Mutation proof: moving the pin-generation step after ``just build-python``
+    made this fail on the ordered generation assertion, and pointing the
+    build job's ``needs`` at ``resolve-target`` alone made it fail on the
+    dependency assertion; restoring each made it pass.
+    """
+    from tools.packaging.products import VAULTSPEC_RAG
+
+    jobs = _load(repo_root, "publish.yml")["jobs"]
+    build = jobs["build"]
+    assert set(build["needs"]) == {"resolve-target", "monitor"}
+    assert "monitor" in _upstream(jobs, "build")
+    assert "frontend" in _upstream(jobs, "monitor")
+    legs = jobs["monitor"]["strategy"]["matrix"]["include"]
+    assert {leg["target"] for leg in legs} == set(VAULTSPEC_RAG.supported_targets)
+
+    steps = build["steps"]
+    download = next(
+        i
+        for i, step in enumerate(steps)
+        if str(step.get("with", {}).get("pattern", "")).startswith("monitor-")
+    )
+    scripts = [str(step.get("run", "")) for step in steps]
+    pins = next(
+        i for i, run in enumerate(scripts) if "just release-monitor-pins " in run
+    )
+    package = next(i for i, run in enumerate(scripts) if "just build-python" in run)
+    assert download < pins < package, (
+        "the monitor digests must be generated from the finalized monitors "
+        "and before the build that carries them"
+    )
+    assert sum("just build-python" in run for run in scripts) == 1
+
+
+def test_the_monitor_archives_are_published_with_the_bundles_attestation(
+    repo_root: Path,
+) -> None:
+    """Each target's monitor archive is a release asset like a bundle.
+
+    It is what a wheel installation downloads, so it is attached, listed in
+    SHA256SUMS, attested by the same call that attests the bundles, and
+    required on the draft before the lane may publish it.
+
+    Mutation proof: dropping the monitor archive download from the attestation
+    job made this fail on the subject-count assertion, and removing the
+    per-target requirement from the draft gate made it fail on the gate
+    assertion; restoring each made it pass.
+    """
+    publish = _load(repo_root, "publish.yml")["jobs"]["github-release"]
+    names = [str(step.get("name", "")) for step in publish["steps"]]
+    archives = names.index("Download the monitor archives")
+    scripts = [str(step.get("run", "")) for step in publish["steps"]]
+    checksums = next(i for i, run in enumerate(scripts) if "sha256sum -- *" in run)
+    upload = next(i for i, run in enumerate(scripts) if "gh release upload" in run)
+    assert archives < checksums < upload
+    archive_step = publish["steps"][archives]
+    assert archive_step["with"]["path"] == "dist/", (
+        "the archives must be checksummed and attached with the packages"
+    )
+
+    binaries = _load(repo_root, "binaries.yml")["jobs"]
+    attest = binaries["attest"]
+    downloads = [str(step.get("with", {}).get("name", "")) for step in attest["steps"]]
+    assert any(name.startswith("monitor-archives-") for name in downloads)
+    subjects = next(
+        str(step.get("run", ""))
+        for step in attest["steps"]
+        if step.get("id") == "subjects"
+    )
+    assert "vaultspec-rag-monitor-v${version}-*" in subjects
+    assert '"${#subjects[@]}" -eq 8' in subjects
+
+    gate = next(
+        str(step.get("run", ""))
+        for step in binaries["verify-release-assets"]["steps"]
+        if step.get("name") == "Require every declared target on the draft release"
+    )
+    assert 'monitor_name="vaultspec-rag-monitor-v${version}-${triple}${suffix}"' in gate
+    assert "monitor_archives=()" in gate
+    assert "vaultspec-rag-monitor-v*.zip|vaultspec-rag-monitor-v*.tar.gz)" in gate
+
+
+def test_the_bundles_consume_the_published_monitor_verified_by_the_wheel(
+    repo_root: Path,
+) -> None:
+    """One compile per release, and the bundle carries exactly those bytes.
+
+    The monitor archives are taken off the release and checked against its
+    SHA256SUMS, like the wheel; each target's leg then verifies its archive
+    against the wheel's own pin before extracting it, and the bundle build
+    refuses a monitor that wheel would not run.
+
+    Mutation proof: dropping the ``sha256sum -c`` from the monitor fetch made
+    this fail on the verified-fetch assertion, and removing the wheel
+    directory from the bundle recipe call made it fail on the pin assertion;
+    restoring each made it pass.
+    """
+    jobs = _load(repo_root, "binaries.yml")["jobs"]
+    fetch = next(
+        str(step.get("run", ""))
+        for step in jobs["wheel"]["steps"]
+        if step.get("name", "").startswith("Fetch the monitor archives")
+    )
+    assert "gh release download" in fetch
+    assert "--pattern SHA256SUMS" in fetch
+    assert "sha256sum -c monitor.sha256" in fetch
+    assert "awk '/^[[:space:]]+target:[[:space:]]/ {print $2}'" in fetch, (
+        "the expected archive count must be derived from the build matrix"
+    )
+
+    scripts = [str(step.get("run", "")) for step in jobs["build"]["steps"]]
+    stage = next(run for run in scripts if "just release-monitor-bytes " in run)
+    assert "dist-monitor dist dist-bin" in stage, (
+        "the staging step must name the archives, the wheel and the staging dir"
+    )
+    bundle = next(run for run in scripts if "just release-bundle " in run)
+    assert bundle.rstrip().endswith("dist-bin dist-bundles dist"), (
+        "the bundle build must be given the wheel whose pins it checks"
+    )
 
 
 def test_release_frontend_cannot_write_dependency_cache(repo_root: Path) -> None:
@@ -629,7 +811,12 @@ def test_release_frontend_cannot_write_dependency_cache(repo_root: Path) -> None
     Mutation proof: removing the explicit automatic-cache opt-out failed the
     named assertion (exit 1); exact restoration passed (exit 0).
     """
-    frontend = _load(repo_root, "binaries.yml")["jobs"]["frontend"]
+    for workflow in ("binaries.yml", "publish.yml"):
+        _assert_no_node_cache(_load(repo_root, workflow)["jobs"]["frontend"])
+
+
+def _assert_no_node_cache(frontend: dict[str, Any]) -> None:
+    """Assert one frontend job leaves setup-node's dependency cache off."""
     node = next(
         step
         for step in frontend["steps"]
@@ -825,11 +1012,17 @@ def test_a_rehearsal_builds_every_target_and_writes_nothing(repo_root: Path) -> 
                     f"a rehearsal reaches {job_id}: {step.get('name')}"
                 )
 
-    for job_id in ("frontend", "build"):
-        assert "if" not in jobs[job_id], f"a rehearsal skips {job_id}"
+    # The build legs run for a rehearsal exactly as for a release. The
+    # frontend and monitor jobs are the rehearsal's own handoff, which a
+    # release takes from the lane that built its wheel instead.
+    assert "if" not in jobs["build"], "a rehearsal skips build"
+    for job_id in ("frontend", "monitor"):
+        assert jobs[job_id]["if"] == "${{ inputs.rehearse }}", job_id
     assert (
         "needs.attest.result == 'success' || inputs.rehearse" in jobs["release"]["if"]
     )
+    assert "needs.frontend.result == 'skipped'" in jobs["release"]["if"]
+    assert "needs.monitor.result == 'skipped'" in jobs["wheel"]["if"]
     assert jobs["attest"]["if"] == "${{ !inputs.rehearse }}"
     assert not any("if" in step for step in jobs["build"]["steps"])
     proven = [

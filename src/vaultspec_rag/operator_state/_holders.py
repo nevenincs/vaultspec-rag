@@ -144,6 +144,7 @@ def holder_line(
     *,
     launcher_pid: int | None = None,
     port: int | None = None,
+    remedy: bool = True,
 ) -> str:
     """Name one holder, what it is, and what clears it, in one line.
 
@@ -151,12 +152,15 @@ def holder_line(
     install refusal shows the command line, and the readiness snapshot must
     not, because it is also served over HTTP. What they do share is this
     line, so an operator reading either one is told the same thing about the
-    same process.
+    same process. A surface with no repair pending names the holder alone,
+    since every remedy here is what to do after a repair.
     """
     pids = f"pid {pid}"
     if launcher_pid is not None:
         pids += f" (with its launcher, pid {launcher_pid})"
     named = role.label + (f" on port {port}" if port is not None else "")
+    if not remedy:
+        return f"{pids} - {named}"
     return f"{pids} - {named}: {role.remediation(port)}"
 
 

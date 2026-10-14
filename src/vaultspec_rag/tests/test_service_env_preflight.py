@@ -12,11 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from ..cli._service_start import (
-    _caller_ephemeral_warning,
-    _ephemeral_env_warning,
-    _tail_daemon_log,
-)
+from ..cli._service_start import _tail_daemon_log
 from ..cli._status_labels import _status_env_label
 from ..operator_state._provisioning import (
     CU130_INDEX_STRATEGY,
@@ -24,6 +20,7 @@ from ..operator_state._provisioning import (
     ToolReceiptVerdict,
     classify_tool_receipt,
     cuda_remediation,
+    declares_a_project,
     environment_python_request,
     inplace_cuda_command,
     published_wheel_platform_tag,
@@ -567,81 +564,115 @@ class TestUpgradeCommands:
             )
 
 
-def _durable_command_for(interpreter: str) -> str:
-    """The request the one builder offers an ephemeral environment."""
-    return cuda_remediation(
-        interpreter, env_kind=RuntimeEnvKind.UVX_EPHEMERAL
-    ).repair_commands[-1]
+class TestAUvxCacheEnvironmentIsNotRepaired:
+    """The one thing to say about an environment that never serves.
 
+    A uvx cache environment is uv's, not the operator's, and the daemon does
+    not run in it at all: a start runs the service from its own GPU runtime.
+    So there is nothing to repair and nothing to install, and the remedy is
+    one sentence naming the one command that serves.
+    """
 
-class TestEphemeralEnvWarning:
-    """server start's uvx-ephemeral warning fires only for the cache env."""
+    def test_the_remedy_is_the_start_and_nothing_else(self, tmp_path: Path) -> None:
+        """Guard assertion: every command this used to print was unrunnable.
 
-    def test_warns_for_an_ephemeral_interpreter(self, tmp_path: Path) -> None:
+        It offered `uv pip install --python <the uv cache environment>`, an
+        installation of the tool the operator had not installed, and a note
+        about restarting a service - three remedies for a state that was not
+        present. Mutation check: restoring the tool repair here puts
+        `uv pip install` back in the steps and fails the second assertion.
+        """
         scripts = tmp_path / "cache" / "archive-v0" / "xYz987" / "Scripts"
         scripts.mkdir(parents=True)
         interpreter = scripts / "python.exe"
         interpreter.touch()
-        lines = _ephemeral_env_warning(str(interpreter))
-        joined = "\n".join(lines)
-        assert "EPHEMERAL" in joined
-        assert "not the installed tool" in joined
-        assert _durable_command_for(str(interpreter)) in joined
-        assert str(interpreter) in joined
 
-    def test_silent_for_a_tool_env_interpreter(self, tmp_path: Path) -> None:
-        scripts = tmp_path / "uv" / "tools" / "vaultspec-rag" / "Scripts"
+        remediation = cuda_remediation(
+            str(interpreter),
+            env_kind=RuntimeEnvKind.UVX_EPHEMERAL,
+            platform_name="win32",
+            machine="AMD64",
+        )
+
+        assert len(remediation.steps) == 1
+        joined = remediation.steps[0]
+        assert "server start" in joined
+        assert "its own GPU runtime" in joined
+        assert "uv pip install" not in joined
+        assert "uv tool install" not in joined
+        assert CU130_INDEX_URL not in joined
+        assert remediation.repair_commands == ()
+
+    def test_no_surface_offers_a_second_command_for_it(self, tmp_path: Path) -> None:
+        """One sentence, one command: the sentence carries exactly one."""
+        scripts = tmp_path / "cache" / "archive-v0" / "xYz987" / "bin"
         scripts.mkdir(parents=True)
-        interpreter = scripts / "python.exe"
+        interpreter = scripts / "python"
         interpreter.touch()
-        assert _ephemeral_env_warning(str(interpreter)) == ()
+
+        remediation = cuda_remediation(
+            str(interpreter),
+            env_kind=RuntimeEnvKind.UVX_EPHEMERAL,
+            platform_name="linux",
+            machine="x86_64",
+        )
+
+        assert remediation.steps[0].count("`") == 2
 
 
-class TestCallerEphemeralWarning:
-    """The attach paths warn about the caller's own env, not a daemon's.
+class TestAnEnvironmentWithNoProjectIsNotSentToSync:
+    """A bare virtual environment is repaired in place, never through a sync.
 
-    ``server start`` against a live service returns ``already_running`` before
-    any daemon interpreter is resolved, so the daemon-side warning cannot fire.
-    An operator invoking from a uvx cache env still walks into the
-    forced-reinstall trap, and for a long-lived daemon that attach outcome is
-    the common one - so the caller env is warned about on its own terms.
+    `uv sync` needs a project declaration. A `pip install` into `.venv` has
+    none, and the directory name is all that distinguished the two, so such an
+    environment was told to run a sync that cannot do anything.
     """
 
-    def test_warns_for_an_ephemeral_caller(self, tmp_path: Path) -> None:
-        scripts = tmp_path / "cache" / "archive-v0" / "aB3dEf" / "Scripts"
-        scripts.mkdir(parents=True)
-        interpreter = scripts / "python.exe"
-        interpreter.touch()
-        lines = _caller_ephemeral_warning(str(interpreter))
-        joined = "\n".join(lines)
-        assert "EPHEMERAL" in joined
-        assert "not the installed tool" in joined
-        assert str(interpreter) in joined
-        # The remediation must stay the single-sourced durable command, so the
-        # attach path cannot drift from the spawn path's guidance.
-        assert _durable_command_for(str(interpreter)) in joined
+    def test_a_venv_without_a_declaration_gets_the_in_place_repair(
+        self, tmp_path: Path
+    ) -> None:
+        """Guard assertion: the name of the directory decided this.
 
-    def test_names_the_caller_not_the_service(self, tmp_path: Path) -> None:
-        scripts = tmp_path / "cache" / "archive-v0" / "aB3dEf" / "Scripts"
+        Mutation check: deciding on the directory name again returns the
+        project repair here, and the `uv sync` assertion fails.
+        """
+        scripts = tmp_path / "somewhere" / ".venv" / "Scripts"
         scripts.mkdir(parents=True)
         interpreter = scripts / "python.exe"
         interpreter.touch()
-        joined = "\n".join(_caller_ephemeral_warning(str(interpreter)))
-        # The running service was started from some other env; claiming its
-        # interpreter is ephemeral would be false on the attach path.
-        assert "this command is running from" in joined
-        assert "service interpreter is" not in joined
 
-    def test_silent_for_a_tool_env_caller(self, tmp_path: Path) -> None:
-        scripts = tmp_path / "uv" / "tools" / "vaultspec-rag" / "Scripts"
-        scripts.mkdir(parents=True)
-        interpreter = scripts / "python.exe"
-        interpreter.touch()
-        assert _caller_ephemeral_warning(str(interpreter)) == ()
+        remediation = cuda_remediation(
+            str(interpreter),
+            env_kind=RuntimeEnvKind.PROJECT_VENV,
+            platform_name="win32",
+            machine="AMD64",
+        )
 
-    def test_silent_for_a_project_venv_caller(self, tmp_path: Path) -> None:
-        scripts = tmp_path / "myproject" / ".venv" / "Scripts"
+        joined = chr(10).join(remediation.steps)
+        assert "uv sync" not in joined
+        assert inplace_cuda_command(str(interpreter)) in joined
+        assert len(remediation.steps) == 1
+
+    def test_a_declaration_beside_the_environment_is_what_makes_it_a_project(
+        self, tmp_path: Path
+    ) -> None:
+        """And the project repair is one line, because its order is load-bearing."""
+        project = tmp_path / "consumer"
+        scripts = project / ".venv" / "Scripts"
         scripts.mkdir(parents=True)
+        (project / "pyproject.toml").write_text("[project]", encoding="utf-8")
         interpreter = scripts / "python.exe"
         interpreter.touch()
-        assert _caller_ephemeral_warning(str(interpreter)) == ()
+
+        assert declares_a_project(str(interpreter))
+        remediation = cuda_remediation(
+            str(interpreter),
+            env_kind=RuntimeEnvKind.PROJECT_VENV,
+            platform_name="win32",
+            machine="AMD64",
+        )
+
+        assert len(remediation.steps) == 1
+        assert remediation.repair_commands == (
+            "vaultspec-rag install && uv sync --reinstall-package torch",
+        )

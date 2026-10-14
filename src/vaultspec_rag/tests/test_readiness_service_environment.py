@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("nothing_provisioned")]
 
 _CLIENT = "this installation is a client"
-_START_FETCHES = "`vaultspec-rag server start` fetches it"
+_START_FETCHES = "`vaultspec-rag server start` downloads it"
 
 
 @pytest.fixture
@@ -74,6 +74,10 @@ def _rows(capability: ComputeCapability) -> dict[str, DependencyReadiness]:
 def test_a_client_is_told_it_needs_neither_and_is_not_called_unready() -> None:
     """A client's report has nothing missing, because it needs nothing.
 
+    Its rows read "not applicable", not "ready": a client cannot itself
+    start the service, and a "ready" row would say otherwise. Not applicable
+    still never counts as unready - it does not block the aggregate.
+
     Mutation check: with the client answer removed from the models row, that
     row reads not ready and names the missing repositories, and the status
     assertion fails for ``models``. With it removed from the Qdrant row, that
@@ -83,7 +87,7 @@ def test_a_client_is_told_it_needs_neither_and_is_not_called_unready() -> None:
     rows = _rows(ComputeCapability.NOT_APPLICABLE)
 
     for name, row in rows.items():
-        assert row.status == ReadinessStatus.READY, (name, row.detail)
+        assert row.status == ReadinessStatus.NOT_APPLICABLE, (name, row.detail)
         assert _CLIENT in row.detail, (name, row.detail)
     assert rows["models"].info == {"repos": {}}
     assert rows["qdrant"].info["binary_source"] == "not_needed"
@@ -95,12 +99,10 @@ def test_a_host_that_cannot_serve_yet_is_not_sent_to_a_command_that_declines() -
     Both fetch commands answer ``skipped`` for an environment that cannot run
     the service, so naming either would send the operator round a loop. The
     rows stay not ready - the files really are missing - and say what fetches
-    them once the environment is repaired.
+    them: the start, which builds the environment that serves.
 
-    Mutation check: with the remedy no longer asking what the environment can
-    do, the models row names ``server warmup`` and the Qdrant row names
-    ``server qdrant install``, and the first assertion on each fails.
-    Restoring it passes.
+    Mutation check: naming the fetch command again whenever automatic
+    download is on fails the first assertion for each row. Restoring passes.
     """
     rows = _rows(ComputeCapability.CPU_ONLY_BUILD)
 
@@ -114,12 +116,30 @@ def test_a_host_that_cannot_serve_yet_is_not_sent_to_a_command_that_declines() -
         assert row.status == ReadinessStatus.NOT_READY, (name, row.detail)
 
 
-def test_a_host_that_can_serve_is_given_the_command_that_fetches() -> None:
-    """An environment the fetch commands will act for is given them, whole."""
+def test_a_host_that_can_serve_is_given_the_one_command_that_fetches() -> None:
+    """Starting is consent to download, so the start is the one command.
+
+    Mutation check: appending the on-disk alternative to the Qdrant row fails
+    the ``--local-only`` assertion; naming ``server warmup`` again fails the
+    models row's first assertion. Restoring passes.
+    """
     rows = _rows(ComputeCapability.READY)
 
-    assert "run `vaultspec-rag server warmup`" in rows["models"].detail
-    assert "run `vaultspec-rag server qdrant install`" in rows["qdrant"].detail
     for name, row in rows.items():
+        assert _START_FETCHES in row.detail, (name, row.detail)
         assert row.status == ReadinessStatus.NOT_READY, (name, row.detail)
-        assert _START_FETCHES not in row.detail, (name, row.detail)
+        assert "--local-only" not in row.detail, (name, row.detail)
+
+
+def test_switching_automatic_download_off_names_the_qdrant_install() -> None:
+    """With the Qdrant download switched off, a start would refuse, so the
+    install command is the one that acts.
+
+    Mutation check: ignoring the switch fails the first assertion.
+    Restoring passes.
+    """
+    with managed_env(**{EnvVar.QDRANT_AUTO_PROVISION.value: "0"}):
+        rows = _rows(ComputeCapability.READY)
+
+    assert "run `vaultspec-rag server qdrant install`" in rows["qdrant"].detail
+    assert _START_FETCHES not in rows["qdrant"].detail

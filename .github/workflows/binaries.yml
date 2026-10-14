@@ -7,6 +7,15 @@ name: RAG Binaries
 # may still dispatch it explicitly to repair a release; the final gate below
 # independently proves the package and bundle set on the draft.
 #
+# WHAT THIS WORKFLOW NO LONGER DOES: compile the monitor. A wheel
+# installation provisions the compiled monitor by verifying it against digests
+# the wheel carries, so the monitors are compiled, finalized and packed before
+# the wheel is built, by the lane that builds it. This workflow consumes those
+# published bytes: it takes each target's monitor archive off the release,
+# checked against SHA256SUMS, verifies it against the wheel's own pins before
+# extracting it, proves those exact bytes natively, and packs them. A second
+# compile here would put a different monitor behind one release.
+#
 # WHAT THIS WORKFLOW STARTS: the publication lane, and only from the gate that
 # found the draft complete. That lane uploads to PyPI and then takes the
 # release out of draft, so an upload that cannot be withdrawn never races a
@@ -31,6 +40,11 @@ on:
         description: "Immutable release commit to build and publish"
         required: true
         type: string
+      frontend_sha256:
+        description: "SHA256 of the release frontend handoff every monitor embeds"
+        required: false
+        type: string
+        default: ""
       rehearse:
         description: "Build and prove the dispatched commit without touching any release"
         required: false
@@ -66,6 +80,7 @@ jobs:
         env:
           TAG: ${{ inputs.tag }}
           TARGET_SHA: ${{ inputs.target_sha }}
+          FRONTEND_SHA256: ${{ inputs.frontend_sha256 }}
           REHEARSE: ${{ inputs.rehearse }}
         run: |
           set -euo pipefail
@@ -75,6 +90,16 @@ jobs:
           fi
           if ! [[ "${TARGET_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::error::target_sha is not a full lowercase commit ID"
+            exit 1
+          fi
+          # The frontend every published monitor embeds. The lane that built
+          # it hands the digest on, and the archive gates compare each
+          # bundle's own recorded digest against it, so a release whose
+          # monitors came from two Vite builds fails rather than ships. A
+          # rehearsal builds the frontend in this run and reads the digest
+          # off that job instead.
+          if [ "${REHEARSE}" != "true" ] && ! [[ "${FRONTEND_SHA256}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::frontend_sha256 is not a lowercase SHA256; Publish hands it on with the tag"
             exit 1
           fi
           # A rehearsal has no tag to resolve: it builds the commit it was
@@ -115,7 +140,10 @@ jobs:
   # to the one on the release and on PyPI. A rebuild would match only as far
   # as the build is reproducible, and nothing asserts that it is.
   wheel:
-    needs: validate
+    needs: [validate, monitor]
+    # `monitor` runs for a rehearsal only, and a skipped dependency would
+    # otherwise skip this job for every release.
+    if: ${{ always() && needs.validate.result == 'success' && (needs.monitor.result == 'success' || needs.monitor.result == 'skipped') }}
     timeout-minutes: 150
     name: "Check: Release wheel (Linux)"
     runs-on: [self-hosted, Linux, X64, build]
@@ -166,6 +194,48 @@ jobs:
           (cd "${work}" && sha256sum -c wheel.sha256)
           mv "${work}/${wheel}" dist/
 
+      # THE MONITORS THE BUNDLES CARRY, taken off the release exactly as the
+      # wheel is and checked the same way. They were compiled, finalized and
+      # packed before that wheel was built, which is what let it carry their
+      # digests; each target's leg below verifies its archive against those
+      # digests before extracting it. Nothing here compiles a monitor.
+      #
+      # Targets are DERIVED from the matrix in this same file rather than
+      # listed again, like the release gates below: a second list drifts.
+      - name: Fetch the monitor archives Publish attached, checked against SHA256SUMS
+        if: ${{ !inputs.rehearse }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          version="${TAG#vaultspec-rag-v}"
+          work="${RUNNER_TEMP}/release-monitor"
+          rm -rf "${work}"
+          mkdir -p "${work}" dist-monitor
+          workflow=.github/workflows/binaries.yml
+          mapfile -t expected < <(awk '/^[[:space:]]+target:[[:space:]]/ {print $2}' "${workflow}" | sort -u)
+          if [ ${#expected[@]} -eq 0 ]; then
+            echo "::error::could not derive any target from ${workflow}; refusing to pass vacuously"
+            exit 1
+          fi
+          if ! gh release download "${TAG}" --repo "$GITHUB_REPOSITORY" \
+               --dir "${work}" --pattern SHA256SUMS \
+               --pattern "vaultspec-rag-monitor-v${version}-*"; then
+            echo "::error::${TAG} carries no monitor archives or SHA256SUMS; Publish attaches both before it dispatches this workflow"
+            exit 1
+          fi
+          grep -E "  vaultspec-rag-monitor-v${version}-" "${work}/SHA256SUMS" \
+            > "${work}/monitor.sha256" || true
+          listed=$(wc -l < "${work}/monitor.sha256")
+          if [ "${listed}" -ne "${#expected[@]}" ]; then
+            echo "::error::SHA256SUMS on ${TAG} lists ${listed} monitor archive(s) for ${#expected[@]} declared target(s)"
+            exit 1
+          fi
+          (cd "${work}" && sha256sum -c monitor.sha256)
+          mv "${work}"/vaultspec-rag-monitor-v*.* dist-monitor/
+
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
@@ -174,6 +244,29 @@ jobs:
 
       - name: Install Python
         run: uv python install 3.13
+
+      - name: Set up just
+        uses: taiki-e/install-action@6012bba2f8e3e666a2b212f8823c06831704ce92 # just
+        with:
+          tool: just@1.38.0
+
+      # No release carries a rehearsed commit's monitors, so a rehearsal
+      # builds its own and pins them into its own wheel - the same order a
+      # release runs, inside one run.
+      - name: Download the monitors a rehearsal compiled
+        if: ${{ inputs.rehearse }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: monitor-${{ needs.validate.outputs.sha }}-*
+          path: dist-monitor/
+          merge-multiple: true
+
+      - name: Generate the monitor digests a rehearsal's wheel carries
+        if: ${{ inputs.rehearse }}
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+        run: just release-monitor-pins "$TAG" dist-monitor
 
       # No release carries a rehearsed commit's wheel, so the rehearsal
       # builds the one the binaries will carry.
@@ -204,8 +297,26 @@ jobs:
           if-no-files-found: error
           retention-days: 5
 
+      # Only the archives. A rehearsal's handoff also holds the finalized
+      # executables beside them, and those are private build intermediates.
+      - name: Upload the monitor archives the bundles consume
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: monitor-archives-${{ needs.validate.outputs.sha }}
+          path: |
+            dist-monitor/vaultspec-rag-monitor-v*.zip
+            dist-monitor/vaultspec-rag-monitor-v*.tar.gz
+          if-no-files-found: error
+          retention-days: 5
+
+  # A REHEARSAL'S OWN FRONTEND AND MONITORS. A release's are built by the lane
+  # that builds the wheel, before it, so the wheel can carry their digests.
+  # A rehearsal reaches no release and so has nothing to take them from: it
+  # produces the same handoff in its own run, in the same order, with the same
+  # recipes, and the wheel job above pins those monitors into its own wheel.
   frontend:
-    needs: [validate, wheel]
+    needs: validate
+    if: ${{ inputs.rehearse }}
     name: "Build: Common monitor frontend (Linux)"
     timeout-minutes: 140
     runs-on: [self-hosted, Linux, X64, build]
@@ -263,8 +374,88 @@ jobs:
           if-no-files-found: error
           retention-days: 5
 
+  monitor:
+    needs: [validate, frontend]
+    if: ${{ inputs.rehearse }}
+    name: "Build: Rehearsed native monitor (${{ matrix.name }})"
+    timeout-minutes: 210
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            runner: [self-hosted, Linux, X64, build]
+            target: x86_64-unknown-linux-gnu
+          - name: windows-x86_64
+            runner: [self-hosted, Windows, X64]
+            target: x86_64-pc-windows-msvc
+          - name: linux-aarch64
+            runner: [self-hosted, Linux, ARM64]
+            target: aarch64-unknown-linux-gnu
+          - name: macos-arm64
+            runner: [self-hosted, macOS, ARM64]
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    env:
+      CI_EXEC_BUDGET_MINUTES: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Require the exact release commit
+        shell: bash
+        env:
+          TARGET_SHA: ${{ needs.validate.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          prune-cache: false
+          enable-cache: false
+
+      - name: Install Python
+        run: uv python install 3.13
+
+      - name: Set up just
+        uses: taiki-e/install-action@6012bba2f8e3e666a2b212f8823c06831704ce92 # just
+        with:
+          tool: just@1.38.0
+
+      - name: Download the common frontend handoff
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.frontend.outputs.artifact }}
+          path: dist-monitor-frontend
+
+      - name: Compile the native monitor
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+          TARGET_SHA: ${{ needs.validate.outputs.sha }}
+          FRONTEND_SHA256: ${{ needs.frontend.outputs.frontend_sha256 }}
+        run: just release-monitor "$TAG" "$TARGET_SHA" "$FRONTEND_SHA256"
+
+      - name: Pack the monitor-only provisioning archive
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+          TARGET: ${{ matrix.target }}
+        run: just release-monitor-archive "$TAG" "$TARGET" dist-bin dist-bin
+
+      - name: Upload the finalized monitor and its archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: monitor-${{ needs.validate.outputs.sha }}-${{ matrix.name }}
+          path: dist-bin/
+          if-no-files-found: error
+          retention-days: 5
+
   build:
-    needs: [validate, wheel, frontend]
+    needs: [validate, wheel]
     name: "Build: Standalone binaries (${{ matrix.name }})"
     strategy:
       fail-fast: false
@@ -332,11 +523,11 @@ jobs:
           name: project-wheel-${{ needs.validate.outputs.sha }}
           path: dist
 
-      - name: Download the common frontend handoff
+      - name: Download the monitor archives the bundles carry
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: ${{ needs.frontend.outputs.artifact }}
-          path: dist-monitor-frontend
+          name: monitor-archives-${{ needs.validate.outputs.sha }}
+          path: dist-monitor
 
       - name: Set up Node for the installed-browser verification driver
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -361,13 +552,17 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: just release-binaries "${TAG}" "${TARGET}" dist-bin dist
 
-      - name: Compile the embedded native monitor
+      # THE PUBLISHED MONITOR, NOT A SECOND COMPILE. The archive's digest is
+      # checked against the wheel's own pin for this target before anything
+      # is extracted, the extracted executable against the wheel's pin for
+      # it, and only then does the proof below run those bytes. A bundle
+      # whose monitor its own wheel would refuse never gets built.
+      - name: Stage the monitor the release wheel admits
         shell: bash
         env:
           TAG: ${{ inputs.tag }}
-          TARGET_SHA: ${{ needs.validate.outputs.sha }}
-          FRONTEND_SHA256: ${{ needs.frontend.outputs.frontend_sha256 }}
-        run: just release-monitor "$TAG" "$TARGET_SHA" "$FRONTEND_SHA256"
+          TARGET: ${{ matrix.target }}
+        run: just release-monitor-bytes "$TAG" "$TARGET" dist-monitor dist dist-bin
 
       # On Windows the proof occupies the directory the runner's own
       # environment names as MONITOR_OUTBOUND_DENIED_DIR. The host denies
@@ -386,7 +581,7 @@ jobs:
         env:
           TAG: ${{ inputs.tag }}
           TARGET: ${{ matrix.target }}
-        run: just release-bundle "${TAG}" "${TARGET}" dist-bin dist-bundles
+        run: just release-bundle "${TAG}" "${TARGET}" dist-bin dist-bundles dist
 
       - name: Upload binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -416,6 +611,14 @@ jobs:
           pattern: binaries-${{ needs.validate.outputs.sha }}-*
           path: ${{ runner.temp }}/attested-bundles/
           merge-multiple: true
+      # The monitor archives are attested with the bundles, by this one call:
+      # they are public release assets, and an installation that downloads
+      # one gets the same provenance the bundle beside it carries.
+      - name: Download the monitor archives into the same directory
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: monitor-archives-${{ needs.validate.outputs.sha }}
+          path: ${{ runner.temp }}/attested-bundles/
       - name: Enumerate only immutable public archives
         id: subjects
         env:
@@ -423,9 +626,13 @@ jobs:
           DIRECTORY: ${{ runner.temp }}/attested-bundles
         run: |
           set -euo pipefail
+          version="${TAG#vaultspec-rag-v}"
           mapfile -t subjects < <(find "$DIRECTORY" -maxdepth 1 -type f \
-            \( -name "$TAG-*.zip" -o -name "$TAG-*.tar.gz" \) | LC_ALL=C sort)
-          [ "${#subjects[@]}" -eq 4 ] || { echo "::error::expected all four proven archives"; exit 1; }
+            \( -name "$TAG-*.zip" -o -name "$TAG-*.tar.gz" \
+               -o -name "vaultspec-rag-monitor-v${version}-*.zip" \
+               -o -name "vaultspec-rag-monitor-v${version}-*.tar.gz" \) \
+            | LC_ALL=C sort)
+          [ "${#subjects[@]}" -eq 8 ] || { echo "::error::expected all four proven bundles and all four monitor archives"; exit 1; }
           {
             echo 'paths<<SUBJECTS_EOF'
             printf '%s\n' "${subjects[@]}"
@@ -440,7 +647,9 @@ jobs:
     timeout-minutes: 150
     name: "Build: Release attachment (Linux)"
     needs: [validate, build, frontend, attest]
-    if: ${{ always() && needs.validate.result == 'success' && needs.build.result == 'success' && needs.frontend.result == 'success' && (needs.attest.result == 'success' || inputs.rehearse) }}
+    # `frontend` runs for a rehearsal only, so a skip there is expected; its
+    # digest reaches a release through the dispatch that started this run.
+    if: ${{ always() && needs.validate.result == 'success' && needs.build.result == 'success' && (needs.frontend.result == 'success' || needs.frontend.result == 'skipped') && (needs.attest.result == 'success' || inputs.rehearse) }}
     runs-on: [self-hosted, Linux, X64, build]
     env:
       CI_EXEC_BUDGET_MINUTES: 30
@@ -480,7 +689,7 @@ jobs:
         env:
           TAG: ${{ inputs.tag }}
           TARGET_SHA: ${{ needs.validate.outputs.sha }}
-          FRONTEND_SHA256: ${{ needs.frontend.outputs.frontend_sha256 }}
+          FRONTEND_SHA256: ${{ inputs.rehearse && needs.frontend.outputs.frontend_sha256 || inputs.frontend_sha256 }}
         run: uv run --no-project --python 3.13 -- python -m tools.monitor.release verify-set --tag "$TAG" --source-revision "$TARGET_SHA" --frontend-sha256 "$FRONTEND_SHA256" --directory dist-bundles
 
       - name: Aggregate checksums
@@ -662,7 +871,7 @@ jobs:
       TAG: ${{ inputs.tag }}
       TARGET_SHA: ${{ needs.validate.outputs.sha }}
       RELEASE_RESULT: ${{ needs.release.result }}
-      FRONTEND_SHA256: ${{ needs.frontend.outputs.frontend_sha256 }}
+      FRONTEND_SHA256: ${{ inputs.rehearse && needs.frontend.outputs.frontend_sha256 || inputs.frontend_sha256 }}
     steps:
       # This job reads the build matrix out of this file, so the file is
       # checked out explicitly.
@@ -766,9 +975,18 @@ jobs:
               [ "${asset}" = "${expected_name}" ] && found=1
             done
             [ "${found}" -eq 1 ] || missing+=("${expected_name}")
+            # THE MONITOR ARCHIVE FOR THE SAME TARGET. A wheel installation
+            # provisions its monitor from this asset and from nothing else,
+            # so a release missing one serves a host that can never start the
+            # service. It is a provisioning unit, not a channel install unit,
+            # which is why it is counted apart from the bundles.
+            monitor_name="vaultspec-rag-monitor-v${version}-${triple}${suffix}"
+            [ "$(printf '%s\n' "${names}" | grep -Fxc "${monitor_name}" || true)" -eq 1 ] \
+              || missing+=("${monitor_name}")
           done
 
           bundle_archives=()
+          monitor_archives=()
           raw=()
           while IFS= read -r asset; do
             [ -n "${asset}" ] || continue
@@ -776,12 +994,16 @@ jobs:
               vaultspec-rag-v*.zip|vaultspec-rag-v*.tar.gz)
                 bundle_archives+=("${asset}")
                 ;;
+              vaultspec-rag-monitor-v*.zip|vaultspec-rag-monitor-v*.tar.gz)
+                monitor_archives+=("${asset}")
+                ;;
               vaultspec-rag-*|vaultspec-search-mcp-*)
                 raw+=("${asset}")
                 ;;
             esac
           done <<< "${names}"
           [ ${#bundle_archives[@]} -eq ${#expected[@]} ] || missing+=("expected ${#expected[@]} bundle archives, found ${#bundle_archives[@]}")
+          [ ${#monitor_archives[@]} -eq ${#expected[@]} ] || missing+=("expected ${#expected[@]} monitor archives, found ${#monitor_archives[@]}")
 
           problems=()
           [ "${RELEASE_RESULT}" = "success" ] || problems+=("release job=${RELEASE_RESULT}")

@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ..qdrant_runtime._executable_hold import held_executable
+from ..native_binary._hold import held_executable
 
 if TYPE_CHECKING:
     from pathlib import Path

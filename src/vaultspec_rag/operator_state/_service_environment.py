@@ -18,12 +18,20 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from . import _compute, _environment_probe
 from ._compute import ProbeDepth
 from ._installation import ComputeCapability, InstallRole
 
-__all__ = ["ServiceEnvironment", "judge_service_environment"]
+if TYPE_CHECKING:
+    from ._models import ComputeReport
+
+__all__ = [
+    "ServiceEnvironment",
+    "judge_foreign_environment",
+    "judge_service_environment",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,5 +99,36 @@ def judge_service_environment(
         return ServiceEnvironment(judged, ComputeCapability.NOT_APPLICABLE)
     if probed is not None:
         return ServiceEnvironment(judged, probed)
-    compute = _environment_probe.probe_interpreter(judged, depth).compute
-    return ServiceEnvironment(judged, compute.capability, compute.detail)
+    return judge_foreign_environment(judged, depth)
+
+
+def judge_foreign_environment(
+    interpreter: str,
+    depth: ProbeDepth = ProbeDepth.VERIFY,
+    *,
+    probed: ComputeReport | None = None,
+) -> ServiceEnvironment:
+    """Judge an environment on its own metadata, not on the asking process's.
+
+    :func:`judge_service_environment` reads the installation role in this
+    process, which is free and is right for the environment this process runs
+    in. It is wrong for an environment this process merely created: a managed
+    service runtime carries its own distributions, and whether the launcher
+    happens to be a client says nothing about what the runtime can do. The
+    child probe reports the role it finds, answering ``not_applicable`` for a
+    client environment itself, so one question covers both halves.
+
+    Args:
+        interpreter: The interpreter to judge.
+        depth: How far the check goes, when it is made here.
+        probed: The report an earlier step of the same command already got
+            from this interpreter. The probe starts a child and imports torch
+            in it, so a caller that needs the whole report hands it over and
+            none is started here.
+    """
+    compute = (
+        _environment_probe.probe_interpreter(interpreter, depth).compute
+        if probed is None
+        else probed
+    )
+    return ServiceEnvironment(interpreter, compute.capability, compute.detail)

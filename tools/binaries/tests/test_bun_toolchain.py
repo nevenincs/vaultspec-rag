@@ -10,7 +10,7 @@ import pytest
 
 from tools.binaries.bun_pins import BUN_ARCHIVES, BUN_EXECUTABLES
 from tools.packaging.products import VAULTSPEC_RAG
-from vaultspec_rag.qdrant_runtime._provision import (
+from vaultspec_rag.native_binary._install import (
     ChecksumMismatchError,
     extract_verified_archive,
     file_sha256,

@@ -96,6 +96,11 @@ class IndexResult:
             hit rate, estimated GPU seconds saved, donor availability), or
             ``None`` when reuse is disabled or the run never reached the
             encode pipeline.
+        first_build: Whether an incremental request ran as this source's
+            first full build, because the source had never been built. The
+            one case in which the operation that ran exceeds the one asked
+            for, so an in-process caller can report both rather than
+            describing a full build as an update.
         drift: Source-drift telemetry for this run: the paths whose source
             moved while the run was recording them and had to be superseded,
             and any left stale for the next generation. Reported so drift
@@ -117,6 +122,7 @@ class IndexResult:
     preprocess_failures: list[str] = field(default_factory=list)
     reuse: dict[str, object] | None = None
     drift: dict[str, object] | None = None
+    first_build: bool = False
 
 
 def _first_h1(body: str) -> str:

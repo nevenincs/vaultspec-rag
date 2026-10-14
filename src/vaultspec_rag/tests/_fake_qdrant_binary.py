@@ -16,8 +16,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..native_binary._install import file_sha256
 from ..qdrant_runtime._constants import BinarySource, ResolvedBinary
-from ..qdrant_runtime._provision import file_sha256
 
 if TYPE_CHECKING:
     from collections.abc import Generator

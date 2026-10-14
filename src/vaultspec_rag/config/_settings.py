@@ -49,11 +49,23 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: The settings keys that are halves of the operator binary, and where each
-#: sits in the pair they are read through.
-_OPERATOR_BINARY_HALVES: dict[str, int] = {
-    "qdrant_binary": OperatorBinary._fields.index("path"),
-    "qdrant_binary_sha256": OperatorBinary._fields.index("sha256"),
+#: The settings keys that are halves of an operator binary: which pair each
+#: is read through, and where it sits in that pair. Two native executables
+#: can be supplied this way, and neither half of either is usable alone.
+_OPERATOR_BINARY_HALVES: dict[str, tuple[str, int]] = {
+    "qdrant_binary": ("qdrant_operator_binary", OperatorBinary._fields.index("path")),
+    "qdrant_binary_sha256": (
+        "qdrant_operator_binary",
+        OperatorBinary._fields.index("sha256"),
+    ),
+    "monitor_binary": (
+        "monitor_operator_binary",
+        OperatorBinary._fields.index("path"),
+    ),
+    "monitor_binary_sha256": (
+        "monitor_operator_binary",
+        OperatorBinary._fields.index("sha256"),
+    ),
 }
 
 
@@ -119,6 +131,26 @@ class VaultSpecConfigWrapper:
         # ``qdrant_operator_binary``, which refuses one without the other.
         "qdrant_binary_sha256": None,
         "qdrant_storage_dir": "~/.vaultspec-rag/qdrant-server/storage",
+        # The monitor executable an operator supplies instead of the one this
+        # release provides, and the SHA256 they declare for it. Never
+        # required: an installation obtains and verifies its own monitor
+        # without either. Read both halves through
+        # ``monitor_operator_binary``, which refuses one without the other.
+        "monitor_binary": None,
+        "monitor_binary_sha256": None,
+        # Where the monitor's per-target release archive is published. The
+        # download URL is ``{base}/{tag}/{archive}``, the layout a generic
+        # mirror preserves, so a mirror is a different base and nothing else.
+        # The digests the download is checked against ship in the package:
+        # this moves where the bytes come from, never which bytes are
+        # accepted.
+        "monitor_release_base_url": "https://github.com/nevenincs/vaultspec-rag/releases/download",
+        # Hosts a redirect may land on while fetching the monitor. The base
+        # URL's own host serves the first request whatever this says.
+        "monitor_download_hosts": (
+            "github.com,release-assets.githubusercontent.com,"
+            "objects.githubusercontent.com"
+        ),
         # Managed qdrant binary provisioning. Starting the service on a host
         # is consent to fetch what the service needs, the binary as much as
         # the model weights, so the switch ships on; turning it off restores
@@ -755,29 +787,74 @@ class VaultSpecConfigWrapper:
             OperatorBinaryPairError: If exactly one of the two is set.
             ValueError: If the digest is set and is not a digest.
         """
-        path = self._resolve_rag_default("qdrant_binary")
-        digest = self._resolve_rag_default("qdrant_binary_sha256")
+        return self._operator_binary(
+            "qdrant_binary", EnvVar.QDRANT_BINARY, EnvVar.QDRANT_BINARY_SHA256
+        )
+
+    @property
+    def monitor_operator_binary(self) -> OperatorBinary | None:
+        """Return the operator-supplied monitor executable and its digest.
+
+        Exists for an operator running a build of their own. It is never
+        required and is never suggested by anything: an installation obtains
+        and verifies its own monitor without it. Enforced as the Qdrant pair
+        is, by the same code and under the same rules.
+
+        Returns:
+            The path and its digest when both are set; ``None`` when neither
+            is, which selects the monitor this release provides.
+
+        Raises:
+            OperatorBinaryPairError: If exactly one of the two is set.
+            ValueError: If the digest is set and is not a digest.
+        """
+        return self._operator_binary(
+            "monitor_binary", EnvVar.MONITOR_BINARY, EnvVar.MONITOR_BINARY_SHA256
+        )
+
+    def _operator_binary(
+        self, key: str, path_var: EnvVar, digest_var: EnvVar
+    ) -> OperatorBinary | None:
+        """Read one operator binary pair, refusing either half on its own.
+
+        One implementation for every executable an operator may supply, so
+        the refusal an operator meets does not depend on which one they set.
+        The message names both variables and says how to produce the digest,
+        because whoever meets it has usually set the path long ago and is
+        seeing the second variable for the first time.
+
+        Args:
+            key: The settings key of the path half; the digest half is that
+                key with ``_sha256``.
+            path_var: The variable naming the file.
+            digest_var: The variable declaring its digest.
+
+        Raises:
+            OperatorBinaryPairError: If exactly one of the two is set.
+            ValueError: If the digest is set and is not a digest.
+        """
+        path = self._resolve_rag_default(key)
+        digest = self._resolve_rag_default(f"{key}_sha256")
         if path is None and digest is None:
             return None
-        path_var = EnvVar.QDRANT_BINARY.value
-        digest_var = EnvVar.QDRANT_BINARY_SHA256.value
+        named = path_var.value
+        declared = digest_var.value
+        together = f"{named} and {declared} must be set together: "
         if digest is None:
             raise OperatorBinaryPairError(
-                f"{path_var} and {digest_var} must be set together: {path_var} "
-                f"names a Qdrant binary but {digest_var} does not declare its "
-                "SHA256, and a binary is never run unverified. Set "
-                f"{digest_var} to the digest printed by 'Get-FileHash "
-                "-Algorithm SHA256 <path>' on Windows, or 'sha256sum <path>' "
-                f"or 'shasum -a 256 <path>' elsewhere; or unset {path_var} to "
-                "use the managed install."
+                f"{together}{named} names an executable but {declared} does "
+                "not declare its SHA256, and an executable is never run "
+                f"unverified. Set {declared} to the digest printed by "
+                "'Get-FileHash -Algorithm SHA256 <path>' on Windows, or "
+                "'sha256sum <path>' or 'shasum -a 256 <path>' elsewhere; or "
+                f"unset {named} to use the managed install."
             )
         if path is None:
             raise OperatorBinaryPairError(
-                f"{path_var} and {digest_var} must be set together: "
-                f"{digest_var} declares a SHA256 but {path_var} names no "
-                f"Qdrant binary for it to verify. Set {path_var} to the "
-                f"absolute path of that binary, or unset {digest_var} to use "
-                "the managed install."
+                f"{together}{declared} declares a SHA256 but {named} names no "
+                f"executable for it to verify. Set {named} to the absolute "
+                f"path of that executable, or unset {declared} to use the "
+                "managed install."
             )
         return OperatorBinary(path=str(path), sha256=str(digest))
 
@@ -1085,6 +1162,7 @@ class VaultSpecConfigWrapper:
             self._watch_policy_relations,
             lambda: self.document_chunk_overlap_chars,
             lambda: self.qdrant_operator_binary,
+            lambda: self.monitor_operator_binary,
             # The kill switch carries no settings key of its own, so the
             # per-key sweep above never reaches it. Resolving it here is what
             # puts a mistyped switch in the same collective report as every
@@ -1232,10 +1310,14 @@ class VaultSpecConfigWrapper:
     qdrant_port: int
     qdrant_binary: str | None
     qdrant_binary_sha256: str | None
+    monitor_binary: str | None
+    monitor_binary_sha256: str | None
     qdrant_storage_dir: str
     qdrant_auto_provision: bool
     qdrant_release_base_url: str
     qdrant_download_hosts: frozenset[str]
+    monitor_release_base_url: str
+    monitor_download_hosts: frozenset[str]
     storage_autoprune: bool
     storage_autoprune_interval_minutes: float
     storage_autoprune_grace_hours: float
@@ -1364,9 +1446,10 @@ class VaultSpecConfigWrapper:
         # no read of either key can hand back a path whose digest is missing.
         # The generic resolution below would, for a configuration built
         # before the environment changed.
-        half = _OPERATOR_BINARY_HALVES.get(name)
-        if half is not None:
-            pair = self.qdrant_operator_binary
+        through = _OPERATOR_BINARY_HALVES.get(name)
+        if through is not None:
+            pair_name, half = through
+            pair = cast("OperatorBinary | None", getattr(self, pair_name))
             return None if pair is None else pair[half]
 
         if name in self._RAG_DEFAULTS:

@@ -91,7 +91,11 @@ class TorchConfigAction(StrEnum):
         APPLIED: cu130 block was just written.
         ALREADY: pyproject is already canonical; nothing to write.
         CONFLICT: a non-canonical cu130 block exists; refused to mutate.
-        ABSENT: no pyproject.toml at the target.
+        ABSENT: there is no project configuration of this installation's
+            torch to speak of - no pyproject.toml at the target, or an
+            installation uv resolves torch for (a tool or uvx environment),
+            which no project declaration reaches. Nothing was inspected and
+            nothing is reported for it: a normal state, not a missing file.
         REMOVED: cu130 block was just removed (uninstall side only).
         DISABLED: ``configure_torch=False`` opted out.
         NOT_APPLICABLE: the installation is a client (no ``gpu`` extra),

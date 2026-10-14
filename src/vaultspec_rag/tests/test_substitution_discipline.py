@@ -83,6 +83,21 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "many times the underlying method actually runs; the real "
         "classification and checkpoint logic execute unchanged on every call",
     ),
+    "test_service_runtime.py": (
+        4,
+        "the three inputs of creating the service's own GPU environment, each "
+        "staged where it is produced and nowhere else: the uv subprocess, "
+        "which would download several gigabytes per test; the origin of the "
+        "launching distribution, which in this checkout is a working tree the "
+        "runtime refuses to reproduce, so no test of what happens afterwards "
+        "could run at all; and the wait for the build lock, shortened so the "
+        "contended case does not sit for twenty seconds. The filesystem, the "
+        "lock, the staging directory, the rename, the completion record and "
+        "the judgement are all real throughout - the judgement through the "
+        "suite's own pinned child-probe answer - and the integration test in "
+        "the same module creates a runtime with the real uv from a wheel built "
+        "out of this checkout, with nothing staged but that origin",
+    ),
     "test_search_conformance_refusal.py": (
         1,
         "the model-free count path a registry exposes never checks storage "
@@ -303,13 +318,36 @@ _ALLOWED: dict[str, tuple[int, str]] = {
     # the declared-sites check; exact restoration passed.
     "test_program_lookup_sites.py": (
         1,
-        "points the running program's recorded location at a temporary "
-        "directory, because the lookup finds what ships beside this "
-        "installation's own programs by asking where the running program is, "
-        "and that cannot be anywhere but the real environment without building "
-        "a second installation; planting a monitor in the real one would "
-        "change the machine the tests run on. The lookup, the planted file, "
-        "the search path and the resolution under test are all real",
+        "states the release digests that admit a monitor, because a checkout "
+        "carries none until it has compiled one and this guard is about where "
+        "a program is looked for, not about whether this machine built one. "
+        "The managed install, the planted programs, the search state, the "
+        "resolution and the process creation under test are all real",
+    ),
+    "test_monitor_pins.py": (
+        1,
+        "answers the distribution lookup with a metadata directory the test "
+        "wrote, because what is under test is how an installation's own "
+        "direct-URL record decides which pins it may accept, and this "
+        "installation has exactly one such record; reinstalling this package "
+        "four ways is not something a unit test can do. The record is a real "
+        "file read by the real metadata reader, and the judgement over this "
+        "checkout's own installation is asserted beside it without any "
+        "substitution",
+    ),
+    # Reducing this bound to two failed count growth; raising it to four failed
+    # the declared-sites check; exact restoration passed.
+    "test_monitor_resolution.py": (
+        3,
+        "two sites stand in for the directories this installation's own "
+        "programs are in - all of them, and the scripts directory alone - "
+        "because resolution looks beside the running program, which cannot be "
+        "anywhere but the real environment without building a second "
+        "installation, and planting a monitor in the real one would change "
+        "the machine the tests run on. The third states the release digests "
+        "for the one case that has no monitor installed at all, so the "
+        "launcher's refusal is reached on a checkout that built one too. "
+        "Every file, directory, digest and resolution step is real",
     ),
     "test_publication_scaling.py": (
         1,
@@ -507,12 +545,34 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "that it could not tell - indistinguishable, to an assertion about "
         "content, from finding no holder",
     ),
+    "test_runtime_aware_surfaces.py": (
+        1,
+        "redirects the daemon interpreter at a purpose-built tool "
+        "installation, because the line under test is about an installation "
+        "with a receipt that records no CUDA source, and the interpreter "
+        "running the suite has no receipt to give it one. Everything else is "
+        "the real resolver, the real runtime directory and the real verbs; "
+        "what a child interpreter can do comes from the suite's own pinned "
+        "answer, which is what lets one machine reach both the launcher that "
+        "serves and the launcher that cannot",
+    ),
+    "test_one_cause_one_command.py": (
+        1,
+        "stands this process's interpreter inside a purpose-built uv tool "
+        "environment, because which kind of environment the suite itself runs "
+        "from is a property of the runner, and both answers have to be "
+        "reached: reporting a tool host as a client installation is the "
+        "defect under test, and the project host must keep its torch row. "
+        "Only the interpreter's location is substituted - the real "
+        "classifier, the real torch gate and the real renderer run on it",
+    ),
     "test_doctor_repair_and_holders.py": (
-        16,
+        14,
         "substitutes the interpreter probe, the daemon interpreter and the "
         "holder scan across three cases. The probe starts a child "
-        "interpreter and imports torch in it, so a CPU-only build cannot be "
-        "provoked on a GPU host and the defect branch would never run. The "
+        "interpreter and imports torch in it, so an environment that can "
+        "serve cannot be provoked on a runner without a GPU and the rows "
+        "under test would describe the wrong plan. The "
         "daemon interpreter is redirected at a purpose-built environment "
         "because the point of the assertion is that the verb asks about that "
         "environment rather than its own, which is untestable while the two "
@@ -602,7 +662,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "be",
     ),
     "conftest.py": (
-        4,
+        6,
         "install's torch and provisioning steps and the release-mismatch advice "
         "all branch on whether this is a host or a client installation, and the "
         "role is read from the distributions the running interpreter holds. The "
@@ -621,7 +681,18 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "because the machine's own anchors may be held by a live service, a "
         "test must never contend for them, and an ownership claim outlives "
         "the test that took it; only their location is substituted, and "
-        "claiming, lending and refusing run unchanged",
+        "claiming, lending and refusing run unchanged. The machine's own "
+        "accelerator is pinned the same way and for the same reason as the "
+        "two readings above: whether anything on this machine can run the "
+        "service decides whether an environment that cannot run it itself is "
+        "still provisioned for, and no test can give a runner a GPU or take "
+        "one away from a workstation; the reading alone is replaced, and it "
+        "is exercised against the real machine in the hardware tests. The "
+        "last site states that this installation carries no monitor digests, "
+        "for the cases about having no monitor at all: a checkout that "
+        "compiled one carries digests and has it installed, and no test can "
+        "unbuild it, so the one fact is stated and everything the readers do "
+        "with it runs unchanged",
     ),
     "test_server.py": (
         5,
@@ -797,6 +868,16 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "durable-publish boundary, which cannot be induced on a real filesystem "
         "on demand; the actual publication, checkpoint and readiness-wake code "
         "under test runs unchanged in every case",
+    ),
+    "test_first_build_admission.py": (
+        1,
+        "one site makes the publication read raise an error outside the set "
+        "admission accounts for. The run ledger converts every corruption a "
+        "real file can carry into its own typed failure, so no file reaches "
+        "the catch-all that keeps such an error from failing an HTTP request "
+        "for every domain; the classification, escalation and refusal under "
+        "test run unchanged, and every other reading in this file is taken "
+        "against a real ledger and a real store",
     ),
     "test_process_termination.py": (
         19,

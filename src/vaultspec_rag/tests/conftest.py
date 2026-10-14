@@ -29,7 +29,11 @@ from vaultspec_core.config import (
 from ..config._settings import VaultSpecConfigWrapper as VaultSpecConfig
 from ..config._settings import get_config
 from ..config._types import EnvVar
-from ..operator_state._installation import ComputeCapability, InstallRole
+from ..operator_state._installation import (
+    ComputeCapability,
+    HardwarePresence,
+    InstallRole,
+)
 from ..progress import NullProgressReporter
 from ._committed_pins import pin_table_drift
 from ._config_fixtures import reset_config as reset_rag_config
@@ -301,6 +305,92 @@ def pin_daemon_capability(
         )
 
     monkeypatch.setattr(_environment_probe, "probe_interpreter", answer)
+
+
+def pin_hardware_presence(
+    monkeypatch: pytest.MonkeyPatch, presence: HardwarePresence
+) -> None:
+    """Substitute which accelerator this machine has.
+
+    The third machine fact the suite cannot change, beside the installation
+    role and what the daemon interpreter can do. Whether anything on this
+    machine can run the service decides whether an environment that cannot
+    run it itself is still provisioned for - the managed runtime would serve
+    it - and neither lane can be made into the other: a GPU workstation always
+    answers that it has one and an accelerator-free runner never does. Only
+    the reading is replaced; every consumer of it runs unchanged, and the
+    reading itself is exercised against this machine in the hardware tests.
+    """
+    from ..operator_state import _hardware
+    from ..operator_state._models import HardwareReading
+
+    monkeypatch.setattr(
+        _hardware, "read_hardware", lambda: HardwareReading(presence=presence)
+    )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def stand_in_monitor(tmp_path_factory: pytest.TempPathFactory) -> Generator[Path]:
+    """Stage a monitor for the session, named through the operator settings.
+
+    Every host start and every install now provisions a monitor, as each
+    provisions model files and a server binary. The monitor a release
+    provides is fetched from a release source no unit test contacts, and a
+    checkout has digests to admit one only once it has compiled one here. The
+    operator settings are the supported way to name an executable that
+    exists, so the session names one of its own and those runs find a monitor
+    already in place and verify it, identically on a checkout that built one
+    and on a checkout that did not.
+
+    Staged for the session, like the managed directories themselves. A test
+    about the monitor clears both settings for its own block, which is what
+    puts the release's own resolution back in play.
+
+    Yields:
+        The executable named.
+    """
+    import hashlib
+
+    from ..config._types import EnvVar
+
+    monitor = tmp_path_factory.mktemp("monitor") / "vaultspec-rag-monitor"
+    monitor.write_bytes(b"#!a stand-in monitor" * 32)
+    with managed_env(
+        **{
+            EnvVar.MONITOR_BINARY.value: str(monitor),
+            EnvVar.MONITOR_BINARY_SHA256.value: hashlib.sha256(
+                monitor.read_bytes()
+            ).hexdigest(),
+        }
+    ):
+        yield monitor
+
+
+@pytest.fixture
+def unpinned_installation(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
+    """An installation that can admit no monitor at all, stated rather than had.
+
+    A checkout that compiled its own monitor carries digests for it and has
+    it installed, so a case about having none cannot inherit that from
+    whatever this working copy last built. What is staged is the one fact:
+    the reader finds no generated digests. It then does everything it
+    normally does with that, so the code and the message a caller meets here
+    are the ones an installation without digests meets. The session's
+    stand-in is cleared with it, or it would answer first.
+
+    Yields:
+        Nothing; both are staged for the test's own block.
+    """
+    from ..monitor_runtime import _pins
+
+    monkeypatch.setattr(_pins, "_generated_pins", lambda: None)
+    with managed_env(
+        **{
+            EnvVar.MONITOR_BINARY.value: None,
+            EnvVar.MONITOR_BINARY_SHA256.value: None,
+        }
+    ):
+        yield
 
 
 @pytest.fixture

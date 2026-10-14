@@ -251,7 +251,7 @@ class TestAHostStartWithNoServer:
         assert exit_code is None
         reported = progress.getvalue()
         assert "Downloading the Qdrant server" in reported
-        assert "Verifying the Qdrant download checksum" in reported
+        assert "Verifying the Qdrant server download checksum" in reported
 
     def test_a_second_start_downloads_nothing(self, release: ServedRelease) -> None:
         """An install that is already the pinned release is left as it is."""

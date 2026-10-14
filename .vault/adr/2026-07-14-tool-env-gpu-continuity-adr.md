@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#tool-env-gpu-continuity'
 date: '2026-07-14'
-modified: '2026-09-23'
-body_hash: 'sha256:75b441bb4af67c597f9add10a47afd5ff9ac305a5ed7e4340c17e13bd5f00e6f'
+modified: '2026-10-13'
+body_hash: 'sha256:48304e5b2abf63db7ddd6d7e2a4afa6fefe9e78c784825924121e74aad657f16'
 related:
   - '[[2026-07-14-tool-env-gpu-continuity-research]]'
   - '[[2026-09-01-tool-mode-cuda-research]]'
@@ -77,6 +77,8 @@ already exists but is underdiscoverable). Grounded in
   `sys.prefix` path shape; `server start` and the refusal warn loudly on
   uvx-ephemeral, naming the installed-tool path and that a locked forced reinstall
   means the running service must be stopped first.
+  Amended 2026-10-13 by `2026-10-13-service-runtime-adr`: a uvx cache environment
+  never serves a daemon, so the ephemeral warning is retired; the classifier stays.
 - **O-C2 - refuse to start from an ephemeral env.** Rejected: uvx-without-install is
   a legitimate flow; a healthy ephemeral env that passes the CUDA pre-flight may run.
   The warning plus the pre-flight refusal (when CPU-only) covers the harmful case.
@@ -100,7 +102,8 @@ already exists but is underdiscoverable). Grounded in
   emitted/ documented command strings must be derived from one constant surface so a
   CUDA bump updates them together (no scattered literals).
 - Env classification must be pure path logic on `sys.prefix`/`UV_TOOL_DIR`/
-  `UV_CACHE_DIR` shapes - no `uv` subprocess on the start path - and must live where
+  `UV_CACHE_DIR` shapes - no `uv` subprocess on the start path (except managed
+  runtime creation, `2026-10-13-service-runtime-adr`) - and must live where
   service call paths can reach it without importing torch
   (`torch-loads-through-centralized-gpu-gate`).
 - The sidecar `warming` stamp is written by the daemon process only; the CLI parent
@@ -197,6 +200,8 @@ premise was partially wrong (F5) - so the fix is discoverability only.
   CPU-only or absent must print copy-paste remediation for the *resolved* interpreter
   and environment kind - the immediate repair and the durable re-install form - never
   a pointer at another command that cannot repair that environment.
+  Narrowed 2026-10-13 by `2026-10-13-service-runtime-adr`: one cause and at most one
+  command, built for the resolved environment and platform.
 
   *(Candidate only - promoted after the constraint has held across at least one full
   execution cycle, per the codify discipline.)*

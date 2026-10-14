@@ -23,23 +23,35 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import threading
+import time
 from typing import TYPE_CHECKING
 
 import pytest
 
-from .._process_probe import _windows_image_matches
+from .._process_probe import _windows_image_matches, pid_image_path
 from .._python_child import inline_command
 from ..commands._mcp_topology import _restore_junction
 from ..commands._models import InstallReport
 from ..commands._tool_torch import _run_repair
 from ..commands._uv_sync import _run_uv_sync_torch
 from ..config._types import EnvVar
-from ..monitor_process import MonitorProcess, _resolve_monitor_executable
+from ..monitor_process import MonitorProcess
+from ..monitor_runtime._assets import (
+    MONITOR_PROGRAM,
+    monitor_archive_name,
+    monitor_executable_name,
+)
+from ..monitor_runtime._pins import MonitorPin, PinProvenance
+from ..monitor_runtime._resolve import managed_monitor_path, monitor_for_launch
+from ..native_binary._install import file_sha256
+from ..native_binary._targets import host_target
 from ..operator_state._hardware import read_hardware
 from ..qdrant_runtime._resolve import reap_qdrant_orphan
 from ._planted_programs import (
     plant_marking_program,
     plant_native_program,
+    plant_waiting_program,
     stock_search_state,
 )
 from ._ports import free_loopback_port
@@ -77,6 +89,41 @@ def fresh_hardware_reading() -> Generator[None]:
         yield
     finally:
         read_hardware.cache_clear()
+
+
+def _install_managed_monitor() -> tuple[Path, MonitorPin]:
+    """Install a program where a release's managed monitor install belongs.
+
+    The managed directory is machine-wide and keyed by release and target
+    alone, so it is the one place every environment of a release resolves
+    through - the managed service runtime's interpreter included, which has
+    no monitor of its own beside it.
+
+    The program is a stock one that outlives its start and answers nothing:
+    what is under test is which file a process is created from. The pin is
+    built from the bytes installed, as a release's pin is built from the
+    bytes it published.
+
+    Returns:
+        The installed executable and the pin that admits it.
+    """
+    target = host_target()
+    version = "9.9.9"
+    directory = managed_monitor_path(version, target).parent
+    directory.mkdir(parents=True, exist_ok=True)
+    installed = plant_waiting_program(directory, MONITOR_PROGRAM)
+    pin = MonitorPin(
+        provenance=PinProvenance.DEVELOPMENT,
+        version=version,
+        tag="",
+        target=target,
+        archive_name=monitor_archive_name(version, target),
+        archive_sha256="0" * 64,
+        executable_name=monitor_executable_name(target),
+        executable_sha256=file_sha256(installed),
+    )
+    assert installed == managed_monitor_path(pin.version, pin.target)
+    return installed, pin
 
 
 def test_status_does_not_run_a_driver_tool_from_the_working_directory(
@@ -139,46 +186,90 @@ def test_install_sync_does_not_run_a_uv_from_the_working_directory(
 
 
 def test_the_monitor_is_not_started_from_the_working_directory(
-    checkout: Path, isolated_singleton_dirs: Path
+    checkout: Path, isolated_singleton_dirs: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Starting the monitor finds none rather than the checkout's.
+    """The monitor that starts is the file resolution named, not the plant.
 
-    The monitor is started on every service start. Shown to fail by
-    resolving it with the standard lookup again: the planted program is
-    started as the monitor and the first assertion fires. Passes with the
-    lookup restored.
+    The monitor is started on every service start, and what admits one is a
+    digest, so a program of the right name proves nothing. This drives the
+    real start against a real managed install - the tier a daemon started
+    from the managed service runtime always resolves through, because the
+    runtime's own interpreter has no monitor beside it - and asserts the
+    image the started process was created from. The plants are both shapes a
+    lookup could answer with: a command script, which the standard lookup
+    finds through ``PATHEXT``, and a native program, which a bare name handed
+    to process creation starts.
+
+    The installed monitor is a stock program that outlives its start and
+    answers nothing, so the start ends at the wait for readiness. That is
+    after process creation, which is what is under test: which file a
+    process was created from is settled the moment the process exists, and
+    the image is read while it is alive. What a real monitor then does is the
+    lifecycle tests' subject.
+
+    Mutation: replaced the resolved path with the bare program name in the
+    start's argument vector and dropped ``executable`` from it, which is the
+    lookup this site used to make. Observed this test fail on the image
+    assertion, naming the working directory's planted program as what was
+    started. Restored; passes.
     """
     del isolated_singleton_dirs
     ran = plant_marking_program(checkout, "vaultspec-rag-monitor")
+    planted = plant_waiting_program(checkout, "vaultspec-rag-monitor")
+    installed, pin = _install_managed_monitor()
+    monitor = MonitorProcess(free_loopback_port())
 
-    with (
-        managed_env(**{EnvVar.MONITOR_BINARY.value: None}),
-        pytest.raises(RuntimeError) as refused,
+    with managed_env(
+        **{
+            EnvVar.MONITOR_BINARY.value: None,
+            EnvVar.MONITOR_BINARY_SHA256.value: None,
+        }
     ):
-        MonitorProcess(free_loopback_port()).start(timeout=20)
+        # The digests of a release are what admit a monitor, and this
+        # checkout carries none until it compiles one. They are the test's
+        # stated input so that where the resolver looks, and what it admits,
+        # are production's throughout; the install above is a real file in
+        # the real managed directory.
+        monkeypatch.setattr(
+            "vaultspec_rag.monitor_runtime._resolve.monitor_pin", lambda _target: pin
+        )
+        # Resolution is production's, and its answer is what the started
+        # process is held to below.
+        resolved = monitor_for_launch()
+        assert resolved.path == installed
+        images: list[str | None] = []
+        done = threading.Event()
 
+        def read_the_image() -> None:
+            """Read the image of whatever the start creates, while it lives."""
+            while not done.is_set():
+                started = monitor.process
+                if started is not None:
+                    images.append(pid_image_path(started.pid))
+                    return
+                time.sleep(0.005)
+
+        reader = threading.Thread(target=read_the_image, name="started-image")
+        reader.start()
+        refused: Exception | None = None
+        try:
+            monitor.start(timeout=3)
+        except Exception as exc:  # reported below, after the guard's own answer
+            refused = exc
+        finally:
+            done.set()
+            reader.join(timeout=10)
+            monitor.stop()
+
+    assert images and images[0] is not None, "nothing started could be identified"
+    assert os.path.normcase(images[0]) == os.path.normcase(str(resolved.path)), (
+        f"{images[0]} was started; {resolved.path} was resolved"
+    )
+    assert os.path.normcase(images[0]) != os.path.normcase(str(planted))
     assert not ran.exists(), "the working directory's monitor was started"
-    assert "executable is required" in str(refused.value)
-
-
-def test_a_monitor_beside_the_installation_is_found_without_path(
-    checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The monitor that ships beside this package's commands needs no ``PATH``.
-
-    The running program is stood in for by a directory of its own, so the
-    test plants nothing in the real environment.
-    """
-    plant_marking_program(checkout, "vaultspec-rag-monitor")
-    bundle = tmp_path / "bundle"
-    bundle.mkdir()
-    plant_marking_program(bundle, "vaultspec-rag-monitor")
-    monkeypatch.setattr(sys, "executable", str(bundle / "vaultspec-rag"))
-
-    with managed_env(**{EnvVar.MONITOR_BINARY.value: None}):
-        resolved = _resolve_monitor_executable()
-
-    assert resolved.parent == bundle.resolve()
+    # The stand-in answers no page, so the start can only end at the wait.
+    assert refused is not None
+    assert "ready" in str(refused), refused
 
 
 @_windows_only

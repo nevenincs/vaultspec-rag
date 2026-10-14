@@ -90,9 +90,10 @@ def record_qdrant_provisioning(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         was reached - or, for a command that must not provision, that it never
         was.
     """
+    from ..native_binary._download import no_progress
+    from ..native_binary._report import ProvisionReport
     from ..qdrant_runtime import _provision as _provision_module
-    from ..qdrant_runtime._constants import ProvisionReport
-    from ..qdrant_runtime._download import no_progress
+    from ..qdrant_runtime._constants import QDRANT_SERVER_VERSION
 
     calls: list[str] = []
 
@@ -110,7 +111,11 @@ def record_qdrant_provisioning(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         del upgrade, dry_run, archive
         calls.append("provision")
         on_progress("Downloading the Qdrant server (release archive)...")
-        return ProvisionReport(action=ProvisionAction.FAILED, message=RECORDED_FAILURE)
+        return ProvisionReport(
+            action=ProvisionAction.FAILED,
+            version=QDRANT_SERVER_VERSION,
+            message=RECORDED_FAILURE,
+        )
 
     monkeypatch.setattr(_provision_module, "provision", _provision)
     return calls

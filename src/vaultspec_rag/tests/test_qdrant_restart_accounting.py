@@ -21,10 +21,10 @@ import pytest
 
 from .._readiness import ReadinessStatus, compute_readiness
 from ..config._types import EnvVar
+from ..native_binary._install import file_sha256
 from ..operator_state._installation import ComputeCapability
 from ..operator_state._models import ComputeReport
 from ..qdrant_runtime._constants import BinarySource, ResolvedBinary
-from ..qdrant_runtime._provision import file_sha256
 from ..qdrant_runtime._supervise import (
     QdrantSupervisor,
     active_supervisor,

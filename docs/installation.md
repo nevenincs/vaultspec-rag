@@ -19,50 +19,49 @@ GPU is required, and the [glossary](glossary.md) defines the terms this guide us
 
 Every machine that uses vaultspec-rag runs one background [service](glossary.md#service).
 The service runs the search models on the GPU, and the `vaultspec-rag server` commands
-control it. Two kinds of installation work with it:
+control it. None of the routes below carry GPU packages at install time; the first
+`vaultspec-rag server start` puts them wherever they belong.
 
-- A [host installation](glossary.md#host-installation) carries the `gpu` extra. It runs
-  the models and is the only kind of installation that can start the service.
-- A [client installation](glossary.md#client-installation) carries no `gpu` extra. It
-  loads no models and sends every request to the service a host installation started.
+- [Install as a standalone tool](#install-as-a-standalone-tool) by default. One
+  installation serves every repository on the machine, in any language.
+- [Add a client to a Python project](#add-a-client-to-a-python-project) when one Python
+  project should list vaultspec-rag as a dependency instead.
+- [Install a prebuilt binary](#install-a-prebuilt-binary) when the machine has no Python
+  toolchain. A binary always carries its own GPU packages.
 
-Run every installation under the same user account. A client can't reach a service
-that another account started.
+Run every installation under the same user account as the service: a client that talks
+to a service another account started can't reach it.
 
 Find out where this machine stands:
 
 - If the `vaultspec-rag` command isn't found, and no project on this machine depends on
-  `vaultspec-rag[gpu]`, no host installation exists yet.
-  [Set up a host installation](#set-up-a-host-installation).
+  it, nothing is installed yet. [Install vaultspec-rag](#install-vaultspec-rag).
 - If `vaultspec-rag server status` reports the service stopped, don't reinstall. Start
-  the service from the host installation with `vaultspec-rag server start`.
+  it with `vaultspec-rag server start`.
 - If `vaultspec-rag server status` reports the service running,
-  [set up each repository](#set-up-each-repository) from the host installation.
+  [set up each repository](#set-up-each-repository).
 
-Choose where the host installation lives:
+To carry the GPU packages in the installation itself instead of letting `server start`
+build them separately - a [host installation](glossary.md#host-installation) - see
+[carry the GPU packages in the tool itself](#carry-the-gpu-packages-in-the-tool-itself).
+The [package table](#packages-and-what-they-can-run) lists what each package can run.
 
-- [Install as a standalone tool](#install-as-a-standalone-tool) by default. One
-  installation serves every repository on the machine, in any language.
-- [Install as a project dependency](#install-as-a-project-dependency) when one Python
-  project's environment should run the service.
-- [Install a prebuilt binary](#install-a-prebuilt-binary) when the machine has no Python
-  toolchain.
-
-If a Python project managed with uv must list vaultspec-rag without GPU packages,
-[add a client](#add-a-client-to-a-python-project) to it. Collaborators' AI assistants
-then launch the search tools from the project's environment. Every collaborator still
-needs their own host installation, running exactly the release the project pins. The
-[package table](#packages-and-what-they-can-run) lists what each package can run.
-
-## Set up a host installation
+## Install vaultspec-rag
 
 ### What you need before you start
 
 - A supported GPU. On Linux and Windows, install an NVIDIA driver that supports CUDA 13.
-  On macOS, the system provides the driver.
+  On macOS, the system provides the driver. Without one, `vaultspec-rag install` and
+  `server start` still run, but `server start` has no GPU to put the service on and
+  refuses; see [when something goes wrong](#when-something-goes-wrong).
 - The system memory (RAM), disk, and GPU memory of a resource profile, from the
   following table.
-- Several gigabytes of free disk for the model download, which every repository shares.
+- Several gigabytes of free disk: the model download, which every repository shares, and,
+  unless this installation carries the GPU packages itself, the GPU environment the first
+  `server start` builds.
+- [uv](https://docs.astral.sh/uv/getting-started/installation/). It installs vaultspec-rag,
+  manages the Python interpreter the standalone tool and the GPU environment use, and
+  needs no separate CPython install.
 - Network access to the Python Package Index (PyPI), the PyTorch download server
   (`download.pytorch.org`) on Windows and Linux, the Hugging Face model server, and
   GitHub release downloads. A site that mirrors the models or the Qdrant release names
@@ -88,8 +87,8 @@ environment that starts the service. Setting it only in a client's shell doesn't
 configure the service. While the service runs, `vaultspec-rag status --verbose` shows
 the profile it uses and its corpus limits.
 
-The Python routes also need [uv](https://docs.astral.sh/uv/getting-started/installation/)
-and CPython 3.13 or 3.14. A prebuilt binary needs neither.
+A project adding vaultspec-rag as a client dependency also needs a `requires-python`
+that allows 3.13 or 3.14. A prebuilt binary needs neither uv nor a project file.
 
 ### Confirm your GPU is visible
 
@@ -137,14 +136,40 @@ reference.
 
 ### Install as a standalone tool
 
-Choose this route by default. The following commands install the host and the Model
-Context Protocol (MCP) adapter that AI assistants launch. The service itself needs only
-the `gpu` extra. The `mcp` extra is there so an assistant's adapter runs from this same
-installation, at the service's release: in `tool` mode the assistant launches
+Choose this route by default. One installation serves every repository on the machine,
+in any language:
+
+```bash
+uv tool install "vaultspec-rag[mcp]"
+```
+
+This installs the command line and the Model Context Protocol (MCP) adapter your AI
+assistant launches: in `tool` mode the assistant launches
 `uvx --from "vaultspec-rag[mcp]" python -m vaultspec_rag.server`, and `uvx` reuses the
-installed tool instead of fetching another copy. The Windows and Linux command
-records the CUDA package index and its resolution strategy in the tool's installation
-receipt, which uv re-applies on every later upgrade, so the GPU build survives them.
+installed tool instead of fetching another copy. It carries no GPU packages. The first
+`vaultspec-rag server start` in each repository builds a separate environment for the
+service, with the CUDA build of PyTorch, under the service's own managed directory, and
+runs the daemon from there. That build runs once per release and takes a few minutes;
+later starts and later repositories reuse it, and an upgrade's first start replaces it.
+
+If uv reports its executables directory isn't on your `PATH`, run `uv tool update-shell`
+and open a new terminal.
+
+Run every later command as `vaultspec-rag`. Continue with
+[set up each repository](#set-up-each-repository).
+
+To try vaultspec-rag without installing anything, run `uvx vaultspec-rag server start`
+instead. It builds the same service environment, but fetches the `vaultspec-rag` command
+itself afresh on every invocation, which is slower for repeated use than the standalone
+tool.
+
+<p id="carry-the-gpu-packages-in-the-tool-itself"></p>
+
+#### Carry the GPU packages in the tool itself
+
+Choose this instead of the default when one environment should hold both the command
+line and the GPU packages, with no separate environment for `server start` to build - for
+example, on a machine with no network access once the install is done.
 
 Windows x86-64, Linux x86-64 and Linux aarch64 (glibc 2.28 or newer):
 
@@ -158,50 +183,17 @@ Apple silicon macOS, which uses Metal rather than CUDA:
 uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]"
 ```
 
-Both options are needed. The index alone leaves the request unsatisfiable, because the
-CUDA index mirrors packages this one depends on at versions it cannot use and uv's
-default strategy forbids falling through to PyPI. Choose a Python version your platform
-has a CUDA build for; PyTorch publishes them for Windows x86-64 and Linux x86-64 and
-aarch64 only. An installation made without the two options is repaired in place by
-[pin the GPU build](#pin-the-gpu-build). If uv reports its executables directory isn't
-on your `PATH`, run `uv tool update-shell` and open a new terminal.
+Both options are needed on Windows and Linux. The index alone leaves the request
+unsatisfiable, because the CUDA index mirrors packages this one depends on at versions it
+cannot use and uv's default strategy forbids falling through to PyPI. Choose a Python
+version your platform has a CUDA build for; PyTorch publishes them for Windows x86-64 and
+Linux x86-64 and aarch64 only. The command records the CUDA package index and its
+resolution strategy in the tool's installation receipt, which uv re-applies on every
+later upgrade, so the GPU build survives them. An installation made without the two
+options is repaired in place by [pin the GPU build](#pin-the-gpu-build).
 
 Run every later command as `vaultspec-rag`. Continue with
 [set up each repository](#set-up-each-repository).
-
-<p id="adding-it-to-a-project"></p>
-
-### Install as a project dependency
-
-Choose this route when one Python project's environment should run the service, and
-collaborators share its pinned version.
-
-Configure the CUDA build of PyTorch before you add the package. Otherwise the first
-`uv add` installs PyPI's `torch`, which is CPU-only on Windows. Add this block to the
-project's `pyproject.toml`; it's the same block the repository setup writes:
-
-```toml
-[[tool.uv.index]]
-name = "pytorch-cu130"
-url = "https://download.pytorch.org/whl/cu130"
-explicit = true
-
-[tool.uv.sources]
-torch = [
-    {index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'"},
-]
-```
-
-Then, from the project root, add vaultspec-rag together with `torch` as a direct
-dependency, because uv applies a package source only to direct dependencies:
-
-```bash
-uv add "vaultspec-rag[gpu,mcp]" "torch>=2.4"
-```
-
-Linux and Windows get the CUDA build, and Apple silicon gets the standard build, which
-uses Metal. Run every later command as `uv run vaultspec-rag` from the project root, and
-continue with [set up each repository](#set-up-each-repository).
 
 <p id="install-without-python"></p>
 <p id="installing-a-prebuilt-binary"></p>
@@ -299,7 +291,7 @@ To check each extracted file against the archive's manifest, see the
 
 #### Open the monitor
 
-After adding the extracted directory to your `PATH`, run:
+The service starts the monitor for you. To look at it on its own, run:
 
 ```sh
 vaultspec-rag-monitor --port 5420
@@ -341,59 +333,43 @@ every later step apply to a binary too.
 
 Run the repository setup once in the root of every repository you want to search. The
 command is named `install`, but it sets up that repository rather than reinstalling the
-package.
-
-If the host installation is a standalone tool or a prebuilt binary, add
-`--no-torch-config`. The installation already carries its PyTorch, and the PyTorch
-step only edits the repository's own `pyproject.toml`:
+package:
 
 ```sh
-vaultspec-rag install --no-torch-config
+vaultspec-rag install
 ```
 
-If the host installation is a dependency of this project, run the setup through the
-project:
+A standalone tool, `uvx`, or prebuilt binary installation has no project of its own to
+patch and runs this with no prompt. vaultspec-rag can also run from a project's own
+environment instead: [a client dependency](#add-a-client-to-a-python-project), or a
+self-contained GPU tool pointed at a repository that happens to have a `pyproject.toml`.
+When that file has no CUDA torch index yet, the setup asks to add one; answer `y`, or
+pass `--yes` for an unattended run. `--force` overwrites existing files but never
+answers this prompt; only `--yes` does. A run with nobody to answer it, such as CI, a
+non-TTY session, or `--json`, never prompts: it skips the patch, reports the skip, and
+exits non-zero, so the gap is visible rather than silent. If the detection is wrong,
+correct it with `--mode`; see the [install command reference](cli.md#install).
 
-1. Run the setup. With the CUDA source from
-   [Install as a project dependency](#install-as-a-project-dependency) already in
-   `pyproject.toml`, its PyTorch step has nothing to change. If the source is missing,
-   the setup asks to add it; answer `y`, or pass `--yes` for an unattended run. On
-   Windows, declining leaves PyPI's CPU-only PyTorch, which can't run the service.
-
-   ```sh
-   uv run vaultspec-rag install
-   ```
-
-   `--force` overwrites existing files but never answers this prompt; only `--yes`
-   does. A run with nobody to answer it, such as CI, a non-TTY session, or `--json`,
-   never prompts. It skips the patch, reports the skip, and exits non-zero, so the gap
-   is visible rather than silent.
-
-   The setup also asks you to approve the MCP server launch it would enroll, and
-   `--yes` does not answer that question: approval needs a person who has read the
-   command, or an approval granted beforehand. Without
-   one, the setup completes and leaves the server unenrolled. See
-   [Install the MCP server](mcp.md#install-the-mcp-server).
-
-1. Sync the environment, so any source or extra the setup added takes effect:
-
-   ```sh
-   uv sync
-   ```
+The setup also asks you to approve the MCP server launch it would enroll, and `--yes`
+does not answer that question: approval needs a person who has read the command, or a
+approval granted beforehand. Without one, the setup
+completes and leaves the server unenrolled. See
+[Install the MCP server](mcp.md#install-the-mcp-server).
 
 The repository setup does three things:
 
 - Adds the AI assistant integration: a rule, a skill, and the MCP server entry your
   assistant launches. See [MCP integration](mcp.md).
 - Creates the `.vault/` folder if it's missing.
-- On the first host repository, when the service environment is ready and managed
-  Qdrant is selected, setup downloads the search models and the Qdrant server binary.
-  Local-only mode skips the Qdrant download. A host whose PyTorch build cannot run the
-  service yet skips these downloads; the first host `server start` fetches what its
-  selected backend needs after the environment is ready. Later repositories reuse the
-  cached models and managed server. The default configuration downloads three models,
-  and a dense-only configuration downloads two. The first run downloads several
-  gigabytes.
+- When this installation's own environment can already run the service and managed
+  Qdrant is selected, setup downloads the search models and the Qdrant server binary, on
+  the first such repository. Local-only mode skips the Qdrant download. Any other
+  installation - including the standalone tool's default route, which runs the service
+  from a separate environment it has not built yet - skips both downloads here; the
+  first `server start` fetches what its selected backend needs once that environment is
+  ready. Later repositories reuse the cached models and managed server. The default
+  configuration downloads three models, and a dense-only configuration downloads two.
+  The first download is several gigabytes.
 
 These flags change it:
 
@@ -408,8 +384,7 @@ These flags change it:
   [storage backends](backends.md).
 
 The repository setup detects how the repository declares vaultspec-rag and records it in
-`.vaultspec/workspace.json`. If the detection is wrong, correct it with `--mode`; see
-the [install command reference](cli.md#install) for every flag.
+`.vaultspec/workspace.json`.
 
 #### Machine-readable output
 
@@ -451,20 +426,23 @@ skip: nothing was installed, so the requested state wasn't reached.
 
 ### Start and verify
 
-Start the service from the host installation:
+Start the service:
 
 ```bash
 vaultspec-rag server start
 ```
 
-On a host installation the command first downloads whatever the selected backend needs
-and doesn't have yet: missing model files, and the Qdrant server when managed-server
-mode is selected and no binary resolves. Local-only mode fetches model files but skips
-Qdrant. It shows each transfer, then loads the models and waits until the service is
-ready. A repository setup that already downloaded the required files leaves nothing to
-fetch. To stop
-`server start` from downloading the Qdrant server, pass `--no-qdrant-auto-provision` or
-set `VAULTSPEC_RAG_QDRANT_AUTO_PROVISION=0`; see
+When this installation's own environment cannot run the service - the standalone tool's
+default route, a plain client dependency, or `uvx` - the first start also builds the
+separate GPU environment described in
+[install as a standalone tool](#install-as-a-standalone-tool), before anything else.
+Either way, the command then downloads whatever the selected backend needs and doesn't
+have yet: missing model files, and the Qdrant server when managed-server mode is
+selected and no binary resolves. Local-only mode fetches model files but skips Qdrant. It
+shows each transfer, then loads the models and waits until the service is ready. A
+repository setup that already downloaded the required files leaves nothing to fetch. To
+stop `server start` from downloading the Qdrant server, pass `--no-qdrant-auto-provision`
+or set `VAULTSPEC_RAG_QDRANT_AUTO_PROVISION=0`; see
 [managed server provisioning](configuration.md#managed-server-provisioning). Stop the
 service with `vaultspec-rag server stop`. It doesn't restart by itself after a reboot, and
 vaultspec-rag ships no autostart. The [service guide](service-mode.md) explains how the
@@ -472,11 +450,11 @@ service is started and what a service manager must account for.
 
 Three commands answer different questions throughout this guide:
 
-| Command                       | What it answers                                                                    |
-| ----------------------------- | ---------------------------------------------------------------------------------- |
-| `vaultspec-rag server status` | Is the service running? Add `--verbose` to see its release.                        |
-| `vaultspec-rag server doctor` | Does this installation have what it needs, and does the service's release match?   |
-| `vaultspec-rag status`        | What state is this repository's index in, and which installation runs the service? |
+| Command                       | What it answers                                                                                                             |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `vaultspec-rag server status` | Is the service running? Add `--verbose` to see its release.                                                                 |
+| `vaultspec-rag server doctor` | Does this installation, or the environment the service runs from, have what it needs, and does the service's release match? |
+| `vaultspec-rag status`        | What state is this repository's index in, and which installation runs the service?                                          |
 
 Check the version:
 
@@ -492,8 +470,10 @@ Then run the readiness report:
 vaultspec-rag server doctor
 ```
 
-A healthy host installation reports PyTorch ready on a `cuda` or `mps` backend, every
-configured model cached, and the Qdrant binary present. If a line reports a problem, see
+A healthy installation reports PyTorch ready on a `cuda` or `mps` backend, every
+configured model cached, and the Qdrant binary present. When the service runs from a
+separate GPU environment rather than this installation, doctor reports that environment
+instead, under its own "Service runtime" line. If a line reports a problem, see
 [when something goes wrong](#when-something-goes-wrong). To interpret the full report,
 see [verify the index](verification.md).
 
@@ -502,105 +482,76 @@ Next, index the repository and run a first search with the
 
 ## Add a client to a Python project
 
-### What a client needs
+Add vaultspec-rag to a Python project without carrying GPU packages in it. The project
+needs a `requires-python` that allows 3.13 or 3.14. From the project root:
 
-- A host installation on this machine that already runs the service under your user
-  account.
+```bash
+uv add --dev "vaultspec-rag[mcp]"
+uv run vaultspec-rag install
+uv run vaultspec-rag server start
+```
 
-- The service's release. From the host installation, run this command and note the
-  `Service release:` line:
+For terminal use without an AI assistant, add the plain package and skip the assistant
+integration instead:
 
-  ```bash
-  vaultspec-rag server status --verbose
-  ```
+```bash
+uv add --dev "vaultspec-rag"
+uv run vaultspec-rag install --no-mcp
+uv run vaultspec-rag server start
+```
 
-- A project whose `requires-python` allows Python 3.13 or 3.14, which vaultspec-rag
-  requires.
+Run every later command as `uv run vaultspec-rag` from the project root. The repository
+setup detects a project dependency and launches the AI assistant's tools from the
+project's own environment; correct a wrong detection with `--mode`. `server start` builds
+this client its own GPU environment the first time it runs, the same as
+[the standalone tool](#install-as-a-standalone-tool) does; nothing in the project's own
+environment needs a GPU, CUDA, or PyTorch.
 
-Pin the client to exactly the service's release: a client refuses a service from any
-other release. A client needs no GPU, CUDA, PyTorch, or model download.
+### Join a service another installation already started
 
-### Add and set up the client
+Skip building a second runtime when a host installation, or another client, already runs
+the service on this machine under your user account. Pin this client to exactly that
+service's release instead - a client refuses a service from any other release:
 
-From the project root:
+```bash
+vaultspec-rag server status --verbose    # note the "Service release:" line
+uv add --dev "vaultspec-rag[mcp]==<release>"
+```
 
-1. Add the client to the development dependencies, pinned to the service's release.
-   `uv add` also syncs the environment.
+Then run `install` and `server start` as above; this time `server start` attaches to the
+running service instead of building a runtime.
 
-   If the project's AI assistant should get the search tools, add the `mcp` extra. It
-   adds only the stdio adapter the assistant launches, and needs no GPU packages:
-
-   ```bash
-   uv add --dev "vaultspec-rag[mcp]==<release>"
-   ```
-
-   For terminal use without an AI assistant, add the plain package:
-
-   ```bash
-   uv add --dev "vaultspec-rag==<release>"
-   ```
-
-1. Set up the project. `--mode dev` makes the AI assistant launch the search tools from
-   the project environment. Without it, a project the host installation already set up
-   keeps launching the standalone tool.
-
-   With the `mcp` extra, `install` enrolls the MCP server by default (`--mcp`) and
-   reconciles the `mcp` extra at the project's placement:
-
-   ```bash
-   uv run vaultspec-rag install --mode dev
-   ```
-
-   With the plain package, `--no-mcp` skips the assistant integration:
-
-   ```bash
-   uv run vaultspec-rag install --mode dev --no-mcp
-   ```
-
-   A client installation skips the PyTorch step and every download automatically. The
-   output reports `PyTorch configuration: not needed (this installation is a client)`
-   and each provisioning step as skipped. No command downloads a model or the Qdrant
-   server for a client: `server warmup` and `server qdrant install` report that they
-   aren't needed, and `server start` is refused before it looks for either.
-
-Run the client as `uv run vaultspec-rag` from the project. If the host installation is
-a standalone tool, a plain `vaultspec-rag` runs the host instead.
-
-### Verify and use the client
-
-Run the readiness report through the client:
+### Verify the client
 
 ```bash
 uv run vaultspec-rag server doctor
 ```
 
-It shows `release: <release> (matches this client)` for the running service, and
-`torch: ready - not needed (this installation is a client)` for the client itself. If
-the release doesn't match, repeat step 1 with the service's release. While the service
-runs, `uv run vaultspec-rag status` describes the host installation that serves the
-client, not the client.
+It shows `release: <release> (matches this client)` for the running service. If the
+release doesn't match, pin the client to the service's release and try again. While the
+service runs, `uv run vaultspec-rag status` describes the installation that serves the
+client, not the client's own environment.
 
-Index and search with the same commands a host uses, prefixed with `uv run`; see the
-[getting-started tutorial](getting-started.md). Start, stop, and upgrade the service
-from the host installation.
+Index and search with the same commands a standalone tool uses, prefixed with
+`uv run`; see the [getting-started tutorial](getting-started.md).
 
 ## Upgrade
 
-A client refuses a service from a different release, even a newer one. Upgrade the host
-installation and every client together.
+A client refuses a service from a different release, even a newer one. Upgrade whichever
+installation runs the service, and every client, together.
 
 1. Close connected assistant sessions. The service may serve other repositories and
-   assistants, so tell their users before stopping it. Then stop the service from the
-   host installation:
+   assistants, so tell their users before stopping it. Then stop it:
 
    ```bash
    vaultspec-rag server stop
    ```
 
-   If the command reports a failure, resolve it before continuing; see
+   A client runs it as `uv run vaultspec-rag server stop`. If the command reports a
+   failure, resolve it before continuing; see
    [the service guide's troubleshooting](service-mode.md#troubleshooting).
 
-1. Upgrade the host installation with the command for its route:
+1. Upgrade the installation that runs the service, with the command for its route:
 
    | Installation route | Upgrade command                                               |
    | ------------------ | ------------------------------------------------------------- |
@@ -610,32 +561,35 @@ installation and every client together.
    | Homebrew           | `brew upgrade vaultspec-rag`                                  |
    | Downloaded archive | Verify and extract the new release in place of the old folder |
 
-   uv upgrades respect version constraints, and a standalone tool re-applies the Python
-   version, the extras and the [CUDA index](#install-as-a-standalone-tool) its receipt
-   records, so the GPU build survives the upgrade.
+   uv upgrades respect version constraints and re-applies the Python version and the
+   extras an installation was given. The default standalone tool and a client carry no
+   GPU packages, so there is nothing for the upgrade to lose; the next
+   `vaultspec-rag server start` builds a fresh GPU environment for the upgraded release
+   and removes the one the previous release used.
 
-   A standalone tool installed before this mechanism, or installed without the two index
-   options, records no CUDA source: a plain upgrade then resolves a CPU-only PyTorch.
-   `vaultspec-rag server doctor` says so and prints the one command that repairs it,
-   which is the same command [pin the GPU build](#pin-the-gpu-build) describes. Nothing
-   needs to be stopped for it.
+   Only [the self-contained tool](#carry-the-gpu-packages-in-the-tool-itself) - the one
+   installed with the `gpu` extra - also re-applies the
+   [CUDA index](#carry-the-gpu-packages-in-the-tool-itself) its receipt records, so its
+   GPU build survives the upgrade. A self-contained tool installed before this mechanism,
+   or installed without the two index options, records no CUDA source: a plain upgrade
+   then resolves a CPU-only PyTorch. `vaultspec-rag server doctor` says so and prints the
+   one command that repairs it, which is the same command
+   [pin the GPU build](#pin-the-gpu-build) describes. Nothing needs to be stopped for it.
 
-1. Read the new release from the upgraded host installation with
-   `vaultspec-rag --version`. Move every client project to that release, keeping its
-   extras:
+1. Read the new release from the upgraded installation with `vaultspec-rag --version`.
+   Move every client project to that release, keeping its extras:
 
    ```bash
    uv add --dev "vaultspec-rag[mcp]==<release>"
    ```
 
    A client on the plain package uses `uv add --dev "vaultspec-rag==<release>"`.
-   Collaborators then upgrade their own host installations to the same release.
+   Collaborators then upgrade their own installations to the same release.
 
 1. In each repository, refresh the repository setup. Repeat any per-run flags whose
-   effects you want for this refresh, such as `--local-only`, `--skip-models`,
-   `--skip-qdrant`, `--no-provision`, `--no-mcp`, or `--no-torch-config`; only the
-   installation route carries over. On the host, `--local-only` records the saved
-   backend choice, while provisioning opt-outs apply only to this command.
+   effects you want for this refresh, such as `--local-only` or `--no-mcp`; only the
+   installation route carries over. Either way, `--local-only` records the saved
+   backend choice.
 
    ```bash
    vaultspec-rag install --upgrade
@@ -650,28 +604,28 @@ installation and every client together.
    working `tool`-mode setup onto `dependency` mode just because the package is also
    listed.
 
-1. If a release advances the pinned Qdrant version, a host start with managed Qdrant
-   selected ensures that version is installed, downloading it if it is missing. This
-   also applies when repository refresh used `--skip-qdrant` or `--no-provision`. A
-   saved local-only choice is different: a plain start continues in local-only mode
-   and skips Qdrant. Use `server start --qdrant` to select the managed server for one
-   start, or install the binary without changing the backend choice:
+1. If a release advances the pinned Qdrant version, a start with managed Qdrant selected
+   ensures that version is installed, downloading it if it is missing. This also applies
+   when repository refresh used `--no-provision`. A saved local-only choice is
+   different: a plain start continues in local-only mode and skips Qdrant. Use
+   `server start --qdrant` to select the managed server for one start, or install the
+   binary without changing the backend choice:
 
    ```bash
    vaultspec-rag server qdrant install
    ```
 
-   If you want managed-server mode saved for later plain starts, rerun the host's
+   If you want managed-server mode saved for later plain starts, rerun
    `install --upgrade` without `--local-only` or a local-only environment override,
-   while its service environment is ready; a successful setup records that choice. If
-   automatic Qdrant downloads are disabled, `server start --qdrant` reports the install
-   command instead.
+   while the environment that runs the service is ready; a successful setup records
+   that choice. If automatic Qdrant downloads are disabled, `server start --qdrant`
+   reports the install command instead.
 
-1. Start the service from the host installation, reconnect assistants, and rerun the
-   checks in [start and verify](#start-and-verify). If `uv` reports that it could not
-   replace an entry point because the file is in use, the release is installed and the
-   environment is intact; restarting the service and any assistant session holding the
-   old launcher clears the report.
+1. Start the service, reconnect assistants, and rerun the checks in
+   [start and verify](#start-and-verify). If `uv` reports that it could not replace an
+   entry point because the file is in use, the release is installed and the environment
+   is intact; restarting the service and any assistant session holding the old launcher
+   clears the report.
 
 1. Apply any release-specific index migration after the new service is running. In
    particular, upgrading to 0.6.0 from the previous sparse encoder requires rebuilding
@@ -707,10 +661,13 @@ diagnostic detail before choosing a repair.
 First, [confirm your GPU is visible](#confirm-your-gpu-is-visible). If that check fails,
 fix the driver before repairing packages. Apple silicon uses MPS, not CUDA.
 
-For a project dependency, rerun the [repository setup](#set-up-each-repository) and
-`uv sync`. For a standalone tool on Linux or Windows, follow
-[pin the GPU build](#pin-the-gpu-build). Running `uv sync` in a project doesn't update
-a tool's environment. After making changes, rerun the checks in
+This applies to an installation that runs the service directly:
+[the self-contained tool](#carry-the-gpu-packages-in-the-tool-itself), or a project that
+added the `gpu` extra itself. Follow [pin the GPU build](#pin-the-gpu-build). The default
+standalone tool, a plain client, and `uvx` run the service from a separate GPU
+environment instead; see
+[the service runtime could not be created](#the-service-runtime-could-not-be-created) if
+that one fails. After making changes, rerun the checks in
 [start and verify](#start-and-verify).
 
 ### The model download fails
@@ -742,18 +699,31 @@ Exhausting GPU memory is a runtime concern rather than an install one. See
 [tuning for memory and speed](configuration.md#tuning-for-memory-and-speed). On MPS,
 memory is unified with the rest of the system rather than dedicated.
 
-### `server start` says the installation is a client
+### The service runtime could not be created
 
-The message reads `That environment cannot run the GPU-only service: not needed (this installation is a client)`.
-The command ran in a client installation, which can't run the service. Start the
-service from the host installation instead. If the machine has none,
-[set up a host installation](#set-up-a-host-installation).
+When this installation's own environment cannot run the service, `server start` builds
+one that can: a separate GPU environment under the service's own managed directory. Each
+cause below is one line in that refusal, and each has one command.
+
+- **uv was not found.** The runtime is built with uv. Install it, then run
+  `vaultspec-rag server start` again. Windows:
+  `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`.
+  Linux and macOS: `curl -LsSf https://astral.sh/uv/install.sh | sh`.
+- **This installation is a source checkout.** The runtime can only reproduce a released
+  build. Install [the standalone tool](#install-as-a-standalone-tool), or
+  [the self-contained tool](#carry-the-gpu-packages-in-the-tool-itself), instead.
+- **No supported GPU is visible to the new environment.** Check the driver:
+  `nvidia-smi`, then run `vaultspec-rag server start` again.
+- **The build itself failed, or another start is already building it.** The failure
+  names what uv could not do. Run `vaultspec-rag server start` again; a build that
+  failed partway is discarded, and a build already in progress is reused once it
+  finishes.
 
 ### Commands report that no service is running
 
-The service is stopped, which is its normal state after a reboot. Start it from the
-host installation with `vaultspec-rag server start`, then retry the search, index
-request, or assistant's tool call.
+The service is stopped, which is its normal state after a reboot. Start it with
+`vaultspec-rag server start` (or `uv run vaultspec-rag server start` for a client), then
+retry the search, index request, or assistant's tool call.
 
 ### The client and the service run different releases
 
@@ -763,24 +733,27 @@ releases. In `--json` output and in an assistant's tool error, the code is
 predates release reporting.
 
 Move the older side forward: pin the client project to the service's release, or
-upgrade the host installation and restart the service from it. The [upgrade](#upgrade)
-steps cover both. A client can't restart the service itself.
+upgrade whichever installation runs the service and restart it. The
+[upgrade](#upgrade) steps cover both.
 
 <p id="install-refused-to-edit-pyprojecttoml"></p>
 
 ### `install` refuses to edit `pyproject.toml`
 
-The repository setup needs consent it doesn't have, so it exits non-zero. Rerun it with
-`--yes` to approve, or with `--no-torch-config` to manage PyTorch yourself.
+This happens only when vaultspec-rag runs from a project's own environment - a client
+dependency, or a self-contained GPU tool pointed at a repository that has its own
+`pyproject.toml` - and that file has no CUDA torch index yet. The repository setup needs
+consent it doesn't have, so it exits non-zero. Rerun it with `--yes` to approve.
 
 <p id="install-refused-to-repair-the-tool-environment"></p>
 
 ### `install` prints a repair command instead of repairing the tool
 
-The repository setup found a tool environment that cannot run the GPU stack, or whose
-installation receipt records no CUDA source, and it was not authorised to change
-anything. It prints the command that repairs it and exits non-zero without setting up
-the repository.
+The repository setup found a persistent, self-contained GPU tool environment that cannot
+run the GPU stack, or whose installation receipt records no CUDA source, and it was not
+authorised to change anything. It prints the command that repairs it and exits non-zero
+without setting up the repository. This never happens for the default standalone tool,
+which carries no GPU packages of its own.
 
 Run the repository setup again with `--yes` to let it apply the repair itself, or run
 the printed command. Either way the change is made in place and nothing has to be
@@ -808,11 +781,11 @@ this failure mode.
 
 ### `server start` can't find the Qdrant binary
 
-A host `server start` downloads the Qdrant server when none is installed, so this
-message appears only when that download is switched off, with
-`--no-qdrant-auto-provision` or `VAULTSPEC_RAG_QDRANT_AUTO_PROVISION=0`. Install the
-Qdrant binary, then retry your original start command, or rerun the start with
-`--qdrant-auto-provision`. For a project dependency, add `uv run`:
+`server start` downloads the Qdrant server when none is installed, so this message
+appears only when that download is switched off, with `--no-qdrant-auto-provision` or
+`VAULTSPEC_RAG_QDRANT_AUTO_PROVISION=0`. Install the Qdrant binary, then retry your
+original start command, or rerun the start with `--qdrant-auto-provision`. For a
+client, add `uv run`:
 
 ```bash
 vaultspec-rag server qdrant install
@@ -923,9 +896,12 @@ another platform's server. Supply your own executable there, as described under
 
 ### Pin the GPU build
 
-Use these steps when a standalone tool on Linux or Windows has a missing or CPU-only
-PyTorch, or when `server doctor` reports that its receipt records no CUDA source. Apple
-silicon uses the standard wheel's Metal support and needs none of this.
+This applies to [the self-contained tool](#carry-the-gpu-packages-in-the-tool-itself) -
+the one installed with the `gpu` extra - never to the default standalone tool, which
+carries no PyTorch of its own. Use these steps when that self-contained tool on Linux or
+Windows has a missing or CPU-only PyTorch, or when `server doctor` reports that its
+receipt records no CUDA source. Apple silicon uses the standard wheel's Metal support
+and needs none of this.
 
 The repair is two commands, in order. The first installs the CUDA build of PyTorch into
 the environment through uv's pip interface, naming the release the environment already
@@ -950,13 +926,13 @@ before attempting these steps.
    ```
 
    It names the compute build, what the next upgrade would resolve, and the two commands
-   for this installation. `vaultspec-rag install --dry-run --no-torch-config` prints the
-   same commands without changing anything.
+   for this installation. `vaultspec-rag install --dry-run` prints the same commands
+   without changing anything.
 
 1. Let the installer apply them, or run them yourself in the order given:
 
    ```sh
-   vaultspec-rag install --yes --no-torch-config
+   vaultspec-rag install --yes
    ```
 
    With a terminal it asks first; `--yes` answers in advance. `--force` does not: it
@@ -1067,20 +1043,23 @@ The `mcp` extra adds the library the model-free MCP standard input/output (stdio
 adapter needs. Every package installs the `vaultspec-search-mcp` command, but that
 command refuses to run without the `mcp` extra.
 
-| Package                  | Installation | Loads models | Needs a GPU | Can start the service | Can run the MCP adapter |
-| ------------------------ | ------------ | ------------ | ----------- | --------------------- | ----------------------- |
-| `vaultspec-rag`          | Client       | No           | No          | No                    | No                      |
-| `vaultspec-rag[mcp]`     | Client       | No           | No          | No                    | Yes                     |
-| `vaultspec-rag[gpu]`     | Host         | Yes          | Yes         | Yes                   | No                      |
-| `vaultspec-rag[gpu,mcp]` | Host         | Yes          | Yes         | Yes                   | Yes                     |
+| Package                  | Installation | Loads models | Needs a GPU | Running `server start`                              | Can run the MCP adapter |
+| ------------------------ | ------------ | ------------ | ----------- | --------------------------------------------------- | ----------------------- |
+| `vaultspec-rag`          | Client       | No           | No          | Builds a private GPU environment and serves from it | No                      |
+| `vaultspec-rag[mcp]`     | Client       | No           | No          | Builds a private GPU environment and serves from it | Yes                     |
+| `vaultspec-rag[gpu]`     | Host         | Yes          | Yes         | Runs the service directly                           | No                      |
+| `vaultspec-rag[gpu,mcp]` | Host         | Yes          | Yes         | Runs the service directly                           | Yes                     |
 
 In `tool` mode, the MCP entry the repository setup writes fetches the adapter with
 `uvx`, whatever the installation contains.
 
-The service is loopback-only. A client and its host installation share one machine; this
-isn't a documented network deployment across machines. `VAULTSPEC_RAG_QDRANT_URL` can
-point at remote vector storage, but Qdrant doesn't run the dense encoder, sparse
-encoder, or reranker. The host installation still needs `[gpu]` and a supported GPU.
+Building a private GPU environment needs uv and a supported GPU on the machine; see
+[the service runtime could not be created](#the-service-runtime-could-not-be-created)
+when it can't. The service is loopback-only: a client and whatever runs the service
+share one machine, and this isn't a documented network deployment across machines.
+`VAULTSPEC_RAG_QDRANT_URL` can point at remote vector storage, but Qdrant doesn't run
+the dense encoder, sparse encoder, or reranker; a supported GPU is still needed
+somewhere on the machine.
 
 ### Inspect the archive layout
 

@@ -145,6 +145,10 @@ def test_a_path_without_a_digest_is_refused_naming_both_and_the_remedy(
 def test_a_digest_without_a_path_is_refused_naming_both() -> None:
     """A digest alone verifies nothing, and is as much a mistake as the reverse.
 
+    The wording names the variables rather than the program: one
+    implementation enforces the pairing for every executable an operator may
+    supply, and the variable names are what say which one is meant.
+
     Mutation: with the missing-path branch removed from the accessor this
     failed DID NOT RAISE; restored, it passed.
     """
@@ -155,7 +159,7 @@ def test_a_digest_without_a_path_is_refused_naming_both() -> None:
 
     message = str(excinfo.value)
     assert message.startswith(_TOGETHER)
-    assert f"{_PATH_VAR.value} names no Qdrant binary" in message
+    assert f"{_PATH_VAR.value} names no executable" in message
     assert collect_environment_problems(None) == [message]
 
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import os
 import stat
+import sys
 from threading import Thread
 from typing import TYPE_CHECKING, cast
 
@@ -24,6 +25,8 @@ from vaultspec_core.core.enums import (
 
 from ..commands._install import install_run
 from ..commands._uninstall import uninstall_run
+from ..config._types import EnvVar
+from ..operator_state._topology import environment_root
 from ..torch_config import _inspect, _mutate
 from ..torch_config._constants import TorchConfigState
 
@@ -74,6 +77,32 @@ class TestInstallTorchConfig:
         assert report.torch_config_action == "disabled"
         assert _sha(consumer_workspace / "pyproject.toml") == sha_before
 
+    def test_install_from_a_tool_environment_leaves_pyproject_alone(
+        self, consumer_workspace: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A uv tool host never syncs from the repository it sets up.
+
+        ``UV_TOOL_DIR`` above this interpreter's environment is how uv marks a
+        tool environment whose receipt is unreadable, so the real classifier
+        reads the running interpreter as a tool. Dropping the tool clause from
+        the torch gate fails the action assertion with ``applied``.
+
+        The action is ``absent``: there is no project configuration of this
+        installation's torch, which is also the action that prints no torch
+        line. It used to be the client action, which printed one saying this
+        GPU host was a client.
+        """
+        monkeypatch.setenv(
+            EnvVar.UV_TOOL_DIR.value,
+            str(environment_root(sys.executable).parent),
+        )
+        sha_before = _sha(consumer_workspace / "pyproject.toml")
+        report = install_run(
+            path=consumer_workspace, assume_yes=True, repair_tool_torch=False
+        )
+        assert report.torch_config_action == "absent"
+        assert _sha(consumer_workspace / "pyproject.toml") == sha_before
+
     def test_install_idempotent_on_second_run(self, consumer_workspace: Path) -> None:
         install_run(path=consumer_workspace, assume_yes=True)
         sha_after_first = _sha(consumer_workspace / "pyproject.toml")
@@ -82,12 +111,18 @@ class TestInstallTorchConfig:
         assert _sha(consumer_workspace / "pyproject.toml") == sha_after_first
 
     def test_install_on_workspace_without_pyproject(self, tmp_path: Path) -> None:
+        """Absent, and silent about it.
+
+        A tool or pip installation has no project declaration, so a warning
+        naming the one that is missing describes a normal state as a problem.
+        The action still records the absence, which is what keeps the report
+        from printing a torch section at all.
+        """
         ws = tmp_path / "no-pyproject"
         ws.mkdir()
         report = install_run(path=ws, assume_yes=True)
         assert report.torch_config_action == "absent"
-        # Warning text names the missing pyproject.
-        assert any("pyproject.toml" in w for w in report.warnings)
+        assert not any("pyproject.toml" in w for w in report.warnings), report.warnings
 
     def test_install_with_customised_block_reports_conflict(
         self, tmp_path: Path
