@@ -44,6 +44,7 @@ if TYPE_CHECKING:
         json: bool
 
 
+from .._gpu_owner import observation_wire
 from .._operator_commands import (
     server_jobs_command,
     server_start_command,
@@ -54,6 +55,10 @@ from .._ports import port_is_available
 from .._process_probe import pid_alive
 from ..config._settings import get_config
 from ..config._types import EnvVar
+from ..gpu_borrow_lease import (
+    borrower_start_message,
+    observe_gpu_borrower,
+)
 from ..operator_state._installation import ComputeCapability
 from ..operator_state._provisioning import cuda_remediation
 from ..operator_state._topology import (
@@ -719,7 +724,9 @@ def _print_preprocess_start_notice(root: Path, effective_mode: str) -> None:
 
 
 def _guard_start_preconditions(port: int, json_mode: bool) -> None:
-    """Fail fast on a taken port or an owned machine, one envelope each.
+    """Fail fast on a taken port, an owned machine or a GPU borrower.
+
+    One envelope each.
 
     Port-level guard: prevents concurrent start races. A foreign process
     holding the port (NOT our service, which the caller's idempotent check
@@ -789,6 +796,8 @@ def _guard_start_preconditions(port: int, json_mode: bool) -> None:
             **({"holder_phase": "warming"} if warming else {}),
         )
 
+    _guard_borrower_lease(json_mode)
+
     # The service lock above is scoped to a storage directory, so a service
     # configured with another one - or a local run that already loaded models -
     # is invisible to it. The GPU owner anchor is machine-wide; the daemon
@@ -797,7 +806,6 @@ def _guard_start_preconditions(port: int, json_mode: bool) -> None:
     from .._gpu_owner import (
         gpu_owned_message,
         gpu_owned_remediation,
-        gpu_owner_wire,
         observe_gpu_owner,
     )
 
@@ -809,8 +817,33 @@ def _guard_start_preconditions(port: int, json_mode: bool) -> None:
             message="Service start failed",
             human_lines=(gpu_owned_message(ownership),),
             next_actions=gpu_owned_remediation(ownership, starting_service=True),
-            gpu_owner=gpu_owner_wire(ownership),
+            gpu_owner=observation_wire(ownership),
         )
+
+
+def _guard_borrower_lease(json_mode: bool) -> None:
+    """Refuse to start a service beside a borrower that holds the GPU.
+
+    A borrower that has loaded nothing yet holds only its lease, so the owner
+    anchor below reads free and a service started now would take the card from
+    work that was granted it. This is also the only place a service start can
+    be refused for it: the monitor's Start and a restart both start the service
+    through this verb. The message carries the whole sentence, since the monitor
+    shows an envelope's message and nothing else of a failure.
+    """
+    borrower = observe_gpu_borrower()
+    if borrower.permits_service_start:
+        return
+    raise _fail_start(
+        json_mode,
+        error="gpu_borrowed",
+        message=borrower_start_message(borrower),
+        human_lines=(
+            "A borrower releases the GPU when its work ends or its process exits.",
+        ),
+        next_actions=(server_start_command(),),
+        gpu_borrower=observation_wire(borrower),
+    )
 
 
 def _attach_existing_service(

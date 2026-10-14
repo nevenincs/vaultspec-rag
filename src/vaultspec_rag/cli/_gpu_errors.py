@@ -37,7 +37,7 @@ def refuse_gpu_owned(
     from .._gpu_owner import (
         gpu_owned_message,
         gpu_owned_remediation,
-        gpu_owner_wire,
+        observation_wire,
     )
 
     message = gpu_owned_message(ownership)
@@ -48,7 +48,7 @@ def refuse_gpu_owned(
             "gpu_owned",
             message,
             1,
-            gpu_owner=gpu_owner_wire(ownership),
+            gpu_owner=observation_wire(ownership),
             remediation=remediation,
         )
     steps = "\n".join(

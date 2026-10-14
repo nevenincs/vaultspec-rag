@@ -38,6 +38,7 @@ Generated from the live command surface. Each entry lists the command's argument
   - [resume](#server-resume)
   - [status](#server-status)
   - [reconcile](#server-reconcile)
+  - [restart](#server-restart)
   - [start](#server-start)
   - [stop](#server-stop)
   - **job**
@@ -473,6 +474,25 @@ None.
 | --- | --- | --- | --- | --- |
 | `--timeout` | float | no | 35.0 | Seconds to wait for convergence before reporting unresolved. |
 | `--json` | boolean | no | off | Emit JSON for scripts instead of human text. Preserves exit codes 0 (converged) and 1 (not converged). |
+
+## server restart
+
+Restart the background search service, keeping its monitor.
+
+```bash
+vaultspec-rag server restart
+```
+
+### Arguments
+
+None.
+
+### Options
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `--port` | int | no | - | Service port (defaults to running service). |
+| `--json` | boolean | no | off | Emit JSON for scripts instead of human text. |
 
 ## server start
 

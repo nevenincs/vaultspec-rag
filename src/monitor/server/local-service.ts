@@ -17,7 +17,7 @@ const checkout =
   typeof MONITOR_COMPILED !== "undefined" && MONITOR_COMPILED
     ? undefined
     : fileURLToPath(new URL("../../../", import.meta.url));
-type LifecycleVerb = "status" | "start" | "stop";
+type LifecycleVerb = "status" | "start" | "stop" | "restart";
 let lifecyclePython: string | undefined;
 class InvalidRequestError extends Error {}
 // Loopback is shared by every local account, so the launching owner alone
@@ -202,6 +202,7 @@ function allowedRoute(path: string, method: string): boolean {
       [
         "/lifecycle/start",
         "/lifecycle/stop",
+        "/lifecycle/restart",
         "/pause",
         "/resume",
         "/repositories/enroll",
@@ -231,6 +232,8 @@ function redact(value: unknown): unknown {
 
 function timeout(path: string): number {
   if (path === "/lifecycle/start") return 900000;
+  // A restart is a stop and then a start, each with its own budget.
+  if (path === "/lifecycle/restart") return 1080000;
   if (path === "/lifecycle/stop") return 120000;
   if (["/lifecycle", "/repositories", "/storage/survey"].includes(path))
     return 30000;
@@ -452,7 +455,9 @@ async function forward(
           ? "status"
           : route.pathname === "/lifecycle/start"
             ? "start"
-            : "stop";
+            : route.pathname === "/lifecycle/restart"
+              ? "restart"
+              : "stop";
       const result = await lifecycle(verb, signal);
       reply(response, result.status, result.payload);
       return;

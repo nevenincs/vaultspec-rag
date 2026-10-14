@@ -17,24 +17,32 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, TypeGuard
 
 from ._anchor_claim import (
+    AnchorOutcome,
     claim_anchor,
+    observe_existing_anchor,
     publish_anchor_record,
     read_anchor_record,
     release_anchor_claim,
 )
 from ._machine_lock import machine_lock_path
+from ._process_probe import pid_alive
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 __all__ = [
     "BorrowerLeaseStatus",
+    "BorrowerObservation",
+    "BorrowerState",
     "GPUBorrowLease",
     "acquire_gpu_borrow_lease",
     "borrower_lease_holder_pid",
     "borrower_lease_status",
+    "borrower_start_message",
+    "borrower_stop_notice",
     "gpu_borrow_lease_path",
     "is_borrower_capability",
+    "observe_gpu_borrower",
     "release_gpu_borrow_lease",
 ]
 
@@ -56,6 +64,38 @@ class BorrowerLeaseStatus(StrEnum):
     NOT_HELD = "not_held"
     CAPABILITY_INVALID = "capability_invalid"
     UNAVAILABLE = "unavailable"
+
+
+class BorrowerState(StrEnum):
+    """Whether a borrower holds the machine's lease, from a non-acquiring look."""
+
+    ABSENT = "absent"
+    HELD = "held"
+    UNVERIFIABLE = "unverifiable"
+
+
+@dataclass(frozen=True, slots=True)
+class BorrowerObservation:
+    """One observation of the borrower lease, taken without acquiring it.
+
+    ``holder_pid`` names the borrower when the lease record names a live
+    process, and is 0 otherwise: a borrower that cannot be named still holds
+    the lease. ``detail`` says why a lease could not be verified, and is empty
+    for every other state.
+    """
+
+    state: BorrowerState
+    holder_pid: int = 0
+    detail: str = ""
+
+    @property
+    def permits_service_start(self) -> bool:
+        """Whether a service may start now, with no borrower to contend with.
+
+        A lease that cannot be verified does not permit it: an owner that
+        cannot be ruled out counts as live.
+        """
+        return self.state is BorrowerState.ABSENT
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +194,76 @@ def borrower_lease_status(capability: str) -> BorrowerLeaseStatus:
     if recorded is None or not hmac.compare_digest(recorded, capability):
         return BorrowerLeaseStatus.CAPABILITY_INVALID
     return BorrowerLeaseStatus.HELD
+
+
+def observe_gpu_borrower() -> BorrowerObservation:
+    """Report whether a borrower holds the lease, without taking it. Never raises.
+
+    For the service start and stop verbs, which must say so legibly and must
+    not become a borrower themselves by looking. The anchor is never created,
+    and any lock taken to look is released before this returns, so nothing but
+    a borrower acquiring in that instant can notice. The holder's pid is read
+    from the lease record and the capability beside it is never returned.
+    """
+    path = gpu_borrow_lease_path()
+    seen = observe_existing_anchor(path, pid_record=True)
+    match seen.outcome:
+        case AnchorOutcome.ABSENT | AnchorOutcome.FREE:
+            return BorrowerObservation(BorrowerState.ABSENT)
+        case AnchorOutcome.CONTENDED:
+            holder = seen.holder_pid if pid_alive(seen.holder_pid) else 0
+            return BorrowerObservation(BorrowerState.HELD, holder)
+        case _:
+            return BorrowerObservation(
+                BorrowerState.UNVERIFIABLE,
+                0,
+                f"{path} could not be opened: {seen.fault}",
+            )
+
+
+def _borrower_phrase(pid: int) -> str:
+    return f" (pid {pid})" if pid > 0 else ""
+
+
+def borrower_start_message(
+    observation: BorrowerObservation, *, verb: str = "start"
+) -> str:
+    """Say, in one paragraph, why a service was not started beside a borrower.
+
+    One paragraph, because a front end that shows only an envelope's message -
+    the monitor does - must show the whole of what the operator needs: who holds
+    the GPU and what to do about it. *verb* names the refused action, ``start``
+    or ``restart``; a refused restart has stopped nothing, so it says so.
+    """
+    refused = f"{verb}ed"
+    kept = " It is still running as it was." if verb == "restart" else ""
+    if observation.state is BorrowerState.UNVERIFIABLE:
+        return (
+            f"The GPU borrower lease could not be verified ({observation.detail}), "
+            f"so the service was not {refused} rather than load its models beside "
+            f"a borrower it cannot rule out.{kept} Make the lease readable, or "
+            f"wait for any borrower to finish, then {verb} the service again."
+        )
+    return (
+        f"A GPU borrower{_borrower_phrase(observation.holder_pid)} holds the GPU, "
+        f"so the service was not {refused}: its models would load onto the GPU "
+        f"beside the borrower's work.{kept} Wait for the borrower to finish, or "
+        f"stop it, then {verb} the service again."
+    )
+
+
+def borrower_stop_notice(observation: BorrowerObservation) -> str | None:
+    """Say what a stop leaves behind when a borrower holds the GPU, else ``None``.
+
+    Only a borrower seen holding the lease is reported. A lease that could not
+    be verified is not a finding about the stop that was asked for.
+    """
+    if observation.state is not BorrowerState.HELD:
+        return None
+    return (
+        f"A GPU borrower{_borrower_phrase(observation.holder_pid)} holds the GPU, "
+        "so the service will not start again until the borrower releases it."
+    )
 
 
 def borrower_lease_holder_pid(capability: str) -> int | None:

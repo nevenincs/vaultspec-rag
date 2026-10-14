@@ -98,7 +98,7 @@ def test_borrower_resume_uses_the_model_operation_hard_cutoff() -> None:
     """
     path = _TEST_ROOT.parent / "cli" / "_gpu_lease.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    resume = _function(tree, "_resume_is_acknowledged")
+    resume = _function(tree, "_resume_refusal")
     admin_calls = [
         node
         for node in ast.walk(resume)

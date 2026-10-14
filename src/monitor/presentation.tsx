@@ -27,6 +27,7 @@ function statusKind(state: string): StatusKind {
       "warming",
       "cancelling",
       "starting",
+      "reconnecting",
     ].includes(state)
   )
     return "in-progress";

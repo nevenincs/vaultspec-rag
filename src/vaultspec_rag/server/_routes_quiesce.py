@@ -53,10 +53,11 @@ def _quiesce_envelope(
 ) -> JSONResponse:
     """Emit the one quiesce envelope, on the achieved and failed exits alike.
 
-    Every exit carries the same ``ok``/``status``/``quiesce`` shape so an
-    adapter branches on ``ok`` alone.  A failure adds ``error`` and
-    ``message``: the operator asked for a state change and did not get it,
-    and the reason is the whole content of that answer.  The daemon answered
+    Every exit carries the same ``ok``/``status``/``quiesce``/``message`` shape
+    so an adapter branches on ``ok`` alone and shows ``message`` as written.  A
+    failure adds ``error`` and ``retryable``: the operator asked for a state
+    change and did not get it, and the reason is the whole content of that
+    answer.  The daemon answered
     in every one of these cases, so the transport status stays 200 and the
     achieved/failed distinction lives in the body - a broker pausing
     speculatively must be able to tell a refused lifecycle request from a
@@ -82,7 +83,9 @@ def _quiesce_envelope(
         "status": status,
         "quiesce": snapshot.as_envelope(),
     }
-    if not achieved:
+    if achieved:
+        payload["message"] = _achieved_message(status, snapshot)
+    else:
         payload["error"] = status
         payload["message"] = (
             message
@@ -122,7 +125,8 @@ _BORROWER_REFUSAL_MESSAGES: Final = {
         "no operator command ends it sooner."
     ),
     "borrower_lease_mismatch": (
-        "A different borrower already holds this pause, so this capability "
+        "A different borrower already holds this pause, and this capability does "
+        "not hold the live borrower lease that would let it take over, so it "
         "cannot act on it."
     ),
     "borrower_pause_not_owned": (
@@ -137,6 +141,41 @@ _BORROWER_REFUSAL_MESSAGES: Final = {
         "once that process has exited."
     ),
 }
+
+
+#: One sentence per achieved outcome, so every adapter shows the operator what
+#: the service is now doing rather than the transition code that got it there.
+_ACHIEVED_MESSAGES: Final[dict[str, str]] = {
+    QuiesceTransitionCode.QUIESCED: (
+        "The service is paused. Searches and index updates wait until it is resumed."
+    ),
+    QuiesceTransitionCode.ALREADY_QUIESCED: (
+        "The service was already paused. Searches and index updates wait until "
+        "it is resumed."
+    ),
+    QuiesceTransitionCode.RUNNING: (
+        "The service is running. Searches and index updates are accepted."
+    ),
+    QuiesceTransitionCode.PAUSE_ABORTED: (
+        "The unfinished pause was cancelled, and the service is running again."
+    ),
+}
+
+_BORROWER_HOLD_NOTE: Final = (
+    " A GPU borrower holds this pause, and it clears on its own when that "
+    "borrower finishes or exits."
+)
+
+
+def _achieved_message(status: str, snapshot: QuiesceSnapshot) -> str:
+    """Return the operator-facing sentence for an achieved transition."""
+    fallback = (
+        QuiesceTransitionCode.RUNNING
+        if snapshot.state is QuiesceState.RUNNING
+        else QuiesceTransitionCode.QUIESCED
+    )
+    sentence = _ACHIEVED_MESSAGES.get(status, _ACHIEVED_MESSAGES[fallback])
+    return sentence + (_BORROWER_HOLD_NOTE if snapshot.borrower_bound else "")
 
 
 def _borrower_refusal_message(code: str) -> str:
@@ -291,10 +330,11 @@ def _post_pause_binding_error(
     Ownership follows the request that produced the state.  An already-quiesced
     outcome is an observation, not a pause: honouring it as a claim let a
     borrower inherit an operator's hold and leave that operator unable to
-    release their own service for as long as the borrower ran.  A borrower
-    repeating its own pause is the one case that still binds on an observation,
-    because the binding it would be granted is the one it already holds, and
-    refusing that would break retry after a lost response.
+    release their own service for as long as the borrower ran.  A hold some
+    borrower owns is the case that still binds on an observation.  The
+    validation above has already shown that the binding is this borrower's own,
+    so a retry after a lost response keeps working, or that its borrower
+    released the lease, so the successor inherits a hold nobody is left to undo.
     """
     if capability is None or not transition.achieved:
         return None
@@ -303,8 +343,9 @@ def _post_pause_binding_error(
         return lease_error
     if transition.snapshot.state is not QuiesceState.QUIESCED:
         return "borrower_lease_mismatch"
-    if transition.code is QuiesceTransitionCode.ALREADY_QUIESCED and not (
-        registry.borrower_capability_is_bound(capability)
+    if (
+        transition.code is QuiesceTransitionCode.ALREADY_QUIESCED
+        and not registry.borrower_hold_is_bound()
     ):
         return "borrower_pause_not_owned"
     if not registry.bind_borrower_capability(capability):
