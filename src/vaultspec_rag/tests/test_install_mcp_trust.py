@@ -538,6 +538,46 @@ class TestApprovalFollowsALinkedLocation:
         assert ownership.read_bytes() == ownership_before
         assert shared.read_bytes() == shared_before
 
+    def test_a_preview_honours_an_operator_source_approved_through_its_link(
+        self, tmp_path: Path
+    ) -> None:
+        """An operator's own linked definition keeps its approval in a preview.
+
+        The install never writes an operator's definition, so it stays a link,
+        and core keys the approval to the link's target. The preview and the
+        rollback replay hold it as a regular file in a projection, so the
+        approval must be looked up through the path in the real workspace,
+        which core resolves to the link's target. Mutation it catches: looking
+        it up at the projection's copy instead, which misses that approval for
+        the install's replay and its preview alike, so both skip the launch
+        and the install's enrolment assertion fails first.
+        """
+        ws = _workspace(tmp_path)
+        definitions = ws / ".vaultspec" / "mcps"
+        definitions.mkdir(parents=True)
+        shared = ws / "operator-extra.shared.json"
+        shared.write_text(
+            json.dumps({"command": "operator-extra-tool", "args": ["--serve"]}),
+            encoding="utf-8",
+        )
+        link = definitions / "operator-extra.builtin.json"
+        link.symlink_to(os.path.relpath(shared, link.parent))
+        request = _InstallRunRequest(
+            path=ws, install_mcp=True, mode=InstallMode.TOOL, configure_torch=False
+        )
+        grant_planned(ws, _planned_launches(request, ws))
+
+        preview = _install(ws, dry_run=True)
+        applied = _install(ws)
+
+        assert not applied.mcp_sync_failed
+        for host in ("claude", "codex"):
+            planned = cast("list[object]", _providers(preview)[host]["items"])
+            done = cast("list[object]", _providers(applied)[host]["items"])
+            assert ["operator-extra", "[ADD]"] in done, host
+            assert ["operator-extra", "[ADD]"] in planned, host
+        assert link.is_symlink()
+
     def test_a_preview_over_a_linked_config_plans_what_the_install_does(
         self, tmp_path: Path
     ) -> None:
