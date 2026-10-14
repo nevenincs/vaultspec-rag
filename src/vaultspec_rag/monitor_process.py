@@ -28,8 +28,8 @@ from ._process_probe import (
 )
 from .config._settings import managed_status_dir
 from .config._types import EnvVar
-from .monitor_runtime._launch import confirm_launch, verified_monitor
 from .monitor_runtime._errors import MonitorError
+from .monitor_runtime._launch import confirm_launch, verified_monitor
 from .monitor_runtime._resolve import monitor_for_launch, resolve_monitor
 from .serviceclient._discovery import status_write_lock
 

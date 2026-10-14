@@ -38,6 +38,7 @@ Generated from the live command surface. Each entry lists the command's argument
   - [resume](#server-resume)
   - [status](#server-status)
   - [reconcile](#server-reconcile)
+  - [restart](#server-restart)
   - [start](#server-start)
   - [stop](#server-stop)
   - **job**
@@ -192,7 +193,7 @@ None.
 | `--dry-run` | boolean | no | off | Preview changes without writing. |
 | `--force` | boolean | no | off | Overwrite setup files that already exist. |
 | `--mode` | choice | no | - | How your AI assistant launches vaultspec-rag: 'tool', or from this project's environment as a 'dependency' or 'dev' dependency. Detected from pyproject.toml when omitted. |
-| `--yes`, `-y` | boolean | no | off | Answer yes to setup prompts, for runs without a terminal. Never approves the MCP launch: approve it at a terminal, or beforehand with `vaultspec-core spec mcps trust`. |
+| `--yes`, `-y` | boolean | no | off | Answer yes to setup prompts, for runs without a terminal. Never approves the MCP launch: run install at a terminal to review and approve it. |
 | `--provision`, `--no-provision` | boolean | no | on | Download the search models and the Qdrant server now, when this installation carries the GPU packages (default). Otherwise `server start` downloads them. |
 | `--mcp`, `--no-mcp` | boolean | no | on | Connect your AI assistant through MCP (default). With --no-mcp, only the command line is set up. |
 | `--local-only` | boolean | no | off | Keep the index in an on-disk store instead of the Qdrant server, for CI, offline or small projects. `server start` remembers the choice. |
@@ -465,6 +466,25 @@ None.
 | --- | --- | --- | --- | --- |
 | `--timeout` | float | no | 35.0 | Seconds to wait for convergence before reporting unresolved. |
 | `--json` | boolean | no | off | Emit JSON for scripts instead of human text. Preserves exit codes 0 (converged) and 1 (not converged). |
+
+## server restart
+
+Restart the background search service, keeping its monitor.
+
+```bash
+vaultspec-rag server restart
+```
+
+### Arguments
+
+None.
+
+### Options
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `--port` | int | no | - | Service port (defaults to running service). |
+| `--json` | boolean | no | off | Emit JSON for scripts instead of human text. |
 
 ## server start
 
