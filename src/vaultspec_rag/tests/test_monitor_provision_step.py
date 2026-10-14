@@ -31,10 +31,10 @@ from ..commands._provision import (
 )
 from ..config._types import EnvVar
 from ..monitor_runtime._provision import MONITOR_PROVISION_FAILED
-from ..operator_state._installation import ComputeCapability
+from ..operator_state._installation import ComputeCapability, HardwarePresence
 from ..operator_state._service_environment import ServiceEnvironment
 from ._provision_fixtures import result_for
-from .conftest import managed_env
+from .conftest import managed_env, pin_hardware_presence
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -45,7 +45,8 @@ pytestmark = [pytest.mark.unit]
 _HOST_READY = ServiceEnvironment("", ComputeCapability.READY)
 #: A client installation, which runs no service and needs no monitor.
 _CLIENT = ServiceEnvironment("", ComputeCapability.NOT_APPLICABLE)
-#: A host whose accelerator stack is not usable yet.
+#: A host whose own accelerator stack is not usable yet, so a start serves
+#: the daemon from the managed runtime instead of this environment.
 _NOT_YET = ServiceEnvironment("", ComputeCapability.TORCH_MISSING)
 
 
@@ -95,8 +96,47 @@ class TestAStartConsidersTheMonitor:
         assert monitor.detail == qdrant.detail
 
     @pytest.mark.usefixtures("inference_host")
-    def test_a_host_that_cannot_run_the_service_yet_fetches_nothing(self) -> None:
-        """Told why, and that a start fetches it once the environment is ready."""
+    def test_a_host_whose_own_torch_cannot_serve_provisions_for_the_runtime(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The daemon runs from the managed runtime, and its monitor is this one.
+
+        What this environment's own torch can do no longer decides the step:
+        the machine has a supported accelerator, so a start serves from the
+        managed runtime, and the monitor that runtime launches is the
+        machine-wide managed install this step provisions. So the step is
+        entered and reports on a monitor rather than skipping.
+        """
+        pin_hardware_presence(monkeypatch, HardwarePresence.NVIDIA_GPU)
+
+        outcome = ensure_runtime_dependencies(
+            environment=_NOT_YET,
+            server_unneeded=None,
+            qdrant_auto_provision=True,
+        )
+
+        monitor = result_for(outcome, ProvisionStep.MONITOR)
+        assert monitor is not None
+        assert monitor.action is ProvisionAction.UNCHANGED, monitor.detail
+
+    @pytest.mark.usefixtures("inference_host")
+    def test_a_machine_nothing_can_serve_on_fetches_nothing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Told what the machine has, and that a start fetches it where one can.
+
+        The question the step asks is whether anything on this machine can
+        serve, so a machine with no supported accelerator is the case that
+        skips - the same answer the model and server steps give it, in the
+        same words.
+
+        Mutation: admitted every machine, whatever its accelerator. Observed
+        this test fail on the skipped-action assertion, the step reporting on
+        a monitor fetched for a service that can never run here. Restored;
+        passes.
+        """
+        pin_hardware_presence(monkeypatch, HardwarePresence.NONE)
+
         outcome = ensure_runtime_dependencies(
             environment=_NOT_YET,
             server_unneeded=None,
@@ -106,7 +146,10 @@ class TestAStartConsidersTheMonitor:
         monitor = result_for(outcome, ProvisionStep.MONITOR)
         assert monitor is not None
         assert monitor.action is ProvisionAction.SKIPPED
-        assert "cannot run the service yet" in monitor.detail
+        assert "no service can run on this machine" in monitor.detail
+        qdrant = result_for(outcome, ProvisionStep.QDRANT)
+        assert qdrant is not None
+        assert monitor.detail == qdrant.detail
 
     @pytest.mark.usefixtures("inference_host", "unpinned_installation")
     def test_an_installation_with_no_monitor_fails_the_step_under_its_own_code(
