@@ -5,7 +5,7 @@ tags:
 date: '2026-10-14'
 modified: '2026-10-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:a83a929386babf832c00d1ea243f566567ae18547f966ec98ac2929f7857172c'
+body_hash: 'sha256:1c5c57aafa023ee82d8ef6b0d17c1e24cb98bf1413b798773add8b695d97bd7c'
 related:
   - "[[2026-10-13-monitor-provisioning-plan]]"
 ---
@@ -62,6 +62,22 @@ This is valid under the ADR's Resolution constraint, since the managed install i
 
 The `gates-run-explicitly` rule forbids passing it. No hook existed, so nothing was skipped.
 
+### env-surface | high | the environment template gates fail because the bundle fix reads PYAPP and an exemption went stale
+
+Re-review of `bb128a3f..63fd1c7f`. `src/vaultspec_rag/tests/test_env_example_coverage.py` fails twice. `.env.example` documents no entry for `PYAPP`, which `src/vaultspec_rag/_program_lookup.py:177` now reads. The `GITHUB_ENV` exemption at `test_env_example_coverage.py:61` is stale since S06 removed the write. The earlier bundle-sibling-tier and working-directory-guard findings are resolved by `6e1f8530` and `63fd1c7f`, as are staging-sweep, readiness-hash-budget, monitor-download-deadline and start-banner.
+
+### staging-pid-parse | medium | the sweep reads an all-digit random token as the pid, so it can delete a live run's staging file
+
+`src/vaultspec_rag/native_binary/_install.py:170-180` takes the last all-digit component of the name. The 12-character hex token is all digits about once in 270 names, so a live writer reads as dead and its fresh file is swept. Tests use the token `0123456789ab`, which hides the defect.
+
+### env-template-path-text | low | `.env.example` still says the monitor is found on the search path
+
+`.env.example:1029-1035`.
+
+### sibling-unreadable | low | an unreadable sibling candidate aborts resolution before the managed install is tried
+
+`src/vaultspec_rag/monitor_runtime/_resolve.py:235-239,287`.
+
 ## Recommendations
 
 - bundle-sibling-tier: resolve the sibling tier from the bundle launcher's own directory as well as the venv. Add a test that places the monitor in a real bundle-shaped layout. Confirm with one built-bundle run.
@@ -71,3 +87,7 @@ The `gates-run-explicitly` rule forbids passing it. No hook existed, so nothing 
 - monitor-download-deadline: give the monitor request its own deadline through `_InstallRequest.limits`.
 - start-banner: name the monitor in the progress line.
 - None of these needs a new decision.
+- env-surface: catalogue `PYAPP` in `.env.example` beside `PATH` as read-only, not a knob, and drop the stale `GITHUB_ENV` exemption.
+- staging-pid-parse: read the pid positionally, as the second-to-last component, and test it with an all-digit token.
+- env-template-path-text: correct the sentence while editing that block.
+- sibling-unreadable: consider skipping an unreadable sibling while still refusing an unreadable managed install.
