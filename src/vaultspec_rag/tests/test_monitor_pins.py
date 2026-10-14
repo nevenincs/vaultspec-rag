@@ -15,7 +15,9 @@ metadata written to disk.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import replace
+from importlib import invalidate_caches
 from importlib.metadata import PathDistribution
 from importlib.util import find_spec, module_from_spec, spec_from_file_location
 from typing import TYPE_CHECKING
@@ -289,7 +291,7 @@ class TestWhereThePinsAreReadFrom:
         assert PINS_MODULE == "vaultspec_rag.monitor_runtime._generated_pins"
 
     def test_pins_on_the_import_path_are_not_this_installation_s(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path
     ) -> None:
         """A module of that name elsewhere on the path admits no monitor.
 
@@ -316,10 +318,17 @@ class TestWhereThePinsAreReadFrom:
             tag="",
         )
         write(tmp_path / "_generated_pins.py", planted)
-        monkeypatch.syspath_prepend(str(tmp_path))
-
-        with pytest.raises(MonitorPinError) as refused:
-            monitor_pin(_TARGET)
+        # The real import path, really prepended, and put back whatever
+        # happens: the planted module has to be findable by the lookup this
+        # refuses to make, or the refusal proves nothing.
+        sys.path.insert(0, str(tmp_path))
+        invalidate_caches()
+        try:
+            with pytest.raises(MonitorPinError) as refused:
+                monitor_pin(_TARGET)
+        finally:
+            sys.path.remove(str(tmp_path))
+            invalidate_caches()
 
         assert refused.value.error == MONITOR_UNPINNED
 
@@ -376,9 +385,12 @@ class TestWhatThisInstallationIs:
         Restored; passes.
         """
         distribution = self._distribution(tmp_path, direct_url)
+
+        def from_name(_name: str) -> PathDistribution:
+            return distribution
+
         monkeypatch.setattr(
-            "vaultspec_rag.monitor_runtime._pins.Distribution.from_name",
-            lambda _name: distribution,
+            "vaultspec_rag.monitor_runtime._pins.Distribution.from_name", from_name
         )
 
         installation = this_installation()

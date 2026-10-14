@@ -85,12 +85,20 @@ def test_monitor_start_failure_rolls_back_child_and_assignment(
     # executable: the interpreter stands in for a monitor and exits at once.
     # Its digest is declared as an operator declares one, and the launch
     # hashes the file before it runs it.
+    #
+    # The interpreter the environment's own python RESOLVES to, which on
+    # Linux is a different file: a virtual environment's python is a symlink
+    # there, an operator-named executable that is a link is refused by
+    # design, and that refusal is a different outcome from the rollback this
+    # test is about. The refusal itself is held elsewhere.
+    interpreter = Path(sys.executable).resolve()
+    assert not interpreter.is_symlink(), interpreter
     with (
         _ports() as listeners,
         managed_env(
             **{
-                EnvVar.MONITOR_BINARY.value: sys.executable,
-                EnvVar.MONITOR_BINARY_SHA256.value: file_sha256(Path(sys.executable)),
+                EnvVar.MONITOR_BINARY.value: str(interpreter),
+                EnvVar.MONITOR_BINARY_SHA256.value: file_sha256(interpreter),
             }
         ),
     ):

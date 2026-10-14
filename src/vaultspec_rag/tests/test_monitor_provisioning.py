@@ -256,6 +256,30 @@ class TestWhatIsRefused:
         assert "Extracting the monitor..." not in lines, lines
         _no_instruction(report)
 
+    def test_a_refusal_leaves_no_empty_directory_chain_behind(
+        self, sources: LoopbackSources
+    ) -> None:
+        """An install that kept nothing leaves no directories either.
+
+        The run has to create the version and target directories before it
+        can stage anything, and a refused archive leaves them empty under
+        the managed directory, where nothing looks again.
+
+        Mutation: dropped the empty-directory removal from the failure path.
+        Observed this test fail on the version-directory assertion, with
+        both directories left behind. Restored; passes.
+        """
+        pin = _pin(_archive())
+
+        report, _ = _install_from(sources, _archive(_WRONG), pin)
+
+        assert report.action is ProvisionAction.FAILED
+        version_dir = managed_monitor_root() / pin.version
+        assert not version_dir.exists(), sorted(version_dir.rglob("*"))
+        # The managed directory itself is nobody's to remove: it holds every
+        # other version's install.
+        assert managed_monitor_root().is_dir()
+
     def test_an_archive_holding_another_executable_installs_nothing(
         self, sources: LoopbackSources
     ) -> None:

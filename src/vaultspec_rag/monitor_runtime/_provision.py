@@ -59,11 +59,13 @@ from ..native_binary._download import (
 from ..native_binary._install import (
     ChecksumMismatchError,
     archive_member,
+    discard_empty_install_dirs,
     discard_staging,
     mark_executable,
     open_staging,
     stream_sha256,
     sweep_abandoned_staging,
+    whole_body_matches,
 )
 from ..native_binary._report import ProvisionReport
 from ._errors import MonitorError
@@ -172,13 +174,6 @@ def _verified_archive(
         DownloadError: However the transfer failed.
     """
     pin = request.pin
-
-    def whole(received: IO[bytes]) -> bool:
-        # Asked only of a body nothing in the transfer says is complete. The
-        # digest is the one thing that can tell a cut transfer from a
-        # finished one, so it is what answers.
-        return stream_sha256(received).lower() == pin.archive_sha256.lower()
-
     archive_path, archive = request.open_staging(
         request.target_path.parent, pin.archive_name
     )
@@ -191,7 +186,9 @@ def _verified_archive(
             archive,
             redirect_hosts=request.redirect_hosts,
             progress=Progress(_SUBJECT, request.on_progress),
-            limits=replace(request.limits, whole=whole),
+            limits=replace(
+                request.limits, whole=whole_body_matches(pin.archive_sha256)
+            ),
         )
         request.on_progress(f"Verifying the {_SUBJECT} download checksum...")
         actual = stream_sha256(archive)
@@ -300,6 +297,7 @@ def _install(request: _InstallRequest) -> ProvisionReport:
     """
     pin = request.pin
     staged: list[Path] = []
+    installed = False
     try:
         request.target_path.parent.mkdir(parents=True, exist_ok=True)
         # Two runs here are not serialised, so there is no lock to prove a
@@ -314,6 +312,7 @@ def _install(request: _InstallRequest) -> ProvisionReport:
         executable = _stage_verified_executable(request, staged)
         mark_executable(executable)
         replace_atomically(executable, request.target_path)
+        installed = True
     except _INSTALL_FAILURES as exc:
         logger.error("monitor provisioning failed: %s", exc)
         return ProvisionReport(
@@ -326,8 +325,13 @@ def _install(request: _InstallRequest) -> ProvisionReport:
         )
     finally:
         # Reached by an interrupt as well as by a failure, so a run stopped
-        # at the keyboard strands no working file either.
+        # at the keyboard strands no working file either, nor the empty
+        # directories it had to make to stage one.
         discard_staging(staged)
+        if not installed:
+            discard_empty_install_dirs(
+                request.target_path.parent, below=managed_monitor_root()
+            )
     return ProvisionReport(
         action=ProvisionAction.CREATED,
         version=pin.version,

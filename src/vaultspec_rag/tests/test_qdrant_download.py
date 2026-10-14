@@ -263,6 +263,12 @@ class TestReleaseBaseSetting:
         assert report.action == ProvisionAction.FAILED
         assert "SHA256 mismatch" in report.message
         assert not (qdrant_bin_dir() / binary_filename()).exists()
+        # A run that kept nothing leaves no directory either: the version
+        # directory it had to create to stage the archive is empty, and
+        # nothing looks in it again. The directory above holds the
+        # provisioning lock and is never removed.
+        assert not qdrant_bin_dir().exists(), sorted(qdrant_bin_dir().rglob("*"))
+        assert qdrant_bin_dir().parent.is_dir()
 
 
 class TestDownloadHostsSetting:

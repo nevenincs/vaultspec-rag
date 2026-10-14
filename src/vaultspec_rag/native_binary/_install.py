@@ -39,7 +39,7 @@ from typing import IO, TYPE_CHECKING, Final
 from ._download import SILENT, Progress
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterable
+    from collections.abc import Callable, Generator, Iterable
     from pathlib import Path
 
 __all__ = [
@@ -47,16 +47,19 @@ __all__ = [
     "ChecksumMismatchError",
     "abandoned_staging",
     "archive_member",
+    "discard_empty_install_dirs",
     "discard_staging",
     "extract_verified_archive",
     "file_sha256",
     "mark_executable",
     "open_destination",
     "open_staging",
+    "operator_path_fault",
     "staging_files",
     "stream_sha256",
     "sweep_abandoned_staging",
     "verify_native_binary",
+    "whole_body_matches",
 ]
 
 _COPY_CHUNK_BYTES = 1 << 20
@@ -96,6 +99,39 @@ def file_sha256(path: Path) -> str:
     """Return the hex SHA256 digest of *path*'s content."""
     with path.open("rb") as handle:
         return stream_sha256(handle)
+
+
+def whole_body_matches(digest: str) -> Callable[[IO[bytes]], bool]:
+    """Return the completeness answer for a transfer pinned to *digest*.
+
+    A response that declares no length and is not chunked ends when the
+    connection closes, so a transfer cut short looks exactly like one that
+    finished. The digest is the one thing that can tell them apart, so it is
+    what answers. Asked only of such a body, and only by a caller that holds
+    the digest the body is pinned to.
+    """
+
+    def whole(received: IO[bytes]) -> bool:
+        return stream_sha256(received).lower() == digest.lower()
+
+    return whole
+
+
+def operator_path_fault(candidate: Path) -> str | None:
+    """Say why *candidate* may not be an operator-named executable, or ``None``.
+
+    Absolute, so the working directory can never choose the file. Not a link,
+    so what is named is what runs and cannot be re-pointed after the fact.
+    Asked at resolution and again at every launch, for every native program
+    an operator may name.
+    """
+    if not candidate.is_absolute():
+        return "is not an absolute path"
+    if candidate.is_symlink():
+        return "is a symbolic link"
+    if not candidate.is_file():
+        return "is not an existing regular file"
+    return None
 
 
 def verify_native_binary(binary: Path, expected_sha256: str) -> None:
@@ -142,6 +178,34 @@ def open_staging(directory: Path, label: str) -> tuple[Path, IO[bytes]]:
         | getattr(os, "O_NOFOLLOW", 0)
     )
     return path, os.fdopen(os.open(path, flags, 0o600), "w+b")
+
+
+def discard_empty_install_dirs(leaf: Path, *, below: Path) -> None:
+    """Remove the install directories a failed run made, while they are empty.
+
+    An install that kept nothing leaves no directories behind either: the
+    chain it had to create before it could stage anything is then empty, and
+    nothing looks in it again. Walks up from *leaf* and removes each
+    directory, stopping at the first one that is not empty and always at
+    *below* - the managed directory itself, which is not one run's to remove
+    and holds every other version's state.
+
+    Nothing holding anything is removed, so a directory another run is
+    installing into is left alone: its staging file is in it. A second run
+    that has just created the same directory and not yet opened its staging
+    file can lose it to this, which costs that run its install and is
+    reported as one; the next start installs again.
+    """
+    current = leaf.resolve()
+    stop = below.resolve()
+    while current != stop and current.is_relative_to(stop):
+        try:
+            current.rmdir()
+        except OSError:
+            # Not empty, already gone, or not ours to remove. Either way
+            # this is as far up as a failed run may go.
+            return
+        current = current.parent
 
 
 def staging_files(directory: Path, *, spare: Path | None = None) -> list[Path]:

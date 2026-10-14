@@ -291,17 +291,40 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "fetch the server runs the real provisioner against a stand-in "
         "release served from a loopback source",
     ),
-    # Reducing this bound to zero failed count growth; raising it to two failed
-    # the declared-sites check; exact restoration passed.
+    "test_monitor_pins.py": (
+        1,
+        "answers the distribution lookup with a metadata directory the test "
+        "wrote, because what is under test is how an installation's own "
+        "direct-URL record decides which pins it may accept, and this "
+        "installation has exactly one such record; reinstalling this package "
+        "under each of the shapes parametrised here is not something a unit "
+        "test can do. The record is a real file read by the real metadata "
+        "reader, and the judgement over this checkout's own installation is "
+        "asserted beside it without any substitution",
+    ),
+    # Reducing this bound to one failed count growth; raising it to three
+    # failed the declared-sites check; exact restoration passed.
+    "test_monitor_resolution.py": (
+        2,
+        "one site points the environment's scripts directory at a temporary "
+        "one, because it is a directory of the interpreter running this suite "
+        "and a file of another build cannot be put in it without writing into "
+        "the environment the tests run in. The other states the release "
+        "digests for the one case that has no monitor installed at all, so "
+        "the launcher's refusal is reached on a checkout that built one too. "
+        "The place an archive install's own monitor sits - the launcher's own "
+        "directory - is driven for real through the variable a launcher sets, "
+        "so every other case here plants its monitor in a real installation "
+        "place; the lookup, the files, the digests, the managed directory and "
+        "the resolver are real throughout",
+    ),
     "test_program_lookup_sites.py": (
         1,
-        "points the running program's recorded location at a temporary "
-        "directory, because the lookup finds what ships beside this "
-        "installation's own programs by asking where the running program is, "
-        "and that cannot be anywhere but the real environment without building "
-        "a second installation; planting a monitor in the real one would "
-        "change the machine the tests run on. The lookup, the planted file, "
-        "the search path and the resolution under test are all real",
+        "states the release digests that admit a monitor, because a checkout "
+        "carries none until it has compiled one and this guard is about where "
+        "a program is looked for, not about whether this machine built one. "
+        "The managed install, the planted programs, the search state, the "
+        "resolution and the process creation under test are all real",
     ),
     "test_publication_scaling.py": (
         1,
@@ -594,7 +617,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "be",
     ),
     "conftest.py": (
-        4,
+        5,
         "install's torch and provisioning steps and the release-mismatch advice "
         "all branch on whether this is a host or a client installation, and the "
         "role is read from the distributions the running interpreter holds. The "
@@ -613,7 +636,11 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "because the machine's own anchors may be held by a live service, a "
         "test must never contend for them, and an ownership claim outlives "
         "the test that took it; only their location is substituted, and "
-        "claiming, lending and refusing run unchanged",
+        "claiming, lending and refusing run unchanged. The last site states "
+        "that this installation carries no monitor digests, for the cases "
+        "about having no monitor at all: a checkout that compiled one carries "
+        "digests and has it installed, and no test can unbuild it, so the one "
+        "fact is stated and everything the readers do with it runs unchanged",
     ),
     "test_server.py": (
         5,
