@@ -85,10 +85,21 @@ def _worker_started_by(supervisor: QdrantSupervisor, pidfile: Path) -> psutil.Pr
 
 
 def _gone(worker: psutil.Process) -> bool:
+    """Return whether *worker* has exited.
+
+    Asked of the exit, not of the process table: on Windows an exited process
+    stays listed, and ``is_running`` true, while any other process still holds
+    a handle to it, which on a hosted runner can outlast a stop by a moment.
+    """
     try:
-        return not worker.is_running() or worker.status() == psutil.STATUS_ZOMBIE
+        if worker.status() == psutil.STATUS_ZOMBIE:
+            return True
+        worker.wait(timeout=0)
     except psutil.NoSuchProcess:
         return True
+    except psutil.TimeoutExpired:
+        return False
+    return True
 
 
 def _end_if_left(worker: psutil.Process | None) -> None:
