@@ -217,9 +217,9 @@ class _InstallCommand(TyperCommand):
                     help=(
                         "Skip the PyTorch configuration prompt. Required for "
                         "non-interactive installs unless --no-torch-config is used. "
-                        "Never approves the MCP server launch: that is reviewed "
-                        "at a terminal, or granted beforehand with vaultspec-core "
-                        "spec mcps trust."
+                        "Never approves the MCP launch: that is reviewed at a "
+                        "terminal, or granted beforehand with vaultspec-core spec "
+                        "mcps trust."
                     ),
                 ),
                 TyperOption(
@@ -345,9 +345,9 @@ class _InstallCommand(TyperCommand):
         "--no-mcp for a CLI-only workspace without the mcp dependency, and "
         "--no-provision to set up the workspace only; use --yes or "
         "--no-torch-config for non-interactive runs. At a terminal, install "
-        "also shows the exact MCP server launch it would enroll and asks you "
-        "to approve it; a run with nobody to ask, or --yes, never approves it "
-        "and leaves the server unenrolled until you approve it with "
+        "also shows the exact MCP launch it would enroll and asks you to "
+        "approve it; a run with nobody to ask, or --yes, never approves it "
+        "and leaves the MCP integration unenrolled until you approve it with "
         "vaultspec-core spec mcps trust. The model files and the "
         "Qdrant server are each checked against digests compiled into "
         "vaultspec-rag before they are used. A client installation is given "
