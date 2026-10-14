@@ -229,6 +229,23 @@ def _preflight_document_scope(
     ).preflight_changed_paths(changed_paths)
 
 
+def _admits_first_build(
+    root_dir: pathlib.Path,
+    source: PublicSourceType,
+) -> bool:
+    """Whether this in-process request runs *source*'s first full build.
+
+    The same admission the service uses, asked directly: an incremental
+    request for a source that has never been built has no publication to
+    reconcile against, so it runs the first build instead of refusing. One
+    reading per selected source, so a root with a built vault and an unbuilt
+    code index gets the right answer for each.
+    """
+    from ._job_admission import admits_first_build
+
+    return admits_first_build(root_dir, source, initiator_kind="api")
+
+
 def index(
     root_dir: pathlib.Path,
     *,
@@ -262,20 +279,25 @@ def index(
     rep = reporter if reporter is not None else NullProgressReporter()
     registry = get_registry()
     result: IndexResult | None = None
+    first_build = not (full or clean) and _admits_first_build(
+        root, PublicSourceType.VAULT
+    )
     with registry.compute_lease(root, model_name=model_name) as lease:
         from .indexer._run_ledger_models import RunAuthority
 
         authority = (
-            RunAuthority.REBUILD if (full or clean) else RunAuthority.PUBLICATION
+            RunAuthority.REBUILD
+            if (full or clean or first_build)
+            else RunAuthority.PUBLICATION
         )
         runtime = lease.runtime
         result = (
             runtime.vault_indexer.full_index(
-                clean=clean,
+                clean=clean or first_build,
                 reporter=rep,
                 authority=authority,
             )
-            if (full or clean)
+            if (full or clean or first_build)
             else runtime.vault_indexer.incremental_index(
                 reporter=rep,
                 authority=authority,
@@ -284,6 +306,7 @@ def index(
         registry.peek_project(root).graph_cache.invalidate()
     if result is None:
         raise RuntimeError("vault indexing lease ended without a result")
+    result.first_build = first_build
     return result
 
 
@@ -311,18 +334,21 @@ def index_codebase(
     preflight = _preflight_code_index(root, extra_excludes=options.extra_excludes)
     registry = get_registry()
     result: IndexResult | None = None
+    first_build = not (options.full or options.clean) and _admits_first_build(
+        root, PublicSourceType.CODE
+    )
     with registry.compute_lease(root, model_name=options.model_name) as lease:
         from .indexer._run_ledger_models import RunAuthority
 
         authority = (
             RunAuthority.REBUILD
-            if (options.full or options.clean)
+            if (options.full or options.clean or first_build)
             else RunAuthority.PUBLICATION
         )
         runtime = lease.runtime
-        if options.full or options.clean:
+        if options.full or options.clean or first_build:
             result = runtime.code_indexer.full_index(
-                clean=options.clean,
+                clean=options.clean or first_build,
                 reporter=rep,
                 preflight=preflight,
                 authority=authority,
@@ -335,6 +361,7 @@ def index_codebase(
             )
     if result is None:
         raise RuntimeError("code indexing lease ended without a result")
+    result.first_build = first_build
     return result
 
 
@@ -365,22 +392,30 @@ def index_documents(
     )
     registry = get_registry()
     result: IndexResult | None = None
+    # A scoped request names its own changed paths, which is the bounded
+    # automatic shape: it never escalates, whatever the source's history.
+    first_build = (
+        options.changed_paths is None
+        and not (options.full or options.clean)
+        and _admits_first_build(root, PublicSourceType.DOCUMENT)
+    )
     with registry.compute_lease(root, model_name=options.model_name) as lease:
         from .indexer._run_ledger_models import RunAuthority
 
         authority = (
             RunAuthority.REBUILD
-            if (options.full or options.clean)
+            if (options.full or options.clean or first_build)
             else RunAuthority.PUBLICATION
         )
         runtime = lease.runtime
-        if options.full or options.clean:
+        if options.full or options.clean or first_build:
             # The scoped-indexing guard above already raises when
             # ``options.full or options.clean`` and ``changed_paths`` is set,
-            # so reaching here means ``preflight`` came from
-            # ``_preflight_document_index``, never ``_preflight_document_scope``.
+            # and a scoped request is never a first build, so reaching here
+            # means ``preflight`` came from ``_preflight_document_index``,
+            # never ``_preflight_document_scope``.
             result = runtime.document_indexer.full_index(
-                clean=options.clean,
+                clean=options.clean or first_build,
                 reporter=rep,
                 preflight=cast("DocumentIndexPreflight", preflight),
                 authority=authority,
@@ -394,6 +429,7 @@ def index_documents(
             )
     if result is None:
         raise RuntimeError("document indexing lease ended without a result")
+    result.first_build = first_build
     return result
 
 
@@ -410,7 +446,14 @@ def index_all(
     root_dir: pathlib.Path,
     options: AllIndexOptions | None = None,
 ) -> AllIndexOutcomes:
-    """Index every domain and return every success or failure independently."""
+    """Index every domain and return every success or failure independently.
+
+    One call per domain rather than one operation over three: each decides on
+    its own history, so a root whose vault has published and whose code index
+    has never been built updates the first and builds the second. The shared
+    ``clean`` flag still means what it says - a rebuild of all three - and
+    cannot be reached by a domain that did not ask for one.
+    """
     if options is None:
         options = AllIndexOptions()
     return AllIndexOutcomes(

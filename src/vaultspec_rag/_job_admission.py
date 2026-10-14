@@ -185,6 +185,25 @@ def _count_stored_points(root: Path, source: PublicSourceType) -> int | None:
         return None
 
 
+def admits_first_build(
+    root: Path,
+    source: PublicSourceType,
+    *,
+    initiator_kind: str,
+) -> bool:
+    """Whether an explicit incremental request runs as *source*'s first build.
+
+    The one owner of that decision, for the job surfaces and the in-process
+    ones alike. A caller that asked for a rebuild never asks: it already runs
+    the full lifecycle. Automatic origins are refused before any reading is
+    taken, so watcher and integrity convergence pays nothing for this and
+    keeps its bounded scope.
+    """
+    if initiator_kind in AUTOMATIC_INDEX_ORIGINS:
+        return False
+    return is_new_source(read_source_admission(root, source))
+
+
 def index_job_spec(
     root: Path,
     *,
@@ -214,15 +233,15 @@ def index_job_spec(
         mode=requested,
         authority=authority,
     )
-    if (
-        requested is JobMode.REBUILD
-        or not source.is_corpus
-        or initiator_kind in AUTOMATIC_INDEX_ORIGINS
-    ):
+    if requested is JobMode.REBUILD or not source.is_corpus:
         return spec
     from ._source_types import PublicSourceType as _Source
 
-    if not is_new_source(read_source_admission(root, _Source(source.value))):
+    if not admits_first_build(
+        root,
+        _Source(source.value),
+        initiator_kind=initiator_kind,
+    ):
         return spec
     logger.info(
         "admitting the first %s index of %s as a full build", source.value, root

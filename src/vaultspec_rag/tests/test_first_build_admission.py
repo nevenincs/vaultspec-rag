@@ -15,6 +15,7 @@ from .._job_admission import (
     SourceAdmissionReading,
     SourcePublication,
     admit_index_job,
+    admits_first_build,
     index_job_spec,
     is_new_source,
     read_source_admission,
@@ -526,6 +527,51 @@ def test_two_concurrent_first_build_admissions_collapse_to_one_job(
         assert active[0].spec.is_first_build
     finally:
         jobs.reset()
+
+
+def test_the_in_process_route_asks_the_same_admission(
+    tmp_path: Path,
+    isolated_registry: ServiceRegistry,
+) -> None:
+    """The public facade decides through the one owner, per source.
+
+    The in-process route has no job to carry a mode, so what it asks is the
+    decision itself. A root whose vault has published and whose code index
+    has never been built answers differently for each, which is what makes
+    selecting every domain safe.
+    """
+    root = tmp_path / "in-process-mixed"
+    publish_empty_vault_proof(root)
+
+    assert not admits_first_build(root, PublicSourceType.VAULT, initiator_kind="api")
+    assert admits_first_build(root, PublicSourceType.CODE, initiator_kind="api")
+    assert admits_first_build(root, PublicSourceType.DOCUMENT, initiator_kind="api")
+    collection = _store_one_code_point(root, isolated_registry)
+    assert _collection_points(root, isolated_registry, collection) == 1
+    assert not admits_first_build(root, PublicSourceType.CODE, initiator_kind="api")
+
+
+@pytest.mark.parametrize("initiator_kind", ["watcher", "integrity"])
+def test_no_origin_outside_the_operator_ones_asks_for_a_build(
+    tmp_path: Path,
+    isolated_registry: ServiceRegistry,
+    initiator_kind: str,
+) -> None:
+    """Automatic origins are refused the decision itself, not just the spec.
+
+    Mutation proven by removing the origin test from ``admits_first_build``:
+    both origins then report a first build to every caller of admission,
+    including the in-process route.
+    """
+    del isolated_registry
+    root = tmp_path / f"origin-{initiator_kind}"
+    root.mkdir()
+
+    assert not admits_first_build(
+        root,
+        PublicSourceType.CODE,
+        initiator_kind=initiator_kind,
+    )
 
 
 def test_a_requested_mode_records_only_an_admitted_first_build() -> None:

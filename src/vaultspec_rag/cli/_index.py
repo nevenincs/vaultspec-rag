@@ -41,6 +41,7 @@ from .._store_locks import VaultStoreLockedError
 from .._store_writes import InsufficientDiskSpaceError
 from ..config._types import EnvVar
 from ..indexer._run_ledger_models import RunAuthority
+from ..job_models import FIRST_BUILD_OPERATION, JobMode
 from ..registry import get_registry
 from ..serviceclient._compat import resolve_data_plane_service
 from ..serviceclient._transport import _try_http_index_audit, _try_http_reindex
@@ -196,6 +197,11 @@ def _print_index_summary(sources: list[dict[str, object]], *, via: str) -> None:
             if duration != "not reported"
             else "duration not reported"
         )
+        # An index of a source that was never built is its first build, not
+        # an update of one, and the counts below read very differently once
+        # the reader knows which they are looking at.
+        if row.get("effective_mode") == FIRST_BUILD_OPERATION:
+            label = f"{label} (first build)"
         _plain(
             f"{label}: added {row.get('added', 0)}; "
             f"updated {row.get('updated', 0)}; "
@@ -624,8 +630,6 @@ def _print_service_domain_outcomes(raw_domains: object) -> bool:
 
 def _queued_first_build(outcome: object) -> bool:
     """Whether the service admitted this queued job as the source's first build."""
-    from ..job_models import FIRST_BUILD_OPERATION
-
     if not isinstance(outcome, dict):
         return False
     job = cast("dict[str, object]", outcome).get("job")
@@ -1074,7 +1078,9 @@ def _try_in_process_indexing(request: _IndexRunRequest) -> None:
         except (ImportError, RuntimeError) as e:
             _handle_gpu_error(e, command="index", json_mode=request.json_mode)
 
-    in_process_sources = _collect_index_rows(v_res, c_res, d_res, all_outcomes)
+    in_process_sources = _collect_index_rows(
+        v_res, c_res, d_res, all_outcomes, rebuild=request.rebuild
+    )
 
     if request.json_mode:
         _emit_json(
@@ -1100,6 +1106,8 @@ def _collect_index_rows(
     code_result: IndexResult | None,
     document_result: IndexResult | None,
     all_outcomes: AllIndexOutcomes | None,
+    *,
+    rebuild: bool,
 ) -> list[dict[str, object]]:
     """Build non-collapsing per-domain rows for CLI output."""
     rows: list[dict[str, object]] = []
@@ -1110,7 +1118,7 @@ def _collect_index_rows(
     ):
         if result is None:
             continue
-        row = _index_result_row(source, result)
+        row = _index_result_row(source, result, rebuild=rebuild)
         if source == "code":
             row.update(
                 preprocess_ok=result.preprocess_ok,
@@ -1128,7 +1136,7 @@ def _collect_index_rows(
         ("document", all_outcomes.document),
     ):
         rows.append(
-            _index_result_row(source, outcome.result)
+            _index_result_row(source, outcome.result, rebuild=rebuild)
             if outcome.result is not None
             else {"source": source, "ok": False, "error": outcome.error}
         )
@@ -1214,8 +1222,20 @@ def _execute_source_indexing(
     )
 
 
-def _index_result_row(source: str, result: IndexResult) -> dict[str, object]:
-    """Project one real IndexResult into the stable CLI row shape."""
+def _index_result_row(
+    source: str,
+    result: IndexResult,
+    *,
+    rebuild: bool,
+) -> dict[str, object]:
+    """Project one real IndexResult into the stable CLI row shape.
+
+    Carries the requested and effective operations under the names the
+    service-owned job records use, so one vocabulary covers both routes. They
+    differ only where a source that had never been built ran its first full
+    build for an incremental request.
+    """
+    requested = (JobMode.REBUILD if rebuild else JobMode.INCREMENTAL).value
     return {
         "source": source,
         "ok": True,
@@ -1224,6 +1244,8 @@ def _index_result_row(source: str, result: IndexResult) -> dict[str, object]:
         "removed": result.removed,
         "total": result.total,
         "duration_ms": result.duration_ms,
+        "requested_mode": requested,
+        "effective_mode": FIRST_BUILD_OPERATION if result.first_build else requested,
     }
 
 

@@ -23,6 +23,7 @@ from ...indexer._run_ledger_models import (
 from ...indexer._vault_checkpoint import VaultRunCheckpoint
 from ...job_control import NO_RUN_CONTROL
 from ...job_models import FIRST_BUILD_OPERATION, JobState
+from ...progress import NullProgressReporter
 from ...store_runtime import configured_backend_identity
 from .._publication_assertions import published_content_identities
 from ._index_job_control_support import (
@@ -360,3 +361,82 @@ async def test_a_first_build_that_failed_without_points_is_a_first_build_again(
     assert set(published_content_identities(root, PublicSourceType.VAULT)) == {
         document.id for document in documents
     }
+
+
+async def test_an_in_process_index_builds_every_new_source_of_a_root(
+    tmp_path: Path,
+    managed_facade_registry: ServiceRegistry,
+) -> None:
+    """The in-process route admits each selected source on its own history.
+
+    No job and no service: this is the public facade the borrowed-GPU CLI run
+    calls. Selecting every domain fans out to one request per domain, so each
+    reads its own publication and storage and builds itself.
+    """
+    from ... import api
+
+    root = tmp_path / "in-process-new"
+    write_vault_documents(root, 4)
+    _write_code_files(root, 4, "in-process")
+
+    outcomes = api.index_all(
+        root,
+        api.AllIndexOptions(clean=False, reporter=NullProgressReporter()),
+    )
+
+    for name, outcome in (
+        ("vault", outcomes.vault),
+        ("code", outcomes.code),
+        ("document", outcomes.document),
+    ):
+        assert outcome.error is None, f"{name} failed: {outcome.error}"
+        assert outcome.result is not None
+        assert outcome.result.first_build, f"{name} did not run as a first build"
+    assert set(published_content_identities(root, PublicSourceType.VAULT))
+    assert set(published_content_identities(root, PublicSourceType.CODE))
+    assert published_content_identities(root, PublicSourceType.DOCUMENT) == {}
+    assert managed_facade_registry.vault_doc_count(root) > 0
+    assert managed_facade_registry.code_chunk_count(root) > 0
+
+
+async def test_an_in_process_index_of_a_published_source_stays_incremental(
+    tmp_path: Path,
+    managed_facade_registry: ServiceRegistry,
+) -> None:
+    """A second in-process index of the same source updates rather than builds."""
+    from ... import api
+
+    root = tmp_path / "in-process-twice"
+    write_vault_documents(root, 3)
+    first = api.index(root, reporter=NullProgressReporter())
+    assert first.first_build
+
+    second = api.index(root, reporter=NullProgressReporter())
+
+    assert not second.first_build
+    assert managed_facade_registry.vault_doc_count(root) > 0
+
+
+async def test_an_in_process_index_refuses_over_points_without_a_publication(
+    tmp_path: Path,
+    managed_facade_registry: ServiceRegistry,
+) -> None:
+    """The in-process route keeps the typed refusal, and the points with it.
+
+    Mutation proven by dropping the never-built test from
+    ``api.index_codebase``: the call then resets the collection and the
+    stored point is gone.
+    """
+    from ... import api
+    from ..._job_errors import JobError
+
+    root = tmp_path / "in-process-unaccounted"
+    _write_code_files(root, 3, "unaccounted")
+    collection = _store_one_code_point(root, managed_facade_registry)
+    assert _collection_points(root, managed_facade_registry, collection) == 1
+
+    with pytest.raises(JobError) as refused:
+        api.index_codebase(root, api.CodeIndexOptions(reporter=NullProgressReporter()))
+
+    assert refused.value.error_kind.value == "full_reindex_required"
+    assert _collection_points(root, managed_facade_registry, collection) == 1
