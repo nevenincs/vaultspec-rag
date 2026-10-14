@@ -13,12 +13,9 @@ import pytest
 from .. import api
 from .._source_types import PublicSourceType
 from ..api import clean
-from ..indexer._run_ledger_models import RunAuthority, RunOperation
-from ..indexer._vault_checkpoint import VaultRunCheckpoint
-from ..job_control import NO_RUN_CONTROL
 from ..registry import get_registry
 from ..service import ProjectBusyError, ServiceRegistry
-from ..store_runtime import configured_backend_identity
+from ._publication_assertions import publish_empty_vault_proof
 from ._state_fixtures import reset_registry
 
 if TYPE_CHECKING:
@@ -39,26 +36,13 @@ def isolated_registry() -> Generator[ServiceRegistry]:
         reset_registry()
 
 
-def _publish_empty_vault_proof(root: Path) -> None:
-    root.mkdir(parents=True, exist_ok=True)
-    checkpoint = VaultRunCheckpoint.open(
-        root,
-        backend_identity=configured_backend_identity(root),
-        authority=RunAuthority.REBUILD,
-        operation=RunOperation.FULL,
-        run_control=NO_RUN_CONTROL,
-    )
-    checkpoint.publish_proof_transition()
-    checkpoint.publish_generation()
-
-
 def test_clean_rejects_a_leased_warm_project_before_mutating_proof(
     tmp_path: Path,
     isolated_registry: ServiceRegistry,
 ) -> None:
     """Maintenance fails before deletion when a request currently pins a slot."""
     root = tmp_path / "leased-warm-project"
-    _publish_empty_vault_proof(root)
+    publish_empty_vault_proof(root)
     warm_slot = isolated_registry.peek_project(root)
 
     with isolated_registry.lease(root) as leased_slot:
@@ -78,7 +62,7 @@ def test_clean_waits_for_a_cold_store_lease_then_recreates_the_collection(
 ) -> None:
     """Cleanup waits for the real cold lease that owns this root's storage lock."""
     root = tmp_path / "cold-store-lease"
-    _publish_empty_vault_proof(root)
+    publish_empty_vault_proof(root)
     completed = threading.Event()
     failures: list[BaseException] = []
     outcomes: list[list[str]] = []

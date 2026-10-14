@@ -536,7 +536,9 @@ def _try_service_delegation(request: _ServiceDelegationRequest) -> bool:
             )
         elif "job_id" in data:
             _print_job_queued(
-                _index_source_label(request.index_type.value), data.get("job_id")
+                _index_source_label(request.index_type.value),
+                data.get("job_id"),
+                first_build=_queued_first_build(data.get("outcome")),
             )
             _print_check_progress()
         elif _print_service_domain_outcomes(data.get("domains")):
@@ -606,7 +608,11 @@ def _print_service_domain_outcomes(raw_domains: object) -> bool:
         rendered = True
         label = _index_source_label(source)
         if domain.get("ok") is True:
-            _print_job_queued(label, domain.get("job_id"))
+            _print_job_queued(
+                label,
+                domain.get("job_id"),
+                first_build=_queued_first_build(domain.get("outcome")),
+            )
         else:
             _plain(
                 f"{label}: failed: {domain.get('error_kind')}: {domain.get('detail')}"
@@ -616,9 +622,35 @@ def _print_service_domain_outcomes(raw_domains: object) -> bool:
     return rendered
 
 
-def _print_job_queued(label: str, job_id: object) -> None:
+def _queued_first_build(outcome: object) -> bool:
+    """Whether the service admitted this queued job as the source's first build."""
+    from ..job_models import FIRST_BUILD_OPERATION
+
+    if not isinstance(outcome, dict):
+        return False
+    job = cast("dict[str, object]", outcome).get("job")
+    if not isinstance(job, dict):
+        return False
+    spec = cast("dict[str, object]", job).get("spec")
+    if not isinstance(spec, dict):
+        return False
+    return (
+        cast("dict[str, object]", spec).get("effective_mode") == FIRST_BUILD_OPERATION
+    )
+
+
+def _print_job_queued(
+    label: str,
+    job_id: object,
+    *,
+    first_build: bool = False,
+) -> None:
+    # An index of a source that was never built is a full first build, not an
+    # update of something, so calling it a re-index describes work the
+    # operator cannot have asked for yet.
+    operation = "first build" if first_build else "re-index"
     _styled(
-        f"{label} re-index job queued on service: ",
+        f"{label} {operation} job queued on service: ",
         (str(job_id), COMMAND),
         soft_wrap=True,
     )

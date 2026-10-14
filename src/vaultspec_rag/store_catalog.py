@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from qdrant_client.conversions.common_types import PointId, PointsSelector
     from qdrant_client.http.models.models import Condition, Filter, Record
 
+    from ._source_types import PublicSourceType
     from .store_runtime import ScrollOptions
 
 logger = logging.getLogger(__name__)
@@ -729,6 +730,28 @@ class _VaultCatalogMixin:
             exist.
         """
         return self._count_collection(self.DOCUMENT_TABLE_NAME)
+
+    def count_source(self, source: PublicSourceType) -> int:
+        """Return one concrete source's canonical point count.
+
+        Callers holding a source selection rather than a collection name had
+        each written this three-way choice out beside their own call, so a
+        reading keyed by the source enum lives here with the three counts it
+        selects between.
+
+        Returns:
+            Point count in *source*'s canonical collection, or ``0`` when
+            that collection does not exist.
+        """
+        from ._source_types import PublicSourceType as _Source
+
+        if source is _Source.VAULT:
+            return self.count()
+        if source is _Source.CODE:
+            return self.count_code()
+        if source is _Source.DOCUMENT:
+            return self.count_document()
+        raise ValueError("a point count requires one concrete source")
 
     def get_by_id(self, doc_id: str) -> dict[str, object] | None:
         """Retrieve a single document by ID, or ``None`` if not found.

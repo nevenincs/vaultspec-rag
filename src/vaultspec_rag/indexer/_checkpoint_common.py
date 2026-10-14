@@ -302,8 +302,6 @@ class RunCheckpointBase:
         ledger: RunLedger, receipt: PublicationReceipt, store: VaultStore
     ) -> None:
         """Pending path repairs cannot replace missing untouched parent storage."""
-        from .._source_types import PublicSourceType
-
         paths = tuple(
             sorted(
                 {item.unit.rel_path for item in receipt.mutations}
@@ -318,11 +316,7 @@ class RunCheckpointBase:
                 receipt.compatibility_key, paths[start : start + FETCH_BATCH]
             )
             touched += sum(len(item.point_ids) for item in evidence.values())
-        count = {
-            PublicSourceType.CODE: store.count_code,
-            PublicSourceType.DOCUMENT: store.count_document,
-            PublicSourceType.VAULT: store.count,
-        }[receipt.compatibility_key.source_type]()
+        count = store.count_source(receipt.compatibility_key.source_type)
         if count < proof.aggregate.retained_points - touched:
             raise RunLedgerStateError(
                 "storage no longer backs untouched publication proof paths"
