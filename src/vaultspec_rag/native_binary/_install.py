@@ -39,7 +39,7 @@ from typing import IO, TYPE_CHECKING, Final
 from ._download import SILENT, Progress
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterable
+    from collections.abc import Callable, Generator, Iterable
     from pathlib import Path
 
 __all__ = [
@@ -53,10 +53,12 @@ __all__ = [
     "mark_executable",
     "open_destination",
     "open_staging",
+    "operator_path_fault",
     "staging_files",
     "stream_sha256",
     "sweep_abandoned_staging",
     "verify_native_binary",
+    "whole_body_matches",
 ]
 
 _COPY_CHUNK_BYTES = 1 << 20
@@ -96,6 +98,39 @@ def file_sha256(path: Path) -> str:
     """Return the hex SHA256 digest of *path*'s content."""
     with path.open("rb") as handle:
         return stream_sha256(handle)
+
+
+def whole_body_matches(digest: str) -> Callable[[IO[bytes]], bool]:
+    """Return the completeness answer for a transfer pinned to *digest*.
+
+    A response that declares no length and is not chunked ends when the
+    connection closes, so a transfer cut short looks exactly like one that
+    finished. The digest is the one thing that can tell them apart, so it is
+    what answers. Asked only of such a body, and only by a caller that holds
+    the digest the body is pinned to.
+    """
+
+    def whole(received: IO[bytes]) -> bool:
+        return stream_sha256(received).lower() == digest.lower()
+
+    return whole
+
+
+def operator_path_fault(candidate: Path) -> str | None:
+    """Say why *candidate* may not be an operator-named executable, or ``None``.
+
+    Absolute, so the working directory can never choose the file. Not a link,
+    so what is named is what runs and cannot be re-pointed after the fact.
+    Asked at resolution and again at every launch, for every native program
+    an operator may name.
+    """
+    if not candidate.is_absolute():
+        return "is not an absolute path"
+    if candidate.is_symlink():
+        return "is a symbolic link"
+    if not candidate.is_file():
+        return "is not an existing regular file"
+    return None
 
 
 def verify_native_binary(binary: Path, expected_sha256: str) -> None:

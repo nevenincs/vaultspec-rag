@@ -46,6 +46,7 @@ from .._program_lookup import Where, find_programs
 from ..config._settings import managed_status_dir
 from ..config._types import EnvVar, OperatorBinaryPairError
 from ..native_binary._hold import held_executable
+from ..native_binary._install import operator_path_fault
 from ..native_binary._targets import UnsupportedTargetError, host_target
 from ._errors import MonitorError
 from ._pins import MonitorPin, monitor_pin
@@ -64,7 +65,6 @@ __all__ = [
     "MonitorBinaryError",
     "MonitorSource",
     "ResolvedMonitor",
-    "expected_monitor_sha256",
     "managed_monitor_path",
     "managed_monitor_root",
     "monitor_for_launch",
@@ -189,7 +189,7 @@ def operator_monitor() -> ResolvedMonitor | None:
     if declared is None:
         return None
     candidate = Path(declared.path).expanduser()
-    fault = operator_monitor_fault(candidate)
+    fault = operator_path_fault(candidate)
     if fault is not None:
         raise MonitorBinaryError(
             MONITOR_BINARY_INVALID,
@@ -204,22 +204,6 @@ def operator_monitor() -> ResolvedMonitor | None:
         source=MonitorSource.OPERATOR_SETTING,
         sha256=declared.sha256,
     )
-
-
-def operator_monitor_fault(candidate: Path) -> str | None:
-    """Say why *candidate* may not be the operator's monitor, or ``None``.
-
-    Absolute, so the working directory can never choose the file. Not a link,
-    so what is named is what runs and cannot be re-pointed after the fact.
-    Asked at resolution and again at every launch.
-    """
-    if not candidate.is_absolute():
-        return "is not an absolute path"
-    if candidate.is_symlink():
-        return "is a symbolic link"
-    if not candidate.is_file():
-        return "is not an existing regular file"
-    return None
 
 
 def _pinned_candidates(pin: MonitorPin) -> Iterator[tuple[Path, MonitorSource]]:
@@ -328,27 +312,3 @@ def monitor_for_launch() -> ResolvedMonitor:
             "verifies it again.",
         )
     return resolved
-
-
-def expected_monitor_sha256() -> str | None:
-    """Return the digest a monitor must hash to here, or ``None`` when none is.
-
-    The digest the resolver would hold the monitor to: the operator's
-    declaration when the operator settings name one, otherwise this release's
-    pin for this target. ``None`` says this installation can admit no monitor
-    at all, which is a source checkout whose monitor was never built here,
-    and an unsupported platform.
-
-    Raises nothing: a caller asking what the digest would be is answered, or
-    told there is none.
-    """
-    try:
-        operator = operator_monitor()
-    except MonitorError:
-        return None
-    if operator is not None:
-        return operator.sha256
-    try:
-        return monitor_pin(monitor_target()).executable_sha256
-    except MonitorError:
-        return None

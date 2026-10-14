@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING
 from .._win32 import WIN_CREATE_NEW_PROCESS_GROUP, WIN_CREATE_NO_WINDOW
 from ..config._types import EnvVar
 from ..native_binary._hold import HeldExecutable, held_executable
+from ..native_binary._install import operator_path_fault
 from ._constants import QDRANT_SERVER_VERSION, BinarySource, ResolvedBinary
 from ._managed_install import (
     InstallState,
@@ -50,7 +51,6 @@ from ._resolve import (
     QdrantBinaryError,
     has_provisioned_binary,
     managed_install_refusal,
-    operator_binary_fault,
     operator_setting_refusal,
 )
 
@@ -161,7 +161,7 @@ def _verified(resolved: ResolvedBinary) -> Generator[HeldExecutable]:
         QdrantBinaryError: When the binary may not run.
     """
     if resolved.source is BinarySource.OPERATOR_SETTING:
-        fault = operator_binary_fault(resolved.path)
+        fault = operator_path_fault(resolved.path)
         if fault is not None:
             raise operator_setting_refusal(resolved.path, fault)
     elif resolved.source is not BinarySource.MANAGED_DOWNLOAD:

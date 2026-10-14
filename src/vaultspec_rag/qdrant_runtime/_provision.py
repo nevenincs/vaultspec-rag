@@ -76,6 +76,7 @@ from ..native_binary._install import (
     staging_files,
     stream_sha256,
     sweep_abandoned_staging,
+    whole_body_matches,
 )
 from ..native_binary._report import ProvisionReport
 from ._constants import (
@@ -332,12 +333,6 @@ def _verified_archive(
             executable_bytes=declared_bytes * _EXECUTABLE_BYTES_PER_ARCHIVE_BYTE,
         )
 
-    def whole(received: IO[bytes]) -> bool:
-        # Asked only of a body nothing in the transfer says is complete. The
-        # digest is the one thing here that can tell a cut transfer from a
-        # finished one, so it is what answers.
-        return stream_sha256(received).lower() == request.archive_sha256.lower()
-
     archive_path, archive = request.open_staging(request.version_dir, request.asset)
     staged.append(archive_path)
     with archive:
@@ -348,7 +343,11 @@ def _verified_archive(
             archive,
             redirect_hosts=request.redirect_hosts,
             progress=Progress(_SUBJECT, on_progress),
-            limits=replace(request.limits, admit=admit, whole=whole),
+            limits=replace(
+                request.limits,
+                admit=admit,
+                whole=whole_body_matches(request.archive_sha256),
+            ),
         )
         on_progress(f"Verifying the {_SUBJECT} download checksum...")
         actual = stream_sha256(archive)

@@ -8,18 +8,19 @@ are not, one planted in the working directory, and one named by the operator
 settings.
 
 The pin is the resolver's argument, so a stand-in release is a value a test
-passes rather than a trust constant it writes. Only the last two cases ask
-what this checkout's own generated digests say, because what they are about
-is a checkout that built its own monitor.
+passes rather than a trust constant it writes: nothing here depends on
+whether this checkout built a monitor of its own.
 """
 
 from __future__ import annotations
 
+import json
 import os
+import subprocess
 import sys
 import sysconfig
 from dataclasses import replace
-from importlib.util import find_spec
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -29,14 +30,13 @@ from ..config._types import EnvVar
 from ..monitor_runtime._assets import monitor_archive_name, monitor_executable_name
 from ..monitor_runtime._errors import MonitorError
 from ..monitor_runtime._launch import verify_monitor
-from ..monitor_runtime._pins import PINS_MODULE, MonitorPin, PinProvenance
+from ..monitor_runtime._pins import MonitorPin, PinProvenance
 from ..monitor_runtime._resolve import (
     MONITOR_BINARY_BUSY,
     MONITOR_BINARY_INVALID,
     MONITOR_BINARY_UNVERIFIED,
     MONITOR_NOT_INSTALLED,
     MonitorSource,
-    expected_monitor_sha256,
     managed_monitor_path,
     monitor_for_launch,
     resolve_monitor,
@@ -49,7 +49,6 @@ from .conftest import managed_env
 
 if TYPE_CHECKING:
     from collections.abc import Generator
-    from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
 
@@ -246,6 +245,10 @@ class TestABundleRunsTheMonitorItShippedWith:
         was the only candidate and its content is not this release's.
         Restored; passes.
         """
+        # The scripts directory alone stands in: resolution looks beside the
+        # running program, which cannot be anywhere but the real environment
+        # without building a second installation, and a monitor planted in
+        # the real one would change the machine the tests run on.
         scripts = tmp_path / "scripts"
         scripts.mkdir()
         real_path = sysconfig.get_path
@@ -369,7 +372,14 @@ class TestALaunchWithNothingToLaunch:
     def test_a_launch_refuses_rather_than_fetching_anything(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The launcher downloads nothing; provisioning runs before it."""
+        """The launcher downloads nothing; provisioning runs before it.
+
+        The digests are stated so that the case reached is the one with no
+        monitor installed at all: a checkout that compiled its own carries
+        digests and has it installed, so the refusal under test would never
+        be reached there. Where the resolver looks, and what it admits, stay
+        production's.
+        """
         monkeypatch.setattr(
             "vaultspec_rag.monitor_runtime._resolve.monitor_pin", lambda _target: _pin()
         )
@@ -421,59 +431,6 @@ class TestVerificationBeforeRunning:
         assert installed.read_bytes() == _MONITOR
 
 
-@pytest.mark.usefixtures("managed")
-class TestTheDigestACallerCanAskFor:
-    def test_the_operator_s_declaration_is_what_a_monitor_is_held_to(
-        self, tmp_path: Path
-    ) -> None:
-        theirs = _install(tmp_path / "theirs" / "monitor", _OTHER)
-
-        with managed_env(
-            **{
-                EnvVar.MONITOR_BINARY.value: str(theirs),
-                EnvVar.MONITOR_BINARY_SHA256.value: file_sha256(theirs),
-            }
-        ):
-            assert expected_monitor_sha256() == file_sha256(theirs)
-
-    def test_an_installation_with_nothing_to_admit_a_monitor_says_so(self) -> None:
-        """``None`` rather than a raise: a caller asking is always answered."""
-        if find_spec(PINS_MODULE) is not None:
-            pytest.skip("this checkout has generated monitor digests of its own")
-
-        assert expected_monitor_sha256() is None
-
-    def test_a_checkout_that_built_its_monitor_says_what_that_one_is(self) -> None:
-        """The digest a caller is given is the installed monitor's own.
-
-        A caller deciding whether a monitor it did not start is this
-        installation's compares the digest recorded for that process with this
-        answer, so on a checkout whose own monitor is built and installed the
-        two have to be the same string.
-        """
-        if find_spec(PINS_MODULE) is None:
-            pytest.skip("this checkout has built no monitor of its own")
-        expected = expected_monitor_sha256()
-
-        assert expected is not None
-        resolved = resolve_monitor()
-        assert resolved is not None
-        assert resolved.sha256 == expected
-        assert file_sha256(resolved.path) == expected
-
-    def test_a_half_set_operator_pair_is_answered_too(self, tmp_path: Path) -> None:
-        """A caller asking what the digest would be never meets an exception."""
-        theirs = _install(tmp_path / "theirs" / "monitor", _OTHER)
-
-        with managed_env(
-            **{
-                EnvVar.MONITOR_BINARY.value: str(theirs),
-                EnvVar.MONITOR_BINARY_SHA256.value: None,
-            }
-        ):
-            assert expected_monitor_sha256() is None
-
-
 def test_the_managed_monitor_lives_beside_the_managed_qdrant_binary(
     managed: Path,
 ) -> None:
@@ -488,3 +445,98 @@ def test_the_managed_monitor_lives_beside_the_managed_qdrant_binary(
     assert os.path.normcase(
         str(monitor.parent.parent.parent.parent)
     ) == os.path.normcase(str(qdrant_bin_dir().parent.parent))
+
+
+#: Resolves the monitor a daemon in another interpreter would run, and reports
+#: where it came from. Run with no access to this process's import path, so
+#: everything it imports comes from the installation the daemon runs as. The
+#: pin is the parent's, passed in, so the digest the child's resolution is held
+#: to is not one it computed from the file it found.
+_RESOLVE_IN_A_DAEMON = """
+import json, sys
+from vaultspec_rag.monitor_runtime._assets import (
+    monitor_archive_name,
+    monitor_executable_name,
+)
+from vaultspec_rag.monitor_runtime._pins import MonitorPin, PinProvenance
+from vaultspec_rag.monitor_runtime._resolve import resolve_pinned_monitor
+from vaultspec_rag.native_binary._targets import host_target
+
+version, digest = sys.argv[1], sys.argv[2]
+target = host_target()
+resolved = resolve_pinned_monitor(
+    MonitorPin(
+        provenance=PinProvenance.RELEASE,
+        version=version,
+        tag="vaultspec-rag-v" + version,
+        target=target,
+        archive_name=monitor_archive_name(version, target),
+        archive_sha256="a" * 64,
+        executable_name=monitor_executable_name(target),
+        executable_sha256=digest,
+    )
+)
+sys.stdout.write(
+    json.dumps(
+        None
+        if resolved is None
+        else {"path": str(resolved.path), "source": str(resolved.source)}
+    )
+)
+"""
+
+
+def test_a_daemon_in_another_interpreter_resolves_the_managed_install(
+    managed: Path,
+) -> None:
+    """The one place every environment of a release shares, by absolute path.
+
+    A daemon the start spawns into the managed service runtime runs another
+    interpreter, so nothing of this installation's is beside it: no launcher,
+    no scripts directory of its own holding a monitor. What has to answer
+    there is the machine-wide managed install, which is keyed by release and
+    target under the managed service directory - and that directory reaches
+    the daemon as an absolute path in the environment the start builds for
+    it, so both processes name the same one.
+
+    Driven in a real child under exactly that environment, with this
+    process's import path dropped as the spawn drops it for an interpreter
+    that is not its own, so the child's resolution is its installation's.
+
+    Mutation: dropped the managed service directory from the environment
+    built for an interpreter that is not this process's own, alongside the
+    three that aim an interpreter. Observed this test fail on the
+    resolved-nothing assertion, the child looking in the user-level managed
+    directory of the machine it runs on instead of the one the parent
+    provisioned into. Restored; passes.
+    """
+    from .._python_child import inline_command
+    from ..cli._process import _build_service_child_env, _ServiceChildEnvRequest
+
+    pin = _pin()
+    installed = _install(managed_monitor_path(pin.version, pin.target), _MONITOR)
+    environment = _build_service_child_env(
+        _ServiceChildEnvRequest(), interpreter="/a/service/runtime/bin/python"
+    )
+    assert "PYTHONPATH" not in environment
+
+    completed = subprocess.run(
+        inline_command(
+            sys.executable,
+            _RESOLVE_IN_A_DAEMON,
+            pin.version,
+            pin.executable_sha256,
+        ),
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    answered = json.loads(completed.stdout)
+    assert answered is not None, "the daemon's interpreter resolved no monitor"
+    assert os.path.normcase(answered["path"]) == os.path.normcase(str(installed))
+    assert answered["source"] == str(MonitorSource.MANAGED_INSTALL)
+    assert Path(answered["path"]).is_relative_to(managed)

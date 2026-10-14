@@ -19,12 +19,12 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 from ..native_binary._hold import held_executable
+from ..native_binary._install import operator_path_fault
 from ._resolve import (
     MONITOR_BINARY_BUSY,
     MONITOR_BINARY_UNVERIFIED,
     MonitorBinaryError,
     MonitorSource,
-    operator_monitor_fault,
 )
 
 if TYPE_CHECKING:
@@ -73,7 +73,7 @@ def verified_monitor(monitor: ResolvedMonitor) -> Generator[HeldExecutable]:
         MonitorError: When the monitor may not run.
     """
     if monitor.source is MonitorSource.OPERATOR_SETTING:
-        fault = operator_monitor_fault(monitor.path)
+        fault = operator_path_fault(monitor.path)
         if fault is not None:
             raise _refused(monitor, fault)
     try:
