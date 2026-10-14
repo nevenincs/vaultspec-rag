@@ -144,7 +144,7 @@ _BORROWER_REFUSAL_MESSAGES: Final = {
 
 #: One sentence per achieved outcome, so every adapter shows the operator what
 #: the service is now doing rather than the transition code that got it there.
-_ACHIEVED_MESSAGES: Final = {
+_ACHIEVED_MESSAGES: Final[dict[str, str]] = {
     QuiesceTransitionCode.QUIESCED: (
         "The service is paused. Searches and index updates wait until it is resumed."
     ),

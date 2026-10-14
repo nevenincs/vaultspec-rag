@@ -24,10 +24,13 @@ def _restart(
         ran.append(verb)
         return steps[verb]
 
+    def release_monitor(*_args: object) -> object:
+        return released
+
     # The real steps start and stop the machine's GPU service, which a unit
     # test cannot; replacing them pins the envelope composition alone.
     monkeypatch.setattr(_service_restart, "_run_verb", run_verb)
-    monkeypatch.setattr(_service_restart, "_try_http_admin", lambda *_: released)
+    monkeypatch.setattr(_service_restart, "_try_http_admin", release_monitor)
     result = CliRunner().invoke(app, ["server", "restart", "--json", "--port", "1"])
     envelopes = [json.loads(line) for line in result.stdout.splitlines() if line]
     return result.exit_code, envelopes, ran

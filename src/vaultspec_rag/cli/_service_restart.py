@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 import sys
+from typing import cast
 
 import typer
 
@@ -57,7 +58,7 @@ def _run_verb(verb: str, port: int | None) -> dict[str, object]:
         envelope = None
     if not isinstance(envelope, dict):
         return {"ok": False, "message": f"The {verb} step gave no readable result."}
-    return envelope
+    return cast("dict[str, object]", envelope)
 
 
 def _step_message(envelope: dict[str, object], fallback: str) -> str:
@@ -117,7 +118,7 @@ def service_restart(
             ),
         )
     data = started.get("data")
-    details = data if isinstance(data, dict) else {}
+    details = cast("dict[str, object]", data) if isinstance(data, dict) else {}
     service_port = details.get("port", resolved_port)
     monitor_url = details.get("monitor_url")
     human_lines = [address_line(service_port)]
