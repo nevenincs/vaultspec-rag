@@ -70,6 +70,20 @@ def install_report(output: str) -> dict[str, Any]:
     return report
 
 
+def seeded_tool_spec() -> str:
+    """The ``uvx --from`` requirement an install seeds for rag's MCP launch.
+
+    A published release is pinned exactly, so the assistant runs the release the
+    service runs; a development or local build stays unpinned, because no index
+    serves its version. Asked of the seeding rule itself, so the expectation
+    holds on either kind of checkout.
+    """
+    from ...builtins import _published_release
+
+    release = _published_release()
+    return f"vaultspec-rag[mcp]=={release}" if release else "vaultspec-rag[mcp]"
+
+
 def read_mcp_json(target: Path) -> dict[str, Any]:
     return json.loads((target / ".mcp.json").read_text(encoding="utf-8"))
 

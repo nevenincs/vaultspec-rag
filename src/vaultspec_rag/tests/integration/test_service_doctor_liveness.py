@@ -88,7 +88,7 @@ def test_doctor_reports_dead_daemon_not_ready(
     # The installed-dependency axis is still present, labelled, and separate.
     assert isinstance(data["dependencies"], list)
     names = [dep["name"] for dep in data["dependencies"]]
-    assert names == ["torch", "models", "qdrant"]
+    assert names == ["torch", "models", "qdrant", "monitor"]
     assert "dependencies_ready" in data
 
 
