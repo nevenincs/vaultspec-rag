@@ -10,7 +10,8 @@ from typer.testing import CliRunner
 
 from ..cli import _service_restart, app
 
-pytestmark = pytest.mark.unit
+# Restart observes the GPU borrower lease, which lives beside the machine lock.
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("isolated_singleton_dirs")]
 
 
 def _restart(

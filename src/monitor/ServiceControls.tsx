@@ -62,14 +62,16 @@ export function ServiceControls({
         { method: "POST", body: "{}" },
         action === "restart" ? 1085000 : action === "start" ? 905000 : 125000,
       );
+      const outcome = text(
+        result.message,
+        action === "restart"
+          ? "The service restarted."
+          : "Service action completed.",
+      );
+      const notice = text(object(result.data).notice, "");
       setFeedback({
         failed: false,
-        message: text(
-          result.message,
-          action === "restart"
-            ? "The service restarted."
-            : "Service action completed.",
-        ),
+        message: notice ? `${outcome} ${notice}` : outcome,
       });
     } catch (error) {
       setFeedback(

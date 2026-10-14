@@ -397,7 +397,9 @@ uv run vaultspec-rag server stop
 This also stops the managed browser monitor and clears its recorded port
 assignment. A separately launched development monitor keeps its own lifecycle.
 
-To restart, stop and start again. No single restart command exists.
+To restart, run `uv run vaultspec-rag server restart`. It stops and starts the
+service and keeps an open monitor page: the monitor outlives the stop, the new
+service adopts it, and the page reconnects by itself with the same link.
 
 Stopping is safe on both platforms, and the vector store recovers either way. The platforms differ in how the stop reaches the daemon.
 
@@ -405,7 +407,7 @@ On Unix, `server stop` sends `SIGTERM`, which drives the daemon's own graceful s
 
 On Windows, the daemon runs detached from any console, so a separate process cannot deliver `CTRL_BREAK` to it. The stop degrades to a bounded force-kill. The daemon runs none of its own teardown, so the CLI reaps the managed Qdrant child and clears the discovery pointer itself. The result is abrupt but safe.
 
-A stop is never refused for a GPU borrower. When one still holds the GPU, the outcome says so and names its process: the service will not start again until the borrower releases the GPU. `server start` is refused while a borrower holds it, with `gpu_borrowed` and the borrower's process ID; wait for the borrower to finish, or stop it, then start the service again.
+A stop is never refused for a GPU borrower. When one still holds the GPU, the outcome says so and names its process: the service will not start again until the borrower releases the GPU. `server start` is refused while a borrower holds it, with `gpu_borrowed` and the borrower's process ID; wait for the borrower to finish, or stop it, then start the service again. `server restart` checks for a borrower before it stops anything, so a restart refused for one leaves the running service as it was.
 
 `server stop --json` emits one outcome envelope per exit path for scripting. Every termination writes a shutdown audit line naming the initiating process, so you can always answer who stopped the service. On Windows the CLI writes that line itself, because the force-killed daemon never runs its own shutdown record.
 

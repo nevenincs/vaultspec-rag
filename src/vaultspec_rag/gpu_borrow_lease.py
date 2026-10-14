@@ -225,25 +225,30 @@ def _borrower_phrase(pid: int) -> str:
     return f" (pid {pid})" if pid > 0 else ""
 
 
-def borrower_start_message(observation: BorrowerObservation) -> str:
+def borrower_start_message(
+    observation: BorrowerObservation, *, verb: str = "start"
+) -> str:
     """Say, in one paragraph, why a service was not started beside a borrower.
 
     One paragraph, because a front end that shows only an envelope's message -
     the monitor does - must show the whole of what the operator needs: who holds
-    the GPU and what to do about it.
+    the GPU and what to do about it. *verb* names the refused action, ``start``
+    or ``restart``; a refused restart has stopped nothing, so it says so.
     """
+    refused = f"{verb}ed"
+    kept = " It is still running as it was." if verb == "restart" else ""
     if observation.state is BorrowerState.UNVERIFIABLE:
         return (
             f"The GPU borrower lease could not be verified ({observation.detail}), "
-            "so the service was not started rather than load its models beside a "
-            "borrower it cannot rule out. Make the lease readable, or wait for "
-            "any borrower to finish, then start the service again."
+            f"so the service was not {refused} rather than load its models beside "
+            f"a borrower it cannot rule out.{kept} Make the lease readable, or "
+            f"wait for any borrower to finish, then {verb} the service again."
         )
     return (
         f"A GPU borrower{_borrower_phrase(observation.holder_pid)} holds the GPU, "
-        "so the service was not started: its models would load onto the GPU "
-        "beside the borrower's work. Wait for the borrower to finish, or stop "
-        "it, then start the service again."
+        f"so the service was not {refused}: its models would load onto the GPU "
+        f"beside the borrower's work.{kept} Wait for the borrower to finish, or "
+        f"stop it, then {verb} the service again."
     )
 
 

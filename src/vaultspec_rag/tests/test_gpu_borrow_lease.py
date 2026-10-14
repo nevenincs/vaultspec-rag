@@ -1269,6 +1269,99 @@ def test_a_start_is_refused_when_the_borrower_lease_cannot_be_verified(
     assert "could not be verified" in envelope["message"]
 
 
+@contextmanager
+def _answering_service() -> Generator[tuple[int, list[str]]]:
+    """Serve ``/health`` on a loopback port and record every request it sees."""
+    import threading
+    from http.server import ThreadingHTTPServer
+
+    from ._http_stubs import QuietHandler
+
+    seen: list[str] = []
+
+    class Handler(QuietHandler):
+        def _answer(self) -> None:
+            seen.append(f"{self.command} {self.path}")
+            body = json.dumps({"status": "ok"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        do_GET = _answer
+        do_POST = _answer
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server.server_address[1], seen
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
+
+
+@pytest.mark.usefixtures("isolated_singleton_dirs")
+def test_a_restart_beside_a_live_borrower_stops_nothing_and_says_so() -> None:
+    """A restart is refused before its stop, so the running service stays up.
+
+    Start refuses while a borrower holds the GPU, so a restart that stopped
+    first would leave the service down for the whole borrow. Mutation: dropping
+    the guard lets the restart release the monitor and run its stop step, which
+    fails the error assertion with ``restart_stop_failed``.
+    """
+    from typer.testing import CliRunner
+
+    from ..cli import app
+
+    with _answering_service() as (port, seen), _borrower_process() as borrower:
+        holder = borrower_lease_holder_pid(borrower.capability)
+        as_json = CliRunner().invoke(
+            app, ["server", "restart", "--json", "--port", str(port)]
+        )
+        as_text = CliRunner().invoke(app, ["server", "restart", "--port", str(port)])
+
+    assert holder is not None
+    assert as_json.exit_code == 1, as_json.output
+    envelope = json.loads(as_json.stdout)
+    assert envelope["command"] == "service.restart"
+    assert envelope["error"] == "gpu_borrowed"
+    message = envelope["message"]
+    assert f"(pid {holder})" in message
+    assert "was not restarted" in message
+    assert "It is still running as it was." in message
+    assert envelope["data"]["gpu_borrower"]["holder_pid"] == holder
+    assert as_text.exit_code == 1, as_text.output
+    assert message in " ".join(as_text.output.split())
+    assert borrower.capability not in as_json.output + as_text.output
+    assert {request.split(" ")[0] for request in seen} == {"GET"}, seen
+
+
+@pytest.mark.usefixtures("isolated_singleton_dirs")
+def test_a_restart_of_a_stopped_service_leaves_the_refusal_to_its_start(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """With nothing running there is nothing to keep, so the guard stands aside.
+
+    The start step then refuses with the start sentence, which never claims a
+    service is still running. Mutation: dropping the liveness check refuses
+    here with the restart sentence and fails the not-refused assertion.
+    """
+    from ..cli._service_restart import _guard_borrower_lease
+
+    with _borrower_process():
+        try:
+            _guard_borrower_lease(True, free_loopback_port())
+            refused = False
+        except typer.Exit:
+            refused = True
+
+    assert not refused, capsys.readouterr().out
+    assert capsys.readouterr().out == ""
+
+
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_a_stop_during_a_borrow_succeeds_and_names_the_borrower() -> None:
     """Stopping is never refused for a borrower, and its envelope says what follows.
