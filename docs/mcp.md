@@ -42,7 +42,7 @@ approval and enrolls the server.
 
 To approve before a first unattended install, review and grant the launch at a
 terminal in the workspace with the vaultspec-core that vaultspec-rag installed:
-run `uvx --from vaultspec-rag vaultspec-core spec mcps trust claude --scope project`,
+run `uvx --from "vaultspec-rag[mcp]" vaultspec-core spec mcps trust claude --scope project`,
 then the same command with `codex` in place of `claude`. The next install then
 enrolls the server without asking.
 

@@ -18,52 +18,38 @@ from ._auth import require_token
 from ._runtime import get_request_runtime
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from starlette.requests import Request
 
+    from ..monitor_process import MonitorProcess
 
-async def monitor_handoff_route(request: Request) -> JSONResponse:
-    """Token-gated handoff; a daemon without a running monitor has none to give."""
+
+#: Each ownership change by the last segment of its route: how it is made, and
+#: the outcome reported when it changed something and when it did not.
+_CHANGES: dict[
+    str, tuple[Callable[[MonitorProcess], bool], tuple[str, str], tuple[str, str]]
+] = {
+    "handoff": (
+        lambda monitor: monitor.hand_off(),
+        ("handed_off", "The monitor will stay open while the service restarts."),
+        ("no_monitor", "No running monitor needs to stay open for the restart."),
+    ),
+    "reclaim": (
+        lambda monitor: monitor.reclaim(),
+        ("reclaimed", "The service kept running, and so does its monitor."),
+        ("not_released", "The monitor was not released, so nothing was taken back."),
+    ),
+}
+
+
+async def monitor_ownership_route(request: Request) -> JSONResponse:
+    """Token-gated change of who owns the monitor, reported as one outcome."""
     denied = require_token(request)
     if denied is not None:
         return denied
+    change, done, unchanged = _CHANGES[request.url.path.rsplit("/", 1)[-1]]
     monitor = get_request_runtime(request).monitor
-    released = monitor is not None and await _run_in_thread(monitor.hand_off)
-    if released:
-        return JSONResponse(
-            {
-                "ok": True,
-                "status": "handed_off",
-                "message": "The monitor will stay open while the service restarts.",
-            }
-        )
-    return JSONResponse(
-        {
-            "ok": True,
-            "status": "no_monitor",
-            "message": "No running monitor needs to stay open for the restart.",
-        }
-    )
-
-
-async def monitor_reclaim_route(request: Request) -> JSONResponse:
-    """Token-gated reclaim; a daemon that released nothing has nothing to take back."""
-    denied = require_token(request)
-    if denied is not None:
-        return denied
-    monitor = get_request_runtime(request).monitor
-    reclaimed = monitor is not None and await _run_in_thread(monitor.reclaim)
-    if reclaimed:
-        return JSONResponse(
-            {
-                "ok": True,
-                "status": "reclaimed",
-                "message": "The service kept running, and so does its monitor.",
-            }
-        )
-    return JSONResponse(
-        {
-            "ok": True,
-            "status": "not_released",
-            "message": "The monitor was not released, so nothing was taken back.",
-        }
-    )
+    changed = monitor is not None and await _run_in_thread(change, monitor)
+    status, message = done if changed else unchanged
+    return JSONResponse({"ok": True, "status": status, "message": message})
