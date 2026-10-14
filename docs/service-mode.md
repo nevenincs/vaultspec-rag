@@ -51,9 +51,10 @@ Other start flags control the port, automatic updates, update timing, and the ma
 
 ### Monitor the service in a browser
 
-The binary installation includes `vaultspec-rag-monitor`. Put the archive's extracted
-directory on `PATH` before starting the service. A Python host installation can select
-that executable with `VAULTSPEC_RAG_MONITOR_BINARY`, set to its absolute path.
+The monitor comes with the service. A host installation obtains and verifies the
+executable for its own release as part of `server start`, alongside the model files and
+the managed Qdrant server, and a binary installation uses the one in its archive. There
+is nothing to install, select, or put on `PATH`.
 
 The service supervisor launches the monitor after backend readiness, beginning at the
 backend port plus one and choosing the next available higher port. It records the
@@ -275,12 +276,13 @@ assignments. A forced daemon death also closes the monitor's parent pipe and
 stops its web server; a later stop cleans any remaining scratch identity.
 Stopping the service from this managed browser also closes its web server.
 
-Managed startup requires the compiled `vaultspec-rag-monitor` command on
-`PATH`, or its absolute path in `VAULTSPEC_RAG_MONITOR_BINARY`. The monitor
-contains the frontend resources and runtime; startup does not compile sources
-or require a checkout, Node or Bun. A missing or failed executable fails the
-coupled start and cleans up the frontend child. Building and bundling the
-executable are separate from this lifecycle integration.
+Managed startup runs the compiled monitor for its own release. A host
+installation obtains and verifies that executable during `server start` and
+runs it from a directory of its own; a binary installation runs the one in its
+archive. The monitor contains the frontend resources and runtime; startup does
+not compile sources or require a checkout, Node or Bun. A monitor that cannot
+be obtained, or that fails, fails the coupled start and cleans up the frontend
+child, and the next start obtains and verifies it again.
 
 For a standalone development monitor, use the shared harness below.
 
@@ -293,11 +295,11 @@ just build-monitor
 just dev
 ```
 
-For the accelerator-free lifecycle tests, run `just build-monitor-test` and
-set `VAULTSPEC_RAG_MONITOR_BINARY` to the absolute executable path it prints
-before running `just test-python`. This uses the pinned release compiler and
-embedded Vite assets, marks the local executable as a development build, and
-writes it under `dist-bin`. The CI test jobs prepare and select it automatically.
+`just build-monitor` builds the frontend, compiles the native monitor from it
+with the pinned release compiler, records the digests of that build, and
+installs it where this checkout's service and its lifecycle tests find it. A
+checkout that has run it starts the service and runs the accelerator-free
+lifecycle tests with nothing exported. The CI test jobs run the same recipe.
 
 Open the `Monitor:` access link the dev server logs when it starts listening;
 `just dev logs` shows it again. The monitor automatically connects to the local

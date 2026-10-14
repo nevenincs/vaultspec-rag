@@ -375,10 +375,16 @@ class TestAnUpgrade:
 
 @pytest.mark.usefixtures("managed")
 class TestTheEntryPointEveryCommandUses:
+    @pytest.mark.usefixtures("unpinned_installation")
     def test_an_installation_with_no_digests_reports_and_fetches_nothing(
         self, sources: LoopbackSources
     ) -> None:
-        """A source checkout provisions nothing rather than trusting anything."""
+        """An installation with nothing to admit one provisions nothing.
+
+        What this installation carries is a stated input: a checkout that
+        compiled a monitor of its own carries digests for it, and this case
+        is the one that carries none.
+        """
         source = sources.serve(_responder(_archive()))
 
         with managed_env(

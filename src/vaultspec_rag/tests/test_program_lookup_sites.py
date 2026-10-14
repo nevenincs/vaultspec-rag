@@ -142,32 +142,39 @@ def test_install_sync_does_not_run_a_uv_from_the_working_directory(
 def test_the_monitor_is_not_started_from_the_working_directory(
     checkout: Path, isolated_singleton_dirs: Path
 ) -> None:
-    """Starting the monitor finds none rather than the checkout's.
+    """Starting the monitor never runs the checkout's program of that name.
 
     The monitor is started on every service start, and what admits one is a
-    digest, so a program of the right name proves nothing. Shown to fail by
+    digest, so a program of the right name proves nothing. A checkout that
+    compiled its own monitor starts that one; a checkout that did not is
+    refused under a monitor code. Neither answer is the working directory's
+    file, which is what is asserted whichever happens. Shown to fail by
     resolving it with a bare-name lookup again: the planted program is
     started as the monitor and the first assertion fires. Passes with the
     resolution restored.
     """
     del isolated_singleton_dirs
     ran = plant_marking_program(checkout, "vaultspec-rag-monitor")
+    monitor = MonitorProcess(free_loopback_port())
 
-    with (
-        managed_env(
-            **{
-                EnvVar.MONITOR_BINARY.value: None,
-                EnvVar.MONITOR_BINARY_SHA256.value: None,
-            }
-        ),
-        pytest.raises(MonitorError) as refused,
+    with managed_env(
+        **{
+            EnvVar.MONITOR_BINARY.value: None,
+            EnvVar.MONITOR_BINARY_SHA256.value: None,
+        }
     ):
-        MonitorProcess(free_loopback_port()).start(timeout=20)
+        try:
+            monitor.start(timeout=20)
+        except MonitorError as refused:
+            # Whatever this checkout can say about its own monitor, nothing
+            # it says is about the one in the working directory.
+            assert refused.error.startswith("monitor_")
+        else:
+            assert monitor.process is not None
+        finally:
+            monitor.stop()
 
     assert not ran.exists(), "the working directory's monitor was started"
-    # Whatever this checkout can say about its own monitor, nothing it says
-    # is about the one in the working directory.
-    assert refused.value.error.startswith("monitor_")
 
 
 @_windows_only

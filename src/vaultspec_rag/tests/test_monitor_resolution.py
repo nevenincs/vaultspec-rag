@@ -7,9 +7,10 @@ real files: an executable whose bytes are the pinned ones, one whose bytes
 are not, one planted in the working directory, and one named by the operator
 settings.
 
-Nothing here reads the digests generated into the package. The pin is the
-resolver's argument, so a stand-in release is a value a test passes rather
-than a trust constant it writes.
+The pin is the resolver's argument, so a stand-in release is a value a test
+passes rather than a trust constant it writes. Only the last two cases ask
+what this checkout's own generated digests say, because what they are about
+is a checkout that built its own monitor.
 """
 
 from __future__ import annotations
@@ -17,15 +18,17 @@ from __future__ import annotations
 import os
 import sys
 from dataclasses import replace
+from importlib.util import find_spec
 from typing import TYPE_CHECKING
 
 import pytest
 
+from .. import _program_lookup
 from ..config._types import EnvVar
 from ..monitor_runtime._assets import monitor_archive_name, monitor_executable_name
 from ..monitor_runtime._errors import MonitorError
 from ..monitor_runtime._launch import verify_monitor
-from ..monitor_runtime._pins import MonitorPin, PinProvenance
+from ..monitor_runtime._pins import PINS_MODULE, MonitorPin, PinProvenance
 from ..monitor_runtime._resolve import (
     MONITOR_BINARY_BUSY,
     MONITOR_BINARY_INVALID,
@@ -105,12 +108,15 @@ def managed(tmp_path: Path) -> Generator[Path]:
 def sibling(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A directory standing in for the one this installation's programs are in.
 
-    The running program is stood in for, so nothing is planted beside the
-    real interpreter.
+    Every place this installation's programs can be is stood in for, so
+    nothing is planted beside the real interpreter and a monitor this
+    checkout compiled for itself cannot answer in their place.
     """
     beside = tmp_path / "beside"
     beside.mkdir()
-    monkeypatch.setattr(sys, "executable", str(beside / "vaultspec-rag"))
+    monkeypatch.setattr(
+        _program_lookup, "installation_programs", lambda: (str(beside),)
+    )
     return beside
 
 
@@ -360,10 +366,28 @@ class TestTheDigestACallerCanAskFor:
 
     def test_an_installation_with_nothing_to_admit_a_monitor_says_so(self) -> None:
         """``None`` rather than a raise: a caller asking is always answered."""
-        if "vaultspec_rag.monitor_runtime._generated_pins" in sys.modules:
+        if find_spec(PINS_MODULE) is not None:
             pytest.skip("this checkout has generated monitor digests of its own")
 
         assert expected_monitor_sha256() is None
+
+    def test_a_checkout_that_built_its_monitor_says_what_that_one_is(self) -> None:
+        """The digest a caller is given is the installed monitor's own.
+
+        A caller deciding whether a monitor it did not start is this
+        installation's compares the digest recorded for that process with this
+        answer, so on a checkout whose own monitor is built and installed the
+        two have to be the same string.
+        """
+        if find_spec(PINS_MODULE) is None:
+            pytest.skip("this checkout has built no monitor of its own")
+        expected = expected_monitor_sha256()
+
+        assert expected is not None
+        resolved = resolve_monitor()
+        assert resolved is not None
+        assert resolved.sha256 == expected
+        assert file_sha256(resolved.path) == expected
 
     def test_a_half_set_operator_pair_is_answered_too(self, tmp_path: Path) -> None:
         """A caller asking what the digest would be never meets an exception."""

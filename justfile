@@ -113,15 +113,13 @@ check-monitor-format:
 check-monitor-type:
     npm run typecheck
 
-# Build the monitor into src/monitor/dist.
+# Build the frontend, compile the native monitor from it, and install that
+# monitor where this checkout's service and tests find it. One command: a
+# checkout that has run it starts the service and runs the lifecycle tests
+# with nothing exported and nothing else to do.
 [group('build')]
 build-monitor:
-    npm run build
-
-# Compile the native monitor used by accelerator-free lifecycle tests.
-[group('build')]
-build-monitor-test:
-    uv run --no-sync python -m tools.monitor.build test --outdir dist-bin
+    uv run --no-sync python -m tools.monitor.build develop --outdir dist-bin
 
 # ===========================================================================
 #  setup

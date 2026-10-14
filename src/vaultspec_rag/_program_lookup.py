@@ -43,7 +43,7 @@ from .config._types import EnvVar
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
-__all__ = ["Where", "find_program"]
+__all__ = ["Where", "find_program", "installation_programs"]
 
 #: The extensions a program may carry on Windows when ``PATHEXT`` says nothing.
 _DEFAULT_PATHEXT = ".COM;.EXE;.BAT;.CMD"
@@ -113,15 +113,24 @@ def _spellings(name: str) -> tuple[str, ...]:
     return tuple(name + extension for extension in extensions)
 
 
+def installation_programs() -> tuple[str, ...]:
+    """Return the directories this installation's own programs are in, in order.
+
+    The first is where an installer puts a program of this installation's; the
+    second is where the running interpreter is, which is the same directory in
+    an ordinary environment and a different one in a relocated or embedded
+    layout. Stated here because whoever installs a program of ours has to
+    agree with where :func:`find_program` will look for it.
+    """
+    return (sysconfig.get_path("scripts"), os.path.dirname(sys.executable))
+
+
 def _directories(where: tuple[Where, ...]) -> Iterator[str]:
     """Yield every absolute directory the given places name, in order."""
     for place in where:
         candidates: Sequence[str]
         if place is Where.INSTALLATION:
-            candidates = [
-                sysconfig.get_path("scripts"),
-                os.path.dirname(sys.executable),
-            ]
+            candidates = installation_programs()
         elif place is Where.SYSTEM:
             candidates = _system_directories()
         else:

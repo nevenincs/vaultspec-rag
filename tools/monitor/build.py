@@ -27,12 +27,21 @@ from tools.monitor.frontend import (
     prepare_frontend,
     validate_frontend,
 )
+from tools.monitor.pins import PINS_PATH, GeneratedPins, digests_for, write
+from tools.packaging.bundles import BundleSpec, build_monitor_archive
 from tools.packaging.products import (
     MONITOR_EXECUTABLE,
     VAULTSPEC_RAG,
     is_windows_target,
 )
-from vaultspec_rag.native_binary._install import file_sha256, verify_native_binary
+from vaultspec_rag._atomic_write import replace_atomically
+from vaultspec_rag.monitor_runtime._pins import PinProvenance
+from vaultspec_rag.native_binary._install import (
+    extract_verified_archive,
+    file_sha256,
+    mark_executable,
+    verify_native_binary,
+)
 from vaultspec_rag.native_binary._targets import host_target
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -210,15 +219,20 @@ def build_frontend(outdir: Path, identity: Frontend) -> None:
     prepare_frontend(ROOT / "src/monitor/dist", outdir, identity)
 
 
-def build_test_monitor(outdir: Path, cache: Path) -> Path:
-    """Use the release compiler for explicitly marked local/CI test bytes."""
+def checkout_version() -> str:
+    """Return the version this checkout builds, as the package declares it."""
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    return str(project["project"]["version"])
+
+
+def build_development_monitor(outdir: Path, cache: Path) -> Path:
+    """Use the release compiler for explicitly marked local/CI development bytes."""
     identity = release_identity(
-        f"vaultspec-rag-v{project['project']['version']}",
+        f"vaultspec-rag-v{checkout_version()}",
         checkout_revision(),
         development=True,
     )
-    with tempfile.TemporaryDirectory(prefix="monitor-test-frontend-") as scratch:
+    with tempfile.TemporaryDirectory(prefix="monitor-development-frontend-") as scratch:
         frontend = Path(scratch) / "frontend"
         build_frontend(frontend, identity)
         return compile_monitor(
@@ -226,9 +240,78 @@ def build_test_monitor(outdir: Path, cache: Path) -> Path:
         )
 
 
+def install_development_monitor(binary: Path, version: str, programs: Path) -> Path:
+    """Admit the monitor compiled here and install it where this checkout looks.
+
+    The whole of what a checkout needs so that starting the service finds its
+    monitor: the compiled executable is packed into the same provisioning
+    archive a release publishes, its digests are generated into the package as
+    a development pin, and the executable the archive carries is installed
+    beside this environment's own programs, which is where resolution looks
+    for a monitor an installation brought with it. Nobody exports anything and
+    nobody is asked to.
+
+    The install goes through the verification a release install goes through:
+    the archive is hashed before anything is extracted from it, and what comes
+    out is hashed again before it lands. The pin is written last, so a failure
+    anywhere leaves the previous one admitting the monitor that is still
+    installed.
+
+    Args:
+        binary: The finalized, target-qualified monitor this checkout compiled.
+        version: The version this checkout builds, which the pin is bound to.
+        programs: Where this installation's own programs are, which is where
+            the executable is installed.
+
+    Returns:
+        The installed executable.
+
+    Raises:
+        BundleError: When the compiled monitor or the archive packed from it is
+            not the single-member provisioning archive a release publishes.
+        ChecksumMismatchError: When the archive does not hash to the digest
+            taken from it, which is a file changing underneath the build.
+        RuntimeError: When the extracted or installed executable does not hash
+            to the digest the pin will carry, so nothing unadmitted is left
+            installed.
+    """
+    target = host_target()
+    spec = BundleSpec(VAULTSPEC_RAG, version, target)
+    installed = programs / spec.monitor_member
+    with tempfile.TemporaryDirectory(prefix="monitor-archive-") as scratch:
+        archive = build_monitor_archive(spec, binary.parent, Path(scratch))
+        archive_sha256, executable_sha256 = digests_for(archive, binary)
+        programs.mkdir(parents=True, exist_ok=True)
+        # Staged inside the destination directory: the install is one rename,
+        # and a rename is only atomic within one filesystem.
+        with tempfile.TemporaryDirectory(
+            prefix=".monitor-install-", dir=programs
+        ) as landing:
+            extracted, _ = extract_verified_archive(
+                archive,
+                archive_sha256,
+                Path(landing),
+                binary_name=spec.monitor_member,
+            )
+            verify_native_binary(extracted, executable_sha256)
+            mark_executable(extracted)
+            replace_atomically(extracted, installed)
+    verify_native_binary(installed, executable_sha256)
+    write(
+        ROOT / PINS_PATH,
+        GeneratedPins(
+            provenance=PinProvenance.DEVELOPMENT,
+            version=version,
+            archives={target: archive_sha256},
+            executables={target: executable_sha256},
+        ),
+    )
+    return installed
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("frontend", "compile", "test"))
+    parser.add_argument("operation", choices=("frontend", "compile", "develop"))
     parser.add_argument("--tag")
     parser.add_argument("--source-revision")
     parser.add_argument("--development", action="store_true")
@@ -239,12 +322,21 @@ def main() -> None:
         "--cache", type=Path, default=Path(tempfile.gettempdir()) / "vaultspec-bun"
     )
     args = parser.parse_args()
-    if args.operation == "test":
-        binary = build_test_monitor(args.outdir, args.cache)
-        if github_env := os.environ.get("GITHUB_ENV"):
-            with Path(github_env).open("a", encoding="utf-8", newline="\n") as output:
-                output.write(f"VAULTSPEC_RAG_MONITOR_BINARY={binary}\n")
-        print(binary)
+    if args.operation == "develop":
+        # Function-local: this names where the package looks for a program of
+        # its own, and reaching it loads the package's settings. The release
+        # operations below run under an interpreter with no site packages,
+        # where that import cannot resolve and is not wanted; a development
+        # build runs in the project environment, where it can.
+        from vaultspec_rag._program_lookup import installation_programs
+
+        version = checkout_version()
+        binary = build_development_monitor(args.outdir, args.cache)
+        print(
+            install_development_monitor(
+                binary, version, Path(installation_programs()[0])
+            )
+        )
         return
     if not args.tag or not args.source_revision:
         parser.error("Release builds require --tag and --source-revision")

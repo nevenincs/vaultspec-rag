@@ -437,7 +437,7 @@ for state meanings; status never makes a paid classification call.
 The address in status output is the backend address. Human, verbose and
 JSON status output do not currently report the browser monitor URL. Run
 `server start` to display its recorded `Monitor:` URL; an already-running
-owned service is reused. See [browser monitor setup](service-mode.md#local-carbon-browser-monitor).
+owned service is reused. See [the browser monitor](service-mode.md#local-carbon-browser-monitor).
 
 ```bash
 vaultspec-rag server status
@@ -486,9 +486,10 @@ tries monitor port 9001. Human output prints the monitor's access link as
 credential: the monitor operates the service only for a caller presenting
 its capability. An already-running response redisplays the recorded link.
 
-Requires the compiled `vaultspec-rag-monitor` command on PATH or its
-absolute path in `VAULTSPEC_RAG_MONITOR_BINARY`. Startup does not compile
-the frontend. See [browser monitor setup](service-mode.md#local-carbon-browser-monitor).
+The compiled monitor for this release is obtained and verified with the
+other dependencies above, and run from a directory of its own; a binary
+installation uses the one in its archive. Startup does not compile the
+frontend. See [the browser monitor](service-mode.md#local-carbon-browser-monitor).
 
 Successful starts and already-running responses include Typesafe enrollment
 from the daemon (`Typesafe:` in human output, `data.typesafe` in JSON).

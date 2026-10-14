@@ -48,13 +48,6 @@ _CLIENT = ServiceEnvironment("", ComputeCapability.NOT_APPLICABLE)
 #: A host whose accelerator stack is not usable yet.
 _NOT_YET = ServiceEnvironment("", ComputeCapability.TORCH_MISSING)
 
-#: Both monitor settings cleared. They name the session's stand-in, which
-#: would otherwise answer every case here.
-_NO_OPERATOR_MONITOR: dict[str, str | None] = {
-    EnvVar.MONITOR_BINARY.value: None,
-    EnvVar.MONITOR_BINARY_SHA256.value: None,
-}
-
 
 class TestAStartConsidersTheMonitor:
     @pytest.mark.usefixtures("inference_host")
@@ -115,7 +108,7 @@ class TestAStartConsidersTheMonitor:
         assert monitor.action is ProvisionAction.SKIPPED
         assert "cannot run the service yet" in monitor.detail
 
-    @pytest.mark.usefixtures("inference_host")
+    @pytest.mark.usefixtures("inference_host", "unpinned_installation")
     def test_an_installation_with_no_monitor_fails_the_step_under_its_own_code(
         self,
     ) -> None:
@@ -125,12 +118,11 @@ class TestAStartConsidersTheMonitor:
         and not a warning. The code is the step's own, so a caller reports it
         under its own name rather than guessing from the text.
         """
-        with managed_env(**_NO_OPERATOR_MONITOR):
-            outcome = ensure_runtime_dependencies(
-                environment=_HOST_READY,
-                server_unneeded="the on-disk store is selected",
-                qdrant_auto_provision=True,
-            )
+        outcome = ensure_runtime_dependencies(
+            environment=_HOST_READY,
+            server_unneeded="the on-disk store is selected",
+            qdrant_auto_provision=True,
+        )
 
         monitor = result_for(outcome, ProvisionStep.MONITOR)
         assert monitor is not None
@@ -201,14 +193,14 @@ class TestTheReadinessRow:
         assert row.status is ReadinessStatus.READY
         assert row.info["monitor_source"] == "env"
 
+    @pytest.mark.usefixtures("unpinned_installation")
     def test_no_monitor_reads_not_ready_with_one_cause(self) -> None:
         """One blocking answer, and nothing for anyone to do about it.
 
         Obtaining the monitor is automatic, so the row says whether one is
         there and never names a command.
         """
-        with managed_env(**_NO_OPERATOR_MONITOR):
-            row = _monitor_readiness()
+        row = _monitor_readiness()
 
         assert row.status is ReadinessStatus.NOT_READY
         assert row.detail

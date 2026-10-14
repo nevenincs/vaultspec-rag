@@ -183,8 +183,8 @@ jobs:
       - name: Restore monitor dependencies for installed-browser checks
         run: npm ci
 
-      - name: Compile the native monitor for lifecycle tests
-        run: just build-monitor-test
+      - name: Build and install the monitor the lifecycle tests run
+        run: just build-monitor
 
       # Four workers. The store-heavy tests carry deadlines of
       # their own, and on the slower Linux runner, with one worker per core,
@@ -262,8 +262,8 @@ jobs:
       - name: Restore monitor dependencies for installed-browser checks
         run: npm ci
 
-      - name: Compile the native monitor for lifecycle tests
-        run: just build-monitor-test
+      - name: Build and install the monitor the lifecycle tests run
+        run: just build-monitor
 
       # Two workers on the four-CPU VM leave scheduling capacity for native
       # monitors, browsers and owner-witness children alongside pytest.

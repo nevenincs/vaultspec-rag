@@ -198,8 +198,9 @@ changing `binaries.yml`, a release recipe, or a fleet runner.
 
 Run each target on its native matrix host with an installed Chrome, Chromium or Edge
 browser. Build the Vite handoff once and carry it unchanged to the other hosts.
-Start with an empty `dist`, `dist-bin`, `dist-monitor-frontend`, and `dist-bundles` output set so
-the exact-wheel and exact-target checks cannot select stale files.
+Start with an empty `dist`, `dist-bin`, `dist-monitor`, `dist-monitor-frontend`, and
+`dist-bundles` output set so the exact-wheel and exact-target checks cannot select stale
+files.
 
 ```sh
 TAG=vaultspec-rag-v<version>
@@ -211,25 +212,41 @@ npm ci
 just release-monitor-frontend "$TAG" "$PRODUCER_SHA"
 FRONTEND_SHA256=$(uv run --no-project --python 3.13 -- python -c \
   "import hashlib; from pathlib import Path; print(hashlib.sha256(Path('dist-monitor-frontend/frontend.json').read_bytes()).hexdigest())")
+MONITOR=$(just release-monitor "$TAG" "$PRODUCER_SHA" "$FRONTEND_SHA256" | tail -1)
+MONITOR_ARCHIVE=$(just release-monitor-archive "$TAG" "$TARGET" dist-bin dist-monitor | tail -1)
+uv run --no-project --python 3.13 -- python -m tools.monitor.pins \
+  --provenance release --tag "$TAG" --target "$TARGET=$MONITOR_ARCHIVE=$MONITOR"
 uv build --wheel --out-dir dist
 
 uv run --no-project --python 3.13 -- python -m tools.monitor.release wheel --tag "$TAG" --directory dist
 just release-binaries "$TAG" "$TARGET" dist-bin dist
-just release-monitor "$TAG" "$PRODUCER_SHA" "$FRONTEND_SHA256"
+just release-monitor-bytes "$TAG" "$TARGET" dist-monitor dist dist-bin
 uv run --no-project --python 3.13 -- python -m tools.monitor.release native-smoke \
   --tag "$TAG" --source-revision "$PRODUCER_SHA" --target "$TARGET" --directory dist-bin
-just release-bundle "$TAG" "$TARGET" dist-bin dist-bundles
+just release-bundle "$TAG" "$TARGET" dist-bin dist-bundles dist
 
 just release-checksums dist-bundles dist-bundles/SHA256SUMS
 (cd dist-bundles && sha256sum -c SHA256SUMS)
 ```
 
+The monitor is compiled and packed before the wheel is built, because the
+wheel carries the digests of the monitors an installation of it may obtain.
+`just release-monitor-pins` is what the pipeline runs, over a directory
+holding every shipped target's finalized monitor; a single-host reproduction
+has only its own, so it pins that one target by naming its archive and its
+executable, as above. An artifact built without that step names no monitor and
+provisions none, and `just release-monitor-bytes` and `just release-bundle`
+both read it back out of the wheel.
+
 `just release-binaries` requires exactly one wheel in `dist` and builds from
-that wheel rather than resolving a published package. `just release-bundle`
-requires all three finalized target-qualified files and `dist-bin/monitor-smoke.json`,
-verifies the archive before
-writing its `.sha256` sidecar, and gives the extracted commands their stable
-names. `just release-checksums` creates an archive-only local view. The GitHub
+that wheel rather than resolving a published package. `just release-monitor-bytes`
+takes the monitor from the release's own provisioning archive, checking it
+against the wheel's pins before and after extraction, so nothing recompiles a
+second monitor for the bundle. `just release-bundle` requires all three
+finalized target-qualified files, `dist-bin/monitor-smoke.json` and the wheel
+whose pins the bundled monitor must match, verifies the archive before writing
+its `.sha256` sidecar, and gives the extracted commands their stable names.
+`just release-checksums` creates an archive-only local view. The GitHub
 workflow merges that view with the wheel and source-distribution entries
 already attached to the Release before uploading `SHA256SUMS`.
 

@@ -15,10 +15,9 @@ metadata written to disk.
 
 from __future__ import annotations
 
-import sys
 from dataclasses import replace
 from importlib.metadata import PathDistribution
-from importlib.util import module_from_spec, spec_from_file_location
+from importlib.util import find_spec, module_from_spec, spec_from_file_location
 from typing import TYPE_CHECKING
 
 import pytest
@@ -303,7 +302,7 @@ class TestWhereThePinsAreReadFrom:
         ``MonitorPinError`` it expects, because the planted module answered.
         Restored; passes.
         """
-        if PINS_MODULE in sys.modules:
+        if find_spec(PINS_MODULE) is not None:
             pytest.skip("this checkout has generated monitor digests of its own")
         # Named for the running installation's own version and provenance,
         # so nothing but where it sits can be what refuses it.

@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#monitor-provisioning'
 date: '2026-10-13'
-modified: '2026-10-13'
+modified: '2026-10-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:775da68347579d4cb5a70e5b600c49489119b9f34f7f106454ff4b804eec37e5'
+body_hash: 'sha256:f8000bb66913668ff71ea779fd29eff3c341f401d73006b9bda8997f414cae95'
 related:
   - "[[2026-10-13-monitor-provisioning-plan]]"
 ---
@@ -176,6 +176,38 @@ related:
 - `S05` `verify:` `uv run --no-sync pytest tools dev (415 passed, 4 skipped)` -> `pass`
 - `S05` `verify:` `uv run --no-sync pytest the citation, marker, pointer, monitor-pin and monitor-runtime suites (206 passed)` -> `pass`
 - `S05` `by:` `implementation-engineer-high`
+- `S06` `M` `justfile`
+- `S06` `M` `tools/monitor/build.py`
+- `S06` `M` `tools/monitor/tests/test_build.py`
+- `S06` `M` `src/vaultspec_rag/_program_lookup.py`
+- `S06` `M` `src/vaultspec_rag/tests/conftest.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_monitor_process_integration.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_monitor_resolution.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_monitor_pins.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_monitor_provisioning.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_monitor_provision_step.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_program_lookup_sites.py`
+- `S06` `M` `.github/workflows/merge-gate.yml`
+- `S06` `M` `.github/workflows/hardware.yml`
+- `S06` `M` `dev/guards/test_ci_lanes.py`
+- `S06` `M` `dev/guards/test_ci_hardware_tiers.py`
+- `S06` `M` `dev/generate_cli_reference.py`
+- `S06` `M` `docs/cli.md`
+- `S06` `M` `docs/service-mode.md`
+- `S06` `M` `docs/installation.md`
+- `S06` `M` `RELEASING.md`
+- `S06` `verify:` `uv run --no-sync ruff check src tools dev conftest.py` -> `pass`
+- `S06` `verify:` `uv run --no-sync ruff format --check src tools dev conftest.py` -> `pass`
+- `S06` `verify:` `uv run --no-sync ty check the changed package, tools, dev and test modules` -> `pass`
+- `S06` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests -m unit -k 'monitor or provision or readiness or program_lookup' (476 passed, 2 skipped)` -> `pass`
+- `S06` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_monitor_process_integration.py against the compiled monitor (4 passed)` -> `pass`
+- `S06` `verify:` `uv run --no-sync pytest tools/monitor/tests tools/packaging/tests (132 passed)` -> `pass`
+- `S06` `verify:` `uv run --no-sync pytest dev/guards/test_ci_lanes.py dev/guards/test_ci_hardware_tiers.py (45 passed)` -> `pass`
+- `S06` `verify:` `uv run --no-sync python -m dev lint markdown` -> `pass`
+- `S06` `verify:` `uv run --no-sync python -m dev lint docs-conventions` -> `pass`
+- `S06` `verify:` `uv run --no-sync python -m dev lint docs-cli` -> `pass`
+- `S06` `verify:` `uv run --no-sync python -m dev.actionlint` -> `pass`
+- `S06` `by:` `implementation-engineer-high`
 
 ## Notes
 
@@ -196,3 +228,11 @@ related:
 - `S05` S05 A rehearsal of the bundle lane keeps its own frontend job and gains a per-target monitor job, both reaching only a rehearsal, and generates release-provenance pins into the unpublished wheel it builds in that run, so the pin comparison runs for real instead of being waived. The binary-bundle decision allows that equivalent same-run handoff. The alternative, a rehearsal that cannot build a bundle at all, would have removed a maintainer capability nothing authorized removing.
 - `S05` S05 RELEASING.md's local reproduction sequence is now stale: it builds the wheel before the monitor, does not generate pins, and calls the bundle recipe without the wheel directory. Left to S06, which owns the documentation.
 - `S05` S05 acquisition.yml and tools/packaging/validate.py needed no change. Public acquisition still admits bundle archives only, which the plan leaves unchanged, and channel pointers already refuse a monitor archive because the buildable set is the bundle names, which is what 'not a channel install unit' requires.
+- `S06` The development monitor installs beside this installation's own programs, the environment's scripts directory, rather than into the managed directory. The managed directory is unreachable from the test suite: the session redirects the status directory to a temporary root and an operator-directory guard refuses the real one, so a monitor installed there could never be the one the lifecycle tests run. The scripts directory is the resolver's installation-sibling tier, which the decision already admits for an installation that carries its own monitor, and it is interpreter-local, so one checkout's monitor never answers for another's.
+- `S06` just build-monitor is now the one recipe that produces a usable monitor: it builds the frontend, compiles the native monitor, packs the same provisioning archive a release publishes, verifies it before and after extraction, installs the executable, and writes the development pin. just build-monitor-test was its duplicate under another name and is removed; the four workflow steps and two CI guards that named it now name build-monitor.
+- `S06` Guard proofs run as break, run alone, fail on the named assertion, restore, pass: removing the extracted-executable digest check in the development install (failed on the nothing-installed assertion, with the unadmitted bytes landed); deleting the monitor build step from the merge gate's tests job; and deleting it from the hardware CUDA tier.
+- `S06` `test_the_monitor_is_not_started_from_the_working_directory` could not be re-proved by mutation on this host. With a monitor installed beside the interpreter, process creation searches that directory first, and with it removed nothing resolves, so no spawn happens; the planted program is a command script, which a bare-name process creation never completes to. Tried the bare-name spawn mutation in both configurations, including one seeding the isolated managed directory, and the assertion did not fire in either. The assertion is asserted on every outcome path and the resolution it guards was not changed by this Step. Recorded for review.
+- `S06` Three test premises were ambient and are now stated: the no-digests provisioning case, the no-monitor start and readiness cases, and the pins-on-the-import-path case. A checkout that compiled its own monitor carries digests and has one installed, so those cases staged no-digests through a shared `unpinned_installation` fixture, which makes the pins reader find none and clears the session's stand-in; the two skip guards now ask importlib for the module's spec rather than sys.modules, which only answered after some other test had imported it.
+- `S06` The sibling fixture in `test_monitor_resolution.py` stood in for only one of the two installation program directories, so this checkout's real monitor answered first once one was installed. It now stands in for `installation_programs,` a new public accessor in `_program_lookup` that both the lookup and the development installer read, so where a program of ours is installed has one spelling.
+- `S06` tools/monitor/build.py imports `installation_programs` inside the development branch. The release operations in that module run under an interpreter with no site packages, which a guard asserts, and reaching that accessor loads the package's settings and its vaultspec-core dependency. The branch was exercised by running just build-monitor.
+- `S06` The documentation link check still fails on the 17 links in .vaultspec/skills/start-vaultspec-rag/references/ recorded under S01 and S03. Those files are user-owned policy sources and were left untouched; the failure awaits the user.

@@ -309,11 +309,12 @@ def stand_in_monitor(tmp_path_factory: pytest.TempPathFactory) -> Generator[Path
 
     Every host start and every install now provisions a monitor, as each
     provisions model files and a server binary. The monitor a release
-    provides is fetched from a release source no unit test contacts, and the
-    digests that admit one are generated into a release artifact, so a
-    checkout has neither. The operator settings are the supported way to name
-    an executable that exists, so the session names one of its own and those
-    runs find a monitor already in place and verify it.
+    provides is fetched from a release source no unit test contacts, and a
+    checkout has digests to admit one only once it has compiled one here. The
+    operator settings are the supported way to name an executable that
+    exists, so the session names one of its own and those runs find a monitor
+    already in place and verify it, identically on a checkout that built one
+    and on a checkout that did not.
 
     Staged for the session, like the managed directories themselves. A test
     about the monitor clears both settings for its own block, which is what
@@ -337,6 +338,33 @@ def stand_in_monitor(tmp_path_factory: pytest.TempPathFactory) -> Generator[Path
         }
     ):
         yield monitor
+
+
+@pytest.fixture
+def unpinned_installation(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
+    """An installation that can admit no monitor at all, stated rather than had.
+
+    A checkout that compiled its own monitor carries digests for it and has
+    it installed, so a case about having none cannot inherit that from
+    whatever this working copy last built. What is staged is the one fact:
+    the reader finds no generated digests. It then does everything it
+    normally does with that, so the code and the message a caller meets here
+    are the ones an installation without digests meets. The session's
+    stand-in is cleared with it, or it would answer first.
+
+    Yields:
+        Nothing; both are staged for the test's own block.
+    """
+    from ..monitor_runtime import _pins
+
+    monkeypatch.setattr(_pins, "_generated_pins", lambda: None)
+    with managed_env(
+        **{
+            EnvVar.MONITOR_BINARY.value: None,
+            EnvVar.MONITOR_BINARY_SHA256.value: None,
+        }
+    ):
+        yield
 
 
 @pytest.fixture
