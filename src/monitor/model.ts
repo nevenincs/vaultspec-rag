@@ -107,24 +107,53 @@ function capability(): string {
   }
 }
 
+/** The monitor's own server stopped answering, as it does while the service it
+ * belongs to stops or restarts. */
+export class MonitorUnreachableError extends Error {
+  constructor(cause: unknown) {
+    super(
+      "This page cannot reach its monitor. The service may be stopping or restarting.",
+      { cause },
+    );
+    this.name = "MonitorUnreachableError";
+  }
+}
+
 export async function request(
   path: string,
   options: RequestInit = {},
   timeout = 7000,
 ): Promise<RecordValue> {
+  const deadline = AbortSignal.timeout(timeout);
   const signal = options.signal
-    ? AbortSignal.any([options.signal, AbortSignal.timeout(timeout)])
-    : AbortSignal.timeout(timeout);
-  const response = await fetch(`/api/monitor${path}`, {
-    ...options,
-    signal,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${capability()}`,
-    },
-    cache: "no-store",
-  });
-  const raw: unknown = await response.json();
+    ? AbortSignal.any([options.signal, deadline])
+    : deadline;
+  let response: Response;
+  try {
+    response = await fetch(`/api/monitor${path}`, {
+      ...options,
+      signal,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${capability()}`,
+      },
+      cache: "no-store",
+    });
+  } catch (error) {
+    if (options.signal?.aborted) throw error;
+    if (deadline.aborted)
+      throw new Error("The service did not answer in time.", { cause: error });
+    throw new MonitorUnreachableError(error);
+  }
+  let raw: unknown;
+  try {
+    raw = await response.json();
+  } catch (error) {
+    throw new Error(
+      `The monitor sent a reply that could not be read (HTTP ${response.status}).`,
+      { cause: error },
+    );
+  }
   const payload = object(raw);
   if (!response.ok || (payload.ok === false && path !== "/lifecycle")) {
     throw new Error(

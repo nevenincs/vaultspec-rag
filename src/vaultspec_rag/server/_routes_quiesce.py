@@ -53,10 +53,11 @@ def _quiesce_envelope(
 ) -> JSONResponse:
     """Emit the one quiesce envelope, on the achieved and failed exits alike.
 
-    Every exit carries the same ``ok``/``status``/``quiesce`` shape so an
-    adapter branches on ``ok`` alone.  A failure adds ``error`` and
-    ``message``: the operator asked for a state change and did not get it,
-    and the reason is the whole content of that answer.  The daemon answered
+    Every exit carries the same ``ok``/``status``/``quiesce``/``message`` shape
+    so an adapter branches on ``ok`` alone and shows ``message`` as written.  A
+    failure adds ``error`` and ``retryable``: the operator asked for a state
+    change and did not get it, and the reason is the whole content of that
+    answer.  The daemon answered
     in every one of these cases, so the transport status stays 200 and the
     achieved/failed distinction lives in the body - a broker pausing
     speculatively must be able to tell a refused lifecycle request from a
@@ -82,7 +83,9 @@ def _quiesce_envelope(
         "status": status,
         "quiesce": snapshot.as_envelope(),
     }
-    if not achieved:
+    if achieved:
+        payload["message"] = _achieved_message(status, snapshot)
+    else:
         payload["error"] = status
         payload["message"] = (
             message
@@ -138,6 +141,41 @@ _BORROWER_REFUSAL_MESSAGES: Final = {
         "once that process has exited."
     ),
 }
+
+
+#: One sentence per achieved outcome, so every adapter shows the operator what
+#: the service is now doing rather than the transition code that got it there.
+_ACHIEVED_MESSAGES: Final[dict[str, str]] = {
+    QuiesceTransitionCode.QUIESCED: (
+        "The service is paused. Searches and index updates wait until it is resumed."
+    ),
+    QuiesceTransitionCode.ALREADY_QUIESCED: (
+        "The service was already paused. Searches and index updates wait until "
+        "it is resumed."
+    ),
+    QuiesceTransitionCode.RUNNING: (
+        "The service is running. Searches and index updates are accepted."
+    ),
+    QuiesceTransitionCode.PAUSE_ABORTED: (
+        "The unfinished pause was cancelled, and the service is running again."
+    ),
+}
+
+_BORROWER_HOLD_NOTE: Final = (
+    " A GPU borrower holds this pause, and it clears on its own when that "
+    "borrower finishes or exits."
+)
+
+
+def _achieved_message(status: str, snapshot: QuiesceSnapshot) -> str:
+    """Return the operator-facing sentence for an achieved transition."""
+    fallback = (
+        QuiesceTransitionCode.RUNNING
+        if snapshot.state is QuiesceState.RUNNING
+        else QuiesceTransitionCode.QUIESCED
+    )
+    sentence = _ACHIEVED_MESSAGES.get(status, _ACHIEVED_MESSAGES[fallback])
+    return sentence + (_BORROWER_HOLD_NOTE if snapshot.borrower_bound else "")
 
 
 def _borrower_refusal_message(code: str) -> str:

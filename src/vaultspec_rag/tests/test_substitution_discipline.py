@@ -31,6 +31,14 @@ _NEEDLES = ("monkeypatch." + "setattr", "monkeypatch." + "delattr")
 # real). The reason belongs at the call site too; it is repeated here so a
 # reader hitting a failure learns what bar a new entry has to clear.
 _ALLOWED: dict[str, tuple[int, str]] = {
+    "test_service_restart_cli.py": (
+        2,
+        "restart's steps are the real stop and start verbs, which operate the "
+        "machine's one GPU service; a unit test cannot start it, so the steps "
+        "and the monitor release are replaced to pin the single envelope and "
+        "the exit code each outcome owes. The composed verb runs unreplaced "
+        "through the monitor bridge test's canonical command check",
+    ),
     # Reducing this bound to two failed count growth; restoration passed.
     "test_pid_image.py": (
         3,
