@@ -115,7 +115,7 @@ def service_restart(
         "handed_off"
     )
 
-    stopped = _run_verb("stop", resolved_port)
+    stopped = _run_verb("stop", port)
     if stopped.get("ok") is not True:
         if monitor_kept and resolved_port is not None:
             # The daemon is still serving; its monitor must stay its own.
