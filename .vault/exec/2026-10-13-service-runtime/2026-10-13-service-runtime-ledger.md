@@ -5,7 +5,7 @@ tags:
 date: '2026-10-13'
 modified: '2026-10-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:b8807cef8e6837b57f66a260fc125e82ce6aa9f57362c8a1e506b5c7d35ec79c'
+body_hash: 'sha256:ade92b7c7ae7df7f886fa84bad58ba07d57db7febc01e46bce7d38dbe224e0dd'
 related:
   - "[[2026-10-13-service-runtime-plan]]"
 ---
@@ -147,6 +147,8 @@ related:
 - `S08` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
 - `S08` `M` `src/vaultspec_rag/watcher_execution.py`
 - `S08` `verify:` `first-build lifecycle 10 integration pass under GPU lock; job-control integration 50 pass; unit lane 7924 pass, only vite-less monitor failures` -> `pass`
+- `S07` `verify:` `lab windows readme, uvx-local, client and pip on e28998f4 with the compiled monitor: install, start, doctor, index, search, stop all exit 0` -> `pass`
+- `S07` `verify:` `lab linux readme, uvx-local, client on 873a586c: all steps exit 0` -> `pass`
 
 ## Notes
 
