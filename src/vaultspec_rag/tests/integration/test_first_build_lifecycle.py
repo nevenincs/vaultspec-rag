@@ -14,7 +14,7 @@ import pytest
 
 from ... import jobs
 from ..._source_types import PublicSourceType
-from ..._store_models import CodeChunk
+from ..._store_models import CodeChunk, generation_code_collection
 from ...indexer._run_ledger_models import (
     RunAuthority,
     RunOperation,
@@ -45,6 +45,58 @@ def _succeeded(snapshot: JobSnapshot) -> bool:
 
 def _terminal(snapshot: JobSnapshot) -> bool:
     return snapshot.state.is_terminal
+
+
+def _store_one_code_point(
+    root: Path,
+    registry: ServiceRegistry,
+    *,
+    generation_id: str | None = None,
+) -> str:
+    """Write one real code point and return the collection now holding it.
+
+    With *generation_id*, the point lands in the collection a rebuild
+    generation of that id writes into - the collection an interrupted build
+    leaves behind, which a reset of this source owns.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    with registry.lease_store(root) as store:
+        collection = (
+            store.CODE_TABLE_NAME
+            if generation_id is None
+            else generation_code_collection(
+                store.DERIVED_CODE_TABLE_NAME, generation_id
+            )
+        )
+        store.upsert_code_chunks(
+            [
+                CodeChunk(
+                    id="src/unaccounted.py#c0",
+                    path="src/unaccounted.py",
+                    language="python",
+                    content="def unaccounted() -> None:\n    return None\n",
+                    line_start=1,
+                    line_end=2,
+                    node_type="function_definition",
+                    function_name="unaccounted",
+                    class_name=None,
+                    vector=[0.1] * store._embedding_dim,
+                )
+            ],
+            write_policy=None,
+            collection=collection,
+        )
+        return collection
+
+
+def _collection_points(root: Path, registry: ServiceRegistry, collection: str) -> int:
+    """Count one exact code collection, naming it rather than resolving it.
+
+    Deliberately not the admission reading: a test proving what that reading
+    has to cover cannot establish its own setup with it.
+    """
+    with registry.lease_store(root) as store:
+        return store.count_code(collection)
 
 
 def _assert_reported_as_a_first_build(snapshot: JobSnapshot) -> None:
@@ -192,26 +244,8 @@ async def test_points_without_a_publication_refuse_the_first_build(
     """
     root = tmp_path / "points-without-proof"
     _write_code_files(root, 4, "unaccounted")
-    with managed_facade_registry.lease_store(root) as store:
-        store.upsert_code_chunks(
-            [
-                CodeChunk(
-                    id="src/unaccounted.py#c0",
-                    path="src/unaccounted.py",
-                    language="python",
-                    content="def unaccounted() -> None:\n    return None\n",
-                    line_start=1,
-                    line_end=2,
-                    node_type="function_definition",
-                    function_name="unaccounted",
-                    class_name=None,
-                    vector=[0.1] * store._embedding_dim,
-                )
-            ],
-            write_policy=None,
-        )
-    stored = managed_facade_registry.code_chunk_count(root)
-    assert stored == 1
+    collection = _store_one_code_point(root, managed_facade_registry)
+    assert _collection_points(root, managed_facade_registry, collection) == 1
 
     job_id = jobs.start_reindex_codebase(
         root,
@@ -234,7 +268,52 @@ async def test_points_without_a_publication_refuse_the_first_build(
     # happened: nothing was ever published for this source.
     assert "publication proof does not exist" in str(snapshot.result)
     assert "storage no longer backs" not in str(snapshot.result)
-    assert managed_facade_registry.code_chunk_count(root) == stored
+    assert _collection_points(root, managed_facade_registry, collection) == 1
+
+
+async def test_an_interrupted_builds_generation_points_refuse_the_first_build(
+    tmp_path: Path,
+    managed_facade_registry: ServiceRegistry,
+    managed_job_manager: JobManager,
+) -> None:
+    """Points an interrupted build left in its own collection refuse too.
+
+    No ledger, an empty served collection, and one generation-scoped
+    collection holding a point. A reset of this source owns and removes that
+    collection, so admitting a first build here would destroy content no
+    proof accounts for - exactly what the refusal protects.
+
+    Mutation proven by counting the canonical collection alone in
+    ``reset_scope_point_count``: the job then succeeds as a first build and
+    the generation's point is gone.
+    """
+    root = tmp_path / "generation-leftover"
+    _write_code_files(root, 4, "leftover")
+    collection = _store_one_code_point(
+        root,
+        managed_facade_registry,
+        generation_id="c0ffee01",
+    )
+    assert _collection_points(root, managed_facade_registry, collection) == 1
+    assert managed_facade_registry.code_chunk_count(root) == 0
+
+    job_id = jobs.start_reindex_codebase(
+        root,
+        clean=False,
+        authority=RunAuthority.PUBLICATION,
+        initiator_kind="cli",
+    )
+    snapshot = await _wait_for_managed_job(
+        managed_job_manager,
+        job_id,
+        _terminal,
+        "the refused incremental index did not reach a terminal state",
+    )
+
+    assert snapshot.state is JobState.FAILED
+    assert snapshot.error_kind == "full_reindex_required"
+    assert snapshot.spec.requested_mode is None
+    assert _collection_points(root, managed_facade_registry, collection) == 1
 
 
 async def test_a_first_build_that_failed_without_points_is_a_first_build_again(

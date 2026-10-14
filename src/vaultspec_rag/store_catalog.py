@@ -78,6 +78,8 @@ class _VaultCatalogMixin:
 
         def ensure_document_table(self) -> None: ...
 
+        def owned_code_collections(self) -> tuple[str, ...]: ...
+
         def _code_collection(self, collection: str | None) -> str: ...
 
         def _collection_exists(self, name: str) -> bool: ...
@@ -752,6 +754,28 @@ class _VaultCatalogMixin:
         if source is _Source.DOCUMENT:
             return self.count_document()
         raise ValueError("a point count requires one concrete source")
+
+    def reset_scope_point_count(self, source: PublicSourceType) -> int:
+        """Return how many points a reset of *source* would destroy here.
+
+        Vault and documents each have exactly one collection, so the
+        canonical count is the whole scope. Code can also hold
+        generation-scoped collections an interrupted build left behind, and
+        they are inside the ownership a reset acts on - so counting only the
+        served collection would call a root that still holds those points
+        empty, and anything deciding on emptiness would authorize destroying
+        them.
+
+        Returns:
+            The sum over every collection the reset owns for *source*.
+        """
+        from ._source_types import PublicSourceType as _Source
+
+        if source is not _Source.CODE:
+            return self.count_source(source)
+        return sum(
+            self.count_code(collection) for collection in self.owned_code_collections()
+        )
 
     def get_by_id(self, doc_id: str) -> dict[str, object] | None:
         """Retrieve a single document by ID, or ``None`` if not found.

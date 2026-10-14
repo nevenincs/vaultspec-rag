@@ -18,7 +18,7 @@ from .._job_admission import (
     read_source_admission,
 )
 from .._source_types import PublicSourceType
-from .._store_models import CodeChunk
+from .._store_models import CodeChunk, generation_code_collection
 from ..indexer._run_ledger_models import RunAuthority
 from ..job_models import (
     FIRST_BUILD_OPERATION,
@@ -69,10 +69,26 @@ def _admit(
     )
 
 
-def _store_one_code_point(root: Path, registry: ServiceRegistry) -> int:
-    """Write one real code point through the production store path."""
+def _store_one_code_point(
+    root: Path,
+    registry: ServiceRegistry,
+    *,
+    generation_id: str | None = None,
+) -> str:
+    """Write one real code point and return the collection now holding it.
+
+    With *generation_id*, it lands in the collection a rebuild generation of
+    that id writes into, which is what an interrupted build leaves behind.
+    """
     root.mkdir(parents=True, exist_ok=True)
     with registry.lease_store(root) as store:
+        collection = (
+            store.CODE_TABLE_NAME
+            if generation_id is None
+            else generation_code_collection(
+                store.DERIVED_CODE_TABLE_NAME, generation_id
+            )
+        )
         store.upsert_code_chunks(
             [
                 CodeChunk(
@@ -89,8 +105,23 @@ def _store_one_code_point(root: Path, registry: ServiceRegistry) -> int:
                 )
             ],
             write_policy=None,
+            collection=collection,
         )
-        return store.count_code()
+        return collection
+
+
+def _collection_points(
+    root: Path,
+    registry: ServiceRegistry,
+    collection: str,
+) -> int:
+    """Count one exact code collection, naming it rather than resolving it.
+
+    Deliberately not the admission reading: a test proving what that reading
+    has to cover cannot establish its own setup with it.
+    """
+    with registry.lease_store(root) as store:
+        return store.count_code(collection)
 
 
 def test_no_publication_and_no_points_is_the_only_new_reading() -> None:
@@ -201,8 +232,8 @@ def test_stored_points_without_a_publication_keep_the_incremental_request(
     this request then escalates and the reset deletes the stored point.
     """
     root = tmp_path / "points-without-proof"
-    stored = _store_one_code_point(root, isolated_registry)
-    assert stored == 1
+    collection = _store_one_code_point(root, isolated_registry)
+    assert _collection_points(root, isolated_registry, collection) == 1
 
     spec = _admit(root, source=JobSource.CODE)
 
@@ -210,8 +241,40 @@ def test_stored_points_without_a_publication_keep_the_incremental_request(
     assert spec.authority is RunAuthority.PUBLICATION
     assert spec.requested_mode is None
     assert not spec.is_first_build
+    assert _collection_points(root, isolated_registry, collection) == 1, (
+        "admission touched stored points"
+    )
+
+
+def test_an_interrupted_builds_generation_points_keep_the_request(
+    tmp_path: Path,
+    isolated_registry: ServiceRegistry,
+) -> None:
+    """A generation-scoped leftover is content the first build would destroy.
+
+    An interrupted code build writes into its own collection, which a reset
+    of this source owns and removes. Reading only the served collection would
+    call this root empty.
+
+    Mutation proven by counting the canonical collection alone in
+    ``reset_scope_point_count``: this request then escalates, and the reset
+    deletes the interrupted build's points.
+    """
+    root = tmp_path / "generation-leftover"
+    collection = _store_one_code_point(
+        root,
+        isolated_registry,
+        generation_id="deadbeef",
+    )
+    assert _collection_points(root, isolated_registry, collection) == 1
     with isolated_registry.lease_store(root) as store:
-        assert store.count_code() == stored, "admission touched stored points"
+        assert store.count_code() == 0, "the served collection should be empty"
+
+    spec = _admit(root, source=JobSource.CODE)
+
+    assert spec.mode is JobMode.INCREMENTAL
+    assert not spec.is_first_build
+    assert _collection_points(root, isolated_registry, collection) == 1
 
 
 def test_a_published_source_keeps_the_incremental_request(

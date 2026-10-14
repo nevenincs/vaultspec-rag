@@ -126,18 +126,25 @@ def _read_source_publication(
 
 
 def _count_stored_points(root: Path, source: PublicSourceType) -> int | None:
-    """Count one source's stored points, or report that it cannot be read.
+    """Count the points a first build would stand over, or report none read.
 
-    The store lease takes the lifecycle lock and the count takes that one
-    collection's lock, in that order. Any failure to reach storage is
-    reported as no reading: escalating on a count nobody could take would
-    reset a target whose contents are unknown.
+    The reading has to cover everything a reset of this source owns, not just
+    the collection it serves: a first build runs the reset, and the reset is
+    what would destroy an interrupted build's generation-scoped leftovers.
+    Reading the served collection alone would call a root holding those
+    points empty and then delete them.
+
+    The store lease takes the lifecycle lock and each count takes that one
+    collection's lock, in that order. Any failure to reach storage - an
+    unreadable served pointer included - is reported as no reading:
+    escalating on a count nobody could take would reset a target whose
+    contents are unknown.
     """
     from .registry import get_registry
 
     try:
         with get_registry().lease_store(root) as store:
-            return store.count_source(source)
+            return store.reset_scope_point_count(source)
     except Exception:  # any unreachable backend is an absence of reading
         logger.warning(
             "could not count stored %s points for %s; "
