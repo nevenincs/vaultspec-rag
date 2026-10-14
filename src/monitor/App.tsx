@@ -191,7 +191,10 @@ export function App() {
         unavailable: "Cannot connect to service",
         divergent: "Service needs attention",
       } as Record<string, string>
-    )[serviceStatus] ?? serviceStatus.replaceAll("_", " ");
+    )[
+      // Every crashed_* outcome the lifecycle owner reports is one crash.
+      serviceStatus.startsWith("crashed") ? "crashed" : serviceStatus
+    ] ?? serviceStatus.replaceAll("_", " ");
   const runtime = usePolling(
     "/runtime-observations",
     object,

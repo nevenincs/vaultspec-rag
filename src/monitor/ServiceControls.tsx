@@ -46,7 +46,9 @@ export function ServiceControls({
   const quiesce = object(state?.quiesce);
   const mode = text(quiesce.state, text(health?.status, "unknown"));
   const borrowed = quiesce.borrower_bound === true;
-  const stopped = lifecycle?.state === "stopped" && (!health || stale);
+  // Any lifecycle outcome without a healthy service can be started, a crash
+  // included; only a service still warming up is left to finish.
+  const stopped = (!health || stale) && lifecycle?.state !== "warming";
   const send = async (action: string) => {
     if (busy.current) return;
     busy.current = true;
