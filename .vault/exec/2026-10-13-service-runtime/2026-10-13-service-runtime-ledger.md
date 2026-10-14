@@ -5,7 +5,7 @@ tags:
 date: '2026-10-13'
 modified: '2026-10-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:ade92b7c7ae7df7f886fa84bad58ba07d57db7febc01e46bce7d38dbe224e0dd'
+body_hash: 'sha256:f6717522b3d38f7acc9848b939120b711687ba2309549235ab2d998801297bfe'
 related:
   - "[[2026-10-13-service-runtime-plan]]"
 ---
@@ -149,6 +149,9 @@ related:
 - `S08` `verify:` `first-build lifecycle 10 integration pass under GPU lock; job-control integration 50 pass; unit lane 7924 pass, only vite-less monitor failures` -> `pass`
 - `S07` `verify:` `lab windows readme, uvx-local, client and pip on e28998f4 with the compiled monitor: install, start, doctor, index, search, stop all exit 0` -> `pass`
 - `S07` `verify:` `lab linux readme, uvx-local, client on 873a586c: all steps exit 0` -> `pass`
+- `S07` `verify:` `combined test branch 42d89b10 (this branch + monitor provisioning + MCP approval), fake HTTPS monitor release: linux and windows tool, uvx, client and pip routes, monitor downloaded and verified, index and search` -> `pass`
+- `S07` `verify:` `tampered monitor archive refused, nothing installed` -> `pass`
+- `S07` `verify:` `attended install approves and registers claude and codex MCP` -> `pass`
 
 ## Notes
 
@@ -157,3 +160,4 @@ related:
 - `S08` the in-process --borrow-gpu and api.index paths still refuse a new root; raised with the user
 - `S07` Monitor still a lab-only stand-in; Windows sandbox not run while the operator's service owns the GPU
 - `S08` in-process --borrow-gpu and api.index now build a new source too, on the user instruction
+- `S07` Unattended install hint names vaultspec-core, which a tool install does not put on PATH (sent to the MCP approval owner); registered MCP launch is unpinned uvx (open question for the user)
