@@ -63,7 +63,7 @@ from ._mcp_topology import (
     topology_materialization_failure,
     topology_preflight_failure,
 )
-from ._mcp_trust import RagLaunchConsent, review_rag_launch
+from ._mcp_trust import RagLaunchConsent, replace_own_launch_skip, review_rag_launch
 from ._mode import (
     RAG_DISTRIBUTION_NAME,
     infer_rag_upgrade_mode,
@@ -603,6 +603,7 @@ def _reconcile_project_mcp(request: _ProjectMcpReconciliationRequest) -> None:
         return
     if request.dry_run:
         _rewrite_preview_paths(result, request.mcp_target, request.target)
+    replace_own_launch_skip(result, request.report.warnings)
     request.report.sync_results.append(result)
     request.report.mcp_sync_results.append(result)
     if request.dry_run and request.mode_flipped and not request.force:

@@ -33,18 +33,18 @@ definition file, command, arguments and environment - and asks you to approve it
 The approval is stored outside the workspace, covers exactly that definition and
 launch, and is asked for again if either changes. It covers only the
 vaultspec-rag server; any other server in the workspace stays yours to approve
-with `vaultspec-core spec mcps trust`.
+with vaultspec-core.
 
 A run with nobody to ask, such as CI, a non-TTY session, or `--json`, never asks,
 and `--yes` never answers for you. The install completes without enrolling the
-server and reports the command that grants approval:
+server and says to run `vaultspec-rag install` at a terminal, which asks for the
+approval and enrolls the server.
 
-```bash
-vaultspec-core spec mcps trust claude --scope project
-vaultspec-core spec mcps trust codex --scope project
-```
-
-Then run `vaultspec-rag install` again to enroll it.
+To approve before a first unattended install, review and grant the launch at a
+terminal in the workspace with the vaultspec-core that vaultspec-rag installed:
+run `uvx --from vaultspec-rag vaultspec-core spec mcps trust claude --scope project`,
+then the same command with `codex` in place of `claude`. The next install then
+enrolls the server without asking.
 
 The server publishes six index-mutating tools. Four reindex, and two delete
 indexes: `clean_documents` deletes the extracted-document index, and `clean_all`

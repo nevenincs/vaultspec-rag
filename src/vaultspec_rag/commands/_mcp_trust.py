@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from vaultspec_core.core.exceptions import VaultSpecError
 from vaultspec_core.core.mcps_trust import McpApproval, grant
@@ -38,10 +38,28 @@ if TYPE_CHECKING:
     from ._mcp_host_state import LaunchToEnroll
     from ._models import ConfirmFn
 
-__all__ = ["RagLaunchConsent", "approvals_for", "review_rag_launch"]
+__all__ = [
+    "OWN_LAUNCH_UNAPPROVED",
+    "RagLaunchConsent",
+    "approvals_for",
+    "replace_own_launch_skip",
+    "review_rag_launch",
+]
 
 #: What a failed read or write of the approval record can raise.
 _GRANT_FAILURES = (OSError, VaultSpecError)
+
+#: How core opens the warning for a launch it skipped as unapproved.
+_CORE_UNAPPROVED_PREFIX = f"MCP server '{RAG_DISTRIBUTION_NAME}' is not approved for "
+
+#: The one cause and the one command an operator needs when this package's own
+#: launch was skipped. Core's warning names its own CLI, which a tool install of
+#: vaultspec-rag does not put on PATH, and lists several alternatives.
+OWN_LAUNCH_UNAPPROVED = (
+    "The vaultspec-rag MCP integration was not enrolled because its launch is "
+    "not approved. Run `vaultspec-rag install` at a terminal to review and "
+    "approve it."
+)
 
 
 def approvals_for(root: Path, launches: Iterable[LaunchToEnroll]) -> list[McpApproval]:
@@ -162,3 +180,33 @@ def review_rag_launch(
         approval.key for approval in approvals_for(root, approved)
     )
     return consent
+
+
+def replace_own_launch_skip(result: object, warnings: list[str]) -> None:
+    """Swap core's skip warnings for this package's launch for one notice.
+
+    Core reports the skip once per provider, each time naming a command a tool
+    install cannot run. Every such warning is removed from *result* and its
+    per-provider outcomes, and :data:`OWN_LAUNCH_UNAPPROVED` is added to
+    *warnings* once. Skips of any other source are core's to explain and stay.
+    """
+    holders: list[object] = [result]
+    per_tool: object = getattr(result, "per_tool", None)
+    if isinstance(per_tool, dict):
+        holders.extend(cast("dict[object, object]", per_tool).values())
+    found = False
+    for holder in holders:
+        raw: object = getattr(holder, "warnings", None)
+        if not isinstance(raw, list):
+            continue
+        messages = cast("list[object]", raw)
+        kept = [
+            message
+            for message in messages
+            if not str(message).startswith(_CORE_UNAPPROVED_PREFIX)
+        ]
+        if len(kept) != len(messages):
+            found = True
+            messages[:] = kept
+    if found and OWN_LAUNCH_UNAPPROVED not in warnings:
+        warnings.append(OWN_LAUNCH_UNAPPROVED)
