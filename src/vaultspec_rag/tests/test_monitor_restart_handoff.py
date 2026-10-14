@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
-import shutil
 import time
 from typing import TYPE_CHECKING
 from urllib.error import HTTPError
@@ -14,26 +12,17 @@ import pytest
 
 from .._loopback_http import LOOPBACK_OPENER
 from .._process_probe import pid_alive, wait_for_exit
-from ..config._types import EnvVar
 from ..monitor_process import MonitorProcess, stop_recorded_monitor
 from .test_monitor_process import _ports
+from .test_monitor_process_integration import (
+    compiled_monitor_required as compiled_monitor_required,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
 
 pytestmark = pytest.mark.unit
-
-
-@pytest.fixture(autouse=True)
-def compiled_monitor_required() -> None:
-    binary = os.environ.get(EnvVar.MONITOR_BINARY.value) or shutil.which(
-        "vaultspec-rag-monitor"
-    )
-    assert binary, (
-        "Build/install the compiled monitor or provide its absolute path in "
-        "VAULTSPEC_RAG_MONITOR_BINARY before running compiled lifecycle integration."
-    )
 
 
 @pytest.fixture
