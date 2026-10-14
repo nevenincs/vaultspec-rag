@@ -60,8 +60,8 @@ class BorrowerLeaseMixin:
         handoff.  Reading one attribute is atomic, and the answer is a
         point-in-time observation either way: the controller half of this
         snapshot was already taken at a different instant.  The security-
-        relevant comparison in :meth:`borrower_capability_is_bound` still takes
-        the lock, because deciding who may act is not an observation.
+        relevant comparison in :meth:`validate_borrower_lifecycle_request` still
+        takes the lock, because deciding who may act is not an observation.
         """
         return replace(
             snapshot,
@@ -74,34 +74,52 @@ class BorrowerLeaseMixin:
         *,
         pause: bool,
     ) -> str | None:
-        """Return one lease denial, or ``None`` for an authorized lifecycle call."""
+        """Return one lease denial, or ``None`` for an authorized lifecycle call.
+
+        A hold bound to one capability is closed to every other, with one
+        exception: a pause whose own capability verifies against the live
+        lease.  The lease is exclusive, so a different capability that holds it
+        proves the bound borrower released it - it exited, crashed or let go -
+        and the hold has no owner left whose undo it protects.  That is read
+        from the lease and never from a recorded pid, which is not an identity
+        and would leave an unreadable process to be guessed at.  Anything short
+        of a verified live lease, a lease that cannot be observed included,
+        stays a mismatch: protection is never shortened on an uncertain answer.
+        A resume never inherits, because the borrower holding the lease has not
+        paused for itself.
+        """
         with self._lock:
             bound_capability = self._borrower_capability
         if bound_capability is not None:
             if capability is None:
                 return None if pause else "borrower_lease_required"
             if not hmac.compare_digest(bound_capability, capability):
+                if pause and self._borrower_lease_error(capability) is None:
+                    return None
                 return "borrower_lease_mismatch"
         if capability is None:
             return None
         return self._borrower_lease_error(capability)
 
-    def borrower_capability_is_bound(self, capability: str) -> bool:
-        """Return whether this exact capability already owns the current hold.
+    def borrower_hold_is_bound(self) -> bool:
+        """Return whether a borrower, rather than an operator, owns the hold.
 
         Separate from :meth:`bind_borrower_capability` because the caller needs
-        to distinguish "already mine" from "bindable" before deciding whether an
-        observed quiescence may be claimed at all.  Compared in constant time
-        like every other capability check.
+        to tell an operator's own pause, which no borrower may take, from a hold
+        that a borrower holds or held, before it decides whether an observed
+        quiescence may be claimed at all.
         """
         with self._lock:
-            bound_capability = self._borrower_capability
-        if bound_capability is None:
-            return False
-        return hmac.compare_digest(bound_capability, capability)
+            return self._borrower_capability is not None
 
     def bind_borrower_capability(self, capability: str) -> bool:
-        """Retain a verified borrower only after the registry is safely quiesced."""
+        """Retain a verified borrower only after the registry is safely quiesced.
+
+        The caller has already verified *capability* against the live lease
+        through :meth:`validate_borrower_lifecycle_request`.  That is what makes
+        replacing a different binding a takeover from a borrower that released
+        the lease, and not a hijack of one that did not.
+        """
         snapshot = self._quiesce_controller.snapshot()
         if (
             snapshot.state is not QuiesceState.QUIESCED
@@ -110,11 +128,8 @@ class BorrowerLeaseMixin:
         ):
             return False
         with self._lock:
-            bound_capability = self._borrower_capability
-            if bound_capability is None:
-                self._borrower_capability = capability
-                return True
-            return hmac.compare_digest(bound_capability, capability)
+            self._borrower_capability = capability
+        return True
 
     @staticmethod
     def lend_gpu_to_borrower(capability: str) -> bool:

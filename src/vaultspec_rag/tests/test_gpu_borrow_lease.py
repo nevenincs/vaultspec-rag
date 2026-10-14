@@ -181,6 +181,32 @@ def _borrower_routes() -> Generator[BorrowerRoutes]:
         yield BorrowerRoutes(client, registry)
 
 
+def _borrower_pause(routes: BorrowerRoutes, capability: str) -> _RouteResponse:
+    """Send one borrower pause for *capability* through the production route."""
+    return routes.client.post(
+        "/pause",
+        headers=_HEADERS,
+        json={"borrower_capability": capability},
+    )
+
+
+def _borrower_resume(routes: BorrowerRoutes, capability: str) -> _RouteResponse:
+    """Send one borrower resume for *capability* through the production route."""
+    return routes.client.post(
+        "/resume",
+        headers=_HEADERS,
+        json={"borrower_capability": capability},
+    )
+
+
+def _kill_borrower(borrower: BorrowerProcess) -> None:
+    """Hard-kill one borrower and wait until the OS has freed its lease."""
+    borrower.process.kill()
+    borrower.process.wait(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
+    assert borrower.process.poll() is not None, "borrower child did not terminate"
+    assert _await_borrower_release(borrower.capability) is BorrowerLeaseStatus.NOT_HELD
+
+
 def _assert_bound_witness(response: _RouteResponse, *, bound: bool) -> None:
     """Assert the published ownership witness on one lifecycle envelope."""
     match _response_payload(response):
@@ -386,7 +412,12 @@ def test_authenticated_routes_bind_and_require_the_live_borrower_capability(
 def test_lost_bound_lease_auto_resumes_but_manual_quiescence_stays_held(
     tmp_path: Path,
 ) -> None:
-    """The heartbeat tick resumes only the quiescence that has a lost binding."""
+    """The heartbeat tick resumes only the quiescence that has a lost binding.
+
+    A different live lease holder is left to take the hold over; the tick
+    clears it only once no borrower holds the lease. Mutation: reverting the
+    takeover fails the successor's pause with a lease mismatch.
+    """
     with _isolated_borrower_anchor(tmp_path), _borrower_routes() as routes:
         _assert_pause_success(routes.client.post("/pause", headers=_HEADERS))
         assert routes.registry.resume_lost_borrower_lease() is None
@@ -427,17 +458,92 @@ def test_lost_bound_lease_auto_resumes_but_manual_quiescence_stays_held(
                 is BorrowerLeaseStatus.NOT_HELD
             )
 
-            with _borrower_process():
+            with _borrower_process() as successor:
                 assert (
                     borrower_lease_status(borrower.capability)
                     is BorrowerLeaseStatus.CAPABILITY_INVALID
                 )
+                # A different live lease holder is not proof the pause was
+                # abandoned: it is the borrower that takes the hold over in its
+                # own pause, so the heartbeat leaves the hold standing for it
+                # and the device is not rebuilt in between.
                 asyncio.run(_borrower_lease_recovery_tick(routes.registry))
                 assert routes.registry.quiesce_snapshot().state.value == "quiesced"
+                _assert_achieved_state(
+                    _borrower_pause(routes, successor.capability), "quiesced"
+                )
 
+            # The successor exited too, so the hold it inherited clears.
             asyncio.run(_borrower_lease_recovery_tick(routes.registry))
 
         assert routes.registry.quiesce_snapshot().state.value == "running"
+
+
+def test_a_hold_is_protected_while_its_borrower_still_holds_the_lease(
+    tmp_path: Path,
+) -> None:
+    """No other capability can act on a hold whose borrower holds the lease.
+
+    The hold survives a stranger's pause and the heartbeat, and stays
+    releasable by its own borrower. Mutation: letting a pause carrying any
+    different capability replace the binding, instead of only one that verifies
+    against the live lease, fails the refusal assertion below.
+    """
+    with (
+        _isolated_borrower_anchor(tmp_path),
+        _borrower_process() as borrower,
+        _borrower_routes() as routes,
+    ):
+        _assert_pause_success(_borrower_pause(routes, borrower.capability))
+
+        refused = _borrower_pause(routes, _unrelated_capability())
+        _assert_borrower_refusal(refused, "borrower_lease_mismatch", state="quiesced")
+        _assert_bound_witness(refused, bound=True)
+
+        asyncio.run(_borrower_lease_recovery_tick(routes.registry))
+        assert routes.registry.quiesce_snapshot().state.value == "quiesced"
+
+        released = _borrower_resume(routes, borrower.capability)
+        _assert_achieved_state(released, "running")
+        _assert_bound_witness(released, bound=False)
+
+
+def test_a_successor_takes_over_a_hold_whose_borrower_is_gone(
+    tmp_path: Path, gpu_owner_anchor: Path
+) -> None:
+    """A borrower started after a hard-killed one is served, not refused.
+
+    The service is still bound to the dead borrower's capability, because the
+    heartbeat has not yet noticed the lease is free. The successor holds the
+    exclusive lease, which proves the first released it, so its pause takes the
+    hold over without a resume in between and the loan of the GPU moves to it.
+    Mutation: reverting the validation to refuse every different capability
+    against a binding fails the takeover assertion with a lease mismatch.
+    """
+    with (
+        _isolated_borrower_anchor(tmp_path),
+        _borrower_routes() as routes,
+        _borrower_process() as first,
+    ):
+        _assert_pause_success(_borrower_pause(routes, first.capability))
+        _kill_borrower(first)
+        assert routes.registry.quiesce_snapshot().borrower_bound is True
+
+        with _borrower_process() as successor:
+            taken = _borrower_pause(routes, successor.capability)
+            _assert_achieved_state(taken, "quiesced")
+            _assert_bound_witness(taken, bound=True)
+            holder = borrower_lease_holder_pid(successor.capability)
+            lent = read_anchor_record(gpu_owner_anchor)
+
+            stale = _borrower_resume(routes, first.capability)
+            _assert_borrower_refusal(stale, "borrower_lease_mismatch", state="quiesced")
+
+            _assert_resume_success(_borrower_resume(routes, successor.capability))
+
+    assert holder is not None
+    assert isinstance(lent, dict)
+    assert lent["lent_to"] == holder
 
 
 def test_a_bound_borrower_is_lent_the_gpu_until_its_resume(

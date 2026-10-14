@@ -122,7 +122,8 @@ _BORROWER_REFUSAL_MESSAGES: Final = {
         "no operator command ends it sooner."
     ),
     "borrower_lease_mismatch": (
-        "A different borrower already holds this pause, so this capability "
+        "A different borrower already holds this pause, and this capability does "
+        "not hold the live borrower lease that would let it take over, so it "
         "cannot act on it."
     ),
     "borrower_pause_not_owned": (
@@ -291,10 +292,11 @@ def _post_pause_binding_error(
     Ownership follows the request that produced the state.  An already-quiesced
     outcome is an observation, not a pause: honouring it as a claim let a
     borrower inherit an operator's hold and leave that operator unable to
-    release their own service for as long as the borrower ran.  A borrower
-    repeating its own pause is the one case that still binds on an observation,
-    because the binding it would be granted is the one it already holds, and
-    refusing that would break retry after a lost response.
+    release their own service for as long as the borrower ran.  A hold some
+    borrower owns is the case that still binds on an observation.  The
+    validation above has already shown that the binding is this borrower's own,
+    so a retry after a lost response keeps working, or that its borrower
+    released the lease, so the successor inherits a hold nobody is left to undo.
     """
     if capability is None or not transition.achieved:
         return None
@@ -303,8 +305,9 @@ def _post_pause_binding_error(
         return lease_error
     if transition.snapshot.state is not QuiesceState.QUIESCED:
         return "borrower_lease_mismatch"
-    if transition.code is QuiesceTransitionCode.ALREADY_QUIESCED and not (
-        registry.borrower_capability_is_bound(capability)
+    if (
+        transition.code is QuiesceTransitionCode.ALREADY_QUIESCED
+        and not registry.borrower_hold_is_bound()
     ):
         return "borrower_pause_not_owned"
     if not registry.bind_borrower_capability(capability):
