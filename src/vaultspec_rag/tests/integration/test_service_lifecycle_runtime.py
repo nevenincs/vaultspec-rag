@@ -405,21 +405,16 @@ def _establish_lifecycle_publication(
     return _consistent_code_search(port, root)
 
 
-def _assert_retained_lifecycle_publication(
+def _assert_resumed_lifecycle_publication(
     port: int, root: Path, baseline: dict[str, object]
 ) -> None:
-    """Retain useful incremental rows while an open receipt refuses certification."""
-    integrity = _lifecycle_code_search(port, root)
-    assert integrity.get("verdict") == "unverifiable", integrity
-    assert integrity.get("reason") == "proof_unreadable", integrity
-    assert "claimed_count" in integrity and integrity["claimed_count"] is None
-    assert "generation_id" in integrity and integrity["generation_id"] is None
+    """Require the resumed attempt to certify the interrupted attempt's rows."""
+    integrity = _consistent_code_search(port, root)
     baseline_count = count(baseline["claimed_count"])
-    live_count = count(integrity.get("live_count"))
-    assert baseline_count is not None
-    # Reporting zero only after the incremental source appeared failed here
-    # with 0 > 512; exact restoration passed the real shutdown/restart case.
-    assert live_count is not None and live_count > baseline_count
+    claimed_count = count(integrity["claimed_count"])
+    assert baseline_count is not None and claimed_count is not None
+    assert claimed_count > baseline_count
+    assert integrity["generation_id"] != baseline["generation_id"]
 
 
 @pytest.mark.timeout(600)
@@ -427,7 +422,17 @@ def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
     tmp_path: Path,
     required_host_provisioned_qdrant_source: tuple[Path, Path],
 ) -> None:
-    """Graceful daemon stop releases every owner before store teardown."""
+    """Graceful daemon stop releases every owner before store teardown.
+
+    The shutdown-signalled attempt is recorded as interrupted with the
+    service-shutdown kind, and the next daemon life on the same backend
+    resumes that same job to a certified publication.
+
+    Mutation caught: keying restart recovery on any kind other than the
+    service-shutdown one leaves the job interrupted and fails the resume wait.
+    Inverting the claimed-count or the generation comparison on the resumed
+    publication fails on that comparison's own line; restoring either passes.
+    """
     from ...job_models import JobState
 
     root = tmp_path / "live-code"
@@ -497,20 +502,23 @@ def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
     with _signalable_live_service(
         tmp_path,
         required_host_provisioned_qdrant_source,
+        qdrant_port=qdrant_port,
     ) as (restart_port, _shutdown_pid):
         _poll_health(restart_port)
         restarted_status = read_service_status()
         assert restarted_status is not None
         restarted_status = cast("dict[str, object]", restarted_status)
         assert int(str(restarted_status["qdrant_pid"])) != qdrant_pid
-        restored = _wait_for_persisted_job(
+        assert int(str(restarted_status["qdrant_port"])) == qdrant_port
+        resumed = _wait_for_persisted_job(
             state_path,
             job_id,
-            lambda job: job.state is JobState.INTERRUPTED,
-            "interrupted result was not retained after daemon restart",
+            lambda job: job.state is JobState.SUCCEEDED,
+            "shutdown-interrupted job was not resumed to completion after restart",
         )
-        assert restored.runtime.task_active is False
-        _assert_retained_lifecycle_publication(restart_port, root, baseline)
+        assert resumed.error_kind is None
+        assert resumed.runtime.task_active is False
+        _assert_resumed_lifecycle_publication(restart_port, root, baseline)
 
 
 def test_start_already_running(request: pytest.FixtureRequest, tmp_path: Path) -> None:
