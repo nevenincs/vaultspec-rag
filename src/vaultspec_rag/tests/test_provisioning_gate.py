@@ -42,7 +42,6 @@ from ..operator_state._installation import (
     HardwarePresence,
     InstallRole,
 )
-from ..service_runtime import ERROR_RUNTIME_UNSUPPORTED
 from ._cli_helpers import app, runner
 from ._model_cache_seed import STAND_IN_DENSE, STAND_IN_RERANKER, seed_model_cache
 from .conftest import (
@@ -327,22 +326,22 @@ class TestAHostThatCannotRunTheServiceItself:
         assert "Next action: vaultspec-rag server qdrant install" in output
         assert "Not needed here:" not in output
 
-    def test_start_refuses_before_it_looks_at_the_port_or_the_machine(
+    def test_a_start_the_port_guard_refuses_fetches_nothing_for_a_runtime(
         self, managed: Path, empty_cache: Path
     ) -> None:
-        """The environment is resolved ahead of every guard that can write.
+        """Nothing is fetched for a start that a guard can still refuse.
 
         A host whose torch cannot use the GPU no longer refuses the operator:
-        the daemon would run from the managed runtime instead. This checkout
-        is a working tree, which no requirement reproduces, so the runtime
-        cannot be created and that is the refusal - and it still arrives
-        before anything is written. The start is aimed at a port something
-        else holds, so a start that reached the port guard first fails for the
-        port instead.
+        the daemon would run from the managed runtime instead. Creating that
+        runtime downloads the GPU stack, so it happens after the port and
+        machine guards - this start is aimed at a port something else holds,
+        and is refused for the port, having written nothing. Which
+        environment would serve is still decided first; deciding costs
+        nothing.
 
-        Mutation check: with the resolution moved back after the port and
-        machine guards, the start fails as ``port_in_use`` and the error
-        assertion fails; restoring passes.
+        Mutation check: creating the runtime while the environment is
+        resolved, ahead of the guards, refuses this checkout as a working
+        tree no requirement reproduces and fails the error assertion.
         """
         del empty_cache
         with _occupied_port() as port:
@@ -352,7 +351,7 @@ class TestAHostThatCannotRunTheServiceItself:
 
         assert result.exit_code == 1, result.output
         payload = cast("dict[str, object]", json.loads(result.stdout))
-        assert payload["error"] == ERROR_RUNTIME_UNSUPPORTED
+        assert payload["error"] == "port_in_use"
         assert not managed.exists(), _tree(managed.parent)
 
 

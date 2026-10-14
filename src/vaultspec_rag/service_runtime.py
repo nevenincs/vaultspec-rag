@@ -44,6 +44,7 @@ from ._program_lookup import Where, find_program
 from ._store_locks import FileLock
 from .config._types import EnvVar
 from .operator_state._compute import ProbeDepth
+from .operator_state._installation import DRIVER_CHECK_COMMAND, ComputeCapability
 from .operator_state._provisioning import (
     CU130_INDEX_STRATEGY,
     HOST_PYTHON,
@@ -131,8 +132,10 @@ class ServiceRuntimeError(Exception):
     Attributes:
         code: The stable code the start reports the failure under.
         cause: One sentence naming what is wrong.
-        command: The one command that moves the operator forward, or ``None``
-            when there is none to offer.
+        command: The one bare command that moves the operator forward, or
+            ``None`` when there is none to offer. A bare command because the
+            start reports it as a next action, which a broker runs and a
+            person pastes: an explanation belongs in *cause*.
         detail: The underlying diagnosis, for the structured outcome.
     """
 
@@ -527,12 +530,30 @@ def ensure_service_runtime(
     return _create_runtime(stage)
 
 
+#: The one command a refused runtime may offer, by what its own interpreter
+#: turned out to hold. Only what the machine around the runtime can still be
+#: asked belongs here: a runtime that resolved a CPU wheel, no torch at all,
+#: or a client-shaped environment is reproduced exactly by the next build, so
+#: any command there - the start above all, which is what built this one -
+#: sends the operator round the same failure. The capability's own remediation
+#: is written for an environment the operator owns and is never reused.
+_RUNTIME_REFUSAL_COMMANDS: Mapping[ComputeCapability, str] = {
+    ComputeCapability.NO_DEVICE: DRIVER_CHECK_COMMAND,
+}
+
+
+def _runtime_refusal_command(capability: ComputeCapability) -> str | None:
+    """The one bare command a refused runtime offers, or ``None`` for none."""
+    return _RUNTIME_REFUSAL_COMMANDS.get(capability)
+
+
 def _judge(interpreter: str) -> ServiceEnvironment:
     """Ask a runtime's own interpreter what it can do, and refuse what it cannot.
 
     No CPU runtime is ever accepted: the judgement is the one a start makes of
     any environment, and a refusal here is one sentence with at most the one
-    command that can change the answer.
+    command that can change the answer - which for most of these is no
+    command at all, because the next start rebuilds the same runtime.
 
     Raises:
         ServiceRuntimeError: That interpreter cannot run the service.
@@ -545,7 +566,7 @@ def _judge(interpreter: str) -> ServiceEnvironment:
             ERROR_RUNTIME_NO_GPU,
             f"The service runtime cannot run the GPU-only service: "
             f"{environment.reason}.",
-            command=environment.capability.remediation,
+            command=_runtime_refusal_command(environment.capability),
             detail=environment.reason,
         )
     return environment

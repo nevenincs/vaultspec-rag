@@ -23,11 +23,16 @@ from pathlib import Path
 
 import pytest
 import typer
+from typer.testing import CliRunner
 
 from .. import service_runtime
+from .._operator_commands import server_start_command
 from ..cli._core import _build_console
 from ..cli._progress import StartupStatusReporter
-from ..cli._service_start import _select_service_environment
+from ..cli._service_start import (
+    _created_service_runtime,
+    _planned_start_environment,
+)
 from ..config._types import EnvVar
 from ..operator_state._installation import ComputeCapability, InstallRole
 from ..operator_state._provisioning import CU130_INDEX_STRATEGY, HOST_PYTHON
@@ -501,6 +506,34 @@ class TestBuildingAndPublishingTheRuntime:
         assert not (runtime_root() / installed_release()).exists()
         assert ComputeCapability.CPU_ONLY_BUILD.label in refusal.value.cause
 
+    def test_a_runtime_that_cannot_serve_never_offers_the_start_again(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guard assertion: the refusal offered the command that produced it.
+
+        The capability's own remediation is written for an environment the
+        operator installed, and for a CPU wheel it says to run the start -
+        which built this runtime and would build the same one again, so the
+        operator loops. A runtime that resolved a CPU wheel therefore states
+        its cause and offers nothing.
+
+        Mutation check: reusing ``capability.remediation`` here puts the
+        start command back and fails the second assertion.
+        """
+        _staged_uv(monkeypatch)
+        pin_daemon_capability(monkeypatch, ComputeCapability.CPU_ONLY_BUILD)
+        _staged_origin(monkeypatch)
+
+        with pytest.raises(ServiceRuntimeError) as refusal:
+            ensure_service_runtime()
+
+        assert refusal.value.command is None
+        # The premise: the remediation that used to be reused here is the one
+        # that sends the operator back to the start that built this runtime.
+        assert server_start_command() in str(
+            ComputeCapability.CPU_ONLY_BUILD.remediation
+        )
+
     def test_a_build_already_running_is_not_run_a_second_time(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -587,8 +620,12 @@ class TestTheStartEnvelope:
             interactive=False,
         )
 
+        # The plan is what sends this launcher to the runtime; the refusal
+        # comes from creating it, which a start only reaches once its guards
+        # have passed.
+        assert _planned_start_environment(interpreter) is None
         with reporter as progress, pytest.raises(typer.Exit) as exit_info:
-            _select_service_environment(interpreter, json_mode=True, progress=progress)
+            _created_service_runtime(json_mode=True, progress=progress)
 
         assert exit_info.value.exit_code != 0
         documents = [
@@ -601,6 +638,92 @@ class TestTheStartEnvelope:
         # One command, and only that one: the envelope carries what the
         # operator would have read.
         assert documents[0]["data"]["next_actions"] == [uv_install_command()]
+
+    def test_every_next_action_a_refusal_offers_is_a_bare_command(self) -> None:
+        """Guard assertion: a next action is run, not read.
+
+        A start reports the refusal's command as a next action, which a
+        broker runs outright and a person pastes into a shell, so a sentence
+        there is not a remedy but a command that fails. Every capability a
+        runtime can be refused for either offers nothing or offers one bare
+        command; the explanation is the cause sentence.
+
+        Mutation check: returning ``capability.remediation`` for any
+        capability puts a sentence in the table and fails on the backtick or
+        the full stop it carries.
+        """
+        from ..operator_state._installation import DRIVER_CHECK_COMMAND
+        from ..service_runtime import _runtime_refusal_command
+
+        offered = {
+            capability: _runtime_refusal_command(capability)
+            for capability in ComputeCapability
+        }
+
+        assert offered[ComputeCapability.CPU_ONLY_BUILD] is None
+        assert offered[ComputeCapability.TORCH_MISSING] is None
+        assert offered[ComputeCapability.NOT_APPLICABLE] is None
+        assert offered[ComputeCapability.NO_DEVICE] == DRIVER_CHECK_COMMAND
+        for command in offered.values():
+            if command is None:
+                continue
+            assert "`" not in command
+            assert not command.endswith(".")
+
+
+@pytest.mark.unit
+@pytest.mark.usefixtures("isolated_singleton_dirs")
+class TestWhenTheRuntimeIsBuilt:
+    """Nothing is downloaded for a start that something can still refuse."""
+
+    def test_a_start_the_port_guard_refuses_builds_no_runtime(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Guard assertion: a refusal that followed a multi-gigabyte download.
+
+        The runtime was created while the environment was being resolved,
+        which ran before the port and machine guards, so a start refused for
+        a taken port had already fetched the whole GPU stack. Creation now
+        runs after every guard that can refuse the start.
+
+        Mutation check: creating the runtime during selection again reaches
+        the build before the port guard, which records the ``uv venv`` call
+        and reports the runtime's own refusal instead of the taken port -
+        failing the error assertion and the empty-call-list assertion.
+        """
+        import socket
+
+        from ..cli import app as cli_app
+
+        _staged_origin(monkeypatch)
+        calls = _staged_uv(monkeypatch)
+        pin_install_role(monkeypatch, InstallRole.HOST)
+        # A launcher that cannot serve, so this start is one the managed
+        # runtime would have to be built for.
+        pin_daemon_capability(monkeypatch, ComputeCapability.CPU_ONLY_BUILD)
+        held = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        held.bind(("127.0.0.1", 0))
+        held.listen(1)
+        port = held.getsockname()[1]
+        try:
+            result = CliRunner().invoke(
+                cli_app,
+                [
+                    "--target",
+                    str(tmp_path),
+                    "server",
+                    "start",
+                    "--json",
+                    "--port",
+                    str(port),
+                ],
+            )
+        finally:
+            held.close()
+
+        assert json.loads(result.stdout)["error"] == "port_in_use"
+        assert calls == []
+        assert not (runtime_root() / installed_release()).exists()
 
 
 @pytest.mark.integration

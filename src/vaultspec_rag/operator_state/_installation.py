@@ -12,7 +12,17 @@ from enum import StrEnum
 
 from .._operator_commands import server_doctor_command
 
-__all__ = ["ComputeCapability", "HardwarePresence", "InstallRole"]
+__all__ = [
+    "DRIVER_CHECK_COMMAND",
+    "ComputeCapability",
+    "HardwarePresence",
+    "InstallRole",
+]
+
+#: What shows whether the machine's driver can see the GPU at all. Written
+#: once because it is both a sentence an operator reads and, where a refusal
+#: can offer nothing else, the bare command it hands over.
+DRIVER_CHECK_COMMAND = "nvidia-smi"
 
 
 class InstallRole(StrEnum):
@@ -139,7 +149,8 @@ class ComputeCapability(StrEnum):
             ),
             ComputeCapability.CPU_ONLY_BUILD: start,
             ComputeCapability.NO_DEVICE: (
-                "Check the GPU driver with `nvidia-smi`, then start the service again."
+                f"Check the GPU driver with `{DRIVER_CHECK_COMMAND}`, then start "
+                f"the service again."
             ),
             ComputeCapability.MPS_POLICY_REFUSED: (
                 "Unset PYTORCH_ENABLE_MPS_FALLBACK or set it to 0."

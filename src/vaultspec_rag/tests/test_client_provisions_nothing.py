@@ -32,8 +32,6 @@ from ..commands._install import install_run
 from ..commands._provision import ProvisionStep
 from ..config._paths import read_persisted_local_only
 from ..config._types import EnvVar
-from ..operator_state._provisioning import host_install_command
-from ..service_runtime import ERROR_RUNTIME_UNSUPPORTED
 from ._cli_helpers import app, runner
 from ._model_cache_seed import STAND_IN_DENSE, STAND_IN_RERANKER, seed_model_cache
 from ._qdrant_provision_seam import record_qdrant_provisioning
@@ -93,21 +91,19 @@ def test_start_is_refused_before_anything_is_provisioned(
     isolated_singleton_dirs: Path,
     tmp_path: Path,
 ) -> None:
-    """``server start`` resolves what would serve before it does anything else.
+    """``server start`` provisions nothing for a client before it is refused.
 
     A client environment never runs the daemon, so the start looks to the
-    managed runtime instead of refusing the operator - and this checkout is a
-    working tree, which no requirement reproduces, so the runtime cannot be
-    created and that is the refusal. What the test proves is the ordering: the
-    start is aimed at a port something else holds, the port guard is the first
-    thing after the environment is resolved, and everything a start fetches or
-    spawns comes after the guard. The occupied port is also what keeps a
-    regressed run from going on to spawn a daemon on this machine.
+    managed runtime instead of refusing the operator. What the test proves is
+    that no fetch happens on the way: the start is aimed at a port something
+    else holds, so the port guard refuses it, and every step that downloads -
+    the runtime itself included - comes after that guard. The occupied port is
+    also what keeps a regressed run from going on to spawn a daemon on this
+    machine.
 
-    Mutation check: with the resolution removed from the start command, or
-    moved after the dependency fetch, the start reaches the port guard first
-    and fails as ``port_in_use`` - failing the error assertion. Restoring it
-    passes.
+    Mutation check: moving the Qdrant provisioning ahead of the guards
+    records a call and fails the first assertion; moving the model or runtime
+    fetch there leaves files under the temp root and fails the second.
     """
     del isolated_singleton_dirs
     calls = record_qdrant_provisioning(monkeypatch)
@@ -131,12 +127,9 @@ def test_start_is_refused_before_anything_is_provisioned(
     assert result.exit_code == 1, result.output
     payload = cast("dict[str, object]", json.loads(result.stdout))
     assert payload["ok"] is False
-    assert payload["error"] == ERROR_RUNTIME_UNSUPPORTED
+    assert payload["error"] == "port_in_use"
     data = cast("dict[str, object]", payload["data"])
-    # One cause, one command, and no claim that the operator's environment is
-    # the thing to repair: it never was.
-    assert data["next_actions"] == [host_install_command()]
-    assert "direct_url.json records" in str(data["detail"])
+    assert data["port"] == port
 
 
 def test_install_provisions_nothing_with_every_step_left_on(

@@ -625,10 +625,10 @@ class _SelectedEnvironment:
     runtime: ManagedRuntime | None
 
 
-def _select_service_environment(
-    interpreter: str, *, json_mode: bool, progress: StartupStatusReporter
-) -> _SelectedEnvironment:
-    """Resolve the environment the daemon will run in, creating one if needed.
+def _planned_start_environment(
+    interpreter: str,
+) -> _SelectedEnvironment | None:
+    """Select the environment the daemon will run in, creating nothing.
 
     The launching environment is judged exactly as it always was, and serves
     the daemon when it can - except from a uvx cache environment, which uv
@@ -639,12 +639,16 @@ def _select_service_environment(
 
     A check that could not finish does not refuse. It is logged and the start
     proceeds, leaving the spawn-and-detect path as the backstop.
+
+    Returns:
+        The selected environment when the launcher serves, and ``None`` when
+        the managed runtime has to. Selecting is all that happens here, so
+        the guards that can still refuse this start run before anything is
+        built or downloaded for it.
     """
     from ..operator_state._service_environment import judge_service_environment
     from ..service_runtime import (
         ServiceInterpreterSource,
-        ServiceRuntimeError,
-        ensure_service_runtime,
         planned_service_interpreter,
     )
 
@@ -655,6 +659,22 @@ def _select_service_environment(
     ):
         _log_inconclusive_capability(launching)
         return _SelectedEnvironment(interpreter, launching, None)
+    return None
+
+
+def _created_service_runtime(
+    *, json_mode: bool, progress: StartupStatusReporter
+) -> _SelectedEnvironment:
+    """Open the managed runtime for this start, building it if it is absent.
+
+    The one expensive step on the start path: a first build downloads the GPU
+    stack. It runs after every guard that can refuse this start, so a refusal
+    never follows a multi-gigabyte download, and before the other
+    dependencies are fetched, because they are fetched for the environment
+    this returns.
+    """
+    from ..service_runtime import ServiceRuntimeError, ensure_service_runtime
+
     progress.stage("Resolving the environment that runs the service...")
     try:
         runtime = ensure_service_runtime(stage=progress.stage)
@@ -685,7 +705,12 @@ def _fail_service_runtime(
 
     One sentence of cause and at most one command, because there is exactly
     one thing to do about each of these: install uv, install a release that
-    can be reproduced, fix the accelerator, or start again.
+    can be reproduced, check the driver, or start again. Some of them have
+    nothing to offer, and then the cause stands alone.
+
+    The cause is a human line and the command is a next action: a next action
+    is pasted into a shell by a person and run outright by a broker, so a
+    sentence there is not a remedy but a command that fails.
     """
     return _fail_start(
         json_mode,
@@ -994,25 +1019,31 @@ def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None
         if _attach_warming_service(json_mode):
             return
 
-        # Everything from here on starts a daemon, so the environment that
-        # would run it is resolved before anything is fetched or written for
-        # it. It comes ahead of the port and machine guards, whose probes can
-        # create a lock file, and ahead of the binary check, so a start that
-        # has no environment to run in has provisioned and written nothing.
+        # Everything from here on starts a daemon, so which environment would
+        # run it is decided before anything is fetched or written for it. The
+        # decision itself costs nothing to undo, which is why it comes ahead
+        # of the port and machine guards, whose probes can create a lock file.
         interpreter = _resolve_daemon_interpreter()
         # A client is answered from the distributions this environment holds,
         # at no cost. A host is asked in a child of the daemon interpreter,
         # which imports torch there: the single longest pre-spawn stall (its
         # own timeout is 60s). A launcher that cannot serve is answered with
-        # the managed runtime, which the first such start creates.
+        # the managed runtime, which the first such start creates - below,
+        # once nothing can refuse this start any more.
         progress.stage("Checking accelerator support in the service environment...")
-        selected = _select_service_environment(
-            interpreter, json_mode=json_mode, progress=progress
-        )
-        environment = selected.environment
+        selected = _planned_start_environment(interpreter)
 
         progress.stage("Checking the port and machine singleton...")
         _guard_start_preconditions(options.port, json_mode)
+
+        # The runtime is built here and nowhere earlier: a first build
+        # downloads the GPU stack, and a guard above refusing this start
+        # afterwards would have cost the operator gigabytes for nothing. It
+        # still precedes every other fetch, which provisions for whichever
+        # environment this start ends up running the daemon in.
+        if selected is None:
+            selected = _created_service_runtime(json_mode=json_mode, progress=progress)
+        environment = selected.environment
 
         backend = decide_backend(local_only=options.local_only, qdrant=options.qdrant)
         _ensure_start_dependencies(options, backend, environment, progress)

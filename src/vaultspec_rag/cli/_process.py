@@ -336,8 +336,33 @@ class _ServiceChildEnvRequest:
     root: Path | None = None
 
 
-def _build_service_child_env(request: _ServiceChildEnvRequest) -> dict[str, str]:
+#: Variables that aim an interpreter at a particular installation: a module
+#: search path, an installation prefix, and a startup file this process's own
+#: environment set up. A daemon running from another interpreter that read
+#: them would import out of this environment - a checkout, or a release that
+#: was never judged able to serve - while reporting the environment it was
+#: started from. They are this process's to use and not the daemon's to
+#: inherit, so a spawn into any other interpreter drops them.
+_INTERPRETER_SCOPED_VARIABLES: Final = ("PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP")
+
+
+def _is_foreign_interpreter(interpreter: str | None) -> bool:
+    """Whether *interpreter* is an installation other than this process's own."""
+
+    def identity(path: str) -> str:
+        return os.path.normcase(os.path.realpath(path))
+
+    return interpreter is not None and identity(interpreter) != identity(sys.executable)
+
+
+def _build_service_child_env(
+    request: _ServiceChildEnvRequest, *, interpreter: str | None = None
+) -> dict[str, str]:
     """Build the environment for the detached daemon process.
+
+    *interpreter* is the one the daemon will run from, or ``None`` for this
+    process's own. Naming another one drops the variables that would point it
+    back at this installation.
 
     The daemon inherits configuration only through the environment (it
     parses no argv beyond ``--port``), which is also why the credentials it
@@ -389,6 +414,8 @@ def _build_service_child_env(request: _ServiceChildEnvRequest) -> dict[str, str]
     # Case-insensitive compare: Windows os.environ stores original case
     # but is case-insensitive for lookups.
     _excluded = {EnvVar.RAG_ROOT.value.upper(), VAULTSPEC_TARGET_DIR.env_name.upper()}
+    if _is_foreign_interpreter(interpreter):
+        _excluded |= {name.upper() for name in _INTERPRETER_SCOPED_VARIABLES}
     inherited = child_environment(*credential_assignments(request.root))
     env = {k: v for k, v in inherited.items() if k.upper() not in _excluded}
     if watch is not None:
@@ -637,10 +664,9 @@ def _spawn_service_request(request: _ServiceSpawnRequest) -> int:
     launch_token = uuid.uuid4().hex
     if deadline is not None and deadline <= time.monotonic():
         raise TimeoutError("service spawn received no remaining startup budget")
-    cmd = _service_launch_command(
-        request.interpreter or _resolve_daemon_interpreter(), port, launch_token
-    )
-    env = _build_service_child_env(request.child_env)
+    interpreter = request.interpreter or _resolve_daemon_interpreter()
+    cmd = _service_launch_command(interpreter, port, launch_token)
+    env = _build_service_child_env(request.child_env, interpreter=interpreter)
     working_directory = _service_working_directory()
     # Owner-only log, refusing a pre-planted symlink at the path where the
     # platform offers O_NOFOLLOW (local log-tamper / redirect hardening).
