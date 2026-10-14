@@ -115,7 +115,7 @@ def service_restart(
         "handed_off"
     )
 
-    stopped = _run_verb("stop", port)
+    stopped = _run_verb("stop", resolved_port)
     if stopped.get("ok") is not True:
         if monitor_kept and resolved_port is not None:
             # The daemon is still serving; its monitor must stay its own.
@@ -136,7 +136,7 @@ def service_restart(
         case _:
             was_running = True
 
-    started = _run_verb("start", port)
+    started = _run_verb("start", resolved_port)
     if started.get("ok") is not True:
         message = _step_message(started, "The service did not start again.")
         raise _fail_lifecycle(
@@ -146,7 +146,7 @@ def service_restart(
                 error="restart_start_failed",
                 message=message,
                 human_lines=(message,),
-                next_actions=(server_start_command(port),),
+                next_actions=(server_start_command(resolved_port),),
             ),
         )
     data = started.get("data")
