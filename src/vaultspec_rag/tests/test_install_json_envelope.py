@@ -11,6 +11,8 @@ same way it parses core's.
 from __future__ import annotations
 
 import json
+import sys
+import tempfile
 from typing import TYPE_CHECKING
 
 import pytest
@@ -262,3 +264,48 @@ def test_uninstall_json_envelope_shape_for_a_real_removal(tmp_path: Path) -> Non
     assert envelope["status"] == "removed"
     assert isinstance(envelope["data"], dict)
     assert envelope["data"]["removed"]
+
+
+def _short_windows_path(path: Path) -> str:
+    """Return the 8.3 alias Windows keeps for *path*, or *path* when it has none."""
+    import ctypes
+
+    buffer = ctypes.create_unicode_buffer(1024)
+    length = ctypes.windll.kernel32.GetShortPathNameW(str(path), buffer, len(buffer))
+    return buffer.value if 0 < length < len(buffer) else str(path)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="8.3 path aliases are Windows")
+def test_an_install_under_a_short_temp_path_plans_its_projections_whole(
+    tmp_path: Path,
+) -> None:
+    """A temp directory reached through its 8.3 alias still previews and installs.
+
+    Windows hands out the alias in ``TEMP`` for a user whose profile name is
+    longer than eight characters, as on hosted runners. Core resolves source
+    paths to their long form and then requires them under the projected
+    workspace, so a projection rooted at the alias failed every preview and
+    replay. Mutation: rooting the preview projection at the unresolved temp
+    directory again fails the dry run's exit-code assertion with "is not in
+    the subpath of".
+    """
+    long_temp = tmp_path / "temp-directory-with-a-long-name"
+    long_temp.mkdir()
+    short_temp = _short_windows_path(long_temp)
+    if short_temp == str(long_temp):
+        pytest.skip("this volume keeps no 8.3 aliases")
+    ws = _make_pyproject(tmp_path, '[project]\nname = "demo"\nversion = "0.1.0"\n')
+    arguments = ["install", "--target", str(ws), "--json", "--no-torch-config"]
+
+    previous = tempfile.tempdir
+    tempfile.tempdir = short_temp
+    try:
+        preview = runner.invoke(app, [*arguments, "--dry-run", "--no-provision"])
+        installed = runner.invoke(app, [*arguments, "--no-provision"])
+    finally:
+        tempfile.tempdir = previous
+
+    assert preview.exit_code == 0, preview.output
+    assert json.loads(preview.output)["data"]["mcp_errors"] == []
+    assert installed.exit_code == 0, installed.output
+    assert json.loads(installed.output)["data"]["mcp_errors"] == []

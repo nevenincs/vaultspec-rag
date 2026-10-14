@@ -466,7 +466,7 @@ def _uninstall_run(request: _UninstallRequest) -> UninstallReport:
     mcp_skipped = "mcp" in skip
     if not mcp_skipped and not dry_run and topology is not None:
         with tempfile.TemporaryDirectory(prefix="vaultspec-rag-mcp-replay-") as raw:
-            replay_target = Path(raw) / "workspace"
+            replay_target = Path(raw).resolve() / "workspace"
             topology.populate_projection(replay_target)
             with projected_core_home(target, replay_target) as host:
                 replay_topology = inspect_required_mcp_topology(replay_target)
