@@ -24,6 +24,7 @@ from .._workspace_layout import (
 )
 from ..builtins import list_builtins
 from ._mcp_extra import reconcile_mcp_extra
+from ._mcp_host_state import expected_authority_ownership, projected_core_home
 from ._mcp_topology import (
     LINKED_NODES_NOT_REMOVABLE,
     RequiredMcpTopology,
@@ -440,7 +441,7 @@ def _uninstall_run(request: _UninstallRequest) -> UninstallReport:
             message = topology_preflight_failure(exc)
             record_mcp_failure(report, message)
             return report
-        if topology.disenrollment_links:
+        if topology.writable_links:
             message = LINKED_NODES_NOT_REMOVABLE
             record_mcp_failure(report, message)
             return report
@@ -465,19 +466,23 @@ def _uninstall_run(request: _UninstallRequest) -> UninstallReport:
     mcp_skipped = "mcp" in skip
     if not mcp_skipped and not dry_run and topology is not None:
         with tempfile.TemporaryDirectory(prefix="vaultspec-rag-mcp-replay-") as raw:
-            replay_target = Path(raw) / "workspace"
+            replay_target = Path(raw).resolve() / "workspace"
             topology.populate_projection(replay_target)
-            replay_topology = inspect_required_mcp_topology(replay_target)
-            replay_report = UninstallReport(action="uninstall", target=replay_target)
-            Context().run(
-                _run_mcp_disenrollment_transaction,
-                replay_target,
-                replay_report,
-                replay_topology,
-                dry_run=False,
-                rollback_on_failure=False,
-            )
-            topology.capture_expected_projection(replay_target)
+            with projected_core_home(target, replay_target) as host:
+                replay_topology = inspect_required_mcp_topology(replay_target)
+                replay_report = UninstallReport(
+                    action="uninstall", target=replay_target
+                )
+                Context().run(
+                    _run_mcp_disenrollment_transaction,
+                    replay_target,
+                    replay_report,
+                    replay_topology,
+                    dry_run=False,
+                    rollback_on_failure=False,
+                )
+                replayed_ownership = expected_authority_ownership(host)
+            topology.capture_expected_projection(replay_target, replayed_ownership)
     if (
         not mcp_skipped
         and topology is not None

@@ -11,18 +11,23 @@ from vaultspec_core.core.manifest import (
     write_manifest,
 )
 
+from .._mcp_consent import approve_install_launches
 from ._install_helpers import (
     _RAG_MCP_REL,
     _RAG_RULE_REL,
     _RAG_SKILL_REL,
     _install,
+    host_ownership,
     install_report,
     read_codex_mcp,
     read_mcp_json,
     workspace_inventory,
 )
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.usefixtures("isolated_mcp_trust_home"),
+]
 
 
 class TestFreshInstall:
@@ -39,9 +44,9 @@ class TestFreshInstall:
         (vaultspec / "providers.json.lock").write_bytes(b"operator-lock")
         (vaultspec / "mcps").mkdir()
         (vaultspec / "mcps" / "operator.json").write_bytes(b'{"operator": true}\n')
-        (vaultspec / "mcp-ownership.json").write_bytes(
-            b'{"version": 1, "targets": {}}\n'
-        )
+        ownership = host_ownership(fresh_workspace)
+        ownership.parent.mkdir(parents=True)
+        ownership.write_bytes(b'{"version": 1, "targets": {}}\n')
         (fresh_workspace / ".mcp.json").write_bytes(
             b'{"mcpServers": {"operator": {"command": "operator"}}}\n'
         )
@@ -52,6 +57,7 @@ class TestFreshInstall:
             b'[project]\nname = "operator"\nversion = "1.0.0"\n'
         )
         before = workspace_inventory(fresh_workspace)
+        ownership_before = ownership.read_bytes()
 
         result = CliRunner().invoke(
             app,
@@ -72,6 +78,7 @@ class TestFreshInstall:
         assert report["mcp_failed"] is True
         assert "provider intent is unreadable" in " ".join(report["mcp_errors"])
         assert workspace_inventory(fresh_workspace) == before
+        assert ownership.read_bytes() == ownership_before
 
     def test_cli_selects_both_project_hosts_without_a_seeded_manifest(
         self, fresh_workspace: Path
@@ -81,6 +88,7 @@ class TestFreshInstall:
         from ...cli import app
 
         assert not (fresh_workspace / ".vaultspec" / "providers.json").exists()
+        approve_install_launches(fresh_workspace, install_mcp=True)
         result = CliRunner().invoke(
             app,
             [
@@ -141,8 +149,9 @@ class TestFreshInstall:
         assert lock.is_dir()
         assert not (fresh_workspace / ".mcp.json.lock").exists()
         assert not (fresh_workspace / ".codex" / "config.toml.lock").exists()
-        assert not (fresh_workspace / ".vaultspec" / "mcp-ownership.json").exists()
-        assert not (fresh_workspace / ".vaultspec" / "mcp-ownership.json.lock").exists()
+        ownership = host_ownership(fresh_workspace)
+        assert not ownership.exists()
+        assert not ownership.with_suffix(".json.lock").exists()
         assert any("provider enrollment failed" in item for item in report.mcp_errors)
 
     def test_creates_required_directories(self, fresh_workspace: Path) -> None:
@@ -174,9 +183,7 @@ class TestFreshInstall:
         assert "vaultspec-rag" in read_mcp_json(fresh_workspace)["mcpServers"]
         assert "vaultspec-rag" in read_codex_mcp(fresh_workspace)
         ownership = json.loads(
-            (fresh_workspace / ".vaultspec" / "mcp-ownership.json").read_text(
-                encoding="utf-8"
-            )
+            host_ownership(fresh_workspace).read_text(encoding="utf-8")
         )
         assert "vaultspec-rag" in json.dumps(ownership)
 
@@ -190,6 +197,7 @@ class TestFreshInstall:
             "--from",
             "vaultspec-rag[mcp]",
             "python",
+            "-P",
             "-m",
             "vaultspec_rag.server",
         ]

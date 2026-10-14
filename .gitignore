@@ -167,6 +167,8 @@ actions-runner-*.tar.gz
 /safe_sleep.sh
 
 # >>> vaultspec-managed (do not edit this block) >>>
+.env
+.env.*
 .vault/.obsidian/
 .vault/.trash/
 .vault/data/
@@ -183,6 +185,7 @@ actions-runner-*.tar.gz
 /.pre-commit-config.yml
 /.vaultspec/.env
 /.vaultspec/.env.*
+!.env.example
 # <<< vaultspec-managed <<<
 
 # stray provider-mirror lock artifacts
