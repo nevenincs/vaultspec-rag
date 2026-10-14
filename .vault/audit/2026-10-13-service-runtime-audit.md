@@ -3,9 +3,9 @@ tags:
   - '#audit'
   - '#service-runtime'
 date: '2026-10-13'
-modified: '2026-10-13'
+modified: '2026-10-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:c00f13e5716ef8e6e74c2ee48119f6e19fe35b8a4857fab2246ba4562c31a2cd'
+body_hash: 'sha256:466f675ce6d7c5c636849524a76b86fda109dca85d829408d3ff20ae71cdfceb'
 related: []
 ---
 
@@ -61,6 +61,38 @@ In a clean Linux container on `fix/install-ux`, the README route reached a ready
 
 "not saved: a client installation does not choose the backend of the service; the host installation that runs it does" (`src/vaultspec_rag/commands/_backend_choice.py:130-137`) after the README route, which has no separate host. Fixed on this branch.
 
+### doctor-ready-regression | high | Doctor reports not ready while a healthy service answers a client
+
+With a `RUNTIME_REQUIRED` plan, `src/vaultspec_rag/cli/_service_doctor.py:176-180` puts an `unknown` torch row into the dependency axis, which `src/vaultspec_rag/_readiness.py:28` treats as blocking, so a project client's `server doctor` beside a live host service exits 1 with "dependencies not ready". A start there would succeed as already running. Reopens S04.
+
+### runtime-refusal-loop | medium | A runtime that cannot serve offers the command that just failed
+
+`src/vaultspec_rag/service_runtime.py:544-550` reuses the launching capability's remediation, so a runtime that resolved a CPU wheel is told to run `server start` again, which rebuilds and fails identically.
+
+### stale-docs | medium | Two guides document the retired client refusal and a removed error code
+
+`docs/service-mode.md:44,449,516` and `docs/provisioning.md:106,111-120,490` describe the refusal and the `service_env_no_gpu` code this branch removed; `docs/automation.md:151-157` states the old doctor exit-code split.
+
+### tool-install-client-line | medium | A uv tool host in a repository reports itself as a client
+
+The tool-environment torch gate sets `not_applicable`, which `src/vaultspec_rag/cli/_render.py:694` labels "this installation is a client", and `src/vaultspec_rag/commands/_provision.py:558-568` adds a skipped torch row that turns the outcome `mixed`.
+
+### download-before-guards | medium | A start refused by the machine guard has already built the runtime
+
+`src/vaultspec_rag/cli/_service_start.py:1009-1015` creates the runtime before `_guard_start_preconditions`, so a refusal can follow a multi-gigabyte download.
+
+### daemon-child-env | medium | The runtime daemon inherits interpreter-scoped variables
+
+`src/vaultspec_rag/cli/_process.py:385-393,639-643` passes `PYTHONPATH`, `PYTHONHOME` and `PYTHONSTARTUP` to a daemon running under a different interpreter, which can import a checkout instead of the judged release.
+
+### next-actions-contract | low | Start `next_actions` can carry a sentence instead of a command
+
+`src/vaultspec_rag/cli/_service_start.py:695-701`.
+
+### enum-duck-typing | low | Torch-line suppression compares a stringified attribute
+
+`src/vaultspec_rag/cli/_render.py:809`.
+
 ## Recommendations
 
 - wheel-start: implement `2026-10-13-monitor-provisioning-adr`.
@@ -70,3 +102,4 @@ In a clean Linux container on `fix/install-ux`, the README route reached a ready
 - status-next-action, install-noise and help-surface: routine corrections within settled decisions.
 - mcp-trust: diagnose against the current vaultspec-core trust contract.
 - first-index: decide whether the first index of a root that has never published is an implicit full build, or whether the next action names `index --rebuild`; it is an amendment to `2026-10-12-destructive-rebuild-lifecycle-adr`.
+- doctor-ready-regression through enum-duck-typing: routine corrections within `2026-10-13-service-runtime-adr`; fix on this branch.
