@@ -373,7 +373,10 @@ class TestQdrantDimension:
         assert report.server_mode is True
         assert qdrant.status == ReadinessStatus.NOT_READY
         assert qdrant.info["binary_source"] == "absent"
-        assert "--local-only" in qdrant.detail
+        # One command: the start downloads it. The on-disk alternative is not
+        # offered beside it, so appending it again fails here.
+        assert "--local-only" not in qdrant.detail
+        assert "`vaultspec-rag server start` downloads it" in qdrant.detail
 
     def test_an_unusable_operator_setting_is_not_ready_and_says_why(
         self, tmp_path: Path

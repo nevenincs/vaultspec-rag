@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, cast
 
-from ._operator_commands import server_restart_remedy
+from ._operator_commands import server_restart_remedy, server_start_command
 from .operator_state._compute import local_compute
 from .operator_state._installation import ComputeCapability
 
@@ -413,19 +413,16 @@ _CLIENT_NEEDS_NONE = (
 )
 
 
-def _fetch_remedy(capability: ComputeCapability, command: str) -> str:
-    """Say how a missing dependency gets fetched in this environment.
+def _fetch_remedy(command: str | None = None) -> str:
+    """Say the one command that fetches a missing dependency.
 
-    An environment that can run the service is given *command*, whole. One
-    that cannot yet is not: every command that fetches would decline it, so
-    it is told what fetches the dependency once the environment is repaired.
-    The torch row beside this one says what the repair is.
+    Starting the service is consent to download what it needs, and the start
+    fetches into whichever environment will serve, so it is the answer
+    wherever this check runs. *command* is given instead only when the
+    operator switched that automatic download off.
     """
-    if capability.blocks_start:
-        return (
-            "`vaultspec-rag server start` fetches it once this environment "
-            "can run the service"
-        )
+    if command is None:
+        return f"`{server_start_command()}` downloads it"
     return f"run `{command}`"
 
 
@@ -542,7 +539,7 @@ def _models_readiness(
                 f"{len(faults)} of {len(models)} model repo(s) cannot be used: "
                 + "; ".join(f"{repo} {detail}" for repo, detail in faults.items())
                 + "; "
-                + _fetch_remedy(capability, "vaultspec-rag server warmup")
+                + _fetch_remedy()
                 + unpinned_note
             ),
             info=info,
@@ -552,10 +549,7 @@ def _models_readiness(
         status=ReadinessStatus.NOT_READY,
         detail=(
             f"{len(unusable)} of {len(models)} model repo(s) missing from the "
-            "cache: "
-            + ", ".join(unusable)
-            + "; "
-            + _fetch_remedy(capability, "vaultspec-rag server warmup")
+            "cache: " + ", ".join(unusable) + "; " + _fetch_remedy()
         ),
         info=info,
     )
@@ -649,6 +643,7 @@ def _qdrant_readiness(
     service, and for a server that is already running at a configured
     address, which this machine does not run.
     """
+    from .config._settings import get_config
     from .qdrant_runtime._supervise import runtime_state
 
     state = runtime_state()
@@ -710,9 +705,11 @@ def _qdrant_readiness(
             status=ReadinessStatus.NOT_READY,
             detail=(
                 "server mode is the default but no qdrant binary resolves; "
-                + _fetch_remedy(capability, "vaultspec-rag server qdrant install")
-                + ", or select the on-disk store with "
-                "`vaultspec-rag server start --local-only`"
+                + _fetch_remedy(
+                    None
+                    if get_config().qdrant_auto_provision
+                    else "vaultspec-rag server qdrant install"
+                )
             ),
             info=info,
         )
