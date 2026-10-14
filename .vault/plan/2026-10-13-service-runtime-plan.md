@@ -11,7 +11,7 @@ related:
   - '[[2026-10-12-destructive-rebuild-lifecycle-adr]]'
 modified: '2026-10-14'
 body_schema: body-v2
-body_hash: 'sha256:e48bbfd069a4f31a2a56504a8b4385b00127b910d54811e65a17357d71d0097e'
+body_hash: 'sha256:627d63f6aed38111bb44ff9ee26d78f030635d36e681bdf49579c92e1b8b448d'
 ---
 
 <!-- RETIRED: S05 -->
@@ -31,7 +31,7 @@ Make every install route start the service with one command, and make every inst
 - [x] `S01` - record the lab audit, accept the service-runtime ADR, and reconcile the amended ADRs; `.vault/adr/2026-10-13-service-runtime-adr.md`.
 - [x] `S02` - provision a managed service runtime and select it when the launching environment cannot serve; `src/vaultspec_rag/cli/_process.py`.
 - [x] `S03` - collapse every install and start refusal to one cause and one command; `src/vaultspec_rag/operator_state/_provisioning.py`.
-- [ ] `S04` - make server doctor and status report a failed or absent service truthfully; `src/vaultspec_rag/cli/_service_doctor.py`.
+- [x] `S04` - make server doctor and status report a failed or absent service truthfully; `src/vaultspec_rag/cli/_service_doctor.py`.
 - [x] `S06` - trim install and start help to user-facing options and rewrite the install docs around one command; `src/vaultspec_rag/cli/_install.py`.
 - [ ] `S07` - verify every install route in the clean-machine GPU lab on Linux and Windows; `X:/project/vaultspec-rag-lab`.
 - [ ] `S08` - admit the first index of a new source as a full build, per the 2026-10-14 amendment; `src/vaultspec_rag/_job_admission.py`.

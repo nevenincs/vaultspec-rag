@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#service-runtime'
 date: '2026-10-13'
-modified: '2026-10-13'
+modified: '2026-10-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:744a9a709bae3c36b41dd74be862479ab172ab7765198e08f43dbbbf4af50530'
+body_hash: 'sha256:ac2677e77febcae634a08073cebc44ad4cf4605fb07b7d7cc3b752f43c440de7'
 related:
   - "[[2026-10-13-service-runtime-plan]]"
 ---
@@ -95,6 +95,22 @@ related:
 - `S06` `verify:` `install, cli, docs and host-install-command suites` -> `pass`
 - `S07` `verify:` `lab linux readme route: install, start, doctor ready, search after rebuild` -> `pass`
 - `S07` `verify:` `lab linux uvx-local and client routes: start, doctor ready` -> `pass`
+- `S04` `M` `src/vaultspec_rag/tests/test_runtime_aware_surfaces.py`
+- `S04` `verify:` `doctor ready beside a live service under a pending runtime; covering suites` -> `pass`
+- `S02` `M` `src/vaultspec_rag/operator_state/_installation.py`
+- `S02` `M` `src/vaultspec_rag/service_runtime.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_cli_server_start.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_service_runtime.py`
+- `S02` `verify:` `runtime created after the start guards; refusal offers no retry loop; child env drops interpreter variables` -> `pass`
+- `S03` `M` `src/vaultspec_rag/operator_state/_topology.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_one_cause_one_command.py`
+- `S03` `M` `src/vaultspec_rag/torch_config/_constants.py`
+- `S03` `verify:` `tool host reports no torch phase; unit lane 7896 pass, only vite-less monitor failures` -> `pass`
+- `S06` `M` `docs/automation.md`
+- `S06` `M` `docs/provisioning.md`
+- `S06` `M` `docs/service-mode.md`
+- `S06` `verify:` `docs tests 114 pass` -> `pass`
+- `S06` `by:` `vaultspec-standard-executor`
 
 ## Notes
 
