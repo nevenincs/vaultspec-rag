@@ -63,7 +63,7 @@ from ._mcp_topology import (
     topology_materialization_failure,
     topology_preflight_failure,
 )
-from ._mcp_trust import RagLaunchConsent, review_rag_launch
+from ._mcp_trust import LaunchConsent, review_rag_launch
 from ._mode import (
     RAG_DISTRIBUTION_NAME,
     infer_rag_upgrade_mode,
@@ -542,14 +542,14 @@ def _planned_launches(
         )
 
 
-def _review_rag_launch(request: _InstallRunRequest, target: Path) -> RagLaunchConsent:
+def _review_rag_launch(request: _InstallRunRequest, target: Path) -> LaunchConsent:
     """Ask the operator to approve rag's own MCP launch, before any write.
 
     A run that will not enrol the launch has nothing to ask. A review that
     cannot be prepared is left to the install itself, whose sync then reports
     the launch unapproved or fails the same way it would have.
     """
-    consent = RagLaunchConsent(target)
+    consent = LaunchConsent(target)
     if not request.install_mcp or {"core", "mcp"} & (request.skip or set()):
         return consent
     try:

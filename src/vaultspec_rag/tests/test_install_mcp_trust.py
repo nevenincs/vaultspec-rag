@@ -7,7 +7,7 @@ under ``--yes`` and after a decline; that an attended approval enrols exactly
 rag's own definition and no other; and that a linked definition or native config
 is approved, and its entries owned, where it really lives, which is what a later
 sync of the workspace asks about, as well as where the install holds it while it
-runs.
+runs. Every launch the operator approved there is carried along, and no other.
 
 The mutation each guard catches is named in its own docstring.
 """
@@ -327,6 +327,61 @@ class TestApprovalFollowsALinkedLocation:
         assert not report.mcp_sync_failed
         assert _enrolled(ws) == (True, True)
         assert node.is_symlink()
+
+    def test_a_sibling_approved_at_the_real_location_is_carried_into_the_run(
+        self, tmp_path: Path
+    ) -> None:
+        """Every launch the operator approved is carried, and no other.
+
+        The operator approved one sibling with core's own command, for the
+        linked config's real location. The install syncs the config's copy at
+        another path, so the approval must follow it there, or core skips a
+        launch the operator already reviewed. The second sibling was never
+        approved and stays skipped, and the install asks only about rag's own
+        launch. Mutations it catches: carrying only rag's own launch leaves the
+        approved sibling skipped and fails the enrolment assertion; carrying
+        every planned launch enrols the unreviewed one and fails the skip
+        assertion.
+        """
+        ws = _workspace(tmp_path)
+        shared = self._link_claude_config(ws).resolve()
+        definitions = ws / ".vaultspec" / "mcps"
+        definitions.mkdir(parents=True)
+        for name in ("operator-extra", "unreviewed-extra"):
+            (definitions / f"{name}.builtin.json").write_text(
+                json.dumps({"command": f"{name}-tool", "args": ["--serve"]}),
+                encoding="utf-8",
+            )
+        request = _InstallRunRequest(
+            path=ws, install_mcp=True, mode=InstallMode.TOOL, configure_torch=False
+        )
+        grant_planned(
+            ws,
+            [
+                launch
+                for launch in _planned_launches(request, ws)
+                if launch.name == "operator-extra"
+            ],
+        )
+        operator = _Operator(approves=True)
+
+        report = _install(ws, confirm=operator)
+
+        assert not report.mcp_sync_failed
+        assert len(operator.prompts) == 1
+        assert "extra" not in operator.prompts[0]
+        for host, result in _providers(report).items():
+            items = cast("list[object]", result["items"])
+            assert ["vaultspec-rag", "[ADD]"] in items, host
+            assert ["operator-extra", "[ADD]"] in items, host
+            assert ["unreviewed-extra", "[SKIP]"] in items, host
+        servers = json.loads(shared.read_text(encoding="utf-8"))["mcpServers"]
+        assert set(servers) == {"vaultspec-rag", "operator-extra"}
+        refused = [
+            warning for warning in dry_sync(ws).warnings if "not approved" in warning
+        ]
+        assert refused
+        assert all("unreviewed-extra" in warning for warning in refused)
 
     @pytest.mark.parametrize("link", ["definition", "claude-config"])
     def test_a_later_sync_finds_the_launch_approved_and_owned(

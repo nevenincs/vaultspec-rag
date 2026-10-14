@@ -14,8 +14,8 @@ every later sync of the workspace asks about. For the length of the run it is
 recorded at the copy's location as well, which is what the install's own sync
 asks about. That second record is the same reviewed launch at the one other
 path core will look at, so it creates no consent; it is made only for a launch
-already approved at its real location, and it matches nothing once the link is
-back.
+already approved at its real location, whichever definition it came from, and
+it matches nothing once the link is back.
 
 Core keys which entries it owns by the same resolved path, so the ownership of
 a linked native config travels the same way: to the copy for the run, and back
@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from ._mcp_host_state import LaunchToEnroll
     from ._models import ConfirmFn
 
-__all__ = ["RagLaunchConsent", "approvals_for", "review_rag_launch"]
+__all__ = ["LaunchConsent", "approvals_for", "review_rag_launch"]
 
 #: What a failed read or write of the approval record can raise.
 _GRANT_FAILURES = (OSError, VaultSpecError)
@@ -95,8 +95,8 @@ def _review_prompt(approvals: list[McpApproval]) -> str:
 
 
 @dataclass(slots=True)
-class RagLaunchConsent:
-    """What the operator has approved of vaultspec-rag's own launch for a root."""
+class LaunchConsent:
+    """What the operator has approved of the launches an install will enrol."""
 
     root: Path
     #: The launches approved at their real locations, before or by this review.
@@ -172,20 +172,21 @@ def review_rag_launch(
     *,
     confirm: ConfirmFn | None,
     assume_yes: bool,
-) -> RagLaunchConsent:
+) -> LaunchConsent:
     """Ask the operator to approve vaultspec-rag's own launch, then record it.
 
-    Only the definition named for this package is considered; every other
-    source stays the operator's to approve with core. Nobody is asked when
-    there is nobody to ask (*confirm* is ``None``) or when the run was told to
-    assume consent (*assume_yes*): a flag is not a review, and core's own sync
-    then skips the launch with the command that grants it.
+    Only the definition named for this package is put to the operator; every
+    other source stays theirs to approve with core, and one already approved
+    is carried along unchanged. Nobody is asked when there is nobody to ask
+    (*confirm* is ``None``) or when the run was told to assume consent
+    (*assume_yes*): a flag is not a review, and core's own sync then skips the
+    launch with the command that grants it.
     """
     planned = list(planned)
     own = [launch for launch in planned if launch.name == RAG_DISTRIBUTION_NAME]
-    consent = RagLaunchConsent(root)
+    consent = LaunchConsent(root)
     consent.ownership.capture(planned)
-    approved = approved_launches(own, root)
+    approved = approved_launches(planned, root)
     missing = [launch for launch in own if launch not in approved]
     if missing and confirm is not None and not assume_yes:
         outcome = confirmation_outcome(
@@ -201,7 +202,7 @@ def review_rag_launch(
             except _GRANT_FAILURES as exc:
                 consent.warnings.append(f"MCP approval could not be recorded: {exc}")
             else:
-                approved = own
+                approved = [*approved, *missing]
     consent.approved = approved
     consent.recorded = frozenset(
         approval.key for approval in approvals_for(root, approved)

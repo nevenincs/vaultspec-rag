@@ -4,7 +4,7 @@ tags:
   - '#provider-mcp-enrollment'
 date: '2026-07-15'
 modified: '2026-10-14'
-body_hash: 'sha256:582bffae9820f98ff39e78fee56fa8b93d6f8d24477eadf6d4a216431da95f04'
+body_hash: 'sha256:ea219801fbbc6dc826dcd94d312bc775d6fbace6ef150cd84a6309d3ae5ad457'
 related:
   - "[[2026-07-15-provider-mcp-enrollment-research]]"
   - '[[2026-07-15-provider-mcp-enrollment-audit]]'
@@ -110,10 +110,12 @@ installation modes.
   entry as owned, and moves what the run left at the copy back to the real location
   before it commits or rolls back, so that a later Core sync finds the entry owned. The
   replay and the dry-run preview carry it the same way. The records moved are Core's own
-  in Core's own sidecar; this adds no second ownership registry. Authorization: the
-  user's 2026-10-14 instruction to fix the remaining install gaps ("fix all")
-  authorizes this refinement. It does not change which component owns provider
-  configuration.
+  in Core's own sidecar; this adds no second ownership registry. The approval carry
+  covers every launch already approved at its real location, whichever definition it came
+  from, and never one that was not: carrying is not approving, and a sibling definition
+  stays the operator's to approve with Core. Authorization: the user's 2026-10-14
+  instruction to fix the remaining install gaps ("fix all") authorizes this refinement.
+  It does not change which component owns provider configuration.
 
 ## Implementation
 
@@ -146,11 +148,11 @@ run agree on what is approved. It shows the operator the exact definition, diges
 and target of RAG's own definition, asks once, and records the answer with Core's grant.
 An approval Core already holds for the same definition and launch is reused without a
 question, and a changed definition or launch is asked about again.
-Once the install has swapped its links for regular copies, it carries that approval to
-the copies' paths, so the install's own sync is not refused for a launch the operator
-approved. It moves the ownership of each linked native config to its copy in the same
-step and returns it to the real location when the run ends, whether the run finished or
-failed, before the install commits or rolls back.
+Once the install has swapped its links for regular copies, it carries every approval
+already held at a real location to the copies' paths, so the install's own sync is not
+refused for a launch the operator approved. It moves the ownership of each linked native
+config to its copy in the same step and returns it to the real location when the run
+ends, whether the run finished or failed, before the install commits or rolls back.
 
 A managed mode transition uses the narrow `force_managed` path. An unowned same-name
 entry produces a collision and remains unchanged unless the operator explicitly forces
