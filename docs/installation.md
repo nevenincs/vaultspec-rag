@@ -291,7 +291,7 @@ To check each extracted file against the archive's manifest, see the
 
 #### Open the monitor
 
-After adding the extracted directory to your `PATH`, run:
+The service starts the monitor for you. To look at it on its own, run:
 
 ```sh
 vaultspec-rag-monitor --port 5420

@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#monitor-lifecycle'
 date: '2026-10-02'
-modified: '2026-10-04'
+modified: '2026-10-13'
 body_schema: 'body-v2'
-body_hash: 'sha256:54e4ae6baee4976e6c7473749c4bcac3776c113b9bb7e5f6dca3bfdc125d6115'
+body_hash: 'sha256:b6621a7610d6668ee39af602175fbdf427edff41f7f4a005ee828062ebf6ac2e'
 related:
   - "[[2026-10-02-monitor-lifecycle-reference]]"
   - "[[2026-09-30-monitor-browser-adr]]"
@@ -35,7 +35,7 @@ The existing local bridge owns automatic credentials and delegates controls to c
 
 The user's 2026-10-02 request authorizes coupling start and stop, scanning upward from the actual backend port plus one, recording the actual assignment in user scratch, and clearing it on stop. Their same-day clarification requires prebuilt monitor resources. CI, frontend compilation and packaging remain excluded and owned by the separate session.
 
-Managed startup launches only the compiled `vaultspec-rag-monitor` executable. Resolve an explicit absolute `VAULTSPEC_RAG_MONITOR_BINARY` override, otherwise the installed command on PATH. Do not compile, acquire dependencies or fall back to checkout-local Vite during service startup. Missing or incompatible executables fail the coupled start before model warming. Package installation and verified binary acquisition belong to delivery; this launcher performs no download or provisioning.
+Managed startup launches only the compiled `vaultspec-rag-monitor` executable. Resolve the executable as `2026-10-13-monitor-provisioning-adr` orders it: the installation's own pinned sibling, then the automatically provisioned managed install, with an optional paired operator override; each is digest-verified before spawn and PATH is not searched. Do not compile, acquire dependencies or fall back to checkout-local Vite during service startup. Missing or incompatible executables fail the coupled start before model warming. The launcher performs no download; host `server start` provisioning acquires and verifies the executable before the launcher runs, under `2026-10-13-monitor-provisioning-adr`.
 
 Share the backend's loopback bind probe to scan upward before spawning. The compiled monitor must continue upward if another process wins the bind race, without wrapping or leaving 1..65535. Do not alter the backend's existing occupied-port refusal. Treat monitor startup failure as a failed coupled start and clean up the child.
 

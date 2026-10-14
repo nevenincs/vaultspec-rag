@@ -59,23 +59,30 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "SILENT",
     "DownloadError",
     "DownloadFailure",
     "DownloadLimits",
+    "Progress",
     "download_https",
     "no_progress",
 ]
 
 _DOWNLOAD_CHUNK_BYTES = 1 << 20
-# The release archives are ~30 MB; cap the stream well above that so a
-# host-pinned-but-defective response cannot fill the disk before the
-# SHA256 check would reject it (defense in depth behind the host pin).
+# The largest pinned archive is well under a hundred megabytes; cap the
+# stream well above that so a host-pinned-but-defective response cannot fill
+# the disk before the SHA256 check would reject it (defense in depth behind
+# the host pin).
 _MAX_DOWNLOAD_BYTES = 256 << 20
 # Report every few chunks rather than every chunk: the reporter prints a plain
 # line per distinct activity off a terminal, so a per-megabyte tick would fill
 # a piped install log with a hundred near-identical lines.
 _DOWNLOAD_REPORT_BYTES = 4 << 20
 _RETRY_JITTER_FRACTION = 0.25
+#: What a caller that names nothing is said to be downloading. Deliberately
+#: anonymous: this module knows nothing about what it fetches.
+_DEFAULT_SUBJECT = "file"
+
 # Statuses that say "not now" rather than "no": a timeout, a rate limit, or a
 # fault on the far side.
 _TRANSIENT_HTTP_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
@@ -90,6 +97,34 @@ def no_progress(_line: str) -> None:
     resolves and verifies the binary; the commands that have a console pass a
     sink of their own, and a caller with nothing to show passes none.
     """
+
+
+@dataclass(frozen=True)
+class Progress:
+    """Where one artifact's progress lines go, and what they call it.
+
+    The sink and the name travel together because every line is both at once:
+    a stage of an install, and a statement of which program it is a stage of.
+    Each program installed through these primitives therefore names itself,
+    and an operator reads what is actually being fetched rather than whatever
+    the first caller happened to write.
+
+    Attributes:
+        subject: A bare noun phrase, rendered as "the {subject}": "Qdrant
+            server", "monitor".
+        sink: Takes one rendered line. Defaults to dropping it.
+    """
+
+    subject: str = _DEFAULT_SUBJECT
+    sink: Callable[[str], None] = no_progress
+
+    def say(self, line: str) -> None:
+        """Hand one finished line to the sink."""
+        self.sink(line)
+
+
+#: Reports nothing, about nothing: the default for a caller with no console.
+SILENT = Progress()
 
 
 def _admit_any(_declared_bytes: int) -> None:
@@ -107,9 +142,9 @@ class DownloadLimits:
 
     Attributes:
         deadline_seconds: The whole transfer, every attempt and every wait
-            between attempts included. Generous for a ~30 MB archive on a
-            slow link, and finite so a slow source ends as a reported failure
-            rather than a command that never returns.
+            between attempts included. Generous for a pinned archive of tens
+            of megabytes on a slow link, and finite so a slow source ends as
+            a reported failure rather than a command that never returns.
         stall_seconds: The longest the source may send nothing at all before
             the attempt is abandoned. It bounds one socket operation, so a
             source that keeps trickling never trips it; the deadline is what
@@ -410,14 +445,14 @@ def _declared_length(headers: object) -> int:
         return 0
 
 
-def _download_line(written: int, declared: int) -> str:
+def _download_line(written: int, declared: int, subject: str) -> str:
     """Render one line of download progress, with a total when one was declared."""
     if declared:
         return (
-            f"Downloading the Qdrant server: "
+            f"Downloading the {subject}: "
             f"{human_bytes(written)} of {human_bytes(declared)}"
         )
-    return f"Downloading the Qdrant server: {human_bytes(written)}"
+    return f"Downloading the {subject}: {human_bytes(written)}"
 
 
 @dataclass(frozen=True)
@@ -436,7 +471,7 @@ def _stream_capped(
     out: IO[bytes],
     *,
     declared: int,
-    on_progress: Callable[[str], None],
+    progress: Progress,
     bounds: _StreamBounds = _CAPPED_ONLY,
 ) -> int:
     """Copy *source* into *out* under the size cap, reporting as it goes.
@@ -454,7 +489,8 @@ def _stream_capped(
         source: The readable stream to drain.
         out: The file to write into.
         declared: The size the response claimed, or 0 when it claimed none.
-        on_progress: Sink for byte-progress lines.
+        progress: Where byte-progress lines go and what they call the
+            artifact.
         bounds: The most the stream may hold, and when the whole download
             must be over if it is bounded in time.
 
@@ -492,7 +528,7 @@ def _stream_capped(
             ) from exc
         if written - reported >= _DOWNLOAD_REPORT_BYTES:
             reported = written
-            on_progress(_download_line(written, declared))
+            progress.say(_download_line(written, declared, progress.subject))
     # A source that hangs up early ends the stream exactly as a complete body
     # does. Named here, it is a transport failure worth another attempt; left
     # to the digest check it would read as a replaced asset.
@@ -501,7 +537,7 @@ def _stream_capped(
     # The final tick lands on the true size, so the last thing an operator
     # reads is the transfer completing rather than stalling near the end.
     if written != reported:
-        on_progress(_download_line(written, declared))
+        progress.say(_download_line(written, declared, progress.subject))
     return written
 
 
@@ -574,7 +610,7 @@ class _Transfer:
     out: IO[bytes]
     limits: DownloadLimits
     deadline: _Deadline
-    on_progress: Callable[[str], None]
+    progress: Progress
 
 
 def _fetch_once(opener: urllib.request.OpenerDirector, transfer: _Transfer) -> None:
@@ -615,7 +651,7 @@ def _fetch_once(opener: urllib.request.OpenerDirector, transfer: _Transfer) -> N
             resp,
             out,
             declared=declared,
-            on_progress=transfer.on_progress,
+            progress=transfer.progress,
             bounds=_StreamBounds(limits.max_bytes, deadline),
         )
     if undelimited and not deadline.cut and not limits.whole(out):
@@ -659,7 +695,7 @@ def download_https(
     out: IO[bytes],
     *,
     redirect_hosts: frozenset[str],
-    on_progress: Callable[[str], None] = no_progress,
+    progress: Progress = SILENT,
     limits: DownloadLimits = _DEFAULT_LIMITS,
 ) -> None:
     """Stream *url* into the open file *out* over HTTPS with pinned redirects.
@@ -679,9 +715,9 @@ def download_https(
         redirect_hosts: Lower-cased host names a redirect may land on. It is
             a required argument so each caller states the hosts it trusts
             rather than inheriting another caller's.
-        on_progress: Sink for byte-progress lines, emitted every few
-            megabytes and once more on the final byte, and for a line per
-            retry.
+        progress: Where byte-progress lines go - emitted every few megabytes,
+            once more on the final byte, and once per retry - and what they
+            call the artifact.
         limits: How long, how large and how persistent the transfer may be.
 
     Raises:
@@ -695,7 +731,7 @@ def download_https(
         opener = urllib.request.build_opener(
             _HostPinnedRedirect(redirect_hosts), _WatchedHTTPS(deadline)
         )
-        transfer = _Transfer(url, out, limits, deadline, on_progress)
+        transfer = _Transfer(url, out, limits, deadline, progress)
         attempt = 1
         # The loop has no bound of its own. The only way out besides success
         # is the failure being raised, so no branch can fall through and
@@ -727,7 +763,7 @@ def download_https(
                     "download attempt %d of %s failed: %s", attempt, url, exc
                 )
                 attempt += 1
-                on_progress(
+                progress.say(
                     f"The download was interrupted ({failure}); "
                     f"retrying, attempt {attempt} of {limits.attempts}..."
                 )

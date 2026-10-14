@@ -937,6 +937,7 @@ _PROVISION_STEP_LABELS = {
     "torch": "PyTorch",
     "models": "Models",
     "qdrant": "Qdrant binary",
+    "monitor": "Monitor",
 }
 _PROVISION_ACTION_LABELS = {
     "created": "downloaded",

@@ -22,21 +22,32 @@ from tools.monitor.provenance import (
 from tools.packaging.bundles import BundleSpec, build_bundle, verify_bundle
 from tools.packaging.checksums import ChecksumError, parse_checksums
 from tools.packaging.products import MONITOR_EXECUTABLE, VAULTSPEC_RAG, WINDOWS_X86_64
-from tools.packaging.tests.test_bundles import REVISION, VERSION, _raw_outputs
+from tools.packaging.tests.test_bundles import (
+    REVISION,
+    VERSION,
+    _raw_outputs,
+    _sources,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 pytestmark = pytest.mark.unit
 
 
-def _archive(tmp_path: Path, target: str = WINDOWS_X86_64) -> tuple[Path, BundleSpec]:
+def _archive(
+    tmp_path: Path,
+    pinned_wheel: Callable[..., Path],
+    target: str = WINDOWS_X86_64,
+) -> tuple[Path, BundleSpec]:
     repo = tmp_path / "repo"
     repo.mkdir(parents=True)
     (repo / "LICENSE").write_text("license\n", encoding="utf-8")
     raw = _raw_outputs(tmp_path, target)
     spec = BundleSpec(VAULTSPEC_RAG, VERSION, target)
-    return build_bundle(spec, raw, tmp_path / "bundles", repo, REVISION), spec
+    sources = _sources(pinned_wheel, raw, repo, target)
+    return build_bundle(spec, sources, tmp_path / "bundles"), spec
 
 
 def test_attestation_failure_refuses_manifest_inspection(
@@ -66,12 +77,13 @@ def test_attestation_failure_refuses_manifest_inspection(
 def test_admission_binds_certificate_to_repository_workflow_tag_and_source(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    pinned_wheel: Callable[..., Path],
 ) -> None:
     """Mutation proof: adding signer-workflow beside cert-identity fails the
     exact flag assertion; restoring the valid command passes. Renaming
     source-digest also failed that assertion; restoration passed.
     """
-    archive, spec = _archive(tmp_path)
+    archive, spec = _archive(tmp_path, pinned_wheel)
     captured: list[list[str]] = []
 
     def verified(
@@ -107,11 +119,12 @@ def test_admission_binds_certificate_to_repository_workflow_tag_and_source(
 def test_archive_mutation_during_attestation_is_refused(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    pinned_wheel: Callable[..., Path],
 ) -> None:
     """Mutation proof: removing the second digest comparison failed with
     DID NOT RAISE (exit 1); restoring it passed (exit 0).
     """
-    archive, spec = _archive(tmp_path)
+    archive, spec = _archive(tmp_path, pinned_wheel)
 
     def changed(
         command: list[str], **_kwargs: object
@@ -127,8 +140,9 @@ def test_archive_mutation_during_attestation_is_refused(
 def test_authenticated_manifest_cannot_claim_a_different_producer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    pinned_wheel: Callable[..., Path],
 ) -> None:
-    archive, spec = _archive(tmp_path)
+    archive, spec = _archive(tmp_path, pinned_wheel)
     monkeypatch.setattr(
         provenance.subprocess,
         "run",
@@ -139,9 +153,9 @@ def test_authenticated_manifest_cannot_claim_a_different_producer(
 
 
 def test_public_extraction_checks_producer_and_digest_before_writing(
-    tmp_path: Path,
+    tmp_path: Path, pinned_wheel: Callable[..., Path]
 ) -> None:
-    archive, spec = _archive(tmp_path)
+    archive, spec = _archive(tmp_path, pinned_wheel)
     manifest = verify_bundle(archive, spec)
     components = cast("dict[str, dict[str, object]]", manifest["components"])
     name = VAULTSPEC_RAG.executable_name(MONITOR_EXECUTABLE, spec.target)
@@ -177,10 +191,11 @@ def test_public_extraction_checks_producer_and_digest_before_writing(
 def test_release_admission_requires_every_native_target(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    pinned_wheel: Callable[..., Path],
 ) -> None:
     directory = tmp_path / "bundles"
     for target in VAULTSPEC_RAG.supported_targets:
-        archive, _spec = _archive(tmp_path / target, target)
+        archive, _spec = _archive(tmp_path / target, pinned_wheel, target)
         directory.mkdir(exist_ok=True)
         (directory / archive.name).write_bytes(archive.read_bytes())
     monkeypatch.setattr(

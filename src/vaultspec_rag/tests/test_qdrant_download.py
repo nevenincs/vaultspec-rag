@@ -18,8 +18,8 @@ import pytest
 
 from .._sync_vocabulary import ProvisionAction
 from ..config._types import EnvVar
+from ..native_binary._download import DownloadLimits, download_https
 from ..qdrant_runtime._constants import QDRANT_SERVER_VERSION
-from ..qdrant_runtime._download import DownloadLimits, download_https
 from ..qdrant_runtime._provision import provision
 from ..qdrant_runtime._resolve import (
     asset_for_platform,

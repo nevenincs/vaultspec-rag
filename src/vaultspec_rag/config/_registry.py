@@ -80,6 +80,7 @@ _EXTERNAL: Final = frozenset(
         EnvVar.PYTHON_SAFE_PATH,
         EnvVar.PATH,
         EnvVar.PATHEXT,
+        EnvVar.PYAPP,
         EnvVar.TEMP,
         EnvVar.TMP,
         EnvVar.TMPDIR,
@@ -147,10 +148,6 @@ _SETTING_KEYS: Final[Mapping[EnvVar, str]] = {
 #: neither a settings key nor an entry here fails the totality check below,
 #: so a new name cannot land undescribed.
 _DESCRIPTIONS: Final[Mapping[EnvVar, str]] = {
-    EnvVar.MONITOR_BINARY: (
-        "Absolute path to the compiled monitor executable, overriding the "
-        "installed vaultspec-rag-monitor command on PATH."
-    ),
     EnvVar.MONITOR_PYTHON: (
         "The initialized daemon's absolute Python interpreter, handed to its "
         "monitor child for canonical service commands; not an operator setting."
@@ -302,6 +299,12 @@ _DESCRIPTIONS: Final[Mapping[EnvVar, str]] = {
     EnvVar.PATHEXT: (
         "The extensions a program name may carry on Windows, read alongside "
         "the search path when a helper program is looked for."
+    ),
+    EnvVar.PYAPP: (
+        "Set by the single-file launcher an archive installation runs, to "
+        "its own path. Read to find the executables packed beside it, which "
+        "are not in the environment it installed this package into. Any "
+        "value that does not name an existing absolute file is ignored."
     ),
     EnvVar.TEMP: (
         "The operating system's temporary directory, read to decide whether "

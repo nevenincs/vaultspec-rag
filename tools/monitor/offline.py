@@ -16,10 +16,10 @@ from typing import TYPE_CHECKING
 
 from tools.binaries.bun_pins import BUN_EXECUTABLES
 from tools.binaries.bun_toolchain import provision_bun
-from tools.binaries.native import host_target_triple
 from tools.monitor.smoke import probe
 from vaultspec_rag._fd_lock import lock_fd_exclusive, unlock_fd
-from vaultspec_rag.qdrant_runtime._provision import verify_native_binary
+from vaultspec_rag.native_binary._install import verify_native_binary
+from vaultspec_rag.native_binary._targets import host_target
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -77,7 +77,7 @@ def macos_launcher() -> tuple[str, ...]:
 
 
 def bun_connection(binary: Path, launch_prefix: tuple[str, ...] = ()) -> bool:
-    verify_native_binary(binary, BUN_EXECUTABLES[host_target_triple()])
+    verify_native_binary(binary, BUN_EXECUTABLES[host_target()])
     result = subprocess.run(
         [
             *launch_prefix,
@@ -154,9 +154,7 @@ def windows_probe(
     browser: Path,
 ) -> dict[str, object]:
     directory = denied_directory()
-    bun = provision_bun(
-        Path(tempfile.gettempdir()) / "vaultspec-bun", host_target_triple()
-    )
+    bun = provision_bun(Path(tempfile.gettempdir()) / "vaultspec-bun", host_target())
     if not bun_connection(bun):
         raise RuntimeError("The external TCP positive control did not connect")
     monitor = directory / MONITOR_SLOT
@@ -193,12 +191,12 @@ def probe_offline(
         scope = "monitor and pinned Bun control; browser harness outside policy"
     elif sys.platform == "linux":
         bun = provision_bun(
-            Path(tempfile.gettempdir()) / "vaultspec-bun", host_target_triple()
+            Path(tempfile.gettempdir()) / "vaultspec-bun", host_target()
         )
         if not bun_connection(bun):
             raise RuntimeError("The external TCP positive control did not connect")
         launcher = (sys.executable, str(Path(__file__).with_name("linux_exec.py")))
-        control_prefix = (*launcher, BUN_EXECUTABLES[host_target_triple()])
+        control_prefix = (*launcher, BUN_EXECUTABLES[host_target()])
         if bun_connection(bun, control_prefix):
             raise RuntimeError("OS offline proof refused: blocked control connects")
         result = probe(

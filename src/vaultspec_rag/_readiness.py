@@ -18,6 +18,9 @@ It reports, per dependency, whether it is provisioned and usable:
 - **qdrant**: where does the qdrant binary resolve from (managed /
   operator-supplied / absent), and - when server mode is the effective
   backend - would a start accept it, and is the supervised child live?
+- **monitor**: is a monitor this installation may run in place, and where
+  does it resolve from? Obtained automatically, so the dimension reports
+  whether it is there and nothing for anyone to do about it.
 
 This is a *report*, not a fixer: it performs no provisioning, no
 download, and no mutation. It is bounded to the known dependency set
@@ -46,6 +49,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from .config._types import ModelRepo
+    from .monitor_runtime._resolve import ResolvedMonitor
     from .operator_state._models import ComputeReport
     from .qdrant_runtime._constants import ResolvedBinary
 
@@ -62,14 +66,17 @@ _HOLDER_SCAN_BUDGET_SECONDS = 20.0
 #: An operator clears holders one at a time; a census helps nobody.
 _HOLDER_REPORT_LIMIT = 10
 
-#: Hashing the server executable takes well under a second on a healthy disk.
-#: The budget is for the unhealthy one: a stalled volume or a scanner holding
-#: the file must not hang a status command.
+#: Hashing a provisioned executable takes well under a second on a healthy
+#: disk. The budget is for the unhealthy one: a stalled volume or a scanner
+#: holding the file must not hang a status command, and this report also
+#: answers a route a broker polls. Shared by the server binary and the
+#: monitor, which are hashed the same way for the same reason.
 _BINARY_VERIFY_BUDGET_SECONDS = 10.0
 
 #: Reported when that budget runs out. Distinct from a failed check: the file
 #: was not shown to be wrong, only not shown to be right.
 _BINARY_UNCHECKED = "qdrant_binary_unchecked"
+_MONITOR_UNCHECKED = "monitor_unchecked"
 
 __all__ = [
     "DependencyReadiness",
@@ -128,7 +135,7 @@ class DependencyReadiness:
 
     Attributes:
         name: The dependency this node describes (``"torch"`` /
-            ``"models"`` / ``"qdrant"``).
+            ``"models"`` / ``"qdrant"`` / ``"monitor"``).
         status: The bounded :class:`ReadinessStatus` outcome.
         detail: Human-readable summary. For ``NOT_READY`` it names what
             is missing; informational otherwise.
@@ -217,7 +224,7 @@ class ReadinessReport:
 
     Attributes:
         dependencies: One node per dependency, in report order
-            (torch, models, qdrant).
+            (torch, models, qdrant, monitor).
         server_mode: Whether the supervised server backend is the
             effective runtime backend at report time. Carried so a
             consumer can explain why the qdrant liveness dimension is
@@ -315,7 +322,7 @@ def compute_readiness(
 
     Returns:
         A :class:`ReadinessReport` with one node per known dependency
-        (torch, models, qdrant), in that order.
+        (torch, models, qdrant, monitor), in that order.
     """
     from .config._settings import get_config
 
@@ -328,6 +335,7 @@ def compute_readiness(
             _torch_readiness(judged),
             _models_readiness(verify=verify_models, capability=judged.capability),
             _qdrant_readiness(server_mode=server_mode, capability=judged.capability),
+            _monitor_readiness(judged.capability),
         ],
         server_mode=server_mode,
         environment_holders=(
@@ -744,4 +752,108 @@ def _qdrant_readiness(
         status=ReadinessStatus.READY,
         detail=f"qdrant binary resolves from {source}",
         info=info,
+    )
+
+
+def _monitor_refusal(
+    *, budget: float
+) -> tuple[ResolvedMonitor | None, tuple[str, str] | None]:
+    """Resolve the monitor a start would run and say whether it is refused.
+
+    Returns the resolved monitor, if any, and the refusal as ``(code,
+    detail)`` or ``None``.
+
+    Bounded as one judgement, for the reason the server binary's is: deciding
+    what is installed hashes the executable, which is the largest file this
+    installation provisions, and this report also answers a route a broker
+    polls. When it does not finish within *budget* seconds the monitor is
+    reported as unchecked and not ready. It is never reported ready on the
+    strength of a check that did not finish.
+    """
+    from ._process_probe import bounded_call
+    from .monitor_runtime._errors import MonitorError
+    from .monitor_runtime._resolve import resolve_monitor
+
+    def judge() -> tuple[ResolvedMonitor | None, tuple[str, str] | None]:
+        try:
+            return resolve_monitor(), None
+        except MonitorError as exc:
+            return None, (exc.error, str(exc))
+
+    return bounded_call(
+        judge,
+        timeout=budget,
+        fallback=(
+            None,
+            (
+                _MONITOR_UNCHECKED,
+                f"the monitor could not be verified within {budget:.0f}s, "
+                "so it is not known to be usable",
+            ),
+        ),
+        label="monitor-verify",
+    )
+
+
+def _monitor_readiness(
+    capability: ComputeCapability = ComputeCapability.READY,
+    *,
+    verify_budget: float = _BINARY_VERIFY_BUDGET_SECONDS,
+) -> DependencyReadiness:
+    """Report whether this installation's monitor is installed and admissible.
+
+    The monitor is obtained automatically, so this dimension has one
+    blocking answer and no remedy to name: either a monitor this
+    installation may run is in place, or it is not and the next start
+    obtains it again. The resolver is asked, which hashes the executable it
+    finds, so this is a read with a cost and no mutation: nothing is
+    downloaded, extracted or written. The cost is bounded, and a check that
+    did not finish reads as unchecked rather than as ready.
+
+    A client installation never runs the service, so nothing is looked for
+    and nothing is missing.
+    """
+    if capability is ComputeCapability.NOT_APPLICABLE:
+        return DependencyReadiness(
+            name="monitor",
+            status=ReadinessStatus.READY,
+            detail=_CLIENT_NEEDS_NONE,
+            info={"monitor_source": "not_needed", "monitor_path": None},
+        )
+    resolved, refusal = _monitor_refusal(budget=verify_budget)
+    if refusal is not None:
+        code, detail = refusal
+        return DependencyReadiness(
+            name="monitor",
+            status=ReadinessStatus.NOT_READY,
+            detail=detail,
+            info={
+                # Nothing is known about an unchecked monitor, which is not
+                # the same as knowing it may not run.
+                "monitor_source": (
+                    "unchecked" if code == _MONITOR_UNCHECKED else "invalid"
+                ),
+                "monitor_path": None,
+                "monitor_error": code,
+            },
+        )
+    if resolved is None:
+        return DependencyReadiness(
+            name="monitor",
+            status=ReadinessStatus.NOT_READY,
+            detail=(
+                "no monitor is installed for this release, so the service "
+                "would start without its frontend; the next start obtains it"
+            ),
+            info={"monitor_source": "absent", "monitor_path": None},
+        )
+    return DependencyReadiness(
+        name="monitor",
+        status=ReadinessStatus.READY,
+        detail=f"monitor resolves from {resolved.source}",
+        info={
+            "monitor_source": str(resolved.source),
+            "monitor_path": str(resolved.path),
+            "monitor_version": resolved.version,
+        },
     )

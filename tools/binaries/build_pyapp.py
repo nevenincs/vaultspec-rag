@@ -33,7 +33,10 @@ both cases the project is installed into a per-user data directory on first
 launch (PYAPP_PROJECT_NAME + PYAPP_PROJECT_VERSION), while the CPython runtime
 is embedded into the binary itself (PYAPP_DISTRIBUTION_EMBED). The binary
 therefore needs no Python on the user's machine, but still needs network access
-to resolve the project and its dependencies on first run.
+to resolve the project and its dependencies on first run. The launcher passes its
+own path to the interpreter it starts (PYAPP_PASS_LOCATION), which is how the
+running package finds the executables packed beside the launcher rather than in
+the environment it installed the wheel into.
 
 Usage::
 
@@ -64,10 +67,10 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from tools.binaries.native import host_target_triple
 from tools.binaries.torch_channel import pip_extra_args
 from tools.binaries.windows_icon import product_version_info, stamp_icon_and_version
 from tools.packaging import products
+from vaultspec_rag.native_binary._targets import host_target, is_windows_target
 
 # Pinned PyApp crate version. Bumping this changes the bootstrapper and the
 # embedded python-build-standalone distributions it selects, so it is an
@@ -218,6 +221,13 @@ def build_one(
             # Bake the CPython distribution into the binary so the target
             # machine needs no interpreter.
             "PYAPP_DISTRIBUTION_EMBED": "1",
+            # Pass the launcher's own path to the interpreter it starts,
+            # instead of the bare "1" marker. The executables an archive
+            # ships with sit beside the launcher, not in the environment it
+            # installs the wheel into, so this is the only way the running
+            # package can find the monitor it was shipped with - without it,
+            # every archive install downloads a monitor it already has.
+            "PYAPP_PASS_LOCATION": "1",
         }
     )
     env.update(binary.pyapp_exec_env())
@@ -459,7 +469,7 @@ def main() -> int:
     args = parser.parse_args()
 
     version = args.version if args.version else version_from_tag(args.tag)
-    target = args.target if args.target else host_target_triple()
+    target = args.target if args.target else host_target()
     if args.wheel and args.wheel_dir:
         raise WheelError("pass --wheel or --wheel-dir, not both")
     project_wheel = args.wheel
@@ -478,7 +488,7 @@ def main() -> int:
             raw = build_one(binary, version, target, workdir, project_wheel)
             asset = outdir / asset_name(binary, target)
             shutil.copy2(raw, asset)
-            if products.is_windows_target(target):
+            if is_windows_target(target):
                 stamp_icon_and_version(
                     asset,
                     APPLICATION_ICON,

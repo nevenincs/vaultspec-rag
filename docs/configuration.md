@@ -15,7 +15,7 @@ standalone tool and no-install routes.
 - [Core variables](#core-variables) - every variable resolved through the standard chain, grouped by what it affects
 - [Config-only keys](#config-only-keys) - settings with no environment variable
 - [Hugging Face cache](#hugging-face-cache) - the third-party variables that govern model downloads
-- [Download sources](#download-sources) - where the server binary, the models and the CUDA wheels come from
+- [Download sources](#download-sources) - where the server binary, the monitor, the models and the CUDA wheels come from
 - [Renamed and removed variables](#renamed-and-removed-variables) - old names and what replaced them
 - [Tuning for memory and speed](#tuning-for-memory-and-speed) - task guidance rather than reference
 - [Examples](#examples)
@@ -68,7 +68,6 @@ The booleans among them accept the same spellings as every other boolean. They d
 | `VAULTSPEC_RAG_LOG_LEVEL`        | string  | `WARNING`         | Root logger level, honoured by the CLI, the stdio MCP server, and the resident daemon alike. It resolves over the logging ladder rather than the generic chain, so every process reads one validated answer: `VAULTSPEC_RAG_LOG_LEVEL`, then the framework-wide `VAULTSPEC_LOG_LEVEL`, then the process kind's own default - `WARNING` for the CLI and the stdio server, `INFO` for the daemon, whose output is a managed log nobody is watching live. A name no level spells is refused rather than degraded; an invocation-supplied level still outranks the whole ladder | `--verbose` (INFO), `--debug` (DEBUG) |
 | `VAULTSPEC_RAG_MEMORY_PROBE`     | boolean | disabled          | Diagnostic memory sampler. Follows the standard boolean rule in full, rejection included: unset and blank leave it off, and an unrecognised word is rejected rather than guessed at                                                                                                                                                                                                                                                                                                                                                                                         | -                                     |
 | `VAULTSPEC_RAG_ROOT`             | path    | working directory | The project every entry point addresses when nothing else names one. `--target` outranks it on the CLI and a tool call's own `project_root` outranks it over MCP; below it sits the framework-wide `VAULTSPEC_TARGET_DIR`, then the working directory. A value naming a directory that is not an enrolled workspace fails the run naming the variable, rather than being dropped for a directory that happens to resolve. The resident HTTP service is the exception: it serves every root at once, so both root variables are stripped from its environment at spawn       | `--target`                            |
-| `VAULTSPEC_RAG_MONITOR_BINARY`   | path    | unset             | Absolute path to the compiled monitor executable. Unset or empty resolves `vaultspec-rag-monitor` on PATH. Relative paths and missing executables fail coupled server startup; startup never compiles or downloads the monitor.                                                                                                                                                                                                                                                                                                                                             | -                                     |
 | `VAULTSPEC_RAG_TYPESAFE_API_KEY` | string  | unset             | Optional paid Typesafe query classification and full-content result reranking. A credential, never a CLI flag; see [Typesafe enrollment](#typesafe-enrollment)                                                                                                                                                                                                                                                                                                                                                                                                              | -                                     |
 
 **Log level.** The CLI, the stdio server, and the daemon all read one validated answer. The order is `VAULTSPEC_RAG_LOG_LEVEL`, then the framework-wide `VAULTSPEC_LOG_LEVEL`, then the process kind's own default. That default is `WARNING` for the CLI and the stdio server, and `INFO` for the daemon, whose output is a managed log nobody watches live. A level flag on the command line outranks the whole ladder. A name no level spells is refused, not degraded.
@@ -220,6 +219,35 @@ These variables decide whether a host `server start` fetches the pinned Qdrant s
 **What a mirror cannot change.** The download is checked against SHA256 digests compiled into vaultspec-rag. No variable overrides a digest, so a mirror changes where the bytes come from and never which bytes are accepted.
 
 **Where these are read from.** The process environment only. Like every setting on this page, none of the three is read from a workspace `.env` or any other file in a project, so a cloned repository cannot choose the server a host downloads an executable from. A value that fails the rules above is rejected at startup with the other unusable settings, before any download begins.
+
+### Monitor provisioning
+
+The compiled monitor is obtained, verified and kept up to date without anything being set, run or read. A host `server start` installs the monitor built from the same release as the installed package, fetching it once per release and never again, and a client installation installs none. There is no setup step on any installation route, and nothing below needs to be set for the monitor to work.
+
+| Variable                                 | Type   | Default                                                                         | Controls                                                                    | CLI flag |
+| ---------------------------------------- | ------ | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | -------- |
+| `VAULTSPEC_RAG_MONITOR_RELEASE_BASE_URL` | string | `https://github.com/nevenincs/vaultspec-rag/releases/download`                  | Release base URL; the archive is fetched from `{base}/{tag}/{archive}`      | -        |
+| `VAULTSPEC_RAG_MONITOR_DOWNLOAD_HOSTS`   | string | `github.com,release-assets.githubusercontent.com,objects.githubusercontent.com` | Hosts a download redirect may land on                                       | -        |
+| `VAULTSPEC_RAG_MONITOR_BINARY`           | path   | none                                                                            | A monitor executable you supply yourself; requires the digest below         | -        |
+| `VAULTSPEC_RAG_MONITOR_BINARY_SHA256`    | string | none                                                                            | SHA256 of that executable; required with the path                           | -        |
+
+**What is verified.** The release pipeline records the SHA256 of each target's monitor archive and of the executable inside it into the package itself. The archive is checked before anything is unpacked, the executable is checked before it is installed, and it is checked again immediately before every start. A mirror changes where the bytes come from and never which bytes are accepted: no variable overrides a digest.
+
+**Where it is installed.** Under the managed service directory, beside the managed Qdrant binary, in a directory named for the release version and the target. Every environment of one release on the host shares it. Installing a new release fetches that release's monitor on its first start and removes the ones no longer in use.
+
+**How it is resolved.** The monitor supplied below, if one is; then the monitor beside the installed commands, and only when its content is the one this release recorded, which is how a binary bundle uses the monitor it shipped with; then the managed install. `PATH` is not searched, so neither the directory a command was typed in nor an unrelated program of the same name can decide what runs.
+
+**Mirrors and host list syntax.** As for the managed server binary above, and with the same rules: an `https` URL with a host, optionally a port and a path prefix, never credentials, a query or a fragment; a comma-separated list of bare host names, where the base URL's own host always serves the first request. Both are read from the process environment only.
+
+#### Supplying your own monitor
+
+`VAULTSPEC_RAG_MONITOR_BINARY` and `VAULTSPEC_RAG_MONITOR_BINARY_SHA256` are one setting in two halves, under the same rules as the server binary pair above. They exist for an operator running a build of their own, and are needed for nothing else.
+
+- The path must be absolute and name a regular file that is not a link.
+- The digest is the SHA256 of that file: 64 hexadecimal characters, in either letter case. Print it with `Get-FileHash -Algorithm SHA256 <path>` on Windows, or `sha256sum <path>` or `shasum -a 256 <path>` elsewhere.
+- The file is hashed and compared with the digest before every start. A file that does not match is never run.
+
+Setting only one of the two is refused, for every command, before the command runs. Set neither to use the monitor the release provides.
 
 ### Project and data locations
 
@@ -508,11 +536,12 @@ Searches additionally quiet the Hub and Transformers loggers by defaulting `HF_H
 
 ## Download sources
 
-vaultspec-rag downloads three things on its own. This table says where each one comes from and what moves it.
+vaultspec-rag downloads four things on its own. This table says where each one comes from and what moves it.
 
 | What                           | Default source                                       | How to change it                                                                                                                                   |
 | ------------------------------ | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Managed Qdrant server binary   | `https://github.com/qdrant/qdrant/releases/download` | `VAULTSPEC_RAG_QDRANT_RELEASE_BASE_URL` and `VAULTSPEC_RAG_QDRANT_DOWNLOAD_HOSTS`; see [Managed server provisioning](#managed-server-provisioning) |
+| Compiled monitor               | `https://github.com/nevenincs/vaultspec-rag/releases/download` | `VAULTSPEC_RAG_MONITOR_RELEASE_BASE_URL` and `VAULTSPEC_RAG_MONITOR_DOWNLOAD_HOSTS`; see [Monitor provisioning](#monitor-provisioning) |
 | Dense, sparse, reranker models | `https://huggingface.co`                             | `VAULTSPEC_RAG_HF_ENDPOINT`; see [Model download source](#model-download-source)                                                                   |
 | CUDA build of PyTorch          | `https://download.pytorch.org/whl/cu130`             | No variable; edit the index entry in your own `pyproject.toml`                                                                                     |
 
