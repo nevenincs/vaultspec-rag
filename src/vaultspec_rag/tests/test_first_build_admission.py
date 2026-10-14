@@ -6,6 +6,7 @@ the predicate is exercised over the same two facts production reads.
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -13,13 +14,15 @@ import pytest
 from .._job_admission import (
     SourceAdmissionReading,
     SourcePublication,
+    admit_index_job,
     index_job_spec,
     is_new_source,
     read_source_admission,
 )
 from .._source_types import PublicSourceType
 from .._store_models import CodeChunk, generation_code_collection
-from ..indexer._run_ledger_models import RunAuthority
+from .._store_writes import workspace_volume_path
+from ..indexer._run_ledger_models import RunAuthority, index_run_ledger_path
 from ..job_models import (
     FIRST_BUILD_OPERATION,
     JobInitiator,
@@ -190,7 +193,12 @@ def test_a_completed_publication_reads_as_published(
     tmp_path: Path,
     isolated_registry: ServiceRegistry,
 ) -> None:
-    """A real committed proof is read as a completed publication."""
+    """A real committed proof is read as a completed publication.
+
+    No point count is taken: a published source is not new whatever storage
+    holds, so opening and locking a backend to compute a number that cannot
+    change the answer is work every incremental index would pay for.
+    """
     del isolated_registry
     root = tmp_path / "published-root"
     publish_empty_vault_proof(root)
@@ -198,9 +206,111 @@ def test_a_completed_publication_reads_as_published(
     assert read_source_admission(root, PublicSourceType.VAULT) == (
         SourceAdmissionReading(
             publication=SourcePublication.PUBLISHED,
-            stored_points=0,
+            stored_points=None,
         )
     )
+
+
+def test_a_ledger_that_is_not_a_database_refuses_without_a_warning(
+    tmp_path: Path,
+    isolated_registry: ServiceRegistry,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A corrupt run ledger is one of the publications known to be unreadable.
+
+    Admission answers the HTTP routes behind the CLI and MCP adapters one
+    domain at a time, so a ledger nobody can read has to refuse that source
+    rather than fail the whole request. The ledger converts corruption into
+    its own typed failure, which is in the set this reads through - and a
+    publication already accounted for as unreadable is not a surprise: an old
+    or contended ledger reaches the same branch on ordinary read paths, where
+    a warning per read would be noise.
+
+    Mutation proven by narrowing the set in ``_read_source_publication`` to
+    ``ProofUnverifiableError``: the ledger's corruption then falls through to
+    the catch-all, which reports it as unaccounted-for.
+    """
+    del isolated_registry
+    root = tmp_path / "corrupt-ledger"
+    root.mkdir()
+    ledger_path = index_run_ledger_path(workspace_volume_path(root.resolve()))
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    ledger_path.write_bytes(b"this is not a database, it is 32 bytes of text.\n")
+
+    with caplog.at_level("WARNING", logger="vaultspec_rag.jobs"):
+        for source in (
+            PublicSourceType.VAULT,
+            PublicSourceType.CODE,
+            PublicSourceType.DOCUMENT,
+        ):
+            assert read_source_admission(root, source) == SourceAdmissionReading(
+                publication=SourcePublication.UNREADABLE,
+                stored_points=None,
+            ), f"{source.value} did not report an unreadable publication"
+        spec = _admit(root, source=JobSource.CODE)
+
+    assert spec.mode is JobMode.INCREMENTAL
+    assert not spec.is_first_build
+    assert [
+        record.message
+        for record in caplog.records
+        if "publication state" in record.message
+    ] == []
+
+
+def test_an_unexpected_publication_failure_refuses_instead_of_raising(
+    tmp_path: Path,
+    isolated_registry: ServiceRegistry,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Nothing a publication read can raise reaches the caller of admission.
+
+    The run ledger converts every corruption it meets into its own typed
+    failure, so no real file reaches the branch below - which is exactly why
+    it exists, and why the read is intercepted to get there. One collaborator
+    is replaced; the classification under test runs unchanged.
+
+    Mutation proven by deleting the catch-all in
+    ``_read_source_publication``: the error then leaves admission, and the
+    one HTTP request behind it fails for every domain rather than refusing
+    this one.
+    """
+    del isolated_registry
+    import sqlite3
+
+    from .. import _publication_state
+
+    root = tmp_path / "unexpected-failure"
+    root.mkdir()
+
+    def raise_database_error(*_args: object, **_kwargs: object) -> object:
+        raise sqlite3.DatabaseError("database disk image is malformed")
+
+    # Admission resolves this name at call time, so replacing it here is
+    # what the production read reaches.
+    monkeypatch.setattr(
+        _publication_state,
+        "acquire_publication_snapshot",
+        raise_database_error,
+    )
+
+    with caplog.at_level("WARNING", logger="vaultspec_rag.jobs"):
+        reading = read_source_admission(root, PublicSourceType.CODE)
+        escalated = _admit(root, source=JobSource.CODE).is_first_build
+
+    assert reading == SourceAdmissionReading(
+        publication=SourcePublication.UNREADABLE,
+        stored_points=None,
+    )
+    assert not escalated
+    # Unaccounted-for, so it is reported. The known unreadable publications
+    # reach their own branch and log nothing.
+    assert [
+        record.message
+        for record in caplog.records
+        if "publication state" in record.message
+    ]
 
 
 def test_an_incremental_request_for_a_new_source_is_admitted_as_a_first_build(
@@ -348,6 +458,74 @@ def test_an_explicit_rebuild_is_not_relabelled_as_a_first_build(
     assert spec.requested_mode is None
     assert spec.requested_operation == JobMode.REBUILD.value
     assert spec.effective_operation == JobMode.REBUILD.value
+
+
+def test_two_concurrent_first_build_admissions_collapse_to_one_job(
+    tmp_path: Path,
+    isolated_status_dir: Path,
+    isolated_registry: ServiceRegistry,
+) -> None:
+    """One source cannot have two first builds admitted for it at once.
+
+    Both callers read a never-built source and both ask for its first build,
+    so without the manager's equivalence two jobs would each run the
+    reset-first lifecycle over the same collections. The readings are taken
+    on both threads before either creates, which is the ordering that makes
+    the second admission's answer depend on equivalence rather than on
+    having observed the first job's writes.
+
+    Mutation proven by making ``_find_equivalent_active_locked`` return
+    ``None``: two jobs are then created for the one source.
+    """
+    del isolated_registry, isolated_status_dir
+    from .. import jobs
+
+    root = tmp_path / "concurrent-first-build"
+    root.mkdir()
+    jobs.reset()
+    ready = threading.Barrier(2)
+    outcomes: list[tuple[str, bool]] = []
+    failures: list[BaseException] = []
+    lock = threading.Lock()
+
+    def admit() -> None:
+        try:
+            spec = _admit(root, source=JobSource.CODE)
+            assert spec.is_first_build
+            ready.wait(timeout=10)
+            _manager, job_id, created = admit_index_job(
+                root,
+                source=JobSource.CODE,
+                clean=False,
+                authority=RunAuthority.PUBLICATION,
+                initiator_kind="cli",
+            )
+        except BaseException as exc:  # reported, never swallowed
+            with lock:
+                failures.append(exc)
+            return
+        with lock:
+            outcomes.append((job_id, created))
+
+    threads = [
+        threading.Thread(target=admit, name=f"first-build-admission-{ordinal}")
+        for ordinal in range(2)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+    try:
+        assert not [thread for thread in threads if thread.is_alive()]
+        assert failures == []
+        assert len({job_id for job_id, _created in outcomes}) == 1
+        assert [created for _job_id, created in outcomes].count(True) == 1
+        manager = jobs.get_job_manager()
+        active = manager.active()
+        assert len(active) == 1
+        assert active[0].spec.is_first_build
+    finally:
+        jobs.reset()
 
 
 def test_a_requested_mode_records_only_an_admitted_first_build() -> None:

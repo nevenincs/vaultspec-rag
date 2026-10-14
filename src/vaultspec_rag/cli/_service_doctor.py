@@ -189,11 +189,14 @@ def _doctor_exit_code(
 ) -> int:
     """Fold every axis into an exit code, error over warn.
 
-    ``overall_ready`` already folds in the live-service axis and every
-    dependency row ``compute_readiness`` reports (torch, models, qdrant, and
-    any row a future dependency adds), so a start that would fail for any
-    reason - a dead or absent daemon, or a dependency that is not ready -
-    lifts the exit code without this function naming any one dependency.
+    ``overall_ready`` already folds in the live-service axis and, except
+    where the daemon's runtime has still to be built, every dependency row
+    ``compute_readiness`` reports (torch, models, qdrant, and any row a
+    future dependency adds). So a dead or absent daemon, and a dependency
+    that is not ready in an environment that exists, lift the exit code
+    without this function naming any one dependency. Rows describing an
+    environment a start would create are facts about the host rather than a
+    verdict on it, and the service runtime axis carries them instead.
     Mirrors core's ``spec doctor`` weighting for the shared per-package axis
     on top: a ``vaultspec-rag`` entry running below its declared floor is an
     error, a declared-vs-observed mode mismatch is a warning. The highest

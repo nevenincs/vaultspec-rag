@@ -71,8 +71,9 @@ class SourcePublication(StrEnum):
 class SourceAdmissionReading:
     """The two readings that decide whether a source has ever been built.
 
-    ``stored_points`` is ``None`` when storage could not be counted at all,
-    which is an absence of reading rather than a reading of zero.
+    ``stored_points`` is ``None`` when no count was taken: storage could not
+    be counted, or the publication reading already settled the question.
+    Either way it is an absence of reading rather than a reading of zero.
     """
 
     publication: SourcePublication
@@ -96,9 +97,19 @@ def read_source_admission(
     root: Path,
     source: PublicSourceType,
 ) -> SourceAdmissionReading:
-    """Take both never-built readings for one concrete source at admission."""
+    """Take the never-built readings for one concrete source at admission.
+
+    The publication reading comes first and can settle the question on its
+    own: a source with a publication, or with publication state nobody can
+    read, is not new whatever storage holds. Counting storage anyway would
+    open and lock a backend to compute a number that cannot change the
+    answer, on every incremental index of every already-built source.
+    """
+    publication = _read_source_publication(root, source)
+    if publication is not SourcePublication.ABSENT:
+        return SourceAdmissionReading(publication=publication, stored_points=None)
     return SourceAdmissionReading(
-        publication=_read_source_publication(root, source),
+        publication=publication,
         stored_points=_count_stored_points(root, source),
     )
 
@@ -107,20 +118,37 @@ def _read_source_publication(
     root: Path,
     source: PublicSourceType,
 ) -> SourcePublication:
-    """Classify the committed publication authority for one source."""
-    from ._publication_state import acquire_publication_snapshot
-    from .indexer._publication_proof import (
-        ProofMissingError,
-        ProofReadConflictError,
-        ProofUnverifiableError,
+    """Classify the committed publication authority for one source.
+
+    Admission is reached from the HTTP routes and from the CLI and MCP
+    adapters behind them, and it answers per domain. Nothing a publication
+    read can raise may leave this function: a ledger file that is not a
+    database at all raises out of SQLite rather than as one of the typed
+    unreadable failures, and letting that through turned one
+    ``index --type all`` into a server error for every domain. Anything other
+    than a legible absence is reported as unreadable, which keeps the typed
+    refusal for that one source.
+    """
+    from ._publication_state import (
+        UNREADABLE_PUBLICATION_ERRORS,
+        acquire_publication_snapshot,
     )
-    from .indexer._run_ledger_models import RunLedgerError
+    from .indexer._publication_proof import ProofMissingError
 
     try:
         acquire_publication_snapshot(root, source).validate()
     except ProofMissingError:
         return SourcePublication.ABSENT
-    except (ProofUnverifiableError, ProofReadConflictError, RunLedgerError):
+    except UNREADABLE_PUBLICATION_ERRORS:
+        return SourcePublication.UNREADABLE
+    except Exception:  # no failure to read publication may escape admission
+        logger.warning(
+            "could not read the %s publication state of %s; "
+            "treating the source as already built",
+            source.value,
+            root,
+            exc_info=True,
+        )
         return SourcePublication.UNREADABLE
     return SourcePublication.PUBLISHED
 
@@ -134,11 +162,12 @@ def _count_stored_points(root: Path, source: PublicSourceType) -> int | None:
     Reading the served collection alone would call a root holding those
     points empty and then delete them.
 
-    The store lease takes the lifecycle lock and each count takes that one
-    collection's lock, in that order. Any failure to reach storage - an
-    unreadable served pointer included - is reported as no reading:
-    escalating on a count nobody could take would reset a target whose
-    contents are unknown.
+    A cold lease holds this root's store admission in the registry for the
+    whole reading, and a warm one pins the existing slot; the counts
+    themselves take only the per-collection lock of each collection they
+    read, one at a time. Any failure to reach storage - an unreadable served
+    pointer included - is reported as no reading: escalating on a count
+    nobody could take would reset a target whose contents are unknown.
     """
     from .registry import get_registry
 

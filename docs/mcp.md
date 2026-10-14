@@ -119,7 +119,10 @@ A connected server publishes twelve tools. Six read:
 Six mutate:
 
 - `reindex_vault`, `reindex_codebase`, and `reindex_documents` re-index one
-  domain incrementally, and `reindex_all` does all three.
+  domain incrementally, and `reindex_all` does all three. A domain that was
+  never indexed has no publication to update, so its first request runs that
+  domain's first full build instead, which deletes nothing. `reindex_all`
+  decides this per domain.
 - `clean_documents` deletes the extracted-document index for a project, and
   `clean_all` deletes the vault, code, and document indexes.
 

@@ -833,6 +833,16 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "on demand; the actual publication, checkpoint and readiness-wake code "
         "under test runs unchanged in every case",
     ),
+    "test_first_build_admission.py": (
+        1,
+        "one site makes the publication read raise an error outside the set "
+        "admission accounts for. The run ledger converts every corruption a "
+        "real file can carry into its own typed failure, so no file reaches "
+        "the catch-all that keeps such an error from failing an HTTP request "
+        "for every domain; the classification, escalation and refusal under "
+        "test run unchanged, and every other reading in this file is taken "
+        "against a real ledger and a real store",
+    ),
     "test_process_termination.py": (
         19,
         "the states under test - a child whose exit waitpid acknowledges, a "

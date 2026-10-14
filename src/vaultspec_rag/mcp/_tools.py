@@ -635,7 +635,12 @@ async def get_code_file(
 async def reindex_vault(
     project_root: str | None = None,
 ) -> dict[str, Any]:
-    """Re-index vault documentation incrementally."""
+    """Re-index vault documentation incrementally.
+
+    On a vault that was never indexed this runs its first full build, which
+    deletes nothing: there is no publication for an incremental update to
+    reconcile against.
+    """
     return await _reindex_source("vault", project_root)
 
 
@@ -643,7 +648,12 @@ async def reindex_vault(
 async def reindex_codebase(
     project_root: str | None = None,
 ) -> dict[str, Any]:
-    """Re-index the source codebase incrementally."""
+    """Re-index the source codebase incrementally.
+
+    On a codebase that was never indexed this runs its first full build,
+    which deletes nothing: there is no publication for an incremental update
+    to reconcile against.
+    """
     return await _reindex_source("code", project_root)
 
 
@@ -675,7 +685,12 @@ async def _reindex_source(
 async def reindex_documents(
     project_root: str | None = None,
 ) -> dict[str, Any]:
-    """Incrementally re-index extracted documents."""
+    """Incrementally re-index extracted documents.
+
+    On documents that were never indexed this runs their first full build,
+    which deletes nothing: there is no publication for an incremental update
+    to reconcile against.
+    """
     return await _reindex_source("document", project_root)
 
 
@@ -683,7 +698,12 @@ async def reindex_documents(
 async def reindex_all(
     project_root: str | None = None,
 ) -> dict[str, Any]:
-    """Incrementally re-index vault, code, and document domains."""
+    """Incrementally re-index vault, code, and document domains.
+
+    Each domain is admitted on its own: one that was never indexed runs its
+    first full build, which deletes nothing, while the others update
+    incrementally.
+    """
     return await _reindex_source("combined", project_root)
 
 
