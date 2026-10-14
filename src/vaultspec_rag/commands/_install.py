@@ -63,7 +63,7 @@ from ._mcp_topology import (
     topology_materialization_failure,
     topology_preflight_failure,
 )
-from ._mcp_trust import review_rag_launch
+from ._mcp_trust import RagLaunchConsent, review_rag_launch
 from ._mode import (
     RAG_DISTRIBUTION_NAME,
     infer_rag_upgrade_mode,
@@ -542,18 +542,16 @@ def _planned_launches(
         )
 
 
-def _review_rag_launch(request: _InstallRunRequest, target: Path) -> list[str]:
+def _review_rag_launch(request: _InstallRunRequest, target: Path) -> RagLaunchConsent:
     """Ask the operator to approve rag's own MCP launch, before any write.
 
     A run that will not enrol the launch has nothing to ask. A review that
     cannot be prepared is left to the install itself, whose sync then reports
     the launch unapproved or fails the same way it would have.
-
-    Returns:
-        The operator-facing problems met while reviewing, if any.
     """
+    consent = RagLaunchConsent(target)
     if not request.install_mcp or {"core", "mcp"} & (request.skip or set()):
-        return []
+        return consent
     try:
         return review_rag_launch(
             target,
@@ -562,7 +560,8 @@ def _review_rag_launch(request: _InstallRunRequest, target: Path) -> list[str]:
             assume_yes=request.assume_yes,
         )
     except Exception as exc:
-        return [f"MCP approval review could not be prepared: {exc}"]
+        consent.warnings.append(f"MCP approval review could not be prepared: {exc}")
+        return consent
 
 
 @dataclass(frozen=True, slots=True)
@@ -1019,7 +1018,7 @@ def _install_run(request: _InstallRunRequest) -> InstallReport:
     if request.dry_run:
         return run()
 
-    review_warnings = _review_rag_launch(request, target)
+    consent = _review_rag_launch(request, target)
     with tempfile.TemporaryDirectory(prefix="vaultspec-rag-mcp-replay-") as raw:
         replay_target = Path(raw) / "workspace"
         topology.populate_projection(replay_target)
@@ -1050,6 +1049,7 @@ def _install_run(request: _InstallRunRequest) -> InstallReport:
         message = topology_materialization_failure(exc)
         record_mcp_failure(failure, message)
         return failure
+    consent.carry_into_transaction()
     try:
         report = run()
     except BaseException as exc:
@@ -1060,7 +1060,7 @@ def _install_run(request: _InstallRunRequest) -> InstallReport:
                 + "; ".join(rollback)
             ) from exc
         raise
-    report.warnings.extend(review_warnings)
+    report.warnings.extend(consent.warnings)
     topology_errors = topology.finish(commit=not report.mcp_sync_failed)
     for message in topology_errors:
         record_mcp_failure(report, message)

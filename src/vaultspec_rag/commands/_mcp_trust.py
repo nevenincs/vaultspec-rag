@@ -7,11 +7,21 @@ install that never asked would seed the definition and then skip the
 enrolment. This module asks, for exactly vaultspec-rag's own definition and no
 other source, and records the answer through core's own grant.
 
+Core binds an approval to where a definition really lives, and an install
+holds a linked definition or native config as a regular copy until it commits.
+The approval is therefore recorded at the real location first, which is what
+every later sync of the workspace asks about. For the length of the run it is
+recorded at the copy's location as well, which is what the install's own sync
+asks about. That second record is the same reviewed launch at the one other
+path core will look at, so it creates no consent; it is made only for a launch
+already approved at its real location, and it matches nothing once the link is
+back.
 """
 
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from vaultspec_core.core.exceptions import VaultSpecError
@@ -28,7 +38,7 @@ if TYPE_CHECKING:
     from ._mcp_host_state import LaunchToEnroll
     from ._models import ConfirmFn
 
-__all__ = ["approvals_for", "review_rag_launch"]
+__all__ = ["RagLaunchConsent", "approvals_for", "review_rag_launch"]
 
 #: What a failed read or write of the approval record can raise.
 _GRANT_FAILURES = (OSError, VaultSpecError)
@@ -79,13 +89,47 @@ def _review_prompt(approvals: list[McpApproval]) -> str:
     return "\n".join(lines)
 
 
+@dataclass(slots=True)
+class RagLaunchConsent:
+    """What the operator has approved of vaultspec-rag's own launch for a root."""
+
+    root: Path
+    #: The launches approved at their real locations, before or by this review.
+    approved: list[LaunchToEnroll] = field(default_factory=list)
+    #: The approval keys recorded for *approved*, at those real locations.
+    recorded: frozenset[str] = frozenset()
+    #: Operator-facing problems met while asking or recording.
+    warnings: list[str] = field(default_factory=list)
+
+    def carry_into_transaction(self) -> None:
+        """Record each approved launch where this run holds it, when that differs.
+
+        Call it once the run's links are materialized and before its sync. It
+        writes nothing for a workspace with no link in the way, because the
+        keys are then the ones already recorded.
+        """
+        held = [
+            approval
+            for approval in approvals_for(self.root, self.approved)
+            if approval.key not in self.recorded
+        ]
+        if not held:
+            return
+        try:
+            grant(held)
+        except _GRANT_FAILURES as exc:
+            self.warnings.append(
+                f"MCP approval could not be carried into this install: {exc}"
+            )
+
+
 def review_rag_launch(
     root: Path,
     planned: Iterable[LaunchToEnroll],
     *,
     confirm: ConfirmFn | None,
     assume_yes: bool,
-) -> list[str]:
+) -> RagLaunchConsent:
     """Ask the operator to approve vaultspec-rag's own launch, then record it.
 
     Only the definition named for this package is considered; every other
@@ -93,24 +137,28 @@ def review_rag_launch(
     there is nobody to ask (*confirm* is ``None``) or when the run was told to
     assume consent (*assume_yes*): a flag is not a review, and core's own sync
     then skips the launch with the command that grants it.
-
-    Returns:
-        The operator-facing problems met while asking or recording, if any.
     """
     own = [launch for launch in planned if launch.name == RAG_DISTRIBUTION_NAME]
+    consent = RagLaunchConsent(root)
     approved = approved_launches(own, root)
     missing = [launch for launch in own if launch not in approved]
-    if not missing or confirm is None or assume_yes:
-        return []
-    outcome = confirmation_outcome(
-        confirm, _review_prompt(approvals_for(root, missing))
+    if missing and confirm is not None and not assume_yes:
+        outcome = confirmation_outcome(
+            confirm, _review_prompt(approvals_for(root, missing))
+        )
+        if outcome.startswith("error:"):
+            consent.warnings.append(
+                f"MCP approval could not be asked of the operator ({outcome})."
+            )
+        elif outcome == "approved":
+            try:
+                grant(approvals_for(root, missing))
+            except _GRANT_FAILURES as exc:
+                consent.warnings.append(f"MCP approval could not be recorded: {exc}")
+            else:
+                approved = own
+    consent.approved = approved
+    consent.recorded = frozenset(
+        approval.key for approval in approvals_for(root, approved)
     )
-    if outcome.startswith("error:"):
-        return [f"MCP approval could not be asked of the operator ({outcome})."]
-    if outcome != "approved":
-        return []
-    try:
-        grant(approvals_for(root, missing))
-    except _GRANT_FAILURES as exc:
-        return [f"MCP approval could not be recorded: {exc}"]
-    return []
+    return consent

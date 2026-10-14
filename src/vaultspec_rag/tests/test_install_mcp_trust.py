@@ -3,9 +3,10 @@
 Core refuses to enrol an MCP launch nobody reviewed and refuses to treat a flag
 as that review. These tests drive the real install, real core sync and a real
 trust record in an isolated home. They prove the gate holds with nobody to ask,
-under ``--yes`` and after a decline; and that an attended approval enrols exactly
-rag's own definition and no other, is kept until the launch changes, and is never
-asked for by a run that enrols nothing.
+under ``--yes`` and after a decline; that an attended approval enrols exactly
+rag's own definition and no other; and that a linked definition or native config
+is approved where it really lives, which is what a later sync of the workspace
+asks about, as well as where the install holds it while it runs.
 
 The mutation each guard catches is named in its own docstring.
 """
@@ -13,20 +14,29 @@ The mutation each guard catches is named in its own docstring.
 from __future__ import annotations
 
 import json
+import os
 import tomllib
+from contextvars import Context
+from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING, Unpack, cast
 
 import pytest
 from vaultspec_core.core.enums import InstallMode
+from vaultspec_core.core.mcps import mcp_sync
 from vaultspec_core.core.mcps_trust import trust_file_path
 
 from ..commands._install import (
     _InstallRunOptions,
+    _InstallRunRequest,
+    _planned_launches,
     install_run,
 )
+from ._mcp_consent import grant_planned
 
 if TYPE_CHECKING:
+    from vaultspec_core.core.types import SyncResult
+
     from ..commands._models import InstallReport
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("isolated_mcp_trust_home")]
@@ -92,6 +102,23 @@ def _enrolled(ws: Path) -> tuple[bool, bool]:
         codex.read_text(encoding="utf-8")
     ).get("mcp_servers", {})
     return in_claude, in_codex
+
+
+def _later_sync(ws: Path) -> SyncResult:
+    """Run core's own sync of *ws* as a later invocation would, writing nothing."""
+    return Context().run(
+        mcp_sync,
+        dry_run=True,
+        mode=InstallMode.TOOL,
+        provider="all",
+        scope="project",
+        target_dir=ws,
+    )
+
+
+def _builtin_definition() -> str:
+    source = files("vaultspec_rag.builtins") / "mcps" / "vaultspec-rag.builtin.json"
+    return source.read_text(encoding="utf-8")
 
 
 class TestApprovalIsAskedOfAnOperator:
@@ -249,3 +276,89 @@ class TestApprovalIsKeptUntilTheLaunchChanges:
         prompt = second.prompts[0]
         assert "operator-launcher" in prompt
         assert _skipped_for_lack_of_approval(report)
+
+
+class TestApprovalFollowsALinkedLocation:
+    """Core binds approval to where a source really lives.
+
+    An install holds a linked definition or native config as a regular copy
+    until it commits, so core asks about the copy's path while the install
+    syncs and about the link's real target in every later sync.
+    """
+
+    @staticmethod
+    def _link_source(ws: Path) -> Path:
+        """Make rag's definition a link to a shared file holding the same bytes."""
+        shared = ws / ".vaultspec" / "shared-rag.json"
+        link = ws / _SOURCE
+        link.parent.mkdir(parents=True)
+        shared.write_text(_builtin_definition(), encoding="utf-8")
+        link.symlink_to(os.path.relpath(shared, link.parent))
+        return link
+
+    @staticmethod
+    def _link_claude_config(ws: Path) -> Path:
+        """Make the Claude project config a link to a shared file."""
+        shared = ws / ".mcp.shared.json"
+        shared.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+        link = ws / ".mcp.json"
+        link.symlink_to(shared.name)
+        return link
+
+    @pytest.mark.parametrize("link", ["definition", "claude-config"])
+    def test_an_approval_given_at_the_real_location_enrols_the_install(
+        self, tmp_path: Path, link: str
+    ) -> None:
+        """The approval an operator gave with core's own command is honoured.
+
+        It is bound to the link's target. The install syncs the link's copy at
+        another path, so without carrying the approval there the launch is
+        skipped and the install enrols nothing. Mutation it catches: dropping
+        the carry into the run, which fails the enrolment assertion.
+        """
+        ws = _workspace(tmp_path)
+        node = (
+            self._link_source(ws)
+            if link == "definition"
+            else self._link_claude_config(ws)
+        )
+        request = _InstallRunRequest(
+            path=ws, install_mcp=True, mode=InstallMode.TOOL, configure_torch=False
+        )
+        grant_planned(ws, _planned_launches(request, ws))
+
+        report = _install(ws)
+
+        assert not report.mcp_sync_failed
+        assert _enrolled(ws) == (True, True)
+        assert node.is_symlink()
+
+    @pytest.mark.parametrize("link", ["definition", "claude-config"])
+    def test_a_review_approves_the_real_location_a_later_sync_checks(
+        self, tmp_path: Path, link: str
+    ) -> None:
+        """What the install's own review records is what core asks about next.
+
+        With the link back in place a later sync of the workspace looks at the
+        link's target. Only consent is asserted: core keys the ownership of a
+        linked native config by the same resolved path, a separate matter.
+        Mutation it catches: recording the approval only at the install's copy,
+        which enrols this run but leaves that later sync refusing the launch.
+        """
+        ws = _workspace(tmp_path)
+        node = (
+            self._link_source(ws)
+            if link == "definition"
+            else self._link_claude_config(ws)
+        )
+        operator = _Operator(approves=True)
+
+        report = _install(ws, confirm=operator)
+
+        assert not report.mcp_sync_failed
+        assert len(operator.prompts) == 1
+        assert _enrolled(ws) == (True, True)
+        assert node.is_symlink()
+        later = _later_sync(ws)
+        assert not later.errors
+        assert not [warning for warning in later.warnings if "not approved" in warning]

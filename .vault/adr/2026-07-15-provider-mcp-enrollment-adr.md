@@ -4,7 +4,7 @@ tags:
   - '#provider-mcp-enrollment'
 date: '2026-07-15'
 modified: '2026-10-14'
-body_hash: 'sha256:77f79dcfefa1fd937c7ebc30eed21c72c237b1c3084b205f507127f87108d182'
+body_hash: 'sha256:165f32cec9c52c9d00dbda7cb39f43844f79b7cdfb29a8fec6939e9656edd266'
 related:
   - "[[2026-07-15-provider-mcp-enrollment-research]]"
   - '[[2026-07-15-provider-mcp-enrollment-audit]]'
@@ -97,6 +97,13 @@ installation modes.
   the user's 2026-10-14 instruction to fix the install gaps ("fix all") authorizes this
   refinement. It adds an operator step to enrollment and does not change which component
   owns provider configuration.
+- Core binds approval to where a definition really lives. An install holds a linked
+  definition or native config as a regular copy until it commits, and Core asks about that
+  copy's path while the install syncs. The approval is therefore recorded at the real
+  location first, which every later sync of the workspace asks about, and an approval
+  already held at the real location is recorded at the copy's path for the run. That
+  second record is the same reviewed launch, made only for a launch already approved at
+  its real location. It creates no consent and matches nothing once the link is back.
 
 ## Implementation
 
@@ -129,6 +136,9 @@ run agree on what is approved. It shows the operator the exact definition, diges
 and target of RAG's own definition, asks once, and records the answer with Core's grant.
 An approval Core already holds for the same definition and launch is reused without a
 question, and a changed definition or launch is asked about again.
+Once the install has swapped its links for regular copies, it carries that approval to
+the copies' paths, so the install's own sync is not refused for a launch the operator
+approved.
 
 A managed mode transition uses the narrow `force_managed` path. An unowned same-name
 entry produces a collision and remains unchanged unless the operator explicitly forces
