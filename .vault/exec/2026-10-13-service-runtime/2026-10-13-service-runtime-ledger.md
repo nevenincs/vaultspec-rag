@@ -5,7 +5,7 @@ tags:
 date: '2026-10-13'
 modified: '2026-10-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:d7e15d3509d14e8f70f59da952ed38973aa435fbcbcb3533fae6f8022e579f85'
+body_hash: 'sha256:a397f4ab9355c33c0623d27844e31360933530f43e1ead93b93b6255af6a2836'
 related:
   - "[[2026-10-13-service-runtime-plan]]"
 ---
@@ -134,6 +134,8 @@ related:
 - `S08` `verify:` `first-build admission 19 unit and 7 integration (GPU lock) pass; unit lane 7916 pass, only monitor and one free-space race` -> `pass`
 - `S08` `by:` `vaultspec-high-executor`
 - `S07` `verify:` `lab linux readme, uvx-local and client after review fixes and S08: install, start, doctor ready, index, search, stop all exit 0` -> `pass`
+- `S04` `M` `src/vaultspec_rag/tests/test_model_readiness.py`
+- `S04` `verify:` `readiness, doctor and model suites 904 pass; two guards mutation-proven` -> `pass`
 
 ## Notes
 
