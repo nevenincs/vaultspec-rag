@@ -86,6 +86,11 @@ class TestInstallTorchConfig:
         tool environment whose receipt is unreadable, so the real classifier
         reads the running interpreter as a tool. Dropping the tool clause from
         the torch gate fails the action assertion with ``applied``.
+
+        The action is ``absent``: there is no project configuration of this
+        installation's torch, which is also the action that prints no torch
+        line. It used to be the client action, which printed one saying this
+        GPU host was a client.
         """
         monkeypatch.setenv(
             EnvVar.UV_TOOL_DIR.value,
@@ -95,7 +100,7 @@ class TestInstallTorchConfig:
         report = install_run(
             path=consumer_workspace, assume_yes=True, repair_tool_torch=False
         )
-        assert report.torch_config_action == "not_applicable"
+        assert report.torch_config_action == "absent"
         assert _sha(consumer_workspace / "pyproject.toml") == sha_before
 
     def test_install_idempotent_on_second_run(self, consumer_workspace: Path) -> None:

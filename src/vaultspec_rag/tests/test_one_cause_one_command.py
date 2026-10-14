@@ -16,6 +16,7 @@ input a CPU-only runner and a GPU workstation cannot both produce.
 from __future__ import annotations
 
 import io
+import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING
@@ -90,6 +91,104 @@ class TestAnInstallWithNoProjectSaysNothingAboutOne:
         assert "PyTorch configuration" in _rendered(report)
 
 
+def _pin_interpreter(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
+    """Run as if this process's interpreter belonged to the environment *root*.
+
+    Which kind of environment an installation runs from is a fact about the
+    machine the tests run on, and both answers have to be exercised; only the
+    interpreter's own location is substituted, and the classification and
+    everything each surface does with it run unchanged.
+    """
+    from ..service_runtime import runtime_interpreter
+
+    interpreter = runtime_interpreter(root)
+    interpreter.parent.mkdir(parents=True, exist_ok=True)
+    interpreter.touch()
+    monkeypatch.setattr(sys, "executable", str(interpreter))
+
+
+def _tool_host(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
+    """Stand this process in a uv tool environment, receipt and all."""
+    from ..operator_state._topology import TOOL_RECEIPT_NAME
+
+    root.mkdir(parents=True, exist_ok=True)
+    (root / TOOL_RECEIPT_NAME).write_text(
+        '[tool]\nrequirements = [{ name = "vaultspec-rag" }]\n', encoding="utf-8"
+    )
+    _pin_interpreter(monkeypatch, root)
+
+
+class TestAToolHostInARepositoryIsNotAClient:
+    """An installation uv resolves torch for has no torch phase to report.
+
+    A uv tool or uvx host needs torch and gets it from uv, so no project
+    declaration configures it - not the one it happens to be standing in. It
+    was recorded as the one other case that configures nothing, a client
+    installation, and so told a GPU host that it was a client and counted a
+    skipped row against the run.
+    """
+
+    def test_no_torch_row_for_a_tool_host_standing_in_a_repository(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guard assertion: the row that made every such install "mixed".
+
+        Mutation check: asking only whether a ``pyproject.toml`` is present,
+        as the reportability question did, returns True here and fails the
+        first assertion; the second holds the other half, so a question that
+        answered False for everything would fail too.
+        """
+        from ..commands._provision import torch_configuration_is_reportable
+
+        (tmp_path / "pyproject.toml").write_text("[project]", encoding="utf-8")
+        _tool_host(monkeypatch, tmp_path / "tool-env")
+
+        assert not torch_configuration_is_reportable(tmp_path, set())
+
+        _pin_interpreter(monkeypatch, tmp_path / "project" / ".venv")
+
+        assert torch_configuration_is_reportable(tmp_path, set())
+
+    def test_no_torch_line_and_no_client_wording_for_a_tool_host(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guard assertion: "this installation is a client", to a GPU host.
+
+        Mutation check: recording the tool host as ``not_applicable`` again -
+        the one action a client is recorded as - prints the client line and
+        fails all three assertions.
+        """
+        from ..commands._models import InstallReport
+        from ..commands._torch_flow import (
+            TorchInstallOptions,
+            _run_torch_config_install,
+        )
+        from ..operator_state._installation import ComputeCapability, InstallRole
+        from .conftest import pin_install_role
+
+        (tmp_path / "pyproject.toml").write_text("[project]", encoding="utf-8")
+        _tool_host(monkeypatch, tmp_path / "tool-env")
+        pin_install_role(monkeypatch, InstallRole.HOST)
+        report = InstallReport(action="install", target=tmp_path)
+
+        _run_torch_config_install(
+            target=tmp_path,
+            report=report,
+            options=TorchInstallOptions(
+                dry_run=False,
+                configure_torch=True,
+                assume_yes=True,
+                sync_after=False,
+                confirm=None,
+            ),
+        )
+        out = _rendered(report)
+
+        assert report.torch_config_action is TorchConfigAction.ABSENT
+        assert "PyTorch configuration" not in out
+        assert ComputeCapability.NOT_APPLICABLE.label not in out
+
+
 class TestTheTorchRowIsNotRepeatedInProvisioning:
     """The install reports its torch step once, under its own heading."""
 
@@ -116,11 +215,14 @@ class TestTheTorchRowIsNotRepeatedInProvisioning:
         assert not torch_configuration_is_reportable(tmp_path, set())
 
     def test_a_project_run_that_configures_torch_still_reports_it(
-        self, tmp_path: Path
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from ..commands._provision import torch_configuration_is_reportable
 
         (tmp_path / "pyproject.toml").write_text("[project]", encoding="utf-8")
+        # Pinned, because whether the interpreter running these tests belongs
+        # to a project is a property of the runner and not of the subject.
+        _pin_interpreter(monkeypatch, tmp_path / "project" / ".venv")
 
         assert torch_configuration_is_reportable(tmp_path, set())
 

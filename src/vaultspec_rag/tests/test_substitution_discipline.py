@@ -525,6 +525,16 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "answer, which is what lets one machine reach both the launcher that "
         "serves and the launcher that cannot",
     ),
+    "test_one_cause_one_command.py": (
+        1,
+        "stands this process's interpreter inside a purpose-built uv tool "
+        "environment, because which kind of environment the suite itself runs "
+        "from is a property of the runner, and both answers have to be "
+        "reached: reporting a tool host as a client installation is the "
+        "defect under test, and the project host must keep its torch row. "
+        "Only the interpreter's location is substituted - the real "
+        "classifier, the real torch gate and the real renderer run on it",
+    ),
     "test_doctor_repair_and_holders.py": (
         14,
         "substitutes the interpreter probe, the daemon interpreter and the "

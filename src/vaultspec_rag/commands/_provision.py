@@ -561,11 +561,19 @@ def torch_configuration_is_reportable(target: Path, skip: set[str]) -> bool:
     It has none when the dedicated install step already ran it - that step
     reports it under its own heading, and a second row describing the same
     step is a duplicate - and none when there is no project declaration to
-    configure at all, which is every tool and pip installation.
+    configure at all, which is every pip installation outside a project.
+
+    It also has none when this installation's torch does not come from a
+    project, which is the same question the torch step itself asks before it
+    inspects anything: a uv tool or uvx host standing in a repository has a
+    ``pyproject.toml`` in front of it and no use for it, and a row saying so
+    made every such install's aggregate outcome ``mixed``.
     """
+    from ..operator_state._topology import runs_from_a_project_environment
+
     if ProvisionStep.TORCH in skip:
         return False
-    return (target / "pyproject.toml").is_file()
+    return (target / "pyproject.toml").is_file() and runs_from_a_project_environment()
 
 
 def _provision_torch(request: _TorchProvisionRequest) -> ProvisionStepResult:

@@ -803,10 +803,10 @@ def _render_provider_and_torch_sections(
     _render_provider_sync(report)
     _render_mcp_extra(report)
     tc_action = report.torch_config_action
-    # An installation with no project declaration has no torch configuration,
-    # so it is told nothing about one. The line said "not found", which reads
-    # as something missing that ought to be there.
-    if str(getattr(tc_action, "value", tc_action)) != TorchConfigAction.ABSENT.value:
+    # An installation whose torch no project declaration configures has no
+    # torch configuration, so it is told nothing about one. The line said
+    # "not found", which reads as something missing that ought to be there.
+    if tc_action is not TorchConfigAction.ABSENT:
         _plain(f"PyTorch configuration: {_action_label(tc_action)}")
     td_action = report.torch_direct_dep_action
     if td_action not in ("skipped",):
