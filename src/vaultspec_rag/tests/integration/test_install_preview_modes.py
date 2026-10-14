@@ -18,13 +18,17 @@ from ._install_helpers import (
     _RAG_MCP_REL,
     _install,
     _node_signature,
+    host_ownership,
     install_report,
     read_codex_mcp,
     read_mcp_json,
     workspace_file_bytes,
 )
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.usefixtures("isolated_mcp_trust_home"),
+]
 
 
 class TestInstallModeTransitions:
@@ -151,7 +155,7 @@ class TestInstallModeTransitions:
         entry = read_mcp_json(fresh_workspace)["mcpServers"]["vaultspec-rag"]
         assert entry == {
             "command": "uv",
-            "args": ["run", "--no-sync", "python", "-m", "vaultspec_rag.server"],
+            "args": ["run", "--no-sync", "python", "-P", "-m", "vaultspec_rag.server"],
         }
 
     @pytest.mark.parametrize("missing_provider", ["claude", "codex"])
@@ -251,7 +255,7 @@ class TestInstallModeTransitions:
         protected_paths = [
             fresh_workspace / ".mcp.json",
             fresh_workspace / ".codex" / "config.toml",
-            fresh_workspace / ".vaultspec" / "mcp-ownership.json",
+            host_ownership(fresh_workspace),
             fresh_workspace / _RAG_MCP_REL,
         ]
         protected_before = {path: path.read_bytes() for path in protected_paths}
@@ -325,7 +329,7 @@ class TestInstallModeTransitions:
                 encoding="utf-8",
             )
         else:
-            (fresh_workspace / ".vaultspec" / "mcp-ownership.json").write_text(
+            host_ownership(fresh_workspace).write_text(
                 "{not-json",
                 encoding="utf-8",
             )
@@ -333,7 +337,7 @@ class TestInstallModeTransitions:
             pyproject,
             fresh_workspace / ".mcp.json",
             fresh_workspace / ".codex" / "config.toml",
-            fresh_workspace / ".vaultspec" / "mcp-ownership.json",
+            host_ownership(fresh_workspace),
             fresh_workspace / _RAG_MCP_REL,
         ]
         protected_before = {path: path.read_bytes() for path in protected_paths}
@@ -398,7 +402,7 @@ class TestInstallModeTransitions:
             source,
             fresh_workspace / ".mcp.json",
             fresh_workspace / ".codex" / "config.toml",
-            fresh_workspace / ".vaultspec" / "mcp-ownership.json",
+            host_ownership(fresh_workspace),
         ]
         protected_before = {path: path.read_bytes() for path in protected_paths}
         locks_before = {

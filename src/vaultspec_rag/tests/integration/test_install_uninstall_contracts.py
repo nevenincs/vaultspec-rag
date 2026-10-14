@@ -17,12 +17,16 @@ from ._install_helpers import (
     _RAG_RULE_REL,
     _RAG_SKILL_REL,
     _install,
+    host_ownership,
     read_codex_mcp,
     read_mcp_json,
     seed_core_mcp_source,
 )
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.usefixtures("isolated_mcp_trust_home"),
+]
 
 
 class TestUninstallSafety:
@@ -66,7 +70,7 @@ class TestUninstallSafety:
             pyproject,
             fresh_workspace / _RAG_MCP_REL,
             fresh_workspace / ".vaultspec" / "workspace.json",
-            fresh_workspace / ".vaultspec" / "mcp-ownership.json",
+            host_ownership(fresh_workspace),
             fresh_workspace / ".mcp.json",
             fresh_workspace / ".codex" / "config.toml",
         ]
@@ -78,7 +82,6 @@ class TestUninstallSafety:
             in {
                 "pyproject.toml.lock",
                 "workspace.json.lock",
-                "mcp-ownership.json.lock",
                 ".mcp.json.lock",
                 "config.toml.lock",
             }
@@ -151,9 +154,7 @@ class TestUserContentPreservation:
         # rag's entry got added
         assert "vaultspec-rag" in data["mcpServers"]
         # User entry NOT taken into managed set
-        ownership = (fresh_workspace / ".vaultspec" / "mcp-ownership.json").read_text(
-            encoding="utf-8"
-        )
+        ownership = host_ownership(fresh_workspace).read_text(encoding="utf-8")
         assert "my-tool" not in ownership
         assert "vaultspec-rag" in ownership
 
@@ -209,7 +210,7 @@ class TestProviderLifecycleAcceptance:
         _install(fresh_workspace)
         claude_path = fresh_workspace / ".mcp.json"
         codex_path = fresh_workspace / ".codex" / "config.toml"
-        ownership_path = fresh_workspace / ".vaultspec" / "mcp-ownership.json"
+        ownership_path = host_ownership(fresh_workspace)
 
         claude = read_mcp_json(fresh_workspace)
         claude["mcpServers"]["user-tool"] = {"command": "custom", "args": []}

@@ -2,6 +2,7 @@
 
 ## Vaultspec Skills
 
+- **start-vaultspec-rag**: Read when new to vaultspec-rag, orienting in a new project session, or starting a feature task. Explains runtime, ingestion, publication and retrieval architecture, then routes to selective capability references.
 - **vaultspec-adr**: Record a costly decision, place it within accepted decision coverage, and reconcile affected ADR wording.
 - **vaultspec-code-research**: Ground a decision or plan in how real code does it. Use when an ADR or plan needs a blueprint from this or another codebase.
 - **vaultspec-code-review**: Review completed planned work for safety, intent, and quality using applicable verification evidence. Use at the system's review cadence.

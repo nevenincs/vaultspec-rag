@@ -6,6 +6,11 @@ vaultspec-core install → RAG companion files seeded → vaultspec-core sync
 
 These tests use subprocess calls to the installed vaultspec-core CLI,
 targeting a temporary directory. No GPU or Qdrant required.
+
+Core enrolls an MCP launch only after the operator approved it, and records
+that approval in the user's home. Every command here runs against a throwaway
+home, and each workspace's launches are approved in it, the way an operator
+reviewing them at a terminal would.
 """
 
 from __future__ import annotations
@@ -15,8 +20,14 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+from .._mcp_consent import approve_core_launches
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 pytestmark = [pytest.mark.integration]
 
@@ -25,6 +36,21 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]
 _BUILTINS = _REPO_ROOT / "src" / "vaultspec_rag" / "builtins"
 _RAG_RULE = _BUILTINS / "rules" / "vaultspec-rag.builtin.md"
 _RAG_MCP_DEF = _BUILTINS / "mcps" / "vaultspec-rag.builtin.json"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def isolated_core_home(tmp_path_factory: pytest.TempPathFactory) -> Generator[Path]:
+    """Point the user's home at a throwaway directory for this module.
+
+    Core's ownership and approval records live there. The subprocesses inherit
+    it and the in-process approvals below write to it, so nothing here reads or
+    writes the operator's own.
+    """
+    home = tmp_path_factory.mktemp("core-home")
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("HOME", str(home))
+        patch.setenv("USERPROFILE", str(home))
+        yield home
 
 
 def _seed_rag(root: Path) -> None:
@@ -56,7 +82,13 @@ def _run_core(
     target: Path,
     timeout: int = 60,
 ) -> subprocess.CompletedProcess[str]:
-    """Run a vaultspec-core CLI command targeting a directory."""
+    """Run a vaultspec-core CLI command targeting a directory.
+
+    The command runs from *target* itself. A top-level ``sync --target`` reads
+    its sources from the working directory's workspace, so running it from
+    anywhere else would propagate that workspace's sources, not the ones this
+    test seeded.
+    """
     cmd = [
         sys.executable,
         "-m",
@@ -69,6 +101,7 @@ def _run_core(
         cmd,
         capture_output=True,
         text=True,
+        cwd=target,
         timeout=timeout,
         encoding="utf-8",
         errors="replace",
@@ -88,8 +121,10 @@ def _build_workspace(root: Path) -> Path:
     result = _run_core("install", target=root)
     assert result.returncode == 0, f"install failed: {result.stderr}"
 
-    # Step 2: seed RAG companion files at the flat fold via rag's seeder
+    # Step 2: seed RAG companion files at the flat fold via rag's seeder, and
+    # approve the launches the workspace now defines
     _seed_rag(root)
+    approve_core_launches(root)
 
     # Step 3: sync
     _run_core("sync", target=root)
@@ -108,24 +143,25 @@ def test_failed_core_command_does_not_reuse_fixture_state(tmp_path: Path) -> Non
 
 
 def _clone_workspace(source: Path, destination: Path) -> Path:
-    """Copy a built workspace to *destination* and re-anchor its MCP ownership.
+    """Copy a built workspace to *destination* and re-anchor its MCP state.
 
     Every fixture below needs the same install-seed-sync base, and each core
     subprocess costs an interpreter start plus a full package import, so
     rebuilding that base four times dominates this module's runtime. Copying it
-    is equivalent with one caveat: core records the absolute path of every
-    provider MCP config it owns in ``.vaultspec/mcp-ownership.json``, so a bare
-    copy carries paths pointing back at *source*. One ``spec mcps sync``
-    resolves the targets from ``--target`` and rewrites the ownership entries to
-    *destination*, which is what makes the clone indistinguishable from a
-    freshly built workspace rather than one aimed at another directory.
+    is equivalent with one caveat: core keeps which entries it owns, and which
+    launches the operator approved, in the user's home keyed by the workspace
+    root, so a bare copy is a workspace that owns nothing and approved nothing.
+    Approving the copy's launches and adopting its entries with one forced
+    ``spec mcps sync`` is what makes the clone indistinguishable from a freshly
+    built workspace rather than one aimed at another directory.
     """
     shutil.copytree(source, destination)
-    _run_core("spec", "mcps", "sync", target=destination)
+    approve_core_launches(destination)
+    _run_core("spec", "mcps", "sync", "--force", target=destination)
     return destination
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def base_workspace(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """One built workspace the per-class fixtures clone instead of rebuilding.
 
@@ -285,6 +321,7 @@ def reinstalled(
     # Reinstall + re-seed
     _run_core("install", target=root)
     _seed_rag(root)
+    approve_core_launches(root)
     _run_core("sync", target=root)
     _run_core("spec", "mcps", "sync", target=root)
     assert preserved.read_bytes() == preserved_bytes, "reinstall changed vault content"

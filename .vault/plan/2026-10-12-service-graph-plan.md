@@ -9,7 +9,7 @@ related:
   - '[[2026-03-07-vaultgraph-cache-adr]]'
 modified: '2026-10-13'
 body_schema: body-v2
-body_hash: 'sha256:f5052dcbc62d26332a92910b563ecd8e0c816c3898fc83077100217f5403b460'
+body_hash: 'sha256:da9e812d665d42ff38de25a319bec0a75cfff7a2eeb579ae324b7bb2482ed814'
 ---
 
 # `service-graph` plan
@@ -31,7 +31,7 @@ storage deletion is required for this work.
 - [x] `S01` - Remove synchronous graph construction from search and verify lifecycle races and live latency; `src/vaultspec_rag/graph_cache.py, search, service.py, _service_eviction.py, tests`.
 - [x] `S02` - Profile and optimize canonical graph calculation separately while preserving graph and filesystem safety semantics; `vaultspec-core/src/vaultspec_core graph, config, core/corpus_io.py and covering tests`.
 - [x] `S03` - Profile cold graph construction with py-spy and process I/O, CPU, memory and handles; optimize measured work and verify cache and filesystem safety; `vaultspec-core/src/vaultspec_core/core/corpus_io.py, graph, config, scanner, covering tests and dev profiling instrument`.
-- [x] `S04` - Repair integration failures exposed by full CI and verify the combined recovery and graph changes through one RAG pull request; `src/vaultspec_rag tests and affected canonical runtime owners, existing execution records`.
+- [ ] `S04` - Repair integration failures exposed by full CI and verify the combined recovery and graph changes through one RAG pull request; `src/vaultspec_rag tests and affected canonical runtime owners, existing execution records`.
 
 ## Parallelization
 

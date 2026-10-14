@@ -19,12 +19,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Unpack
 
 import pytest
+from vaultspec_core.core.enums import McpScope
 from vaultspec_core.core.manifest import (
     write_manifest,
 )
+from vaultspec_core.core.mcps import ownership_path
 
 from ...builtins import list_builtins
 from ...commands._install import _InstallRunOptions, install_run
+from .._mcp_consent import approve_install_launches
 
 if TYPE_CHECKING:
     from ...commands._models import InstallReport
@@ -41,7 +44,6 @@ _RAG_NON_MCP_BUILTIN_REL = Path(".vaultspec") / next(
 _REQUIRED_MCP_RELATIVES = (
     Path(".mcp.json"),
     Path(".codex") / "config.toml",
-    Path(".vaultspec") / "mcp-ownership.json",
     Path(".vaultspec") / "providers.json",
     Path(".vaultspec") / "workspace.json",
     _RAG_MCP_REL,
@@ -108,9 +110,15 @@ def _node_signature(path: Path) -> tuple[str, str | int, bool]:
     return ("node", stat.S_IFMT(path.lstat().st_mode), path.is_dir())
 
 
+def host_ownership(target: Path) -> Path:
+    """Return where core keeps the MCP ownership of *target*: the user's home."""
+    return ownership_path(target, McpScope.PROJECT)
+
+
 def required_mcp_transaction_inventory(
     target: Path,
 ) -> dict[str, tuple[tuple[str, str | int, bool] | None, bytes | None]]:
+    """Capture every node an install transaction may mutate, ownership included."""
     required = (
         *(target / relative for relative in _REQUIRED_MCP_RELATIVES),
         target / "pyproject.toml",
@@ -119,13 +127,19 @@ def required_mcp_transaction_inventory(
         *required,
         *(path.with_suffix(path.suffix + ".lock") for path in required),
     )
-    return {
+    inventory = {
         path.relative_to(target).as_posix(): (
             _node_signature(path) if path.exists() or path.is_symlink() else None,
             path.read_bytes() if path.is_file() else None,
         )
         for path in paths
     }
+    ownership = host_ownership(target)
+    inventory["<host>/mcp-ownership.json"] = (
+        _node_signature(ownership) if ownership.exists() else None,
+        ownership.read_bytes() if ownership.is_file() else None,
+    )
+    return inventory
 
 
 def create_windows_junction(path: Path, target: Path) -> None:
@@ -156,6 +170,7 @@ def _install(target: Path, **overrides: Unpack[_InstallRunOptions]) -> InstallRe
         "provision": False,
     }
     options.update(overrides)
+    approve_install_launches(target, **options)
     return install_run(path=target, **options)
 
 
@@ -168,16 +183,22 @@ def seed_core_mcp_source(target: Path) -> None:
 
 
 @pytest.fixture()
-def fresh_workspace(tmp_path: Path) -> Path:
-    """An empty directory rag will bootstrap from scratch."""
+def fresh_workspace(tmp_path: Path, isolated_mcp_trust_home: None) -> Path:
+    """An empty directory rag will bootstrap from scratch.
+
+    Depends on ``isolated_mcp_trust_home`` directly so that the ownership and
+    approvals an install records land in a throwaway home, never the operator's.
+    """
+    _ = isolated_mcp_trust_home
     ws = tmp_path / "workspace"
     ws.mkdir()
     return ws
 
 
 @pytest.fixture()
-def installed_workspace(tmp_path: Path) -> Path:
+def installed_workspace(tmp_path: Path, isolated_mcp_trust_home: None) -> Path:
     """An empty directory with rag freshly installed (post-sync)."""
+    _ = isolated_mcp_trust_home
     ws = tmp_path / "workspace"
     ws.mkdir()
     _install(ws)

@@ -1,0 +1,58 @@
+# Code indexing and chunk production
+
+Full/incremental code orchestration, CPU AST/text chunks, worker queues and drift recovery. Streaming and publication capabilities own shared encoding/write and proof mechanics.
+
+Read when: code indexing; chunk IDs; incremental drift; producer/consumer shutdown.
+
+## Modules
+
+| Module                                                                                                                | Responsibility                                                                                                                                                                            | Evidence                                       |
+| --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| [src/vaultspec_rag/cli/\_gpu_errors.py](../../../../src/vaultspec_rag/cli/_gpu_errors.py)                             | Renders GPU ownership refusals and torch/CUDA/MPS remediation from capability probes or compute failures.                                                                                 | [s1-0035](public-api-cli-part-02.md)           |
+| [src/vaultspec_rag/cli/\_gpu_lease.py](../../../../src/vaultspec_rag/cli/_gpu_lease.py)                               | Coordinates borrower lease, compatible service pause/safe-snapshot/work/resume, retaining the lease if resume cannot be acknowledged.                                                     | [s1-0035](public-api-cli-part-02.md)           |
+| [src/vaultspec_rag/cli/\_index.py](../../../../src/vaultspec_rag/cli/_index.py)                                       | Registers index/clean, dry-run discovery, audit routing and service publication or explicit GPU borrowing. Clean requires a source and confirmed execution, including --yes for JSON.     | [s1-0035](public-api-cli-part-02.md)           |
+| [src/vaultspec_rag/cli/\_preprocess.py](../../../../src/vaultspec_rag/cli/_preprocess.py)                             | Registers list/check/approve/revoke/run-one/status commands, enforcing the hook gate before diagnostic preprocessing without indexing.                                                    | [s1-0038](public-api-cli-part-03.md)           |
+| [src/vaultspec_rag/indexer/__init__.py](../../../../src/vaultspec_rag/indexer/__init__.py)                            | Reexports AST/text chunking, language map, source indexers, results and document preparation; broad package behavior in its docstring is not independently demonstrated.                  | [s1-0049](code-indexing-part-01.md)            |
+| [src/vaultspec_rag/indexer/\_ast_chunker.py](../../../../src/vaultspec_rag/indexer/_ast_chunker.py)                   | Parses tree-sitter source into contextual six-field chunks, recursively splits oversized nodes/leaves, groups siblings and merges small adjacent chunks.                                  | [s1-0049](code-indexing-part-01.md)            |
+| [src/vaultspec_rag/indexer/\_checkpoint_common.py](../../../../src/vaultspec_rag/indexer/_checkpoint_common.py)       | Coordinates compatible run generations, publication receipt recovery/replay, mutation callbacks, confirmed deletions and proof/metadata/generation finalization.                          | [s1-0049](code-indexing-part-01.md)            |
+| [src/vaultspec_rag/indexer/\_chunk_producer.py](../../../../src/vaultspec_rag/indexer/_chunk_producer.py)             | Produces code chunks serially or in spawn pools with bounded futures, batch preprocessing, weighted queue backpressure, cancellation and consumer-failure checks.                         | [s1-0049](code-indexing-part-01.md)            |
+| [src/vaultspec_rag/indexer/\_chunk_worker.py](../../../../src/vaultspec_rag/indexer/_chunk_worker.py)                 | Hashes/caps/decodes sources, applies routed preprocessing/cache outcomes and emits code AST/text chunks or provenance-rich document streams with distinct disappearance/failure handling. | [s1-0157](code-indexing-part-02.md)            |
+| [src/vaultspec_rag/indexer/\_chunking.py](../../../../src/vaultspec_rag/indexer/_chunking.py)                         | Defines structural text splitting/exact offsets, language/grammar mappings, separate conventional admission extensions, AST node sets and binary sampling.                                | [s1-0157](code-indexing-part-02.md)            |
+| [src/vaultspec_rag/indexer/\_codebase_indexer.py](../../../../src/vaultspec_rag/indexer/_codebase_indexer.py)         | Wires discovery/producer/consumer/lifecycle/commit collaborators and serializes preflighted full/incremental publication with stat hashing, ingest barriers and policy-epoch checks.      | [s1-0157](code-indexing-part-02.md)            |
+| [src/vaultspec_rag/indexer/\_codebase_preprocess.py](../../../../src/vaultspec_rag/indexer/_codebase_preprocess.py)   | Resolves run preprocessing context, resets counters, marks disabled transforms stale, excludes disabled work and accumulates worker outcomes.                                             | [s1-0157](code-indexing-part-02.md)            |
+| [src/vaultspec_rag/indexer/\_consumer_pipeline.py](../../../../src/vaultspec_rag/indexer/_consumer_pipeline.py)       | Coordinates CPU chunk producers and one weighted queue consumer for encoding/writes, resume skips, confirmed checkpoints and bounded shutdown.                                            | [s1-0051](content-admission-policy-part-01.md) |
+| [src/vaultspec_rag/indexer/\_drift_owner.py](../../../../src/vaultspec_rag/indexer/_drift_owner.py)                   | Deletes superseded code points before reopening ledger evidence, handles digest collisions and defers paths after bounded retries.                                                        | [s1-0158](document-processing-part-06.md)      |
+| [src/vaultspec_rag/indexer/\_generation_lifecycle.py](../../../../src/vaultspec_rag/indexer/_generation_lifecycle.py) | Opens code checkpoints and owns drift repair, build naming/lost-evidence handling, storage reconciliation and breadth-before-pointer publication.                                         | [s1-0158](document-processing-part-06.md)      |
+| [src/vaultspec_rag/indexer/\_incremental_commit.py](../../../../src/vaultspec_rag/indexer/_incremental_commit.py)     | Scopes code supersede to selected paths, invokes chunk/embed, cleans introduced IDs on ordinary failure and checkpoints obsolete deletes before publication.                              | [s1-0053](document-processing-part-01.md)      |
+| [src/vaultspec_rag/indexer/\_index_lifecycle.py](../../../../src/vaultspec_rag/indexer/_index_lifecycle.py)           | Wraps locked index operations with cooperative checkpoints, started/failed/completed events and persistent activity-clock touches.                                                        | [s1-0053](document-processing-part-01.md)      |
+
+## Selective evidence parts
+
+Choose the part for the files or behavior you need; do not load every part.
+
+- [s1-0035](public-api-cli-part-02.md): __init__.py, \_app.py, \_cli_format.py, \_core.py, \_gpu_errors.py, \_gpu_lease.py, \_index.py.
+- [s1-0038](public-api-cli-part-03.md): \_preprocess.py, \_process.py, \_progress.py, \_provision_progress.py, \_render.py.
+- [s1-0049](code-indexing-part-01.md): __init__.py, \_ast_chunker.py, \_checkpoint_common.py, \_chunk_producer.py.
+- [s1-0051](content-admission-policy-part-01.md): \_config_epoch.py, \_consumer_pipeline.py, \_content_discovery.py, \_content_policy.py, \_document_checkpoint.py, \_document_file.py, \_document_identity.py.
+- [s1-0053](document-processing-part-01.md): \_html.py, \_ignore_specs.py, \_incremental_commit.py, \_index_lifecycle.py, \_index_schema.py, \_pool_guard.py, \_preprocess_approval.py, \_preprocess_cache.py, \_preprocess_config.py, \_preprocess_entry.py, \_preprocess_glue.py, \_preprocess_runner.py, \_preprocess_schema.py.
+- [s1-0054](publication-integrity-part-02.md): \_publication_proof.py, \_resolved_policy.py, \_resource_ceilings.py, \_reuse.py, \_route_migration.py, \_run_checkpoint.py.
+- [s1-0086](publication-integrity-part-06.md): test_code_consumer_progress.py, test_code_file_security.py, test_code_index_symlinks.py, test_code_pipeline_retained_ids.py, test_code_rebuild_stale_evidence.py.
+- [s1-0089](content-admission-policy-part-02.md): test_document_index_symlinks.py, test_document_result_shaping.py, test_document_search_validation.py, test_document_store_search.py, test_document_unit_bounding.py, test_domain.py, test_donor_admission.py, test_donor_embedding_identity.py, test_embeddings_dependencies.py, test_encode_bucket_planner.py, test_encode_hygiene_unit.py, test_env_boolean_dialects.py, test_env_credentials.py.
+- [s1-0095](publication-integrity-part-09.md): test_index_run_ledger_publication_reads.py, test_index_run_ledger_publication_receipts.py, test_index_run_ledger_recovery.py, test_index_run_ledger_schema.py, test_indexer_unit.py.
+- [s1-0147](service-lifecycle-part-22.md): test_store_integration.py, test_targeted_reindex_integration.py, test_teardown_budget.py, test_vault_chunking_integration.py, test_vault_evidence_gate.py, test_vault_payload_fields.py, test_vault_search_adapter_parity.py, test_vault_true_incremental.py, test_watcher_config.py, test_watcher_content_admission.py, test_watcher_control.py.
+- [s1-0157](code-indexing-part-02.md): \_chunk_worker.py, \_chunking.py, \_codebase_indexer.py, \_codebase_preprocess.py.
+- [s1-0158](document-processing-part-06.md): \_document_indexer.py, \_donor_candidates.py, \_drift_owner.py, \_file_state.py, \_generation_lifecycle.py, \_hook_sandbox.py.
+- [s1-0159](gpu-model-runtime-part-04.md): \_stat_gate.py, \_streaming.py, \_streaming_types.py, \_support_budget.py, \_vault_checkpoint.py, \_vault_fingerprint.py, \_vault_incremental.py.
+
+## Connections
+
+- [Durable publication and index integrity](publication-integrity.md): Generation lifecycle checkpoints confirmed slices, reconciles drift and publishes breadth before the served pointer. Evidence: s1-0051 pipeline; s1-0158 generation lifecycle; s1-0054 receipts/publication.
+
+## Limits and reconciliations
+
+Findings describe the inspected snapshot. External dependency internals and operational outcomes were not verified. Test assertions and recorded benchmark results do not establish a current passing run.
+
+- Support caps, consumer shutdown, write settlement and drift recovery remain static implementation evidence.
+- The 10 MiB producer constant is distinct from the configured source cap; unsettled failures bypass normal cleanup.
+- Preprocess cache docstring abbreviates the key to source hash/command/schema, while implementation fingerprints command or entry-point, options, extractor version, target, mode, byte cap and schema plus source path unless path-independent. Use the implemented cache identity: command/entry-point, options, extractor version, target, mode, byte cap, schema, and source path unless path-independent. The short docstring is incomplete.
+- Preprocess config docstring says malformed rules are dropped in non-strict mode, but unsupported config schema, missing/invalid target and extractor_version raise PreprocessPolicyError directly. Preserve direct PreprocessPolicyError for unsupported schema and missing/invalid target or extractor_version. Non-strict malformed-rule degradation is narrower than the docstring; intended wording remains unresolved.
