@@ -54,9 +54,8 @@ pytestmark = pytest.mark.unit
 def compiled_monitor_required() -> Generator[None]:
     """Resolve the monitor these tests run, the way a service start resolves it.
 
-    The session names a stand-in through the operator settings so that every
-    other test finds a monitor in place. These tests run the real executable,
-    so they clear both settings and let the resolver answer from this
+    These tests run the real executable, so they clear any monitor named
+    through the operator settings and let the resolver answer from this
     checkout's own digests: one that built its monitor is admitted by its own
     pin, and one that did not fails here with what the resolver says rather
     than passing against a file that is not a monitor.

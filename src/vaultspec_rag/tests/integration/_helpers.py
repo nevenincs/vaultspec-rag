@@ -497,17 +497,10 @@ def _service_env(
     # the status view (``<status dir>/service.json``). A single-level isolated
     # storage dir collapses both views onto one path and silently hides every
     # independent-repair and independent-cleanup contract.
-    #
-    # The session names a stand-in monitor through the operator settings so
-    # that a test which only provisions finds one in place. A real daemon runs
-    # its monitor, so it resolves the one this checkout pins instead, as a
-    # production start does.
     defaults: dict[str, Callable[[], str | None]] = {
         storage_key: lambda: str(tmp_path / "qdrant-server" / "storage"),
         qdrant_port_key: lambda: str(_get_ephemeral_qdrant_port()),
         cuda_ceiling_key: lambda: str(INTEGRATION_CUDA_CEILING_MIB),
-        EnvVar.MONITOR_BINARY.value: lambda: None,
-        EnvVar.MONITOR_BINARY_SHA256.value: lambda: None,
     }
     updates: dict[str, str | None] = {env_key: str(tmp_path)}
     updates.update(
