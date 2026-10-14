@@ -365,7 +365,7 @@ async def test_a_first_build_that_failed_without_points_is_a_first_build_again(
 
 async def test_an_in_process_index_builds_every_new_source_of_a_root(
     tmp_path: Path,
-    managed_facade_registry: ServiceRegistry,
+    managed_run_config: ServiceRegistry,
 ) -> None:
     """The in-process route admits each selected source on its own history.
 
@@ -395,13 +395,13 @@ async def test_an_in_process_index_builds_every_new_source_of_a_root(
     assert set(published_content_identities(root, PublicSourceType.VAULT))
     assert set(published_content_identities(root, PublicSourceType.CODE))
     assert published_content_identities(root, PublicSourceType.DOCUMENT) == {}
-    assert managed_facade_registry.vault_doc_count(root) > 0
-    assert managed_facade_registry.code_chunk_count(root) > 0
+    assert managed_run_config.vault_doc_count(root) > 0
+    assert managed_run_config.code_chunk_count(root) > 0
 
 
 async def test_an_in_process_index_of_a_published_source_stays_incremental(
     tmp_path: Path,
-    managed_facade_registry: ServiceRegistry,
+    managed_run_config: ServiceRegistry,
 ) -> None:
     """A second in-process index of the same source updates rather than builds."""
     from ... import api
@@ -414,29 +414,42 @@ async def test_an_in_process_index_of_a_published_source_stays_incremental(
     second = api.index(root, reporter=NullProgressReporter())
 
     assert not second.first_build
-    assert managed_facade_registry.vault_doc_count(root) > 0
+    assert managed_run_config.vault_doc_count(root) > 0
 
 
 async def test_an_in_process_index_refuses_over_points_without_a_publication(
     tmp_path: Path,
-    managed_facade_registry: ServiceRegistry,
+    managed_run_config: ServiceRegistry,
 ) -> None:
-    """The in-process route keeps the typed refusal, and the points with it.
+    """The in-process route keeps the refusal, and the points with it.
+
+    In process there is no job record to carry a typed kind, so the refusal
+    is the failure the indexer raises; what makes it the same refusal is that
+    its text classifies as ``full_reindex_required`` through the one
+    classifier every adapter reads. Asserting the exception class instead
+    would pin which layer happens to raise it.
 
     Mutation proven by dropping the never-built test from
-    ``api.index_codebase``: the call then resets the collection and the
-    stored point is gone.
+    ``api.index_codebase``: the call then runs a first build over this
+    content instead of refusing, so nothing is raised at all.
     """
     from ... import api
-    from ..._job_errors import JobError
+    from ..._job_errors import JobErrorKind, classify_error_text
 
     root = tmp_path / "in-process-unaccounted"
     _write_code_files(root, 3, "unaccounted")
-    collection = _store_one_code_point(root, managed_facade_registry)
-    assert _collection_points(root, managed_facade_registry, collection) == 1
+    collection = _store_one_code_point(root, managed_run_config)
+    assert _collection_points(root, managed_run_config, collection) == 1
 
-    with pytest.raises(JobError) as refused:
-        api.index_codebase(root, api.CodeIndexOptions(reporter=NullProgressReporter()))
+    # The exception class is deliberately not pinned: what makes this the
+    # same refusal is the classification below.
+    with pytest.raises(Exception) as refused:
+        api.index_codebase(
+            root,
+            api.CodeIndexOptions(reporter=NullProgressReporter()),
+        )
 
-    assert refused.value.error_kind.value == "full_reindex_required"
-    assert _collection_points(root, managed_facade_registry, collection) == 1
+    assert classify_error_text(str(refused.value)) is (
+        JobErrorKind.FULL_REINDEX_REQUIRED
+    )
+    assert _collection_points(root, managed_run_config, collection) == 1
