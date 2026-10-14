@@ -5,7 +5,7 @@ tags:
 date: '2026-10-13'
 modified: '2026-10-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:ac2677e77febcae634a08073cebc44ad4cf4605fb07b7d7cc3b752f43c440de7'
+body_hash: 'sha256:a36fc568441327e20dfffb5bbad80dec7674f4a227e4ac08c24410a0042dae05'
 related:
   - "[[2026-10-13-service-runtime-plan]]"
 ---
@@ -111,8 +111,31 @@ related:
 - `S06` `M` `docs/service-mode.md`
 - `S06` `verify:` `docs tests 114 pass` -> `pass`
 - `S06` `by:` `vaultspec-standard-executor`
+- `S08` `M` `src/vaultspec_rag/_job_admission.py`
+- `S08` `M` `src/vaultspec_rag/cli/_index.py`
+- `S08` `M` `src/vaultspec_rag/indexer/_checkpoint_common.py`
+- `S08` `M` `src/vaultspec_rag/indexer/_generation_lifecycle.py`
+- `S08` `M` `src/vaultspec_rag/job_models.py`
+- `S08` `M` `src/vaultspec_rag/job_persistence.py`
+- `S08` `M` `src/vaultspec_rag/server/_routes.py`
+- `S08` `M` `src/vaultspec_rag/service.py`
+- `S08` `M` `src/vaultspec_rag/store_catalog.py`
+- `S08` `M` `src/vaultspec_rag/store_collections.py`
+- `S08` `M` `src/vaultspec_rag/store_runtime.py`
+- `S08` `M` `src/vaultspec_rag/tests/_publication_assertions.py`
+- `S08` `A` `src/vaultspec_rag/tests/integration/test_first_build_lifecycle.py`
+- `S08` `M` `src/vaultspec_rag/tests/integration/test_service_job_control.py`
+- `S08` `M` `src/vaultspec_rag/tests/integration/test_service_jobs_routes_mutations.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_api_clean_admission.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_cli_index_summary.py`
+- `S08` `A` `src/vaultspec_rag/tests/test_first_build_admission.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_publication_read_paths.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_served_pointer_validation.py`
+- `S08` `verify:` `first-build admission 19 unit and 7 integration (GPU lock) pass; unit lane 7916 pass, only monitor and one free-space race` -> `pass`
+- `S08` `by:` `vaultspec-high-executor`
 
 ## Notes
 
 - `S04` doctor, status, qdrant and backend choice read the planned service interpreter
 - `S07` Monitor replaced by a lab-only readiness stand-in until the compiled monitor ships; Windows sandbox not run while the operator's service owns the GPU; first index needs --rebuild (audit first-index)
+- `S08` the in-process --borrow-gpu and api.index paths still refuse a new root; raised with the user

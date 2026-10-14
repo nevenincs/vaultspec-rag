@@ -11,7 +11,7 @@ related:
   - '[[2026-10-12-destructive-rebuild-lifecycle-adr]]'
 modified: '2026-10-14'
 body_schema: body-v2
-body_hash: 'sha256:627d63f6aed38111bb44ff9ee26d78f030635d36e681bdf49579c92e1b8b448d'
+body_hash: 'sha256:466235884a1d5979e0ff1c6c2a67e2260b7d5e504522b39f77909497e85d1c9f'
 ---
 
 <!-- RETIRED: S05 -->
@@ -34,7 +34,7 @@ Make every install route start the service with one command, and make every inst
 - [x] `S04` - make server doctor and status report a failed or absent service truthfully; `src/vaultspec_rag/cli/_service_doctor.py`.
 - [x] `S06` - trim install and start help to user-facing options and rewrite the install docs around one command; `src/vaultspec_rag/cli/_install.py`.
 - [ ] `S07` - verify every install route in the clean-machine GPU lab on Linux and Windows; `X:/project/vaultspec-rag-lab`.
-- [ ] `S08` - admit the first index of a new source as a full build, per the 2026-10-14 amendment; `src/vaultspec_rag/_job_admission.py`.
+- [x] `S08` - admit the first index of a new source as a full build, per the 2026-10-14 amendment; `src/vaultspec_rag/_job_admission.py`.
 
 ## Parallelization
 
