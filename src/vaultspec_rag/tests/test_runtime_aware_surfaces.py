@@ -265,6 +265,45 @@ class TestTheDoctorVerbFromALauncherThatCannotServe:
         # Nothing is running, which is not ready whatever the rows say.
         assert result.exit_code != 0
         assert envelope["data"]["status"] == "not_running"
+        assert envelope["data"]["next_action"] == server_start_command()
+
+    def test_a_live_service_reads_ready_though_no_runtime_exists_yet(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guard assertion: an environment nobody uses blocked the verdict.
+
+        A project client beside a live, healthy host service was told
+        "dependencies not ready" and exited 1, because the plan's own torch
+        row - the runtime that does not exist yet, reported as unchecked -
+        was folded into the top line. Nothing about the service answering
+        requests was untrue; a start from here would have attached to it.
+
+        Mutation check: folding the dependency rows in under a runtime plan
+        reads this as ``dependencies_not_ready`` and fails the status and
+        exit-code assertions; the service runtime axis still reports the
+        absent runtime, which the last assertion holds.
+        """
+        from ._cli_helpers import _running_service_record, _status_contract_server
+
+        pin_install_role(monkeypatch, InstallRole.HOST)
+        pin_daemon_capability(monkeypatch, ComputeCapability.CPU_ONLY_BUILD)
+        server, thread = _status_contract_server(tmp_path)
+        try:
+            port = server.server_address[1]
+            with _running_service_record(tmp_path / "live", port):
+                result = runner.invoke(
+                    app, ["--target", str(tmp_path), "server", "doctor", "--json"]
+                )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        envelope = json.loads(result.stdout)
+        assert envelope["data"]["status"] == "ready"
+        assert envelope["data"]["ready"] is True
+        assert result.exit_code == 0
+        assert envelope["data"]["service_runtime"]["ready"] is False
 
 
 @pytest.mark.usefixtures("isolated_status_dir")

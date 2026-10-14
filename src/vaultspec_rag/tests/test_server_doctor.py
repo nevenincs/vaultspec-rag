@@ -436,7 +436,7 @@ def test_a_starting_service_reads_as_starting_not_as_needing_a_restart() -> None
         "state": starting.value,
     }
 
-    ready, status = _overall_readiness({"ready": True}, service)
+    ready, status = _overall_readiness({"ready": True}, service, runtime_required=False)
 
     assert (ready, status) == (False, "starting")
     assert starting.label in _overall_label(ready, status)
@@ -458,7 +458,7 @@ def test_no_service_running_is_never_read_as_ready_whatever_dependencies_say() -
 
     absent: dict[str, object] = {"present": False, "live": False}
 
-    ready, status = _overall_readiness({"ready": True}, absent)
+    ready, status = _overall_readiness({"ready": True}, absent, runtime_required=False)
 
     assert (ready, status) == (False, "not_running")
     assert _doctor_next_action(status) == "vaultspec-rag server start"
@@ -480,7 +480,7 @@ def test_overall_readiness_is_not_ready_when_a_dependency_row_is_not_ready() -> 
         "state": ServiceLifecycle.RUNNING.value,
     }
 
-    ready, status = _overall_readiness({"ready": False}, live)
+    ready, status = _overall_readiness({"ready": False}, live, runtime_required=False)
 
     assert (ready, status) == (False, "dependencies_not_ready")
 
@@ -503,9 +503,14 @@ def test_overall_readiness_needs_a_live_service_and_every_dependency() -> None:
     }
     absent: dict[str, object] = {"present": False, "live": False}
 
-    assert _overall_readiness({"ready": False}, live)[0] is False
-    assert _overall_readiness({"ready": True}, absent)[0] is False
-    assert _overall_readiness({"ready": True}, live) == (True, "ready")
+    def readiness(deps_ready: bool, service: dict[str, object]) -> tuple[bool, str]:
+        return _overall_readiness(
+            {"ready": deps_ready}, service, runtime_required=False
+        )
+
+    assert readiness(False, live)[0] is False
+    assert readiness(True, absent)[0] is False
+    assert readiness(True, live) == (True, "ready")
 
 
 def test_doctor_exit_code_is_generic_over_overall_readiness() -> None:

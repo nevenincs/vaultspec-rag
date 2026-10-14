@@ -117,7 +117,9 @@ def service_doctor(
     service = _live_service_axis()
     mode = _mode_floor_axis(_resolve_doctor_target(ctx), planned, launching)
     runtime = _service_runtime_axis(planned)
-    overall_ready, status = _overall_readiness(report, service)
+    overall_ready, status = _overall_readiness(
+        report, service, runtime_required=planned.runtime_required
+    )
     next_action = _doctor_next_action(status)
     if json_output:
         envelope = {
@@ -292,6 +294,8 @@ def _live_service_axis() -> dict[str, object]:
 def _overall_readiness(
     report: dict[str, object],
     service: dict[str, object],
+    *,
+    runtime_required: bool,
 ) -> tuple[bool, str]:
     """Fold the two axes into an honest top-line ``(ready, status)``.
 
@@ -308,8 +312,16 @@ def _overall_readiness(
       when every dependency row is also ready (or not applicable), status
       ``ready`` / ``dependencies_not_ready``. Generic over whatever rows the
       dependency report carries.
+
+    *runtime_required* says the daemon would run from an environment that
+    does not exist yet, which is what the dependency rows then describe:
+    nothing. They are reported as facts about the environment in front of
+    the operator and kept out of this verdict, because a live, healthy
+    service answering requests does not become unready over an environment
+    it does not use - the service runtime axis is where that environment is
+    reported, and a start is what creates it.
     """
-    deps_ready = bool(report.get("ready"))
+    deps_ready = bool(report.get("ready")) or runtime_required
     if not service.get("present"):
         return False, "not_running"
     if not service.get("live"):
