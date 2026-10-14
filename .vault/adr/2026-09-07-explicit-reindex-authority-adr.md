@@ -10,9 +10,9 @@ related:
   - '[[2026-10-12-destructive-rebuild-lifecycle-adr]]'
 supersedes:
   - '2026-07-25-index-completeness-guard-adr'
-modified: '2026-10-12'
+modified: '2026-10-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:bb740ec06d1a87cfa6ba5fb389f6d7b02bf0e38c46e524229a8809346c300a66'
+body_hash: 'sha256:43f6cce9064c77cbaa1e9e83cfbe40e02cfe6c46331487290419e6b0a051aeca'
 ---
 
 # `explicit-reindex-authority` adr: `Require explicit authority for full-corpus indexing` | (**status:** `accepted`)
@@ -45,7 +45,11 @@ Incremental indexing is admitted as bounded change reconciliation, but its imple
 
 The user authorized reset-first rebuilds and concurrent search on 2026-10-12. For explicit rebuilds, `2026-10-12-destructive-rebuild-lifecycle-adr` replaces this record's non-destructive-publication constraint and its statements that generation-scoped preservation remains stable or untouched. A newly admitted rebuild deletes its selected old index before ingestion, searches the growing replacement, and certifies completeness at the end. Resume and retry of that rebuild preserve only its new committed progress. Incremental refusal, explicit authority, backend identity, attribution, and bounded automatic scope remain binding. The earlier preservation wording below records the prior dependency, not the current rebuild contract.
 
-### Retained original ruling, subject to the amendment above
+### 2026-10-14: the first index of a new source
+
+`2026-10-12-destructive-rebuild-lifecycle-adr` (2026-10-14 amendment) admits an explicit incremental request for a source that has never completed a publication and holds no stored points as that source's first full build, and reports it as the effective operation. Every other first-run, compatibility or scope-loss case keeps the typed refusal below, and watcher and integrity origins never start one.
+
+### Retained original ruling, subject to the amendments above
 
 - No incremental method may call a full-index method or silently discard caller scope.
 - A full-corpus operation requires an explicit rebuild operation in the admitted job specification or a direct full-index API call.
