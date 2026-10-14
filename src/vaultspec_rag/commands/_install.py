@@ -464,7 +464,7 @@ def _mcp_preview_projection(
     """
     topology = inspect_required_mcp_topology(target)
     with tempfile.TemporaryDirectory(prefix="vaultspec-rag-mcp-preview-") as raw:
-        projection = Path(raw) / "workspace"
+        projection = Path(raw).resolve() / "workspace"
         projection.mkdir()
 
         source_vaultspec = target / WORKSPACE_DIR
@@ -1020,7 +1020,7 @@ def _install_run(request: _InstallRunRequest) -> InstallReport:
 
     consent = _review_rag_launch(request, target)
     with tempfile.TemporaryDirectory(prefix="vaultspec-rag-mcp-replay-") as raw:
-        replay_target = Path(raw) / "workspace"
+        replay_target = Path(raw).resolve() / "workspace"
         topology.populate_projection(replay_target)
         with projected_core_home(target, replay_target) as host:
             Context().run(
