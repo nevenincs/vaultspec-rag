@@ -37,7 +37,15 @@ from ..commands._tool_torch import _run_repair
 from ..commands._uv_sync import _run_uv_sync_torch
 from ..config._types import EnvVar
 from ..monitor_process import MonitorProcess
-from ..monitor_runtime._resolve import monitor_for_launch
+from ..monitor_runtime._assets import (
+    MONITOR_PROGRAM,
+    monitor_archive_name,
+    monitor_executable_name,
+)
+from ..monitor_runtime._pins import MonitorPin, PinProvenance
+from ..monitor_runtime._resolve import managed_monitor_path, monitor_for_launch
+from ..native_binary._install import file_sha256
+from ..native_binary._targets import host_target
 from ..operator_state._hardware import read_hardware
 from ..qdrant_runtime._resolve import reap_qdrant_orphan
 from ._planted_programs import (
@@ -81,6 +89,41 @@ def fresh_hardware_reading() -> Generator[None]:
         yield
     finally:
         read_hardware.cache_clear()
+
+
+def _install_managed_monitor() -> tuple[Path, MonitorPin]:
+    """Install a program where a release's managed monitor install belongs.
+
+    The managed directory is machine-wide and keyed by release and target
+    alone, so it is the one place every environment of a release resolves
+    through - the managed service runtime's interpreter included, which has
+    no monitor of its own beside it.
+
+    The program is a stock one that outlives its start and answers nothing:
+    what is under test is which file a process is created from. The pin is
+    built from the bytes installed, as a release's pin is built from the
+    bytes it published.
+
+    Returns:
+        The installed executable and the pin that admits it.
+    """
+    target = host_target()
+    version = "9.9.9"
+    directory = managed_monitor_path(version, target).parent
+    directory.mkdir(parents=True, exist_ok=True)
+    installed = plant_waiting_program(directory, MONITOR_PROGRAM)
+    pin = MonitorPin(
+        provenance=PinProvenance.DEVELOPMENT,
+        version=version,
+        tag="",
+        target=target,
+        archive_name=monitor_archive_name(version, target),
+        archive_sha256="0" * 64,
+        executable_name=monitor_executable_name(target),
+        executable_sha256=file_sha256(installed),
+    )
+    assert installed == managed_monitor_path(pin.version, pin.target)
+    return installed, pin
 
 
 def test_status_does_not_run_a_driver_tool_from_the_working_directory(
@@ -143,23 +186,26 @@ def test_install_sync_does_not_run_a_uv_from_the_working_directory(
 
 
 def test_the_monitor_is_not_started_from_the_working_directory(
-    checkout: Path, isolated_singleton_dirs: Path
+    checkout: Path, isolated_singleton_dirs: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The monitor that starts is the file resolution named, not the plant.
 
     The monitor is started on every service start, and what admits one is a
     digest, so a program of the right name proves nothing. This drives the
-    real start, with this checkout's own compiled monitor as the resolved
-    one - the same precondition the monitor lifecycle tests hold - and
-    asserts the image the started process was created from. The plants are
-    both shapes a lookup could answer with: a command script, which the
-    standard lookup finds through ``PATHEXT``, and a native program, which a
-    bare name handed to process creation starts.
+    real start against a real managed install - the tier a daemon started
+    from the managed service runtime always resolves through, because the
+    runtime's own interpreter has no monitor beside it - and asserts the
+    image the started process was created from. The plants are both shapes a
+    lookup could answer with: a command script, which the standard lookup
+    finds through ``PATHEXT``, and a native program, which a bare name handed
+    to process creation starts.
 
-    The image is read while the started process is alive, whether the start
-    goes on to succeed or not, because what is asserted is which file was
-    started and that is settled the moment it exists. Whether it then became
-    ready is reported after, as its own assertion.
+    The installed monitor is a stock program that outlives its start and
+    answers nothing, so the start ends at the wait for readiness. That is
+    after process creation, which is what is under test: which file a
+    process was created from is settled the moment the process exists, and
+    the image is read while it is alive. What a real monitor then does is the
+    lifecycle tests' subject.
 
     Mutation: replaced the resolved path with the bare program name in the
     start's argument vector and dropped ``executable`` from it, which is the
@@ -170,6 +216,7 @@ def test_the_monitor_is_not_started_from_the_working_directory(
     del isolated_singleton_dirs
     ran = plant_marking_program(checkout, "vaultspec-rag-monitor")
     planted = plant_waiting_program(checkout, "vaultspec-rag-monitor")
+    installed, pin = _install_managed_monitor()
     monitor = MonitorProcess(free_loopback_port())
 
     with managed_env(
@@ -178,11 +225,18 @@ def test_the_monitor_is_not_started_from_the_working_directory(
             EnvVar.MONITOR_BINARY_SHA256.value: None,
         }
     ):
+        # The digests of a release are what admit a monitor, and this
+        # checkout carries none until it compiles one. They are the test's
+        # stated input so that where the resolver looks, and what it admits,
+        # are production's throughout; the install above is a real file in
+        # the real managed directory.
+        monkeypatch.setattr(
+            "vaultspec_rag.monitor_runtime._resolve.monitor_pin", lambda _target: pin
+        )
         # Resolution is production's, and its answer is what the started
-        # process is held to below. A checkout with no monitor of its own
-        # fails here, with the resolver's own refusal, rather than passing
-        # over a start that never happened.
+        # process is held to below.
         resolved = monitor_for_launch()
+        assert resolved.path == installed
         images: list[str | None] = []
         done = threading.Event()
 
@@ -199,7 +253,7 @@ def test_the_monitor_is_not_started_from_the_working_directory(
         reader.start()
         refused: Exception | None = None
         try:
-            monitor.start(timeout=20)
+            monitor.start(timeout=3)
         except Exception as exc:  # reported below, after the guard's own answer
             refused = exc
         finally:
@@ -213,7 +267,9 @@ def test_the_monitor_is_not_started_from_the_working_directory(
     )
     assert os.path.normcase(images[0]) != os.path.normcase(str(planted))
     assert not ran.exists(), "the working directory's monitor was started"
-    assert refused is None, f"the resolved monitor did not start: {refused}"
+    # The stand-in answers no page, so the start can only end at the wait.
+    assert refused is not None
+    assert "ready" in str(refused), refused
 
 
 @_windows_only

@@ -310,13 +310,36 @@ _ALLOWED: dict[str, tuple[int, str]] = {
     # the declared-sites check; exact restoration passed.
     "test_program_lookup_sites.py": (
         1,
-        "points the running program's recorded location at a temporary "
-        "directory, because the lookup finds what ships beside this "
-        "installation's own programs by asking where the running program is, "
-        "and that cannot be anywhere but the real environment without building "
-        "a second installation; planting a monitor in the real one would "
-        "change the machine the tests run on. The lookup, the planted file, "
-        "the search path and the resolution under test are all real",
+        "states the release digests that admit a monitor, because a checkout "
+        "carries none until it has compiled one and this guard is about where "
+        "a program is looked for, not about whether this machine built one. "
+        "The managed install, the planted programs, the search state, the "
+        "resolution and the process creation under test are all real",
+    ),
+    "test_monitor_pins.py": (
+        1,
+        "answers the distribution lookup with a metadata directory the test "
+        "wrote, because what is under test is how an installation's own "
+        "direct-URL record decides which pins it may accept, and this "
+        "installation has exactly one such record; reinstalling this package "
+        "four ways is not something a unit test can do. The record is a real "
+        "file read by the real metadata reader, and the judgement over this "
+        "checkout's own installation is asserted beside it without any "
+        "substitution",
+    ),
+    # Reducing this bound to two failed count growth; raising it to four failed
+    # the declared-sites check; exact restoration passed.
+    "test_monitor_resolution.py": (
+        3,
+        "two sites stand in for the directories this installation's own "
+        "programs are in - all of them, and the scripts directory alone - "
+        "because resolution looks beside the running program, which cannot be "
+        "anywhere but the real environment without building a second "
+        "installation, and planting a monitor in the real one would change "
+        "the machine the tests run on. The third states the release digests "
+        "for the one case that has no monitor installed at all, so the "
+        "launcher's refusal is reached on a checkout that built one too. "
+        "Every file, directory, digest and resolution step is real",
     ),
     "test_publication_scaling.py": (
         1,
@@ -631,7 +654,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "be",
     ),
     "conftest.py": (
-        5,
+        6,
         "install's torch and provisioning steps and the release-mismatch advice "
         "all branch on whether this is a host or a client installation, and the "
         "role is read from the distributions the running interpreter holds. The "
@@ -656,7 +679,12 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "service decides whether an environment that cannot run it itself is "
         "still provisioned for, and no test can give a runner a GPU or take "
         "one away from a workstation; the reading alone is replaced, and it "
-        "is exercised against the real machine in the hardware tests",
+        "is exercised against the real machine in the hardware tests. The "
+        "last site states that this installation carries no monitor digests, "
+        "for the cases about having no monitor at all: a checkout that "
+        "compiled one carries digests and has it installed, and no test can "
+        "unbuild it, so the one fact is stated and everything the readers do "
+        "with it runs unchanged",
     ),
     "test_server.py": (
         5,
