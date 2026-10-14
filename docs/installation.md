@@ -371,7 +371,7 @@ project:
 
    The setup also asks you to approve the MCP server launch it would enroll, and
    `--yes` does not answer that question: approval needs a person who has read the
-   command, or a grant made beforehand with `vaultspec-core spec mcps trust`. Without
+   command, or an approval granted beforehand. Without
    one, the setup completes and leaves the server unenrolled. See
    [Install the MCP server](mcp.md#install-the-mcp-server).
 

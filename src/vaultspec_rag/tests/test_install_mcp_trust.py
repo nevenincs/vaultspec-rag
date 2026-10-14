@@ -33,6 +33,7 @@ from ..commands._install import (
     _planned_launches,
     install_run,
 )
+from ..commands._mcp_trust import OWN_LAUNCH_UNAPPROVED
 from ._mcp_consent import dry_sync, grant_planned, owned_config_paths, rag_tags
 
 if TYPE_CHECKING:
@@ -80,16 +81,22 @@ def _providers(report: InstallReport) -> dict[str, dict[str, object]]:
 
 
 def _skipped_for_lack_of_approval(report: InstallReport) -> bool:
-    """Whether both providers skipped rag's launch and said how to approve it."""
+    """Whether both providers skipped rag's launch and one notice says what to run.
+
+    The notice replaces core's per-provider warning, which names a command a
+    tool install does not put on PATH. Mutation: dropping the replacement leaves
+    core's warning on each provider and no notice, and fails this check.
+    """
     providers = _providers(report)
-    return all(
+    skipped = all(
         ["vaultspec-rag", "[SKIP]"] in cast("list[object]", providers[host]["items"])
-        and any(
-            "vaultspec-core spec mcps trust" in str(warning)
+        and not any(
+            "spec mcps trust" in str(warning)
             for warning in cast("list[object]", providers[host]["warnings"])
         )
         for host in ("claude", "codex")
     )
+    return skipped and report.warnings.count(OWN_LAUNCH_UNAPPROVED) == 1
 
 
 def _enrolled(ws: Path) -> tuple[bool, bool]:
@@ -116,7 +123,7 @@ def _builtin_definition() -> str:
 
 
 class TestApprovalIsAskedOfAnOperator:
-    def test_nobody_to_ask_skips_the_launch_and_names_the_grant(
+    def test_nobody_to_ask_skips_the_launch_and_says_to_run_install(
         self, tmp_path: Path
     ) -> None:
         """No callback at all, the shape every unattended run has.
