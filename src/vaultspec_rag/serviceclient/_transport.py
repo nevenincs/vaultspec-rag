@@ -1045,6 +1045,7 @@ _POST_BODY_ROUTES: dict[str, str] = {
     "pause_service": "/pause",
     "resume_service": "/resume",
     "hand_off_monitor": "/monitor/handoff",
+    "reclaim_monitor": "/monitor/reclaim",
 }
 
 _JOBS_PARAMS = {

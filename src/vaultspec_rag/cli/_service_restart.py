@@ -117,6 +117,9 @@ def service_restart(
 
     stopped = _run_verb("stop", port)
     if stopped.get("ok") is not True:
+        if monitor_kept and resolved_port is not None:
+            # The daemon is still serving; its monitor must stay its own.
+            _try_http_admin("reclaim_monitor", {}, resolved_port)
         message = _step_message(stopped, "The service did not stop.")
         raise _fail_lifecycle(
             json_mode,

@@ -416,6 +416,22 @@ class MonitorProcess:
         self.handed_off = True
         return True
 
+    def reclaim(self) -> bool:
+        """Take back a monitor this daemon released, when it is not stopping after all.
+
+        A restart releases the monitor before its stop step, and that step can
+        fail with this daemon still serving. Clearing the release returns the
+        monitor to discovery and to this daemon's own stop, and the record no
+        longer keeps it open for a successor or carries its access link.
+        """
+        identity = self.identity
+        if not self.handed_off or identity is None or not self._running():
+            return False
+        self.identity = replace(identity, handoff_until=0.0, access="")
+        self._publish_identity()
+        self.handed_off = False
+        return True
+
     def _publish_identity(self) -> None:
         if self.identity is None:
             return

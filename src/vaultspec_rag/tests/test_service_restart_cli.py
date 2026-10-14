@@ -19,14 +19,16 @@ def _restart(
     steps: dict[str, dict[str, object]],
     released: object,
 ) -> tuple[int, list[dict[str, object]], list[str]]:
+    """Run restart with its steps replaced; *ran* lists verbs and admin calls."""
     ran: list[str] = []
 
     def run_verb(verb: str, _port: int | None) -> dict[str, object]:
         ran.append(verb)
         return steps[verb]
 
-    def release_monitor(*_args: object) -> object:
-        return released
+    def release_monitor(operation: object, *_args: object) -> object:
+        ran.append(str(operation))
+        return released if operation == "hand_off_monitor" else None
 
     # The real steps start and stop the machine's GPU service, which a unit
     # test cannot; replacing them pins the envelope composition alone.
@@ -53,7 +55,7 @@ def test_a_restart_that_kept_the_monitor_reports_one_success(
     )
 
     assert code == 0
-    assert ran == ["stop", "start"]
+    assert ran == ["hand_off_monitor", "stop", "start"]
     assert len(envelopes) == 1
     assert envelopes[0]["command"] == "service.restart"
     data = cast("dict[str, object]", envelopes[0]["data"])
@@ -71,7 +73,7 @@ def test_a_failed_stop_never_starts_and_fails_with_its_reason(
     )
 
     assert code == 1
-    assert ran == ["stop"]
+    assert ran == ["hand_off_monitor", "stop"]
     assert len(envelopes) == 1
     assert envelopes[0]["ok"] is False
     assert envelopes[0]["error"] == "restart_stop_failed"
@@ -93,3 +95,22 @@ def test_a_stopped_service_is_started_and_says_so(
     assert code == 1
     assert envelopes[0]["error"] == "restart_start_failed"
     assert envelopes[0]["message"] == "Models are missing."
+
+
+def test_a_failed_stop_after_a_handoff_takes_the_monitor_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The daemon is still serving, so the monitor it released must be its own.
+
+    Mutation it catches: dropping the reclaim from the failed-stop path, which
+    leaves the call list without it and fails the call assertion.
+    """
+    code, envelopes, ran = _restart(
+        monkeypatch,
+        {"stop": {"ok": False, "message": "The service is still running."}},
+        {"ok": True, "status": "handed_off"},
+    )
+
+    assert code == 1
+    assert ran == ["hand_off_monitor", "stop", "reclaim_monitor"]
+    assert envelopes[0]["error"] == "restart_stop_failed"

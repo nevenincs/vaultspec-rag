@@ -147,3 +147,36 @@ def test_a_handoff_from_a_different_executable_is_ended_not_adopted(
     finally:
         second.stop()
         _end(first, pid)
+
+
+def test_a_released_monitor_is_taken_back_when_the_stop_does_not_happen(
+    isolated_singleton_dirs: Path, backend_port: int
+) -> None:
+    """A restart whose stop failed leaves the daemon serving with its monitor.
+
+    Mutations it catches: a reclaim that leaves the release in place, which
+    keeps the monitor out of discovery and fails the discovery assertion; and
+    one that leaves the record keeping it open for a successor, which fails
+    the deadline assertion.
+    """
+    monitor = MonitorProcess(backend_port)
+    monitor.start()
+    assert monitor.process is not None
+    pid = monitor.process.pid
+    try:
+        assert monitor.hand_off()
+        assert monitor.discovery_fields() == {}
+
+        assert monitor.reclaim()
+
+        assert monitor.discovery_fields().get("monitor_pid") == pid
+        record = json.loads(
+            (isolated_singleton_dirs / "monitor.json").read_text(encoding="utf-8")
+        )
+        assert record["handoff_until"] == 0.0
+        assert record["access"] == ""
+        assert not monitor.reclaim(), "nothing is released twice"
+        assert monitor.stop()
+        assert wait_for_exit(pid, timeout=10)
+    finally:
+        _end(monitor, pid)
