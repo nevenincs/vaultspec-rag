@@ -5,7 +5,7 @@ tags:
 date: '2026-10-13'
 modified: '2026-10-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:14da77cc077db67f166d71f307c06a98cc6cccebbfd9cb480d5fbd81faca9d36'
+body_hash: 'sha256:545fdb7d07d51711a35b5687f401b60be9a3243095ffaf825289f5329481bf90'
 related:
   - "[[2026-10-13-monitor-provisioning-plan]]"
 ---
@@ -200,6 +200,12 @@ related:
 - `S03` `verify:` `uv run --no-sync python -m pytest tools (246 passed)` -> `pass`
 - `S03` `verify:` `uv run --no-sync python -m dev lint docs-cli` -> `pass`
 - `S03` `by:` `vaultspec-implement-high`
+- `S06` `M` `src/vaultspec_rag/tests/_planted_programs.py`
+- `S06` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/tests/test_program_lookup_sites.py src/vaultspec_rag/tests/_planted_programs.py` -> `pass`
+- `S06` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/tests/test_program_lookup_sites.py src/vaultspec_rag/tests/_planted_programs.py` -> `pass`
+- `S06` `verify:` `uv run --no-sync ty check src/vaultspec_rag/tests/test_program_lookup_sites.py src/vaultspec_rag/tests/_planted_programs.py` -> `pass`
+- `S06` `verify:` `uv run --no-sync python -m pytest src/vaultspec_rag/tests/test_program_lookup_sites.py src/vaultspec_rag/tests/test_program_lookup.py (23 passed)` -> `pass`
+- `S06` `by:` `vaultspec-implement-high`
 
 ## Notes
 
@@ -231,3 +237,5 @@ related:
 - `S03` Launcher tier confirmed on a real launcher: a PyApp 0.29.0 build of the repo's pin with `PYAPP_PASS_LOCATION=1` exports PYAPP as its own absolute path while sys.executable is the cache environment's; with the 90 MB compiled monitor beside that launcher and the venv copy moved aside, the readiness row reported `monitor_source` 'installed' at the launcher's path and fetched nothing.
 - `S03` Path correction: the fix needs `tools/binaries/build_pyapp.py,` outside S03's stated paths. Without `PYAPP_PASS_LOCATION` the launcher exports the bare marker '1' and no mechanism states the launcher's path, so the sibling tier cannot see a bundle's own monitor.
 - `S03` Mutation proofs, each broken, run alone, failed on the named assertion, restored and passed: launcher directory left out of `installation_programs` (places assertion, and both bundle resolution cases on 'resolved is not None'); `find_programs` stopped at its first match (order assertion, and the masking case on 'resolved is not None'); a stated value taken as a path whenever non-empty (places assertion for marker and relative values); the install's staging sweep removed (removal assertion); the sweep given no age witness (survival assertion for a live run's fresh file); the shared download default taken (deadline assertion); the readiness refusal branch dropped `(monitor_source` assertion, 'absent' for 'unchecked').
+- `S06` Mutation proof obtained: the start's argument vector was given the bare program name and 'executable' was dropped from it. Run alone, the test failed on the image assertion, naming the working directory's planted program as what was started; restored, it passes. The plant it needs is a program that is still a process when the image is read, so the planted native program for this site waits on its standard input.
+- `S06` The guard now requires a monitor this checkout can run, as the monitor lifecycle tests already do: resolution is production's and its answer is what the started image is compared against, instead of a branch that passed when nothing was started.

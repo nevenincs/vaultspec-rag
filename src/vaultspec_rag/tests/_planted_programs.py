@@ -17,7 +17,12 @@ if TYPE_CHECKING:
 
     import pytest
 
-__all__ = ["plant_marking_program", "plant_native_program", "stock_search_state"]
+__all__ = [
+    "plant_marking_program",
+    "plant_native_program",
+    "plant_waiting_program",
+    "stock_search_state",
+]
 
 #: The Windows switch that keeps the working directory out of a bare-name
 #: program search. A stock machine does not set it; a machine that does hides
@@ -82,4 +87,30 @@ def plant_native_program(directory: Path, name: str) -> Path:
 
     planted = directory / f"{name}.exe"
     shutil.copyfile(os.path.join(system_directory(), "hostname.exe"), planted)
+    return planted
+
+
+def plant_waiting_program(directory: Path, name: str) -> Path:
+    """Ship a native program called *name* that runs until its input closes.
+
+    A plant a test can still ask about: one that exits at once is gone
+    before anything can read what was started, so "which program ran" has
+    no answer either way. This one is a process for as long as the caller
+    keeps its standard input open, and prints nothing.
+
+    On Windows it is a copy of a stock filter, because a command script
+    cannot be a process image; elsewhere a shell script does the same.
+
+    Returns:
+        The planted file.
+    """
+    if sys.platform != "win32":
+        script = directory / name
+        script.write_text("#!/bin/sh\ncat >/dev/null\n", encoding="utf-8")
+        script.chmod(0o755)
+        return script
+    from .._win32 import system_directory
+
+    planted = directory / f"{name}.exe"
+    shutil.copyfile(os.path.join(system_directory(), "findstr.exe"), planted)
     return planted

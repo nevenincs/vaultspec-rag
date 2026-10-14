@@ -23,11 +23,13 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import threading
+import time
 from typing import TYPE_CHECKING
 
 import pytest
 
-from .._process_probe import _windows_image_matches
+from .._process_probe import _windows_image_matches, pid_image_path
 from .._python_child import inline_command
 from ..commands._mcp_topology import _restore_junction
 from ..commands._models import InstallReport
@@ -35,12 +37,13 @@ from ..commands._tool_torch import _run_repair
 from ..commands._uv_sync import _run_uv_sync_torch
 from ..config._types import EnvVar
 from ..monitor_process import MonitorProcess
-from ..monitor_runtime._errors import MonitorError
+from ..monitor_runtime._resolve import monitor_for_launch
 from ..operator_state._hardware import read_hardware
 from ..qdrant_runtime._resolve import reap_qdrant_orphan
 from ._planted_programs import (
     plant_marking_program,
     plant_native_program,
+    plant_waiting_program,
     stock_search_state,
 )
 from ._ports import free_loopback_port
@@ -142,19 +145,31 @@ def test_install_sync_does_not_run_a_uv_from_the_working_directory(
 def test_the_monitor_is_not_started_from_the_working_directory(
     checkout: Path, isolated_singleton_dirs: Path
 ) -> None:
-    """Starting the monitor never runs the checkout's program of that name.
+    """The monitor that starts is the file resolution named, not the plant.
 
     The monitor is started on every service start, and what admits one is a
-    digest, so a program of the right name proves nothing. A checkout that
-    compiled its own monitor starts that one; a checkout that did not is
-    refused under a monitor code. Neither answer is the working directory's
-    file, which is what is asserted whichever happens. Shown to fail by
-    resolving it with a bare-name lookup again: the planted program is
-    started as the monitor and the first assertion fires. Passes with the
-    resolution restored.
+    digest, so a program of the right name proves nothing. This drives the
+    real start, with this checkout's own compiled monitor as the resolved
+    one - the same precondition the monitor lifecycle tests hold - and
+    asserts the image the started process was created from. The plants are
+    both shapes a lookup could answer with: a command script, which the
+    standard lookup finds through ``PATHEXT``, and a native program, which a
+    bare name handed to process creation starts.
+
+    The image is read while the started process is alive, whether the start
+    goes on to succeed or not, because what is asserted is which file was
+    started and that is settled the moment it exists. Whether it then became
+    ready is reported after, as its own assertion.
+
+    Mutation: replaced the resolved path with the bare program name in the
+    start's argument vector and dropped ``executable`` from it, which is the
+    lookup this site used to make. Observed this test fail on the image
+    assertion, naming the working directory's planted program as what was
+    started. Restored; passes.
     """
     del isolated_singleton_dirs
     ran = plant_marking_program(checkout, "vaultspec-rag-monitor")
+    planted = plant_waiting_program(checkout, "vaultspec-rag-monitor")
     monitor = MonitorProcess(free_loopback_port())
 
     with managed_env(
@@ -163,18 +178,42 @@ def test_the_monitor_is_not_started_from_the_working_directory(
             EnvVar.MONITOR_BINARY_SHA256.value: None,
         }
     ):
+        # Resolution is production's, and its answer is what the started
+        # process is held to below. A checkout with no monitor of its own
+        # fails here, with the resolver's own refusal, rather than passing
+        # over a start that never happened.
+        resolved = monitor_for_launch()
+        images: list[str | None] = []
+        done = threading.Event()
+
+        def read_the_image() -> None:
+            """Read the image of whatever the start creates, while it lives."""
+            while not done.is_set():
+                started = monitor.process
+                if started is not None:
+                    images.append(pid_image_path(started.pid))
+                    return
+                time.sleep(0.005)
+
+        reader = threading.Thread(target=read_the_image, name="started-image")
+        reader.start()
+        refused: Exception | None = None
         try:
             monitor.start(timeout=20)
-        except MonitorError as refused:
-            # Whatever this checkout can say about its own monitor, nothing
-            # it says is about the one in the working directory.
-            assert refused.error.startswith("monitor_")
-        else:
-            assert monitor.process is not None
+        except Exception as exc:  # reported below, after the guard's own answer
+            refused = exc
         finally:
+            done.set()
+            reader.join(timeout=10)
             monitor.stop()
 
+    assert images and images[0] is not None, "nothing started could be identified"
+    assert os.path.normcase(images[0]) == os.path.normcase(str(resolved.path)), (
+        f"{images[0]} was started; {resolved.path} was resolved"
+    )
+    assert os.path.normcase(images[0]) != os.path.normcase(str(planted))
     assert not ran.exists(), "the working directory's monitor was started"
+    assert refused is None, f"the resolved monitor did not start: {refused}"
 
 
 @_windows_only
