@@ -19,16 +19,16 @@ import typer
 from starlette.testclient import TestClient
 
 from .._anchor_claim import read_anchor_record
+from .._gpu_owner import observation_wire
 from .._process_probe import pid_start_time, process_lineage
 from ..config._types import EnvVar
 from ..gpu_borrow_lease import (
     BorrowerLeaseStatus,
-    BorrowerPresence,
+    BorrowerState,
     _read_recorded_capability,
     acquire_gpu_borrow_lease,
     borrower_lease_holder_pid,
     borrower_lease_status,
-    borrower_wire,
     gpu_borrow_lease_path,
     observe_gpu_borrower,
     release_gpu_borrow_lease,
@@ -1145,7 +1145,7 @@ def test_observing_the_borrower_lease_names_its_holder_and_takes_nothing(
     acquisition.
     """
     with _isolated_borrower_anchor(tmp_path):
-        assert observe_gpu_borrower().presence is BorrowerPresence.ABSENT
+        assert observe_gpu_borrower().state is BorrowerState.ABSENT
         successor = acquire_gpu_borrow_lease()
         assert successor is not None, "observing a free lease must not keep it"
         release_gpu_borrow_lease(successor)
@@ -1153,15 +1153,15 @@ def test_observing_the_borrower_lease_names_its_holder_and_takes_nothing(
         with _borrower_process() as borrower:
             held = observe_gpu_borrower()
             holder = borrower_lease_holder_pid(borrower.capability)
-            wire = json.dumps(borrower_wire(held))
+            wire = json.dumps(observation_wire(held))
             _kill_borrower(borrower)
             gone = observe_gpu_borrower()
 
     assert holder is not None
-    assert held.presence is BorrowerPresence.HELD
+    assert held.state is BorrowerState.HELD
     assert held.holder_pid == holder
     assert borrower.capability not in wire
-    assert gone.presence is BorrowerPresence.ABSENT
+    assert gone.state is BorrowerState.ABSENT
     assert gone.holder_pid == 0
 
 
@@ -1179,7 +1179,7 @@ def test_a_borrower_lease_that_cannot_be_opened_is_unverifiable_not_absent(
         lease_path.mkdir(parents=True)
         observed = observe_gpu_borrower()
 
-    assert observed.presence is BorrowerPresence.UNVERIFIABLE
+    assert observed.state is BorrowerState.UNVERIFIABLE
     assert not observed.permits_service_start
     assert str(lease_path) in observed.detail
 

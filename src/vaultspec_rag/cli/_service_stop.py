@@ -19,6 +19,7 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
+from .._gpu_owner import observation_wire
 from .._loopback_http import probe_loopback_connect
 from .._operator_commands import server_status_command
 from .._process_probe import (
@@ -31,7 +32,7 @@ from .._process_probe import (
     server_launch_port,
     wait_for_exit,
 )
-from ..gpu_borrow_lease import borrower_stop_notice, borrower_wire, observe_gpu_borrower
+from ..gpu_borrow_lease import borrower_stop_notice, observe_gpu_borrower
 from ..serviceclient._discovery import _delete_service_status, read_service_status
 from ..serviceclient._transport import _try_http_health
 from ._app import JSON_ENVELOPE_OPTION_HELP, server_root_app
@@ -471,7 +472,7 @@ def _stop_success(
         notice = borrower_stop_notice(borrower)
         if notice is not None:
             human_lines = (*human_lines, notice)
-            data["gpu_borrower"] = borrower_wire(borrower)
+            data["gpu_borrower"] = observation_wire(borrower)
             data["notice"] = notice
     _lifecycle_success(
         json_mode,

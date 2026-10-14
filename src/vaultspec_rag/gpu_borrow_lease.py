@@ -33,14 +33,13 @@ if TYPE_CHECKING:
 __all__ = [
     "BorrowerLeaseStatus",
     "BorrowerObservation",
-    "BorrowerPresence",
+    "BorrowerState",
     "GPUBorrowLease",
     "acquire_gpu_borrow_lease",
     "borrower_lease_holder_pid",
     "borrower_lease_status",
     "borrower_start_message",
     "borrower_stop_notice",
-    "borrower_wire",
     "gpu_borrow_lease_path",
     "is_borrower_capability",
     "observe_gpu_borrower",
@@ -67,7 +66,7 @@ class BorrowerLeaseStatus(StrEnum):
     UNAVAILABLE = "unavailable"
 
 
-class BorrowerPresence(StrEnum):
+class BorrowerState(StrEnum):
     """Whether a borrower holds the machine's lease, from a non-acquiring look."""
 
     ABSENT = "absent"
@@ -82,10 +81,10 @@ class BorrowerObservation:
     ``holder_pid`` names the borrower when the lease record names a live
     process, and is 0 otherwise: a borrower that cannot be named still holds
     the lease. ``detail`` says why a lease could not be verified, and is empty
-    for every other presence.
+    for every other state.
     """
 
-    presence: BorrowerPresence
+    state: BorrowerState
     holder_pid: int = 0
     detail: str = ""
 
@@ -96,7 +95,7 @@ class BorrowerObservation:
         A lease that cannot be verified does not permit it: an owner that
         cannot be ruled out counts as live.
         """
-        return self.presence is BorrowerPresence.ABSENT
+        return self.state is BorrowerState.ABSENT
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,25 +209,16 @@ def observe_gpu_borrower() -> BorrowerObservation:
     seen = observe_existing_anchor(path, pid_record=True)
     match seen.outcome:
         case AnchorOutcome.ABSENT | AnchorOutcome.FREE:
-            return BorrowerObservation(BorrowerPresence.ABSENT)
+            return BorrowerObservation(BorrowerState.ABSENT)
         case AnchorOutcome.CONTENDED:
             holder = seen.holder_pid if pid_alive(seen.holder_pid) else 0
-            return BorrowerObservation(BorrowerPresence.HELD, holder)
+            return BorrowerObservation(BorrowerState.HELD, holder)
         case _:
             return BorrowerObservation(
-                BorrowerPresence.UNVERIFIABLE,
+                BorrowerState.UNVERIFIABLE,
                 0,
                 f"{path} could not be opened: {seen.fault}",
             )
-
-
-def borrower_wire(observation: BorrowerObservation) -> dict[str, object]:
-    """Project one observation into the object a start or stop envelope carries."""
-    return {
-        "state": observation.presence.value,
-        "holder_pid": observation.holder_pid,
-        "detail": observation.detail,
-    }
 
 
 def _borrower_phrase(pid: int) -> str:
@@ -242,7 +232,7 @@ def borrower_start_message(observation: BorrowerObservation) -> str:
     the monitor does - must show the whole of what the operator needs: who holds
     the GPU and what to do about it.
     """
-    if observation.presence is BorrowerPresence.UNVERIFIABLE:
+    if observation.state is BorrowerState.UNVERIFIABLE:
         return (
             f"The GPU borrower lease could not be verified ({observation.detail}), "
             "so the service was not started rather than load its models beside a "
@@ -263,7 +253,7 @@ def borrower_stop_notice(observation: BorrowerObservation) -> str | None:
     Only a borrower seen holding the lease is reported. A lease that could not
     be verified is not a finding about the stop that was asked for.
     """
-    if observation.presence is not BorrowerPresence.HELD:
+    if observation.state is not BorrowerState.HELD:
         return None
     return (
         f"A GPU borrower{_borrower_phrase(observation.holder_pid)} holds the GPU, "

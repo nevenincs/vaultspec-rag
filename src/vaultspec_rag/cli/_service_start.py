@@ -44,6 +44,7 @@ if TYPE_CHECKING:
         json: bool
 
 
+from .._gpu_owner import observation_wire
 from .._operator_commands import (
     server_jobs_command,
     server_start_command,
@@ -56,7 +57,6 @@ from ..config._settings import get_config
 from ..config._types import EnvVar
 from ..gpu_borrow_lease import (
     borrower_start_message,
-    borrower_wire,
     observe_gpu_borrower,
 )
 from ..operator_state._installation import ComputeCapability
@@ -806,7 +806,6 @@ def _guard_start_preconditions(port: int, json_mode: bool) -> None:
     from .._gpu_owner import (
         gpu_owned_message,
         gpu_owned_remediation,
-        gpu_owner_wire,
         observe_gpu_owner,
     )
 
@@ -818,7 +817,7 @@ def _guard_start_preconditions(port: int, json_mode: bool) -> None:
             message="Service start failed",
             human_lines=(gpu_owned_message(ownership),),
             next_actions=gpu_owned_remediation(ownership, starting_service=True),
-            gpu_owner=gpu_owner_wire(ownership),
+            gpu_owner=observation_wire(ownership),
         )
 
 
@@ -843,7 +842,7 @@ def _guard_borrower_lease(json_mode: bool) -> None:
             "A borrower releases the GPU when its work ends or its process exits.",
         ),
         next_actions=(server_start_command(),),
-        gpu_borrower=borrower_wire(borrower),
+        gpu_borrower=observation_wire(borrower),
     )
 
 
