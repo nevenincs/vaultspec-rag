@@ -16,7 +16,7 @@ page links to them rather than repeating their syntax.
 
 - [What is fetched](#what-is-fetched)
 - [Which commands provision](#which-commands-provision)
-- [A client installation provisions nothing](#a-client-installation-provisions-nothing)
+- [A client installation provisions nothing on its own](#a-client-installation-provisions-nothing-on-its-own)
 - [The Qdrant server](#the-qdrant-server)
 - [The model files](#the-model-files)
 - [Change where downloads come from](#change-where-downloads-come-from)
@@ -94,31 +94,41 @@ the outcome names the command that continues. One limit applies: while the Qdran
 download is waiting on a source that has gone silent, the interrupt is acted on when
 that wait ends, which takes at most 30 seconds.
 
-## A client installation provisions nothing
+## A client installation provisions nothing on its own
 
-A client installation sends requests to a service that a host installation runs. It
-loads no model and runs no server, so it has nothing to fetch, and no command makes it
-fetch anything:
+A client installation sends requests to a service that runs elsewhere. It loads no
+model and runs no server from its own environment, so most commands fetch nothing
+for it:
 
 - `install` reports each provisioning step as skipped.
 - `server warmup` and `server qdrant install` report that they are not needed and exit
   `0`. `--archive` changes nothing: the file is not read.
-- `server start` is refused before it looks at a model or an executable.
+- `server start` builds the separate environment that will run the service for it,
+  then fetches through that environment the same way a host does; see
+  [the service runtime could not be created](installation.md#the-service-runtime-could-not-be-created)
+  if that build fails.
 
 The [installation guide](installation.md#choose-an-installation) explains the two
 roles.
 
-### A host that cannot run the service yet
+### A host whose own PyTorch build cannot serve
 
-A host installation whose PyTorch build cannot use a GPU cannot run the service, so
-nothing is fetched for it either. This is the ordinary state of a project straight
-after `vaultspec-rag install` has written the PyTorch configuration and before
-`uv sync` has applied it.
+A host installation whose own PyTorch build cannot use a GPU does not run the service
+from its own environment, but the machine can still serve it through the service's
+managed runtime. This is the ordinary state of a project straight after
+`vaultspec-rag install` has written the PyTorch configuration and before `uv sync`
+has applied it.
 
-- `install`, `server warmup` and `server qdrant install` report the model files and the
-  Qdrant server as skipped, say why, and say that `server start` fetches them once the
-  environment is ready. They exit `0`.
-- `server start` is refused with the reason and the repair.
+- On a machine with a supported NVIDIA GPU or Apple silicon, `install`, `server
+  warmup` and `server qdrant install` fetch the model files and the Qdrant server as
+  usual: something on this machine will serve, even though this environment will not.
+- On a machine with no supported accelerator at all, those same commands report the
+  model files and the Qdrant server as skipped, say why, and say that `server start`
+  fetches them once a machine with one is used. They exit `0`.
+- `server start` builds the managed runtime instead of using this environment, and
+  fetches through it; see
+  [the service runtime could not be created](installation.md#the-service-runtime-could-not-be-created)
+  if that build fails.
 - `server doctor` reports what is missing truthfully, and does not send you to a
   command that would skip.
 
@@ -486,9 +496,15 @@ Causes of `qdrant_provision_failed`, each named in the detail with what to do:
 The model files are fetched before the Qdrant server, so a start that cannot get its
 models is not also sent to download a server it cannot use yet.
 
-A separate failure belongs to the environment and not to any fetch: `server start`
-reports `service_env_no_gpu` for a client installation and for a host whose PyTorch
-build cannot use a GPU, with the reason and the repair.
+A separate failure belongs to the environment the service would run in, not to any
+fetch. When the launching environment cannot serve, `server start` builds the
+managed runtime first, before anything is fetched, and reports one of three codes if
+that fails: `service_runtime_unsupported` when uv is missing or this installation is
+a source checkout the runtime cannot reproduce, `service_runtime_no_gpu` when the
+runtime itself has no supported GPU, and `service_runtime_failed` when uv could not
+build it or another start is still building it. Each message names the one command
+that resolves it; see
+[the service runtime could not be created](installation.md#the-service-runtime-could-not-be-created).
 
 ### After a failure
 

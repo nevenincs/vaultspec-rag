@@ -41,7 +41,7 @@ The default index profile accepts only the managed server, so also set
 service. See [the installation guide](installation.md#what-you-need-before-you-start).
 `install --local-only` records the choice, so a later `server start` needs no flag.
 
-Start it from a host installation, the one that carries the `gpu` extra. The service runs in whatever Python environment launched it, which is why `uv run` is the documented form for a project that depends on `vaultspec-rag[gpu]`; see [Which Python environment runs the service](#which-python-environment-runs-the-service). A client installation, without the `gpu` extra, cannot start it.
+The service runs in whatever Python environment launched it, when that environment can run it - which is why `uv run` is the documented form for a project that depends on `vaultspec-rag[gpu]`; see [Which Python environment runs the service](#which-python-environment-runs-the-service). A client installation, or a host whose PyTorch build cannot use a GPU, starts the service from the service's own managed runtime instead: the first such start builds it. See [the service runtime could not be created](installation.md#the-service-runtime-could-not-be-created) if that build fails.
 
 `server start` detaches: it returns once the service is ready and leaves the daemon running. A service unit that wraps it needs oneshot or remain-after-exit semantics, or the manager treats the returned command as a stopped service.
 
@@ -154,10 +154,9 @@ Next actions:
 ```
 
 That happens after an upgrade that left an older daemon running, and the two
-next actions are the whole fix. Line breaks above differ from the
-terminal's; nothing else is changed. A client installation cannot start the
-service, so it is told instead to pin its project to the service's release, or to
-have the service restarted from a host installation running the client's release.
+next actions are the whole fix for any installation, client included: it holds the
+machine lock either way. Line breaks above differ from the terminal's; nothing
+else is changed.
 
 `doctor` reports PyTorch and accelerator readiness, the compute backend (`cuda` or `mps`), the models, and Qdrant. It separately names the storage backend (`server` or `local-only`) and states whether the service is ready for requests. If a dependency reports not ready, follow its detail line, which names either a provision step or an install step.
 
@@ -440,13 +439,13 @@ The service evicts idle projects over time, so you don't normally need to unload
 
 ## Which Python environment runs the service
 
-`server start` spawns the daemon using the interpreter of the environment you launched it from, and the daemon inherits that environment's packages, including PyTorch. So the environment decides which accelerator the service can use.
+`server start` spawns the daemon in the interpreter of the environment you launched it from, when that environment can run the service, and the daemon inherits that environment's packages, including PyTorch. So that environment decides which accelerator the service uses, whenever it is the one that serves.
 
 To see which environment is running the service, read the `Service env:` line in `server status`.
 
-Starting from an environment without a supported accelerator fails immediately. `server start` refuses if the environment has no torch, has no supported accelerator, or has MPS CPU fallback enabled. It names the interpreter and the reason rather than spawning a daemon that crashes during model load.
+An environment with no torch, no supported accelerator, or MPS CPU fallback enabled does not serve: `server start` builds the service's own managed runtime instead and spawns the daemon there. `server doctor` reports where the daemon actually runs under its "Service runtime" line.
 
-A client installation, without the `gpu` extra, never launches the service: its `server start` succeeds only when a service at the client's release is already running, and otherwise names the `gpu` extra as the fix. Start the service from the host installation instead. A standalone tool installed with `[gpu]` is a host installation, and on Linux or Windows it can launch the service only if its tool receipt pins the CUDA wheel. The [installation guide](installation.md) covers that pin, and the [architecture overview](architecture.md) covers why the accelerator is required at all.
+A client installation, without the `gpu` extra, does not launch the daemon from its own environment either, and runs it from the managed runtime the same way. A standalone tool installed with `[gpu]`, or a project that depends on `vaultspec-rag[gpu]`, is a host installation, and on Linux or Windows it launches the daemon directly only if its own torch pins the CUDA wheel. The [installation guide](installation.md) covers that pin and [the service runtime could not be created](installation.md#the-service-runtime-could-not-be-created), and the [architecture overview](architecture.md) covers why the accelerator is required at all.
 
 ## HTTP monitoring routes
 
@@ -511,9 +510,9 @@ A stale process ID can keep `server stop` from completing. Kill the process by i
 
 Server mode needs the Qdrant binary. `server start` downloads it when it is missing, unless that download is switched off, in which case provision it with `server qdrant install`. If the start reports `qdrant_binary_unverified`, the installed binary failed its checksum: replace it with `server qdrant install --upgrade`. If it reports `qdrant_binary_invalid`, `VAULTSPEC_RAG_QDRANT_BINARY` names something that is not an absolute path to a regular file: correct or unset it. The [installation guide](installation.md#server-start-cannot-find-the-qdrant-binary) covers each case. To run without the managed server, use `server start --local-only` and the `embedded-local` index profile (see [Start the service](#start-the-service)).
 
-### `server start` says the environment cannot run the service
+### `server start` could not build the service runtime
 
-The Python environment you launched it from cannot run the service. If the message says the installation is a client, you started it from an environment without the `gpu` extra: run `server start` from the host installation instead. Otherwise the environment has no supported accelerator. On Linux or Windows, for a project that depends on `vaultspec-rag[gpu]`, run `uv run vaultspec-rag install`, then `uv sync --reinstall-package torch`, to install the CUDA wheel; for a standalone tool, follow the [GPU build pin](installation.md#pin-the-gpu-build). On Apple silicon, install the standard macOS PyTorch wheel and make sure `PYTORCH_ENABLE_MPS_FALLBACK` is unset or `0`. The service never runs on the CPU. See [Which Python environment runs the service](#which-python-environment-runs-the-service).
+The Python environment you launched it from cannot run the service - a client installation, a host whose PyTorch build cannot use a GPU, or no torch at all - so `server start` built it a separate one instead, and that build failed. Each cause names its own one command; see [the service runtime could not be created](installation.md#the-service-runtime-could-not-be-created). The service never runs on the CPU. See [Which Python environment runs the service](#which-python-environment-runs-the-service).
 
 ### The index seems stale
 
