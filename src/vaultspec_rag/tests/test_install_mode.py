@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import json
 import tomllib
-from importlib.resources import files
+from importlib import metadata
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -85,7 +85,8 @@ _TOOL_LAUNCH = (
     "uvx",
     [
         "--from",
-        f"{RAG_DISTRIBUTION_NAME}[mcp]",
+        # The seeded launch names the release this install runs.
+        f"{RAG_DISTRIBUTION_NAME}[mcp]=={metadata.version(RAG_DISTRIBUTION_NAME)}",
         "python",
         "-P",
         "-m",
@@ -594,10 +595,14 @@ def test_infer_upgrade_mode_skips_mcp_status_when_disallowed(tmp_path: Path) -> 
     ],
 )
 def test_tokenized_builtin_renders_expected_launch(
-    mode: InstallMode, expected_command: str, expected_args: list[str]
+    mode: InstallMode,
+    expected_command: str,
+    expected_args: list[str],
+    tmp_path: Path,
 ) -> None:
-    """The shipped tokenized builtin renders the right launch through core."""
-    builtin = files("vaultspec_rag.builtins") / "mcps" / "vaultspec-rag.builtin.json"
+    """The seeded tokenized builtin renders the right launch through core."""
+    seed_builtins(tmp_path)
+    builtin = tmp_path / "mcps" / "vaultspec-rag.builtin.json"
     definition = json.loads(builtin.read_text(encoding="utf-8"))
 
     rendered = render_mcp_definition_for_mode(definition, mode)

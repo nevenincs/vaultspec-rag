@@ -556,6 +556,12 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "answer, which is what lets one machine reach both the launcher that "
         "serves and the launcher that cannot",
     ),
+    "test_mcp_launch_pin.py": (
+        1,
+        "replaces the installed version with a development or local one, "
+        "because a test cannot make this checkout carry such a version, and "
+        "the case under test is a version no package index serves.",
+    ),
     "test_one_cause_one_command.py": (
         1,
         "stands this process's interpreter inside a purpose-built uv tool "
