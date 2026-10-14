@@ -14,6 +14,9 @@ supplies the order, and the order is the point:
   made to follow a planted link.
 - An executable is hashed after its last byte is written and before it
   replaces anything.
+- A staging file no live run can still be using is removed, because a run
+  killed mid-write cannot remove its own and the directory is otherwise
+  left with it for good.
 
 Stdlib-only and free of service configuration: the release tooling installs
 its own pinned artifacts through these same functions.
@@ -21,12 +24,14 @@ its own pinned artifacts through these same functions.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import shutil
 import stat
 import sys
 import tarfile
+import time
 import zipfile
 from contextlib import contextmanager
 from typing import IO, TYPE_CHECKING, Final
@@ -34,19 +39,23 @@ from typing import IO, TYPE_CHECKING, Final
 from ._download import SILENT, Progress
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Generator, Iterable
     from pathlib import Path
 
 __all__ = [
     "STAGING_SUFFIX",
     "ChecksumMismatchError",
+    "abandoned_staging",
     "archive_member",
+    "discard_staging",
     "extract_verified_archive",
     "file_sha256",
     "mark_executable",
     "open_destination",
     "open_staging",
+    "staging_files",
     "stream_sha256",
+    "sweep_abandoned_staging",
     "verify_native_binary",
 ]
 
@@ -131,6 +140,105 @@ def open_staging(directory: Path, label: str) -> tuple[Path, IO[bytes]]:
         | getattr(os, "O_NOFOLLOW", 0)
     )
     return path, os.fdopen(os.open(path, flags, 0o600), "w+b")
+
+
+def staging_files(directory: Path, *, spare: Path | None = None) -> list[Path]:
+    """Return the staging files in *directory*, less one the caller owns.
+
+    A file is a staging file by its name alone. *spare* is a file the caller
+    was handed rather than created - an operator's own archive, wherever it
+    is kept and whatever it is called - so the run that was given a file is
+    never the run that deletes it.
+    """
+    try:
+        found = list(directory.glob(f".*{STAGING_SUFFIX}"))
+    except OSError:
+        return []
+    if spare is None:
+        return found
+    kept = spare.resolve()
+    return [path for path in found if path.resolve() != kept]
+
+
+def staging_pid(path: Path) -> int | None:
+    """Return the process id recorded in a staging file's name, or ``None``.
+
+    :func:`open_staging` writes it there. ``None`` means the name carries
+    none, so nothing is known about who created the file.
+    """
+    parts = path.name.removesuffix(STAGING_SUFFIX).split(".")
+    for part in reversed(parts):
+        if part.isdigit():
+            return int(part)
+    return None
+
+
+def abandoned_staging(
+    directory: Path,
+    *,
+    spare: Path | None = None,
+    stale_after_seconds: float | None = None,
+) -> list[Path]:
+    """Return the staging files in *directory* no live run can still be using.
+
+    Args:
+        directory: The install directory to read.
+        spare: A file the caller owns, as :func:`staging_files` takes it.
+        stale_after_seconds: How old a file whose creating process is still
+            live has to be before it counts as abandoned. ``None`` says the
+            caller holds a lock every run that creates a staging file holds
+            for as long as that file exists, which already proves that
+            whatever is found belongs to a run that is gone.
+
+    A pid is not an identity: it is recycled, so a live process under the
+    recorded pid is not proof that the run which created the file survives.
+    Age is the second witness, and it is why a caller with no lock passes
+    one: no transfer can outlast the deadline it was given, so a file older
+    than that is finished with whoever still answers to its pid.
+    """
+    from .._process_probe import pid_alive
+
+    found = staging_files(directory, spare=spare)
+    if stale_after_seconds is None:
+        return found
+    cutoff = time.time() - stale_after_seconds
+    abandoned: list[Path] = []
+    for path in found:
+        pid = staging_pid(path)
+        if pid is not None and pid_alive(pid):
+            try:
+                if path.stat().st_mtime > cutoff:
+                    continue
+            except OSError:
+                continue
+        abandoned.append(path)
+    return abandoned
+
+
+def discard_staging(paths: Iterable[Path]) -> None:
+    """Remove staging files, tolerating ones already moved away."""
+    for path in paths:
+        with contextlib.suppress(OSError):
+            path.unlink(missing_ok=True)
+
+
+def sweep_abandoned_staging(
+    directory: Path,
+    *,
+    spare: Path | None = None,
+    stale_after_seconds: float | None = None,
+) -> None:
+    """Remove the working files a killed run left in *directory*.
+
+    The one sweep every pinned native install runs, on the terms
+    :func:`abandoned_staging` states. An install that is never run again
+    would otherwise leave them there for good.
+    """
+    discard_staging(
+        abandoned_staging(
+            directory, spare=spare, stale_after_seconds=stale_after_seconds
+        )
+    )
 
 
 def mark_executable(path: Path) -> None:

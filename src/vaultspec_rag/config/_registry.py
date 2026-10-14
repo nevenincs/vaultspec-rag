@@ -79,6 +79,7 @@ _EXTERNAL: Final = frozenset(
         EnvVar.PYTHON_SAFE_PATH,
         EnvVar.PATH,
         EnvVar.PATHEXT,
+        EnvVar.PYAPP,
         EnvVar.TEMP,
         EnvVar.TMP,
         EnvVar.TMPDIR,
@@ -293,6 +294,12 @@ _DESCRIPTIONS: Final[Mapping[EnvVar, str]] = {
     EnvVar.PATHEXT: (
         "The extensions a program name may carry on Windows, read alongside "
         "the search path when a helper program is looked for."
+    ),
+    EnvVar.PYAPP: (
+        "Set by the single-file launcher an archive installation runs, to "
+        "its own path. Read to find the executables packed beside it, which "
+        "are not in the environment it installed this package into. Any "
+        "value that does not name an existing absolute file is ignored."
     ),
     EnvVar.TEMP: (
         "The operating system's temporary directory, read to decide whether "

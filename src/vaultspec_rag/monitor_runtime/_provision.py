@@ -9,7 +9,9 @@ extracted. The archive's one expected member is extracted by basename to a
 second staging file, hashed against the executable digest, and only then
 moved onto the installed name in one atomic replace. A failure or an
 interrupt at any stage removes this run's staging files and leaves whatever
-was installed before exactly as it was.
+was installed before exactly as it was. A run that was killed outright could
+not remove its own, so an install sweeps the staging files it finds that no
+live run can still be writing before it stages any of its own.
 
 What is installed is judged by hashing it, never by reading anything beside
 it. A run that finds this release's monitor already in place fetches nothing
@@ -33,7 +35,6 @@ thing it could save is bytes.
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import shutil
 import tarfile
@@ -58,9 +59,11 @@ from ..native_binary._download import (
 from ..native_binary._install import (
     ChecksumMismatchError,
     archive_member,
+    discard_staging,
     mark_executable,
     open_staging,
     stream_sha256,
+    sweep_abandoned_staging,
 )
 from ..native_binary._report import ProvisionReport
 from ._errors import MonitorError
@@ -75,7 +78,7 @@ from ._resolve import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Iterable
+    from collections.abc import Callable, Generator
     from pathlib import Path
 
 
@@ -96,7 +99,16 @@ MONITOR_PROVISION_FAILED = "monitor_provision_failed"
 #: What progress lines call what is being installed.
 _SUBJECT = "monitor"
 _COPY_CHUNK_BYTES = 1 << 20
-_DOWNLOAD_LIMITS = DownloadLimits()
+
+#: How long the whole transfer may take. The archive is about three times
+#: the size of the Qdrant server's, so the shared default would ask three
+#: times the bandwidth of a first start that has to succeed on a slow link,
+#: and there is no resume. Sized for these bytes at the floor bandwidth that
+#: default assumes.
+_DOWNLOAD_DEADLINE_SECONDS = 2700.0
+_DOWNLOAD_LIMITS = replace(
+    DownloadLimits(), deadline_seconds=_DOWNLOAD_DEADLINE_SECONDS
+)
 
 # Everything that can go wrong between creating the first staging file and
 # the executable landing, and is an outcome to report rather than a defect to
@@ -144,13 +156,6 @@ def _archive_url(base_url: str, pin: MonitorPin) -> str:
     at a mirror is the whole of what an operator changes.
     """
     return f"{base_url.rstrip('/')}/{pin.tag}/{pin.archive_name}"
-
-
-def _discard(paths: Iterable[Path]) -> None:
-    """Remove this run's staging files, tolerating ones already moved away."""
-    for path in paths:
-        with contextlib.suppress(OSError):
-            path.unlink(missing_ok=True)
 
 
 @contextmanager
@@ -297,6 +302,15 @@ def _install(request: _InstallRequest) -> ProvisionReport:
     staged: list[Path] = []
     try:
         request.target_path.parent.mkdir(parents=True, exist_ok=True)
+        # Two runs here are not serialised, so there is no lock to prove a
+        # working file is nobody's. Its name carries the process that made
+        # it, and no transfer outlasts the deadline this one is given, so a
+        # file whose creator is gone or that is older than that is finished
+        # with. An install killed at the keyboard cannot remove its own.
+        sweep_abandoned_staging(
+            request.target_path.parent,
+            stale_after_seconds=request.limits.deadline_seconds,
+        )
         executable = _stage_verified_executable(request, staged)
         mark_executable(executable)
         replace_atomically(executable, request.target_path)
@@ -313,7 +327,7 @@ def _install(request: _InstallRequest) -> ProvisionReport:
     finally:
         # Reached by an interrupt as well as by a failure, so a run stopped
         # at the keyboard strands no working file either.
-        _discard(staged)
+        discard_staging(staged)
     return ProvisionReport(
         action=ProvisionAction.CREATED,
         version=pin.version,

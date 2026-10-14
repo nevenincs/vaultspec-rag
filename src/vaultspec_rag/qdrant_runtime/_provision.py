@@ -68,12 +68,14 @@ from ..native_binary._download import (
     no_progress,
 )
 from ..native_binary._install import (
-    STAGING_SUFFIX,
     ChecksumMismatchError,
     archive_member,
+    discard_staging,
     mark_executable,
     open_staging,
+    staging_files,
     stream_sha256,
+    sweep_abandoned_staging,
 )
 from ..native_binary._report import ProvisionReport
 from ._constants import (
@@ -88,7 +90,7 @@ from ._constants import (
 from ._managed_install import InstallState, ManagedInstall, classify_managed_binary
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Iterable
+    from collections.abc import Callable, Generator
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -247,13 +249,6 @@ def _require_free_space(
         f"{human_bytes(needed - free)} more on that volume, then run "
         f"{_install_command(request)}."
     )
-
-
-def _discard(paths: Iterable[Path]) -> None:
-    """Remove this run's staging files, tolerating ones already moved away."""
-    for path in paths:
-        with contextlib.suppress(OSError):
-            path.unlink(missing_ok=True)
 
 
 def _replace_executable(staged: Path, target: Path, *, rerun: str) -> None:
@@ -730,7 +725,7 @@ def _install(request: _InstallRequest) -> ProvisionReport:
     finally:
         # Reached by an interrupt as well as by a failure, so a run stopped
         # at the keyboard strands no working file either.
-        _discard(staged)
+        discard_staging(staged)
     action = (
         ProvisionAction.UPDATED
         if request.previously != InstallState.ABSENT
@@ -894,34 +889,6 @@ def _preview(planned: _ManifestRepair | _InstallRequest) -> ProvisionReport:
     )
 
 
-def _abandoned_staging(request: _ProvisionRequest) -> list[Path]:
-    """Return the working files in the version dir, less the caller's own file.
-
-    A file is a working file by its name alone, so an archive the caller
-    passed is never counted as one, wherever it is kept and whatever it is
-    called: the run that was handed an operator's file must not be the run
-    that deletes it.
-    """
-    try:
-        found = list(request.version_dir.glob(f".*{STAGING_SUFFIX}"))
-    except OSError:
-        return []
-    if request.archive is None:
-        return found
-    spared = request.archive.resolve()
-    return [path for path in found if path.resolve() != spared]
-
-
-def _sweep_abandoned_staging(request: _ProvisionRequest) -> None:
-    """Remove working files a killed run left behind.
-
-    Called only while holding the provisioning lock. Every run that creates a
-    staging file holds that lock for as long as the file exists, so one found
-    now belongs to a run that is gone.
-    """
-    _discard(_abandoned_staging(request))
-
-
 @contextmanager
 def _lock_held(descriptor: int) -> Generator[None]:
     """Keep the provisioning lock, named for a waiter, for the block."""
@@ -950,13 +917,16 @@ def _sweep_if_unclaimed(request: _ProvisionRequest, lock_path: Path) -> None:
     """
     from .._anchor_claim import claim_anchor
 
-    if not _abandoned_staging(request):
+    if not staging_files(request.version_dir, spare=request.archive):
         return
     claim = claim_anchor(lock_path, pid_record=True)
     if claim.descriptor is None:
         return
     with _lock_held(claim.descriptor):
-        _sweep_abandoned_staging(request)
+        # The lock is held, and every run that creates a staging file here
+        # holds it for as long as that file exists, so no age is asked for:
+        # whatever is found belongs to a run that is gone.
+        sweep_abandoned_staging(request.version_dir, spare=request.archive)
 
 
 def _run_exclusively(
@@ -1093,7 +1063,7 @@ def provision(
         return _preview(planned)
 
     def act_now() -> ProvisionReport:
-        _sweep_abandoned_staging(request)
+        sweep_abandoned_staging(request.version_dir, spare=request.archive)
         # Another run may have finished this very install while this one
         # waited, so what to do is decided again now that nothing else can
         # change it.

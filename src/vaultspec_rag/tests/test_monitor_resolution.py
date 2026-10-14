@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import sys
+import sysconfig
 from dataclasses import replace
 from importlib.util import find_spec
 from typing import TYPE_CHECKING
@@ -56,6 +57,8 @@ _VERSION = "9.9.9"
 #: The bytes a stand-in monitor is made of. Its digest is the pin.
 _MONITOR = b"#!stand-in monitor\x00" * 64
 _OTHER = b"#!a monitor of some other build\x00" * 64
+#: What an archive install's launcher is called on this platform.
+_LAUNCHER_SUFFIX = ".exe" if sys.platform == "win32" else ""
 
 
 def _pin(executable: bytes = _MONITOR) -> MonitorPin:
@@ -194,6 +197,75 @@ class TestWhatIsChosen:
         _install(managed_monitor_path(pin.version, pin.target), _OTHER)
 
         assert resolve_pinned_monitor(pin) is None
+
+
+@pytest.mark.usefixtures("managed")
+class TestABundleRunsTheMonitorItShippedWith:
+    """The real layout an archive install has, with nothing stood in for.
+
+    An archive install is a launcher that carries this package as a wheel and
+    installs it into a cache environment of its own on first run. The monitor
+    it shipped with is beside the launcher, inside the extracted archive;
+    the environment the launcher runs holds no monitor at all. Nothing here
+    replaces the accessor that says where this installation's programs are:
+    the launcher states its own path exactly as it does in a real install,
+    and the directories that accessor derives from this interpreter are the
+    real ones.
+    """
+
+    def test_the_monitor_beside_the_launcher_is_resolved(self, tmp_path: Path) -> None:
+        """Mutation: left the launcher's directory out of the places this
+        installation's programs are in. Observed this test fail on the "not
+        None" assertion, with nothing resolved, which is the download of a
+        monitor the install already has. Restored; passes."""
+        bundle = tmp_path / "bundle"
+        bundle.mkdir()
+        launcher = _install(bundle / f"vaultspec-rag{_LAUNCHER_SUFFIX}", b"launcher")
+        beside = _install(bundle / monitor_executable_name(host_target()), _MONITOR)
+
+        with managed_env(**{EnvVar.PYAPP.value: str(launcher)}):
+            resolved = resolve_pinned_monitor(_pin())
+
+        assert resolved is not None
+        assert resolved.path == beside.resolve()
+        assert resolved.source is MonitorSource.INSTALLATION_SIBLING
+        assert resolved.sha256 == _pin().executable_sha256
+
+    def test_a_monitor_of_another_build_in_the_environment_masks_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Both places are judged by content, so the order cannot decide.
+
+        An upgraded launcher installs a new wheel into a new cache
+        environment, and an older monitor left in a scripts directory is
+        still of the right name. Resolving the first file found would hand
+        the install that one and refuse it.
+
+        Mutation: offered only the first match. Observed this test fail on
+        the "not None" assertion, with nothing resolved: the older monitor
+        was the only candidate and its content is not this release's.
+        Restored; passes.
+        """
+        scripts = tmp_path / "scripts"
+        scripts.mkdir()
+        real_path = sysconfig.get_path
+
+        def scripts_here(name: str) -> str:
+            return str(scripts) if name == "scripts" else real_path(name)
+
+        monkeypatch.setattr(sysconfig, "get_path", scripts_here)
+        _install(scripts / monitor_executable_name(host_target()), _OTHER)
+        bundle = tmp_path / "bundle"
+        bundle.mkdir()
+        launcher = _install(bundle / f"vaultspec-rag{_LAUNCHER_SUFFIX}", b"launcher")
+        beside = _install(bundle / monitor_executable_name(host_target()), _MONITOR)
+
+        with managed_env(**{EnvVar.PYAPP.value: str(launcher)}):
+            resolved = resolve_pinned_monitor(_pin())
+
+        assert resolved is not None
+        assert resolved.path == beside.resolve()
+        assert resolved.source is MonitorSource.INSTALLATION_SIBLING
 
 
 @pytest.mark.usefixtures("managed")

@@ -127,6 +127,11 @@ def test_build_one_embeds_the_exact_wheel_and_keeps_the_torch_pin(
     assert environment["PYAPP_PIP_EXTRA_ARGS"] == pip_extra_args(
         "x86_64-unknown-linux-gnu", PYTHON_VERSION
     )
+    # The launcher must hand the interpreter its own path rather than the bare
+    # installation marker: the monitor an archive ships with sits beside the
+    # launcher, not in the environment it installs the wheel into, and without
+    # this every archive install downloads a monitor it already has.
+    assert environment["PYAPP_PASS_LOCATION"] == "1"
 
 
 @pytest.mark.parametrize(

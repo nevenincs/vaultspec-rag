@@ -207,6 +207,24 @@ class TestTheReadinessRow:
         assert "run " not in row.detail
         assert EnvVar.MONITOR_BINARY.value not in row.detail
 
+    def test_a_check_that_does_not_finish_is_not_ready(self) -> None:
+        """Running out of time is neither a pass nor an absent monitor.
+
+        Deciding what is installed hashes the largest file this installation
+        provisions, and this report also answers a route a broker polls. A
+        budget of nothing stands in for a file that cannot be read in time.
+
+        Mutation: reported an unfinished judgement as no monitor installed.
+        Observed this test fail on the source assertion, the row saying
+        ``absent`` where nothing at all is known. Restored; passes.
+        """
+        row = _monitor_readiness(verify_budget=0.0)
+
+        assert row.status is ReadinessStatus.NOT_READY
+        assert row.info["monitor_source"] == "unchecked"
+        assert row.info["monitor_error"] == "monitor_unchecked"
+        assert "could not be verified" in row.detail
+
     def test_a_client_installation_needs_none(self, tmp_path: Path) -> None:
         """The qdrant row's client branch, mechanically.
 

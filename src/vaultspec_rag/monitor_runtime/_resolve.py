@@ -9,11 +9,14 @@ Resolution order, and nothing else is consulted:
    it. Half the pair, or a path that names anything else, is an error and
    never a reason to fall through: an operator who named an executable must
    not be handed another.
-2. The monitor beside this installation's own programs, and only when its
+2. A monitor beside this installation's own programs, and only when its
    content is the executable this release pins for this target. That is how a
-   bundle install uses the monitor it shipped with. One that is anything else
-   is not this release's and is passed over in silence - it is not an error,
-   because the managed install serves that case.
+   bundle install uses the monitor it shipped with: a bundle is a launcher
+   that installs its wheel into a cache environment, so the monitor it
+   shipped with sits beside the launcher rather than in that environment, and
+   both places are looked in. One that is anything else is not this release's
+   and is passed over in silence - it is not an error, because the managed
+   install serves that case.
 3. The managed install for this release and target, which host ``server
    start`` provisions when it is absent.
 
@@ -39,7 +42,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .._program_lookup import Where, find_program
+from .._program_lookup import Where, find_programs
 from ..config._settings import managed_status_dir
 from ..config._types import EnvVar, OperatorBinaryPairError
 from ..native_binary._hold import held_executable
@@ -220,9 +223,16 @@ def operator_monitor_fault(candidate: Path) -> str | None:
 
 
 def _pinned_candidates(pin: MonitorPin) -> Iterator[tuple[Path, MonitorSource]]:
-    """Yield the places this release's own monitor may sit, in order."""
-    sibling = find_program(pin.executable_name, Where.INSTALLATION)
-    if sibling is not None:
+    """Yield the places this release's own monitor may sit, in order.
+
+    Every monitor beside this installation's programs is offered, not the
+    first one found: an installation can hold more than one of that name -
+    a launcher's own directory beside the scripts directory of the
+    environment it installed - and which of them is this release's is
+    decided by content. Stopping at the first would let a monitor of another
+    build mask the one that matches.
+    """
+    for sibling in find_programs(pin.executable_name, Where.INSTALLATION):
         yield Path(sibling).resolve(), MonitorSource.INSTALLATION_SIBLING
     yield managed_monitor_path(pin.version, pin.target), MonitorSource.MANAGED_INSTALL
 

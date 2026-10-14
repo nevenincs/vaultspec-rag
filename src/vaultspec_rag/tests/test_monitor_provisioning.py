@@ -19,7 +19,9 @@ that the next start tries again.
 from __future__ import annotations
 
 import inspect
+import os
 import re
+import time
 from dataclasses import replace
 from http import HTTPStatus
 from typing import TYPE_CHECKING
@@ -37,6 +39,7 @@ from ..monitor_runtime._provision import (
     retire_superseded,
 )
 from ..monitor_runtime._resolve import managed_monitor_path, managed_monitor_root
+from ..native_binary._download import DownloadLimits
 from ..native_binary._install import STAGING_SUFFIX
 from ..native_binary._targets import host_target
 from ._loopback_tls import (
@@ -63,6 +66,9 @@ _TAG = f"vaultspec-rag-v{_VERSION}"
 _MONITOR = b"#!stand-in monitor\x00" * 512
 #: What a source that is serving something else sends.
 _WRONG = b"not this release's monitor at all"
+#: A process id no process has. Nothing is signalled with it; it only has to
+#: read as gone.
+_DEAD_PID = 2_000_000_000
 
 #: Anything that reads as an instruction to go and get the monitor. None of
 #: these may appear in any outcome: the only hands this passes through are
@@ -371,6 +377,98 @@ class TestAnUpgrade:
 
         assert sorted(retired) == ["0.0.1", "0.0.2"]
         assert (root / _VERSION).is_dir()
+
+
+@pytest.mark.usefixtures("managed")
+class TestWhatAKilledRunLeftBehind:
+    """Nothing serialises these installs, so a sweep answers to two witnesses.
+
+    A staging file's name carries the process that created it, and no
+    transfer outlasts the deadline the run was given. A file whose creator
+    is gone, or that is older than that deadline, is one no run can still be
+    writing. A pid is recycled, which is why age is asked as well.
+    """
+
+    def _abandon(self, pin: MonitorPin, pid: int) -> Path:
+        """Leave a file exactly as a run killed mid-download leaves one."""
+        version_dir = managed_monitor_path(pin.version, pin.target).parent
+        version_dir.mkdir(parents=True, exist_ok=True)
+        left = version_dir / f".{pin.archive_name}.{pid}.0123456789ab{STAGING_SUFFIX}"
+        left.write_bytes(b"half a download from a run that was killed")
+        return left
+
+    def test_a_file_whose_run_is_gone_is_swept_on_the_next_install(
+        self, sources: LoopbackSources
+    ) -> None:
+        """Mutation: dropped the sweep from the install. Observed this test
+        fail on the removal assertion, the abandoned file still there after
+        a successful install. Restored; passes."""
+        archive = _archive()
+        pin = _pin(archive)
+        left = self._abandon(pin, _DEAD_PID)
+
+        report, _ = _install_from(sources, archive, pin)
+
+        assert report.action is ProvisionAction.CREATED, report.message
+        assert not left.exists()
+
+    def test_a_file_a_live_run_may_still_be_writing_is_left_alone(
+        self, sources: LoopbackSources
+    ) -> None:
+        """A second run installing right now is not something to clean up.
+
+        Mutation: swept every staging file found, whatever its name said.
+        Observed this test fail on the survival assertion, this process's
+        own fresh file removed. Restored; passes.
+        """
+        archive = _archive()
+        pin = _pin(archive)
+        live = self._abandon(pin, os.getpid())
+
+        report, _ = _install_from(sources, archive, pin)
+
+        assert report.action is ProvisionAction.CREATED, report.message
+        assert live.exists()
+
+    def test_a_live_pid_s_file_older_than_the_deadline_is_swept(
+        self, sources: LoopbackSources
+    ) -> None:
+        """A pid is not an identity, so age is the second witness.
+
+        No transfer outlasts the deadline its run was given, so a file older
+        than that belongs to a run that is gone whoever answers to its pid
+        now.
+        """
+        archive = _archive()
+        pin = _pin(archive)
+        live = self._abandon(pin, os.getpid())
+        stale = time.time() - monitor_provision._DOWNLOAD_DEADLINE_SECONDS - 60
+        os.utime(live, (stale, stale))
+
+        report, _ = _install_from(sources, archive, pin)
+
+        assert report.action is ProvisionAction.CREATED, report.message
+        assert not live.exists()
+
+
+def test_the_download_deadline_is_sized_for_the_monitor_s_own_bytes() -> None:
+    """The archive is about three times the server binary's, with no resume.
+
+    The shared default is sized for tens of megabytes, so taking it would
+    ask three times the bandwidth of a first start that has to succeed on a
+    slow link.
+
+    Mutation: took the shared default. Observed this test fail on the
+    deadline assertion. Restored; passes.
+    """
+    default = DownloadLimits()
+    limits = monitor_provision._DOWNLOAD_LIMITS
+
+    assert limits.deadline_seconds == pytest.approx(3 * default.deadline_seconds)
+    # Only the deadline differs: nothing else about the transfer changes.
+    assert limits.stall_seconds == default.stall_seconds
+    assert limits.max_bytes == default.max_bytes
+    assert limits.attempts == default.attempts
 
 
 @pytest.mark.usefixtures("managed")

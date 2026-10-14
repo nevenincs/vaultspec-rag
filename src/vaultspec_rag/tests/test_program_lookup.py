@@ -18,12 +18,19 @@ import os
 import shutil
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 
 import pytest
 
-from .._program_lookup import Where, find_program
+from .._program_lookup import (
+    Where,
+    find_program,
+    find_programs,
+    installation_programs,
+)
 from .._win32 import system_directory
+from ..config._types import EnvVar
 from ._planted_programs import (
     plant_marking_program,
     plant_native_program,
@@ -139,6 +146,80 @@ def test_powershell_is_found_among_the_system_programs_whatever_path_holds(
     assert found is not None, "the system's places do not hold PowerShell"
     assert Path(found).is_relative_to(system_directory()), found
     assert find_program("powershell.exe", Where.SEARCH_PATH) == str(planted)
+
+
+def test_every_match_is_offered_in_the_order_of_the_places(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A caller that judges a match by its content is offered all of them.
+
+    The first file of the right name is not necessarily the right file, and
+    an installation can hold more than one.
+
+    Mutation: made the enumeration stop after its first match. Observed this
+    test fail on the list assertion, with only the first directory named.
+    Restored; passes.
+    """
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    for directory in (first, second):
+        directory.mkdir()
+        plant_native_program(directory, _NAME)
+    monkeypatch.setenv("PATH", os.pathsep.join([str(first), str(second)]))
+
+    found = list(find_programs(_NAME, Where.SEARCH_PATH))
+
+    assert [os.path.dirname(path) for path in found] == [str(first), str(second)]
+
+
+def test_the_launcher_s_own_directory_is_one_of_this_installation_s_places(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The programs a launcher was packed with sit beside the launcher.
+
+    A single-file launcher installs this package into a cache environment of
+    its own and runs that environment's interpreter, so neither the scripts
+    directory nor the interpreter's own directory is where the executables
+    it shipped with are. The launcher states its own path, and that is the
+    only evidence of where they are.
+
+    Mutation: left the stated launcher out of the places. Observed this test
+    fail on the places assertion, the launcher's own directory absent from
+    them, and the lookup below find nothing. Restored; passes.
+    """
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    launcher = plant_native_program(bundle, "vaultspec-rag-launcher")
+    planted = plant_native_program(bundle, _NAME)
+    monkeypatch.setenv(EnvVar.PYAPP.value, str(launcher))
+
+    assert str(bundle) in installation_programs()
+    found = find_program(_NAME, Where.INSTALLATION)
+    # Windows supplies the extension from PATHEXT, in its spelling.
+    assert found is not None
+    assert os.path.normcase(found) == os.path.normcase(str(planted))
+
+
+@pytest.mark.parametrize("stated", ["1", "", "bundle/vaultspec-rag"])
+def test_a_launcher_value_that_names_no_file_adds_no_place(
+    stated: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A launcher built without that option states a marker, not a path.
+
+    A relative path is refused for the reason the whole module exists: it
+    would name a directory relative to wherever the process happens to be.
+
+    Mutation: took the stated value as a path whenever it was not empty.
+    Observed this test fail on the places assertion for every value, the
+    marker contributing an empty place and the relative path a relative
+    one. Restored; passes.
+    """
+    monkeypatch.setenv(EnvVar.PYAPP.value, stated)
+
+    assert installation_programs() == (
+        sysconfig.get_path("scripts"),
+        os.path.dirname(sys.executable),
+    )
 
 
 @pytest.mark.parametrize("name", ["", ".", "..", "bin/tool", "./tool"])

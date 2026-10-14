@@ -373,7 +373,7 @@ def _ensure_start_dependencies(
     from ._provision_progress import ReporterProvisionProgress
     from ._render import _render_provisioning_outcome
 
-    progress.stage("Checking the model files and the Qdrant server...")
+    progress.stage("Checking the model files, the Qdrant server and the monitor...")
     try:
         with ReporterProvisionProgress(progress) as sink:
             outcome = ensure_runtime_dependencies(

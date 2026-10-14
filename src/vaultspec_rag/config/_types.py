@@ -300,6 +300,11 @@ class EnvVar(StrEnum):
     # empty or relative entry of the search path is never searched.
     PATH = "PATH"
     PATHEXT = "PATHEXT"
+    # What a single-file launcher tells the interpreter it starts: the
+    # launcher's own path, where it was built to pass it, and a bare marker
+    # otherwise. Read to find the programs that shipped beside the launcher,
+    # which are not in the cache environment it installed this package into.
+    PYAPP = "PYAPP"
     # The operating system's temporary-directory conventions, read to decide
     # whether an indexed root was throwaway.
     TEMP = "TEMP"

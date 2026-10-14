@@ -33,7 +33,10 @@ both cases the project is installed into a per-user data directory on first
 launch (PYAPP_PROJECT_NAME + PYAPP_PROJECT_VERSION), while the CPython runtime
 is embedded into the binary itself (PYAPP_DISTRIBUTION_EMBED). The binary
 therefore needs no Python on the user's machine, but still needs network access
-to resolve the project and its dependencies on first run.
+to resolve the project and its dependencies on first run. The launcher passes its
+own path to the interpreter it starts (PYAPP_PASS_LOCATION), which is how the
+running package finds the executables packed beside the launcher rather than in
+the environment it installed the wheel into.
 
 Usage::
 
@@ -218,6 +221,13 @@ def build_one(
             # Bake the CPython distribution into the binary so the target
             # machine needs no interpreter.
             "PYAPP_DISTRIBUTION_EMBED": "1",
+            # Pass the launcher's own path to the interpreter it starts,
+            # instead of the bare "1" marker. The executables an archive
+            # ships with sit beside the launcher, not in the environment it
+            # installs the wheel into, so this is the only way the running
+            # package can find the monitor it was shipped with - without it,
+            # every archive install downloads a monitor it already has.
+            "PYAPP_PASS_LOCATION": "1",
         }
     )
     env.update(binary.pyapp_exec_env())

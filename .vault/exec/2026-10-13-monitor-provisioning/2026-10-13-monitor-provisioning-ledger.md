@@ -5,7 +5,7 @@ tags:
 date: '2026-10-13'
 modified: '2026-10-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:4fdb7d24a80a5483fb6651317cd6823df111d03dcbccf23053c406048fc174c2'
+body_hash: 'sha256:14da77cc077db67f166d71f307c06a98cc6cccebbfd9cb480d5fbd81faca9d36'
 related:
   - "[[2026-10-13-monitor-provisioning-plan]]"
 ---
@@ -182,6 +182,24 @@ related:
 - `S06` `verify:` `uv run --no-sync python -m dev lint docs-cli` -> `pass`
 - `S06` `verify:` `uv run --no-sync python -m dev.actionlint` -> `pass`
 - `S06` `by:` `implementation-engineer-high`
+- `S03` `M` `src/vaultspec_rag/monitor_runtime/_resolve.py`
+- `S03` `M` `src/vaultspec_rag/monitor_runtime/_provision.py`
+- `S03` `M` `src/vaultspec_rag/native_binary/_install.py`
+- `S03` `M` `src/vaultspec_rag/_readiness.py`
+- `S03` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S03` `M` `tools/binaries/build_pyapp.py`
+- `S03` `M` `tools/binaries/tests/test_build_pyapp.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_program_lookup.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_monitor_resolution.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_monitor_provisioning.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_monitor_provision_step.py`
+- `S03` `verify:` `uv run --no-sync ruff check src tools dev conftest.py` -> `pass`
+- `S03` `verify:` `uv run --no-sync ruff format --check src tools dev conftest.py` -> `pass`
+- `S03` `verify:` `uv run --no-sync ty check (15 changed files)` -> `pass`
+- `S03` `verify:` `uv run --no-sync python -m pytest src/vaultspec_rag/tests -m unit -k 'monitor or provision or readiness or program_lookup or qdrant or managed_install or service_start or install' (1283 passed)` -> `pass`
+- `S03` `verify:` `uv run --no-sync python -m pytest tools (246 passed)` -> `pass`
+- `S03` `verify:` `uv run --no-sync python -m dev lint docs-cli` -> `pass`
+- `S03` `by:` `vaultspec-implement-high`
 
 ## Notes
 
@@ -210,3 +228,6 @@ related:
 - `S06` The sibling fixture in `test_monitor_resolution.py` stood in for only one of the two installation program directories, so this checkout's real monitor answered first once one was installed. It now stands in for `installation_programs,` a new public accessor in `_program_lookup` that both the lookup and the development installer read, so where a program of ours is installed has one spelling.
 - `S06` tools/monitor/build.py imports `installation_programs` inside the development branch. The release operations in that module run under an interpreter with no site packages, which a guard asserts, and reaching that accessor loads the package's settings and its vaultspec-core dependency. The branch was exercised by running just build-monitor.
 - `S06` The documentation link check still fails on the 17 links in .vaultspec/skills/start-vaultspec-rag/references/ recorded under S01 and S03. Those files are user-owned policy sources and were left untouched; the failure awaits the user.
+- `S03` Launcher tier confirmed on a real launcher: a PyApp 0.29.0 build of the repo's pin with `PYAPP_PASS_LOCATION=1` exports PYAPP as its own absolute path while sys.executable is the cache environment's; with the 90 MB compiled monitor beside that launcher and the venv copy moved aside, the readiness row reported `monitor_source` 'installed' at the launcher's path and fetched nothing.
+- `S03` Path correction: the fix needs `tools/binaries/build_pyapp.py,` outside S03's stated paths. Without `PYAPP_PASS_LOCATION` the launcher exports the bare marker '1' and no mechanism states the launcher's path, so the sibling tier cannot see a bundle's own monitor.
+- `S03` Mutation proofs, each broken, run alone, failed on the named assertion, restored and passed: launcher directory left out of `installation_programs` (places assertion, and both bundle resolution cases on 'resolved is not None'); `find_programs` stopped at its first match (order assertion, and the masking case on 'resolved is not None'); a stated value taken as a path whenever non-empty (places assertion for marker and relative values); the install's staging sweep removed (removal assertion); the sweep given no age witness (survival assertion for a live run's fresh file); the shared download default taken (deadline assertion); the readiness refusal branch dropped `(monitor_source` assertion, 'absent' for 'unchecked').
