@@ -1,0 +1,73 @@
+---
+tags:
+  - '#audit'
+  - '#monitor-provisioning'
+date: '2026-10-14'
+modified: '2026-10-14'
+body_schema: 'body-v2'
+body_hash: 'sha256:a83a929386babf832c00d1ea243f566567ae18547f966ec98ac2929f7857172c'
+related:
+  - "[[2026-10-13-monitor-provisioning-plan]]"
+---
+
+# `monitor-provisioning` audit: `Integrated review of automatic monitor provisioning`
+
+## Scope
+
+Integrated review of `2026-10-13-monitor-provisioning-plan` Steps S01 to S06, diff `ef49416b..8d17ff52` on `feat/monitor-provisioning`, against `2026-10-13-monitor-provisioning-adr` and the records it reconciled. Three workflows were traced end to end: a wheel install's first `server start`, the release pipeline from monitor compile to bundle, and a development checkout after `just build-monitor`. Verdict: revision required. The high findings reopen S03 and S06.
+
+## Findings
+
+### bundle-sibling-tier | high | the sibling tier cannot see a bundle's own monitor, so every bundle install downloads one
+
+`src/vaultspec_rag/_program_lookup.py:116` derives the installation's program directories from `sysconfig` scripts and `sys.executable`. `src/vaultspec_rag/monitor_runtime/_resolve.py:222` resolves the sibling tier from those directories. A bundle is a PyApp launcher that installs the embedded wheel into its own cache venv (`tools/binaries/build_pyapp.py:211-232`), so both directories point inside that venv, not at the extracted archive that holds the monitor. With the PATH tier removed, a bundle install falls through to the managed tier and downloads a monitor it already has. `src/vaultspec_rag/tests/test_monitor_resolution.py:107` stubs the accessor, so no test covers the real layout. Running a built bundle once confirms or dissolves this finding.
+
+### working-directory-guard | high | the guard records a mutation proof that was never obtained, and it cannot fail on what it guards
+
+`src/vaultspec_rag/tests/test_program_lookup_sites.py:142-177`. The docstring claims a bare-name mutation fails the test, but the S06 ledger records that the mutation did not fire. The assertions on both branches always hold. `assert not ran.exists()` passes vacuously when resolution refuses first. Separately, `executable=held.launch_path` masks the mutation.
+
+### staging-sweep | medium | a killed provisioning run leaks staging files that nothing removes
+
+`src/vaultspec_rag/monitor_runtime/_provision.py:149,298-316`. The `finally` cleanup misses a hard kill. `retire_superseded` (`:327`) only removes other versions' directories. Qdrant sweeps abandoned staging files (`src/vaultspec_rag/qdrant_runtime/_provision.py:915`) under its lock; the monitor has no lock and no sweep.
+
+### readiness-hash-budget | medium | the monitor readiness row hashes about 90 MB with no time limit on a polled route
+
+`src/vaultspec_rag/_readiness.py:722-781` calls `resolve_monitor()` without a time limit, while the Qdrant dimension uses `bounded_call` and reports `qdrant_binary_unchecked` (`:544-586`). The readiness report is served at `/readiness` (`src/vaultspec_rag/server/_routes.py:917`).
+
+### monitor-download-deadline | medium | the download deadline was sized for a 30 MB archive, not the 90 MB monitor
+
+`src/vaultspec_rag/monitor_runtime/_provision.py:99` uses the default 900-second deadline from `DownloadLimits()` (`src/vaultspec_rag/native_binary/_download.py:176`). That roughly triples the minimum bandwidth a start needs to succeed, and there is no resume.
+
+### cross-version-retire | low | retiring an old version can race a concurrent install of another version
+
+Without a lock, `retire_superseded` (`src/vaultspec_rag/monitor_runtime/_provision.py:327`) can remove another version's directory while that install is still running. The result is one failed start that the next start repairs.
+
+### free-space-admission | low | there is no free-space check before installing
+
+A full volume is reported once as an unrecoverable write error that names the volume (`src/vaultspec_rag/monitor_runtime/_provision.py:275`). The only cost is a wasted transfer.
+
+### dev-install-location | low | the development monitor is installed in the interpreter's own scripts directory
+
+This is valid under the ADR's Resolution constraint, since the managed install is only an implementation hypothesis. But a daemon running under a different interpreter does not see the monitor.
+
+### init-recipe | low | `just init` does not build the monitor
+
+`just build-monitor` remains a separate one-time step in a development checkout. This is not a regression.
+
+### start-banner | low | the start progress line omits the monitor
+
+`src/vaultspec_rag/cli/_service_start.py:376` names only models and Qdrant.
+
+### no-verify-commit | low | the S06 commit passed `--no-verify`
+
+The `gates-run-explicitly` rule forbids passing it. No hook existed, so nothing was skipped.
+
+## Recommendations
+
+- bundle-sibling-tier: resolve the sibling tier from the bundle launcher's own directory as well as the venv. Add a test that places the monitor in a real bundle-shaped layout. Confirm with one built-bundle run.
+- working-directory-guard: make the guard able to fail by asserting the spawned image against `resolve_monitor().path`, or correct the docstring to say no falsifying mutation was obtained.
+- staging-sweep: sweep staging files on entry when the pid that created them is dead or they are older than the download deadline.
+- readiness-hash-budget: wrap the monitor resolve in `bounded_call` and add a `monitor_unchecked` code.
+- monitor-download-deadline: give the monitor request its own deadline through `_InstallRequest.limits`.
+- start-banner: name the monitor in the progress line.
+- None of these needs a new decision.
