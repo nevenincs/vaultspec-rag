@@ -16,23 +16,28 @@ asks about. That second record is the same reviewed launch at the one other
 path core will look at, so it creates no consent; it is made only for a launch
 already approved at its real location, and it matches nothing once the link is
 back.
+
+Core keys which entries it owns by the same resolved path, so the ownership of
+a linked native config travels the same way: to the copy for the run, and back
+to the real location before the install commits or rolls back.
 """
 
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from vaultspec_core.core.exceptions import VaultSpecError
 from vaultspec_core.core.mcps_trust import McpApproval, grant
 
-from ._mcp_host_state import approved_launches
+from ._mcp_host_state import OwnershipCarry, approved_launches
 from ._mode import RAG_DISTRIBUTION_NAME
 from ._util import confirmation_outcome
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Generator, Iterable
     from pathlib import Path
 
     from ._mcp_host_state import LaunchToEnroll
@@ -98,16 +103,35 @@ class RagLaunchConsent:
     approved: list[LaunchToEnroll] = field(default_factory=list)
     #: The approval keys recorded for *approved*, at those real locations.
     recorded: frozenset[str] = frozenset()
+    #: Core's ownership of the native configs this run syncs.
+    ownership: OwnershipCarry = field(init=False)
     #: Operator-facing problems met while asking or recording.
     warnings: list[str] = field(default_factory=list)
 
-    def carry_into_transaction(self) -> None:
-        """Record each approved launch where this run holds it, when that differs.
+    def __post_init__(self) -> None:
+        self.ownership = OwnershipCarry(self.root)
 
-        Call it once the run's links are materialized and before its sync. It
-        writes nothing for a workspace with no link in the way, because the
-        keys are then the ones already recorded.
+    @contextmanager
+    def carried_into_transaction(self) -> Generator[None]:
+        """Carry the host-local state to where this run holds it, and back.
+
+        Enter once the run's links are materialized and before its sync. Each
+        approved launch is recorded where the run holds it when that differs
+        from where it is recorded, which writes nothing for a workspace with no
+        link in the way, and stays there matching nothing once the link is back.
+        Ownership moves to the copies and returns to the real locations on the
+        way out, whether the run finished or failed, so that rollback finds it
+        where the replay expects it.
         """
+        self._carry_approvals()
+        held = self._hold_ownership()
+        try:
+            yield
+        finally:
+            if held:
+                self._release_ownership()
+
+    def _carry_approvals(self) -> None:
         held = [
             approval
             for approval in approvals_for(self.root, self.approved)
@@ -120,6 +144,25 @@ class RagLaunchConsent:
         except _GRANT_FAILURES as exc:
             self.warnings.append(
                 f"MCP approval could not be carried into this install: {exc}"
+            )
+
+    def _hold_ownership(self) -> bool:
+        try:
+            self.ownership.hold()
+        except OSError as exc:
+            self.warnings.append(
+                f"MCP ownership could not be carried into this install: {exc}"
+            )
+            return False
+        return True
+
+    def _release_ownership(self) -> None:
+        try:
+            self.ownership.release()
+        except OSError as exc:
+            self.warnings.append(
+                "MCP ownership could not be returned to the real location of "
+                f"a linked config: {exc}"
             )
 
 
@@ -138,8 +181,10 @@ def review_rag_launch(
     assume consent (*assume_yes*): a flag is not a review, and core's own sync
     then skips the launch with the command that grants it.
     """
+    planned = list(planned)
     own = [launch for launch in planned if launch.name == RAG_DISTRIBUTION_NAME]
     consent = RagLaunchConsent(root)
+    consent.ownership.capture(planned)
     approved = approved_launches(own, root)
     missing = [launch for launch in own if launch not in approved]
     if missing and confirm is not None and not assume_yes:

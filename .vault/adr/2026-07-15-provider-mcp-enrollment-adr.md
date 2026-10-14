@@ -4,7 +4,7 @@ tags:
   - '#provider-mcp-enrollment'
 date: '2026-07-15'
 modified: '2026-10-14'
-body_hash: 'sha256:165f32cec9c52c9d00dbda7cb39f43844f79b7cdfb29a8fec6939e9656edd266'
+body_hash: 'sha256:582bffae9820f98ff39e78fee56fa8b93d6f8d24477eadf6d4a216431da95f04'
 related:
   - "[[2026-07-15-provider-mcp-enrollment-research]]"
   - '[[2026-07-15-provider-mcp-enrollment-audit]]'
@@ -104,6 +104,16 @@ installation modes.
   already held at the real location is recorded at the copy's path for the run. That
   second record is the same reviewed launch, made only for a launch already approved at
   its real location. It creates no consent and matches nothing once the link is back.
+- Core keys which native entries it owns by the same resolved path, so an install treats
+  the ownership of a linked native config as it treats approval. It moves the ownership
+  found at the real location to the copy for the run, so the install's sync meets RAG's
+  entry as owned, and moves what the run left at the copy back to the real location
+  before it commits or rolls back, so that a later Core sync finds the entry owned. The
+  replay and the dry-run preview carry it the same way. The records moved are Core's own
+  in Core's own sidecar; this adds no second ownership registry. Authorization: the
+  user's 2026-10-14 instruction to fix the remaining install gaps ("fix all")
+  authorizes this refinement. It does not change which component owns provider
+  configuration.
 
 ## Implementation
 
@@ -138,7 +148,9 @@ An approval Core already holds for the same definition and launch is reused with
 question, and a changed definition or launch is asked about again.
 Once the install has swapped its links for regular copies, it carries that approval to
 the copies' paths, so the install's own sync is not refused for a launch the operator
-approved.
+approved. It moves the ownership of each linked native config to its copy in the same
+step and returns it to the real location when the run ends, whether the run finished or
+failed, before the install commits or rolls back.
 
 A managed mode transition uses the narrow `force_managed` path. An unowned same-name
 entry produces a collision and remains unchanged unless the operator explicitly forces

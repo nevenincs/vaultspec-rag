@@ -5,8 +5,9 @@ as that review. These tests drive the real install, real core sync and a real
 trust record in an isolated home. They prove the gate holds with nobody to ask,
 under ``--yes`` and after a decline; that an attended approval enrols exactly
 rag's own definition and no other; and that a linked definition or native config
-is approved where it really lives, which is what a later sync of the workspace
-asks about, as well as where the install holds it while it runs.
+is approved, and its entries owned, where it really lives, which is what a later
+sync of the workspace asks about, as well as where the install holds it while it
+runs.
 
 The mutation each guard catches is named in its own docstring.
 """
@@ -16,14 +17,14 @@ from __future__ import annotations
 import json
 import os
 import tomllib
-from contextvars import Context
 from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING, Unpack, cast
 
 import pytest
-from vaultspec_core.core.enums import InstallMode
-from vaultspec_core.core.mcps import mcp_sync
+from vaultspec_core.core.enums import InstallMode, McpScope
+from vaultspec_core.core.manifest import write_manifest
+from vaultspec_core.core.mcps import ownership_path
 from vaultspec_core.core.mcps_trust import trust_file_path
 
 from ..commands._install import (
@@ -32,7 +33,7 @@ from ..commands._install import (
     _planned_launches,
     install_run,
 )
-from ._mcp_consent import grant_planned
+from ._mcp_consent import dry_sync, grant_planned, owned_config_paths, rag_tags
 
 if TYPE_CHECKING:
     from vaultspec_core.core.types import SyncResult
@@ -104,16 +105,9 @@ def _enrolled(ws: Path) -> tuple[bool, bool]:
     return in_claude, in_codex
 
 
-def _later_sync(ws: Path) -> SyncResult:
-    """Run core's own sync of *ws* as a later invocation would, writing nothing."""
-    return Context().run(
-        mcp_sync,
-        dry_run=True,
-        mode=InstallMode.TOOL,
-        provider="all",
-        scope="project",
-        target_dir=ws,
-    )
+def _externally_managed(sync: SyncResult) -> list[str]:
+    """The warnings of a sync that found an entry it does not own."""
+    return [warning for warning in sync.warnings if "externally managed" in warning]
 
 
 def _builtin_definition() -> str:
@@ -283,7 +277,8 @@ class TestApprovalFollowsALinkedLocation:
 
     An install holds a linked definition or native config as a regular copy
     until it commits, so core asks about the copy's path while the install
-    syncs and about the link's real target in every later sync.
+    syncs and about the link's real target in every later sync. Approval and
+    ownership are both keyed that way.
     """
 
     @staticmethod
@@ -334,16 +329,18 @@ class TestApprovalFollowsALinkedLocation:
         assert node.is_symlink()
 
     @pytest.mark.parametrize("link", ["definition", "claude-config"])
-    def test_a_review_approves_the_real_location_a_later_sync_checks(
+    def test_a_later_sync_finds_the_launch_approved_and_owned(
         self, tmp_path: Path, link: str
     ) -> None:
         """What the install's own review records is what core asks about next.
 
         With the link back in place a later sync of the workspace looks at the
-        link's target. Only consent is asserted: core keys the ownership of a
-        linked native config by the same resolved path, a separate matter.
-        Mutation it catches: recording the approval only at the install's copy,
-        which enrols this run but leaves that later sync refusing the launch.
+        link's target, for the approval and for the ownership of the entry the
+        install wrote there. Mutations it catches: recording the approval only
+        at the install's copy enrols this run but leaves that later sync
+        refusing the launch; leaving the ownership at the copy leaves it
+        reporting the entry externally managed, which fails the ownership
+        assertions for the linked config and not for the linked definition.
         """
         ws = _workspace(tmp_path)
         node = (
@@ -359,6 +356,143 @@ class TestApprovalFollowsALinkedLocation:
         assert len(operator.prompts) == 1
         assert _enrolled(ws) == (True, True)
         assert node.is_symlink()
-        later = _later_sync(ws)
+        later = dry_sync(ws)
         assert not later.errors
         assert not [warning for warning in later.warnings if "not approved" in warning]
+        assert not _externally_managed(later)
+        assert rag_tags(later) == ["[UNCHANGED]", "[UNCHANGED]"]
+
+    def test_ownership_is_recorded_where_the_config_really_lives(
+        self, tmp_path: Path
+    ) -> None:
+        """No record is left at the install's copy, which no sync looks at again.
+
+        A record at the link's own path would claim ownership of whatever file
+        later replaces the link. Mutation it catches: returning a copy of the
+        record to the real location instead of moving it, which leaves the
+        stale one behind and fails the second assertion.
+        """
+        ws = _workspace(tmp_path)
+        self._link_claude_config(ws)
+
+        assert not _install(ws, confirm=_Operator(approves=True)).mcp_sync_failed
+
+        recorded = owned_config_paths(ws)
+        assert ws.resolve() / ".mcp.shared.json" in recorded
+        assert ws.resolve() / ".mcp.json" not in recorded
+
+    def test_a_reinstall_over_a_linked_config_still_owns_its_entry(
+        self, tmp_path: Path
+    ) -> None:
+        """Ownership recorded at the real location is the install's own, next time.
+
+        The second install finds the entry owned and leaves it as it is.
+        Mutation it catches: not carrying the real location's ownership to the
+        install's copy. The sync then meets an entry it does not own, skips it
+        as externally managed, and the first assertion fails.
+        """
+        ws = _workspace(tmp_path)
+        self._link_claude_config(ws)
+        assert not _install(ws, confirm=_Operator(approves=True)).mcp_sync_failed
+
+        report = _install(ws, upgrade=True)
+
+        assert not report.mcp_sync_failed
+        providers = _providers(report)
+        assert ["vaultspec-rag", "[UNCHANGED]"] in cast(
+            "list[object]", providers["claude"]["items"]
+        )
+        assert not [
+            warning
+            for host in providers.values()
+            for warning in cast("list[object]", host["warnings"])
+            if "externally managed" in str(warning)
+        ]
+        assert rag_tags(dry_sync(ws)) == ["[UNCHANGED]", "[UNCHANGED]"]
+
+    def test_a_failed_install_over_a_linked_config_restores_ownership_exactly(
+        self, tmp_path: Path
+    ) -> None:
+        """A run that fails after enrolling leaves no ownership behind.
+
+        The hosts are already chosen, so only the install's own rollback can
+        undo the ownership. The Codex config cannot be parsed, so the install
+        fails after Claude's linked config took rag's entry and its ownership.
+        Rollback restores the ownership only when it is exactly what the run is
+        expected to have left, and that holds only once the install has returned
+        the record to the real location. Mutation it catches: leaving the
+        record at the copy, which rollback then refuses to touch as a
+        concurrent update and leaves in place.
+        """
+        ws = _workspace(tmp_path)
+        write_manifest(ws, {"claude", "codex"})
+        shared = self._link_claude_config(ws).resolve()
+        broken = ws / ".codex" / "config.toml"
+        broken.parent.mkdir()
+        broken.write_text('invalid = "unterminated', encoding="utf-8")
+        link_target = os.readlink(ws / ".mcp.json")
+        shared_before = shared.read_bytes()
+
+        report = _install(ws, confirm=_Operator(approves=True))
+
+        assert report.mcp_sync_failed
+        assert not any("concurrent update preserved" in w for w in report.warnings)
+        assert not ownership_path(ws, McpScope.PROJECT).exists()
+        assert os.readlink(ws / ".mcp.json") == link_target
+        assert shared.read_bytes() == shared_before
+        assert broken.read_text(encoding="utf-8") == 'invalid = "unterminated'
+
+    def test_a_failed_reinstall_restores_the_ownership_it_found(
+        self, tmp_path: Path
+    ) -> None:
+        """A run that rewrites owned entries and then fails puts the record back.
+
+        The changed definition makes the install refresh the entry the first
+        install wrote, which rewrites its ownership at the link's target, and
+        the unparsable Codex config then fails the run. The replay has to have
+        found the entry owned to predict that rewrite, or rollback cannot tell
+        the install's own write from somebody else's. Mutation it catches:
+        leaving the real location's ownership out of the replay, which then
+        predicts no rewrite, so rollback treats the refreshed record as a
+        concurrent update, leaves it in place and says so.
+        """
+        ws = _workspace(tmp_path)
+        shared = self._link_claude_config(ws).resolve()
+        assert not _install(ws, confirm=_Operator(approves=True)).mcp_sync_failed
+        ownership = ownership_path(ws, McpScope.PROJECT)
+        ownership_before = ownership.read_bytes()
+        shared_before = shared.read_bytes()
+        source = ws / _SOURCE
+        definition = json.loads(source.read_text(encoding="utf-8"))
+        definition["command"] = "operator-launcher"
+        source.write_text(json.dumps(definition), encoding="utf-8")
+        broken = ws / ".codex" / "config.toml"
+        broken.write_text('invalid = "unterminated', encoding="utf-8")
+
+        report = _install(ws, confirm=_Operator(approves=True))
+
+        assert report.mcp_sync_failed
+        assert not any("concurrent update preserved" in w for w in report.warnings)
+        assert ownership.read_bytes() == ownership_before
+        assert shared.read_bytes() == shared_before
+
+    def test_a_preview_over_a_linked_config_plans_what_the_install_does(
+        self, tmp_path: Path
+    ) -> None:
+        """The preview finds the entry owned, as the install will.
+
+        Mutation it catches: leaving the real location's ownership out of the
+        preview, which then reports the entry skipped as externally managed
+        while the install leaves it unchanged, and fails the first assertion.
+        """
+        ws = _workspace(tmp_path)
+        self._link_claude_config(ws)
+        assert not _install(ws, confirm=_Operator(approves=True)).mcp_sync_failed
+
+        preview = _install(ws, upgrade=True, dry_run=True)
+        applied = _install(ws, upgrade=True)
+
+        assert ["vaultspec-rag", "[UNCHANGED]"] in cast(
+            "list[object]", _providers(preview)["claude"]["items"]
+        )
+        assert _providers(preview) == _providers(applied)

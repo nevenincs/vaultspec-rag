@@ -45,7 +45,7 @@ from ..torch_config._constants import TorchConfigAction
 from ._mcp_extra import reconcile_mcp_extra
 from ._mcp_host_state import (
     HostProjection,
-    carry_consent,
+    carry_host_state,
     expected_authority_ownership,
     launches_to_enroll,
     projected_core_home,
@@ -582,7 +582,7 @@ def _reconcile_project_mcp(request: _ProjectMcpReconciliationRequest) -> None:
     projected_mode_transition = request.dry_run and request.mode_flipped
     try:
         if request.host is not None:
-            carry_consent(
+            carry_host_state(
                 request.host,
                 mode=request.mode,
                 enrolled=request.fresh_providers,
@@ -1049,9 +1049,9 @@ def _install_run(request: _InstallRunRequest) -> InstallReport:
         message = topology_materialization_failure(exc)
         record_mcp_failure(failure, message)
         return failure
-    consent.carry_into_transaction()
     try:
-        report = run()
+        with consent.carried_into_transaction():
+            report = run()
     except BaseException as exc:
         rollback = topology.finish(commit=False)
         if rollback:

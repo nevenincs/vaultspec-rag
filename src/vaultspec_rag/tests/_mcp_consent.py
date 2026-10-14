@@ -1,11 +1,17 @@
-"""Explicit executable grants for installation tests in an isolated user home."""
+"""Explicit executable grants for installation tests in an isolated user home.
+
+Also reads back what core then did with them: the sync it plans and the
+ownership it recorded.
+"""
 
 from __future__ import annotations
 
 from contextvars import Context
+from pathlib import Path
 from typing import TYPE_CHECKING, Unpack
 
-from vaultspec_core.core.enums import Tool
+from vaultspec_core.core.enums import InstallMode, McpScope, Tool
+from vaultspec_core.core.mcps import mcp_sync, ownership_path, read_ownership
 from vaultspec_core.core.mcps_definitions import collect_mcp_servers
 from vaultspec_core.core.mcps_mode import (
     render_definition_for_sync,
@@ -33,11 +39,32 @@ from ..commands._mode import resolve_rag_mode
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
-    from pathlib import Path
-
-    from vaultspec_core.core.enums import InstallMode
 
     from ..commands._mcp_host_state import LaunchToEnroll
+
+
+def dry_sync(root: Path, *, enrolled: Iterable[Tool] | None = None) -> SyncResult:
+    """Run core's own sync of *root* as a later invocation would, writing nothing."""
+    return Context().run(
+        mcp_sync,
+        dry_run=True,
+        mode=InstallMode.TOOL,
+        provider="all",
+        scope="project",
+        target_dir=root,
+        enrolled=enrolled,
+    )
+
+
+def rag_tags(result: SyncResult) -> list[str]:
+    """What a sync did with rag's entry on each host, in the order it reached them."""
+    return [tag for name, tag in result.items if name == "vaultspec-rag"]
+
+
+def owned_config_paths(root: Path) -> set[Path]:
+    """Return the native config paths core records *root*'s ownership at."""
+    targets = read_ownership(ownership_path(root, McpScope.PROJECT))["targets"]
+    return {Path(path) for record in targets.values() if (path := record.get("path"))}
 
 
 def approve_workspace_launches(root: Path, mode: InstallMode | None = None) -> None:
