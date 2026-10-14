@@ -5,7 +5,7 @@ tags:
 date: '2026-10-13'
 modified: '2026-10-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:ad58ebb429a8f0a94a8ee317f28db5e828469f26d3d1cf3cad8c26399c569a90'
+body_hash: 'sha256:74dc8651a6e3f29c74859052660b7f77e5a6c76790dca06e077685591e838f5f'
 related:
   - "[[2026-10-13-monitor-provisioning-plan]]"
 ---
@@ -213,6 +213,9 @@ related:
 - `S03` `verify:` `uv run --no-sync python -m pytest src/vaultspec_rag/tests/test_env_example_coverage.py test_env_parity.py test_env_registry.py test_env_settings_centralised.py test_env_credentials.py test_configuration_doc.py dev/guards/test_env_provisioning.py (101 passed, 4 skipped)` -> `pass`
 - `S03` `verify:` `uv run --no-sync python -m pytest src/vaultspec_rag/tests -m unit -k 'monitor or provision or readiness or program_lookup or qdrant or managed_install or service_start or install or env' (1781 passed, 7 skipped)` -> `pass`
 - `S03` `verify:` `uv run --no-sync python -m dev lint docs-conventions` -> `pass`
+- `S07` `A` `.vault/audit/2026-10-14-monitor-provisioning-audit.md`
+- `S07` `verify:` `pytest test_env_example_coverage.py test_monitor_provisioning.py` -> `pass`
+- `S07` `by:` `vaultspec-code-reviewer`
 
 ## Notes
 

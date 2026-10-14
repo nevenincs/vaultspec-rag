@@ -78,6 +78,10 @@ Re-review of `bb128a3f..63fd1c7f`. `src/vaultspec_rag/tests/test_env_example_cov
 
 `src/vaultspec_rag/monitor_runtime/_resolve.py:235-239,287`.
 
+### final-review | low | the review passes once env-surface and staging-pid-parse are resolved
+
+`30708f0c` catalogues `PYAPP` in `.env.example` as read-only, drops the stale `GITHUB_ENV` exemption, and reads the staging pid by position. A mutation proof with an all-digit token is recorded in the ledger. `test_env_example_coverage.py` and `test_monitor_provisioning.py` were re-run: 28 passed. The sibling-unreadable finding stays open by judgement: the behaviour is fail-closed, and no falsifying test can be built on Windows. Pending verification: one built-bundle rehearsal of the launcher sibling tier. Pending on the user: `dev lint links` fails on user-owned `.vaultspec/skills/start-vaultspec-rag/references/*`, and `uv.lock` is stale at the branch base.
+
 ## Recommendations
 
 - bundle-sibling-tier: resolve the sibling tier from the bundle launcher's own directory as well as the venv. Add a test that places the monitor in a real bundle-shaped layout. Confirm with one built-bundle run.

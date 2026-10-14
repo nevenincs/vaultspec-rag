@@ -13,7 +13,7 @@ related:
   - '[[2026-10-09-automatic-merge-gate-autonomous-release-adr]]'
 modified: '2026-10-14'
 body_schema: body-v2
-body_hash: 'sha256:d350184206d9fb5b791a5314cb9e2aa7142ba583274ca9ae99a21e0739b8a66f'
+body_hash: 'sha256:284614713f322080704c409dce4efb70a9761af208160a59688e2942b77d9c8d'
 ---
 
 # `monitor-provisioning` plan
@@ -36,7 +36,7 @@ Ownership boundary: peer session main-bf, on branch fix/install-ux, owns the `se
 - [x] `S04` - Run the monitor step in server start and install provisioning and report it on the readiness dependency axis; `src/vaultspec_rag/commands/_provision.py, src/vaultspec_rag/cli/_render.py, src/vaultspec_rag/_readiness.py monitor entry only, and tests`.
 - [x] `S05` - Compile the monitor before the wheel, publish monitor-only archives and check bundle pins against the wheel; `.github/workflows/publish.yml, binaries.yml and acquisition.yml, tools/monitor/build.py and release.py, tools/packaging/bundles.py and validate.py, justfile release recipes, and tests`.
 - [x] `S06` - Make development monitor setup automatic and drop manual monitor setup from the docs; `justfile build-monitor recipes, tools/monitor/build.py test mode, .github/workflows/merge-gate.yml test jobs, docs/service-mode.md, docs/configuration.md, docs/installation.md monitor lines, dev/generate_cli_reference.py and docs/cli.md`.
-- [ ] `S07` - Review the integrated provisioning, release and documentation changes; `monitor-provisioning audit`.
+- [x] `S07` - Review the integrated provisioning, release and documentation changes; `monitor-provisioning audit`.
 
 ## Parallelization
 
