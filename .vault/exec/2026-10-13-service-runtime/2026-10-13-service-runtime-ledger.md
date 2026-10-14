@@ -5,7 +5,7 @@ tags:
 date: '2026-10-13'
 modified: '2026-10-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:a36fc568441327e20dfffb5bbad80dec7674f4a227e4ac08c24410a0042dae05'
+body_hash: 'sha256:d7e15d3509d14e8f70f59da952ed38973aa435fbcbcb3533fae6f8022e579f85'
 related:
   - "[[2026-10-13-service-runtime-plan]]"
 ---
@@ -133,9 +133,11 @@ related:
 - `S08` `M` `src/vaultspec_rag/tests/test_served_pointer_validation.py`
 - `S08` `verify:` `first-build admission 19 unit and 7 integration (GPU lock) pass; unit lane 7916 pass, only monitor and one free-space race` -> `pass`
 - `S08` `by:` `vaultspec-high-executor`
+- `S07` `verify:` `lab linux readme, uvx-local and client after review fixes and S08: install, start, doctor ready, index, search, stop all exit 0` -> `pass`
 
 ## Notes
 
 - `S04` doctor, status, qdrant and backend choice read the planned service interpreter
 - `S07` Monitor replaced by a lab-only readiness stand-in until the compiled monitor ships; Windows sandbox not run while the operator's service owns the GPU; first index needs --rebuild (audit first-index)
 - `S08` the in-process --borrow-gpu and api.index paths still refuse a new root; raised with the user
+- `S07` Monitor still a lab-only stand-in; Windows sandbox not run while the operator's service owns the GPU
