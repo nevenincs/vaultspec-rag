@@ -5,7 +5,7 @@ tags:
 date: '2026-10-13'
 modified: '2026-10-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:a397f4ab9355c33c0623d27844e31360933530f43e1ead93b93b6255af6a2836'
+body_hash: 'sha256:b8807cef8e6837b57f66a260fc125e82ce6aa9f57362c8a1e506b5c7d35ec79c'
 related:
   - "[[2026-10-13-service-runtime-plan]]"
 ---
@@ -136,6 +136,17 @@ related:
 - `S07` `verify:` `lab linux readme, uvx-local and client after review fixes and S08: install, start, doctor ready, index, search, stop all exit 0` -> `pass`
 - `S04` `M` `src/vaultspec_rag/tests/test_model_readiness.py`
 - `S04` `verify:` `readiness, doctor and model suites 904 pass; two guards mutation-proven` -> `pass`
+- `S08` `M` `docs/mcp.md`
+- `S08` `M` `src/vaultspec_rag/api.py`
+- `S08` `M` `src/vaultspec_rag/cli/_service_doctor.py`
+- `S08` `M` `src/vaultspec_rag/indexer/_vault_prep.py`
+- `S08` `M` `src/vaultspec_rag/mcp/_tools.py`
+- `S08` `M` `src/vaultspec_rag/tests/integration/_index_job_control_support.py`
+- `S08` `M` `src/vaultspec_rag/tests/integration/test_first_build_lifecycle.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_first_build_admission.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S08` `M` `src/vaultspec_rag/watcher_execution.py`
+- `S08` `verify:` `first-build lifecycle 10 integration pass under GPU lock; job-control integration 50 pass; unit lane 7924 pass, only vite-less monitor failures` -> `pass`
 
 ## Notes
 
@@ -143,3 +154,4 @@ related:
 - `S07` Monitor replaced by a lab-only readiness stand-in until the compiled monitor ships; Windows sandbox not run while the operator's service owns the GPU; first index needs --rebuild (audit first-index)
 - `S08` the in-process --borrow-gpu and api.index paths still refuse a new root; raised with the user
 - `S07` Monitor still a lab-only stand-in; Windows sandbox not run while the operator's service owns the GPU
+- `S08` in-process --borrow-gpu and api.index now build a new source too, on the user instruction
