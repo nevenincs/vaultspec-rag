@@ -303,14 +303,20 @@ def test_a_restart_brings_the_service_back_on_the_port_it_ran_on(
         elsewhere = free_loopback_port()
         assert elsewhere != port
 
-        outcome = _cli("restart", elsewhere, explicit_port=False)
+        try:
+            outcome = _cli("restart", elsewhere, explicit_port=False)
 
-        assert outcome.returncode == 0, outcome.describe()
-        assert outcome.data["status"] == "restarted"
-        assert outcome.data["port"] == port
-        new_pid = _keep_with_session(_discovery())
-        assert _poll_health(port)["pid"] == new_pid
-        assert not _port_is_listening(elsewhere)
+            assert outcome.returncode == 0, outcome.describe()
+            assert outcome.data["status"] == "restarted"
+            assert outcome.data["port"] == port
+            new_pid = _keep_with_session(_discovery())
+            assert _poll_health(port)["pid"] == new_pid
+            assert not _port_is_listening(elsewhere)
+        finally:
+            # A restart that came back on the wrong port left a daemon there,
+            # with its monitor; it must not outlive the test that found it.
+            if _port_is_listening(elsewhere):
+                _cli("stop", elsewhere)
 
 
 @pytest.mark.timeout(900)
