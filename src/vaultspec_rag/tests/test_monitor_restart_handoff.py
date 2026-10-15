@@ -1,9 +1,13 @@
-"""Restart handoff and adoption against the real compiled monitor executable."""
+"""Restart handoff, adoption and lifecycle waits against the real compiled monitor."""
 
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.error import HTTPError
 from urllib.request import Request
@@ -12,7 +16,9 @@ import pytest
 
 from .._loopback_http import LOOPBACK_OPENER
 from .._process_probe import pid_alive, wait_for_exit
-from ..monitor_process import MonitorProcess, stop_recorded_monitor
+from ..config._types import EnvVar
+from ..monitor_process import MonitorProcess, extend_handoff, stop_recorded_monitor
+from .conftest import managed_env
 from .test_monitor_process import _ports
 from .test_monitor_process_integration import (
     compiled_monitor_required as compiled_monitor_required,
@@ -20,7 +26,6 @@ from .test_monitor_process_integration import (
 
 if TYPE_CHECKING:
     from collections.abc import Generator
-    from pathlib import Path
 
 pytestmark = pytest.mark.unit
 
@@ -167,5 +172,103 @@ def test_a_released_monitor_is_taken_back_when_the_stop_does_not_happen(
         assert not monitor.reclaim(), "nothing is released twice"
         assert monitor.stop()
         assert wait_for_exit(pid, timeout=10)
+    finally:
+        _end(monitor, pid)
+
+
+def test_a_renewed_handoff_keeps_the_monitor_until_renewal_stops(
+    isolated_singleton_dirs: Path, backend_port: int
+) -> None:
+    """A restart still provisioning keeps the monitor open; one that died does not.
+
+    The handoff is two seconds and is renewed past that while the owner is
+    gone, which is a restart waiting on a long start step. Once renewal stops
+    the monitor closes within a window. Mutation: renewal that writes nothing
+    lets the monitor close at its first deadline and fails the alive assertion;
+    renewal that revives an expired handoff fails the final refusal; restoring
+    both passes.
+    """
+    monitor = MonitorProcess(backend_port)
+    monitor.start()
+    assert monitor.process is not None
+    pid = monitor.process.pid
+    try:
+        assert monitor.hand_off(seconds=2)
+        monitor.stop()
+        renewed_until = time.monotonic() + 6
+        while time.monotonic() < renewed_until:
+            assert extend_handoff(seconds=2)
+            time.sleep(0.5)
+        assert pid_alive(pid), "a renewed handoff closed the monitor"
+
+        assert wait_for_exit(pid, timeout=15)
+        assert not extend_handoff(seconds=2), "an expired handoff was revived"
+    finally:
+        _end(monitor, pid)
+        (isolated_singleton_dirs / "monitor.json").unlink(missing_ok=True)
+
+
+def _page_budgets(served: object) -> dict[str, dict[str, float]]:
+    """What the page waits on each verb, given what the server *served*."""
+    node = shutil.which("node")
+    assert node is not None
+    source = Path(__file__).resolve().parents[2] / "monitor/lifecycle-budget.ts"
+    script = (
+        "import { pageBudgetMilliseconds, lifecycleBudgetMilliseconds } "
+        f"from {json.dumps(source.as_uri())};"
+        f"const served = {json.dumps(served)};"
+        "console.log(JSON.stringify({"
+        "page: Object.fromEntries(['start','stop','restart'].map("
+        "(verb) => [verb, pageBudgetMilliseconds(verb, served)])),"
+        "fallback: lifecycleBudgetMilliseconds()}));"
+    )
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", script],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout.strip().splitlines()[-1])
+
+
+def test_the_page_waits_what_the_monitor_server_serves(
+    isolated_singleton_dirs: Path, backend_port: int
+) -> None:
+    """A raised readiness window reaches the page's wait through the server.
+
+    The server reads the window from its environment and reports its waits
+    with the lifecycle state; the page waits those rather than the default it
+    would otherwise assume, and the default only when nothing was served.
+    Mutation: the page ignoring what was served waits the default start and
+    fails the served-start assertion; the server not serving its waits leaves
+    no budget in the reply and fails the raised-window assertion; restoring
+    both passes.
+    """
+    del isolated_singleton_dirs
+    with managed_env(**{EnvVar.QDRANT_READY_TIMEOUT.value: "900"}):
+        monitor = MonitorProcess(backend_port)
+        monitor.start()
+    assert monitor.process is not None
+    pid = monitor.process.pid
+    link = monitor.access
+    assert link is not None
+    try:
+        base, _, capability = link.partition("/#capability=")
+        request = Request(
+            f"{base}/api/monitor/lifecycle",
+            headers={"Authorization": f"Bearer {capability}"},
+        )
+        with LOOPBACK_OPENER.open(request, timeout=60) as response:
+            served = json.loads(response.read())["budget"]
+        budgets = _page_budgets(served)
+        assert served["start"] > budgets["fallback"]["start"], (
+            "the raised readiness window did not reach the served wait"
+        )
+        assert budgets["page"] == served, "the page did not wait what was served"
+        assert _page_budgets(None)["page"] == budgets["fallback"]
     finally:
         _end(monitor, pid)

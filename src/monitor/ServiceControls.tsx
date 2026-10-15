@@ -10,7 +10,7 @@ import {
 } from "@carbon/react";
 import {
   clientMarginMilliseconds,
-  lifecycleBudgetMilliseconds,
+  pageBudgetMilliseconds,
 } from "./lifecycle-budget.ts";
 import {
   MonitorUnreachableError,
@@ -19,16 +19,6 @@ import {
   text,
   type RecordValue,
 } from "./model";
-
-function lifecycleBudget(action: string): number {
-  // A page cannot read the operator's store readiness window, so the default
-  // one stands here; the monitor's own server honours whatever is set.
-  const budget = lifecycleBudgetMilliseconds();
-  if (action === "restart") return budget.restart;
-  if (action === "start") return budget.start;
-  // Pause, resume and stop all end in the monitor's stop-shaped budget.
-  return budget.stop;
-}
 
 const stoppedWithMonitor =
   "The service stopped, and this monitor closed with it. Run `vaultspec-rag server start` to start it again.";
@@ -78,7 +68,8 @@ export function ServiceControls({
           ? `/lifecycle/${action}`
           : `/${action}`,
         { method: "POST", body: "{}" },
-        lifecycleBudget(action) + clientMarginMilliseconds,
+        pageBudgetMilliseconds(action, lifecycle?.budget) +
+          clientMarginMilliseconds,
       );
       const outcome = text(
         result.message,

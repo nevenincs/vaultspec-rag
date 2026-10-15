@@ -41,9 +41,10 @@ _READY_PREFIX = "vaultspec.monitor.ready "
 #: Written down the ownership pipe before a restart releases the monitor, so
 #: the EOF that follows keeps it alive for the next daemon to adopt.
 _HANDOFF_LINE = "vaultspec.monitor.handoff\n"
-#: How long a released monitor waits for adoption. A restart provisions nothing
-#: new and starts the monitor before warming any model, so a successor that has
-#: not adopted by then is not coming.
+#: How long a released monitor waits for adoption before it closes. A restart
+#: whose start step is still running renews it, because that step can provision
+#: a runtime, models and binaries for far longer; a restart that dies stops
+#: renewing, so the monitor still closes one window later.
 HANDOFF_SECONDS = 120.0
 
 
@@ -166,6 +167,24 @@ def _terminate_verified(identity: MonitorIdentity) -> bool:
         signal.SIGTERM if sys.platform == "win32" else signal.SIGKILL,
     )
     return wait_for_exit(identity.pid, timeout=5)
+
+
+def extend_handoff(*, seconds: float = HANDOFF_SECONDS) -> bool:
+    """Move a pending handoff's deadline to *seconds* from now.
+
+    Returns ``False`` once the monitor was adopted, its handoff expired, or no
+    record exists, and writes nothing then: an expired handoff is never
+    revived, so whoever renews it can only keep a released monitor open while
+    it keeps renewing.
+    """
+    path = _identity_path()
+    with status_write_lock(path):
+        identity = _read_identity(path)
+        if identity is None or not identity.handoff_pending():
+            return False
+        renewed = replace(identity, handoff_until=time.time() + seconds)
+        write_json_atomically(path, asdict(renewed))
+    return True
 
 
 def stop_recorded_monitor() -> bool:

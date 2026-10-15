@@ -17,8 +17,9 @@
  * One term is stated at its widest rather than at what this host will
  * actually do: every model repository a build can configure is counted. The
  * daemon readiness term follows the window an operator sets, which the
- * monitor's server reads from the environment it launches the owner in; a
- * browser cannot read it and uses the default. Waiting longer than the owner
+ * monitor's server reads from the environment it launches the owner in and
+ * reports with the lifecycle state, so the page waits what the server does.
+ * Waiting longer than the owner
  * can run costs nothing - the owner answers with its own outcome first -
  * while waiting less kills a start that was still working, after the stop
  * that preceded it already succeeded. A check in the owner's own tests holds
@@ -85,3 +86,25 @@ export function lifecycleBudgetMilliseconds(
  * server's own timeout is the outcome it reports rather than a bare abort.
  */
 export const clientMarginMilliseconds = 5 * second;
+
+/**
+ * What the page waits on *action*, in milliseconds: the wait the monitor's
+ * server reported with the lifecycle state, which follows the readiness
+ * window the operator set, and the default only before it has reported.
+ */
+export function pageBudgetMilliseconds(
+  action: string,
+  served: unknown,
+): number {
+  // Pause, resume and stop all end in the monitor's stop-shaped budget.
+  const verb = action === "restart" || action === "start" ? action : "stop";
+  const reported =
+    typeof served === "object" && served !== null
+      ? (served as Record<string, unknown>)[verb]
+      : undefined;
+  return typeof reported === "number" &&
+    Number.isFinite(reported) &&
+    reported > 0
+    ? reported
+    : lifecycleBudgetMilliseconds()[verb];
+}

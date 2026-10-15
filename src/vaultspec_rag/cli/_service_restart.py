@@ -12,12 +12,15 @@ import json
 import os
 import subprocess
 import sys
-from typing import cast
+import threading
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, cast
 
 import typer
 
 from .._operator_commands import server_start_command
 from .._python_child import module_command
+from ..monitor_process import HANDOFF_SECONDS, extend_handoff
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
 from ._app import JsonMode, PortOption, server_root_app
@@ -30,7 +33,14 @@ from ._service_lifecycle import (
 from ._service_start import start_budget_seconds
 from ._service_stop import STOP_BUDGET_SECONDS
 
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
 _RESTART_COMMAND = "service.restart"
+
+#: How often a released monitor's handoff is renewed while the start runs:
+#: often enough that one missed renewal still leaves most of a window.
+_HANDOFF_RENEWAL_SECONDS = HANDOFF_SECONDS / 4
 
 
 def _step_timeout_seconds(verb: str) -> float:
@@ -46,6 +56,34 @@ def _step_timeout_seconds(verb: str) -> float:
     leaving no service running and a half-built runtime behind.
     """
     return start_budget_seconds() if verb == "start" else STOP_BUDGET_SECONDS
+
+
+@contextmanager
+def _monitor_kept_open(released: bool) -> Generator[None]:
+    """Keep a released monitor's handoff open for as long as the block runs.
+
+    The start step can provision for far longer than one handoff window, and
+    the successor that adopts the monitor exists only once it is done. The
+    renewal runs in this process, so a restart that dies stops renewing and the
+    monitor closes one window later, as an unadopted handoff always does.
+    """
+    if not released:
+        yield
+        return
+    finished = threading.Event()
+
+    def renew() -> None:
+        while not finished.wait(_HANDOFF_RENEWAL_SECONDS):
+            if not extend_handoff():
+                return
+
+    renewer = threading.Thread(target=renew, name="monitor-handoff", daemon=True)
+    renewer.start()
+    try:
+        yield
+    finally:
+        finished.set()
+        renewer.join(timeout=_HANDOFF_RENEWAL_SECONDS)
 
 
 def _run_verb(verb: str, port: int | None) -> dict[str, object]:
@@ -122,7 +160,8 @@ def service_restart(
         case _:
             was_running = True
 
-    started = _run_verb("start", resolved_port)
+    with _monitor_kept_open(monitor_kept):
+        started = _run_verb("start", resolved_port)
     if started.get("ok") is not True:
         message = _step_message(started, "The service did not start again.")
         raise _fail_lifecycle(

@@ -374,6 +374,9 @@ async function lifecycle(
     if (typeof state !== "string" || !state)
       throw new Error("The lifecycle owner returned no service state.");
     payload.state = state;
+    // The page cannot read the operator's readiness window, so it is given
+    // the waits this server applies and outlasts them.
+    payload.budget = lifecycleBudgetMilliseconds(readinessWindowSeconds());
     return { status: 200, payload };
   }
   return { status: error || !payload.ok ? 503 : 200, payload };
