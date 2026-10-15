@@ -16,12 +16,10 @@ from typing import cast
 
 import typer
 
-from .._gpu_owner import observation_wire
 from .._operator_commands import server_start_command
 from .._python_child import module_command
-from ..gpu_borrow_lease import borrower_start_message, observe_gpu_borrower
 from ..serviceclient._discovery import _default_service_port
-from ..serviceclient._transport import _try_http_admin, _try_http_health
+from ..serviceclient._transport import _try_http_admin
 from ._app import JsonMode, PortOption, server_root_app
 from ._render import address_line
 from ._service_lifecycle import (
@@ -68,32 +66,6 @@ def _step_message(envelope: dict[str, object], fallback: str) -> str:
     return message if isinstance(message, str) and message else fallback
 
 
-def _guard_borrower_lease(json_mode: bool, port: int | None) -> None:
-    """Refuse to stop a running service its start step would not bring back.
-
-    Start refuses while a borrower holds the GPU, so a restart that stopped
-    first would leave the service down for the whole borrow. Refusing before
-    the stop leaves it running as it was. A service that is not running has
-    nothing to keep, and its start step refuses with its own message.
-    """
-    borrower = observe_gpu_borrower()
-    if borrower.permits_service_start:
-        return
-    if port is None or _try_http_health(port) is None:
-        return
-    message = borrower_start_message(borrower, verb="restart")
-    raise _fail_lifecycle(
-        json_mode,
-        _LifecycleFailure(
-            command=_RESTART_COMMAND,
-            error="gpu_borrowed",
-            message=message,
-            human_lines=(message,),
-        ),
-        gpu_borrower=observation_wire(borrower),
-    )
-
-
 @server_root_app.command(
     "restart", help="Restart the background search service, keeping its monitor."
 )
@@ -107,7 +79,6 @@ def service_restart(
     is running again, 1 when the stop or the start failed.
     """
     resolved_port = port if port is not None else _default_service_port()
-    _guard_borrower_lease(json_mode, resolved_port)
     released = None
     if resolved_port is not None:
         released = _try_http_admin("hand_off_monitor", {}, resolved_port)

@@ -473,3 +473,43 @@ def test_a_refused_start_fails_the_restart_at_its_start() -> None:
         assert envelope["message"] == "Service start failed"
         assert read_service_status() is None
         assert _service_processes_on_port(port) == {}
+
+
+@pytest.mark.timeout(900)
+def test_a_restart_during_a_borrow_stops_and_relays_the_start_refusal(
+    tmp_path: Path,
+) -> None:
+    """A restart beside a live borrower stops the service, then says why no start.
+
+    Stopping stays allowed during a borrow, and the start that follows is
+    refused, so the restart ends with the service down and the start step's own
+    sentence naming the borrower. A real process holds the real lease.
+
+    Mutation it catches: refusing the restart before its stop leaves the daemon
+    running and reports ``gpu_borrowed`` from the restart itself, which fails
+    the error assertion; restoring the verb passes.
+    """
+    from ...gpu_borrow_lease import borrower_lease_holder_pid
+    from ..test_gpu_borrow_lease import _borrower_process
+
+    with _running_service(tmp_path) as port:
+        old_pid = cast("int", _discovery()["pid"])
+        with _borrower_process() as borrower:
+            holder = borrower_lease_holder_pid(borrower.capability)
+            outcome = _cli("restart", port)
+
+        assert holder is not None
+        assert outcome.returncode == 1, outcome.describe()
+        envelope = outcome.envelope
+        assert envelope["command"] == "service.restart"
+        assert envelope["ok"] is False
+        assert envelope["error"] == "restart_start_failed"
+        message = cast("str", envelope["message"])
+        assert f"(pid {holder})" in message
+        assert "Wait for the borrower to finish, or stop it" in message
+        assert not pid_alive(old_pid)
+        assert not _port_is_listening(port)
+        assert borrower.capability not in outcome.stdout + outcome.stderr
+        # The monitor was released for a daemon that never came; nothing will
+        # adopt it, so it is ended here rather than outliving the service.
+        stop_recorded_monitor()

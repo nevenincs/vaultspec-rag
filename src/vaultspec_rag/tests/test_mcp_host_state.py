@@ -35,6 +35,7 @@ Each negative assertion was proven able to fail before it was trusted:
 from __future__ import annotations
 
 import shutil
+import stat
 from contextvars import Context
 from pathlib import Path
 
@@ -66,6 +67,7 @@ from ..commands._mcp_host_state import (
     rebase_ownership,
 )
 from ..commands._mcp_topology import SnapshotKind
+from ..commands._mcp_trust import LaunchConsent
 from ._mcp_consent import (
     approve_install_launches,
     dry_sync,
@@ -318,3 +320,33 @@ def test_a_workspace_with_no_link_in_the_way_writes_nothing(tmp_path: Path) -> N
     carry.release()
 
     assert sidecar.read_bytes() == found
+
+
+def test_ownership_that_cannot_go_back_fails_the_transaction(tmp_path: Path) -> None:
+    """A release that cannot write the sidecar stops the run instead of warning.
+
+    The sidecar and its directory are made read-only once ownership is held,
+    so writing it back fails for real: the replace is refused on Windows, and
+    the sibling temporary on POSIX. Mutation: recording the failure as a
+    warning lets the transaction end normally, which an install then commits,
+    and fails the raises assertion; restoring the raise passes.
+    """
+    ws, shared = _linked(tmp_path)
+    consent = LaunchConsent(ws)
+    consent.ownership = _swapped(ws, shared)
+    sidecar = ownership_path(ws, McpScope.PROJECT)
+    writable = {path: path.stat().st_mode for path in (sidecar, sidecar.parent)}
+
+    try:
+        with (
+            pytest.raises(RuntimeError, match="so the install cannot commit"),
+            consent.carried_into_transaction(),
+        ):
+            assert consent.ownership.held is not None
+            sidecar.chmod(stat.S_IREAD)
+            sidecar.parent.chmod(stat.S_IREAD | stat.S_IEXEC)
+    finally:
+        for path, mode in reversed(writable.items()):
+            path.chmod(mode)
+
+    assert consent.warnings == []

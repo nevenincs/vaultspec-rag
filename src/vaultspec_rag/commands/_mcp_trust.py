@@ -175,13 +175,15 @@ class LaunchConsent:
         return True
 
     def _release_ownership(self) -> None:
+        # A run that left Core's ownership at a copy must not commit: the link
+        # comes back and a later sync meets rag's entry as externally managed.
         try:
             self.ownership.release()
         except OSError as exc:
-            self.warnings.append(
+            raise RuntimeError(
                 "MCP ownership could not be returned to the real location of "
-                f"a linked config: {exc}"
-            )
+                f"a linked config, so the install cannot commit: {exc}"
+            ) from exc
 
 
 def review_rag_launch(
