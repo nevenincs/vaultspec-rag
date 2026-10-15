@@ -33,15 +33,15 @@ from pathlib import Path
 
 from vaultspec_rag.config._schema import comma_separated
 from vaultspec_rag.config._settings import rag_default
+from vaultspec_rag.native_binary._download import download_https
+from vaultspec_rag.native_binary._install import (
+    extract_verified_archive,
+    file_sha256,
+)
 from vaultspec_rag.qdrant_runtime._constants import (
     ASSET_WINDOWS_X86,
     QDRANT_ASSET_SHA256,
     QDRANT_EXECUTABLE_SHA256,
-)
-from vaultspec_rag.qdrant_runtime._download import download_https
-from vaultspec_rag.qdrant_runtime._provision import (
-    extract_verified_archive,
-    file_sha256,
 )
 from vaultspec_rag.qdrant_runtime._resolve import binary_filename
 

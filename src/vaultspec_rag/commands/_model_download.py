@@ -122,6 +122,26 @@ class FetchLimits:
     first_byte_seconds: float = 60.0
     contention_seconds: float = 3600.0
 
+    @property
+    def budget_seconds(self) -> float:
+        """The longest one repository's fetch is waited on, in seconds.
+
+        The wait for another process fetching into the same cache, then the
+        wait for a first byte, then one window of too little progress, then
+        the confirmation of the kill that ends it. A caller that bounds a
+        command containing a fetch reads its model term from here rather than
+        restating these limits.
+
+        A fetch that keeps making progress is not bounded by this and is not
+        bounded by the fetch either: it ends when the files arrive.
+        """
+        return (
+            self.contention_seconds
+            + self.first_byte_seconds
+            + self.window_seconds
+            + _KILL_CONFIRM_SECONDS
+        )
+
 
 DEFAULT_LIMITS = FetchLimits()
 

@@ -74,7 +74,7 @@ def main() -> None:
         str(Path(__file__).resolve().parents[2]),
         str(Path(__file__).resolve().parents[2] / "src"),
     ]
-    from vaultspec_rag.qdrant_runtime._provision import verify_native_binary
+    from vaultspec_rag.native_binary._install import verify_native_binary
 
     digest, binary, *arguments = sys.argv[1:]
     verify_native_binary(Path(binary), digest)

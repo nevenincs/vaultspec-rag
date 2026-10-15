@@ -45,8 +45,9 @@ from ..torch_config._constants import TorchConfigAction
 from ._mcp_extra import reconcile_mcp_extra
 from ._mcp_host_state import (
     HostProjection,
-    carry_consent,
+    carry_host_state,
     expected_authority_ownership,
+    launches_to_enroll,
     projected_core_home,
 )
 from ._mcp_topology import (
@@ -62,6 +63,7 @@ from ._mcp_topology import (
     topology_materialization_failure,
     topology_preflight_failure,
 )
+from ._mcp_trust import LaunchConsent, replace_own_launch_skip, review_rag_launch
 from ._mode import (
     RAG_DISTRIBUTION_NAME,
     infer_rag_upgrade_mode,
@@ -89,6 +91,7 @@ if TYPE_CHECKING:
     )
     from vaultspec_core.core.workspace_mode import ResolvedMode
 
+    from ._mcp_host_state import LaunchToEnroll
     from ._models import ConfirmFn
     from ._provision import ProvisionProgress
 
@@ -510,6 +513,57 @@ def _copy_preview_node(
     restore_file_snapshot(destination, snapshot)
 
 
+def _planned_launches(
+    request: _InstallRunRequest, target: Path
+) -> list[LaunchToEnroll]:
+    """List every launch *request* would enroll into *target*, under its real paths.
+
+    Read from the same projection a dry run plans against, so the launches are
+    those the install's own sync will be asked to enroll, before anything has
+    been written to the workspace.
+    """
+    skip = request.skip or set()
+    mode = _resolve_install_mode(
+        target, request.mode, upgrade=request.upgrade, skip=skip
+    ).mode
+    with _mcp_preview_projection(
+        target,
+        install_mcp=request.install_mcp,
+        force=request.force,
+        upgrade=request.upgrade,
+        mode=mode,
+    ) as projection:
+        return Context().run(
+            launches_to_enroll,
+            target,
+            projection,
+            mode=mode,
+            enrolled=_requested_fresh_mcp_providers(target, skip),
+        )
+
+
+def _review_rag_launch(request: _InstallRunRequest, target: Path) -> LaunchConsent:
+    """Ask the operator to approve rag's own MCP launch, before any write.
+
+    A run that will not enrol the launch has nothing to ask. A review that
+    cannot be prepared is left to the install itself, whose sync then reports
+    the launch unapproved or fails the same way it would have.
+    """
+    consent = LaunchConsent(target)
+    if not request.install_mcp or {"core", "mcp"} & (request.skip or set()):
+        return consent
+    try:
+        return review_rag_launch(
+            target,
+            _planned_launches(request, target),
+            confirm=request.confirm,
+            assume_yes=request.assume_yes,
+        )
+    except Exception as exc:
+        consent.warnings.append(f"MCP approval review could not be prepared: {exc}")
+        return consent
+
+
 @dataclass(frozen=True, slots=True)
 class _ProjectMcpReconciliationRequest:
     mcp_target: Path
@@ -528,7 +582,7 @@ def _reconcile_project_mcp(request: _ProjectMcpReconciliationRequest) -> None:
     projected_mode_transition = request.dry_run and request.mode_flipped
     try:
         if request.host is not None:
-            carry_consent(
+            carry_host_state(
                 request.host,
                 mode=request.mode,
                 enrolled=request.fresh_providers,
@@ -549,6 +603,7 @@ def _reconcile_project_mcp(request: _ProjectMcpReconciliationRequest) -> None:
         return
     if request.dry_run:
         _rewrite_preview_paths(result, request.mcp_target, request.target)
+    replace_own_launch_skip(result, request.report.warnings)
     request.report.sync_results.append(result)
     request.report.mcp_sync_results.append(result)
     if request.dry_run and request.mode_flipped and not request.force:
@@ -964,6 +1019,7 @@ def _install_run(request: _InstallRunRequest) -> InstallReport:
     if request.dry_run:
         return run()
 
+    consent = _review_rag_launch(request, target)
     with tempfile.TemporaryDirectory(prefix="vaultspec-rag-mcp-replay-") as raw:
         replay_target = Path(raw).resolve() / "workspace"
         topology.populate_projection(replay_target)
@@ -995,7 +1051,8 @@ def _install_run(request: _InstallRunRequest) -> InstallReport:
         record_mcp_failure(failure, message)
         return failure
     try:
-        report = run()
+        with consent.carried_into_transaction():
+            report = run()
     except BaseException as exc:
         rollback = topology.finish(commit=False)
         if rollback:
@@ -1004,6 +1061,7 @@ def _install_run(request: _InstallRunRequest) -> InstallReport:
                 + "; ".join(rollback)
             ) from exc
         raise
+    report.warnings.extend(consent.warnings)
     topology_errors = topology.finish(commit=not report.mcp_sync_failed)
     for message in topology_errors:
         record_mcp_failure(report, message)

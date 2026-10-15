@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from ..indexer._consumer_pipeline import ChunkEmbedResult
 
 __all__ = ["unloaded_model"]
-pytestmark = pytest.mark.unit
+pytestmark = pytest.mark.integration
 
 
 @dataclass(frozen=True)

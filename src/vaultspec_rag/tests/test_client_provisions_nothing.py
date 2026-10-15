@@ -32,7 +32,6 @@ from ..commands._install import install_run
 from ..commands._provision import ProvisionStep
 from ..config._paths import read_persisted_local_only
 from ..config._types import EnvVar
-from ..operator_state._installation import ComputeCapability
 from ._cli_helpers import app, runner
 from ._model_cache_seed import STAND_IN_DENSE, STAND_IN_RERANKER, seed_model_cache
 from ._qdrant_provision_seam import record_qdrant_provisioning
@@ -92,18 +91,19 @@ def test_start_is_refused_before_anything_is_provisioned(
     isolated_singleton_dirs: Path,
     tmp_path: Path,
 ) -> None:
-    """``server start`` judges the role before it does anything else.
+    """``server start`` provisions nothing for a client before it is refused.
 
-    The start is aimed at a port something else holds. The port guard is the
-    first thing after the role, and everything a start fetches or spawns comes
-    after the guard, so a client that is refused as a client - rather than for
-    the port - was judged before any of it. The occupied port is also what
-    keeps a regressed run from going on to spawn a daemon on this machine.
+    A client environment never runs the daemon, so the start looks to the
+    managed runtime instead of refusing the operator. What the test proves is
+    that no fetch happens on the way: the start is aimed at a port something
+    else holds, so the port guard refuses it, and every step that downloads -
+    the runtime itself included - comes after that guard. The occupied port is
+    also what keeps a regressed run from going on to spawn a daemon on this
+    machine.
 
-    Mutation check: with the refusal removed from the start command, or moved
-    after the dependency fetch, the start reaches the port guard first and
-    fails as ``port_in_use`` - failing the error assertion. Restoring it
-    passes.
+    Mutation check: moving the Qdrant provisioning ahead of the guards
+    records a call and fails the first assertion; moving the model or runtime
+    fetch there leaves files under the temp root and fails the second.
     """
     del isolated_singleton_dirs
     calls = record_qdrant_provisioning(monkeypatch)
@@ -127,9 +127,9 @@ def test_start_is_refused_before_anything_is_provisioned(
     assert result.exit_code == 1, result.output
     payload = cast("dict[str, object]", json.loads(result.stdout))
     assert payload["ok"] is False
-    assert payload["error"] == "service_env_no_gpu"
+    assert payload["error"] == "port_in_use"
     data = cast("dict[str, object]", payload["data"])
-    assert data["detail"] == ComputeCapability.NOT_APPLICABLE.label
+    assert data["port"] == port
 
 
 def test_install_provisions_nothing_with_every_step_left_on(
@@ -161,7 +161,15 @@ def test_install_provisions_nothing_with_every_step_left_on(
     assert calls == [], "a client install reached the Qdrant provisioner"
     outcome = report.provision_outcome
     assert outcome is not None
-    assert {result.step for result in outcome.steps} == set(ProvisionStep)
+    # The three fetch-and-go dependencies, and no torch row: install runs the
+    # torch configuration as its own step and reports it under its own
+    # heading, and the second row the front door used to add for the same step
+    # said only that it had not re-run it.
+    assert {result.step for result in outcome.steps} == {
+        ProvisionStep.MODELS,
+        ProvisionStep.QDRANT,
+        ProvisionStep.MONITOR,
+    }
     for result in outcome.steps:
         assert result.action == ProvisionAction.SKIPPED, result
         assert _NOT_NEEDED in result.detail, result

@@ -24,6 +24,7 @@ from ...server import ServerRouteRuntime, create_http_app
 from ...server._routes import InvalidJobRequestError, validated_index_request
 from ...service import ServiceRegistry
 from ...service_quiesce import ServiceQuiesceController
+from .._publication_assertions import publish_empty_vault_proof
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
@@ -46,6 +47,10 @@ async def test_generic_service_admission_preserves_closed_authority(
 ) -> None:
     """The generic HTTP adapter must retain the exact admitted enum member."""
     (tmp_path / ".vault").mkdir()
+    # A root with a completed publication, so the only thing that can change
+    # the requested pair here is the adapter. A never-built source is
+    # admitted as its first full build, which is a different proof.
+    publish_empty_vault_proof(tmp_path)
     spec, _initiator, _admission = await validated_index_request(
         {
             "operation": "index",
@@ -370,7 +375,13 @@ async def test_job_mutations_keep_real_asgi_loop_responsive(
             outcome = cast("dict[str, object]", created.json()["outcome"])
             job = cast("dict[str, object]", outcome["job"])
             spec = cast("dict[str, object]", job["spec"])
-            assert spec["authority"] == "publication"
+            # This root has never been indexed, so the incremental request
+            # was admitted as its first full build: the record reports both
+            # operations, and the authority is the one a reset-first build
+            # needs rather than the one the request carried.
+            assert spec["authority"] == "rebuild"
+            assert spec["requested_mode"] == "incremental"
+            assert spec["effective_mode"] == "first_build"
             job_id = str(job["id"])
 
             cancelled = await _assert_mutation_overlaps_auth_probe(

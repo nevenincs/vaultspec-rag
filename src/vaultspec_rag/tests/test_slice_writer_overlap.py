@@ -50,8 +50,6 @@ from ..job_control import CancelRequested
 from ..progress import NullProgressReporter
 from ..store_runtime import VaultStore
 
-pytestmark = [pytest.mark.unit]
-
 _DIM = 8
 
 
@@ -198,6 +196,7 @@ def _stream(
 class TestVaultEncodeUpsertOverlap:
     """The vault path must overlap slice N's upsert with slice N+1's encode."""
 
+    @pytest.mark.integration
     def test_next_slice_encode_starts_while_prior_upsert_is_in_flight(
         self,
         tmp_path: Path,
@@ -221,6 +220,7 @@ class TestVaultEncodeUpsertOverlap:
             assert overlapped, "no encode started while an upsert was in flight"
             assert set(counts.values()) == {1}
 
+    @pytest.mark.integration
     def test_exactly_one_writer_thread_and_encode_stays_on_the_caller(
         self,
         tmp_path: Path,
@@ -238,6 +238,7 @@ class TestVaultEncodeUpsertOverlap:
             # The caller stays the only encode (GPU-consumer) thread.
             assert set(encoder.encode_threads) == {caller}
 
+    @pytest.mark.integration
     def test_slices_are_stored_in_encode_order(self, tmp_path: Path) -> None:
         with _SlowUpsertStore(tmp_path, latency_seconds=0.05) as store:
             encoder = _RecordingEncoder()
@@ -256,6 +257,7 @@ class TestVaultEncodeUpsertOverlap:
                 _expected_ids(texts) for texts in encoder.encoded_slices
             ]
 
+    @pytest.mark.integration
     def test_a_writer_failure_fails_the_run(self, tmp_path: Path) -> None:
         with _FailingUpsertStore(tmp_path) as store:
             encoder = _RecordingEncoder()
@@ -269,6 +271,7 @@ class TestVaultEncodeUpsertOverlap:
 class TestSliceWriterContract:
     """Direct coverage of the writer thread's ordering and shutdown bounds."""
 
+    @pytest.mark.unit
     def test_tasks_run_in_submission_order_on_one_thread(self) -> None:
         writer = _SliceWriter(name="order-writer")
         executed: list[int] = []
@@ -290,6 +293,7 @@ class TestSliceWriterContract:
         assert executed == list(range(6))
         assert len(set(threads)) == 1
 
+    @pytest.mark.unit
     def test_mutation_intent_precedes_store_and_confirmation_precedes_release(
         self,
     ) -> None:
@@ -320,6 +324,7 @@ class TestSliceWriterContract:
             "release",
         ]
 
+    @pytest.mark.unit
     def test_store_failure_leaves_only_prepared_mutation_intent(self) -> None:
         """Mutation: marking APPLIED in a finally block makes this guard red."""
         events: list[str] = []
@@ -338,6 +343,7 @@ class TestSliceWriterContract:
             execute_store_mutation(_fail, lifecycle)
         assert events == ["prepare", "store"]
 
+    @pytest.mark.unit
     def test_async_acknowledgement_stays_applied_until_owning_barrier(self) -> None:
         """Mutation: confirming every acknowledged write makes this guard red."""
         events: list[str] = []
@@ -354,6 +360,7 @@ class TestSliceWriterContract:
         lifecycle.confirm()
         assert events == ["prepare", "store", "applied", "confirmed"]
 
+    @pytest.mark.unit
     def test_confirmed_exact_replay_skips_the_store_but_not_the_record(self) -> None:
         """The store call is skipped; the checkpoint record still happens.
 
@@ -389,6 +396,7 @@ class TestSliceWriterContract:
         assert "store" not in events
         assert events == ["prepare", "acknowledged"]
 
+    @pytest.mark.integration
     def test_code_and_document_slices_drive_lifecycle_and_code_barrier(
         self,
         tmp_path: Path,
@@ -455,6 +463,7 @@ class TestSliceWriterContract:
             )
             assert document_events == ["prepare", "applied", "confirmed"]
 
+    @pytest.mark.unit
     def test_cancellation_during_prepare_never_touches_storage(self) -> None:
         """Mutation: moving preparation after storage makes this guard red."""
         store_calls = 0
@@ -476,6 +485,7 @@ class TestSliceWriterContract:
             execute_store_mutation(write, lifecycle)
         assert store_calls == 0
 
+    @pytest.mark.unit
     def test_a_cancel_during_close_leaves_no_live_writer_thread(self) -> None:
         """A shutdown interrupted by its own checkpoint must still stop.
 
@@ -507,6 +517,7 @@ class TestSliceWriterContract:
             "interpreter shutdown for the life of the process"
         )
 
+    @pytest.mark.unit
     def test_the_writer_thread_never_blocks_interpreter_exit(self) -> None:
         """The thread is a daemon, so an abandoned writer cannot wedge exit.
 
@@ -520,6 +531,7 @@ class TestSliceWriterContract:
         finally:
             writer.close()
 
+    @pytest.mark.unit
     def test_failure_releases_later_tasks_without_writing_them(self) -> None:
         writer = _SliceWriter(name="failing-writer")
         written: list[int] = []
@@ -543,6 +555,7 @@ class TestSliceWriterContract:
         assert written == []
         assert released == [0, 1]
 
+    @pytest.mark.unit
     def test_submit_after_failure_reraises_and_leaves_the_task_unwritten(
         self,
     ) -> None:
@@ -560,6 +573,7 @@ class TestSliceWriterContract:
         with pytest.raises(RuntimeError, match="injected write failure"):
             writer.close()
 
+    @pytest.mark.unit
     def test_wedged_writer_close_raises_within_its_bound(self) -> None:
         # Wedge safety: close() must log-and-raise within its shutdown bound
         # rather than wait forever on a stuck store call. The helper thread's

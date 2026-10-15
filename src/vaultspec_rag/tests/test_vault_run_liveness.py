@@ -47,8 +47,6 @@ if TYPE_CHECKING:
 
     from .._store_writes import StoreWritePolicy
 
-pytestmark = [pytest.mark.unit]
-
 
 @pytest.fixture
 def unloaded_model(clean_config: None) -> EmbeddingModel:
@@ -115,6 +113,7 @@ def _confirm(
     )
 
 
+@pytest.mark.unit
 def test_confirmed_vault_units_extend_a_run_beyond_its_timeout(
     tmp_path: Path, unloaded_model: EmbeddingModel
 ) -> None:
@@ -143,6 +142,7 @@ def test_confirmed_vault_units_extend_a_run_beyond_its_timeout(
         )
 
 
+@pytest.mark.unit
 def test_duplicate_or_empty_confirmation_does_not_renew(
     tmp_path: Path, unloaded_model: EmbeddingModel
 ) -> None:
@@ -167,6 +167,7 @@ def test_duplicate_or_empty_confirmation_does_not_renew(
         assert after.durable_progress_count == before.durable_progress_count
 
 
+@pytest.mark.unit
 def test_silence_refuses_publication_before_terminal_success(
     tmp_path: Path, unloaded_model: EmbeddingModel
 ) -> None:
@@ -194,6 +195,7 @@ def test_silence_refuses_publication_before_terminal_success(
         assert checkpoint.run_policy._completed is False
 
 
+@pytest.mark.unit
 def test_successful_publication_retires_deadline_but_preserves_control(
     tmp_path: Path, unloaded_model: EmbeddingModel
 ) -> None:
@@ -229,6 +231,7 @@ def test_successful_publication_retires_deadline_but_preserves_control(
         assert checkpoint.run_policy.store_write_policy.remaining_seconds() == 0.0
 
 
+@pytest.mark.unit
 def test_successful_publication_closes_actual_storage_admission(
     tmp_path: Path, unloaded_model: EmbeddingModel
 ) -> None:
@@ -251,6 +254,7 @@ def test_successful_publication_closes_actual_storage_admission(
         assert checkpoint.run_policy.snapshot().expired is False
 
 
+@pytest.mark.unit
 def test_failed_store_or_ledger_never_renews_or_completes(
     tmp_path: Path, unloaded_model: EmbeddingModel
 ) -> None:
@@ -286,6 +290,7 @@ def test_failed_store_or_ledger_never_renews_or_completes(
         assert not checkpoint.run_policy._completed
 
 
+@pytest.mark.unit
 def test_failed_terminal_commit_never_retires_the_deadline(
     tmp_path: Path, unloaded_model: EmbeddingModel
 ) -> None:
@@ -312,6 +317,7 @@ def test_failed_terminal_commit_never_retires_the_deadline(
         )
 
 
+@pytest.mark.unit
 def test_completion_preserves_a_previously_latched_failure(
     tmp_path: Path, unloaded_model: EmbeddingModel
 ) -> None:
@@ -333,6 +339,7 @@ def test_completion_preserves_a_previously_latched_failure(
         assert checkpoint.run_policy.snapshot().expired
 
 
+@pytest.mark.integration
 def test_actual_stream_and_payload_writes_receive_exact_checkpoint_policy(
     tmp_path: Path, unloaded_model: EmbeddingModel
 ) -> None:
@@ -429,6 +436,7 @@ def test_actual_stream_and_payload_writes_receive_exact_checkpoint_policy(
         )
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize("mode", ["full", "incremental", "scoped"])
 def test_actual_vault_entries_adopt_the_opened_checkpoint_policy(
     tmp_path: Path, unloaded_model: EmbeddingModel, mode: str
@@ -437,6 +445,17 @@ def test_actual_vault_entries_adopt_the_opened_checkpoint_policy(
     path = tmp_path / ".vault" / "adr" / "notes.md"
     path.parent.mkdir(parents=True)
     path.write_text("---\ndate: '2026-10-03'\n---\n# Notes\n\nreal source\n")
+    # This observes which policy each entry adopts, not the deadline. The
+    # profile hook slows every call past the two-second window the deadline
+    # tests rely on, so this run gets a window only a hang exceeds.
+    get_config(
+        {
+            "embedding_dimension": 2,
+            "qdrant_url": None,
+            "sparse_enabled": False,
+            "index_no_progress_timeout_seconds": 60.0,
+        }
+    )
     with VaultStore(tmp_path, embedding_dim=2) as store:
         seed = _open(tmp_path, store, RunControlToken())
         _confirm(store, seed, _chunk())
@@ -489,6 +508,7 @@ def test_actual_vault_entries_adopt_the_opened_checkpoint_policy(
         assert not opened[0].run_policy._completed
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize("payload_only", [False, True])
 def test_vault_point_lock_wait_is_bounded_by_its_run_policy(
     tmp_path: Path, unloaded_model: EmbeddingModel, payload_only: bool
@@ -530,6 +550,7 @@ def test_vault_point_lock_wait_is_bounded_by_its_run_policy(
         assert checkpoint.run_policy.snapshot().durable_progress_count == 0
 
 
+@pytest.mark.unit
 def test_expired_writer_cleanup_settles_and_releases_real_work(
     tmp_path: Path, unloaded_model: EmbeddingModel
 ) -> None:

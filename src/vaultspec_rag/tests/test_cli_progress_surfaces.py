@@ -348,7 +348,9 @@ class TestQdrantProvisionProgress:
         archive is unpacked. The report has to describe that order rather than
         invent a friendlier one.
         """
-        from ..qdrant_runtime._provision import extract_verified_archive, file_sha256
+        from ..native_binary._download import Progress
+        from ..native_binary._install import extract_verified_archive, file_sha256
+        from ..qdrant_runtime._provision import _SUBJECT
         from ..qdrant_runtime._resolve import binary_filename
 
         archive = _zip_archive(
@@ -363,11 +365,12 @@ class TestQdrantProvisionProgress:
                 archive,
                 file_sha256(archive),
                 dest,
-                on_progress=reporter.stage,
+                binary_name=binary_filename(),
+                progress=Progress(_SUBJECT, reporter.stage),
             )
 
         plain = _plain(buffer.getvalue())
-        verify_at = plain.find("Verifying the Qdrant download checksum")
+        verify_at = plain.find("Verifying the Qdrant server download checksum")
         extract_at = plain.find("Extracting the Qdrant server")
         assert verify_at >= 0, plain
         assert extract_at > verify_at, plain
@@ -381,10 +384,12 @@ class TestQdrantProvisionProgress:
         appeared": a report that announced extraction before the digest was
         compared would still print plenty.
         """
-        from ..qdrant_runtime._provision import (
+        from ..native_binary._download import Progress
+        from ..native_binary._install import (
             ChecksumMismatchError,
             extract_verified_archive,
         )
+        from ..qdrant_runtime._provision import _SUBJECT
         from ..qdrant_runtime._resolve import binary_filename
 
         archive = _zip_archive(
@@ -396,17 +401,21 @@ class TestQdrantProvisionProgress:
         dest.mkdir()
         with reporter, pytest.raises(ChecksumMismatchError):
             extract_verified_archive(
-                archive, "00" * 32, dest, on_progress=reporter.stage
+                archive,
+                "00" * 32,
+                dest,
+                binary_name=binary_filename(),
+                progress=Progress(_SUBJECT, reporter.stage),
             )
 
         plain = _plain(buffer.getvalue())
-        assert "Verifying the Qdrant download checksum" in plain
+        assert "Verifying the Qdrant server download checksum" in plain
         assert "Extracting the Qdrant server" not in plain
         assert not (dest / binary_filename()).exists()
 
     def test_the_stream_reports_bytes_against_the_declared_total(self, tmp_path: Path):
         """A transfer reports how far along it is, not merely that it runs."""
-        from ..qdrant_runtime._download import _stream_capped
+        from ..native_binary._download import Progress, _stream_capped
 
         payload = b"x" * (9 << 20)
         buffer = io.StringIO()
@@ -417,7 +426,7 @@ class TestQdrantProvisionProgress:
                 io.BytesIO(payload),
                 out,
                 declared=len(payload),
-                on_progress=reporter.stage,
+                progress=Progress(sink=reporter.stage),
             )
 
         assert written == len(payload)
@@ -429,7 +438,7 @@ class TestQdrantProvisionProgress:
         self, tmp_path: Path
     ):
         """A response with no ``Content-Length`` must not invent one."""
-        from ..qdrant_runtime._download import _stream_capped
+        from ..native_binary._download import Progress, _stream_capped
 
         payload = b"y" * (5 << 20)
         buffer = io.StringIO()
@@ -437,7 +446,10 @@ class TestQdrantProvisionProgress:
         target = tmp_path / "staged.bin"
         with reporter, target.open("wb") as out:
             _stream_capped(
-                io.BytesIO(payload), out, declared=0, on_progress=reporter.stage
+                io.BytesIO(payload),
+                out,
+                declared=0,
+                progress=Progress(sink=reporter.stage),
             )
 
         plain = _plain(buffer.getvalue())
@@ -446,7 +458,7 @@ class TestQdrantProvisionProgress:
 
     def test_the_size_cap_still_refuses_an_oversized_stream(self, tmp_path: Path):
         """Reporting was added around the cap, not in place of it."""
-        from ..qdrant_runtime import _download
+        from ..native_binary import _download
 
         payload = b"z" * (_download._MAX_DOWNLOAD_BYTES + 1)
         target = tmp_path / "staged.bin"
@@ -458,7 +470,7 @@ class TestQdrantProvisionProgress:
                 io.BytesIO(payload),
                 out,
                 declared=len(payload),
-                on_progress=lambda _line: None,
+                progress=_download.SILENT,
             )
 
     def test_json_install_emits_exactly_one_envelope(self, tmp_path: Path):

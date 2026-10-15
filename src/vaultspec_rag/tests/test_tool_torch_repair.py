@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import inspect
+import itertools
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +13,7 @@ from typing import TYPE_CHECKING
 import pytest
 from pytest import MonkeyPatch
 
+from .._process_probe import process_lineage
 from ..commands import _tool_torch
 from ..operator_state import _environment_probe, _provisioning
 from ..operator_state._compute import ProbeDepth
@@ -763,6 +765,24 @@ def _holder_row(
     return {"pid": pid, "ppid": None, "exe": image, "cwd": None, "cmdline": argv}
 
 
+def _unrelated_pids(how_many: int) -> tuple[int, ...]:
+    """Pids for made-up holders, none of them this process or one that started it.
+
+    A refusal leaves out the holders it is itself running inside, so a made-up
+    holder whose pid is one of theirs vanishes from the list the test reads. A
+    test worker's pid is a small number in a fresh process namespace, so any
+    fixed pid a test picks can be its own.
+
+    Mutation check: counting up from this process's own pid and ignoring the
+    lineage failed the tests that read the list on the assertion naming the
+    holder, with the refusal reporting only that the command runs inside the
+    environment; restored, they passed.
+    """
+    lineage = {entry.pid for entry in process_lineage()}
+    free = (pid for pid in itertools.count(700) if pid not in lineage)
+    return tuple(itertools.islice(free, how_many))
+
+
 def _refusal_detail(tmp_path: Path) -> str:
     interpreter = tmp_path / "Scripts" / "python.exe"
     interpreter.parent.mkdir(exist_ok=True)
@@ -782,16 +802,17 @@ def test_the_refusal_names_what_each_holder_is_and_how_to_clear_it(
     lines, and the remediation for all three was "end this process".
     """
     image = str(tmp_path / "Scripts" / "python.exe")
+    service, adapter, script = _unrelated_pids(3)
     monkeypatch.setattr(
         "vaultspec_rag._process_probe.iter_process_info",
         _process_table(
             _holder_row(
-                701,
+                service,
                 image,
                 [image, "-m", "vaultspec_rag.server", "--port", "8776"],
             ),
-            _holder_row(702, image, [image, "-m", "vaultspec_rag.server"]),
-            _holder_row(703, image, [image, "-c", "import time; time.sleep(9)"]),
+            _holder_row(adapter, image, [image, "-m", "vaultspec_rag.server"]),
+            _holder_row(script, image, [image, "-c", "import time; time.sleep(9)"]),
         ),
     )
 
@@ -822,11 +843,12 @@ def test_a_holder_under_a_long_path_still_shows_what_it_is_running(
     """
     deep = tmp_path.joinpath(*[f"a-long-directory-component-{n}" for n in range(6)])
     image = str(deep / "Scripts" / "python.exe")
+    (service,) = _unrelated_pids(1)
     monkeypatch.setattr(
         "vaultspec_rag._process_probe.iter_process_info",
         _process_table(
             _holder_row(
-                901, image, [image, "-m", "vaultspec_rag.server", "--port", "8776"]
+                service, image, [image, "-m", "vaultspec_rag.server", "--port", "8776"]
             )
         ),
     )
@@ -846,9 +868,10 @@ def test_the_refusal_counts_the_processes_it_could_not_inspect(
     another user produced the same sentence, and they are different answers
     to "is this list the whole story".
     """
+    (stranger,) = _unrelated_pids(1)
     monkeypatch.setattr(
         "vaultspec_rag._process_probe.iter_process_info",
-        _process_table(_holder_row(801, None)),
+        _process_table(_holder_row(stranger, None)),
     )
 
     detail = _refusal_detail(tmp_path)

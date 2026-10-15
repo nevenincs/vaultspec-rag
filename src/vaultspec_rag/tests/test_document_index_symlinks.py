@@ -42,7 +42,6 @@ if TYPE_CHECKING:
     from ..embeddings import EmbeddingModel
 
 __all__ = ["unloaded_model"]
-pytestmark = [pytest.mark.unit]
 
 _SECRET = "fixture_sensitive_value = 'fixture only'\n"
 
@@ -109,6 +108,7 @@ def forwardless_model(
     return local_model
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize("target_name", [".env", ".git/config", "private/notes.md"])
 @pytest.mark.parametrize("chained", [False, True])
 def test_discovery_rejects_ignored_target_alias(
@@ -134,6 +134,7 @@ def test_discovery_rejects_ignored_target_alias(
     )
 
 
+@pytest.mark.unit
 def test_scan_reports_document_alias_as_a_failed_probe(tmp_path: Path) -> None:
     """Classifying the alias by name alone reported it admitted; the probe passed."""
     target = tmp_path / ".env"
@@ -154,6 +155,7 @@ def test_scan_reports_document_alias_as_a_failed_probe(tmp_path: Path) -> None:
     assert samples["docs/guide.md"].kind is ContentKind.DOCUMENT
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize("target_kind", ["safe", "outside", "missing"])
 def test_discovery_rejects_other_file_link_targets(
     tmp_path: Path, target_kind: str
@@ -171,6 +173,7 @@ def test_discovery_rejects_other_file_link_targets(
     assert preflight.files == ((target,) if target_kind == "safe" else ())
 
 
+@pytest.mark.unit
 def test_full_preflight_rejects_source_replaced_by_link(tmp_path: Path) -> None:
     """Dropping the canonical check accepted the link; restoring it refused."""
     docs = _docs(tmp_path)
@@ -190,6 +193,7 @@ def test_full_preflight_rejects_source_replaced_by_link(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.unit
 def test_full_preflight_rejects_forged_link_membership(tmp_path: Path) -> None:
     docs = _docs(tmp_path)
     target = tmp_path / ".env"
@@ -205,6 +209,7 @@ def test_full_preflight_rejects_forged_link_membership(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.unit
 def test_full_preflight_rejects_forged_outside_link(tmp_path: Path) -> None:
     """The containment branch still names an outside target as outside."""
     root = tmp_path / "project"
@@ -223,6 +228,7 @@ def test_full_preflight_rejects_forged_outside_link(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize("directory_alias", [False, True])
 def test_worker_rejects_link_created_after_preflight(
     tmp_path: Path, directory_alias: bool
@@ -250,6 +256,7 @@ def test_worker_rejects_link_created_after_preflight(
     assert list(result.chunks) == []
 
 
+@pytest.mark.unit
 def test_swap_between_validation_and_chunk_read_yields_nothing(
     tmp_path: Path,
 ) -> None:
@@ -280,6 +287,7 @@ def test_swap_between_validation_and_chunk_read_yields_nothing(
     assert isinstance(refusal, SourceIdentityError)
 
 
+@pytest.mark.unit
 def test_extractor_is_not_launched_on_a_link(tmp_path: Path) -> None:
     """Hashing by name alone launched the extractor on the target; the gate did not."""
     marker = tmp_path / "launched.txt"
@@ -323,6 +331,7 @@ def test_extractor_is_not_launched_on_a_link(tmp_path: Path) -> None:
     assert result.preprocess_status == "skipped"
 
 
+@pytest.mark.unit
 def test_incremental_selection_refuses_to_digest_a_link(tmp_path: Path) -> None:
     """A digest opened by name alone hashed the target; the bound digest refused."""
     docs = _docs(tmp_path)
@@ -338,6 +347,7 @@ def test_incremental_selection_refuses_to_digest_a_link(tmp_path: Path) -> None:
         _indexer(tmp_path)._select_incremental_paths((alias,), previous, scoped=False)
 
 
+@pytest.mark.integration
 def test_incremental_removes_points_of_document_replaced_by_link(
     tmp_path: Path, forwardless_model: EmbeddingModel
 ) -> None:
@@ -374,6 +384,7 @@ def test_incremental_removes_points_of_document_replaced_by_link(
         assert (outcome.removed, outcome.preprocess_skipped) == (1, 0)
 
 
+@pytest.mark.unit
 def test_refused_source_is_reported_as_one_failed_file(
     tmp_path: Path, local_model: EmbeddingModel
 ) -> None:
@@ -409,6 +420,7 @@ def test_refused_source_is_reported_as_one_failed_file(
         assert store.count_document() == 0
 
 
+@pytest.mark.unit
 def test_regular_document_keeps_hash_chunks_and_preflight(tmp_path: Path) -> None:
     docs = _docs(tmp_path)
     source = docs / "guide.md"
@@ -430,6 +442,7 @@ def test_regular_document_keeps_hash_chunks_and_preflight(tmp_path: Path) -> Non
     assert result.preprocess_status is None
 
 
+@pytest.mark.unit
 def test_symlinked_project_root_keeps_regular_document(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
@@ -446,6 +459,7 @@ def test_symlinked_project_root_keeps_regular_document(tmp_path: Path) -> None:
     assert list(stream_document_and_hash_file(source, project).chunks)
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize("directory_alias", [False, True])
 def test_open_time_replacement_cannot_supply_worker_bytes(
     tmp_path: Path, directory_alias: bool

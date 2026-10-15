@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#qdrant-provisioning-trust'
 date: '2026-10-05'
-modified: '2026-10-05'
+modified: '2026-10-13'
 body_schema: 'body-v2'
-body_hash: 'sha256:9dffc208cc4b7d0b8e8402b4bcb22f70b2b177d66ed00fa2c48190e5f1d5a60e'
+body_hash: 'sha256:480329c5bc1ebfb1250396352e96f9ca2a9a78d6c9124ec8251e84f76e6d23cd'
 related:
   - "[[2026-10-05-qdrant-provisioning-trust-audit]]"
   - "[[2026-06-12-qdrant-server-provisioning-adr]]"
@@ -140,7 +140,7 @@ A host installation that has never provisioned the managed Qdrant server cannot 
 
 - A model the operator names that is not a default has no manifest; it is fetched at the revision the operator gives, loaded without remote code, and reported as unverified on status and readiness.
 
-- Added after the hostile reviews. Provisioning of models and the binary runs only in an environment that can run the service: the judgement is the one `server start` makes of the interpreter that will run the daemon, covering installation role and accelerator capability together, and every provisioning surface, readiness row, and status remedy asks it. An environment that cannot run the service is told that, never to provision. Nothing is written - no directory, no backend marker - before that judgement.
+- Added after the hostile reviews. Provisioning of models and the binary runs only in an environment that can run the service: the judgement is the one `server start` makes of the interpreter that will run the daemon, covering installation role and accelerator capability together, and every provisioning surface, readiness row, and status remedy asks it. An environment that cannot run the service is told that, never to provision. Nothing is written - no directory, no backend marker - before that judgement. Amended 2026-10-13 by `2026-10-13-service-runtime-adr`: when the launching environment cannot serve, the interpreter that will run the daemon is the managed runtime's, so that environment is no longer told it cannot provision.
 
 - The backend is decided once from the effective settings, with command flags as overrides, and the same decision drives the start preflight and the daemon's environment. A persisted or exported local-only choice, a server mode switched off, or a remote server address means no binary is fetched.
 

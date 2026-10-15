@@ -73,6 +73,8 @@ class _VaultCollectionMixin:
 
         def _collection_exists(self, name: str) -> bool: ...
 
+        def _existing_collection_names(self) -> tuple[str, ...]: ...
+
         def _create_payload_index(
             self,
             collection_name: str,
@@ -256,6 +258,34 @@ class _VaultCollectionMixin:
     def drop_document_table(self) -> None:
         """Drop only the independently owned document collection."""
         self._drop_collection(self.DOCUMENT_TABLE_NAME)
+
+    def owned_code_collections(self) -> tuple[str, ...]:
+        """Return every existing code collection this root owns.
+
+        The derived base name, whatever the pointer serves, and any
+        generation-suffixed name the writer minted here - decided by the one
+        predicate the drop enforces, so this cannot name a collection a drop
+        would refuse or miss one it would accept. An interrupted rebuild
+        leaves such a generation behind, which is why reading only the served
+        name is not a reading of this root's code namespace.
+
+        Raises:
+            RuntimeError: the served pointer is unreadable, so what this root
+                serves is not established. The reset refuses on the same
+                reading rather than guessing.
+        """
+        derived = self.DERIVED_CODE_TABLE_NAME
+        if not read_served_pointer(self.root_dir, derived).verifiable:
+            raise RuntimeError(
+                "cannot enumerate code collections without a verifiable served pointer"
+            )
+        return tuple(
+            sorted(
+                name
+                for name in self._existing_collection_names()
+                if code_collection_matches_derived(name, derived)
+            )
+        )
 
     def reset_source(self, source: PublicSourceType) -> list[str]:
         """Invalidate selected proofs and recreate storage under a writer lease."""

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from ..operator_state import _compute
 from ..operator_state._installation import InstallRole
+from ..operator_state._topology import runs_from_a_project_environment
 from ..torch_config import _direct_dep, _inspect, _mutate
 from ..torch_config._constants import (
     DIRECT_TORCH_REQUIREMENT,
@@ -126,9 +127,13 @@ def _run_torch_config_install(
 ) -> None:
     """Apply the cu130 torch-config patch to the consumer pyproject.
 
-    Only an inference host is configured. A client installation (no ``gpu``
-    extra) sends every search to the service and never needs torch, so it is
-    neither prompted nor patched and the pyproject is left untouched.
+    Only an inference host running from an environment the target's project
+    could own is configured. Neither of the other two is prompted or patched,
+    and each is recorded as what it is: a client installation (no ``gpu``
+    extra) sends every search to the service and never needs torch, while a
+    tool or uvx host needs torch and gets it from uv, so there is no project
+    configuration of its torch to report at all. Recording the second as the
+    first is what told a uv tool host in a repository that it was a client.
 
     Decisions are recorded on ``report``. The body converts the
     raise-paths from :mod:`vaultspec_rag.torch_config`
@@ -142,6 +147,8 @@ def _run_torch_config_install(
         report.torch_config_action = TorchConfigAction.DISABLED
     elif _compute.installed_role()[0] is InstallRole.CLIENT:
         report.torch_config_action = TorchConfigAction.NOT_APPLICABLE
+    elif not runs_from_a_project_environment():
+        report.torch_config_action = TorchConfigAction.ABSENT
     else:
         pyproject = target / "pyproject.toml"
         try:
@@ -170,10 +177,10 @@ def _apply_torch_install_state(
 ) -> None:
     """Apply the install action selected by an already-inspected TOML state."""
     if state == TorchConfigState.NO_PROJECT_FILE:
+        # No warning: a tool or pip installation has no project declaration by
+        # design, and nothing about this run went wrong. The action records
+        # the absence for the report, which prints no torch section for it.
         report.torch_config_action = TorchConfigAction.ABSENT
-        report.warnings.append(
-            f"no pyproject.toml at {pyproject}; skipped torch-config patch"
-        )
     elif state == TorchConfigState.CANONICAL:
         _handle_canonical_state(
             pyproject,

@@ -39,7 +39,11 @@ from ..indexer._streaming import execute_store_mutation
 from ..indexer._streaming_types import CodeFileSegment
 from ..indexer._vault_checkpoint import VaultRunCheckpoint
 from ..job_control import PauseRequested, RunControlToken
-from ..job_dispatch import _execute_index_attempt, _observe_index_resilience
+from ..job_dispatch import (
+    _RESILIENCE_PUBLICATION_SECONDS,
+    _execute_index_attempt,
+    _observe_index_resilience,
+)
 from ..job_manager._control import AttemptTerminal
 from ..job_manager.manager import JobManager
 from ..job_manager.models import JobAttemptContext, JobExecutionResult
@@ -67,6 +71,11 @@ if TYPE_CHECKING:
     from ..job_manager.state import AttemptExit
 
 pytestmark = [pytest.mark.unit]
+
+
+#: How many publication windows the burst test waits through for two commits
+#: that land inside one.
+_BURST_ATTEMPTS = 5
 
 
 @pytest.fixture
@@ -241,7 +250,17 @@ async def test_nonfinal_units_publish_before_attempt_exit(
 async def test_burst_coalesces_publications_and_retains_final_facts(
     tmp_path: Path, unloaded_model: EmbeddingModel
 ) -> None:
-    """Rapid durable commits avoid per-unit job fsync and still settle exact facts."""
+    """Rapid durable commits avoid per-unit job fsync and still settle exact facts.
+
+    A commit inside the publication window of the one before it is not
+    published. Whether two commits land inside one window depends on how fast
+    the host commits, so the pair is retried after a window has passed until
+    it lands inside one, measured from before the first commit to after the
+    second, and the run fails if no attempt does.
+
+    Mutation: publishing every durable commit fails the burst assertion on the
+    first attempt that lands inside a window; restoring the window passes.
+    """
     (tmp_path / "module.py").write_text("def alpha():\n    return 1\n")
     with VaultStore(tmp_path, embedding_dim=2) as store, _running(tmp_path) as context:
         indexer = CodebaseIndexer(tmp_path, unloaded_model, store)
@@ -250,21 +269,36 @@ async def test_burst_coalesces_publications_and_retains_final_facts(
             _observe_index_resilience(context, indexer, IndexResilienceSnapshot()),
         ):
             checkpoint = _open_code(indexer, context)
-            _commit(indexer, checkpoint, 0)
-            published = _live(context)
-            persisted = (tmp_path / "jobs.json").read_bytes()
-            _commit(indexer, checkpoint, 1)
-            assert checkpoint.ledger.committed_unit_count(checkpoint.generation_id) == 2
+            committed = 0
+            for _ in range(_BURST_ATTEMPTS):
+                started = time.monotonic()
+                _commit(indexer, checkpoint, committed)
+                published = _live(context)
+                persisted = (tmp_path / "jobs.json").read_bytes()
+                _commit(indexer, checkpoint, committed + 1)
+                committed += 2
+                if time.monotonic() - started < _RESILIENCE_PUBLICATION_SECONDS:
+                    break
+                await asyncio.sleep(_RESILIENCE_PUBLICATION_SECONDS + 0.05)
+            else:
+                pytest.fail(
+                    "no two commits landed inside one publication window in "
+                    f"{_BURST_ATTEMPTS} attempts"
+                )
+            assert (
+                checkpoint.ledger.committed_unit_count(checkpoint.generation_id)
+                == committed
+            )
             assert _live(context) == published, (
                 "burst performed another job publication"
             )
             assert (tmp_path / "jobs.json").read_bytes() == persisted
-        assert _live(context).committed_units == 2, (
+        assert _live(context).committed_units == committed, (
             "exit lost coalesced durable evidence"
         )
         settled = _live(context)
-        await asyncio.sleep(1.05)
-        _commit(indexer, checkpoint, 2)
+        await asyncio.sleep(_RESILIENCE_PUBLICATION_SECONDS + 0.05)
+        _commit(indexer, checkpoint, committed)
         assert _live(context) == settled, "closed attempt observer still published"
 
 

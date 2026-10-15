@@ -42,18 +42,19 @@ import pytest
 from .._store_writes import free_bytes
 from .._sync_vocabulary import ProvisionAction
 from ..config._types import EnvVar
-from ..qdrant_runtime._constants import MANIFEST_FILENAME
-from ..qdrant_runtime._download import (
+from ..native_binary._download import (
     DownloadError,
     DownloadFailure,
     DownloadLimits,
+    Progress,
     download_https,
 )
-from ..qdrant_runtime._provision import (
-    _install,
-    _open_staging,
+from ..native_binary._install import (
+    open_staging,
     verify_native_binary,
 )
+from ..qdrant_runtime._constants import MANIFEST_FILENAME
+from ..qdrant_runtime._provision import _install
 from ..qdrant_runtime._resolve import binary_filename, qdrant_bin_dir
 from ._loopback_tls import (
     LOOPBACK_HOST,
@@ -176,7 +177,7 @@ class TestRetry:
             source.url("/asset.bin"),
             out,
             redirect_hosts=_ALLOWED,
-            on_progress=lines.append,
+            progress=Progress(sink=lines.append),
             limits=_QUICK,
         )
 
@@ -435,13 +436,13 @@ def _fills_up(
 ) -> Callable[[Path, str], tuple[Path, IO[bytes]]]:
     """Open staging files for real, failing writes to the one *label_part* names."""
 
-    def open_staging(directory: Path, label: str) -> tuple[Path, IO[bytes]]:
-        path, handle = _open_staging(directory, label)
+    def staging_that_fills_up(directory: Path, label: str) -> tuple[Path, IO[bytes]]:
+        path, handle = open_staging(directory, label)
         if label_part not in label:
             return path, handle
         return path, cast("IO[bytes]", _FailingWrites(handle, fail_after=fail_after))
 
-    return open_staging
+    return staging_that_fills_up
 
 
 class TestLocalWrite:
@@ -819,7 +820,7 @@ class TestFreeSpace:
 
         def recording(directory: Path, label: str) -> tuple[Path, IO[bytes]]:
             staged.append(label)
-            return _open_staging(directory, label)
+            return open_staging(directory, label)
 
         request = replace(
             install_request(

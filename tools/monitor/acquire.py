@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import cast
 
 from tools.binaries.build_pyapp import check_platform_floor
-from tools.binaries.native import host_target_triple
 from tools.binaries.release_hosts import GITHUB_RELEASE_REDIRECT_HOSTS
 from tools.monitor.offline import probe_offline
 from tools.monitor.provenance import (
@@ -24,12 +23,13 @@ from tools.monitor.smoke import installed_browser, probe
 from tools.packaging.bundles import BundleSpec, verify_bundle
 from tools.packaging.checksums import parse_checksums, require
 from tools.packaging.products import MONITOR_EXECUTABLE, VAULTSPEC_RAG
-from vaultspec_rag.qdrant_runtime._download import download_https
-from vaultspec_rag.qdrant_runtime._provision import (
+from vaultspec_rag.native_binary._download import download_https
+from vaultspec_rag.native_binary._install import (
     extract_verified_archive,
     file_sha256,
     verify_native_binary,
 )
+from vaultspec_rag.native_binary._targets import host_target
 
 
 def _fetch(url: str, destination: Path) -> None:
@@ -104,7 +104,7 @@ def latest_tag(directory: Path) -> str:
 def acquire(
     tag: str | None, producer: str | None, target: str, *, os_offline: bool = False
 ) -> dict[str, object]:
-    if target != host_target_triple():
+    if target != host_target():
         raise ProvenanceError("Public acquisition requires the native declared target")
     browser = installed_browser()
     with tempfile.TemporaryDirectory(prefix="monitor-acquisition-") as scratch:

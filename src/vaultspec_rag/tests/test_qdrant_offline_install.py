@@ -25,6 +25,10 @@ import pytest
 
 from .._sync_vocabulary import ProvisionAction
 from ..config._types import EnvVar
+from ..native_binary._install import (
+    open_staging,
+    verify_native_binary,
+)
 from ..qdrant_runtime._constants import (
     MANIFEST_FILENAME,
     QDRANT_ASSET_SHA256,
@@ -32,10 +36,8 @@ from ..qdrant_runtime._constants import (
 )
 from ..qdrant_runtime._provision import (
     _install,
-    _open_staging,
     provision,
     provisioned_versions,
-    verify_native_binary,
 )
 from ..qdrant_runtime._resolve import (
     asset_for_platform,
@@ -232,7 +234,7 @@ class TestInstallFromALocalArchive:
 
         def recording(directory: Path, label: str) -> tuple[Path, IO[bytes]]:
             opened.append(label)
-            return _open_staging(directory, label)
+            return open_staging(directory, label)
 
         request = replace(
             _local_request(release_source, version_dir, pinned, asset),

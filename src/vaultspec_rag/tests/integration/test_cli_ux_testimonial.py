@@ -196,7 +196,9 @@ class TestSearchPowerUser:
             )
 
     @pytest.mark.subprocess_gpu
-    def test_live_code_search(self, tmp_path_factory: TempPathFactory) -> None:
+    def test_live_code_search(
+        self, tmp_path_factory: TempPathFactory, private_owner_anchor: Path
+    ) -> None:
         """Real in-process GPU search returns non-empty ranked output."""
         import subprocess
         import sys
@@ -231,7 +233,7 @@ class TestSearchPowerUser:
             # the status dir this subprocess reads. It is withdrawn before the
             # search, which is service-first: a discoverable host holding no
             # project would answer the query itself and return nothing.
-            with production_service(root):
+            with production_service(root, gpu_owner_anchor=private_owner_anchor):
                 index_result = subprocess.run(
                     [
                         sys.executable,

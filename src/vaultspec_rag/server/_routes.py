@@ -73,6 +73,7 @@ from ._routes_jobs import (
     _parse_since_seconds,
     sort_job_records,
 )
+from ._routes_monitor import monitor_ownership_route
 from ._routes_operator import enroll_repository_route, repositories_route
 from ._routes_quiesce import pause_service_route, resume_service_route
 from ._routes_registry import (
@@ -249,7 +250,8 @@ async def validated_index_request(
     JobInitiator,
     CodeIndexPreflight | DocumentIndexPreflight | None,
 ]:
-    from ..job_models import JobMode, JobOperation, JobSource, JobSpec
+    from .._job_admission import index_job_spec
+    from ..job_models import JobMode, JobOperation, JobSource
 
     operation = job_string(payload, "operation", default="index")
     source = job_string(payload, "source")
@@ -300,19 +302,26 @@ async def validated_index_request(
         root = _resolve_root(raw_root)
     except (ProjectRootRequiredError, ValueError) as exc:
         raise InvalidJobRequestError("invalid_job_spec", str(exc)) from exc
-    spec = JobSpec(
-        operation=JobOperation.INDEX,
-        source=JobSource(source),
-        project_root=str(root),
-        mode=JobMode(mode),
-        authority=authority,
-    )
-    admission = await _validate_index_job_spec(spec)
     initiator = _validated_initiator(
         payload,
         root=root,
         default_command="http_jobs_create",
     )
+    # Admission owns the escalation an incremental request for a never-built
+    # source gets, so the route reads the request and creates whatever
+    # admission says it is. Both of its readings reach SQLite and storage, so
+    # they run off the event loop like every other admission check here.
+    spec = await _run_in_thread(
+        partial(
+            index_job_spec,
+            root,
+            source=JobSource(source),
+            clean=JobMode(mode) is JobMode.REBUILD,
+            authority=authority,
+            initiator_kind=initiator.kind,
+        )
+    )
+    admission = await _validate_index_job_spec(spec)
     return spec, initiator, admission
 
 
@@ -1132,6 +1141,8 @@ ROUTES: list[Route] = [
     Route("/watcher/start", start_watcher_route, methods=["POST"]),
     Route("/watcher/stop", stop_watcher_route, methods=["POST"]),
     Route("/watcher/reconfigure", reconfigure_watcher_route, methods=["POST"]),
+    Route("/monitor/handoff", monitor_ownership_route, methods=["POST"]),
+    Route("/monitor/reclaim", monitor_ownership_route, methods=["POST"]),
     Route("/pause", pause_service_route, methods=["POST"]),
     Route("/resume", resume_service_route, methods=["POST"]),
     Route("/service-state", get_service_state_route, methods=["GET"]),

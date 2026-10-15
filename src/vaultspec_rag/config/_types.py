@@ -38,7 +38,19 @@ class EnvVar(StrEnum):
     LOG_FILE = "VAULTSPEC_RAG_LOG_FILE"
     PORT = "VAULTSPEC_RAG_PORT"
     MONITOR_BINARY = "VAULTSPEC_RAG_MONITOR_BINARY"
+    # The SHA256 the operator declares for that executable. The two are one
+    # setting in two halves, as the Qdrant pair below is: a path with no
+    # digest would be an executable run unverified, and a digest with no path
+    # verifies nothing. Never required and never suggested: an installation
+    # obtains and verifies its own monitor without either.
+    MONITOR_BINARY_SHA256 = "VAULTSPEC_RAG_MONITOR_BINARY_SHA256"
     MONITOR_PYTHON = "VAULTSPEC_RAG_MONITOR_PYTHON"
+    # Where the monitor's release archive comes from. The digests it is
+    # checked against ship in the package and have no variable here, for the
+    # reason the Qdrant digests do not: a source may be redirected, the bytes
+    # it must serve may not.
+    MONITOR_RELEASE_BASE_URL = "VAULTSPEC_RAG_MONITOR_RELEASE_BASE_URL"
+    MONITOR_DOWNLOAD_HOSTS = "VAULTSPEC_RAG_MONITOR_DOWNLOAD_HOSTS"
     LOG_LEVEL = "VAULTSPEC_RAG_LOG_LEVEL"
     SERVICE_IDLE_TTL_SECONDS = "VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS"
     SERVICE_MAX_PROJECTS = "VAULTSPEC_RAG_SERVICE_MAX_PROJECTS"
@@ -276,6 +288,10 @@ class EnvVar(StrEnum):
     TRANSFORMERS_NO_ADVISORY_WARNINGS = "TRANSFORMERS_NO_ADVISORY_WARNINGS"
     TRANSFORMERS_VERBOSITY = "TRANSFORMERS_VERBOSITY"
     PYTORCH_ENABLE_MPS_FALLBACK = "PYTORCH_ENABLE_MPS_FALLBACK"
+    # The uv executable uv itself names to its children. It is the only
+    # reading that is right when a machine carries more than one uv: the one
+    # running the command is the one the operator invoked.
+    UV = "UV"
     UV_CACHE_DIR = "UV_CACHE_DIR"
     UV_TOOL_DIR = "UV_TOOL_DIR"
     VIRTUAL_ENV = "VIRTUAL_ENV"
@@ -288,6 +304,11 @@ class EnvVar(StrEnum):
     # empty or relative entry of the search path is never searched.
     PATH = "PATH"
     PATHEXT = "PATHEXT"
+    # What a single-file launcher tells the interpreter it starts: the
+    # launcher's own path, where it was built to pass it, and a bare marker
+    # otherwise. Read to find the programs that shipped beside the launcher,
+    # which are not in the cache environment it installed this package into.
+    PYAPP = "PYAPP"
     # The operating system's temporary-directory conventions, read to decide
     # whether an indexed root was throwaway.
     TEMP = "TEMP"
@@ -306,7 +327,7 @@ class OperatorBinaryPairError(ValueError):
 
 
 class OperatorBinary(NamedTuple):
-    """A Qdrant binary the operator supplies, and the digest they declare for it.
+    """An executable the operator supplies, and the digest they declare for it.
 
     The two travel together because neither is usable alone. The digest is
     what the operator states the file to be; whoever runs the file hashes it

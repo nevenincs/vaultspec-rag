@@ -120,10 +120,12 @@ class TestCLIIndex:
     """
 
     @pytest.mark.timeout(300)
-    def test_index_vault_produces_summary(self, cli_vault: Path) -> None:
+    def test_index_vault_produces_summary(
+        self, cli_vault: Path, private_owner_anchor: Path
+    ) -> None:
         """``vaultspec-rag index --type vault`` should print a summary."""
         root = str(cli_vault)
-        with production_service(cli_vault):
+        with production_service(cli_vault, gpu_owner_anchor=private_owner_anchor):
             _seed_cli_publication(root, "vault")
             result = _run_cli(
                 "--target",
@@ -138,10 +140,12 @@ class TestCLIIndex:
         assert "Indexing summary" in result.stdout
 
     @pytest.mark.timeout(300)
-    def test_index_rebuild_flag_works(self, cli_vault: Path) -> None:
+    def test_index_rebuild_flag_works(
+        self, cli_vault: Path, private_owner_anchor: Path
+    ) -> None:
         """``vaultspec-rag index --type vault --rebuild`` exits zero."""
         root = str(cli_vault)
-        with production_service(cli_vault):
+        with production_service(cli_vault, gpu_owner_anchor=private_owner_anchor):
             result = _run_cli(
                 "--target",
                 root,
@@ -156,10 +160,12 @@ class TestCLIIndex:
         assert "Vault" in result.stdout
 
     @pytest.mark.timeout(300)
-    def test_index_code_produces_summary(self, cli_vault: Path) -> None:
+    def test_index_code_produces_summary(
+        self, cli_vault: Path, private_owner_anchor: Path
+    ) -> None:
         """``vaultspec-rag index --type code`` prints summary."""
         root = str(cli_vault)
-        with production_service(cli_vault):
+        with production_service(cli_vault, gpu_owner_anchor=private_owner_anchor):
             _seed_cli_publication(root, "code")
             result = _run_cli(
                 "--target",
@@ -175,10 +181,12 @@ class TestCLIIndex:
         assert "Source code" in result.stdout
 
     @pytest.mark.timeout(300)
-    def test_index_all_produces_both_rows(self, cli_vault: Path) -> None:
+    def test_index_all_produces_both_rows(
+        self, cli_vault: Path, private_owner_anchor: Path
+    ) -> None:
         """``vaultspec-rag index --type all`` shows Vault and Codebase."""
         root = str(cli_vault)
-        with production_service(cli_vault):
+        with production_service(cli_vault, gpu_owner_anchor=private_owner_anchor):
             result = _run_cli(
                 "--target",
                 root,
@@ -206,7 +214,9 @@ class TestCLISearch:
     """
 
     @pytest.mark.timeout(300)
-    def test_search_vault_returns_results(self, cli_vault: Path) -> None:
+    def test_search_vault_returns_results(
+        self, cli_vault: Path, private_owner_anchor: Path
+    ) -> None:
         """``vaultspec-rag search`` should return ranked results."""
         root = str(cli_vault)
         # Ensure indexed first. Local indexing needs the borrower lease, which
@@ -215,7 +225,7 @@ class TestCLISearch:
         # service-first, and a discoverable host with no project loaded would
         # answer the query itself and return nothing, which is a different
         # subject from the local ranked search asserted below.
-        with production_service(cli_vault):
+        with production_service(cli_vault, gpu_owner_anchor=private_owner_anchor):
             _run_cli(
                 "--target",
                 root,

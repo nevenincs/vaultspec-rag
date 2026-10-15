@@ -23,6 +23,7 @@ from .service_quiesce import (
 
 if TYPE_CHECKING:
     import threading
+    from pathlib import Path
 
 logger = logging.getLogger("vaultspec_rag.service")
 
@@ -31,6 +32,7 @@ class BorrowerLeaseMixin:
     """Validates and tracks the borrower authorised to hold this service paused."""
 
     _borrower_capability: str | None
+    _gpu_owner_anchor: Path | None
     _lock: threading.RLock
     _quiesce_controller: ServiceQuiesceController
 
@@ -60,8 +62,8 @@ class BorrowerLeaseMixin:
         handoff.  Reading one attribute is atomic, and the answer is a
         point-in-time observation either way: the controller half of this
         snapshot was already taken at a different instant.  The security-
-        relevant comparison in :meth:`borrower_capability_is_bound` still takes
-        the lock, because deciding who may act is not an observation.
+        relevant comparison in :meth:`validate_borrower_lifecycle_request` still
+        takes the lock, because deciding who may act is not an observation.
         """
         return replace(
             snapshot,
@@ -74,34 +76,52 @@ class BorrowerLeaseMixin:
         *,
         pause: bool,
     ) -> str | None:
-        """Return one lease denial, or ``None`` for an authorized lifecycle call."""
+        """Return one lease denial, or ``None`` for an authorized lifecycle call.
+
+        A hold bound to one capability is closed to every other, with one
+        exception: a pause whose own capability verifies against the live
+        lease.  The lease is exclusive, so a different capability that holds it
+        proves the bound borrower released it - it exited, crashed or let go -
+        and the hold has no owner left whose undo it protects.  That is read
+        from the lease and never from a recorded pid, which is not an identity
+        and would leave an unreadable process to be guessed at.  Anything short
+        of a verified live lease, a lease that cannot be observed included,
+        stays a mismatch: protection is never shortened on an uncertain answer.
+        A resume never inherits, because the borrower holding the lease has not
+        paused for itself.
+        """
         with self._lock:
             bound_capability = self._borrower_capability
         if bound_capability is not None:
             if capability is None:
                 return None if pause else "borrower_lease_required"
             if not hmac.compare_digest(bound_capability, capability):
+                if pause and self._borrower_lease_error(capability) is None:
+                    return None
                 return "borrower_lease_mismatch"
         if capability is None:
             return None
         return self._borrower_lease_error(capability)
 
-    def borrower_capability_is_bound(self, capability: str) -> bool:
-        """Return whether this exact capability already owns the current hold.
+    def borrower_hold_is_bound(self) -> bool:
+        """Return whether a borrower, rather than an operator, owns the hold.
 
         Separate from :meth:`bind_borrower_capability` because the caller needs
-        to distinguish "already mine" from "bindable" before deciding whether an
-        observed quiescence may be claimed at all.  Compared in constant time
-        like every other capability check.
+        to tell an operator's own pause, which no borrower may take, from a hold
+        that a borrower holds or held, before it decides whether an observed
+        quiescence may be claimed at all.
         """
         with self._lock:
-            bound_capability = self._borrower_capability
-        if bound_capability is None:
-            return False
-        return hmac.compare_digest(bound_capability, capability)
+            return self._borrower_capability is not None
 
     def bind_borrower_capability(self, capability: str) -> bool:
-        """Retain a verified borrower only after the registry is safely quiesced."""
+        """Retain a verified borrower only after the registry is safely quiesced.
+
+        The caller has already verified *capability* against the live lease
+        through :meth:`validate_borrower_lifecycle_request`.  That is what makes
+        replacing a different binding a takeover from a borrower that released
+        the lease, and not a hijack of one that did not.
+        """
         snapshot = self._quiesce_controller.snapshot()
         if (
             snapshot.state is not QuiesceState.QUIESCED
@@ -110,14 +130,10 @@ class BorrowerLeaseMixin:
         ):
             return False
         with self._lock:
-            bound_capability = self._borrower_capability
-            if bound_capability is None:
-                self._borrower_capability = capability
-                return True
-            return hmac.compare_digest(bound_capability, capability)
+            self._borrower_capability = capability
+        return True
 
-    @staticmethod
-    def lend_gpu_to_borrower(capability: str) -> bool:
+    def lend_gpu_to_borrower(self, capability: str) -> bool:
         """Lend this service's GPU to the process holding *capability*'s lease.
 
         The service owns the GPU for as long as it runs, but it takes the
@@ -125,8 +141,10 @@ class BorrowerLeaseMixin:
         claims it here: lending is what lets the borrower and every process it
         starts load models while nothing else can, and it cannot be skipped
         because the service happens to hold nothing yet. The claim is
-        torch-free. Returns whether the loan was recorded; a borrower whose loan
-        was not must not be told the GPU is its to use.
+        torch-free. The loan is recorded on this registry's owner anchor, the
+        machine's own unless the registry was given another. Returns whether
+        the loan was recorded; a borrower whose loan was not must not be told
+        the GPU is its to use.
         """
         from ._gpu_owner import GpuOwnedError, lend_gpu, require_gpu_ownership
         from .gpu_borrow_lease import borrower_lease_holder_pid
@@ -135,11 +153,11 @@ class BorrowerLeaseMixin:
         if borrower_pid is None:
             return False
         try:
-            require_gpu_ownership()
+            require_gpu_ownership(anchor=self._gpu_owner_anchor)
         except GpuOwnedError as exc:
             logger.warning("the GPU cannot be lent to the bound borrower: %s", exc)
             return False
-        return lend_gpu(borrower_pid)
+        return lend_gpu(borrower_pid, anchor=self._gpu_owner_anchor)
 
     def clear_borrower_capability_after_resume(self, capability: str | None) -> None:
         """Clear a borrower binding only for its matching achieved resume."""

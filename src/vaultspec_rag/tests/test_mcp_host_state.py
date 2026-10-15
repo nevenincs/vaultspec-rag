@@ -8,7 +8,7 @@ home is never written.
 
 Each negative assertion was proven able to fail before it was trusted:
 
-- ``carry_consent`` granting every launch instead of only the approved ones
+- ``carry_host_state`` granting every launch instead of only the approved ones
   fails ``test_a_projection_is_approved_only_for_launches_the_operator_approved``
   on its unapproved-launch assertion; restoring it passes.
 - ``rebase_ownership`` moving a record's path but keeping its old key fails
@@ -19,34 +19,62 @@ Each negative assertion was proven able to fail before it was trusted:
   ``test_a_projection_never_writes_the_operators_home`` on its first assertion;
   restoring it passes. Overwriting the operator's ownership on entry fails the
   same test on the unchanged-home assertion; restoring it passes.
+- ``carry_host_state`` leaving a linked config's ownership at its real
+  location fails ``test_a_projection_owns_a_linked_config_through_its_own_file``
+  on the externally-managed assertion; restoring it passes.
+- ``OwnershipCarry.release`` re-serializing a sidecar the run never touched
+  fails ``test_a_run_that_never_touches_the_sidecar_leaves_it_as_found`` on the
+  byte comparison; restoring it passes. ``hold`` doing nothing fails
+  ``test_held_ownership_is_what_core_finds_at_the_copy`` on the first
+  assertion after the swap; restoring it passes. ``hold`` holding a workspace
+  whose configs are their own files fails
+  ``test_a_workspace_with_no_link_in_the_way_writes_nothing`` on its ``held``
+  assertion; restoring it passes.
 """
 
 from __future__ import annotations
 
 import shutil
+import stat
 from contextvars import Context
 from pathlib import Path
 
 import pytest
-from vaultspec_core.core.enums import InstallMode, McpScope, Tool
+from vaultspec_core.core.enums import InstallMode, McpScope, McpTargetFormat, Tool
 from vaultspec_core.core.home import core_home_layout
 from vaultspec_core.core.mcps import (
     mcp_sync,
     mcp_uninstall,
     ownership_path,
     read_ownership,
+    write_ownership,
 )
+from vaultspec_core.core.mcps_ownership import (
+    discard_owned_names,
+    owned_fingerprints,
+    set_owned_fingerprints,
+)
+from vaultspec_core.core.types import McpTarget
 
 from ..builtins import seed_builtins
 from ..commands._install import install_run
 from ..commands._mcp_host_state import (
-    carry_consent,
+    OwnershipCarry,
+    carry_host_state,
     expected_authority_ownership,
+    launches_to_enroll,
     projected_core_home,
     rebase_ownership,
 )
 from ..commands._mcp_topology import SnapshotKind
-from ._mcp_consent import approve_install_launches, grant_launches
+from ..commands._mcp_trust import LaunchConsent
+from ._mcp_consent import (
+    approve_install_launches,
+    dry_sync,
+    grant_launches,
+    owned_config_paths,
+    rag_tags,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("isolated_mcp_trust_home")]
 
@@ -155,7 +183,7 @@ def test_a_projection_is_approved_only_for_launches_the_operator_approved(
         projection = tmp_path / label
         shutil.copytree(ws, projection)
         with projected_core_home(ws, projection) as host:
-            carry_consent(host, mode=InstallMode.TOOL, enrolled=_PROVIDERS)
+            carry_host_state(host, mode=InstallMode.TOOL, enrolled=_PROVIDERS)
             result = Context().run(
                 mcp_sync,
                 dry_run=True,
@@ -174,3 +202,151 @@ def test_a_projection_is_approved_only_for_launches_the_operator_approved(
     grant_launches(ws, ws, mode=InstallMode.TOOL, enrolled=_PROVIDERS)
 
     assert ["vaultspec-rag", "[ADD]"] in preview("after-approval")
+
+
+def _claude(path: Path) -> McpTarget:
+    return McpTarget(Tool.CLAUDE, McpScope.PROJECT, path, McpTargetFormat.JSON)
+
+
+def _linked(tmp_path: Path) -> tuple[Path, Path]:
+    """Return a workspace with rag installed whose Claude config is now a link.
+
+    The operator moved the config aside and linked it back, and the approval
+    and the ownership of rag's entry are where the file really lives, which is
+    where core asks about them from then on.
+    """
+    ws = _installed(tmp_path)
+    config = ws / ".mcp.json"
+    shared = ws / ".mcp.shared.json"
+    sidecar = ownership_path(ws, McpScope.PROJECT)
+    state = read_ownership(sidecar)
+    owned: dict[str, str | None] = {**owned_fingerprints(state, _claude(config))}
+    discard_owned_names(state, _claude(config), set(owned))
+    config.replace(shared)
+    config.symlink_to(shared.name)
+    set_owned_fingerprints(state, _claude(shared), owned)
+    write_ownership(sidecar, state)
+    grant_launches(ws, ws, mode=InstallMode.TOOL, enrolled=_PROVIDERS)
+    return ws, shared
+
+
+def test_a_projection_owns_a_linked_config_through_its_own_file(
+    tmp_path: Path,
+) -> None:
+    """A projection holds a linked config as a regular file and still owns its entry.
+
+    The authority's ownership is keyed by the link's target. The projection's
+    copy of that file is somewhere else, and core asks about ownership there.
+    """
+    ws, _ = _linked(tmp_path)
+    projection = tmp_path / "projection"
+    shutil.copytree(ws, projection)
+    assert not (projection / ".mcp.json").is_symlink()
+
+    with projected_core_home(ws, projection) as host:
+        carry_host_state(host, mode=InstallMode.TOOL, enrolled=_PROVIDERS)
+        result = dry_sync(projection, enrolled=_PROVIDERS)
+
+    assert not [w for w in result.warnings if "externally managed" in w]
+    assert rag_tags(result) == ["[UNCHANGED]", "[UNCHANGED]"]
+
+
+def _swapped(ws: Path, shared: Path) -> OwnershipCarry:
+    """Capture the carry, then swap the link for a copy as an install does."""
+    carry = OwnershipCarry(ws)
+    carry.capture(
+        Context().run(
+            launches_to_enroll, ws, ws, mode=InstallMode.TOOL, enrolled=_PROVIDERS
+        )
+    )
+    config = ws / ".mcp.json"
+    config.unlink()
+    config.write_bytes(shared.read_bytes())
+    return carry
+
+
+def test_held_ownership_is_what_core_finds_at_the_copy(tmp_path: Path) -> None:
+    """Core finds the entry owned at the copy while held, and at the file after.
+
+    The link's target is not where core looks once the link is a copy, and the
+    copy is not where it looks once the link is back.
+    """
+    ws, shared = _linked(tmp_path)
+    carry = _swapped(ws, shared)
+    assert rag_tags(dry_sync(ws, enrolled=_PROVIDERS))[0] == "[SKIP]"
+
+    carry.hold()
+
+    assert rag_tags(dry_sync(ws, enrolled=_PROVIDERS)) == ["[UNCHANGED]", "[UNCHANGED]"]
+    carry.release()
+    (ws / ".mcp.json").unlink()
+    (ws / ".mcp.json").symlink_to(shared.name)
+    assert rag_tags(dry_sync(ws, enrolled=_PROVIDERS)) == ["[UNCHANGED]", "[UNCHANGED]"]
+    assert ws.resolve() / ".mcp.json" not in owned_config_paths(ws)
+
+
+def test_a_run_that_never_touches_the_sidecar_leaves_it_as_found(
+    tmp_path: Path,
+) -> None:
+    """The operator's own bytes come back, even where core would write others."""
+    ws, shared = _linked(tmp_path)
+    sidecar = ownership_path(ws, McpScope.PROJECT)
+    found = sidecar.read_bytes().replace(b"  ", b"\t")
+    sidecar.write_bytes(found)
+    carry = _swapped(ws, shared)
+
+    carry.hold()
+    assert sidecar.read_bytes() != found
+    carry.release()
+
+    assert sidecar.read_bytes() == found
+
+
+def test_a_workspace_with_no_link_in_the_way_writes_nothing(tmp_path: Path) -> None:
+    """Nothing is held for a config that is its own file; the sidecar is untouched."""
+    ws = _installed(tmp_path)
+    sidecar = ownership_path(ws, McpScope.PROJECT)
+    found = sidecar.read_bytes().replace(b"  ", b"\t")
+    sidecar.write_bytes(found)
+    carry = OwnershipCarry(ws)
+    carry.capture(
+        Context().run(
+            launches_to_enroll, ws, ws, mode=InstallMode.TOOL, enrolled=_PROVIDERS
+        )
+    )
+
+    carry.hold()
+    assert carry.held is None
+    carry.release()
+
+    assert sidecar.read_bytes() == found
+
+
+def test_ownership_that_cannot_go_back_fails_the_transaction(tmp_path: Path) -> None:
+    """A release that cannot write the sidecar stops the run instead of warning.
+
+    The sidecar and its directory are made read-only once ownership is held,
+    so writing it back fails for real: the replace is refused on Windows, and
+    the sibling temporary on POSIX. Mutation: recording the failure as a
+    warning lets the transaction end normally, which an install then commits,
+    and fails the raises assertion; restoring the raise passes.
+    """
+    ws, shared = _linked(tmp_path)
+    consent = LaunchConsent(ws)
+    consent.ownership = _swapped(ws, shared)
+    sidecar = ownership_path(ws, McpScope.PROJECT)
+    writable = {path: path.stat().st_mode for path in (sidecar, sidecar.parent)}
+
+    try:
+        with (
+            pytest.raises(RuntimeError, match="so the install cannot commit"),
+            consent.carried_into_transaction(),
+        ):
+            assert consent.ownership.held is not None
+            sidecar.chmod(stat.S_IREAD)
+            sidecar.parent.chmod(stat.S_IREAD | stat.S_IEXEC)
+    finally:
+        for path, mode in reversed(writable.items()):
+            path.chmod(mode)
+
+    assert consent.warnings == []

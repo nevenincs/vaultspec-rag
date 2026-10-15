@@ -163,7 +163,9 @@ def test_published_core_floor_carries_native_mcp_contract() -> None:
 
     The floor carries Core's native MCP contract and its shared settings
     chain (``vaultspec_core.env_values`` and ``ConfigurationError``), which
-    this package imports at startup.
+    this package imports at startup, and the host-local MCP state install
+    plans against: launch approvals and native-entry ownership kept in the
+    operator's home rather than the workspace.
     """
     core = next(req for req in _requirements() if req.name == "vaultspec-core")
-    assert str(core.specifier) == ">=0.3.2"
+    assert str(core.specifier) == ">=0.3.7"

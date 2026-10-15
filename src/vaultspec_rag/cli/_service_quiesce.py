@@ -57,7 +57,12 @@ def _quiesce(*, pause: bool, command: str, port: int | None, json_mode: bool) ->
         if json_mode:
             _emit_json(True, command, data=result)
             raise typer.Exit(0)
-        _plain(f"Service quiesce status: {result.get('status')}.")
+        message = result.get("message")
+        _plain(
+            message
+            if isinstance(message, str) and message
+            else f"Service quiesce status: {result.get('status')}."
+        )
         raise typer.Exit(0)
 
     error = result.get("error")

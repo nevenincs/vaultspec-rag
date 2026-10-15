@@ -40,6 +40,7 @@ Generated from the live command surface. Each entry lists the command's argument
   - [reconcile](#server-reconcile)
   - [start](#server-start)
   - [stop](#server-stop)
+  - [restart](#server-restart)
   - **job**
     - [show](#server-job-show)
     - [pause](#server-job-pause)
@@ -173,7 +174,7 @@ vaultspec-rag clean
 
 ## install
 
-Set up vaultspec-rag in a workspace. Creates the required workspace folders, installs bundled rules and integration files, and syncs the files used by supported tools. By default, install also provisions the external dependencies the server-first default needs - the embedding/reranker models and the pinned Qdrant server binary - and ensures the optional MCP extra so the agent-facing MCP search surface can run, and asks before changing PyTorch package configuration. Use --local-only for the minimal local backend (skips the binary), the finer --skip-models/--skip-qdrant flags for partial opt-out, --no-mcp for a CLI-only workspace without the mcp dependency, and --no-provision to set up the workspace only; use --yes or --no-torch-config for non-interactive runs. The model files and the Qdrant server are each checked against digests compiled into vaultspec-rag before they are used. A client installation is given neither, and a host that cannot run the service yet gets them from server start once it can. Exits non-zero when a step it was asked to run failed.
+Set up vaultspec-rag in this repository. Connects your AI assistant and creates the .vault/ folder. At a terminal it asks you to approve the MCP launch it enrolls. Then run `vaultspec-rag server start`, which downloads what the service still needs. Exits non-zero when a step failed.
 
 ```bash
 vaultspec-rag install
@@ -190,21 +191,13 @@ None.
 | `--target`, `-t` | directory | no | - | Workspace path (default: current working directory). |
 | `--upgrade` | boolean | no | off | Refresh bundled rules and integration files even if present. |
 | `--dry-run` | boolean | no | off | Preview changes without writing. |
-| `--force` | boolean | no | off | Override existing files. Never answers the torch-config confirmation prompt; use --yes for that. |
-| `--skip` | str | no | () | Skip a component (repeatable). |
-| `--mode` | choice | no | - | Provisioning mode: 'tool' (default, launched via uvx), 'dependency' (a runtime project dependency resolved through the project's own venv, ships in built distributions), or 'dev' (the default dev dependency group; renders like dependency but does not ship in built distributions). Auto-detected from pyproject.toml when omitted. |
-| `--torch-config`, `--no-torch-config` | boolean | no | on | Configure the CUDA PyTorch package source in pyproject.toml. --no-torch-config takes precedence over --yes. |
-| `--tool-repair`, `--no-tool-repair` | boolean | no | on | Check whether a persistent uv tool environment holds a processor-only torch build, and report the command that repairs it. Nothing is installed or replaced by this check. --no-tool-repair skips it entirely. |
-| `--torch-group` | str | no | - | Place the managed CUDA torch direct-dependency under the PEP 735 [dependency-groups].NAME surface instead of [project].dependencies, so a dev-only consumer does not leak torch into its published requirements. Defaults the group name to 'dev' when passed without a value. Omit the flag entirely to keep the historic [project].dependencies placement. The group must be enabled for the resolve (`uv sync --group NAME`) for the cu130 pin to apply. |
-| `--yes`, `-y` | boolean | no | off | Skip the PyTorch configuration prompt. Required for non-interactive installs unless --no-torch-config is used. |
-| `--sync` | boolean | no | off | Run `uv sync --reinstall-package torch` after PyTorch configuration changes are applied. |
-| `--provision`, `--no-provision` | boolean | no | on | Provision external dependencies (models and the Qdrant server binary) after enrollment. On by default; --no-provision sets up the workspace only. |
-| `--mcp`, `--no-mcp` | boolean | no | on | Enroll the agent-facing MCP search surface and reconcile its optional dependency at RAG's existing project placement. On by default; --no-mcp sets up a CLI-only workspace without the mcp dependency (and, on Windows, without pywin32). |
-| `--local-only` | boolean | no | off | Use the on-disk store instead of the supervised Qdrant server: skips the Qdrant binary download and persists the local backend so `server start` honours it. The minimal / CI / air-gapped alternative to the server-first default. |
-| `--skip-models` | boolean | no | off | Skip the embedding/reranker model provisioning step. |
-| `--skip-qdrant` | boolean | no | off | Skip the Qdrant server binary provisioning step. |
+| `--force` | boolean | no | off | Overwrite setup files that already exist. |
+| `--mode` | choice | no | - | How your AI assistant launches vaultspec-rag: 'tool', or from this project's environment as a 'dependency' or 'dev' dependency. Detected from pyproject.toml when omitted. |
+| `--yes`, `-y` | boolean | no | off | Answer yes to setup prompts, for runs without a terminal. Never approves the MCP launch: run install at a terminal to review and approve it. |
+| `--provision`, `--no-provision` | boolean | no | on | Download the search models and the Qdrant server now, when this installation carries the GPU packages (default). Otherwise `server start` downloads them. |
+| `--mcp`, `--no-mcp` | boolean | no | on | Connect your AI assistant through MCP (default). With --no-mcp, only the command line is set up. |
+| `--local-only` | boolean | no | off | Keep the index in an on-disk store instead of the Qdrant server, for CI, offline or small projects. `server start` remembers the choice. |
 | `--json` | boolean | no | off | Emit JSON for scripts instead of human text. |
-| `--no-hints` | boolean | no | off | Suppress next-step advisory hints. |
 
 ## uninstall
 
@@ -259,7 +252,7 @@ None.
 
 ## server doctor
 
-Report readiness across two axes: installed dependencies (torch, models, qdrant binary) and the live service (a running daemon's health). A dead daemon is reported as not ready. Each pinned model's cached files are hashed against the digests compiled into this tool, which reads several gigabytes and takes a few seconds; a model with no such digests is reported as unpinned.
+Report readiness across two axes: installed dependencies (torch, models, qdrant binary) and the live service (a running daemon's health). A dead or absent daemon is reported as not ready, with exactly one command to resolve it. Each pinned model's cached files are hashed against the digests compiled into this tool, which reads several gigabytes and takes a few seconds; a model with no such digests is reported as unpinned.
 
 ```bash
 vaultspec-rag server doctor
@@ -437,7 +430,7 @@ for state meanings; status never makes a paid classification call.
 The address in status output is the backend address. Human, verbose and
 JSON status output do not currently report the browser monitor URL. Run
 `server start` to display its recorded `Monitor:` URL; an already-running
-owned service is reused. See [browser monitor setup](service-mode.md#local-carbon-browser-monitor).
+owned service is reused. See [the browser monitor](service-mode.md#local-carbon-browser-monitor).
 
 ```bash
 vaultspec-rag server status
@@ -476,7 +469,7 @@ None.
 
 ## server start
 
-Start the background search service. Defaults to the managed Qdrant server backend (server mode); pass --local-only for the on-disk store. Before the service is started, a host installation fetches what it needs and does not have: the model files, each checked against digests compiled into vaultspec-rag, and the managed Qdrant server, unless that download is switched off. A client installation is refused and fetches nothing. A fetch that fails stops the start with its cause and its remedy. Waits until the service is ready and records how the CLI can reach it.
+Start the background search service. The first start downloads what the service needs and does not have yet, each checked against digests pinned in vaultspec-rag, then waits until the service is ready. Later starts download nothing.
 
 Also starts the managed browser monitor. Its port begins at the actual
 backend port plus one and increments until free: `--port 9000` first
@@ -486,9 +479,10 @@ tries monitor port 9001. Human output prints the monitor's access link as
 credential: the monitor operates the service only for a caller presenting
 its capability. An already-running response redisplays the recorded link.
 
-Requires the compiled `vaultspec-rag-monitor` command on PATH or its
-absolute path in `VAULTSPEC_RAG_MONITOR_BINARY`. Startup does not compile
-the frontend. See [browser monitor setup](service-mode.md#local-carbon-browser-monitor).
+The compiled monitor for this release is obtained and verified with the
+other dependencies above, and run from a directory of its own; a binary
+installation uses the one in its archive. Startup does not compile the
+frontend. See [the browser monitor](service-mode.md#local-carbon-browser-monitor).
 
 Successful starts and already-running responses include Typesafe enrollment
 from the daemon (`Typesafe:` in human output, `data.typesafe` in JSON).
@@ -513,10 +507,9 @@ None.
 | `--updates`, `--no-updates` | boolean | no | - | Enable or disable automatic index updates when files change (default: enabled). |
 | `--update-delay-ms` | int | no | - | Delay before indexing a burst of file changes, in milliseconds. |
 | `--repeat-update-delay-s` | float | no | - | Minimum wait before automatically updating a project again, in seconds. |
-| `--local-only` | boolean | no | off | Use the on-disk local store instead of the default managed Qdrant server. This is the first-class opt-out for CI, offline, and small-project hosts. |
-| `--qdrant`, `--no-qdrant` | boolean | no | - | Select the managed Qdrant server for this start, or decline it. --qdrant overrides a saved or exported local-only choice for this run without rewriting it; --local-only still wins when both are given. Unset leaves the current setting in force. |
-| `--qdrant-auto-provision`, `--no-qdrant-auto-provision` | boolean | no | - | Download and verify the managed Qdrant server when it is missing (default: enabled). With --no-qdrant-auto-provision, start prints the install command instead. Unset leaves the VAULTSPEC_RAG_QDRANT_AUTO_PROVISION setting in force. |
-| `--no-preprocess` | boolean | no | off | Kill switch: the service loads no document-preprocessing rules for any root (forwards VAULTSPEC_RAG_PREPROCESS=off). |
+| `--local-only` | boolean | no | off | Keep the index in an on-disk store instead of the Qdrant server, for CI, offline or small projects. |
+| `--qdrant`, `--no-qdrant` | boolean | no | - | Use the managed Qdrant server for this start even when --local-only was saved, without changing the saved choice. |
+| `--qdrant-auto-provision`, `--no-qdrant-auto-provision` | boolean | no | - | Download the Qdrant server when it is missing (default). With --no-qdrant-auto-provision, start stops and prints the install command instead. Overrides VAULTSPEC_RAG_QDRANT_AUTO_PROVISION for this run. |
 | `--json` | boolean | no | off | Emit one structured JSON outcome. An already-running owned service is the success `already_running` (exit 0), so a supervising broker can attach rather than treating it as a fault. |
 
 ## server stop
@@ -543,6 +536,25 @@ None.
 | `--port` | int | no | - | Stop the service answering on this port, resolving its identity from /health, or from a matching launch identity in the status file before its listener opens. Use when the service runs on a non-default port or the status file diverges from the running instance. |
 | `--json` | boolean | no | off | Emit one structured JSON outcome. An already-stopped service is the success `already_stopped` (exit 0); a stop that leaves the service running (unconfirmed identity) is `identity_unconfirmed` (exit 1) in both output modes. |
 | `--orphans` | boolean | no | off | Reap surplus vaultspec-rag daemons that lost the machine-singleton race and linger holding no port, lock, or discovery pointer, invisible to a normal stop. Confirm-then-reap, scoped to this singleton's port; the live singleton, isolated-config, and foreign-worktree daemons are always spared. |
+
+## server restart
+
+Restart the background search service, keeping its monitor.
+
+```bash
+vaultspec-rag server restart
+```
+
+### Arguments
+
+None.
+
+### Options
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `--port` | int | no | - | Service port (defaults to running service). |
+| `--json` | boolean | no | off | Emit JSON for scripts instead of human text. |
 
 ## server job show
 

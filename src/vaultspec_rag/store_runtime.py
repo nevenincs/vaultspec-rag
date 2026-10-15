@@ -518,6 +518,22 @@ class VaultStore(
             lambda _timeout: self.client.collection_exists(name),
         )
 
+    def _existing_collection_names(self) -> tuple[str, ...]:
+        """Return every collection name the backend currently reports.
+
+        Purely a query, like :meth:`_collection_exists`, so it replays under
+        the same bounded retry. Callers that need one exact name ask for it;
+        this is for the ones that have to know what a root's namespace holds
+        before touching any of it.
+        """
+        return self._retried(
+            "list collections",
+            lambda _timeout: tuple(
+                descriptor.name
+                for descriptor in self.client.get_collections().collections
+            ),
+        )
+
     def _create_payload_index(
         self,
         collection_name: str,

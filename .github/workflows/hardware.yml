@@ -104,9 +104,9 @@ jobs:
         if: inputs.macos_full_suite
         run: npm ci
 
-      - name: Compile the native monitor for lifecycle tests
+      - name: Build and install the monitor the lifecycle tests run
         if: inputs.macos_full_suite
-        run: just build-monitor-test
+        run: just build-monitor
 
       # Scheduled and dispatched full suites gate their job. Releases do not
       # run this suite: the MPS guard below is the release's Apple silicon claim.
@@ -212,8 +212,8 @@ jobs:
       - name: Restore monitor dependencies
         run: npm ci
 
-      - name: Compile the native monitor the resident service starts
-        run: just build-monitor-test
+      - name: Build and install the monitor the resident service starts
+        run: just build-monitor
 
       # The tier does not own the card, it BORROWS it: the coordinator captures
       # a live, health-verified, version-compatible resident service before

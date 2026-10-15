@@ -1,5 +1,8 @@
+import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createServer as createPortProbe, type Server } from "node:net";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { monitorAccess, monitorMiddleware } from "./local-service.ts";
 import manifest from "../../../package.json" with { type: "json" };
 
@@ -96,6 +99,50 @@ async function bind(server: Server, selected: Options): Promise<number> {
   throw new Error("No monitor port is available above the backend port.");
 }
 
+// The daemon writes this down the ownership pipe before a restart releases the
+// monitor; the EOF that follows then hands it to the next daemon instead of
+// closing it.
+const handoffLine = "vaultspec.monitor.handoff";
+
+function ownerAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** Whether the identity record still keeps this released monitor open. */
+async function stillOwned(): Promise<boolean> {
+  const directory =
+    process.env.VAULTSPEC_RAG_STATUS_DIR || join(homedir(), ".vaultspec-rag");
+  let record: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(
+      await readFile(join(directory, "monitor.json"), "utf8"),
+    );
+    if (typeof parsed !== "object" || parsed === null) return false;
+    record = parsed as Record<string, unknown>;
+  } catch {
+    return false;
+  }
+  if (record.pid !== process.pid) return false;
+  const until = record.handoff_until;
+  if (typeof until === "number" && until > 0) return Date.now() / 1000 < until;
+  return typeof record.owner_pid === "number" && ownerAlive(record.owner_pid);
+}
+
+/** After a handoff no pipe ties the monitor to a daemon, so it watches the
+ * record the adopting daemon rewrites and closes once nothing owns it. */
+function watchOwner(stop: () => void): void {
+  const check = async () => {
+    if (await stillOwned()) setTimeout(() => void check(), 1000);
+    else stop();
+  };
+  void check();
+}
+
 export async function startMonitor(
   assets: ReadonlyMap<string, EmbeddedAsset>,
   build: MonitorBuild,
@@ -185,7 +232,25 @@ export async function startMonitor(
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
   if (selected.managed) {
-    process.stdin.once("end", stop);
+    let handedOff = false;
+    let buffered = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk: string) => {
+      buffered += chunk;
+      const lines = buffered.split("\n");
+      buffered = lines.pop() ?? "";
+      if (lines.some((line) => line.trim() === handoffLine)) {
+        handedOff = true;
+        // The releasing daemon owns the read end of this output and is about
+        // to exit; a later write must not take the monitor down with it.
+        process.stdout.on("error", () => undefined);
+        process.stderr.on("error", () => undefined);
+      }
+    });
+    process.stdin.once("end", () => {
+      if (handedOff) watchOwner(stop);
+      else stop();
+    });
     process.stdin.resume();
   }
   console.log(`vaultspec.monitor.ready ${monitorAccess(port)}`);

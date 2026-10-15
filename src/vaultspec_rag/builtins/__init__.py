@@ -54,7 +54,48 @@ def _iter_builtin_files(root: Path) -> list[Path]:
     return files
 
 
-def _classify_action(dest: Path, src_file: Path) -> str:
+#: The MCP definition, whose launch names the release this install runs.
+_MCP_DEFINITION = "mcps/vaultspec-rag.builtin.json"
+_UNPINNED_TOOL_SPEC = '"vaultspec-rag[mcp]"'
+
+
+def _published_release() -> str | None:
+    """This installation's release when a package index can serve it, else None.
+
+    A development or local build carries a version no index publishes, so an
+    exact pin on it could never resolve.
+    """
+    from importlib import metadata
+
+    from packaging.version import InvalidVersion, Version
+
+    try:
+        version = Version(metadata.version("vaultspec-rag"))
+    except (metadata.PackageNotFoundError, InvalidVersion):
+        return None
+    if version.is_devrelease or version.local is not None:
+        return None
+    return str(version)
+
+
+def _seeded_text(rel: str, src_file: Path) -> str:
+    """The content a builtin is seeded with.
+
+    The MCP launch runs ``uvx --from`` the package, which resolves the newest
+    release unless told otherwise. The assistant would then run a release
+    other than the one this install starts the service from, and a client
+    refuses a service of another release, so the launch names this release.
+    """
+    text = src_file.read_text(encoding="utf-8")
+    if rel != _MCP_DEFINITION:
+        return text
+    release = _published_release()
+    if release is None:
+        return text
+    return text.replace(_UNPINNED_TOOL_SPEC, f'"vaultspec-rag[mcp]=={release}"')
+
+
+def _classify_action(dest: Path, text: str) -> str:
     """Classify a builtin as ``[ADD]`` / ``[UPDATE]`` / ``[UNCHANGED]``.
 
     Assumes the caller has already decided to act on ``dest`` (it does not
@@ -64,7 +105,7 @@ def _classify_action(dest: Path, src_file: Path) -> str:
     if not dest.exists():
         return "[ADD]"
     try:
-        unchanged = dest.read_bytes() == src_file.read_bytes()
+        unchanged = dest.read_bytes() == text.encode("utf-8")
     except OSError:
         unchanged = False
     return "[UNCHANGED]" if unchanged else "[UPDATE]"
@@ -129,9 +170,10 @@ def seed_builtins(
         with open_plain_directory(target_dir.parent, container, create=not dry_run):
             if dest.exists() and not force:
                 continue
-            action = _classify_action(dest, src_file)
+            text = _seeded_text(rel, src_file)
+            action = _classify_action(dest, text)
             if action != "[UNCHANGED]" and not dry_run:
-                atomic_write(dest, src_file.read_text(encoding="utf-8"))
+                atomic_write(dest, text)
                 written.append(rel)
             results.append((rel, action))
     results.sort()

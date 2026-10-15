@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+import stat
+import sys
+from contextlib import contextmanager
 from pathlib import Path
 from threading import Event, Thread
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from vaultspec_core.core.enums import (
@@ -30,10 +33,40 @@ from ._install_helpers import (
     workspace_inventory,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.usefixtures("isolated_mcp_trust_home"),
 ]
+
+
+@contextmanager
+def _filesystem_refuses_removal(link: Path) -> Generator[None]:
+    """Make the filesystem itself refuse to remove *link*, then undo that.
+
+    Windows refuses to delete a read-only link. Elsewhere the permission to
+    remove an entry belongs to the directory holding it, so that directory is
+    made read-only; the superuser is not bound by it, and a test that cannot
+    produce the refusal fails rather than passing over a branch it never ran.
+    """
+    if sys.platform == "win32":
+        os.chmod(link, stat.S_IREAD, follow_symlinks=False)
+        try:
+            yield
+        finally:
+            os.chmod(link, stat.S_IWRITE | stat.S_IREAD, follow_symlinks=False)
+        return
+    if os.geteuid() == 0:
+        pytest.fail("permissions do not stop the superuser removing a link")
+    directory = link.parent
+    mode = stat.S_IMODE(directory.stat().st_mode)
+    directory.chmod(0o555)
+    try:
+        yield
+    finally:
+        directory.chmod(mode)
 
 
 class TestInstallPreviewTopology:
@@ -616,6 +649,96 @@ class TestInstallPreviewTopology:
         assert not topology.finish(commit=True)
         assert _node_signature(source) == signature
         assert target.read_bytes() == b'{"command": "operator", "args": []}\n'
+
+    @staticmethod
+    def _link_both_native_configs(workspace: Path) -> tuple[Path, Path]:
+        """Make both native configs links to operator-held targets, in order."""
+        links = (workspace / ".mcp.json", workspace / ".codex" / "config.toml")
+        for link in links:
+            target = link.with_name(f"{link.name}.operator")
+            link.replace(target)
+            link.symlink_to(target.name)
+        return links
+
+    def test_a_failure_mid_materialization_restores_the_links_already_swapped(
+        self,
+        fresh_workspace: Path,
+    ) -> None:
+        """A link swapped for a copy goes back when a later link cannot be swapped.
+
+        Materialization replaces each writable link with a regular copy in turn.
+        The second native config here is one the filesystem will not let go of,
+        so the first has already been swapped when the refusal arrives. The
+        refusal must leave every link exactly as it was found, targets included.
+        Proven able to fail: dropping the rollback in the handler leaves the
+        first config a regular file and fails the first signature assertion;
+        restoring it passes.
+        """
+        from ...commands._mcp_topology import inspect_required_mcp_topology
+
+        _install(fresh_workspace, mode=InstallMode.TOOL)
+        first, second = self._link_both_native_configs(fresh_workspace)
+        signatures = (_node_signature(first), _node_signature(second))
+        targets = tuple(
+            link.with_name(f"{link.name}.operator").read_bytes()
+            for link in (first, second)
+        )
+        topology = inspect_required_mcp_topology(fresh_workspace)
+
+        with (
+            _filesystem_refuses_removal(second),
+            pytest.raises(OSError) as refusal,
+        ):
+            topology.materialize()
+
+        assert "rollback was incomplete" not in str(refusal.value)
+        assert (_node_signature(first), _node_signature(second)) == signatures
+        assert (
+            tuple(
+                link.with_name(f"{link.name}.operator").read_bytes()
+                for link in (first, second)
+            )
+            == targets
+        )
+        assert not list(fresh_workspace.rglob("*.rollback-*"))
+
+    @pytest.mark.skipif(
+        sys.platform != "win32",
+        reason="only Windows refuses to delete a read-only file",
+    )
+    def test_a_swapped_link_that_cannot_be_restored_is_reported_not_overwritten(
+        self,
+        fresh_workspace: Path,
+    ) -> None:
+        """A rollback that cannot finish says so and leaves the copy alone.
+
+        The first config's target is read-only, so its copy is read-only too
+        and cannot be removed to put the link back. The failure that started
+        the rollback is not the whole story then, and the error names both.
+        Proven able to fail: reporting only the original refusal drops the
+        phrase from the error and fails the match; restoring it passes.
+        """
+        from ...commands._mcp_topology import inspect_required_mcp_topology
+
+        _install(fresh_workspace, mode=InstallMode.TOOL)
+        first, second = self._link_both_native_configs(fresh_workspace)
+        first_target = first.with_name(f"{first.name}.operator")
+        first_bytes = first_target.read_bytes()
+        os.chmod(first_target, stat.S_IREAD)
+        topology = inspect_required_mcp_topology(fresh_workspace)
+
+        try:
+            with (
+                _filesystem_refuses_removal(second),
+                pytest.raises(OSError, match="rollback was incomplete") as refusal,
+            ):
+                topology.materialize()
+            assert str(first) in str(refusal.value)
+            assert not first.is_symlink()
+            assert first.read_bytes() == first_bytes
+        finally:
+            os.chmod(first_target, stat.S_IWRITE | stat.S_IREAD)
+            os.chmod(first, stat.S_IWRITE | stat.S_IREAD)
 
     def test_link_target_race_is_preserved_on_commit_refusal(
         self,

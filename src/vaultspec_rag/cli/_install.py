@@ -151,11 +151,11 @@ class _InstallCommand(TyperCommand):
                     param_decls=["--force"],
                     default=False,
                     is_flag=True,
-                    help="Override existing files. Never answers the torch-config "
-                    "confirmation prompt; use --yes for that.",
+                    help="Overwrite setup files that already exist.",
                 ),
                 TyperOption(
                     param_decls=["--skip"],
+                    hidden=True,
                     type=str,
                     multiple=True,
                     default=_NO_SKIP,
@@ -166,17 +166,15 @@ class _InstallCommand(TyperCommand):
                     type=TyperChoice([member.value for member in InstallMode]),
                     default=None,
                     help=(
-                        "Provisioning mode: 'tool' (default, launched via uvx), "
-                        "'dependency' (a runtime project dependency resolved "
-                        "through the project's own venv, ships in built "
-                        "distributions), or 'dev' (the default dev dependency "
-                        "group; renders like dependency but "
-                        "does not ship in built distributions). Auto-detected from "
-                        "pyproject.toml when omitted."
+                        "How your AI assistant launches vaultspec-rag: 'tool', "
+                        "or from this project's environment as a 'dependency' "
+                        "or 'dev' dependency. Detected from pyproject.toml when "
+                        "omitted."
                     ),
                 ),
                 TyperOption(
                     param_decls=["--torch-config/--no-torch-config"],
+                    hidden=True,
                     default=True,
                     is_flag=True,
                     help=(
@@ -186,6 +184,7 @@ class _InstallCommand(TyperCommand):
                 ),
                 TyperOption(
                     param_decls=["--tool-repair/--no-tool-repair"],
+                    hidden=True,
                     default=True,
                     is_flag=True,
                     help=(
@@ -197,6 +196,7 @@ class _InstallCommand(TyperCommand):
                 ),
                 TyperOption(
                     param_decls=["--torch-group"],
+                    hidden=True,
                     type=str,
                     default=None,
                     help=(
@@ -215,12 +215,14 @@ class _InstallCommand(TyperCommand):
                     default=False,
                     is_flag=True,
                     help=(
-                        "Skip the PyTorch configuration prompt. Required for "
-                        "non-interactive installs unless --no-torch-config is used."
+                        "Answer yes to setup prompts, for runs without a terminal. "
+                        "Never approves the MCP launch: run install at a terminal "
+                        "to review and approve it."
                     ),
                 ),
                 TyperOption(
                     param_decls=["--sync"],
+                    hidden=True,
                     default=False,
                     is_flag=True,
                     help=(
@@ -233,9 +235,9 @@ class _InstallCommand(TyperCommand):
                     default=True,
                     is_flag=True,
                     help=(
-                        "Provision external dependencies (models and the Qdrant "
-                        "server binary) after enrollment. On by default; "
-                        "--no-provision sets up the workspace only."
+                        "Download the search models and the Qdrant server now, "
+                        "when this installation carries the GPU packages "
+                        "(default). Otherwise `server start` downloads them."
                     ),
                 ),
                 TyperOption(
@@ -243,10 +245,8 @@ class _InstallCommand(TyperCommand):
                     default=True,
                     is_flag=True,
                     help=(
-                        "Enroll the agent-facing MCP search surface and reconcile its "
-                        "optional dependency at RAG's existing project placement. On "
-                        "by default; --no-mcp sets up a CLI-only workspace without the "
-                        "mcp dependency (and, on Windows, without pywin32)."
+                        "Connect your AI assistant through MCP (default). With "
+                        "--no-mcp, only the command line is set up."
                     ),
                 ),
                 TyperOption(
@@ -254,20 +254,21 @@ class _InstallCommand(TyperCommand):
                     default=False,
                     is_flag=True,
                     help=(
-                        "Use the on-disk store instead of the supervised Qdrant "
-                        "server: skips the Qdrant binary download and persists the "
-                        "local backend so `server start` honours it. The minimal / "
-                        "CI / air-gapped alternative to the server-first default."
+                        "Keep the index in an on-disk store instead of the Qdrant "
+                        "server, for CI, offline or small projects. `server start` "
+                        "remembers the choice."
                     ),
                 ),
                 TyperOption(
                     param_decls=["--skip-models"],
+                    hidden=True,
                     default=False,
                     is_flag=True,
                     help="Skip the embedding/reranker model provisioning step.",
                 ),
                 TyperOption(
                     param_decls=["--skip-qdrant"],
+                    hidden=True,
                     default=False,
                     is_flag=True,
                     help="Skip the Qdrant server binary provisioning step.",
@@ -280,6 +281,7 @@ class _InstallCommand(TyperCommand):
                 ),
                 TyperOption(
                     param_decls=["--no-hints"],
+                    hidden=True,
                     default=False,
                     is_flag=True,
                     help="Suppress next-step advisory hints.",
@@ -329,24 +331,11 @@ class _InstallCommand(TyperCommand):
     "install",
     cls=_InstallCommand,
     help=(
-        "Set up vaultspec-rag in a workspace.\n\n"
-        "Creates the required workspace folders, installs bundled rules and "
-        "integration files, and syncs the files used by supported tools. By "
-        "default, install also provisions the external dependencies the "
-        "server-first default needs - the embedding/reranker models and the "
-        "pinned Qdrant server binary - and ensures the optional MCP extra so "
-        "the agent-facing MCP search surface can run, and asks before changing "
-        "PyTorch package configuration. Use --local-only for the minimal local "
-        "backend (skips the binary), the finer "
-        "--skip-models/--skip-qdrant flags for partial opt-out, "
-        "--no-mcp for a CLI-only workspace without the mcp dependency, and "
-        "--no-provision to set up the workspace only; use --yes or "
-        "--no-torch-config for non-interactive runs. The model files and the "
-        "Qdrant server are each checked against digests compiled into "
-        "vaultspec-rag before they are used. A client installation is given "
-        "neither, and a host that cannot run the service yet gets them from "
-        "server start once it can. Exits non-zero when a step it was asked "
-        "to run failed."
+        "Set up vaultspec-rag in this repository.\n\n"
+        "Connects your AI assistant and creates the .vault/ folder. At a "
+        "terminal it asks you to approve the MCP launch it enrolls. Then run "
+        "`vaultspec-rag server start`, which downloads what the service still "
+        "needs. Exits non-zero when a step failed."
     ),
 )
 def handle_install() -> None:
@@ -392,6 +381,23 @@ def _confirmation_hook(
         json_output=json_output, environ=environ, stdin=stdin, stdout=stdout
     )
     return None if unattended else confirm
+
+
+def _ask_operator(prompt: str) -> bool:
+    """Ask the operator one yes-or-no question at the terminal.
+
+    The default is no: pressing Enter on a prompt without reading it must not
+    authorise a write, such as patching the user's ``pyproject.toml`` or
+    approving an MCP launch.
+
+    The prompt is shown as the literal text it is. A launch under review
+    carries brackets, such as ``vaultspec-rag[mcp]``, which Rich would read as
+    markup and drop from what the operator is approving.
+    """
+    from rich.prompt import Confirm
+    from rich.text import Text
+
+    return Confirm.ask(Text(prompt), default=False, console=_cli.console)
 
 
 def _report_command_failure(
@@ -518,8 +524,6 @@ def _install_next_step_hint(status: str, *, no_hints: bool) -> dict[str, object]
 def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
     """Enrol the workspace and provision dependencies for one install request."""
 
-    from rich.prompt import Confirm
-
     from ..commands._install import install_run
 
     # Honour the global ``--target`` from the root callback. Click
@@ -528,14 +532,7 @@ def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
     # the path entirely if we only read the local ``target``.
     effective_target = options.target or _global_target(ctx)
 
-    def _confirm(prompt: str) -> bool:
-        # Default-no on a destructive write - pressing Enter on the
-        # ``Patch <pyproject>?`` prompt without reading it must NOT
-        # mutate the user's pyproject. Users who want to bypass the
-        # prompt can pass ``--yes`` or ``--force``. CLI3-04.
-        return Confirm.ask(prompt, default=False, console=_cli.console)
-
-    confirm_fn = _confirmation_hook(_confirm, json_output=options.json_output)
+    confirm_fn = _confirmation_hook(_ask_operator, json_output=options.json_output)
 
     # Map the per-dependency opt-out flags onto the front door's skip
     # token set. ``--local-only`` already drops the qdrant binary in the

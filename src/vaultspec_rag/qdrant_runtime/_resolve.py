@@ -55,6 +55,7 @@ from .._process_probe import (
 )
 from ..config._settings import get_config, managed_status_dir
 from ..config._types import EnvVar, OperatorBinaryPairError
+from ..native_binary._install import operator_path_fault
 from ._constants import (
     ASSET_LINUX_ARM_MUSL,
     ASSET_LINUX_X86_MUSL,
@@ -88,7 +89,6 @@ __all__ = [
     "decide_qdrant_action",
     "has_provisioned_binary",
     "managed_install_refusal",
-    "operator_binary_fault",
     "operator_setting_refusal",
     "owner_pid_witness_state",
     "probe_qdrant_endpoint",
@@ -828,22 +828,6 @@ class QdrantBinaryError(RuntimeError):
         self.error = error
 
 
-def operator_binary_fault(candidate: Path) -> str | None:
-    """Say why *candidate* may not be the operator binary, or ``None``.
-
-    Absolute, so the working directory can never choose the file. Not a link,
-    so what is named is what runs and cannot be re-pointed after the fact.
-    Asked at resolution and again at every spawn.
-    """
-    if not candidate.is_absolute():
-        return "is not an absolute path"
-    if candidate.is_symlink():
-        return "is a symbolic link"
-    if not candidate.is_file():
-        return "is not an existing regular file"
-    return None
-
-
 def operator_setting_refusal(candidate: Path, fault: str) -> QdrantBinaryError:
     """Build the refusal for an operator setting that names *candidate*."""
     return QdrantBinaryError(
@@ -865,7 +849,7 @@ def _resolve_env_binary() -> ResolvedBinary | None:
     if declared is None:
         return None
     candidate = Path(declared.path).expanduser()
-    fault = operator_binary_fault(candidate)
+    fault = operator_path_fault(candidate)
     if fault is not None:
         raise operator_setting_refusal(candidate, fault)
     # A file that hashes to a pinned release executable's digest is that

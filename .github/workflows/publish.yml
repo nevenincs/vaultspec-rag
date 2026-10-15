@@ -7,10 +7,20 @@ name: RAG Publish
 # for every tag a person pushes, racing the cut's own dispatch.
 #
 # The release chain, one hop each:
-#   cut (tag + draft) -> Publish (build, smoke, attach to the draft) ->
-#   Binaries (build, attach, prove the draft) -> Publish (package index: PyPI,
-#   then publish the draft, then the channel pointers and the acquisition
-#   check)
+#   cut (tag + draft) -> Publish (frontend, native monitors, pins, build,
+#   smoke, attach to the draft) -> Binaries (build, attach, prove the draft) ->
+#   Publish (package index: PyPI, then publish the draft, then the channel
+#   pointers and the acquisition check)
+#
+# THE MONITORS ARE COMPILED BEFORE THE WHEEL, and that order is the whole
+# reason this workflow owns them. A wheel installation obtains the compiled
+# monitor by downloading its own release's monitor archive and verifying it
+# against digests the wheel carries, so those digests have to exist before
+# the wheel is built. The frontend is built once, each target's monitor is
+# compiled and finalized from that exact output, each is packed into a
+# monitor-only archive, and the digests of all of them are generated into the
+# package - in that order, in the jobs below. Binaries then consumes those
+# published bytes instead of compiling a second monitor.
 #
 # Everything above the publication runs against a DRAFT, which is invisible to
 # `latest` by construction. A release that exists is therefore a release that
@@ -133,12 +143,181 @@ jobs:
               --generate-notes
           fi
 
+  # ONE Vite build for the whole release. Every native compilation below
+  # embeds this exact output, so the monitors of one release differ only by
+  # the platform they were compiled for.
+  frontend:
+    name: "Build: Monitor frontend (Linux)"
+    timeout-minutes: 140
+    needs: resolve-target
+    if: ${{ inputs.stage != 'package-index' }}
+    runs-on: [self-hosted, Linux, X64, build]
+    env:
+      CI_EXEC_BUDGET_MINUTES: 20
+    outputs:
+      artifact: ${{ steps.identity.outputs.artifact }}
+      frontend_sha256: ${{ steps.identity.outputs.frontend_sha256 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ needs.resolve-target.outputs.sha }}
+
+      - name: Require the exact release commit
+        shell: bash
+        env:
+          TARGET_SHA: ${{ needs.resolve-target.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+          # A dispatch-supplied checkout must not write the dependency cache.
+          package-manager-cache: false
+
+      - name: Restore the committed npm dependency graph
+        run: npm ci
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          prune-cache: false
+          enable-cache: false
+
+      - name: Install Python
+        run: uv python install 3.13
+
+      - name: Set up just
+        uses: taiki-e/install-action@6012bba2f8e3e666a2b212f8823c06831704ce92 # just
+        with:
+          tool: just@1.38.0
+
+      - name: Build the frontend once from the exact producer
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+          TARGET_SHA: ${{ needs.resolve-target.outputs.sha }}
+        run: just release-monitor-frontend "$TAG" "$TARGET_SHA"
+
+      - name: Bind the common artifact to source, version and lock
+        id: identity
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+          TARGET_SHA: ${{ needs.resolve-target.outputs.sha }}
+        run: |
+          set -euo pipefail
+          lock=$(sha256sum package-lock.json | cut -d' ' -f1)
+          echo "artifact=monitor-frontend-${TAG}-${TARGET_SHA}-${lock}" >> "$GITHUB_OUTPUT"
+          echo "frontend_sha256=$(sha256sum dist-monitor-frontend/frontend.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the exact Vite handoff
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.identity.outputs.artifact }}
+          path: dist-monitor-frontend/
+          if-no-files-found: error
+          retention-days: 5
+
+  # EVERY SHIPPED TARGET'S MONITOR, FINALIZED AND PACKED, BEFORE THE WHEEL.
+  # Each leg compiles on its own native host - a Bun compilation cannot cross
+  # targets - finishes resources, signing and modes, and packs the finalized
+  # bytes into the monitor-only archive an installation provisions from. The
+  # build job below hashes exactly these artifacts into the package.
+  monitor:
+    name: "Build: Native monitor (${{ matrix.name }})"
+    timeout-minutes: 210
+    needs: [resolve-target, frontend]
+    if: ${{ inputs.stage != 'package-index' }}
+    strategy:
+      # A leg that fails is the signal; cancelling the others hides whether
+      # the break is one platform's or the release's.
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            runner: [self-hosted, Linux, X64, build]
+            target: x86_64-unknown-linux-gnu
+          - name: windows-x86_64
+            runner: [self-hosted, Windows, X64]
+            target: x86_64-pc-windows-msvc
+          - name: linux-aarch64
+            runner: [self-hosted, Linux, ARM64]
+            target: aarch64-unknown-linux-gnu
+          - name: macos-arm64
+            runner: [self-hosted, macOS, ARM64]
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    env:
+      CI_EXEC_BUDGET_MINUTES: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ needs.resolve-target.outputs.sha }}
+
+      - name: Require the exact release commit
+        shell: bash
+        env:
+          TARGET_SHA: ${{ needs.resolve-target.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          prune-cache: false
+          enable-cache: false
+
+      - name: Install Python
+        run: uv python install 3.13
+
+      - name: Set up just
+        uses: taiki-e/install-action@6012bba2f8e3e666a2b212f8823c06831704ce92 # just
+        with:
+          tool: just@1.38.0
+
+      - name: Download the common frontend handoff
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.frontend.outputs.artifact }}
+          path: dist-monitor-frontend
+
+      - name: Compile the native monitor
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+          TARGET_SHA: ${{ needs.resolve-target.outputs.sha }}
+          FRONTEND_SHA256: ${{ needs.frontend.outputs.frontend_sha256 }}
+        run: just release-monitor "$TAG" "$TARGET_SHA" "$FRONTEND_SHA256"
+
+      # Packed from the finalized bytes, so the archive digest the wheel
+      # carries describes what the release publishes. Both the archive and
+      # the executable stay in the handoff: the wheel's pins name both.
+      - name: Pack the monitor-only provisioning archive
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+          TARGET: ${{ matrix.target }}
+        run: just release-monitor-archive "$TAG" "$TARGET" dist-bin dist-bin
+
+      - name: Upload the finalized monitor and its archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: monitor-${{ needs.resolve-target.outputs.sha }}-${{ matrix.name }}
+          path: dist-bin/
+          if-no-files-found: error
+          retention-days: 5
+
   build:
     name: "Build: Python package (Linux)"
     timeout-minutes: 210
-    needs: resolve-target
+    needs: [resolve-target, monitor]
     # Every release-stage job descends from this one, so the package-index
-    # stage skips the whole build chain by skipping it.
+    # stage skips the whole build chain by skipping it. The two jobs above
+    # are what this one descends from, and they carry the same condition.
     if: ${{ inputs.stage != 'package-index' }}
     outputs:
       sha: ${{ needs.resolve-target.outputs.sha }}
@@ -175,6 +354,24 @@ jobs:
       - name: Initialize the worktree
         run: just init
 
+      - name: Download every target's finalized monitor
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: monitor-${{ needs.resolve-target.outputs.sha }}-*
+          path: dist-monitor/
+          merge-multiple: true
+
+      # BEFORE THE BUILD, and the build is what carries it. The generator
+      # hashes the archives and executables downloaded above and writes the
+      # module the package reads to decide which monitor bytes it may run; a
+      # wheel built without it provisions no monitor at all, and the
+      # generator refuses a set that does not cover every shipped target.
+      - name: Generate the monitor digests the package carries
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+        run: just release-monitor-pins "$TAG" dist-monitor
+
       - name: Build package
         run: just build-python
 
@@ -183,6 +380,18 @@ jobs:
         with:
           name: dist-${{ needs.resolve-target.outputs.sha }}
           path: dist/
+          if-no-files-found: error
+          retention-days: 5
+
+      # Only the archives. The target-qualified executables beside them are
+      # private build intermediates and never cross the release edge.
+      - name: Upload the monitor archives the release publishes
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: monitor-archives-${{ needs.resolve-target.outputs.sha }}
+          path: |
+            dist-monitor/vaultspec-rag-monitor-v*.zip
+            dist-monitor/vaultspec-rag-monitor-v*.tar.gz
           if-no-files-found: error
           retention-days: 5
 
@@ -260,7 +469,10 @@ jobs:
   github-release:
     name: "Build: Release assets (Linux)"
     timeout-minutes: 135
-    needs: [resolve-target, smoke-test]
+    # `frontend` for the digest every published monitor embeds, which the
+    # dispatch below hands to the archive gates. It is upstream of the build
+    # this job already waits for, so naming it adds no wait.
+    needs: [resolve-target, smoke-test, frontend]
     outputs:
       sha: ${{ needs.smoke-test.outputs.sha }}
     # Needs `gh` and `sha256sum`.
@@ -276,6 +488,16 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dist-${{ needs.smoke-test.outputs.sha }}
+          path: dist/
+
+      # PUBLIC ASSETS, beside the wheel and the sdist, and checksummed with
+      # them below. A wheel installation downloads its own release's monitor
+      # archive for the host it runs on, so one per shipped target has to be
+      # published and has to appear in SHA256SUMS.
+      - name: Download the monitor archives
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: monitor-archives-${{ needs.smoke-test.outputs.sha }}
           path: dist/
 
       - name: Generate checksums
@@ -316,7 +538,7 @@ jobs:
             LC_ALL=C sort -k2 -o SHA256SUMS SHA256SUMS
           fi
 
-      - name: Attach wheel, sdist, and checksums to the GitHub Release
+      - name: Attach wheel, sdist, monitor archives, and checksums to the GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.resolve-target.outputs.tag }}
@@ -334,13 +556,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.resolve-target.outputs.tag }}
           TARGET_SHA: ${{ needs.smoke-test.outputs.sha }}
+          FRONTEND_SHA256: ${{ needs.frontend.outputs.frontend_sha256 }}
         run: |
           set -euo pipefail
           gh workflow run binaries.yml \
             --repo "$GITHUB_REPOSITORY" \
             --ref "${TAG}" \
             --field tag="${TAG}" \
-            --field target_sha="${TARGET_SHA}"
+            --field target_sha="${TARGET_SHA}" \
+            --field frontend_sha256="${FRONTEND_SHA256}"
           echo "Dispatched Binaries for ${TAG} at ${TARGET_SHA}" >> "$GITHUB_STEP_SUMMARY"
 
   # The package index is written LAST, and only for a draft the Binaries gate

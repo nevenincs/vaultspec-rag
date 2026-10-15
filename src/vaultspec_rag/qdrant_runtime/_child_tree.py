@@ -56,7 +56,7 @@ from .._process_probe import (
     pid_is_zombie,
     send_group_signal,
 )
-from .._win32 import job_member_count, terminate_job
+from .._win32 import job_member_pids, terminate_job
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -145,6 +145,9 @@ def _end_job(proc: subprocess.Popen[bytes], job: int | None, *, timeout: float) 
     and its store. For the same reason the end is confirmed on the process
     itself and not on the exit code recorded for it.
     """
+    # Named before the job ends them: the job forgets a process as soon as it
+    # begins exiting, and each is confirmed gone by its own exit below.
+    members = job_member_pids(job) or ()
     taken = terminate_job(job, purpose="qdrant") and _exits_within(
         proc, _JOB_GRACE_SECONDS
     )
@@ -159,10 +162,14 @@ def _end_job(proc: subprocess.Popen[bytes], job: int | None, *, timeout: float) 
 
     def gone() -> bool:
         # The open process handle keeps the pid from being reused, so this
-        # asks about the child and nothing else. An unreadable count is the
+        # asks about the child and nothing else. An unreadable list is the
         # job that could not be created or joined: the child alone was the
         # tree that could be governed.
-        return not pid_alive(proc.pid) and job_member_count(job) in {0, None}
+        return (
+            not pid_alive(proc.pid)
+            and job_member_pids(job) in {(), None}
+            and not any(pid_alive(pid) for pid in members)
+        )
 
     if _holds_within(gone, _KILL_CONFIRM_SECONDS):
         return True

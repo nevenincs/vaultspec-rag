@@ -39,7 +39,6 @@ from ._http_stubs import QuietHandler
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
 
-pytestmark = [pytest.mark.unit]
 
 runner = CliRunner()
 
@@ -111,6 +110,7 @@ def _publish_health(state: _HealthServiceState, **fields: object) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 def test_matching_release_is_the_only_compatible_verdict() -> None:
     """The same release on both sides is compatible; nothing else is."""
     verdict = classify_service_version({SERVICE_VERSION_FIELD: local_package_version()})
@@ -121,6 +121,7 @@ def test_matching_release_is_the_only_compatible_verdict() -> None:
     assert verdict.remediation() == ()
 
 
+@pytest.mark.unit
 def test_different_release_is_a_mismatch_naming_both_sides() -> None:
     """A mismatch carries both versions, so the operator sees the actual drift."""
     verdict = classify_service_version({SERVICE_VERSION_FIELD: _FOREIGN_RELEASE})
@@ -134,6 +135,7 @@ def test_different_release_is_a_mismatch_naming_both_sides() -> None:
     assert local_package_version() in verdict.reason()
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize(
     "payload",
     [
@@ -161,6 +163,7 @@ def test_unreadable_release_is_never_a_silent_pass(
     assert verdict.service_version is None
 
 
+@pytest.mark.unit
 def test_verdict_dict_carries_every_field_a_surface_renders() -> None:
     """The envelope view is complete, so no surface re-derives the comparison."""
     verdict = classify_service_version({SERVICE_VERSION_FIELD: _FOREIGN_RELEASE})
@@ -173,6 +176,7 @@ def test_verdict_dict_carries_every_field_a_surface_renders() -> None:
     }
 
 
+@pytest.mark.unit
 @pytest.mark.usefixtures("client_installation")
 def test_a_client_is_sent_to_the_service_release_not_told_to_restart() -> None:
     """A client cannot start the service, so restarting it is not its fix.
@@ -190,6 +194,7 @@ def test_a_client_is_sent_to_the_service_release_not_told_to_restart() -> None:
     assert not any("server start" in step for step in remediation)
 
 
+@pytest.mark.unit
 @pytest.mark.usefixtures("client_installation")
 def test_a_client_facing_an_unreported_release_is_sent_to_the_host() -> None:
     """With no service release to pin to, only a host restart converges them."""
@@ -201,6 +206,7 @@ def test_a_client_facing_an_unreported_release_is_sent_to_the_host() -> None:
     )
 
 
+@pytest.mark.unit
 @pytest.mark.usefixtures("inference_host")
 def test_a_host_is_told_to_restart_the_service_it_can_start() -> None:
     """The host keeps the one action that replaces a foreign daemon."""
@@ -218,6 +224,7 @@ def test_a_host_is_told_to_restart_the_service_it_can_start() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 def test_readiness_report_publishes_this_installs_release() -> None:
     """``/readiness`` carries the release, so a direct consumer can gate on it."""
     from .._readiness import compute_readiness
@@ -228,6 +235,7 @@ def test_readiness_report_publishes_this_installs_release() -> None:
     assert classify_service_version(payload).is_compatible
 
 
+@pytest.mark.unit
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_the_cli_parent_stamps_the_release_into_the_discovery_file() -> None:
     """The spawn-time write records the release that launched the daemon."""
@@ -246,6 +254,7 @@ def test_the_cli_parent_stamps_the_release_into_the_discovery_file() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_start_refuses_to_report_already_running_for_a_foreign_release(
     health_service: _HealthServiceState,
@@ -268,6 +277,7 @@ def test_start_refuses_to_report_already_running_for_a_foreign_release(
     assert envelope["data"]["version"]["client_version"] == local_package_version()
 
 
+@pytest.mark.unit
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_start_refuses_a_daemon_that_reports_no_release(
     health_service: _HealthServiceState,
@@ -283,6 +293,7 @@ def test_start_refuses_a_daemon_that_reports_no_release(
     assert envelope["error"] == VERSION_ERROR_UNREPORTED
 
 
+@pytest.mark.unit
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_start_emits_exactly_one_envelope_on_the_refusal_path(
     health_service: _HealthServiceState,
@@ -303,6 +314,7 @@ def test_start_emits_exactly_one_envelope_on_the_refusal_path(
     assert result.stdout.lstrip()[consumed:].strip() == ""
 
 
+@pytest.mark.unit
 @pytest.mark.usefixtures("isolated_singleton_dirs", "inference_host")
 def test_start_refusal_is_non_zero_and_actionable_in_human_mode(
     health_service: _HealthServiceState,
@@ -322,6 +334,7 @@ def test_start_refusal_is_non_zero_and_actionable_in_human_mode(
     assert "vaultspec-rag server stop" in result.stdout
 
 
+@pytest.mark.unit
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_start_still_attaches_to_a_daemon_of_this_release(
     health_service: _HealthServiceState,
@@ -346,6 +359,7 @@ def test_start_still_attaches_to_a_daemon_of_this_release(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 @pytest.mark.usefixtures("isolated_singleton_dirs", "inference_host")
 def test_mcp_tools_refuse_a_foreign_release_with_the_same_code(
     health_service: _HealthServiceState,
@@ -381,6 +395,7 @@ def test_mcp_tools_refuse_a_foreign_release_with_the_same_code(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 def test_a_pointer_declaring_an_unknown_schema_is_refused() -> None:
     """An unrecognised discriminator means the other fields cannot be trusted."""
     from ..serviceclient._discovery import (
@@ -400,6 +415,7 @@ def test_a_pointer_declaring_an_unknown_schema_is_refused() -> None:
     )
 
 
+@pytest.mark.unit
 def test_a_pointer_predating_the_discriminator_is_still_read() -> None:
     """Absent fields are the pre-discriminator case, not a refusal.
 
@@ -411,6 +427,7 @@ def test_a_pointer_predating_the_discriminator_is_still_read() -> None:
     assert _discovery_pair_understood({"pid": 1, "port": 2})
 
 
+@pytest.mark.unit
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_an_unreadable_status_file_degrades_rather_than_reads_absent() -> None:
     """A file this build cannot read must not be reported as "nothing running".
@@ -448,9 +465,16 @@ def test_an_unreadable_status_file_degrades_rather_than_reads_absent() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_doctor_exits_non_zero_for_a_running_foreign_release() -> None:
-    """A foreign daemon lifts the doctor's exit code, as a dead one does."""
+    """A foreign daemon lifts the doctor's exit code, as a dead one does.
+
+    ``overall_ready`` is passed in as ``True`` for both cases to isolate the
+    release gate from the live-service and dependency axes it is layered
+    over: this proves the foreign-release check alone, regardless of what
+    the rest of the doctor computed.
+    """
     from ..cli._service_doctor import _doctor_exit_code
 
     compatible: dict[str, object] = {
@@ -464,21 +488,26 @@ def test_doctor_exits_non_zero_for_a_running_foreign_release() -> None:
         "version_compatible": False,
     }
 
-    assert _doctor_exit_code(compatible, None) == 0
-    assert _doctor_exit_code(foreign, None) == 1
+    assert _doctor_exit_code(True, compatible, None) == 0
+    assert _doctor_exit_code(True, foreign, None) == 1
 
 
+@pytest.mark.unit
 def test_doctor_ignores_the_release_when_no_daemon_was_observed() -> None:
-    """A pre-install run has no daemon to compare, and must stay exit 0.
+    """The foreign-release gate must never fire over a daemon never observed.
 
-    ``version_compatible`` is absent rather than False there, and the gate keys
-    on ``is False`` for exactly that reason.
+    ``version_compatible`` is absent rather than False there, and the gate
+    keys on ``is False`` for exactly that reason. ``overall_ready=True`` is
+    passed in to isolate this gate: a real absent daemon already makes
+    ``overall_ready`` False on its own (asserted separately on
+    ``_overall_readiness`), which is a different reason to exit non-zero
+    than a foreign release.
     """
     from ..cli._service_doctor import _doctor_exit_code
 
     absent: dict[str, object] = {"present": False, "live": False}
 
-    assert _doctor_exit_code(absent, None) == 0
+    assert _doctor_exit_code(True, absent, None) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -498,6 +527,7 @@ def _record_foreign_daemon(port: int) -> None:
     status_path.write_text(json.dumps(document), encoding="utf-8")
 
 
+@pytest.mark.unit
 def test_the_data_plane_seam_pairs_the_address_with_the_verdict() -> None:
     """One seam answers both questions, so no caller can gate only one.
 
@@ -517,6 +547,7 @@ def test_the_data_plane_seam_pairs_the_address_with_the_verdict() -> None:
     assert not down.reachable and not down.usable
 
 
+@pytest.mark.unit
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_cli_search_refuses_a_foreign_release_rather_than_answering(
     health_service: _HealthServiceState,
@@ -538,6 +569,7 @@ def test_cli_search_refuses_a_foreign_release_rather_than_answering(
     assert envelope["version"]["service_version"] == _FOREIGN_RELEASE
 
 
+@pytest.mark.integration
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_a_local_mandate_does_not_run_beside_a_foreign_release(
     health_service: _HealthServiceState,
@@ -563,6 +595,7 @@ def test_a_local_mandate_does_not_run_beside_a_foreign_release(
     assert any("another release" in step for step in envelope["remediation"])
 
 
+@pytest.mark.unit
 @pytest.mark.usefixtures("isolated_singleton_dirs", "inference_host")
 def test_cli_search_refusal_is_actionable_in_human_mode(
     health_service: _HealthServiceState,
@@ -580,6 +613,7 @@ def test_cli_search_refusal_is_actionable_in_human_mode(
     assert "vaultspec-rag server status --verbose" in result.stdout
 
 
+@pytest.mark.unit
 @pytest.mark.usefixtures("isolated_singleton_dirs", "client_installation")
 def test_cli_search_refusal_sends_a_client_to_the_service_release(
     health_service: _HealthServiceState,
@@ -594,6 +628,7 @@ def test_cli_search_refusal_sends_a_client_to_the_service_release(
     assert "vaultspec-rag server stop" not in result.stdout
 
 
+@pytest.mark.unit
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_cli_index_refuses_rather_than_indexing_around_a_foreign_daemon(
     health_service: _HealthServiceState,
@@ -614,6 +649,7 @@ def test_cli_index_refuses_rather_than_indexing_around_a_foreign_daemon(
     assert envelope["error"] == VERSION_ERROR_MISMATCH
 
 
+@pytest.mark.unit
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_stop_is_not_gated_because_it_is_the_remediation() -> None:
     """The verb that resolves the mismatch must never be blocked by it.

@@ -71,13 +71,16 @@ async def test_get_jobs_is_newest_first(
     (first_root / ".vaultspec").mkdir(parents=True, exist_ok=True)
     (second_root / ".vault").mkdir(parents=True, exist_ok=True)
     (second_root / ".vaultspec").mkdir(parents=True, exist_ok=True)
+    # Finished work is listed by when it finished, newest first. The second job
+    # is submitted once the first has finished, so it is the newer by both its
+    # submission and its finish, and the order cannot depend on which of two
+    # concurrent jobs happened to finish first.
     job1 = await tools.reindex_vault(project_root=str(first_root))
-    job2 = await tools.reindex_vault(project_root=str(second_root))
     await _wait_for_terminal_jobs(cast("str", job1["job_id"]))
+    job2 = await tools.reindex_vault(project_root=str(second_root))
     await _wait_for_terminal_jobs(cast("str", job2["job_id"]))
 
     jobs = (await admin.get_jobs())["jobs"]
-    # The list is newest-first, so job2 should appear before job1
     ids = [entry["id"] for entry in jobs]
     assert ids.index(job2["job_id"]) < ids.index(job1["job_id"])
 

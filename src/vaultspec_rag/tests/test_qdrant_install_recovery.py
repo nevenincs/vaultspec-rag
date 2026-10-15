@@ -78,7 +78,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator
     from pathlib import Path
 
-    from ..qdrant_runtime._constants import ProvisionReport
+    from ..native_binary._report import ProvisionReport
 
 pytestmark = [pytest.mark.unit]
 

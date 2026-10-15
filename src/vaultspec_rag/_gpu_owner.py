@@ -47,7 +47,7 @@ import threading
 import time
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -64,8 +64,8 @@ __all__ = [
     "gpu_owned_message",
     "gpu_owned_remediation",
     "gpu_owner_anchor_path",
-    "gpu_owner_wire",
     "lend_gpu",
+    "observation_wire",
     "observe_gpu_owner",
     "reclaim_gpu",
     "require_gpu_ownership",
@@ -220,17 +220,37 @@ def gpu_owned_remediation(
             )
 
 
-def gpu_owner_wire(ownership: GpuOwnership) -> dict[str, object]:
-    """Project one ownership answer into the shape every envelope carries.
+class HolderObservation(Protocol):
+    """What an envelope reports about whoever holds a machine resource."""
 
-    A refused search and a refused start report the same condition, so both
-    carry this one object under the same key, whichever part of their own
-    envelope holds a command's detail.
+    @property
+    def state(self) -> StrEnum:
+        """The answer, as one of the observing module's own states."""
+        ...
+
+    @property
+    def holder_pid(self) -> int:
+        """The holder's pid, or 0 when it is unknown or not alive."""
+        ...
+
+    @property
+    def detail(self) -> str:
+        """Why the holder could not be verified, else empty."""
+        ...
+
+
+def observation_wire(observation: HolderObservation) -> dict[str, object]:
+    """Project one holder observation into the shape every envelope carries.
+
+    A refused search, a refused start and a stop that leaves a borrower
+    holding the GPU report the same kind of condition, so each carries this
+    one object under its own key, whichever part of its envelope holds a
+    command's detail.
     """
     return {
-        "state": ownership.state.value,
-        "holder_pid": ownership.holder_pid,
-        "detail": ownership.detail,
+        "state": observation.state.value,
+        "holder_pid": observation.holder_pid,
+        "detail": observation.detail,
     }
 
 

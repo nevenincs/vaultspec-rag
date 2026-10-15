@@ -40,8 +40,6 @@ if TYPE_CHECKING:
 
     from ._http_stubs import QuietHandler
 
-pytestmark = [pytest.mark.unit]
-
 #: Run one command as a host that can serve, and raise an interrupt in the
 #: main thread once the file named first on the command line appears. The
 #: role and the capability are pinned with the helpers the in-process suites
@@ -56,20 +54,12 @@ import time
 
 import pytest
 
-from pathlib import Path
-
 from vaultspec_rag.operator_state._installation import ComputeCapability, InstallRole
-from vaultspec_rag.tests.conftest import (
-    pin_daemon_capability,
-    pin_hardware_anchors,
-    pin_install_role,
-)
+from vaultspec_rag.tests.conftest import pin_daemon_capability, pin_install_role
 
 pinned = pytest.MonkeyPatch()
 pin_install_role(pinned, InstallRole.HOST)
 pin_daemon_capability(pinned, ComputeCapability.READY)
-# A service that owns this machine's GPU would refuse the start outright.
-pin_hardware_anchors(pinned, Path(sys.argv[1]).parent)
 
 
 def interrupt_when_told(marker):
@@ -108,13 +98,7 @@ class _SilentSource:
 def _interrupted(
     tmp_path: Path, argv: list[str], env: dict[str, str], source: _SilentSource
 ) -> subprocess.CompletedProcess[str]:
-    """Run *argv*, interrupt it once its fetch reached *source*, and return it.
-
-    Mutation check: with the child's hardware anchors left on the machine's
-    own, a host whose service owns the GPU refuses the start, and the premise
-    fails within two seconds carrying the ``gpu_owned`` envelope. Restoring
-    the redirect passes.
-    """
+    """Run *argv*, interrupt it once its fetch reached *source*, and return it."""
     marker = tmp_path / "interrupt-now"
     child = subprocess.Popen(
         [sys.executable, "-c", _INTERRUPTED_COMMAND, str(marker), *argv],
@@ -173,6 +157,7 @@ def _model_fetch_environment(
     )
 
 
+@pytest.mark.unit
 @pytest.mark.usefixtures("inference_host")
 def test_a_warmup_that_cannot_fetch_is_a_failed_envelope_naming_each_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -205,6 +190,7 @@ def test_a_warmup_that_cannot_fetch_is_a_failed_envelope_naming_each_model(
     ]
 
 
+@pytest.mark.unit
 @pytest.mark.usefixtures("client_installation")
 def test_a_warmup_on_a_client_is_a_successful_envelope_that_fetched_nothing() -> None:
     """A client needs no models, which is an outcome and not a failure."""
@@ -219,6 +205,7 @@ def test_a_warmup_on_a_client_is_a_successful_envelope_that_fetched_nothing() ->
     assert "not needed by a client installation" in str(data["detail"])
 
 
+@pytest.mark.unit
 def test_an_interrupted_warmup_is_one_envelope_and_exit_one(tmp_path: Path) -> None:
     """The verb has a JSON mode, and an interrupt is one of its outcomes.
 
@@ -244,6 +231,7 @@ def test_an_interrupted_warmup_is_one_envelope_and_exit_one(tmp_path: Path) -> N
     assert envelope.get("data") == {"next_actions": ["vaultspec-rag server warmup"]}
 
 
+@pytest.mark.integration
 def test_a_start_interrupted_while_fetching_starts_nothing_and_says_so(
     tmp_path: Path,
 ) -> None:
@@ -253,6 +241,12 @@ def test_a_start_interrupted_while_fetching_starts_nothing_and_says_so(
     before any daemon exists. That is a different outcome from interrupting
     the wait for readiness, where a daemon carries on, and the envelope says
     which: ``started`` is false.
+
+    The start's pre-flight asks the machine's real GPU owner anchor. Inside the
+    loan the GPU lane runs in, the anchor answers that this process tree may
+    load models, so the start goes on to its fetch. A tree the GPU is not lent
+    to is refused there with ``gpu_owned``, which is why this runs in the
+    integration tier.
 
     Mutation check: with the interrupt no longer caught around the fetch,
     the interpreter exits 130 with nothing on stdout, and the exit-code
@@ -288,6 +282,7 @@ def test_a_start_interrupted_while_fetching_starts_nothing_and_says_so(
     assert not (tmp_path / "status" / "service.json").exists()
 
 
+@pytest.mark.unit
 def test_an_interrupted_qdrant_install_installs_nothing_and_says_so(
     tmp_path: Path,
 ) -> None:

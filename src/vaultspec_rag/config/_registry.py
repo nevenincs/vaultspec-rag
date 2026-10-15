@@ -73,12 +73,14 @@ _EXTERNAL: Final = frozenset(
         EnvVar.TRANSFORMERS_VERBOSITY,
         EnvVar.DISABLE_SAFETENSORS_CONVERSION,
         EnvVar.PYTORCH_ENABLE_MPS_FALLBACK,
+        EnvVar.UV,
         EnvVar.UV_CACHE_DIR,
         EnvVar.UV_TOOL_DIR,
         EnvVar.VIRTUAL_ENV,
         EnvVar.PYTHON_SAFE_PATH,
         EnvVar.PATH,
         EnvVar.PATHEXT,
+        EnvVar.PYAPP,
         EnvVar.TEMP,
         EnvVar.TMP,
         EnvVar.TMPDIR,
@@ -146,10 +148,6 @@ _SETTING_KEYS: Final[Mapping[EnvVar, str]] = {
 #: neither a settings key nor an entry here fails the totality check below,
 #: so a new name cannot land undescribed.
 _DESCRIPTIONS: Final[Mapping[EnvVar, str]] = {
-    EnvVar.MONITOR_BINARY: (
-        "Absolute path to the compiled monitor executable, overriding the "
-        "installed vaultspec-rag-monitor command on PATH."
-    ),
     EnvVar.MONITOR_PYTHON: (
         "The initialized daemon's absolute Python interpreter, handed to its "
         "monitor child for canonical service commands; not an operator setting."
@@ -280,6 +278,10 @@ _DESCRIPTIONS: Final[Mapping[EnvVar, str]] = {
         "to the processor. Read with PyTorch's own reading of it - the exact "
         "value 1 - because the behaviour behind it is PyTorch's."
     ),
+    EnvVar.UV: (
+        "The uv executable, as uv names it to its children. Read to create "
+        "the service's own GPU environment with the uv the operator invoked."
+    ),
     EnvVar.UV_CACHE_DIR: (
         "uv's cache location. Read to tell an ephemeral cache environment "
         "apart from an installed tool when explaining a GPU failure."
@@ -297,6 +299,12 @@ _DESCRIPTIONS: Final[Mapping[EnvVar, str]] = {
     EnvVar.PATHEXT: (
         "The extensions a program name may carry on Windows, read alongside "
         "the search path when a helper program is looked for."
+    ),
+    EnvVar.PYAPP: (
+        "Set by the single-file launcher an archive installation runs, to "
+        "its own path. Read to find the executables packed beside it, which "
+        "are not in the environment it installed this package into. Any "
+        "value that does not name an existing absolute file is ignored."
     ),
     EnvVar.TEMP: (
         "The operating system's temporary directory, read to decide whether "

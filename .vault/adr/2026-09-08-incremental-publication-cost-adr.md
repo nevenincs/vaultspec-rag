@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#incremental-publication-cost'
 date: '2026-09-08'
-modified: '2026-10-12'
+modified: '2026-10-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:56d51e511ae02f0e3f0c37f65aeff302e47a285e84524f5df3a4d2f6c185ef14'
+body_hash: 'sha256:8a24c5b065d68f3c8bd45928ac0e76d5fd7a382d729b5076d5c3ebb0f8684103'
 related:
   - "[[2026-09-08-incremental-publication-cost-research]]"
   - "[[2026-09-08-incremental-publication-cost-reference]]"
@@ -69,6 +69,10 @@ proof. The cutover instead fails old indexes closed until an explicitly authoriz
 retained as the exceptional verification path.
 
 ## Constraints
+
+### 2026-10-14: the first index of a new source
+
+Missing proof remains the typed rebuild-required boundary, except for a source that `2026-10-12-destructive-rebuild-lifecycle-adr` (2026-10-14 amendment) defines as new: no completed publication and no stored points. An explicit incremental request for that source is admitted as its first full build.
 
 ### 2026-10-12: reset-first rebuild and progressive search
 

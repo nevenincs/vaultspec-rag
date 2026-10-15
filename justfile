@@ -113,15 +113,13 @@ check-monitor-format:
 check-monitor-type:
     npm run typecheck
 
-# Build the monitor into src/monitor/dist.
+# Build the frontend, compile the native monitor from it, and install that
+# monitor where this checkout's service and tests find it. One command: a
+# checkout that has run it starts the service and runs the lifecycle tests
+# with nothing exported and nothing else to do.
 [group('build')]
 build-monitor:
-    npm run build
-
-# Compile the native monitor used by accelerator-free lifecycle tests.
-[group('build')]
-build-monitor-test:
-    uv run --no-sync python -m tools.monitor.build test --outdir dist-bin
+    uv run --no-sync python -m tools.monitor.build develop --outdir dist-bin
 
 # ===========================================================================
 #  setup
@@ -533,6 +531,22 @@ release-monitor-frontend tag producer_revision frontend_dir='dist-monitor-fronte
 release-monitor tag producer_revision frontend_digest frontend_dir='dist-monitor-frontend' outdir='dist-bin':
     uv run --no-project --python 3.13 -- python -m tools.monitor.build compile --tag {{tag}} --source-revision {{producer_revision}} --frontend {{frontend_dir}} --frontend-sha256 {{frontend_digest}} --outdir {{outdir}}
 
+# Pack one finalized monitor as the archive an installation provisions from.
+[group('release')]
+release-monitor-archive tag rust_target raw_dir='dist-bin' outdir='dist-monitor':
+    uv run --no-project --python 3.13 -- python -m tools.monitor.release monitor-archive --tag {{tag}} --target {{rust_target}} --directory {{raw_dir}} --outdir {{outdir}}
+
+# Generate the digests the wheel carries, from every target's finalized monitor.
+# Runs before the wheel build: an artifact built without it provisions nothing.
+[group('release')]
+release-monitor-pins tag monitor_dir='dist-monitor':
+    uv run --no-project --python 3.13 -- python -m tools.monitor.pins --provenance release --tag {{tag}} --directory {{monitor_dir}}
+
+# Stage the monitor a release wheel admits, verified before and after extraction.
+[group('release')]
+release-monitor-bytes tag rust_target monitor_dir='dist-monitor' wheel_dir='dist' raw_dir='dist-bin':
+    uv run --no-project --python 3.13 -- python -m tools.monitor.release monitor-bytes --tag {{tag}} --target {{rust_target}} --archive-dir {{monitor_dir}} --wheel-dir {{wheel_dir}} --directory {{raw_dir}}
+
 # Render and probe finalized bytes before packaging or publication.
 [group('release')]
 release-monitor-smoke binary digest version producer_revision browser report='dist-bin/monitor-smoke.json':
@@ -540,8 +554,8 @@ release-monitor-smoke binary digest version producer_revision browser report='di
 
 # Package finalized executables as the validated public target archive.
 [group('release')]
-release-bundle tag rust_target raw_dir='dist-bin' outdir='dist-bundles':
-    uv run --no-project --python 3.13 -- python -m tools.packaging.bundles --tag {{tag}} --target {{rust_target}} --raw-dir {{raw_dir}} --outdir {{outdir}}
+release-bundle tag rust_target raw_dir='dist-bin' outdir='dist-bundles' wheel_dir='dist':
+    uv run --no-project --python 3.13 -- python -m tools.packaging.bundles --tag {{tag}} --target {{rust_target}} --raw-dir {{raw_dir}} --outdir {{outdir}} --wheel-dir {{wheel_dir}}
 
 # Aggregate the deterministic archive sidecars into the local release checksum
 # view. CI merges this view with the wheel and sdist entries already attached to

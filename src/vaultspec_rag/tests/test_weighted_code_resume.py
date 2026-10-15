@@ -54,8 +54,6 @@ if TYPE_CHECKING:
     from ..indexer._run_checkpoint import CodeRunCheckpoint
     from ..memory_probe import MemoryBudgetSnapshot
 
-pytestmark = [pytest.mark.unit]
-
 
 class _CpuEncoder:
     """Only the model forward boundary is deterministic; storage is real."""
@@ -269,6 +267,7 @@ def resume_run(tmp_path: Path, clean_config: None) -> Generator[_ResumeRun]:
         )
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize(
     "committed",
     [(), (0,), (0, 1), (0, 1, 2, 3, 4, 5), (1, 3, 5, 7), (3, 7), tuple(range(8))],
@@ -317,6 +316,7 @@ def test_weighted_resume_preserves_durable_units(
     assert not checkpoint.ingestion_complete, "unit resume must not invent publication"
 
 
+@pytest.mark.unit
 def test_committed_end_marker_cannot_complete_a_file_with_gaps(
     resume_run: _ResumeRun,
 ) -> None:
@@ -357,6 +357,7 @@ def test_committed_end_marker_cannot_complete_a_file_with_gaps(
     )
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("indices", "message"),
     [
@@ -389,6 +390,7 @@ def test_committed_units_cannot_hide_malformed_raw_stream(
         )
 
 
+@pytest.mark.unit
 def test_committed_unit_must_still_fit_raw_weight_bounds(
     resume_run: _ResumeRun,
 ) -> None:
@@ -410,6 +412,7 @@ def test_committed_unit_must_still_fit_raw_weight_bounds(
     assert checkpoint.resumed_units == 0, "raw bounds must precede resume selection"
 
 
+@pytest.mark.unit
 def test_resume_selection_requires_exact_unit_identity(resume_run: _ResumeRun) -> None:
     """Ignoring the canonical ledger identity silently skips changed work."""
     segment = resume_run.segments[0]

@@ -15,6 +15,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from vaultspec_rag.native_binary._targets import (
+    archive_suffix,
+    executable_filename,
+    is_windows_target,
+)
+
 #: Rust target triples the delivery matrix builds, mapped to the channel that
 #: consumes each one. A triple absent here is not deliverable: it may exist as
 #: a release asset, but no package manager will point at it.
@@ -112,24 +118,9 @@ class Product:
         return f"{self.homepage}/releases/download/{self.tag_for(version)}"
 
 
-def is_windows_target(target: str) -> bool:
-    """Return whether *target* is the Windows MSVC release target."""
-    return target.endswith("windows-msvc")
-
-
-def executable_filename(name: str, target: str) -> str:
-    """Return the stable extracted filename for a binary name and target."""
-    return f"{name}{'.exe' if is_windows_target(target) else ''}"
-
-
 def raw_asset_name(name: str, target: str) -> str:
     """Return the target-qualified staging filename for one executable."""
     return f"{name}-{target}{'.exe' if is_windows_target(target) else ''}"
-
-
-def archive_suffix(target: str) -> str:
-    """Return the archive suffix used for a target platform."""
-    return ".zip" if is_windows_target(target) else ".tar.gz"
 
 
 MONITOR_EXECUTABLE = Executable(

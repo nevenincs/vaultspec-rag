@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlsplit
 
-from vaultspec_rag.qdrant_runtime._provision import file_sha256
+from vaultspec_rag.native_binary._install import file_sha256
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#provider-mcp-enrollment'
 date: '2026-07-15'
-modified: '2026-07-27'
-body_hash: 'sha256:8b5b8b6a837a94426078f4c9b8f2ea610a5a14f000e0cf09b7ba66aee26c66f5'
+modified: '2026-10-14'
+body_hash: 'sha256:ea219801fbbc6dc826dcd94d312bc775d6fbace6ef150cd84a6309d3ae5ad457'
 related:
   - "[[2026-07-15-provider-mcp-enrollment-research]]"
   - '[[2026-07-15-provider-mcp-enrollment-audit]]'
@@ -85,6 +85,37 @@ installation modes.
   dependency resolution.
 - Tests use real temporary workspaces and real CLIs; no mocks, fakes, patches, skips, or
   mirrored business logic.
+- Amendment, 2026-10-14. Core enrolls a launch only after the operator has reviewed its
+  exact definition and launch and approved it in a record kept outside the workspace; its
+  own install grants nothing, and no flag stands in for that review. RAG's install
+  therefore asks the operator to approve RAG's own definition, and only that one, at an
+  attended terminal, and records the answer through Core's public grant. An unattended
+  run, or `--yes`, never asks and never grants: the sync skips the launch with Core's
+  message naming the command that grants it. A dry run never writes. A sibling definition
+  stays the operator's to approve with Core. The approval is the operator's decision about
+  that exact launch, so it outlives an install that fails and rolls back. Authorization:
+  the user's 2026-10-14 instruction to fix the install gaps ("fix all") authorizes this
+  refinement. It adds an operator step to enrollment and does not change which component
+  owns provider configuration.
+- Core binds approval to where a definition really lives. An install holds a linked
+  definition or native config as a regular copy until it commits, and Core asks about that
+  copy's path while the install syncs. The approval is therefore recorded at the real
+  location first, which every later sync of the workspace asks about, and an approval
+  already held at the real location is recorded at the copy's path for the run. That
+  second record is the same reviewed launch, made only for a launch already approved at
+  its real location. It creates no consent and matches nothing once the link is back.
+- Core keys which native entries it owns by the same resolved path, so an install treats
+  the ownership of a linked native config as it treats approval. It moves the ownership
+  found at the real location to the copy for the run, so the install's sync meets RAG's
+  entry as owned, and moves what the run left at the copy back to the real location
+  before it commits or rolls back, so that a later Core sync finds the entry owned. The
+  replay and the dry-run preview carry it the same way. The records moved are Core's own
+  in Core's own sidecar; this adds no second ownership registry. The approval carry
+  covers every launch already approved at its real location, whichever definition it came
+  from, and never one that was not: carrying is not approving, and a sibling definition
+  stays the operator's to approve with Core. Authorization: the user's 2026-10-14
+  instruction to fix the remaining install gaps ("fix all") authorizes this refinement.
+  It does not change which component owns provider configuration.
 
 ## Implementation
 
@@ -110,6 +141,18 @@ Newly managed dependency changes carry location provenance in RAG-owned workspac
 state. Legacy placement without provenance is reported rather than silently corrected.
 Install, upgrade, mode migration, dry-run, and uninstall pass provider work through
 Core's typed lifecycle, and structured RAG reports retain Core's per-target results.
+
+Install plans the launches it will enroll from the projection a dry run uses, before
+any write and before the replay that journals rollback state, so the replay and the real
+run agree on what is approved. It shows the operator the exact definition, digest, launch
+and target of RAG's own definition, asks once, and records the answer with Core's grant.
+An approval Core already holds for the same definition and launch is reused without a
+question, and a changed definition or launch is asked about again.
+Once the install has swapped its links for regular copies, it carries every approval
+already held at a real location to the copies' paths, so the install's own sync is not
+refused for a launch the operator approved. It moves the ownership of each linked native
+config to its copy in the same step and returns it to the real location when the run
+ends, whether the run finished or failed, before the install commits or rolls back.
 
 A managed mode transition uses the narrow `force_managed` path. An unowned same-name
 entry produces a collision and remains unchanged unless the operator explicitly forces
@@ -155,6 +198,8 @@ honestly refusing to infer ownership that older releases never recorded.
   Codex session may require restart.
 - Adding another provider becomes a Core `McpTarget` concern instead of a new RAG
   serializer.
+- An unattended install, or one run with `--yes`, completes without enrolling the server
+  until the operator grants approval with Core, then installs again.
 
 ## Codification candidates
 

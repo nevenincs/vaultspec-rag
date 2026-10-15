@@ -228,18 +228,22 @@ class CodeGenerationLifecycle:
         )
 
     def published_evidence_lost(self) -> bool:
-        """Return whether canonical code proof is absent or storage is short."""
+        """Return whether storage contradicts the canonical code proof.
+
+        Absence of proof is not loss. A root that never published has no
+        claim for storage to fall short of, and reporting one told an
+        operator indexing a new repository that the storage behind a
+        published index had gone away. The proof read this predicate makes
+        raises for that case on its own, so the refusal an absent proof
+        earns is the one that names it.
+        """
         from .._publication_state import acquire_publication_snapshot
         from .._source_types import PublicSourceType
-        from ._publication_proof import ProofMissingError
 
-        try:
-            snapshot = acquire_publication_snapshot(
-                self._root_dir,
-                PublicSourceType.CODE,
-            )
-        except ProofMissingError:
-            return True
+        snapshot = acquire_publication_snapshot(
+            self._root_dir,
+            PublicSourceType.CODE,
+        )
         if not self._store.code_collection_exists():
             return True
         live = self._store.count_code()

@@ -42,7 +42,7 @@ __all__ = [
     "assign_process_to_job",
     "create_kill_on_close_job",
     "grant_every_account_access",
-    "job_member_count",
+    "job_member_pids",
     "open_without_following",
     "program_data_directory",
     "system_directory",
@@ -116,7 +116,8 @@ _FILE_FLAG_BACKUP_SEMANTICS: Final = 0x02000000
 #: Job Object constants (``winnt.h``).
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: Final = 0x2000
 _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION: Final = 9
-_JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION: Final = 1
+_JOB_OBJECT_BASIC_PROCESS_ID_LIST: Final = 3
+_ERROR_MORE_DATA: Final = 234
 
 
 def create_kill_on_close_job(*, purpose: str) -> int | None:
@@ -238,29 +239,33 @@ def terminate_job(job: int | None, *, purpose: str) -> bool:
     return False
 
 
-def job_member_count(job: int | None) -> int | None:
-    """Return how many live processes *job* holds.
+def _process_id_list(capacity: int) -> type[ctypes.Structure]:
+    """``JOBOBJECT_BASIC_PROCESS_ID_LIST`` with room for *capacity* ids."""
+    from ctypes import wintypes
 
-    ``None`` when there is no job or it cannot be queried, which a caller
-    must not read as empty.
+    class _ProcessIdList(ctypes.Structure):
+        _fields_ = [
+            ("NumberOfAssignedProcesses", wintypes.DWORD),
+            ("NumberOfProcessIdsInList", wintypes.DWORD),
+            ("ProcessIdList", ctypes.c_size_t * capacity),
+        ]
+
+    return _ProcessIdList
+
+
+def job_member_pids(job: int | None) -> tuple[int, ...] | None:
+    """Return the ids of the processes *job* holds.
+
+    The job drops a process from this list as soon as it begins exiting,
+    before the process has released what it holds, so an empty list says the
+    tree was ended, not that it is gone. ``None`` when there is no job or it
+    cannot be queried, which a caller must not read as empty.
     """
     if sys.platform != "win32" or job is None:
         return None
     from ctypes import wintypes
 
     from ._process_probe import win_kernel32
-
-    class _BasicAccounting(ctypes.Structure):
-        _fields_ = [
-            ("TotalUserTime", wintypes.LARGE_INTEGER),
-            ("TotalKernelTime", wintypes.LARGE_INTEGER),
-            ("ThisPeriodTotalUserTime", wintypes.LARGE_INTEGER),
-            ("ThisPeriodTotalKernelTime", wintypes.LARGE_INTEGER),
-            ("TotalPageFaultCount", wintypes.DWORD),
-            ("TotalProcesses", wintypes.DWORD),
-            ("ActiveProcesses", wintypes.DWORD),
-            ("TotalTerminatedProcesses", wintypes.DWORD),
-        ]
 
     kernel32 = win_kernel32()
     kernel32.QueryInformationJobObject.argtypes = (
@@ -271,16 +276,21 @@ def job_member_count(job: int | None) -> int | None:
         ctypes.c_void_p,
     )
     kernel32.QueryInformationJobObject.restype = wintypes.BOOL
-    info = _BasicAccounting()
-    if not kernel32.QueryInformationJobObject(
-        job,
-        _JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION,
-        ctypes.byref(info),
-        ctypes.sizeof(info),
-        None,
-    ):
-        return None
-    return int(cast("int", info.ActiveProcesses))
+    capacity = 64
+    while True:
+        info = _process_id_list(capacity)()
+        if kernel32.QueryInformationJobObject(
+            job,
+            _JOB_OBJECT_BASIC_PROCESS_ID_LIST,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+            None,
+        ):
+            listed = int(cast("int", info.NumberOfProcessIdsInList))
+            return tuple(int(pid) for pid in info.ProcessIdList[:listed])
+        if kernel32.GetLastError() != _ERROR_MORE_DATA or capacity >= 1 << 16:
+            return None
+        capacity *= 4
 
 
 class _AclHeader(ctypes.Structure):

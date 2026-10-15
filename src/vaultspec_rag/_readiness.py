@@ -18,6 +18,9 @@ It reports, per dependency, whether it is provisioned and usable:
 - **qdrant**: where does the qdrant binary resolve from (managed /
   operator-supplied / absent), and - when server mode is the effective
   backend - would a start accept it, and is the supervised child live?
+- **monitor**: is a monitor this installation may run in place, and where
+  does it resolve from? Obtained automatically, so the dimension reports
+  whether it is there and nothing for anyone to do about it.
 
 This is a *report*, not a fixer: it performs no provisioning, no
 download, and no mutation. It is bounded to the known dependency set
@@ -37,7 +40,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, cast
 
-from ._operator_commands import server_restart_remedy
+from ._operator_commands import server_restart_remedy, server_start_command
 from .operator_state._compute import local_compute
 from .operator_state._installation import ComputeCapability
 
@@ -46,6 +49,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from .config._types import ModelRepo
+    from .monitor_runtime._resolve import ResolvedMonitor
     from .operator_state._models import ComputeReport
     from .qdrant_runtime._constants import ResolvedBinary
 
@@ -62,14 +66,17 @@ _HOLDER_SCAN_BUDGET_SECONDS = 20.0
 #: An operator clears holders one at a time; a census helps nobody.
 _HOLDER_REPORT_LIMIT = 10
 
-#: Hashing the server executable takes well under a second on a healthy disk.
-#: The budget is for the unhealthy one: a stalled volume or a scanner holding
-#: the file must not hang a status command.
+#: Hashing a provisioned executable takes well under a second on a healthy
+#: disk. The budget is for the unhealthy one: a stalled volume or a scanner
+#: holding the file must not hang a status command, and this report also
+#: answers a route a broker polls. Shared by the server binary and the
+#: monitor, which are hashed the same way for the same reason.
 _BINARY_VERIFY_BUDGET_SECONDS = 10.0
 
 #: Reported when that budget runs out. Distinct from a failed check: the file
 #: was not shown to be wrong, only not shown to be right.
 _BINARY_UNCHECKED = "qdrant_binary_unchecked"
+_MONITOR_UNCHECKED = "monitor_unchecked"
 
 __all__ = [
     "DependencyReadiness",
@@ -98,11 +105,28 @@ class ReadinessStatus(StrEnum):
             client is not importable). Distinct from ``NOT_READY`` so a
             missing prerequisite is not misreported as a broken
             dependency.
+        NOT_APPLICABLE: this installation never needs the dependency (a
+            client installation needing no torch, model cache, or Qdrant
+            binary of its own). Distinct from ``READY`` so a row that says
+            nothing is required is never read as a signal that this
+            installation can itself start the service; it never blocks the
+            aggregate :attr:`ReadinessReport.ready`, the same as ``READY``.
     """
 
     READY = "ready"
     NOT_READY = "not_ready"
     UNKNOWN = "unknown"
+    NOT_APPLICABLE = "not_applicable"
+
+
+#: Statuses that never block the aggregate readiness verdict: a dependency
+#: this installation does not need is as little an obstacle as one that is
+#: provisioned, but it must never be rendered or counted as the same thing
+#: as "this installation can itself answer requests" - see ``READY`` vs
+#: ``NOT_APPLICABLE`` above.
+_NON_BLOCKING_STATUSES = frozenset(
+    {ReadinessStatus.READY, ReadinessStatus.NOT_APPLICABLE}
+)
 
 
 @dataclass
@@ -111,7 +135,7 @@ class DependencyReadiness:
 
     Attributes:
         name: The dependency this node describes (``"torch"`` /
-            ``"models"`` / ``"qdrant"``).
+            ``"models"`` / ``"qdrant"`` / ``"monitor"``).
         status: The bounded :class:`ReadinessStatus` outcome.
         detail: Human-readable summary. For ``NOT_READY`` it names what
             is missing; informational otherwise.
@@ -200,7 +224,7 @@ class ReadinessReport:
 
     Attributes:
         dependencies: One node per dependency, in report order
-            (torch, models, qdrant).
+            (torch, models, qdrant, monitor).
         server_mode: Whether the supervised server backend is the
             effective runtime backend at report time. Carried so a
             consumer can explain why the qdrant liveness dimension is
@@ -215,9 +239,14 @@ class ReadinessReport:
 
     @property
     def ready(self) -> bool:
-        """True when every known dependency dimension is ``READY``."""
+        """True when every dependency is ``READY`` or ``NOT_APPLICABLE``.
+
+        Generic over whatever rows :func:`compute_readiness` reports: a new
+        dependency row is folded in automatically, with no change here,
+        because this checks every row's status rather than naming any one.
+        """
         return bool(self.dependencies) and all(
-            dep.status == ReadinessStatus.READY for dep in self.dependencies
+            dep.status in _NON_BLOCKING_STATUSES for dep in self.dependencies
         )
 
     def dimension(self, name: str) -> DependencyReadiness | None:
@@ -246,7 +275,7 @@ class ReadinessReport:
         degraded_reasons = [
             dep.detail
             for dep in self.dependencies
-            if dep.status is not ReadinessStatus.READY and dep.detail
+            if dep.status not in _NON_BLOCKING_STATUSES and dep.detail
         ]
 
         return {
@@ -293,7 +322,7 @@ def compute_readiness(
 
     Returns:
         A :class:`ReadinessReport` with one node per known dependency
-        (torch, models, qdrant), in that order.
+        (torch, models, qdrant, monitor), in that order.
     """
     from .config._settings import get_config
 
@@ -306,6 +335,7 @@ def compute_readiness(
             _torch_readiness(judged),
             _models_readiness(verify=verify_models, capability=judged.capability),
             _qdrant_readiness(server_mode=server_mode, capability=judged.capability),
+            _monitor_readiness(judged.capability),
         ],
         server_mode=server_mode,
         environment_holders=(
@@ -361,10 +391,12 @@ def _torch_readiness(compute: ComputeReport) -> DependencyReadiness:
         status = ReadinessStatus.READY
         detail = f"{str(compute.backend).upper()} available on {compute.device_name}"
     else:
-        # A client never needs torch, so its absence is ready rather than a
-        # defect; a build nobody has verified is not yet known either way.
+        # A client never needs torch, so its absence is not applicable
+        # rather than a defect - and never "ready", which would read as this
+        # installation being able to start the service; a build nobody has
+        # verified is not yet known either way.
         if capability is ComputeCapability.NOT_APPLICABLE:
-            status = ReadinessStatus.READY
+            status = ReadinessStatus.NOT_APPLICABLE
         elif capability.is_defect:
             status = ReadinessStatus.NOT_READY
         else:
@@ -389,19 +421,16 @@ _CLIENT_NEEDS_NONE = (
 )
 
 
-def _fetch_remedy(capability: ComputeCapability, command: str) -> str:
-    """Say how a missing dependency gets fetched in this environment.
+def _fetch_remedy(command: str | None = None) -> str:
+    """Say the one command that fetches a missing dependency.
 
-    An environment that can run the service is given *command*, whole. One
-    that cannot yet is not: every command that fetches would decline it, so
-    it is told what fetches the dependency once the environment is repaired.
-    The torch row beside this one says what the repair is.
+    Starting the service is consent to download what it needs, and the start
+    fetches into whichever environment will serve, so it is the answer
+    wherever this check runs. *command* is given instead only when the
+    operator switched that automatic download off.
     """
-    if capability.blocks_start:
-        return (
-            "`vaultspec-rag server start` fetches it once this environment "
-            "can run the service"
-        )
+    if command is None:
+        return f"`{server_start_command()}` downloads it"
     return f"run `{command}`"
 
 
@@ -469,7 +498,7 @@ def _models_readiness(
     if capability is ComputeCapability.NOT_APPLICABLE:
         return DependencyReadiness(
             name="models",
-            status=ReadinessStatus.READY,
+            status=ReadinessStatus.NOT_APPLICABLE,
             detail=_CLIENT_NEEDS_NONE,
             info={"repos": {}},
         )
@@ -518,7 +547,7 @@ def _models_readiness(
                 f"{len(faults)} of {len(models)} model repo(s) cannot be used: "
                 + "; ".join(f"{repo} {detail}" for repo, detail in faults.items())
                 + "; "
-                + _fetch_remedy(capability, "vaultspec-rag server warmup")
+                + _fetch_remedy()
                 + unpinned_note
             ),
             info=info,
@@ -528,10 +557,7 @@ def _models_readiness(
         status=ReadinessStatus.NOT_READY,
         detail=(
             f"{len(unusable)} of {len(models)} model repo(s) missing from the "
-            "cache: "
-            + ", ".join(unusable)
-            + "; "
-            + _fetch_remedy(capability, "vaultspec-rag server warmup")
+            "cache: " + ", ".join(unusable) + "; " + _fetch_remedy()
         ),
         info=info,
     )
@@ -625,6 +651,7 @@ def _qdrant_readiness(
     service, and for a server that is already running at a configured
     address, which this machine does not run.
     """
+    from .config._settings import get_config
     from .qdrant_runtime._supervise import runtime_state
 
     state = runtime_state()
@@ -632,9 +659,18 @@ def _qdrant_readiness(
         server_mode=server_mode, capability=capability, remote=state.mode == "remote"
     )
     if unneeded is not None:
+        # Only the client case is "not applicable" - this installation never
+        # runs a server binary, whatever backend is configured. The
+        # local-only and already-remote cases are a real "ready": this
+        # machine's chosen backend genuinely needs no binary of its own.
+        status = (
+            ReadinessStatus.NOT_APPLICABLE
+            if capability is ComputeCapability.NOT_APPLICABLE
+            else ReadinessStatus.READY
+        )
         return DependencyReadiness(
             name="qdrant",
-            status=ReadinessStatus.READY,
+            status=status,
             detail=unneeded,
             info={
                 "binary_source": "not_needed",
@@ -677,9 +713,11 @@ def _qdrant_readiness(
             status=ReadinessStatus.NOT_READY,
             detail=(
                 "server mode is the default but no qdrant binary resolves; "
-                + _fetch_remedy(capability, "vaultspec-rag server qdrant install")
-                + ", or select the on-disk store with "
-                "`vaultspec-rag server start --local-only`"
+                + _fetch_remedy(
+                    None
+                    if get_config().qdrant_auto_provision
+                    else "vaultspec-rag server qdrant install"
+                )
             ),
             info=info,
         )
@@ -714,4 +752,108 @@ def _qdrant_readiness(
         status=ReadinessStatus.READY,
         detail=f"qdrant binary resolves from {source}",
         info=info,
+    )
+
+
+def _monitor_refusal(
+    *, budget: float
+) -> tuple[ResolvedMonitor | None, tuple[str, str] | None]:
+    """Resolve the monitor a start would run and say whether it is refused.
+
+    Returns the resolved monitor, if any, and the refusal as ``(code,
+    detail)`` or ``None``.
+
+    Bounded as one judgement, for the reason the server binary's is: deciding
+    what is installed hashes the executable, which is the largest file this
+    installation provisions, and this report also answers a route a broker
+    polls. When it does not finish within *budget* seconds the monitor is
+    reported as unchecked and not ready. It is never reported ready on the
+    strength of a check that did not finish.
+    """
+    from ._process_probe import bounded_call
+    from .monitor_runtime._errors import MonitorError
+    from .monitor_runtime._resolve import resolve_monitor
+
+    def judge() -> tuple[ResolvedMonitor | None, tuple[str, str] | None]:
+        try:
+            return resolve_monitor(), None
+        except MonitorError as exc:
+            return None, (exc.error, str(exc))
+
+    return bounded_call(
+        judge,
+        timeout=budget,
+        fallback=(
+            None,
+            (
+                _MONITOR_UNCHECKED,
+                f"the monitor could not be verified within {budget:.0f}s, "
+                "so it is not known to be usable",
+            ),
+        ),
+        label="monitor-verify",
+    )
+
+
+def _monitor_readiness(
+    capability: ComputeCapability = ComputeCapability.READY,
+    *,
+    verify_budget: float = _BINARY_VERIFY_BUDGET_SECONDS,
+) -> DependencyReadiness:
+    """Report whether this installation's monitor is installed and admissible.
+
+    The monitor is obtained automatically, so this dimension has one
+    blocking answer and no remedy to name: either a monitor this
+    installation may run is in place, or it is not and the next start
+    obtains it again. The resolver is asked, which hashes the executable it
+    finds, so this is a read with a cost and no mutation: nothing is
+    downloaded, extracted or written. The cost is bounded, and a check that
+    did not finish reads as unchecked rather than as ready.
+
+    A client installation never runs the service, so nothing is looked for
+    and nothing is missing.
+    """
+    if capability is ComputeCapability.NOT_APPLICABLE:
+        return DependencyReadiness(
+            name="monitor",
+            status=ReadinessStatus.READY,
+            detail=_CLIENT_NEEDS_NONE,
+            info={"monitor_source": "not_needed", "monitor_path": None},
+        )
+    resolved, refusal = _monitor_refusal(budget=verify_budget)
+    if refusal is not None:
+        code, detail = refusal
+        return DependencyReadiness(
+            name="monitor",
+            status=ReadinessStatus.NOT_READY,
+            detail=detail,
+            info={
+                # Nothing is known about an unchecked monitor, which is not
+                # the same as knowing it may not run.
+                "monitor_source": (
+                    "unchecked" if code == _MONITOR_UNCHECKED else "invalid"
+                ),
+                "monitor_path": None,
+                "monitor_error": code,
+            },
+        )
+    if resolved is None:
+        return DependencyReadiness(
+            name="monitor",
+            status=ReadinessStatus.NOT_READY,
+            detail=(
+                "no monitor is installed for this release, so the service "
+                "would start without its frontend; the next start obtains it"
+            ),
+            info={"monitor_source": "absent", "monitor_path": None},
+        )
+    return DependencyReadiness(
+        name="monitor",
+        status=ReadinessStatus.READY,
+        detail=f"monitor resolves from {resolved.source}",
+        info={
+            "monitor_source": str(resolved.source),
+            "monitor_path": str(resolved.path),
+            "monitor_version": resolved.version,
+        },
     )

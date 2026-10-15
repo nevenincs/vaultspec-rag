@@ -31,8 +31,6 @@ if typing.TYPE_CHECKING:
     import threading
     from pathlib import Path
 
-pytestmark = [pytest.mark.unit]
-
 
 def _search_body(output: str) -> str:
     lines = _plain_lines(output)
@@ -50,8 +48,7 @@ def _search_body(output: str) -> str:
 class TestSearchSafetyContract:
     """Fail-hard fast path + path indicator + tqdm suppression."""
 
-    pytestmark: typing.ClassVar = [pytest.mark.unit]
-
+    @pytest.mark.unit
     def test_search_port_dead_default_fails_hard(self, tmp_path: Path):
         """--port unreachable + no --allow-fallback exits non-zero."""
         (tmp_path / ".vaultspec").mkdir()
@@ -85,6 +82,7 @@ class TestSearchSafetyContract:
         assert "Qdrant lock" not in normalized
         assert "in-process" not in normalized
 
+    @pytest.mark.integration
     def test_search_port_dead_with_allow_fallback_no_warning(self, tmp_path: Path):
         """--allow-fallback does NOT emit the legacy fallthrough warning."""
         (tmp_path / ".vaultspec").mkdir()
@@ -103,6 +101,7 @@ class TestSearchSafetyContract:
         normalized = " ".join(result.output.split())
         assert "falling back to in-process" not in normalized
 
+    @pytest.mark.unit
     def test_index_exclude_warning_uses_running_service_language(self, tmp_path: Path):
         (tmp_path / ".vaultspec").mkdir()
         result = runner.invoke(
@@ -125,6 +124,7 @@ class TestSearchSafetyContract:
         assert "--exclude is ignored when using the running service." in normalized
         assert "RAG service" not in normalized
 
+    @pytest.mark.unit
     def test_search_command_renders_numbered_results_from_http_response(
         self, tmp_path: Path
     ) -> None:
@@ -162,6 +162,7 @@ class TestSearchSafetyContract:
         assert " - " not in lines[0]
         _assert_no_table_borders(result.output)
 
+    @pytest.mark.unit
     def test_search_structure_filter_sends_service_node_type(
         self, tmp_path: Path
     ) -> None:
@@ -186,6 +187,7 @@ class TestSearchSafetyContract:
         assert requests == [expected]
         assert "--node-type" not in result.output
 
+    @pytest.mark.unit
     def test_search_prefer_accepts_user_facing_value_alias(
         self, tmp_path: Path
     ) -> None:
@@ -209,6 +211,7 @@ class TestSearchSafetyContract:
         expected["prefer"] = "prod"
         assert requests == [expected]
 
+    @pytest.mark.unit
     def test_search_command_humanizes_missing_result_location(
         self, tmp_path: Path
     ) -> None:
@@ -236,6 +239,7 @@ class TestSearchSafetyContract:
         assert "unknown" not in result.output.lower()
         _assert_no_table_borders(result.output)
 
+    @pytest.mark.unit
     def test_search_command_scores_flag_uses_plain_score_label(
         self, tmp_path: Path
     ) -> None:
@@ -259,6 +263,7 @@ class TestSearchSafetyContract:
         )
         _assert_no_table_borders(result.output)
 
+    @pytest.mark.unit
     def test_empty_search_command_humanizes_service_diagnostics(
         self, tmp_path: Path
     ) -> None:
@@ -309,6 +314,7 @@ class TestSearchSafetyContract:
         assert "index is for" not in result.output
         assert not any("=" in line for line in lines)
 
+    @pytest.mark.integration
     def test_empty_local_fallback_search_is_actionable(self, tmp_path: Path) -> None:
         (tmp_path / ".vaultspec").mkdir()
         result = runner.invoke(
@@ -345,6 +351,7 @@ class TestSearchSafetyContract:
         assert "No vault results found" not in result.output
         _assert_no_table_borders(result.output)
 
+    @pytest.mark.unit
     def test_suppress_hf_progress_sets_env(self, monkeypatch: pytest.MonkeyPatch):
         """_suppress_hf_progress sets the HF env vars idempotently."""
         from ..cli._search import _suppress_hf_progress
@@ -355,6 +362,7 @@ class TestSearchSafetyContract:
         assert os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] == "1"
         assert os.environ["TRANSFORMERS_VERBOSITY"] == "error"
 
+    @pytest.mark.integration
     def test_search_locked_store_raises_actionable_error(self, tmp_path: Path):
         """A store held by another process prints the routing-mode message.
 
@@ -402,6 +410,7 @@ class TestSearchSafetyContract:
         assert "RAG service" not in normalized
         assert "file watcher" not in normalized
 
+    @pytest.mark.integration
     def test_search_locked_store_json_mode(self, tmp_path: Path):
         """A store held by another process reports local_store_locked under --json.
 
@@ -455,6 +464,7 @@ class TestSearchSafetyContract:
         assert "RAG service" not in message
         assert "file watcher" not in message
 
+    @pytest.mark.unit
     def test_search_timeout_is_transport_only(self, tmp_path: Path):
         """A real stalled response reports only the transport failure."""
         from ..serviceclient._search_transport import try_http_search
@@ -487,6 +497,7 @@ class TestSearchSafetyContract:
         ):
             assert client_diagnosis not in res
 
+    @pytest.mark.unit
     def test_search_timeout_human_output_is_plain_diagnostic(
         self, tmp_path: Path
     ) -> None:
@@ -516,6 +527,7 @@ class TestSearchSafetyContract:
         ):
             assert forbidden not in result.output
 
+    @pytest.mark.unit
     def test_search_timeout_json_is_transport_only(self, tmp_path: Path) -> None:
         """JSON exposes the transport error without synthesized service facts."""
         result, _port = invoke_timed_out_search(tmp_path, "--json")
@@ -617,14 +629,13 @@ class TestIncompleteIndexCannotAnswerSilently:
     deficit is the part an operator acts on.
     """
 
-    pytestmark: typing.ClassVar = [pytest.mark.unit]
-
     _SHORTFALL: typing.ClassVar[dict[str, object]] = {
         "published_count": 421,
         "live_count": 4,
         "missing_count": 417,
     }
 
+    @pytest.mark.unit
     def test_shortfall_warns_over_returned_results(self, tmp_path: Path) -> None:
         """Results plus a shortfall must carry the warning and the figures."""
         (tmp_path / ".vaultspec").mkdir()
@@ -645,6 +656,7 @@ class TestIncompleteIndexCannotAnswerSilently:
         assert "not evidence that no such code exists" in normalized, normalized
         assert "vaultspec-rag index --type code --full" in normalized, normalized
 
+    @pytest.mark.unit
     def test_shortfall_warns_over_an_empty_answer(self, tmp_path: Path) -> None:
         """An empty answer over a truncated index is the dangerous case.
 
@@ -667,6 +679,7 @@ class TestIncompleteIndexCannotAnswerSilently:
         assert "holds 4 of the 421 sections it published" in normalized, normalized
         assert "417 are missing" in normalized, normalized
 
+    @pytest.mark.unit
     def test_complete_index_is_not_warned_about(self, tmp_path: Path) -> None:
         """No shortfall on the envelope means no warning.
 
@@ -688,6 +701,7 @@ class TestIncompleteIndexCannotAnswerSilently:
         assert "sections it published" not in normalized, normalized
         assert "are missing" not in normalized, normalized
 
+    @pytest.mark.unit
     def test_json_mode_carries_the_shortfall_verbatim(self, tmp_path: Path) -> None:
         """JSON mode must carry the service's figures, not a rendered sentence.
 
@@ -725,8 +739,6 @@ class TestOneUndecodableFileCannotAbortTheSearch:
     ended the whole search rather than degrading one snippet.
     """
 
-    pytestmark: typing.ClassVar = [pytest.mark.unit]
-
     @staticmethod
     def _undecodable(tmp_path: Path) -> Path:
         """Write a file whose bytes are not valid UTF-8 under any decoding."""
@@ -735,6 +747,7 @@ class TestOneUndecodableFileCannotAbortTheSearch:
         target.write_bytes(b"first = 1\nsecond = '\xff\xfe'\nthird = 3\n")
         return target
 
+    @pytest.mark.unit
     def test_the_lines_still_render_with_replacement(self, tmp_path: Path) -> None:
         """Mutation: dropped ``errors="replace"`` from the read.
 
@@ -757,6 +770,7 @@ class TestOneUndecodableFileCannotAbortTheSearch:
         assert lines[0] == "first = 1"
         assert lines[2] == "third = 3"
 
+    @pytest.mark.unit
     def test_a_missing_file_still_yields_no_lines(self, tmp_path: Path) -> None:
         """The OSError arm still absorbs an absent file rather than raising.
 
@@ -780,8 +794,7 @@ class TestOneUndecodableFileCannotAbortTheSearch:
 class TestRenderedTextMatchesTheSnippet:
     """The human view never shows text the search did not match."""
 
-    pytestmark: typing.ClassVar = [pytest.mark.unit]
-
+    @pytest.mark.unit
     def test_current_lines_render_while_they_hold_the_snippet(
         self, tmp_path: Path
     ) -> None:
@@ -801,6 +814,7 @@ class TestRenderedTextMatchesTheSnippet:
             "The passage the search matched."
         ]
 
+    @pytest.mark.unit
     def test_an_edited_file_falls_back_to_the_indexed_snippet(
         self, tmp_path: Path
     ) -> None:

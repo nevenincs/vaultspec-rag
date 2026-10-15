@@ -91,6 +91,7 @@ class TestDiskPreflightRefusal:
     def test_json_mode_emits_disk_preflight_failed(
         self,
         isolated_singleton_dirs: Path,
+        private_owner_anchor: Path,
         project_refused_by_the_disk_preflight: Path,
     ) -> None:
         """A refused preflight is one classified envelope, exit 1.
@@ -114,7 +115,9 @@ class TestDiskPreflightRefusal:
         """
 
         project = project_refused_by_the_disk_preflight
-        with production_service(isolated_singleton_dirs):
+        with production_service(
+            isolated_singleton_dirs, gpu_owner_anchor=private_owner_anchor
+        ):
             result = runner.invoke(
                 app,
                 [
@@ -146,6 +149,7 @@ class TestDiskPreflightRefusal:
     def test_human_mode_prints_the_refusal(
         self,
         isolated_singleton_dirs: Path,
+        private_owner_anchor: Path,
         project_refused_by_the_disk_preflight: Path,
     ) -> None:
         """Human mode prints the store's own wording, exit 1.
@@ -162,7 +166,9 @@ class TestDiskPreflightRefusal:
         this test binds only the wording that reaches the operator.
         """
         project = project_refused_by_the_disk_preflight
-        with production_service(isolated_singleton_dirs):
+        with production_service(
+            isolated_singleton_dirs, gpu_owner_anchor=private_owner_anchor
+        ):
             result = runner.invoke(
                 app,
                 [

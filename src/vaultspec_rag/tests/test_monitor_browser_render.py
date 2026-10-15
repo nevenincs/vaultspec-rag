@@ -7,6 +7,7 @@ import os
 import queue
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -757,6 +758,47 @@ def test_carbon_stopped_service_and_theme_notifications(
             "getComputedStyle(document.querySelector('#service-state-notice'))"
             ".backgroundColor "
             f"!== {json.dumps(dark)}"
+        )
+    finally:
+        discovery.write_text(original, encoding="utf-8")
+    browser.wait("document.body.innerText.includes('Models and integrations')")
+
+
+def test_carbon_crashed_service_offers_start(
+    rendered_monitor: Browser, monitor_http: tuple[int, Path]
+) -> None:
+    """A service that died leaves the operator a usable Start, not a dead Restart.
+
+    The discovery record names a process that has exited, which the status
+    owner reports as a crash rather than as stopped. Mutations it catches:
+    offering Start only for the exact stopped state, which renders a disabled
+    Restart here and fails the Start wait; and labelling only a bare crashed
+    state, which shows the raw state name and fails the label wait.
+    """
+    browser = rendered_monitor
+    discovery = monitor_http[1] / "service.json"
+    original = discovery.read_text(encoding="utf-8")
+    exited = subprocess.Popen([sys.executable, "-c", "pass"])
+    exited.wait(timeout=30)
+    try:
+        discovery.write_text(
+            json.dumps({"pid": exited.pid, "port": 1}), encoding="utf-8"
+        )
+        browser.wait("document.body.innerText.includes('Service stopped unexpectedly')")
+        # Asked together: a later status read can reap the dead record, and a
+        # plain stop offers Start under any rule.
+        browser.wait(
+            "document.body.innerText.includes('Service stopped unexpectedly') && "
+            "[...document.querySelectorAll('.monitor-control-grid button')]"
+            ".some(button => button.textContent === 'Start service' && "
+            "!button.disabled)"
+        )
+        assert (
+            browser.evaluate(
+                "[...document.querySelectorAll('.monitor-control-grid button')]"
+                ".some(button => button.textContent === 'Restart service')"
+            )
+            is False
         )
     finally:
         discovery.write_text(original, encoding="utf-8")

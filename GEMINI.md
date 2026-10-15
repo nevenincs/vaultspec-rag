@@ -248,8 +248,9 @@ trigger: always_on
 - Verify every provisioned native binary against a committed SHA256 pin before
   extraction, and again before execution.
 - Never extract or run an unverified artifact.
-- Take the digest from a reviewed code constant, never from live release
-  metadata.
+- Take the digest from a reviewed code constant, or for a same-release product
+  from a pin module the release pipeline generates into the artifact that
+  verifies it. Never from live release metadata.
 - Download over HTTPS with a pinned host, and re-check the scheme across
   redirects.
 - Discard archive-embedded paths on extraction.

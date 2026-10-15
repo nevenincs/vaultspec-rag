@@ -91,11 +91,17 @@ def publish_discovery(
 
 
 @contextlib.contextmanager
-def production_service(status_dir: Path) -> Generator[ProductionService]:
-    """Serve authenticated production routes with no daemon lifespan or GPU."""
+def production_service(
+    status_dir: Path, *, gpu_owner_anchor: Path | None = None
+) -> Generator[ProductionService]:
+    """Serve authenticated production routes with no daemon lifespan or GPU.
+
+    The registry lends through *gpu_owner_anchor*, the machine's own when none
+    is named. A test that has a borrower pause the service names a private one.
+    """
     from ..server import ServerRouteRuntime, create_http_app
 
-    registry = ServiceRegistry()
+    registry = ServiceRegistry(gpu_owner_anchor=gpu_owner_anchor)
     port = free_loopback_port()
     server = uvicorn.Server(
         uvicorn.Config(

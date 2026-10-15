@@ -217,6 +217,14 @@ def place_stand_in(executable: bytes = NEW_EXECUTABLE) -> Path:
 
 
 def working_files(version_dir: Path) -> list[str]:
-    """Every file in *version_dir* other than an install's own two."""
+    """Every file in *version_dir* other than an install's own two.
+
+    A directory that is not there holds none of them. A run that installed
+    nothing removes the version directory it had to create, while it is
+    empty, so "no working files left" and "no directory left" are one
+    answer; the cases about the directory itself assert its absence.
+    """
     keep = {binary_filename(), MANIFEST_FILENAME}
+    if not version_dir.is_dir():
+        return []
     return sorted(p.name for p in version_dir.iterdir() if p.name not in keep)

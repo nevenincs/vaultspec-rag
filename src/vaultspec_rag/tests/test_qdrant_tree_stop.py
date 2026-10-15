@@ -16,6 +16,8 @@ run leaves nothing behind for long.
 from __future__ import annotations
 
 import contextlib
+import subprocess
+import sys
 import time
 from typing import TYPE_CHECKING
 
@@ -187,3 +189,34 @@ def test_a_server_left_behind_by_a_launcher_that_exited_is_ended_too(
         assert _gone(worker), "the server a dead launcher left behind was not ended"
     finally:
         _end_if_left(worker)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows job objects")
+def test_a_job_names_each_process_it_holds_until_it_is_ended() -> None:
+    """The job's process list names a real member, and is empty once it ends.
+
+    A stop records these ids before ending the job and waits on each one,
+    because the job forgets a process as soon as it begins exiting. Mutation:
+    reading the list header's assigned count as the listed count, or returning
+    an empty list on a successful query, fails the membership assertion.
+    """
+    from .._win32 import create_kill_on_close_job, job_member_pids, terminate_job
+    from ..qdrant_runtime._supervise import _win_assign_to_job
+
+    job = create_kill_on_close_job(purpose="test")
+    assert job is not None
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(120)"],
+        stdin=subprocess.DEVNULL,
+    )
+    try:
+        assert _win_assign_to_job(job, child)
+        assert child.pid in (job_member_pids(job) or ())
+
+        assert terminate_job(job, purpose="test")
+        child.wait(timeout=30)
+        assert job_member_pids(job) == ()
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait(timeout=30)

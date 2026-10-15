@@ -22,7 +22,8 @@ from ._import_probe import assert_fresh_import_excludes, import_probe_source
 from ._production_service import production_service
 
 # Borrowing pauses a served registry, which lends its GPU through the owner
-# anchor; every test here gets a private one, so none claims the machine's.
+# anchor it is given; each test that borrows hands it a private one, so none
+# claims the machine's.
 pytestmark = [pytest.mark.unit]
 
 runner = CliRunner()
@@ -46,11 +47,13 @@ def _assert_lease_is_available() -> None:
 
 
 def test_borrowed_work_runs_only_during_safe_pause_then_resumes_and_releases(
-    isolated_singleton_dirs: Path,
+    isolated_singleton_dirs: Path, private_owner_anchor: Path
 ) -> None:
     """The actual coordinator binds the real route lifecycle around its work."""
     observed_states: list[str] = []
-    with production_service(isolated_singleton_dirs) as service:
+    with production_service(
+        isolated_singleton_dirs, gpu_owner_anchor=private_owner_anchor
+    ) as service:
 
         def work() -> None:
             quiesce = _safe_remote_snapshot(service.port)
@@ -65,10 +68,12 @@ def test_borrowed_work_runs_only_during_safe_pause_then_resumes_and_releases(
 
 
 def test_borrowed_work_failure_still_resumes_then_releases(
-    isolated_singleton_dirs: Path,
+    isolated_singleton_dirs: Path, private_owner_anchor: Path
 ) -> None:
     """A real child-work exception cannot leave a recoverable service paused."""
-    with production_service(isolated_singleton_dirs) as service:
+    with production_service(
+        isolated_singleton_dirs, gpu_owner_anchor=private_owner_anchor
+    ) as service:
 
         def failing_work() -> None:
             _safe_remote_snapshot(service.port)
@@ -127,13 +132,16 @@ def _marker_published(marker: Path) -> bool:
 
 def test_unacknowledged_resume_retains_lease_until_child_exit_for_heartbeat_recovery(
     isolated_singleton_dirs: Path,
+    private_owner_anchor: Path,
     tmp_path: Path,
 ) -> None:
     """A real lost response retains ownership until process death triggers recovery."""
     marker = tmp_path / "borrower-safe.marker"
     environment = os.environ.copy()
     environment["PYTHONPATH"] = str(Path.cwd() / "src")
-    with production_service(isolated_singleton_dirs) as service:
+    with production_service(
+        isolated_singleton_dirs, gpu_owner_anchor=private_owner_anchor
+    ) as service:
         child = subprocess.Popen(
             [
                 sys.executable,
