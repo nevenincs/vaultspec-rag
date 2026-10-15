@@ -47,6 +47,7 @@ from ._planted_programs import (
     plant_marking_program,
     plant_native_program,
     plant_waiting_program,
+    ran_marker,
     stock_search_state,
 )
 from ._ports import free_loopback_port
@@ -236,11 +237,18 @@ def test_the_monitor_is_not_started_from_the_working_directory(
     digest, so a program of the right name proves nothing. This drives the
     real start against a real managed install - the tier a daemon started
     from the managed service runtime always resolves through, because the
-    runtime's own interpreter has no monitor beside it - and asserts the
-    image the started process was created from. The plants are both shapes a
+    runtime's own interpreter has no monitor beside it - and asks which file
+    the started process was created from. The plants are both shapes a
     lookup could answer with: a command script, which the standard lookup
     finds through ``PATHEXT``, and a native program, which a bare name handed
-    to process creation starts.
+    to process creation starts. Where no extension is completed there is one
+    file of that name, and it answers to both.
+
+    A native program is the image of the process created from it, so on
+    Windows that image is what is read. A script is run by its interpreter,
+    whose image names nothing planted, so elsewhere each plant is asked what
+    it left behind when it ran: the working directory's must have left
+    nothing, and the installed one must have left its marker.
 
     The start runs in an installation of its own: an installed release whose
     generated digests are those of the program installed here, started from
@@ -260,7 +268,12 @@ def test_the_monitor_is_not_started_from_the_working_directory(
     start's argument vector and dropped ``executable`` from it, which is the
     lookup this site used to make. Observed this test fail on the image
     assertion, naming the working directory's planted program as what was
-    started. Restored; passes.
+    started. Restored; passes. On Linux the same change starts nothing: a bare
+    name is looked for from the child's own directory, which the start sets,
+    and the plant is in this one. It failed on the assertion that the resolved
+    monitor was started. Dropping the child's directory as well started the
+    plant, and it failed on the assertion that the working directory's
+    monitor was not. Restored; passes.
     """
     del isolated_singleton_dirs
     ran = plant_marking_program(checkout, "vaultspec-rag-monitor")
@@ -287,12 +300,17 @@ def test_the_monitor_is_not_started_from_the_working_directory(
     image = started["image"]
     refused = started["refused"]
     assert os.path.normcase(resolved) == os.path.normcase(str(installed))
-    assert image is not None, "nothing started could be identified"
-    assert os.path.normcase(str(image)) == os.path.normcase(resolved), (
-        f"{image} was started; {resolved} was resolved"
-    )
-    assert os.path.normcase(str(image)) != os.path.normcase(str(planted))
     assert not ran.exists(), "the working directory's monitor was started"
+    if sys.platform == "win32":
+        assert image is not None, "nothing started could be identified"
+        assert os.path.normcase(str(image)) == os.path.normcase(resolved), (
+            f"{image} was started; {resolved} was resolved"
+        )
+        assert os.path.normcase(str(image)) != os.path.normcase(str(planted))
+    else:
+        assert ran_marker(installed.parent, MONITOR_PROGRAM).exists(), (
+            "the resolved monitor was not started"
+        )
     # The stand-in answers no page, so the start can only end at the wait.
     assert refused is not None
     assert "ready" in str(refused), refused

@@ -21,6 +21,7 @@ __all__ = [
     "plant_marking_program",
     "plant_native_program",
     "plant_waiting_program",
+    "ran_marker",
     "stock_search_state",
 ]
 
@@ -46,6 +47,25 @@ def stock_search_state(
     monkeypatch.setenv("PATH", os.pathsep.join(entries))
 
 
+def ran_marker(directory: Path, name: str) -> Path:
+    """The file a plant called *name* in *directory* leaves behind when it runs."""
+    return directory / f"{name}.ran"
+
+
+def _marks(ran: Path) -> str:
+    """The shell command that leaves the file *ran* behind."""
+    return f'echo ran > "{ran}"'
+
+
+def _write_script(directory: Path, name: str, *commands: str) -> Path:
+    """Write the shell script *name* running *commands* in order, and make it so."""
+    script = directory / name
+    body = "".join(f"{command}\n" for command in commands)
+    script.write_text(f"#!/bin/sh\n{body}", encoding="utf-8")
+    script.chmod(0o755)
+    return script
+
+
 def plant_marking_program(directory: Path, name: str) -> Path:
     """Ship a program called *name* that leaves a file behind when it runs.
 
@@ -55,14 +75,12 @@ def plant_marking_program(directory: Path, name: str) -> Path:
     Returns:
         The file the program leaves.
     """
-    ran = directory / f"{name}.ran"
+    ran = ran_marker(directory, name)
     if sys.platform == "win32":
         script = directory / f"{name}.cmd"
         script.write_text(f'@echo ran> "{ran}"\r\n', encoding="utf-8")
     else:
-        script = directory / name
-        script.write_text(f'#!/bin/sh\necho ran > "{ran}"\n', encoding="utf-8")
-        script.chmod(0o755)
+        _write_script(directory, name, _marks(ran))
     return ran
 
 
@@ -79,10 +97,7 @@ def plant_native_program(directory: Path, name: str) -> Path:
         The planted file.
     """
     if sys.platform != "win32":
-        script = directory / name
-        script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        script.chmod(0o755)
-        return script
+        return _write_script(directory, name, "exit 0")
     from .._win32 import system_directory
 
     planted = directory / f"{name}.exe"
@@ -91,7 +106,7 @@ def plant_native_program(directory: Path, name: str) -> Path:
 
 
 def plant_waiting_program(directory: Path, name: str) -> Path:
-    """Ship a native program called *name* that runs until its input closes.
+    """Ship a program called *name* that runs until its input closes.
 
     A plant a test can still ask about: one that exits at once is gone
     before anything can read what was started, so "which program ran" has
@@ -99,16 +114,26 @@ def plant_waiting_program(directory: Path, name: str) -> Path:
     keeps its standard input open, and prints nothing.
 
     On Windows it is a copy of a stock filter, because a command script
-    cannot be a process image; elsewhere a shell script does the same.
+    cannot be a process image, and the image a process reports is then the
+    file it was created from. Elsewhere it is a shell script, because the
+    stock filters, ``cat`` among them, refuse the arguments a monitor is
+    started with. A script's image is its interpreter, so what a process was
+    created from is told by the marker the script leaves instead: the one
+    :func:`ran_marker` names, which :func:`plant_marking_program` leaves
+    too, so planting both under one name leaves one program that answers to
+    either. The script waits with builtins alone, because ``PATH`` names
+    nothing in the tests that plant it.
 
     Returns:
         The planted file.
     """
     if sys.platform != "win32":
-        script = directory / name
-        script.write_text("#!/bin/sh\ncat >/dev/null\n", encoding="utf-8")
-        script.chmod(0o755)
-        return script
+        return _write_script(
+            directory,
+            name,
+            _marks(ran_marker(directory, name)),
+            "while read -r _; do :; done",
+        )
     from .._win32 import system_directory
 
     planted = directory / f"{name}.exe"

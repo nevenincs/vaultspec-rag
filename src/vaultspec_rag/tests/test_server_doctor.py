@@ -33,6 +33,9 @@ from vaultspec_core.core.workspace_mode import (
 from ..api import get_readiness
 from ..cli import app
 from ..commands._install import install_run
+from ..operator_state._compute import local_compute
+from ..operator_state._installation import ComputeCapability
+from ..operator_state._models import ComputeReport
 from ._mcp_consent import approve_workspace_launches
 
 if TYPE_CHECKING:
@@ -67,6 +70,20 @@ def _install_rag_workspace(tmp_path: Path, mode: InstallMode) -> Path:
     return ws
 
 
+def _launcher_serves() -> bool:
+    """Whether the interpreter running this suite could itself run the service.
+
+    The doctor reports on the environment a start would run the daemon in. The
+    launcher's own when it can serve, and otherwise a runtime a start would
+    create first, so what it says differs between a workstation with an
+    accelerator and a runner without one. This is the machine's answer to which
+    of the two it is: this process's own environment, read directly and held to
+    the one capability that names a verified device, not to the product's
+    judgement of the same environment.
+    """
+    return local_compute().capability is ComputeCapability.READY
+
+
 def test_doctor_json_envelope_carries_both_axes(
     isolated_status_dir: Path,
     tmp_path: Path,
@@ -83,6 +100,21 @@ def test_doctor_json_envelope_carries_both_axes(
     apart on any host. Mutation: with the command asking for the cheap
     snapshot, this failed on the dependencies comparison; restored, it
     passed.
+
+    Whose snapshot it is depends on the machine. Where this installation can
+    serve, the daemon runs from it and the rows are the reporter's reading of
+    this process. Where it cannot - a client, a CPU-only build, no device -
+    the daemon runs from a runtime a start has still to create, torch there is
+    unchecked, and the other rows are read as that runtime will need them, so
+    the rows differ from this process's own reading on purpose. Each runner
+    proves the branch its machine implies: a workstation the first, a runner
+    with no accelerator the second.
+
+    Mutation check, on a runner with no accelerator: handing the launcher's own
+    verdict to the dependency rows under a runtime plan, in place of the
+    unchecked one, failed on the torch row's status; restored, it passed. The
+    mirror, on a workstation: judging every launcher unable to serve failed on
+    the runtime axis being present; restored, it passed.
 
     Mutation check: folding the top line back to dependency-only truth for an
     absent service - as the doctor once did - would read a fully-provisioned
@@ -104,7 +136,22 @@ def test_doctor_json_envelope_carries_both_axes(
     assert envelope["command"] == "server doctor"
     data = envelope["data"]
     # The installed-dependency snapshot is preserved verbatim and labelled.
-    snapshot = get_readiness(verify_models=True)
+    if _launcher_serves():
+        assert data["service_runtime"] is None
+        snapshot = get_readiness(verify_models=True)
+    else:
+        from ..cli._service_doctor import _RUNTIME_PENDING
+
+        torch_row = data["dependencies"][0]
+        assert (torch_row["name"], torch_row["status"]) == ("torch", "unknown")
+        assert _RUNTIME_PENDING in torch_row["detail"]
+        assert data["service_runtime"]["ready"] is False
+        snapshot = get_readiness(
+            compute=ComputeReport(
+                capability=ComputeCapability.UNKNOWN, detail=_RUNTIME_PENDING
+            ),
+            verify_models=True,
+        )
     assert data["dependencies"] == snapshot["dependencies"]
     assert data["dependencies_ready"] == bool(snapshot["ready"])
     assert data["server_mode"] == bool(snapshot["server_mode"])
@@ -234,6 +281,19 @@ def test_doctor_floor_advice_names_a_command_that_upgrades(
     Guard assertion: the advice was `uv tool upgrade vaultspec-rag`, which a
     tool environment pinned by the CUDA repair answers with "nothing to
     upgrade". An operator following it sees no change and no reason why.
+
+    That holds where the daemon runs from this installation. Where it does not
+    - a client, a CPU-only build, no device - the daemon runs from a runtime of
+    its own, this installation's receipt decides nothing there, and recording
+    a CUDA source in it would repair something that is not broken, so the
+    verb alone is the advice. Each runner proves the branch its machine
+    implies: a workstation the first, a runner with no accelerator the second.
+
+    Mutation check, on a runner with no accelerator: handing the sequence the
+    answer that the daemon runs from this installation put the receipt step
+    in and failed on the count of commands; restored, it passed. The mirror,
+    on a workstation: judging every launcher unable to serve failed on the
+    receipt step being absent from the first command; restored, it passed.
     """
     _ = isolated_status_dir
     ws = _install_rag_workspace(tmp_path, InstallMode.TOOL)
@@ -247,16 +307,22 @@ def test_doctor_floor_advice_names_a_command_that_upgrades(
     result = runner.invoke(app, ["server", "doctor"])
     envelope = json.loads(runner.invoke(app, ["server", "doctor", "--json"]).stdout)
 
-    # This installation's receipt carries no CUDA source, so the sequence
-    # records it first and then upgrades: the bare verb alone would move the
-    # release and drop the GPU build with it.
     commands = envelope["data"]["mode"]["upgrade_commands"]
-    assert "--index-strategy unsafe-first-match" in commands[0]
-    assert commands[1] == "uv tool upgrade vaultspec-rag"
+    if _launcher_serves():
+        # This installation's receipt carries no CUDA source, so the sequence
+        # records it first and then upgrades: the bare verb alone would move
+        # the release and drop the GPU build with it.
+        assert "--index-strategy unsafe-first-match" in commands[0]
+        assert commands[1] == "uv tool upgrade vaultspec-rag"
+        assert "--index-strategy unsafe-first-match" in result.stdout
+    else:
+        # The verb, then the restart that brings the release to the daemon.
+        assert len(commands) == 2
+        assert commands[0] == "uv tool upgrade vaultspec-rag"
+        assert "--index-strategy" not in result.stdout
     assert "server stop" in commands[-1]
     # The envelope carries what the human output shows, so a broker is not
     # left reading a floor error it cannot act on.
-    assert "--index-strategy unsafe-first-match" in result.stdout
     assert "uv tool upgrade vaultspec-rag" in result.stdout
 
 
