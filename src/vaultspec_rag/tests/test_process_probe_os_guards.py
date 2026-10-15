@@ -107,7 +107,7 @@ def test_no_module_redeclares_the_kernel32_job_object_calls() -> None:
     assert not found, (
         f"direct kernel32 Job Object calls outside _win32 at {found}; "
         "use create_kill_on_close_job / assign_process_to_job / terminate_job "
-        "/ job_member_count instead"
+        "/ job_member_pids instead"
     )
 
 
