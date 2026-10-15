@@ -37,7 +37,7 @@ def refuse_gpu_owned(
     from .._gpu_owner import (
         gpu_owned_message,
         gpu_owned_remediation,
-        gpu_owner_wire,
+        observation_wire,
     )
 
     message = gpu_owned_message(ownership)
@@ -48,7 +48,7 @@ def refuse_gpu_owned(
             "gpu_owned",
             message,
             1,
-            gpu_owner=gpu_owner_wire(ownership),
+            gpu_owner=observation_wire(ownership),
             remediation=remediation,
         )
     steps = "\n".join(
@@ -146,9 +146,14 @@ def warn_if_active_torch_not_accelerator(
     install resolves torch from PyPI (CPU), since the cu130 source pin is
     project-scoped and is not part of the published wheel metadata. This probes
     the actual wheel in a child interpreter, so the CLI never imports torch,
-    and when it is CPU-only, absent, or GPU-less, prints a prominent
-    topology-aware warning so a configured-but-CPU install never passes
-    silently. A client installation never asked for torch and is not warned.
+    and when it is CPU-only, absent, or GPU-less, says so once. A client
+    installation never asked for torch and is not warned.
+
+    One cause and at most one command. An environment the operator owns and
+    the product repairs - a ``uv tool`` installation - keeps its repair, which
+    is two commands in one order for reasons of its own. Everywhere else the
+    one thing to say is that the service no longer needs this environment's
+    torch at all, because a start runs it from its own GPU runtime.
 
     ``capability`` is a verdict about this same interpreter that the caller
     already obtained. The probe starts a child interpreter and imports torch
@@ -181,38 +186,18 @@ def warn_if_active_torch_not_accelerator(
 
     lines = [
         "",
-        "WARNING: the active interpreter's torch has no supported accelerator.",
+        f"WARNING: this environment's torch cannot use a GPU: {capability.label}.",
     ]
-    if capability is ComputeCapability.CPU_ONLY_BUILD:
-        lines.append(
-            "  The installed torch is a CPU-only wheel - vaultspec-rag is "
-            "GPU-only and the service will not start."
-        )
-    elif capability.fixed_by_torch_reinstall:
-        lines.append(f"  In the active interpreter, {capability.label}.")
-    else:
-        lines.append(f"  In the active interpreter, {capability.label}.")
-        lines.append(
-            "  Confirm the accelerator is visible: python -c "
-            '"import torch; print(torch.backends.mps.is_available())"'
-            if sys.platform == "darwin"
-            else "  Confirm the driver sees the GPU: nvidia-smi"
-        )
-        _plain("\n".join(lines))
-        return
-
     kind = classify_environment(environment_root(sys.executable))
-    if kind is RuntimeEnvKind.UVX_EPHEMERAL:
-        lines.append(
-            f"  This interpreter is a uvx EPHEMERAL cache environment "
-            f"({sys.prefix}) - not the installed tool. uvx silently falls "
-            "back to it when the installed tool environment is broken or the "
-            "request does not match it."
+    if kind is RuntimeEnvKind.UV_TOOL:
+        lines.extend(
+            f"  {step}"
+            for step in cuda_remediation(sys.executable, env_kind=kind).steps
         )
-    lines.append("")
-    lines.extend(
-        f"  {step}" for step in cuda_remediation(sys.executable, env_kind=kind).steps
-    )
+    else:
+        remediation = capability.remediation
+        if remediation:
+            lines.append(f"  {remediation}")
     _plain("\n".join(lines))
 
 

@@ -303,18 +303,28 @@ def _signalable_live_service(
     qdrant_source: tuple[Path, Path],
     *,
     storage_witness: tuple[Path, Path] | None = None,
+    qdrant_port: int | None = None,
 ) -> Generator[tuple[int, int]]:
-    """Run the real daemon in a Windows-signalable process group."""
+    """Run the real daemon in a Windows-signalable process group.
+
+    Each life draws a fresh ephemeral Qdrant port unless *qdrant_port* pins it.
+    The port is part of the backend identity every publication proof is bound
+    to, so a second life that must continue the first one's publication pins
+    the port the first life used, as a restarted production daemon keeps its
+    configured one.
+    """
     from ...cli._process import _build_service_child_env, _ServiceChildEnvRequest
     from .conftest import _cleanup_service_process
 
-    offline_env = {
+    env_overrides: dict[str, str | None] = {
         EnvVar.HF_HUB_OFFLINE.value: "1",
         EnvVar.TRANSFORMERS_OFFLINE.value: "1",
     }
+    if qdrant_port is not None:
+        env_overrides[EnvVar.QDRANT_PORT.value] = str(qdrant_port)
     with _service_env(
         tmp_path,
-        env_overrides=offline_env,
+        env_overrides=env_overrides,
         qdrant_source=qdrant_source,
     ):
         port = free_loopback_port()
@@ -428,7 +438,14 @@ def _job_owns_full_pipeline(job: JobSnapshot) -> bool:
 
 
 def _assert_interrupted_after_release(job: JobSnapshot) -> None:
-    """Require interruption to carry complete worker-release evidence."""
+    """Require interruption to carry complete worker-release evidence.
+
+    The exact ``service_shutdown`` kind is what lets the next daemon life
+    resume the job, so a plain ``interrupted`` kind must not satisfy it.
+    Mutation caught: classifying a shutdown-signalled attempt as
+    ``interrupted`` in the job manager's terminal-exit commit fails the final
+    assertion here; restoring it passes.
+    """
     assert job.runtime.task_active is False
     assert job.runtime.worker_active is False
     assert job.resources.started is not None
@@ -438,7 +455,7 @@ def _assert_interrupted_after_release(job: JobSnapshot) -> None:
     assert job.resources.writer_lock_held is False
     assert job.resources.pipeline_active is False
     assert job.timestamps.finished_at is not None
-    assert job.error_kind == "interrupted"
+    assert job.error_kind == "service_shutdown"
 
 
 def _assert_shutdown_log_order(

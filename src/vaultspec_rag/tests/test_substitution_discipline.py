@@ -291,18 +291,6 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "fetch the server runs the real provisioner against a stand-in "
         "release served from a loopback source",
     ),
-    # Reducing this bound to zero failed count growth; raising it to two failed
-    # the declared-sites check; exact restoration passed.
-    "test_program_lookup_sites.py": (
-        1,
-        "points the running program's recorded location at a temporary "
-        "directory, because the lookup finds what ships beside this "
-        "installation's own programs by asking where the running program is, "
-        "and that cannot be anywhere but the real environment without building "
-        "a second installation; planting a monitor in the real one would "
-        "change the machine the tests run on. The lookup, the planted file, "
-        "the search path and the resolution under test are all real",
-    ),
     "test_publication_scaling.py": (
         1,
         "observation, not substitution: the replacement opens the real ledger "
@@ -500,11 +488,12 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "content, from finding no holder",
     ),
     "test_doctor_repair_and_holders.py": (
-        16,
+        14,
         "substitutes the interpreter probe, the daemon interpreter and the "
         "holder scan across three cases. The probe starts a child "
-        "interpreter and imports torch in it, so a CPU-only build cannot be "
-        "provoked on a GPU host and the defect branch would never run. The "
+        "interpreter and imports torch in it, so an environment that can "
+        "serve cannot be provoked on a runner without a GPU and the rows "
+        "under test would describe the wrong plan. The "
         "daemon interpreter is redirected at a purpose-built environment "
         "because the point of the assertion is that the verb asks about that "
         "environment rather than its own, which is untestable while the two "
@@ -594,7 +583,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "be",
     ),
     "conftest.py": (
-        4,
+        2,
         "install's torch and provisioning steps and the release-mismatch advice "
         "all branch on whether this is a host or a client installation, and the "
         "role is read from the distributions the running interpreter holds. The "
@@ -608,12 +597,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "accelerator-free runner answers otherwise, and the model and Qdrant "
         "steps are gated on the answer, so a test of either side pins the "
         "child's answer alone while the judgement made of it and every "
-        "command that acts on it run unchanged. Separately, both machine "
-        "hardware anchors are pointed at private files for every test, "
-        "because the machine's own anchors may be held by a live service, a "
-        "test must never contend for them, and an ownership claim outlives "
-        "the test that took it; only their location is substituted, and "
-        "claiming, lending and refusing run unchanged",
+        "command that acts on it run unchanged",
     ),
     "test_server.py": (
         5,

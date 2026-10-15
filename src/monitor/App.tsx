@@ -5,6 +5,7 @@ import {
   Content,
   Grid,
   Header,
+  InlineLoading,
   HeaderMenuButton,
   HeaderName,
   HeaderGlobalBar,
@@ -126,6 +127,7 @@ export function App() {
     }
   }, [themeSetting]);
   const [paused, setPaused] = useState(false);
+  const [restarting, setRestarting] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [indexOptions, setIndexOptions] = useState(defaultListOptions);
   const [queryOptions, setQueryOptions] = useState(defaultListOptions);
@@ -162,13 +164,16 @@ export function App() {
   const lifecycleState = lifecycle.error
     ? "unavailable"
     : text(lifecycle.data?.state, "connecting");
-  const serviceStatus = service.error
-    ? lifecycleState
-    : service.data
-      ? text(object(service.data.quiesce).state) === "running"
-        ? text(service.data.status, "unknown")
-        : text(object(service.data.quiesce).state, text(service.data.status))
-      : "connecting";
+  const unreachable = Boolean(service.unreachable);
+  const serviceStatus = unreachable
+    ? "reconnecting"
+    : service.error
+      ? lifecycleState
+      : service.data
+        ? text(object(service.data.quiesce).state) === "running"
+          ? text(service.data.status, "unknown")
+          : text(object(service.data.quiesce).state, text(service.data.status))
+        : "connecting";
   const offline = Boolean(service.error);
   const serviceLabel =
     (
@@ -182,10 +187,14 @@ export function App() {
         crashed: "Service stopped unexpectedly",
         warming: "Service starting",
         connecting: "Checking service",
+        reconnecting: "Reconnecting",
         unavailable: "Cannot connect to service",
         divergent: "Service needs attention",
       } as Record<string, string>
-    )[serviceStatus] ?? serviceStatus.replaceAll("_", " ");
+    )[
+      // Every crashed_* outcome the lifecycle owner reports is one crash.
+      serviceStatus.startsWith("crashed") ? "crashed" : serviceStatus
+    ] ?? serviceStatus.replaceAll("_", " ");
   const runtime = usePolling(
     "/runtime-observations",
     object,
@@ -344,12 +353,35 @@ export function App() {
                       state={offline ? undefined : state.data}
                       lifecycle={lifecycle.data}
                       stale={Boolean(service.error || state.error)}
+                      unreachable={unreachable}
                       onRefresh={refreshNow}
+                      onRestartingChange={setRestarting}
                     />
                   </div>
                   {["repositories", "storage"].includes(
                     page,
-                  ) ? null : offline &&
+                  ) ? null : restarting ? (
+                    <Tile id="service-state-notice">
+                      <Stack gap={3}>
+                        <InlineLoading description="Restarting the service…" />
+                        <p>
+                          This page stays open and reconnects on its own when
+                          the service is ready.
+                        </p>
+                      </Stack>
+                    </Tile>
+                  ) : unreachable ? (
+                    <Tile id="service-state-notice">
+                      <Stack gap={3}>
+                        <InlineLoading description="Waiting for the service…" />
+                        <p>
+                          This page cannot reach its monitor, which happens
+                          while the service stops or restarts. It reconnects on
+                          its own as soon as the service is back.
+                        </p>
+                      </Stack>
+                    </Tile>
+                  ) : offline &&
                     ["stopped", "warming"].includes(serviceStatus) ? (
                     <Tile id="service-state-notice">
                       <p>

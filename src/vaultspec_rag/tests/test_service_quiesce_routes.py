@@ -147,9 +147,12 @@ def _assert_unpublished_resume_failure(payload: dict[str, object]) -> None:
 
 def _assert_achieved_resume(payload: dict[str, object]) -> None:
     """Assert that a service-owned success carries no failure fields."""
-    assert set(payload) == {"ok", "status", "quiesce"}
+    assert set(payload) == {"ok", "status", "quiesce", "message"}
     assert payload["ok"] is True
     assert payload["status"] == "running"
+    assert payload["message"] == (
+        "The service is running. Searches and index updates are accepted."
+    )
     raw_quiesce = payload["quiesce"]
     assert isinstance(raw_quiesce, dict)
     quiesce = cast("dict[str, object]", raw_quiesce)
@@ -203,8 +206,10 @@ def _assert_lifecycle_envelope(
     assert quiesce["safe_to_borrow_gpu"] is safe_to_borrow_gpu
     assert quiesce["failure_reason"] is None
     assert "error" not in payload
-    assert "message" not in payload
     assert "retryable" not in payload
+    message = payload["message"]
+    assert isinstance(message, str)
+    assert message.startswith("The service ")
 
 
 def test_pause_resume_routes_return_the_complete_controller_envelope(
@@ -468,6 +473,42 @@ class TestAnUnachievedTransitionNamesItsConsequence:
 
         assert "left the service in 'quiesced'" in message
         assert "the service is '" not in message
+
+
+class TestAnAchievedTransitionSaysWhatTheServiceIsDoing:
+    """A success is shown to an operator, so it carries a sentence, not a code."""
+
+    def test_a_pause_reports_that_the_service_is_paused(
+        self, quiesce_routes: QuiesceRoutes
+    ) -> None:
+        client, _registry = quiesce_routes
+
+        payload = client.post("/pause", headers=_HEADERS).json()
+
+        assert payload["ok"] is True
+        assert payload["message"] == (
+            "The service is paused. Searches and index updates wait until it is "
+            "resumed."
+        )
+
+    def test_a_borrower_held_pause_says_who_holds_it_and_when_it_clears(
+        self,
+    ) -> None:
+        """Mutation it catches: dropping the borrower note from a held pause.
+
+        The operator cannot release that pause, so without the note the monitor
+        shows a paused service and a Resume that is refused for no stated reason.
+        """
+        from ..server._routes_quiesce import _achieved_message
+
+        held = _achieved_message(
+            "already_quiesced", held_quiesce_snapshot(borrower_bound=True)
+        )
+        unheld = _achieved_message("already_quiesced", held_quiesce_snapshot())
+
+        assert held.startswith("The service was already paused.")
+        assert "GPU borrower holds this pause" in held
+        assert "borrower" not in unheld
 
 
 class TestThePauseDrainBudgetFitsItsCaller:

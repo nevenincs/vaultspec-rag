@@ -1,11 +1,17 @@
-"""Explicit executable grants for installation tests in an isolated user home."""
+"""Explicit executable grants for installation tests in an isolated user home.
+
+Also reads back what core then did with them: the sync it plans and the
+ownership it recorded.
+"""
 
 from __future__ import annotations
 
 from contextvars import Context
+from pathlib import Path
 from typing import TYPE_CHECKING, Unpack
 
-from vaultspec_core.core.enums import Tool
+from vaultspec_core.core.enums import InstallMode, McpScope, Tool
+from vaultspec_core.core.mcps import mcp_sync, ownership_path, read_ownership
 from vaultspec_core.core.mcps_definitions import collect_mcp_servers
 from vaultspec_core.core.mcps_mode import (
     render_definition_for_sync,
@@ -23,19 +29,42 @@ from vaultspec_core.core.workspace_mode import (
 from ..builtins import seed_builtins
 from ..commands._install import (
     _InstallRunOptions,
-    _mcp_preview_projection,
-    _requested_fresh_mcp_providers,
-    _resolve_install_mode,
+    _InstallRunRequest,
+    _planned_launches,
 )
 from ..commands._mcp_host_state import launches_to_enroll
 from ..commands._mcp_topology import inspect_required_mcp_topology
+from ..commands._mcp_trust import approvals_for
 from ..commands._mode import resolve_rag_mode
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
-    from pathlib import Path
 
-    from vaultspec_core.core.enums import InstallMode
+    from ..commands._mcp_host_state import LaunchToEnroll
+
+
+def dry_sync(root: Path, *, enrolled: Iterable[Tool] | None = None) -> SyncResult:
+    """Run core's own sync of *root* as a later invocation would, writing nothing."""
+    return Context().run(
+        mcp_sync,
+        dry_run=True,
+        mode=InstallMode.TOOL,
+        provider="all",
+        scope="project",
+        target_dir=root,
+        enrolled=enrolled,
+    )
+
+
+def rag_tags(result: SyncResult) -> list[str]:
+    """What a sync did with rag's entry on each host, in the order it reached them."""
+    return [tag for name, tag in result.items if name == "vaultspec-rag"]
+
+
+def owned_config_paths(root: Path) -> set[Path]:
+    """Return the native config paths core records *root*'s ownership at."""
+    targets = read_ownership(ownership_path(root, McpScope.PROJECT))["targets"]
+    return {Path(path) for record in targets.values() if (path := record.get("path"))}
 
 
 def approve_workspace_launches(root: Path, mode: InstallMode | None = None) -> None:
@@ -74,6 +103,11 @@ def approve_workspace_launches(root: Path, mode: InstallMode | None = None) -> N
     grant(approvals)
 
 
+def grant_planned(authority: Path, launches: Iterable[LaunchToEnroll]) -> None:
+    """Grant *launches* at *authority*'s own paths, as an operator reviewing them."""
+    grant(approvals_for(authority, launches))
+
+
 def grant_launches(
     authority: Path,
     work: Path,
@@ -82,21 +116,11 @@ def grant_launches(
     enrolled: Iterable[Tool] | None,
 ) -> None:
     """Grant, for *authority*'s paths, every launch a sync of *work* would enroll."""
-    launches = Context().run(
-        launches_to_enroll, authority, work, mode=mode, enrolled=enrolled
-    )
-    grant(
-        [
-            McpApproval.capture(
-                authority,
-                launch.authority_target,
-                launch.name,
-                launch.authority_path,
-                launch.config,
-                launch.digest,
-            )
-            for launch in launches
-        ]
+    grant_planned(
+        authority,
+        Context().run(
+            launches_to_enroll, authority, work, mode=mode, enrolled=enrolled
+        ),
     )
 
 
@@ -116,11 +140,11 @@ def approve_install_launches(root: Path, **options: Unpack[_InstallRunOptions]) 
 
     Takes the options the install itself is about to run with. An operator
     reviews the launches an install leaves behind and approves them before the
-    sync that enrolls them. The launches an install will leave are whatever its
-    own projection holds after seeding, so they are read from that projection
-    rather than guessed, and nothing is written into *root*. Approval is a real
-    grant in the user's home; production sync still enforces it, so a launch
-    not approved here is skipped exactly as it would be.
+    sync that enrolls them, with core's own trust command. The launches an
+    install will leave are whatever its own plan holds after seeding, so they
+    are read from that plan rather than guessed, and nothing is written into
+    *root*. Approval is a real grant in the user's home; production sync still
+    enforces it, so a launch not approved here is skipped exactly as it would be.
     """
     skipped = options.get("skip") or set()
     if {"core", "mcp"} & skipped:
@@ -131,20 +155,6 @@ def approve_install_launches(root: Path, **options: Unpack[_InstallRunOptions]) 
         # The install runs this same preflight first and refuses an unsafe
         # topology before any launch is enrolled, so there is nothing to approve.
         return
-    upgrade = options.get("upgrade", False)
-    resolved = _resolve_install_mode(
-        root, options.get("mode"), upgrade=upgrade, skip=skipped
-    ).mode
-    with _mcp_preview_projection(
-        root,
-        install_mcp=options.get("install_mcp", False),
-        force=options.get("force", False),
-        upgrade=upgrade,
-        mode=resolved,
-    ) as projection:
-        grant_launches(
-            root,
-            projection,
-            mode=resolved,
-            enrolled=_requested_fresh_mcp_providers(root, skipped),
-        )
+    grant_planned(
+        root, _planned_launches(_InstallRunRequest(path=root, **options), root)
+    )

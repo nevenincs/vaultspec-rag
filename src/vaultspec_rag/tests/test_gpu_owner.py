@@ -2,9 +2,9 @@
 
 Every question here is asked of real processes contending for a real anchor:
 a child claims the GPU, lends it or does not, and this process - or a process
-this one starts - asks whether it may load models. Each anchor is private to
-its test, because the machine's own anchor may be held by a live service, and
-a test must never contend for it.
+this one starts - asks whether it may load models. Each anchor is a file of its
+own, named to the function being asked, because the machine's own anchor
+belongs to the resident service and a unit test must never contend for it.
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import socket
 import subprocess
 import sys
 import time
@@ -259,96 +258,6 @@ def test_an_anchor_that_cannot_be_opened_is_unverifiable_not_free(
 def test_observing_a_free_gpu_does_not_take_it(anchor: Path) -> None:
     assert observe_gpu_owner(anchor=anchor).state is GpuOwnerState.FREE
     assert _asked_by_a_child(anchor) == GpuOwnerState.OWNED_HERE
-
-
-def test_load_accelerator_asks_for_ownership_before_anything_else(
-    gpu_owner_anchor: Path, tmp_path: Path
-) -> None:
-    from .._gpu import load_accelerator
-
-    with _owner(tmp_path, gpu_owner_anchor), pytest.raises(GpuOwnedError):
-        # Catches load_accelerator losing its ownership check: it would then
-        # import torch and reach admission, returning an accelerator or a
-        # contention refusal instead of this one.
-        load_accelerator()
-
-
-# A start judges the installation before it looks at who owns the GPU, so the
-# ownership refusal is only reached as a host that can serve.
-@pytest.mark.usefixtures("isolated_singleton_dirs", "inference_host")
-def test_server_start_refuses_in_seconds_when_another_process_owns_the_gpu(
-    gpu_owner_anchor: Path, tmp_path: Path
-) -> None:
-    from typer.testing import CliRunner
-
-    from ..cli import app
-
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.bind(("127.0.0.1", 0))
-        free_port = probe.getsockname()[1]
-    with _owner(tmp_path, gpu_owner_anchor) as owner_pid:
-        # Catches the start pre-flight losing its ownership check: the start
-        # would then go on to bring Qdrant up and fail only at model load.
-        result = CliRunner().invoke(
-            app, ["server", "start", "--json", "--port", str(free_port)]
-        )
-        human = CliRunner().invoke(app, ["server", "start", "--port", str(free_port)])
-
-    assert result.exit_code == 1, result.output
-    envelope = json.loads(result.stdout)
-    assert envelope["ok"] is False
-    assert envelope["error"] == "gpu_owned"
-    assert envelope["data"]["gpu_owner"] == {
-        "state": GpuOwnerState.OWNED_ELSEWHERE,
-        "holder_pid": owner_pid,
-        "detail": "",
-    }
-    # A start is resolved by the owner going away, never by search flags.
-    # Catches the start path reusing the local-compute remediation.
-    assert human.exit_code == 1
-    assert "Then start this one" in human.output
-    assert "--allow-fallback" not in human.output
-
-
-def test_a_mandated_local_search_is_refused_while_another_process_owns_the_gpu(
-    gpu_owner_anchor: Path, tmp_path: Path
-) -> None:
-    from typer.testing import CliRunner
-
-    from ..cli import app
-
-    workspace = tmp_path / "workspace"
-    (workspace / ".vaultspec").mkdir(parents=True)
-    with _owner(tmp_path, gpu_owner_anchor) as owner_pid:
-        # Catches the search router running in-process on a local mandate
-        # beside a live owner: it would open the store and load models
-        # instead of refusing.
-        result = CliRunner().invoke(
-            app,
-            [
-                "--target",
-                str(workspace),
-                "search",
-                "anything",
-                "--port",
-                "1",
-                "--allow-fallback",
-                "--json",
-            ],
-        )
-
-    assert result.exit_code == 1, result.output
-    envelope = json.loads(result.stdout)
-    assert envelope["ok"] is False
-    assert envelope["command"] == "search"
-    assert envelope["error"] == "gpu_owned"
-    # The same object a refused start carries, so one condition has one shape.
-    assert envelope["gpu_owner"] == {
-        "state": GpuOwnerState.OWNED_ELSEWHERE,
-        "holder_pid": owner_pid,
-        "detail": "",
-    }
-    assert any("--allow-fallback" in step for step in envelope["remediation"])
 
 
 def test_a_load_refused_inside_a_command_renders_the_ownership_refusal(

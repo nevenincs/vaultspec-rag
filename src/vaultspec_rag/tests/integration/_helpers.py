@@ -32,7 +32,7 @@ from .._ports import free_loopback_port
 
 if TYPE_CHECKING:
     import subprocess
-    from collections.abc import Generator, Mapping
+    from collections.abc import Callable, Generator, Mapping
     from pathlib import Path
 
     from ...embeddings import EmbeddingModel
@@ -491,21 +491,21 @@ def _service_env(
     storage_key = "VAULTSPEC_RAG_QDRANT_STORAGE_DIR"
     qdrant_port_key = "VAULTSPEC_RAG_QDRANT_PORT"
     cuda_ceiling_key = "VAULTSPEC_RAG_INDEX_CUDA_CEILING_MIB"
-    updates: dict[str, str | None] = {
-        env_key: str(tmp_path),
+    # Production nests the managed storage one level below the machine dir
+    # (``<managed>/qdrant-server/storage``), which is what keeps the machine
+    # discovery pointer (``<storage>/../service.json``) a distinct file from
+    # the status view (``<status dir>/service.json``). A single-level isolated
+    # storage dir collapses both views onto one path and silently hides every
+    # independent-repair and independent-cleanup contract.
+    defaults: dict[str, Callable[[], str | None]] = {
+        storage_key: lambda: str(tmp_path / "qdrant-server" / "storage"),
+        qdrant_port_key: lambda: str(_get_ephemeral_qdrant_port()),
+        cuda_ceiling_key: lambda: str(INTEGRATION_CUDA_CEILING_MIB),
     }
-    if storage_key not in overrides:
-        # Production nests the managed storage one level below the machine dir
-        # (``<managed>/qdrant-server/storage``), which is what keeps the machine
-        # discovery pointer (``<storage>/../service.json``) a distinct file from
-        # the status view (``<status dir>/service.json``). A single-level
-        # isolated storage dir collapses both views onto one path and silently
-        # hides every independent-repair and independent-cleanup contract.
-        updates[storage_key] = str(tmp_path / "qdrant-server" / "storage")
-    if qdrant_port_key not in overrides:
-        updates[qdrant_port_key] = str(_get_ephemeral_qdrant_port())
-    if cuda_ceiling_key not in overrides:
-        updates[cuda_ceiling_key] = str(INTEGRATION_CUDA_CEILING_MIB)
+    updates: dict[str, str | None] = {env_key: str(tmp_path)}
+    updates.update(
+        {key: value() for key, value in defaults.items() if key not in overrides}
+    )
     updates.update(overrides)
 
     # Snapshot every distinct key exactly once before the first mutation.

@@ -92,6 +92,11 @@ _SITES: dict[str, _Site] = {
         {"subprocess.Popen": 2},
         "the resident service on Windows; the command is its caller's",
     ),
+    "cli/_service_restart.py::_run_verb": _Site(
+        _Starts.PYTHON,
+        {"subprocess.run": 1},
+        "the canonical stop and start verbs, from module_command",
+    ),
     "commands/_mcp_topology.py::_restore_junction": _Site(
         _Starts.NATIVE,
         {"subprocess.run": 1},
@@ -116,6 +121,12 @@ _SITES: dict[str, _Site] = {
         _Starts.NATIVE,
         {"subprocess.run": 1},
         "uv sync in the target project, on the operator's request",
+    ),
+    "service_runtime.py::_run_uv": _Site(
+        _Starts.NATIVE,
+        {"subprocess.run": 1},
+        "uv, creating the service's own GPU environment; uv chooses how it "
+        "runs its own interpreter",
     ),
     "indexer/_chunk_producer.py::CodeChunkProducer.produce_singles": _Site(
         _Starts.POOL,
@@ -183,6 +194,10 @@ _BUILT_BY: dict[str, tuple[str, str]] = {
         "cli/_process.py::_service_launch_command",
         "module_command",
     ),
+    "cli/_service_restart.py::_run_verb": (
+        "cli/_service_restart.py::_run_verb",
+        "module_command",
+    ),
     "commands/_model_download.py::_run": (
         "commands/_model_download.py::_run",
         "module_command",
@@ -221,9 +236,9 @@ _FOUND_BY: dict[str, tuple[str, str]] = {
         "commands/_uv_sync.py::_run_uv_sync_torch",
         "uv",
     ),
-    "monitor_process.py::MonitorProcess.start": (
-        "monitor_process.py::_resolve_monitor_executable",
-        "vaultspec-rag-monitor",
+    "service_runtime.py::_run_uv": (
+        "service_runtime.py::uv_executable",
+        "uv",
     ),
     "operator_state/_hardware.py::query_hardware": (
         "operator_state/_hardware.py::read_hardware",
@@ -237,6 +252,11 @@ _FOUND_BY: dict[str, tuple[str, str]] = {
 
 #: Native sites whose program is never looked up by name.
 _NOT_LOOKED_UP: dict[str, str] = {
+    "monitor_process.py::MonitorProcess.start": (
+        "an absolute path the resolver admits only when its content is the "
+        "executable this release pins, checked again while the file is held "
+        "as the process is created"
+    ),
     "qdrant_runtime/_spawn_trust.py::spawn_verified": (
         "an absolute path the resolver refuses unless it is one, checked "
         "against its pinned digest before and as the process is created"

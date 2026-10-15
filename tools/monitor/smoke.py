@@ -20,9 +20,9 @@ from urllib.parse import urlsplit
 from urllib.request import Request
 
 from tools.binaries.build_pyapp import glibc_version, required_symbol_versions
-from tools.binaries.native import host_target_triple
 from vaultspec_rag._loopback_http import LOOPBACK_OPENER
-from vaultspec_rag.qdrant_runtime._provision import verify_native_binary
+from vaultspec_rag.native_binary._install import verify_native_binary
+from vaultspec_rag.native_binary._targets import host_target
 
 
 def isolated_environment(directory: Path) -> dict[str, str]:
@@ -344,7 +344,7 @@ def probe(
     launch_prefix: tuple[str, ...] = (),
 ) -> dict[str, object]:
     binary = binary.absolute()
-    target = host_target_triple()
+    target = host_target()
     platform = platform_evidence(binary, target)
     with tempfile.TemporaryDirectory(prefix="monitor-delivered-") as scratch:
         directory = Path(scratch)

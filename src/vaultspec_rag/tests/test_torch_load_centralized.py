@@ -351,7 +351,7 @@ def test_half_accumulation_leaves_other_backends_alone() -> None:
     assert ran
 
 
-@pytest.mark.unit
+@pytest.mark.integration
 def test_load_accelerator_contract_holds_for_the_real_interpreter() -> None:
     """The gate returns a supported accelerator or fails hard, without mocks.
 
@@ -366,9 +366,9 @@ def test_load_accelerator_contract_holds_for_the_real_interpreter() -> None:
     card in the interval, and refusing then is the gate working - so both are
     accepted here while everything else stays a failure: another exception type,
     a refusal that is not the contention one, or anything returned that is not
-    the torch module. GPU ownership is asked of a private anchor, so a live
-    service on the host running this suite neither refuses this call nor has
-    its own anchor taken by it.
+    the torch module. GPU ownership is asked of the machine's own anchor, which
+    inside the loan this tier runs in admits the process, so the resident
+    service neither refuses this call nor has its anchor taken by it.
     """
     from .._gpu import detect_accelerator_backend, load_accelerator
 

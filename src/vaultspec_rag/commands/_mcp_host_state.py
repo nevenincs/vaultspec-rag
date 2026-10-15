@@ -9,8 +9,15 @@ real root does.
 
 ``projected_core_home`` gives such a run a throwaway home, carries the
 authority root's ownership into it re-keyed to the projection, and
-``carry_consent`` carries over exactly the launches the operator already
-approved for the authority root. The operator's own home is only ever read.
+``carry_host_state`` carries over exactly the launches the operator already
+approved for the authority root, with the ownership of any native config the
+projection holds under another name than the authority's. The operator's own
+home is only ever read by a projection.
+
+An install also holds a linked native config as a regular copy while it
+syncs, and core keys both records by the resolved path of that config, so
+``OwnershipCarry`` moves the ownership to the copy for the run and back to
+where the config really lives once it is over.
 """
 
 from __future__ import annotations
@@ -19,22 +26,22 @@ import json
 import os
 import tempfile
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from vaultspec_core.core.enums import McpScope, McpTargetFormat, Tool
+from vaultspec_core.core.enums import McpScope
+from vaultspec_core.core.helpers import atomic_write_bytes
 from vaultspec_core.core.home import core_home_layout
 from vaultspec_core.core.mcps import (
     collect_mcp_servers,
     ownership_path,
-    ownership_target_key,
     resolve_mcp_targets,
     write_ownership,
 )
 from vaultspec_core.core.mcps_native import normalized_sources
 from vaultspec_core.core.mcps_trust import McpApproval, approved_sources, grant
-from vaultspec_core.core.types import McpTarget, SyncResult
+from vaultspec_core.core.types import SyncResult
 
 from ._mcp_topology import (
     NodeSnapshot,
@@ -44,10 +51,11 @@ from ._mcp_topology import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterable
+    from collections.abc import Callable, Generator, Iterable, Mapping
 
-    from vaultspec_core.core.enums import InstallMode
+    from vaultspec_core.core.enums import InstallMode, Tool
     from vaultspec_core.core.mcps_ownership import OwnershipState
+    from vaultspec_core.core.types import McpTarget
 
 #: The variables the platform consults for the user's home directory: the first
 #: on Windows, the second everywhere else.
@@ -108,12 +116,15 @@ def _serialized(state: dict[str, object]) -> bytes:
         return path.read_bytes()
 
 
-def _rebased_record(
-    record: dict[str, object], source: Path, destination: Path
-) -> tuple[str, dict[str, object]] | None:
-    """Return one ownership record moved from *source* to *destination*."""
+def _destination(
+    record: object, relocate: Callable[[Path], Path | None]
+) -> tuple[str, Path] | None:
+    """Return the key and path one ownership record moves to, if it moves."""
+    if not isinstance(record, dict):
+        return None
     provider, scope, raw_path = (
-        record.get(field) for field in ("provider", "scope", "path")
+        cast("dict[str, object]", record).get(name)
+        for name in ("provider", "scope", "path")
     )
     if not (
         isinstance(provider, str)
@@ -121,24 +132,20 @@ def _rebased_record(
         and isinstance(raw_path, str)
     ):
         return None
-    try:
-        relative = Path(raw_path).relative_to(source)
-        moved = McpTarget(
-            Tool(provider),
-            McpScope(scope),
-            destination / relative,
-            McpTargetFormat.JSON,
-        )
-    except ValueError:
+    destination = relocate(Path(raw_path))
+    if destination is None or destination == Path(raw_path):
         return None
-    return ownership_target_key(moved), {**record, "path": str(moved.path.resolve())}
+    return f"{provider}:{scope}:{destination}", destination
 
 
-def rebase_ownership(payload: bytes, source: Path, destination: Path) -> bytes:
-    """Return the ownership sidecar *payload* with *source* records at *destination*.
+def _moved(payload: bytes, relocate: Callable[[Path], Path | None]) -> bytes:
+    """Return the ownership sidecar *payload* with records moved to new paths.
 
-    Bytes core would refuse to read pass through untouched, so a projection
-    fails on them exactly the way the real root does.
+    *relocate* names where the record at a path goes, or ``None`` to leave it.
+    A record keeps its provider, scope and fingerprints, its key follows its
+    path, and one moved onto another record's path replaces it. Bytes core would
+    refuse to read pass through untouched, so a projection fails on them
+    exactly the way the real root does.
     """
     try:
         parsed = cast("object", json.loads(payload.decode("utf-8")))
@@ -150,26 +157,50 @@ def rebase_ownership(payload: bytes, source: Path, destination: Path) -> bytes:
     targets = state.get("targets")
     if not isinstance(targets, dict):
         return payload
-    moved_targets: dict[str, object] = {}
-    changed = False
-    for key, raw_record in cast("dict[str, object]", targets).items():
-        rebased = (
-            _rebased_record(
-                cast("dict[str, object]", raw_record),
-                source.resolve(),
-                destination.resolve(),
-            )
-            if isinstance(raw_record, dict)
-            else None
-        )
-        if rebased is None:
-            moved_targets[key] = raw_record
+    kept: dict[str, object] = {}
+    moved: dict[str, object] = {}
+    for key, record in cast("dict[str, object]", targets).items():
+        destination = _destination(record, relocate)
+        if destination is None:
+            kept[key] = record
             continue
-        moved_targets[rebased[0]] = rebased[1]
-        changed = True
-    if not changed:
+        new_key, path = destination
+        moved[new_key] = {**cast("dict[str, object]", record), "path": str(path)}
+    if not moved:
         return payload
-    return _serialized({**state, "targets": moved_targets})
+    return _serialized({**state, "targets": {**kept, **moved}})
+
+
+def _rebased(path: Path, source: Path, destination: Path) -> Path | None:
+    """Return where *path*, which lies under *source*, lies under *destination*.
+
+    The result is resolved, as core keys it: a config that is a link under
+    *destination* is keyed by the file it really is.
+    """
+    try:
+        return (destination / path.relative_to(source)).resolve()
+    except ValueError:
+        return None
+
+
+def rebase_ownership(payload: bytes, source: Path, destination: Path) -> bytes:
+    """Return the ownership sidecar *payload* with *source* records at *destination*."""
+    root, moved_root = source.resolve(), destination.resolve()
+    return _moved(payload, lambda path: _rebased(path, root, moved_root))
+
+
+def _move_in(sidecar: Path, moves: Mapping[Path, Path]) -> None:
+    """Move the ownership records at the *moves* keys to their values in *sidecar*.
+
+    The file is replaced in one atomic step, as core replaces it, so a failure
+    leaves the bytes that were there: this file is the operator's own record.
+    """
+    current = file_snapshot(sidecar)
+    if current.kind is not SnapshotKind.FILE or not isinstance(current.payload, bytes):
+        return
+    moved = _moved(current.payload, moves.get)
+    if moved != current.payload:
+        atomic_write_bytes(sidecar, moved)
 
 
 @contextmanager
@@ -210,7 +241,9 @@ def expected_authority_ownership(host: HostProjection) -> NodeSnapshot:
     """Return the ownership sidecar a real run would leave, as the projection did.
 
     Core's writes into the projection's home, translated back to the authority
-    root, are the exact bytes the real root is expected to hold afterwards.
+    root, are the exact bytes the real root is expected to hold afterwards. A
+    config that is a link in the authority is keyed by its real location, which
+    is where an install leaves its ownership once its links are back.
     """
     written = file_snapshot(host.work_ownership)
     if written.kind is SnapshotKind.FILE and isinstance(written.payload, bytes):
@@ -261,43 +294,143 @@ def launches_to_enroll(
     return launches
 
 
-def carry_consent(
+def approved_launches(
+    launches: Iterable[LaunchToEnroll],
+    authority: Path,
+    *,
+    home: Path | None = None,
+) -> list[LaunchToEnroll]:
+    """Return the *launches* the operator already approved for *authority*.
+
+    Consent is asked of core itself, at the authority's own paths and in the
+    operator's home (or *home*), so a launch whose definition or rendered
+    command changed since it was approved is not among them.
+    """
+    launches = list(launches)
+    approved: list[LaunchToEnroll] = []
+    for target in {launch.target for launch in launches}:
+        group = [launch for launch in launches if launch.target == target]
+        names = approved_sources(
+            {launch.name: (launch.authority_path, launch.config) for launch in group},
+            {launch.authority_path: launch.digest for launch in group},
+            authority,
+            group[0].authority_target,
+            SyncResult(),
+            home=home,
+        )
+        approved.extend(launch for launch in group if launch.name in names)
+    return approved
+
+
+def carry_host_state(
     host: HostProjection,
     *,
     mode: InstallMode,
     enrolled: Iterable[Tool] | None,
 ) -> None:
-    """Approve in the projection exactly the launches approved for the authority.
+    """Make the projection see what the operator already decided for the authority.
 
-    Consent is asked of core against the authority root, in the operator's own
-    home, so a launch the operator never approved stays unapproved in the
-    projection and is skipped there as it will be for real.
+    Approvals are asked of core against the authority root, in the operator's
+    own home, so a launch the operator never approved stays unapproved in the
+    projection and is skipped there as it will be for real. Ownership is
+    already there under the authority's paths; where a config is a link in the
+    authority and a regular file in the projection, it is moved to the
+    projection's file, the one place core will look.
     """
     launches = launches_to_enroll(
         host.authority, host.work, mode=mode, enrolled=enrolled
     )
-    approvals: list[McpApproval] = []
-    for target in {launch.target for launch in launches}:
-        group = [launch for launch in launches if launch.target == target]
-        approved = approved_sources(
-            {launch.name: (launch.authority_path, launch.config) for launch in group},
-            {launch.authority_path: launch.digest for launch in group},
-            host.authority,
-            group[0].authority_target,
-            SyncResult(),
-            home=host.authority_home,
+    approvals = [
+        McpApproval.capture(
+            host.work,
+            launch.target,
+            launch.name,
+            launch.path,
+            launch.config,
+            launch.digest,
         )
-        approvals.extend(
-            McpApproval.capture(
-                host.work,
-                target,
-                launch.name,
-                launch.path,
-                launch.config,
-                launch.digest,
-            )
-            for launch in group
-            if launch.name in approved
+        for launch in approved_launches(
+            launches, host.authority, home=host.authority_home
         )
+    ]
     if approvals:
         grant(approvals, home=host.home)
+    authority, work = host.authority.resolve(), host.work.resolve()
+    moves: dict[Path, Path] = {}
+    for launch in launches:
+        real = _rebased(launch.authority_target.path.resolve(), authority, work)
+        if real is not None:
+            moves[real] = launch.target.path.resolve()
+    _move_in(host.work_ownership, moves)
+
+
+@dataclass(frozen=True, slots=True)
+class _HeldOwnership:
+    """The sidecar around the move to the copies, and the way back."""
+
+    sidecar: Path
+    before: NodeSnapshot
+    after: NodeSnapshot
+    back: dict[Path, Path]
+
+
+@dataclass(slots=True)
+class OwnershipCarry:
+    """Where core keeps the ownership of native configs an install swaps for copies.
+
+    Core keys ownership by the resolved path of the native config. While an
+    install holds a linked config as a regular copy, core syncs, and records
+    what it owns, at the copy's path, and no later sync looks there: it asks
+    about the link's target. ``hold`` moves the ownership found at each real
+    location to its copy for the run, so the install does not meet its own
+    entry as somebody else's, and ``release`` moves what the run left at the
+    copy back to the real location, so a later sync finds it owned.
+    """
+
+    root: Path
+    #: Each native config the run syncs, as the workspace names it, and where it
+    #: really lives.
+    real: dict[Path, Path] = field(default_factory=dict)
+    held: _HeldOwnership | None = field(default=None, init=False)
+
+    def capture(self, launches: Iterable[LaunchToEnroll]) -> None:
+        """Note where each config of *launches* really lives, before any swap."""
+        self.real = {
+            launch.authority_target.path: launch.authority_target.path.resolve()
+            for launch in launches
+        }
+
+    def hold(self) -> None:
+        """Move the ownership at each real location to the copy that stands in for it.
+
+        Writes nothing when no config is a copy of a link.
+        """
+        copies = {
+            real: copy
+            for config, real in self.real.items()
+            if (copy := config.resolve()) != real
+        }
+        if not copies:
+            return
+        sidecar = ownership_path(self.root, McpScope.PROJECT)
+        before = file_snapshot(sidecar)
+        _move_in(sidecar, copies)
+        self.held = _HeldOwnership(
+            sidecar,
+            before,
+            file_snapshot(sidecar),
+            {copy: real for real, copy in copies.items()},
+        )
+
+    def release(self) -> None:
+        """Move the ownership at each copy back to the real location it stands for.
+
+        A sidecar the run never touched goes back exactly as it was found.
+        """
+        held, self.held = self.held, None
+        if held is None:
+            return
+        if file_snapshot(held.sidecar) != held.after:
+            _move_in(held.sidecar, held.back)
+        elif isinstance(held.before.payload, bytes) and held.before != held.after:
+            atomic_write_bytes(held.sidecar, held.before.payload)

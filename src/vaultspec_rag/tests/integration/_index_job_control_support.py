@@ -549,11 +549,28 @@ def managed_facade_registry(
 
 
 @pytest.fixture
+def managed_run_config(managed_facade_registry: ServiceRegistry) -> ServiceRegistry:
+    """Re-apply this module's run configuration for one test, and yield the registry.
+
+    The registry is module-scoped, so the model it loaded outlives any one
+    test, while the configuration is per-test state that another test can
+    move. A run driven under a configuration the loaded model does not match
+    asks for work the model cannot do - a sparse encode against a model
+    loaded without a sparse encoder - so every test that drives indexing
+    takes the configuration from here rather than inheriting whatever ran
+    last.
+    """
+    get_config(_managed_test_config())
+    return managed_facade_registry
+
+
+@pytest.fixture
 async def managed_job_manager(
     managed_facade_registry: ServiceRegistry,
+    managed_run_config: ServiceRegistry,
 ) -> AsyncGenerator[JobManager]:
     """Isolate manager state and boundedly drain production work on teardown."""
-    get_config(_managed_test_config())
+    del managed_run_config
     jobs.reset()
     reset_limiters()
     manager = jobs.get_job_manager()

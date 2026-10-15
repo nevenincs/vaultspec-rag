@@ -43,7 +43,6 @@ if TYPE_CHECKING:
 
     from ..embeddings import EmbeddingModel
 
-pytestmark = [pytest.mark.unit]
 
 _DENSE_DIM = 1024
 
@@ -194,6 +193,7 @@ def _context(store: VaultStore, *collections: str) -> DonorReuseContext:
 
 
 class TestAllHitsAdoptWithoutEncoding:
+    @pytest.mark.integration
     def test_verified_hits_produce_zero_forward_passes(self, store: VaultStore) -> None:
         donors = [
             _donor_chunk("a.py:1-3", 1, "def a():\n    return 1"),
@@ -236,6 +236,7 @@ class TestAllHitsAdoptWithoutEncoding:
 
 
 class TestContentVerification:
+    @pytest.mark.integration
     def test_content_mismatch_at_same_point_id_is_a_miss_and_encodes(
         self, store: VaultStore
     ) -> None:
@@ -265,6 +266,7 @@ class TestContentVerification:
         assert stored[donor.id].dense == _encoded_dense(code_embed_text(changed))
         assert stored[donor.id].dense != _donor_dense(7)
 
+    @pytest.mark.integration
     def test_identical_content_at_same_point_id_is_adopted(
         self, store: VaultStore
     ) -> None:
@@ -306,6 +308,7 @@ class _TripwireStore(VaultStore):
 
 
 class TestFlagOffBaseline:
+    @pytest.mark.unit
     def test_flag_off_resolves_to_no_context(
         self,
         store: VaultStore,
@@ -323,6 +326,7 @@ class TestFlagOffBaseline:
         assert stats is None
         assert context is None
 
+    @pytest.mark.integration
     def test_reuse_none_never_consults_donors_and_encodes_everything(
         self, tmp_path: Path
     ) -> None:
@@ -353,6 +357,7 @@ class TestFlagOffBaseline:
 
 
 class TestMixedSliceAlignment:
+    @pytest.mark.integration
     def test_hit_and_miss_vectors_land_on_the_right_chunks(
         self, store: VaultStore
     ) -> None:
@@ -427,6 +432,7 @@ class _FailingDonorStore(VaultStore):
 
 
 class TestDonorFailureDegradesToEncode:
+    @pytest.mark.integration
     def test_donor_read_exception_encodes_all_and_never_fails_the_job(
         self, tmp_path: Path
     ) -> None:
@@ -457,6 +463,7 @@ class TestDonorFailureDegradesToEncode:
 
 
 class TestVaultChunkIdentity:
+    @pytest.mark.unit
     def test_vault_chunk_adopts_by_point_key_and_text(self, store: VaultStore) -> None:
         # Binds the vault identity mapping (point_key -> stored ``content``
         # payload field carrying ``text``) against the real writer, so an id
@@ -500,6 +507,7 @@ class TestVaultChunkIdentity:
         assert fresh.sparse_indices == [21]
         assert context.stats.reuse_hits == 1
 
+    @pytest.mark.unit
     def test_vault_chunk_text_mismatch_is_a_miss(self, store: VaultStore) -> None:
         donor = VaultChunk(
             doc_id="adr/2026-01-01-x-adr",
@@ -539,6 +547,7 @@ class TestVaultChunkIdentity:
         assert fresh.vector == []
         assert context.stats.reuse_misses == 1
 
+    @pytest.mark.unit
     def test_identical_text_under_another_title_is_a_miss(
         self, store: VaultStore
     ) -> None:
@@ -584,6 +593,7 @@ class TestVaultChunkIdentity:
 
 
 class TestResolveTelemetry:
+    @pytest.mark.unit
     def test_knob_on_with_no_donors_records_donor_absent(
         self, store: VaultStore, tmp_path: Path
     ) -> None:
@@ -606,6 +616,7 @@ class TestResolveTelemetry:
             "donor_collections": [],
         }
 
+    @pytest.mark.unit
     def test_sparse_required_rejects_dense_only_donor_points(
         self, store: VaultStore
     ) -> None:

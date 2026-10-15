@@ -1,11 +1,15 @@
 """``server doctor`` answers about the environment that would run the service.
 
-Two defects this covers. The compute capability's own remediation tells an
-operator that this command prints the exact repair, and ``status`` renders
-that sentence, while the command printed only the capability label. And the
-holder scan ran over the CLI's own environment while the compute verdict
-beside it described the daemon interpreter's, so the two halves of one block
-could be about two different environments - and neither reached the output.
+The defect this covers: the holder scan ran over the CLI's own environment
+while the compute verdict beside it described the daemon interpreter's, so
+the two halves of one block could be about two different environments - and
+neither reached the output. The receipt rows beside them are here for the
+same reason: they are about the installation in front of the operator, and
+only when the daemon runs from it.
+
+Every environment here can serve, so the daemon runs from it and the rows are
+about it. What the verb says from a launcher that cannot serve - which is a
+runtime's story rather than a repair's - is covered where the plan is.
 
 The interpreter probe is doubled: it starts a child interpreter and imports
 torch in it, which cannot be made to report a CPU-only build on a GPU host.
@@ -33,7 +37,6 @@ from ..operator_state._provisioning import (
     CU130_INDEX_STRATEGY,
     ToolReceiptVerdict,
     classify_tool_receipt,
-    cuda_remediation,
 )
 from ..operator_state._topology import TOOL_RECEIPT_NAME
 from ..torch_config._index import CU130_INDEX_URL
@@ -110,44 +113,6 @@ def _recording_scan(seen: list[str], holders: tuple[EnvironmentHolder, ...] = ()
     return scan
 
 
-def test_a_device_problem_has_no_provisioning_repair_to_print() -> None:
-    """Only a defect a new wheel fixes gets a provisioning command.
-
-    Guard assertion: printing the tool repair for a missing device tells an
-    operator to reinstall torch over a driver fault it cannot touch.
-    """
-    assert doctor._compute_repair_steps("python", ComputeCapability.NO_DEVICE) == []
-    assert doctor._compute_repair_steps(
-        "python", ComputeCapability.CPU_ONLY_BUILD
-    ) == list(cuda_remediation("python").steps)
-
-
-def test_doctor_prints_the_exact_repair_for_a_cpu_only_daemon(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The command the capability's remediation promises is actually printed.
-
-    Guard assertion: `ComputeCapability.CPU_ONLY_BUILD.remediation` sends the
-    operator here for the exact command, and status renders that sentence, so
-    a doctor that prints only the label is a dead end.
-    """
-    root = _daemon_environment(tmp_path, monkeypatch)
-    monkeypatch.setattr(
-        _environment_probe,
-        "probe_interpreter",
-        _probe_reporting(ComputeCapability.CPU_ONLY_BUILD),
-    )
-    monkeypatch.setattr(
-        "vaultspec_rag._process_probe.environment_holders", _recording_scan([])
-    )
-    expected = cuda_remediation(str(root / "Scripts" / "python.exe"))
-
-    result = runner.invoke(app, ["server", "doctor"])
-
-    for command in expected.repair_commands:
-        assert command in result.stdout
-
-
 def test_doctor_scans_the_daemon_environment_not_its_own(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -205,7 +170,10 @@ def test_doctor_reports_the_holders_in_both_output_modes(
 
     assert "pid 4321" in human.stdout
     assert "vaultspec-rag service on port 8776" in human.stdout
-    assert "vaultspec-rag server stop --port 8776" in human.stdout
+    # Doctor runs with no repair pending, so the restart that moves a holder
+    # onto a repaired build is advice for a state that is not present.
+    # Passing the remedy through to the holder line fails here.
+    assert "vaultspec-rag server stop --port 8776" not in human.stdout
     assert "with its launcher, pid 4320" in human.stdout
     reported = envelope["data"]["environment_holders"]
     assert reported["holders"][0]["pid"] == 4321

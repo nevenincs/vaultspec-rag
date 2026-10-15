@@ -2,10 +2,10 @@
 
 Index your project, search its source code, and narrow the results to a file.
 
-## Step 1: Prepare a host installation
+## Step 1: Install vaultspec-rag
 
-This tutorial starts the service from a host installation. Install it once per machine
-as a standalone tool, as the [installation guide](installation.md) recommends:
+This tutorial starts the service from a standalone tool installation. Install it once
+per machine, as the [installation guide](installation.md) recommends:
 
 1. Follow [Install as a standalone tool](installation.md#install-as-a-standalone-tool).
 1. Complete the
@@ -13,13 +13,13 @@ as a standalone tool, as the [installation guide](installation.md) recommends:
 1. Run the [repository setup](installation.md#set-up-each-repository) from your project root.
 1. Follow [Start and verify](installation.md#start-and-verify).
 
-A project dependency or a prebuilt binary works too; see
+A project client or a prebuilt binary works too; see
 [how to choose an installation](installation.md#choose-what-this-environment-runs).
 
-A client installation carries no GPU packages and cannot start the service. If a host
-installation on this machine already runs the service at the client's release, a client
-can follow Steps 2 to 4 with the `uv run` prefix: its `server start` reports the running
-service instead of starting one.
+A client installation carries no GPU packages. It can still start the service itself -
+the first `server start` builds it a private GPU environment - or, if a host
+installation on this machine already runs the service at the client's release, attach to
+that one instead. Either way, a client follows Steps 2 to 4 with the `uv run` prefix.
 
 Examples call `vaultspec-rag` directly, as a standalone tool does. Once verification
 succeeds, return here for Step 2.

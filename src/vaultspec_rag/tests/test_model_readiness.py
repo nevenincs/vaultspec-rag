@@ -144,7 +144,8 @@ def test_a_pinned_model_with_other_bytes_is_present_but_fails_the_deep_check(
     assert repos == {DENSE_MODEL_ID: False, STAND_IN_RERANKER: True}
     assert DENSE_MODEL_ID in deep.detail
     assert "does not match the SHA256 committed for the pinned release" in deep.detail
-    assert "vaultspec-rag server warmup" in deep.detail
+    # The start fetches a mismatched file again, so it is the one remedy.
+    assert "`vaultspec-rag server start` downloads it" in deep.detail
 
 
 @pytest.mark.usefixtures("clean_models")

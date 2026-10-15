@@ -65,8 +65,6 @@ if TYPE_CHECKING:
 
 __all__ = ["resume_run"]
 
-pytestmark = [pytest.mark.unit]
-
 
 @pytest.fixture(autouse=True)
 def own_status_dir(
@@ -244,6 +242,7 @@ def _pipeline(
 class TestConsumerAdvancesProgress:
     """The consumer advances the file counter and publishes forwards."""
 
+    @pytest.mark.unit
     def test_a_confirmed_slice_advances_completed_files(
         self,
         tmp_path: Path,
@@ -320,6 +319,7 @@ class TestConsumerAdvancesProgress:
             "chunk work preceded store acknowledgement"
         )
 
+    @pytest.mark.unit
     def test_the_code_slice_publishes_forward_boundaries(
         self,
         tmp_path: Path,
@@ -456,6 +456,7 @@ class TestConsumerAdvancesProgress:
                 probe=probe,
             )
 
+    @pytest.mark.unit
     def test_encode_buckets_publish_sub_slice_progress_and_retries(
         self,
         tmp_path: Path,
@@ -496,6 +497,7 @@ class TestConsumerAdvancesProgress:
             "oom_count": 1,
         }
 
+    @pytest.mark.unit
     def test_bucket_boundaries_keep_the_forward_count_slice_scoped(
         self,
         tmp_path: Path,
@@ -542,6 +544,7 @@ class TestConsumerAdvancesProgress:
         assert forward["items"] == len(chunks)
         assert forward["slice_ordinal"] == 2
 
+    @pytest.mark.unit
     def test_sparse_retries_drain_beside_a_larger_dense_count(self) -> None:
         """One slice's sparse retries reach the job record beside dense ones.
 
@@ -610,6 +613,7 @@ def _chunk_work_run(
     )
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize("reused", [False, True], ids=["encoded", "donor-hits"])
 def test_acknowledged_chunk_operations_include_reuse_and_repeated_point_ids(
     tmp_path: Path, reused: bool
@@ -656,6 +660,7 @@ def test_acknowledged_chunk_operations_include_reuse_and_repeated_point_ids(
         assert reuse.stats.reuse_hits == 6
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize("prior_ack", [False, True], ids=["no-ack", "partial-ack"])
 def test_failed_slice_counts_only_prior_successful_acknowledgements(
     tmp_path: Path, prior_ack: bool
@@ -690,6 +695,7 @@ def test_failed_slice_counts_only_prior_successful_acknowledgements(
     assert (work["last_updated"] is None) is (not prior_ack)
 
 
+@pytest.mark.unit
 def test_acknowledged_work_survives_control_unwind_after_store_return(
     tmp_path: Path,
 ) -> None:
@@ -811,6 +817,7 @@ def _consume_replay_progress(
     return consumer_run, job_id, completed_at_advancement
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize(
     "committed",
     [(), (0,), (0, 1), (0, 1, 2, 3, 4, 5), (1, 3, 5, 7), (3, 7), tuple(range(8))],
@@ -850,6 +857,7 @@ def test_replayed_complete_files_count_once_after_confirmation(
     assert not resume_run.checkpoint.ingestion_complete
 
 
+@pytest.mark.integration
 def test_replayed_final_marker_counts_each_path_only_once(
     resume_run: _ResumeRun,
 ) -> None:
@@ -866,6 +874,7 @@ def test_replayed_final_marker_counts_each_path_only_once(
     assert consumer.total == [0] and not resume_run.encoder.texts
 
 
+@pytest.mark.integration
 def test_changed_digest_is_counted_after_new_confirmation(
     resume_run: _ResumeRun,
 ) -> None:
@@ -893,6 +902,7 @@ def test_changed_digest_is_counted_after_new_confirmation(
     )
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize(
     ("indices", "message"),
     [
@@ -919,6 +929,7 @@ def test_invalid_replay_stream_cannot_seed_file_progress(
     assert not confirmations and not consumer.completed_file_paths
 
 
+@pytest.mark.integration
 def test_oversized_committed_final_cannot_advance_progress(
     resume_run: _ResumeRun,
 ) -> None:
@@ -946,6 +957,7 @@ def test_oversized_committed_final_cannot_advance_progress(
     assert not confirmations and not consumer.completed_file_paths
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("outcome", ["empty", "blank", "skipped", "vanished"])
 @pytest.mark.parametrize("retained", [False, True], ids=["fresh", "resumed"])
 def test_resolved_zero_chunk_files_count_after_durable_outcome(
@@ -1012,6 +1024,7 @@ def test_resolved_zero_chunk_files_count_after_durable_outcome(
     assert consumer.total == [4] and len(resume_run.encoder.texts) == 4
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("failure", ["extraction", "ledger"])
 def test_failed_zero_chunk_outcomes_do_not_advance_progress(
     resume_run: _ResumeRun, monkeypatch: pytest.MonkeyPatch, failure: str
@@ -1041,6 +1054,7 @@ def test_failed_zero_chunk_outcomes_do_not_advance_progress(
     assert not resume_run.encoder.texts
 
 
+@pytest.mark.integration
 def test_producer_and_consumer_publish_file_progress_in_order(
     resume_run: _ResumeRun, monkeypatch: pytest.MonkeyPatch
 ) -> None:

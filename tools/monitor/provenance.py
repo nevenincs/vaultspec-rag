@@ -12,7 +12,7 @@ from typing import cast
 from tools.monitor.release import verify_release_set
 from tools.packaging.bundles import BundleError, BundleSpec, verify_bundle
 from tools.packaging.products import MONITOR_EXECUTABLE, VAULTSPEC_RAG
-from vaultspec_rag.qdrant_runtime._provision import file_sha256
+from vaultspec_rag.native_binary._install import file_sha256
 
 REPOSITORY = "nevenincs/vaultspec-rag"
 SIGNER_WORKFLOW = f"{REPOSITORY}/.github/workflows/binaries.yml"

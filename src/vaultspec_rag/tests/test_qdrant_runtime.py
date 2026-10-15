@@ -24,6 +24,11 @@ import pytest
 
 from .._sync_vocabulary import ProvisionAction
 from ..config._types import EnvVar
+from ..native_binary._install import (
+    ChecksumMismatchError,
+    extract_verified_archive,
+    file_sha256,
+)
 from ..qdrant_runtime._constants import (
     QDRANT_ASSET_SHA256,
     QDRANT_EXECUTABLE_SHA256,
@@ -37,9 +42,6 @@ from ..qdrant_runtime._managed_install import (
     classify_managed_binary,
 )
 from ..qdrant_runtime._provision import (
-    ChecksumMismatchError,
-    extract_verified_archive,
-    file_sha256,
     provision,
     provisioned_versions,
 )
@@ -277,7 +279,9 @@ class TestVerifiedExtraction:
 
         out_dir = tmp_path / "out"
         out_dir.mkdir()
-        binary, binary_sha = extract_verified_archive(archive, expected, out_dir)
+        binary, binary_sha = extract_verified_archive(
+            archive, expected, out_dir, binary_name=binary_filename()
+        )
 
         assert binary == out_dir / binary_filename()
         assert binary.read_bytes() == payload
@@ -288,7 +292,9 @@ class TestVerifiedExtraction:
         wrong = "0" * 64
 
         with pytest.raises(ChecksumMismatchError):
-            extract_verified_archive(archive, wrong, tmp_path)
+            extract_verified_archive(
+                archive, wrong, tmp_path, binary_name=binary_filename()
+            )
 
         assert not archive.exists(), "partial download must be deleted"
         assert not (tmp_path / binary_filename()).exists(), (
@@ -415,7 +421,9 @@ class TestArchiveTraversal:
 
         out_dir = tmp_path / "out"
         out_dir.mkdir()
-        binary, _ = extract_verified_archive(archive, expected, out_dir)
+        binary, _ = extract_verified_archive(
+            archive, expected, out_dir, binary_name=binary_filename()
+        )
 
         assert binary == out_dir / binary_filename()
         assert binary.read_bytes() == b"payload-x"

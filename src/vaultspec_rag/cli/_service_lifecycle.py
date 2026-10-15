@@ -166,11 +166,10 @@ def service_warmup(json_mode: JsonMode = False) -> None:
 
     Fetches files and nothing else: no model is constructed and this process
     never imports torch. The files are fetched only for an environment that
-    can run the service, judged the way ``server start`` judges it, in a
-    child of the interpreter that would run the daemon. One that cannot is
-    told so, with the reason, before the cache is probed: a client needs no
-    model files, and a host whose accelerator stack is not usable yet gets
-    them from ``server start`` once it is.
+    can run the service, judged the way ``server start`` judges it: of the
+    interpreter a start would run the daemon from, in a child of it, which is
+    the managed runtime's whenever this environment cannot serve. One that
+    cannot is told so, with the reason, before the cache is probed.
 
     Every way the verb ends is one outcome: with ``--json`` one envelope on
     stdout, and exit 1 whenever the models are not all in place afterwards,
@@ -179,6 +178,7 @@ def service_warmup(json_mode: JsonMode = False) -> None:
     from .._sync_vocabulary import ProvisionAction
     from ..commands._provision import provision_models
     from ..operator_state._service_environment import judge_service_environment
+    from ..service_runtime import planned_service_environment
     from ._process import _resolve_daemon_interpreter
     from ._provision_progress import ReporterProvisionProgress
 
@@ -197,9 +197,14 @@ def service_warmup(json_mode: JsonMode = False) -> None:
             # The judgement starts an interpreter and imports torch in it,
             # which takes seconds; saying so keeps the wait from reading as a
             # hang.
-            reporter.stage("Checking that this environment can run the service...")
-            environment = judge_service_environment(_resolve_daemon_interpreter())
-            result = provision_models(progress=progress, environment=environment)
+            reporter.stage("Checking the environment that runs the service...")
+            interpreter = _resolve_daemon_interpreter()
+            planned = planned_service_environment(
+                judge_service_environment(interpreter)
+            )
+            result = provision_models(
+                progress=progress, environment=planned.environment
+            )
     except KeyboardInterrupt:
         raise _fail_lifecycle(
             json_mode,

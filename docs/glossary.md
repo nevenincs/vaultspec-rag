@@ -22,7 +22,7 @@ A slice of a vault document or source file that the indexer stores as one search
 
 ## Client installation
 
-An installation without the `gpu` extra: the plain `vaultspec-rag` package, or `vaultspec-rag[mcp]` to serve an AI assistant. It loads no models and needs no GPU. It sends every search and indexing request to the service a [host installation](#host-installation) has already started on the same machine, cannot start that service itself, and must be the same release as the service. See [the installation guide](installation.md).
+An installation without the `gpu` extra: the plain `vaultspec-rag` package, or `vaultspec-rag[mcp]` to serve an AI assistant. It loads no models and needs no GPU itself. It sends every search and indexing request to the service, and must be the same release as that service. It can start the service too: the first `server start` it runs builds a separate GPU environment under the service's own managed directory and runs the service from there, or attaches to one a [host installation](#host-installation) already started on the same machine. See [the installation guide](installation.md).
 
 ## Codebase index
 
@@ -66,7 +66,7 @@ One published version of an index. Indexing builds new content and publishes it 
 
 ## Host installation
 
-An installation with the `gpu` extra, `vaultspec-rag[gpu]` or `vaultspec-rag[gpu,mcp]`, that runs the search models on this machine's accelerator. It is the only kind of installation that can start the [service](#service), which then serves every repository on the machine and any [client installation](#client-installation). See [the installation guide](installation.md).
+An installation with the `gpu` extra, `vaultspec-rag[gpu]` or `vaultspec-rag[gpu,mcp]`, that runs the search models on this machine's accelerator directly when it starts the [service](#service). A [client installation](#client-installation) can also start the service: `server start` then builds it a separate GPU environment to run from instead. Either way, one running service serves every repository on the machine and every client. See [the installation guide](installation.md).
 
 ## HTTP service daemon
 
@@ -126,7 +126,7 @@ The directory vaultspec-rag treats as the project boundary, the folder holding `
 
 ## Provisioning
 
-The one-time setup, run during `install` and completed by a host `server start` for any model file or Qdrant binary still missing, that obtains the external dependencies vaultspec-rag needs: search models cached from Hugging Face, the managed Qdrant server binary, and, when the [host installation](#host-installation) is a project dependency, the CUDA PyTorch source in that project's `pyproject.toml`. CUDA uses the configured cu130 source; macOS uses the standard MPS-capable wheel. A [client installation](#client-installation) needs none of these, and `install` skips them for it automatically. See [the installation guide](installation.md).
+The one-time setup, run during `install` and completed by `server start` for any model file or Qdrant binary still missing, that obtains the external dependencies vaultspec-rag needs: search models cached from Hugging Face, the managed Qdrant server binary, and, when the [host installation](#host-installation) is a project dependency, the CUDA PyTorch source in that project's `pyproject.toml`. CUDA uses the configured cu130 source; macOS uses the standard MPS-capable wheel. A [client installation](#client-installation) needs none of these, and `install` skips them for it automatically. See [the installation guide](installation.md).
 
 ## Readiness
 

@@ -160,7 +160,7 @@ def test_macos_full_suite_and_its_preparation_are_gating() -> None:
     required = (
         ("uses", "actions/setup-node@"),
         ("run", "npm ci"),
-        ("run", "just build-monitor-test"),
+        ("run", "just build-monitor"),
         ("run", "just test-python"),
     )
     indices: list[int] = []
@@ -280,7 +280,7 @@ def test_the_resident_service_starts_after_its_monitor_is_compiled() -> None:
     A service start launches the compiled monitor and stops when it finds
     none, so a job that never builds one ends before a single test runs.
 
-    Mutation proof: deleting the ``just build-monitor-test`` step made this
+    Mutation proof: deleting the ``just build-monitor`` step made this
     fail on the compile assertion, deleting the ``npm ci`` step made it fail
     on the restore assertion, and moving the compile step below the resident
     start made it fail on the compile assertion; restoring each passed.
@@ -293,10 +293,10 @@ def test_the_resident_service_starts_after_its_monitor_is_compiled() -> None:
     )
     earlier = [_run(step) for step in job.steps[:start]]
     assert "npm ci" in earlier, "the monitor build has no restored dependencies"
-    assert "just build-monitor-test" in earlier, (
+    assert "just build-monitor" in earlier, (
         "the resident service starts before any monitor is compiled"
     )
-    assert earlier.index("npm ci") < earlier.index("just build-monitor-test")
+    assert earlier.index("npm ci") < earlier.index("just build-monitor")
 
 
 @pytest.mark.parametrize("token", ["VAULTSPEC_RAG_TYPESAFE_API_KEY"])

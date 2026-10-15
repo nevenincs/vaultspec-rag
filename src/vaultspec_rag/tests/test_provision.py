@@ -31,11 +31,11 @@ from ..commands._provision import (
     provision_models,
 )
 from ..config._types import EnvVar
+from ..native_binary._install import file_sha256
 from ..qdrant_runtime._constants import (
     MANIFEST_SOURCE_DOWNLOAD,
     QDRANT_SERVER_VERSION,
 )
-from ..qdrant_runtime._provision import file_sha256
 from ..qdrant_runtime._resolve import (
     asset_for_platform,
     binary_filename,
@@ -419,6 +419,7 @@ class TestFrontDoorComposition:
             ProvisionStep.TORCH,
             ProvisionStep.MODELS,
             ProvisionStep.QDRANT,
+            ProvisionStep.MONITOR,
         }
         # The skipped model step is still represented, so the report is
         # complete rather than silently dropping opted-out dependencies.

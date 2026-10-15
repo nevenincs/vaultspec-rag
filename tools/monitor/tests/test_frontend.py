@@ -77,7 +77,7 @@ def test_rehashed_frontend_must_match_common_producer_digest(tmp_path: Path) -> 
     import json
 
     from tools.monitor.frontend import MANIFEST
-    from vaultspec_rag.qdrant_runtime._provision import file_sha256
+    from vaultspec_rag.native_binary._install import file_sha256
 
     directory, identity = handoff(tmp_path)
     manifest = directory / MANIFEST

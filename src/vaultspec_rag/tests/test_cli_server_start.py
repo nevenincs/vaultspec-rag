@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import sys
 from typing import TYPE_CHECKING
 
 import pytest
@@ -67,6 +68,67 @@ def test_default_start_does_not_force_a_backend() -> None:
     env = _build_service_child_env(_ServiceChildEnvRequest())
     assert EnvVar.LOCAL_ONLY.value not in env
     assert EnvVar.QDRANT_SERVER.value not in env
+
+
+class TestWhatADaemonInAnotherInterpreterInherits:
+    """Variables that aim an interpreter are this process's, not the daemon's.
+
+    A daemon that runs from the managed runtime is a different installation,
+    judged able to serve on its own contents. Handing it this process's module
+    search path, prefix or startup file lets it import out of this environment
+    - a checkout, or a release nobody judged - while reporting the one it was
+    started from.
+    """
+
+    @staticmethod
+    def _with_interpreter_variables() -> dict[str, str | None]:
+        previous: dict[str, str | None] = {}
+        for name, value in (
+            ("PYTHONPATH", os.pathsep.join(("/somewhere", "/else"))),
+            ("PYTHONHOME", "/a/prefix"),
+            ("PYTHONSTARTUP", "/a/startup.py"),
+        ):
+            previous[name] = os.environ.get(name)
+            os.environ[name] = value
+        return previous
+
+    @staticmethod
+    def _restore(previous: dict[str, str | None]) -> None:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+    def test_another_interpreter_inherits_none_of_them(self) -> None:
+        """Guard assertion: the daemon imported out of the launcher's tree.
+
+        Mutation check: passing the three through for a foreign interpreter,
+        as the spawn did, leaves each name in the environment and fails the
+        first three assertions; the last three hold the other half, so a
+        builder that dropped them unconditionally would fail too.
+        """
+        from ..cli._process import _build_service_child_env
+
+        previous = self._with_interpreter_variables()
+        try:
+            foreign = _build_service_child_env(
+                _ServiceChildEnvRequest(), interpreter="/a/runtime/bin/python"
+            )
+            own = _build_service_child_env(
+                _ServiceChildEnvRequest(), interpreter=sys.executable
+            )
+        finally:
+            self._restore(previous)
+
+        assert "PYTHONPATH" not in foreign
+        assert "PYTHONHOME" not in foreign
+        assert "PYTHONSTARTUP" not in foreign
+        # This process's own interpreter is this process's environment, which
+        # the daemon has always inherited whole.
+        assert "PYTHONPATH" in own
+        assert "PYTHONHOME" in own
+        assert "PYTHONSTARTUP" in own
 
 
 def test_server_start_help_renders_local_only_flag() -> None:

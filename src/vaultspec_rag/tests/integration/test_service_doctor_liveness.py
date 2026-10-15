@@ -11,8 +11,9 @@ Asserts the residual #204 doctor contract:
   ``ready: false`` with a ``needs_restart`` status on the live axis, while the
   installed-dependency axis stays present and labelled (the two are never
   conflated).
-- With no discovery file, ``doctor`` still reports installed-dependency
-  readiness so a pure pre-install check works.
+- With no discovery file, ``doctor`` reports no service running - the
+  installed-dependency axis stays present and labelled, but the top line
+  never reads ready while nothing is running to answer a request.
 """
 
 from __future__ import annotations
@@ -87,7 +88,7 @@ def test_doctor_reports_dead_daemon_not_ready(
     # The installed-dependency axis is still present, labelled, and separate.
     assert isinstance(data["dependencies"], list)
     names = [dep["name"] for dep in data["dependencies"]]
-    assert names == ["torch", "models", "qdrant"]
+    assert names == ["torch", "models", "qdrant", "monitor"]
     assert "dependencies_ready" in data
 
 
@@ -112,10 +113,16 @@ def test_doctor_dead_daemon_human_render_labels_both_axes(
     assert "Installed dependencies:" in result.output
 
 
-def test_doctor_no_discovery_file_reports_dependency_readiness(
+def test_doctor_no_discovery_file_reports_not_running(
     isolated_status_dir: Path,
 ) -> None:
-    """With no discovery file the top line reflects installed dependencies."""
+    """With no discovery file the top line says no service is running.
+
+    Mutation check: folding the top line back to the installed-dependency
+    verdict for an absent service - the pre-fix behaviour - reads a
+    fully-provisioned host as ready while nothing is running and fails the
+    ``ready``/``status`` assertions; requiring a live service first passes.
+    """
     sf = isolated_status_dir / "service.json"
     assert not sf.exists()
 
@@ -123,9 +130,13 @@ def test_doctor_no_discovery_file_reports_dependency_readiness(
 
     envelope = json.loads(result.stdout)
     data = envelope["data"]
-    # No daemon expected => the live axis does not constrain readiness; the
-    # top line equals the installed-dependency verdict.
     assert data["service"]["present"] is False
     assert data["service"]["state"] == "not_started"
-    assert data["ready"] == data["dependencies_ready"]
-    assert envelope["ok"] == data["ready"]
+    # No daemon running => never ready, whatever the dependency rows say.
+    assert data["ready"] is False
+    assert data["status"] == "not_running"
+    assert envelope["ok"] is False
+    assert data["next_action"] == "vaultspec-rag server start"
+    assert result.exit_code != 0
+    # The installed-dependency axis is still present and labelled.
+    assert "dependencies_ready" in data

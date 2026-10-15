@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#gpu-single-owner'
 date: '2026-09-26'
-modified: '2026-09-26'
+modified: '2026-10-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:d78e110594f768acf3824ffc6d30950355aa821d15470257cb0bc47ca3c8d55f'
+body_hash: 'sha256:6aa75dd2a47aeb4ae76fe54c864413e97f174b933ed54c91d9abfbbc5b33a5c3'
 related:
   - "[[2026-09-26-gpu-single-owner-audit]]"
   - "[[2026-07-24-service-quiesce-adr]]"
@@ -79,7 +79,10 @@ every path and every release.
   exemption.
 - The borrower's pid is written only into the local anchor record, which the
   borrower lease record already carries, and never into a snapshot, status,
-  discovery record, log line or error.
+  discovery record, log line or error. The one exception is the operator's own
+  `server start` and `server stop` envelopes, which read the lease record in
+  the operator's process and name the pid so the operator can act on it;
+  nothing the service serves carries it.
 - Guard tests prove they can fail, and code cites no vault document.
 
 ## Implementation
@@ -106,8 +109,9 @@ The service lends and reclaims at its borrower binding points: binding a verifie
 borrower rewrites the service's anchor record to name the borrower's pid, and the
 resume or lease loss that clears the binding rewrites it back. `server start`
 observes the anchor before spawning, as it already does for the identity lock, and
-the search router checks ownership before running a mandated local search, so
-both refuse in seconds with a structured error rather than at model load.
+observes the borrower lease as well, so a service is never started beside a live
+borrower. The search router checks ownership before running a mandated local
+search, so both refuse in seconds with a structured error rather than at model load.
 
 ## Rationale
 

@@ -6,7 +6,7 @@ import typing
 from contextlib import contextmanager
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, Final, TypedDict
 
 import pytest
 
@@ -29,7 +29,11 @@ from vaultspec_core.config import (
 from ..config._settings import VaultSpecConfigWrapper as VaultSpecConfig
 from ..config._settings import get_config
 from ..config._types import EnvVar
-from ..operator_state._installation import ComputeCapability, InstallRole
+from ..operator_state._installation import (
+    ComputeCapability,
+    HardwarePresence,
+    InstallRole,
+)
 from ..progress import NullProgressReporter
 from ._committed_pins import pin_table_drift
 from ._config_fixtures import reset_config as reset_rag_config
@@ -303,6 +307,15 @@ def pin_daemon_capability(
     monkeypatch.setattr(_environment_probe, "probe_interpreter", answer)
 
 
+#: The accelerators a service can run on, as the suite states them. Tests that
+#: take a different branch on a machine with one read the machine's own answer
+#: and compare it to this rather than to the product's judgement of it, so a
+#: change to what the product counts as capable fails them.
+SERVING_HARDWARE: Final = frozenset(
+    {HardwarePresence.NVIDIA_GPU, HardwarePresence.APPLE_SILICON}
+)
+
+
 @pytest.fixture
 def inference_host(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make this installation read as an inference host that can serve.
@@ -323,53 +336,21 @@ def client_installation(monkeypatch: pytest.MonkeyPatch) -> None:
     pin_install_role(monkeypatch, InstallRole.CLIENT)
 
 
-def pin_hardware_anchors(monkeypatch: pytest.MonkeyPatch, directory: Path) -> None:
-    """Resolve the machine's hardware anchors inside *directory*.
+@pytest.fixture
+def private_owner_anchor(tmp_path: Path) -> Generator[Path]:
+    """A GPU owner anchor of this test's own, for a registry that lends through it.
 
-    The anchors cannot be moved through the environment, by design: one
-    resolved through anything a process can change would exclude nothing. So
-    a fresh interpreter a test starts consults the machine's own, and where a
-    live service owns the GPU its start is refused before it does anything
-    the test set out to observe. Such a child calls this itself, as the suite
-    does for its own process.
-    """
-    from .. import _gpu_admission, _gpu_owner
-
-    monkeypatch.setattr(
-        _gpu_owner, "gpu_owner_anchor_path", lambda: directory / "gpu-owner.lock"
-    )
-    monkeypatch.setattr(
-        _gpu_admission,
-        "load_window_lock_path",
-        lambda: directory / "gpu-load-window.lock",
-    )
-
-
-@pytest.fixture(autouse=True)
-def gpu_owner_anchor(
-    request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> Generator[Path]:
-    """Point every machine-hardware anchor a test reaches at a private file.
-
-    The machine's own anchors may be held by a live service, and a test must
-    never contend for them: a test driving a start, a loan or a model load past
-    the ownership check would otherwise be refused by the real owner or, on a
-    free machine, take the real anchor itself - and an owner holds its anchor
-    until the process exits, so one such test silences every GPU test that runs
-    after it in that worker, and holds the anchor the developer's own service
-    needs. Which makes this unconditional rather than opt-in: a test cannot
-    declare in advance that nothing it drives will ask.
-
-    Only where the anchors live is replaced; claiming, lending and refusing run
-    unchanged, and there is no such redirection outside the suite. A test that
-    asserts where the real ones resolve opts out with ``real_hardware_anchor``.
+    A service registry lends the GPU through the owner anchor it is given, the
+    machine's own by default. A test that drives a borrower's pause hands the
+    registry this one instead, so the registry claims and lends for real, on a
+    file nothing else contends for, and the machine's own anchor - which the
+    resident service holds - is never asked. An ownership claim lasts until the
+    process exits, so the one this process took here is let go at teardown.
     """
     from .. import _gpu_owner
     from .._anchor_claim import release_anchor_claim
 
     anchor = tmp_path / "gpu-owner.lock"
-    if "real_hardware_anchor" not in request.keywords:
-        pin_hardware_anchors(monkeypatch, tmp_path)
     yield anchor
     with _gpu_owner._guard:
         descriptor = _gpu_owner._held.pop(str(anchor), None)
@@ -381,23 +362,21 @@ def gpu_owner_anchor(
 def no_claim_on_a_machine_anchor() -> Generator[None]:
     """Fail a test that left this process owning one of the machine's anchors.
 
-    An ownership claim outlives the test that took it, so the damage shows up
-    as an unrelated test being refused the GPU, in another worker, in a run
-    that may be on someone else's machine. This names the test that took it
-    instead, and lets the claim go so the rest of the worker still runs.
+    The machine's own anchors belong to the resident service. A test that has to
+    reach them is an integration test: its session runs inside the loan the
+    service makes to the borrowing lane, so the anchor answers with that loan
+    and nothing is claimed. A test in the accelerator-free lane that claims one
+    instead holds it until the process exits, and the damage shows up as an
+    unrelated test being refused the GPU, in another worker, in a run that may
+    be on someone else's machine. This names the test that took it, and lets
+    the claim go so the rest of the worker still runs.
 
-    Independent of the redirect above on purpose: a guard that shares its
-    mechanism with the thing it guards reports nothing when that mechanism is
-    removed. It runs before the redirect releases, so what it reads is what
-    the test left.
-
-    Mutation check: resolved the machine directory from whatever the test had
-    claimed rather than from the real anchor, which is how a claim landing
-    outside the test's own anchor looks. The borrow that a refused disk
-    preflight drives then failed this assertion by name, naming the anchor;
-    restoring the real resolution passed. The mutation is the way round it is
-    because claiming the real anchor to provoke the guard is the very thing
-    it exists to stop.
+    Mutation check: counted every anchor this process held as the machine's
+    own, which is how a claim on the real anchor looks. A test that held an
+    anchor of its own then failed this assertion by name, naming that anchor;
+    restoring the comparison against the machine's directory passed. The
+    mutation is the way round it is because claiming the real anchor to
+    provoke the guard is the very thing it exists to stop.
     """
     yield
     from .. import _gpu_owner
@@ -417,7 +396,8 @@ def no_claim_on_a_machine_anchor() -> Generator[None]:
             release_anchor_claim(_gpu_owner._held.pop(held), pid_record=True)
     assert not left, (
         f"this test claimed the machine's own hardware anchor: {left}. "
-        "Every anchor a test reaches must resolve inside its tmp_path."
+        "A test that has to reach one is an integration test, and runs inside "
+        "the loan the GPU lane borrows."
     )
 
 

@@ -49,6 +49,7 @@ class GPUResidencyMixin:
     """Drives the registry's pause, resume, and GPU residency lifecycle."""
 
     _gpu_lock: threading.Lock
+    _gpu_owner_anchor: Path | None
     _gpu_residency_recipe: GPUResidencyRecipe | None
     _model: EmbeddingModel | None
     _reranker: CrossEncoder | None
@@ -122,7 +123,7 @@ class GPUResidencyMixin:
         # borrower's process tree and the rebuilt stack never share the device.
         from ._gpu_owner import reclaim_gpu
 
-        reclaim_gpu()
+        reclaim_gpu(anchor=self._gpu_owner_anchor)
         try:
             self._rebuild_gpu_dependencies(
                 admission_epoch=warming.snapshot.admission_epoch,

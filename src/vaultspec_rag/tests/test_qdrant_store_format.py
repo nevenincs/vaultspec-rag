@@ -26,13 +26,13 @@ from ..cli._status_labels import (
     degradation_findings,
 )
 from ..config._types import EnvVar
+from ..native_binary._install import file_sha256
 from ..operator_state._service import DegradationReason
 from ..qdrant_runtime._constants import (
     QDRANT_EXECUTABLE_SHA256,
     QDRANT_SERVER_VERSION,
     QdrantRuntimeState,
 )
-from ..qdrant_runtime._provision import file_sha256
 from ..qdrant_runtime._resolve import (
     QdrantIdentity,
     asset_for_platform,

@@ -149,11 +149,14 @@ fi
 
 That gate is right for the commands that answer a question, such as `search`
 and `index`. It is not the whole verdict for the diagnostics. `server doctor`
-sets `ok` from whether the dependencies and the service are ready, and computes
-its exit code from a second axis - a dead daemon, a declared-versus-observed
-mode mismatch, a version floor - so a host whose dependencies are all ready and
-whose install mode has drifted reports `ok: true` and exits `1`. Gate a
-diagnostic on its exit code, and read `ok` for what it says.
+sets `ok` from whether the dependencies and the service are ready, and the exit
+code folds in every axis at the worse severity: not ready - no service running,
+a dead or stale daemon, or any blocking dependency - exits `1`, and so does a
+declared-versus-observed mode mismatch or a running daemon from another release;
+a version floor violation exits `2`; only every axis ready exits `0`. So a host
+whose dependencies are all ready and whose install mode has drifted reports
+`ok: true` and still exits `1`. Gate a diagnostic on its exit code, and read
+`ok` for what it says.
 
 For index migration, a failed collection makes the command fail. Inspect
 `data.results` to distinguish copied collections from skipped ones. See the
@@ -262,6 +265,12 @@ failure.
 skipped a step it required consent for, such as the PyTorch configuration
 patch nobody was there to approve. A failed install exits `1` like any other
 failure. See [installation](installation.md#machine-readable-output).
+
+An unattended install, or one run with `--yes`, never approves the MCP server's
+launch. It completes, leaves the server unenrolled, and says so. Run
+`vaultspec-rag install` once at a terminal to review and approve the launch;
+later unattended installs then enroll it. To approve ahead of a first unattended
+run, see [MCP](mcp.md#install-the-mcp-server).
 
 Code `5` is retryable; wait and re-run. The `error` field carries a code such
 as `port_unreachable`, `local_store_locked`, or `stopped`. The table above is

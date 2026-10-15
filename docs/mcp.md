@@ -27,6 +27,25 @@ the written configuration launches the server without syncing:
 vaultspec-rag install
 ```
 
+Core enrolls a server only after you have reviewed the exact command it will run.
+At a terminal, `install` shows the launch of the vaultspec-rag server - its
+definition file, command, arguments and environment - and asks you to approve it.
+The approval is stored outside the workspace, covers exactly that definition and
+launch, and is asked for again if either changes. It covers only the
+vaultspec-rag server; any other server in the workspace stays yours to approve
+with vaultspec-core.
+
+A run with nobody to ask, such as CI, a non-TTY session, or `--json`, never asks,
+and `--yes` never answers for you. The install completes without enrolling the
+server and says to run `vaultspec-rag install` at a terminal, which asks for the
+approval and enrolls the server.
+
+To approve before a first unattended install, review and grant the launch at a
+terminal in the workspace with the vaultspec-core that vaultspec-rag installed:
+run `uvx --from "vaultspec-rag[mcp]" vaultspec-core spec mcps trust claude --scope project`,
+then the same command with `codex` in place of `claude`. The next install then
+enrolls the server without asking.
+
 The server publishes six index-mutating tools. Four reindex, and two delete
 indexes: `clean_documents` deletes the extracted-document index, and `clean_all`
 deletes every index for the project. If you want the assistant to search and
@@ -119,7 +138,10 @@ A connected server publishes twelve tools. Six read:
 Six mutate:
 
 - `reindex_vault`, `reindex_codebase`, and `reindex_documents` re-index one
-  domain incrementally, and `reindex_all` does all three.
+  domain incrementally, and `reindex_all` does all three. A domain that was
+  never indexed has no publication to update, so its first request runs that
+  domain's first full build instead, which deletes nothing. `reindex_all`
+  decides this per domain.
 - `clean_documents` deletes the extracted-document index for a project, and
   `clean_all` deletes the vault, code, and document indexes.
 

@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Final, cast
 
 from . import _typed_fields
 
@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from .indexer._run_ledger_models import RunAuthority
 
 __all__ = [
+    "FIRST_BUILD_OPERATION",
     "DesiredJobState",
     "IndexResilienceSnapshot",
     "JobAttempt",
@@ -70,6 +71,13 @@ class JobMode(StrEnum):
 
     INCREMENTAL = "incremental"
     REBUILD = "rebuild"
+
+
+#: The effective operation reported for an incremental request that admission
+#: admitted as a source's first full build. It is not a requestable mode: a
+#: caller asks for incremental or rebuild work, and only admission can read
+#: the ledger and storage that establish a source has never been built.
+FIRST_BUILD_OPERATION: Final = "first_build"
 
 
 class JobState(StrEnum):
@@ -355,6 +363,12 @@ class JobSpec:
     project_root: str | None
     mode: JobMode | None
     authority: RunAuthority
+    #: The mode the caller asked for, when admission admitted something
+    #: larger. Set only where an incremental request for a never-built source
+    #: became that source's first full build, which is the one case in which
+    #: the effective operation exceeds the requested one. ``None`` everywhere
+    #: else, where the two are the same value.
+    requested_mode: JobMode | None = None
 
     def __post_init__(self) -> None:
         from .indexer._run_ledger_models import RunAuthority
@@ -362,6 +376,31 @@ class JobSpec:
         _require_str("project_root", self.project_root, allow_empty=True, optional=True)
         if not isinstance(self.authority, RunAuthority):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
             raise TypeError("authority must be a RunAuthority")
+        if self.requested_mode is not None and not (
+            self.requested_mode is JobMode.INCREMENTAL and self.mode is JobMode.REBUILD
+        ):
+            raise ValueError(
+                "requested_mode records only an incremental request admitted "
+                "as a first build"
+            )
+
+    @property
+    def is_first_build(self) -> bool:
+        """Whether an incremental request was admitted as the first build."""
+        return self.requested_mode is not None
+
+    @property
+    def requested_operation(self) -> str | None:
+        """The operation the caller asked for, as served records spell it."""
+        requested = self.requested_mode if self.is_first_build else self.mode
+        return requested.value if requested is not None else None
+
+    @property
+    def effective_operation(self) -> str | None:
+        """The operation that actually runs for this specification."""
+        if self.is_first_build:
+            return FIRST_BUILD_OPERATION
+        return self.mode.value if self.mode is not None else None
 
     def to_dict(self) -> dict[str, object]:
         """Return the one persisted and served specification shape."""
@@ -673,16 +712,13 @@ class JobSnapshot:
             "revision": self.revision,
             "spec": {
                 **self.spec.to_dict(),
-                "requested_mode": (
-                    self.spec.mode.value if self.spec.mode is not None else None
-                ),
-                # Incremental execution is forbidden from escalating beyond
-                # its admitted cost class. Keeping the effective value
-                # explicit makes that invariant observable instead of asking
-                # clients to infer it from logs.
-                "effective_mode": (
-                    self.spec.mode.value if self.spec.mode is not None else None
-                ),
+                "requested_mode": self.spec.requested_operation,
+                # Execution is forbidden from escalating beyond its admitted
+                # cost class. Keeping the effective value explicit makes that
+                # invariant observable instead of asking clients to infer it
+                # from logs. The one admitted escalation is a never-built
+                # source's first build, which reports itself here by name.
+                "effective_mode": self.spec.effective_operation,
             },
             "state": self.state.value,
             "desired_state": self.desired_state.value,

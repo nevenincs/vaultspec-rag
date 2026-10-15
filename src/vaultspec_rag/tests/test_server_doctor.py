@@ -33,6 +33,9 @@ from vaultspec_core.core.workspace_mode import (
 from ..api import get_readiness
 from ..cli import app
 from ..commands._install import install_run
+from ..operator_state._compute import local_compute
+from ..operator_state._installation import ComputeCapability
+from ..operator_state._models import ComputeReport
 from ._mcp_consent import approve_workspace_launches
 
 if TYPE_CHECKING:
@@ -67,13 +70,28 @@ def _install_rag_workspace(tmp_path: Path, mode: InstallMode) -> Path:
     return ws
 
 
+def _launcher_serves() -> bool:
+    """Whether the interpreter running this suite could itself run the service.
+
+    The doctor reports on the environment a start would run the daemon in. The
+    launcher's own when it can serve, and otherwise a runtime a start would
+    create first, so what it says differs between a workstation with an
+    accelerator and a runner without one. This is the machine's answer to which
+    of the two it is: this process's own environment, read directly and held to
+    the one capability that names a verified device, not to the product's
+    judgement of the same environment.
+    """
+    return local_compute().capability is ComputeCapability.READY
+
+
 def test_doctor_json_envelope_carries_both_axes(
     isolated_status_dir: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """With no discovery file the envelope carries the dependency snapshot
-    verbatim and a not-started live-service axis.
+    verbatim, a not-started live-service axis, and a not-ready, non-zero
+    top line that names the one command to resolve it.
 
     The snapshot is the deep one: the health command checks each model's
     snapshot as a load would, hashing a pinned model's files, where a polled
@@ -82,6 +100,26 @@ def test_doctor_json_envelope_carries_both_axes(
     apart on any host. Mutation: with the command asking for the cheap
     snapshot, this failed on the dependencies comparison; restored, it
     passed.
+
+    Whose snapshot it is depends on the machine. Where this installation can
+    serve, the daemon runs from it and the rows are the reporter's reading of
+    this process. Where it cannot - a client, a CPU-only build, no device -
+    the daemon runs from a runtime a start has still to create, torch there is
+    unchecked, and the other rows are read as that runtime will need them, so
+    the rows differ from this process's own reading on purpose. Each runner
+    proves the branch its machine implies: a workstation the first, a runner
+    with no accelerator the second.
+
+    Mutation check, on a runner with no accelerator: handing the launcher's own
+    verdict to the dependency rows under a runtime plan, in place of the
+    unchecked one, failed on the torch row's status; restored, it passed. The
+    mirror, on a workstation: judging every launcher unable to serve failed on
+    the runtime axis being present; restored, it passed.
+
+    Mutation check: folding the top line back to dependency-only truth for an
+    absent service - as the doctor once did - would read a fully-provisioned
+    host as "ready" while nothing is running, failing the ``ready``/exit-code
+    assertions below; requiring a live service first passes.
     """
     _ = isolated_status_dir
     # The mode-and-floor axis is read from the CWD's workspace declaration, so
@@ -98,34 +136,51 @@ def test_doctor_json_envelope_carries_both_axes(
     assert envelope["command"] == "server doctor"
     data = envelope["data"]
     # The installed-dependency snapshot is preserved verbatim and labelled.
-    snapshot = get_readiness(verify_models=True)
+    if _launcher_serves():
+        assert data["service_runtime"] is None
+        snapshot = get_readiness(verify_models=True)
+    else:
+        from ..cli._service_doctor import _RUNTIME_PENDING
+
+        torch_row = data["dependencies"][0]
+        assert (torch_row["name"], torch_row["status"]) == ("torch", "unknown")
+        assert _RUNTIME_PENDING in torch_row["detail"]
+        assert data["service_runtime"]["ready"] is False
+        snapshot = get_readiness(
+            compute=ComputeReport(
+                capability=ComputeCapability.UNKNOWN, detail=_RUNTIME_PENDING
+            ),
+            verify_models=True,
+        )
     assert data["dependencies"] == snapshot["dependencies"]
     assert data["dependencies_ready"] == bool(snapshot["ready"])
     assert data["server_mode"] == bool(snapshot["server_mode"])
     # The live-service axis reports "not started" when no discovery file exists.
     assert data["service"]["present"] is False
     assert data["service"]["state"] == "not_started"
-    # No daemon expected => top-line tracks installed dependencies.
-    assert data["ready"] == bool(snapshot["ready"])
-    assert envelope["ok"] == data["ready"]
+    # No service is running => never ready, whatever the dependency rows say.
+    assert data["ready"] is False
+    assert data["status"] == "not_running"
+    assert envelope["ok"] is False
+    assert data["next_action"] == "vaultspec-rag server start"
     # Nothing declared here, so the provisioning axis stays silent and cannot
     # contribute to the exit code - the sibling tests below drive it from real
     # installed workspaces.
     assert data["mode"] is None
-    # No daemon expected => exit 0 regardless of dependency readiness (the
-    # pre-install informational contract); the non-zero exit is reserved for a
-    # daemon that is expected but dead.
-    assert result.exit_code == 0
+    # No service running lifts the exit code, matching the service-runtime
+    # messaging constraint: doctor exits non-zero whenever a start would be
+    # needed.
+    assert result.exit_code == 1
 
 
-def test_doctor_json_dependency_axis_is_bounded_three_dimensions(
+def test_doctor_json_dependency_axis_is_bounded_to_the_known_dependencies(
     isolated_status_dir: Path,
 ) -> None:
     _ = isolated_status_dir
     result = runner.invoke(app, ["server", "doctor", "--json"])
     data = json.loads(result.stdout)["data"]
     names = [dep["name"] for dep in data["dependencies"]]
-    assert names == ["torch", "models", "qdrant"]
+    assert names == ["torch", "models", "qdrant", "monitor"]
     assert isinstance(data["dependencies_ready"], bool)
     assert isinstance(data["server_mode"], bool)
     assert isinstance(data["ready"], bool)
@@ -160,8 +215,9 @@ def test_doctor_omits_mode_axis_when_no_rag_declaration(
 
     data = json.loads(result.stdout)["data"]
     assert data["mode"] is None
-    # No declaration and no daemon keeps the informational exit-0 contract.
-    assert result.exit_code == 0
+    # No declaration and no daemon: the mode axis contributes nothing, but no
+    # service running still lifts the exit code on its own.
+    assert result.exit_code == 1
 
 
 def test_doctor_reports_clean_rag_mode_and_floor(
@@ -169,7 +225,12 @@ def test_doctor_reports_clean_rag_mode_and_floor(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A cleanly provisioned rag workspace reads mode ok, floor ok, exit 0."""
+    """A cleanly provisioned rag workspace reads mode ok, floor ok.
+
+    The exit code still lifts to 1: no daemon is running in this test, and a
+    clean mode-and-floor axis contributes no error or warning of its own to
+    offset that.
+    """
     _ = isolated_status_dir
     ws = _install_rag_workspace(tmp_path, InstallMode.TOOL)
     monkeypatch.chdir(ws)
@@ -182,7 +243,7 @@ def test_doctor_reports_clean_rag_mode_and_floor(
     assert mode["declared_mode"] == "tool"
     assert mode["mode_mismatch"] == "clean"
     assert mode["version_floor"] == "ok"
-    assert result.exit_code == 0
+    assert result.exit_code == 1
 
 
 def test_doctor_weights_below_floor_as_error(
@@ -220,6 +281,19 @@ def test_doctor_floor_advice_names_a_command_that_upgrades(
     Guard assertion: the advice was `uv tool upgrade vaultspec-rag`, which a
     tool environment pinned by the CUDA repair answers with "nothing to
     upgrade". An operator following it sees no change and no reason why.
+
+    That holds where the daemon runs from this installation. Where it does not
+    - a client, a CPU-only build, no device - the daemon runs from a runtime of
+    its own, this installation's receipt decides nothing there, and recording
+    a CUDA source in it would repair something that is not broken, so the
+    verb alone is the advice. Each runner proves the branch its machine
+    implies: a workstation the first, a runner with no accelerator the second.
+
+    Mutation check, on a runner with no accelerator: handing the sequence the
+    answer that the daemon runs from this installation put the receipt step
+    in and failed on the count of commands; restored, it passed. The mirror,
+    on a workstation: judging every launcher unable to serve failed on the
+    receipt step being absent from the first command; restored, it passed.
     """
     _ = isolated_status_dir
     ws = _install_rag_workspace(tmp_path, InstallMode.TOOL)
@@ -233,16 +307,22 @@ def test_doctor_floor_advice_names_a_command_that_upgrades(
     result = runner.invoke(app, ["server", "doctor"])
     envelope = json.loads(runner.invoke(app, ["server", "doctor", "--json"]).stdout)
 
-    # This installation's receipt carries no CUDA source, so the sequence
-    # records it first and then upgrades: the bare verb alone would move the
-    # release and drop the GPU build with it.
     commands = envelope["data"]["mode"]["upgrade_commands"]
-    assert "--index-strategy unsafe-first-match" in commands[0]
-    assert commands[1] == "uv tool upgrade vaultspec-rag"
+    if _launcher_serves():
+        # This installation's receipt carries no CUDA source, so the sequence
+        # records it first and then upgrades: the bare verb alone would move
+        # the release and drop the GPU build with it.
+        assert "--index-strategy unsafe-first-match" in commands[0]
+        assert commands[1] == "uv tool upgrade vaultspec-rag"
+        assert "--index-strategy unsafe-first-match" in result.stdout
+    else:
+        # The verb, then the restart that brings the release to the daemon.
+        assert len(commands) == 2
+        assert commands[0] == "uv tool upgrade vaultspec-rag"
+        assert "--index-strategy" not in result.stdout
     assert "server stop" in commands[-1]
     # The envelope carries what the human output shows, so a broker is not
     # left reading a floor error it cannot act on.
-    assert "--index-strategy unsafe-first-match" in result.stdout
     assert "uv tool upgrade vaultspec-rag" in result.stdout
 
 
@@ -298,7 +378,10 @@ def test_doctor_honours_root_target_over_the_working_directory(
     assert mode["package"] == "vaultspec-rag"
     assert mode["declared_mode"] == "tool"
     assert mode["mode_mismatch"] == "clean"
-    assert result.exit_code == 0
+    # No daemon is running in this test; the clean mode axis contributes no
+    # error or warning of its own, but the absent service still lifts the
+    # exit code.
+    assert result.exit_code == 1
 
 
 def test_doctor_honours_rag_root_env_var_over_the_working_directory(
@@ -334,7 +417,10 @@ def test_doctor_honours_rag_root_env_var_over_the_working_directory(
     assert mode["package"] == "vaultspec-rag"
     assert mode["declared_mode"] == "tool"
     assert mode["mode_mismatch"] == "clean"
-    assert result.exit_code == 0
+    # No daemon is running in this test; the clean mode axis contributes no
+    # error or warning of its own, but the absent service still lifts the
+    # exit code.
+    assert result.exit_code == 1
 
 
 def test_doctor_human_render_labels_mode_axis(
@@ -416,7 +502,98 @@ def test_a_starting_service_reads_as_starting_not_as_needing_a_restart() -> None
         "state": starting.value,
     }
 
-    ready, status = _overall_readiness({"ready": True}, service)
+    ready, status = _overall_readiness({"ready": True}, service, runtime_required=False)
 
     assert (ready, status) == (False, "starting")
     assert starting.label in _overall_label(ready, status)
+
+
+def test_no_service_running_is_never_read_as_ready_whatever_dependencies_say() -> None:
+    """An absent daemon must outrank even a fully-provisioned dependency axis.
+
+    This is the exact shape of the audit finding: a client install (or any
+    host) with every dependency row ready still cannot answer a request when
+    nothing is running, so the top line must say so and name the one command
+    that starts it.
+
+    Mutation check: returning ``deps_ready`` for an absent service, as the
+    doctor once did, reads this as ``(True, "ready")`` and fails the first
+    assertion; requiring a live service first passes.
+    """
+    from ..cli._service_doctor import _doctor_next_action, _overall_readiness
+
+    absent: dict[str, object] = {"present": False, "live": False}
+
+    ready, status = _overall_readiness({"ready": True}, absent, runtime_required=False)
+
+    assert (ready, status) == (False, "not_running")
+    assert _doctor_next_action(status) == "vaultspec-rag server start"
+
+
+def test_overall_readiness_is_not_ready_when_a_dependency_row_is_not_ready() -> None:
+    """A live, healthy daemon still cannot be called ready over a bad dependency.
+
+    Mutation check: returning ``True`` whenever the service is live,
+    ignoring the dependency report, fails the first assertion; folding the
+    report's own ``ready`` boolean back in passes.
+    """
+    from ..cli._service_doctor import _overall_readiness
+    from ..operator_state._service import ServiceLifecycle
+
+    live: dict[str, object] = {
+        "present": True,
+        "live": True,
+        "state": ServiceLifecycle.RUNNING.value,
+    }
+
+    ready, status = _overall_readiness({"ready": False}, live, runtime_required=False)
+
+    assert (ready, status) == (False, "dependencies_not_ready")
+
+
+def test_overall_readiness_needs_a_live_service_and_every_dependency() -> None:
+    """Both conditions must hold at once for the top line to read ready.
+
+    Mutation check: reporting ready from either axis alone - a live daemon
+    with a bad dependency, or ready dependencies with no daemon - fails one
+    of the first two assertions; requiring both at once passes, and only
+    then does the third assertion hold.
+    """
+    from ..cli._service_doctor import _overall_readiness
+    from ..operator_state._service import ServiceLifecycle
+
+    live: dict[str, object] = {
+        "present": True,
+        "live": True,
+        "state": ServiceLifecycle.RUNNING.value,
+    }
+    absent: dict[str, object] = {"present": False, "live": False}
+
+    def readiness(deps_ready: bool, service: dict[str, object]) -> tuple[bool, str]:
+        return _overall_readiness(
+            {"ready": deps_ready}, service, runtime_required=False
+        )
+
+    assert readiness(False, live)[0] is False
+    assert readiness(True, absent)[0] is False
+    assert readiness(True, live) == (True, "ready")
+
+
+def test_doctor_exit_code_is_generic_over_overall_readiness() -> None:
+    """The exit code reads ``overall_ready`` alone for the not-ready case.
+
+    This is what makes the exit code generic over whatever dependency rows
+    the readiness report carries - a future dependency row is folded into
+    ``overall_ready`` by ``_overall_readiness`` with no change needed here.
+
+    Mutation check: returning 0 whenever no mode and no foreign release are
+    present, ignoring ``overall_ready``, fails the first assertion; gating
+    on it passes.
+    """
+    from ..cli._service_doctor import _doctor_exit_code
+
+    not_running: dict[str, object] = {"present": False, "live": False}
+    live: dict[str, object] = {"present": True, "live": True}
+
+    assert _doctor_exit_code(False, not_running, None) == 1
+    assert _doctor_exit_code(True, live, None) == 0

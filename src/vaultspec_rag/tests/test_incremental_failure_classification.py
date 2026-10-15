@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from ..indexer._vault_prep import IndexResult
     from ..progress import ProgressReporter
 
-pytestmark = [pytest.mark.unit]
+pytestmark = [pytest.mark.integration]
 
 
 @dataclass

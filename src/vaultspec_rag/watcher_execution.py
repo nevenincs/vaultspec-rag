@@ -27,12 +27,9 @@ from .job_manager.models import JobAttemptContext, JobExecutionResult, ResourceU
 from .job_models import (
     IndexResilienceSnapshot,
     JobInitiator,
-    JobMode,
-    JobOperation,
     JobOutcomeStatus,
     JobSnapshot,
     JobSource,
-    JobSpec,
     JobState,
 )
 from .logging_config import log_event
@@ -295,12 +292,17 @@ async def submit_watcher_job(
         outcome = await _run_in_thread(
             partial(
                 manager.create,
-                JobSpec(
-                    operation=JobOperation.INDEX,
+                # Through admission like every other index request, so what
+                # an incremental request becomes has one owner. The watcher
+                # origin is refused escalation there before any reading is
+                # taken, which is what keeps automatic convergence bounded
+                # and costs this path nothing.
+                _job_admission.index_job_spec(
+                    slot.root,
                     source=slot.source,
-                    project_root=str(slot.root),
-                    mode=JobMode.INCREMENTAL,
+                    clean=False,
                     authority=RunAuthority.PUBLICATION,
+                    initiator_kind="watcher",
                 ),
                 JobInitiator(
                     kind="watcher",

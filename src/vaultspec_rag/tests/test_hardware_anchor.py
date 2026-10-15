@@ -20,10 +20,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from .. import _gpu_admission
+from .. import _gpu_admission, _gpu_owner
 from .._anchor_claim import (
     AnchorOutcome,
     claim_anchor,
+    hardware_anchor_path,
     observe_existing_anchor,
     release_anchor_claim,
 )
@@ -33,10 +34,10 @@ if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
     from pathlib import Path
 
-# The real resolvers are the subject here, so this module opts out of the
-# per-test anchor redirect. Nothing in it claims a machine anchor: the
-# locations are read, and every lock it takes is on a temporary file.
-pytestmark = [pytest.mark.unit, pytest.mark.real_hardware_anchor]
+# The real resolvers are the subject here. Nothing in it claims a machine
+# anchor: the locations are read, and every lock it takes is on a temporary
+# file.
+pytestmark = [pytest.mark.unit]
 
 # Every variable a process can set to move a path it resolves: the Windows
 # ProgramData and temporary variables, their POSIX counterparts, both homes,
@@ -97,6 +98,20 @@ def test_anchor_locations_ignore_every_variable_a_process_can_change(
     # configuration gives a second process an anchor of its own.
     assert _resolved_under(relocated) == unchanged
     assert len(unchanged) == 2
+
+
+def test_the_owner_and_load_window_anchors_resolve_in_the_machine_directory() -> None:
+    # Catches an anchor resolving anywhere but the machine's shared directory,
+    # under the name every release claims: a process resolving a different file
+    # would hold an anchor nobody else contends for.
+    # Mutation: renamed the owner anchor's file. Observed the first assertion
+    # fail on the owner anchor resolving to the renamed file; renaming the
+    # load window's file instead failed the second the same way. Restoring
+    # each name passed.
+    assert _gpu_owner.gpu_owner_anchor_path() == hardware_anchor_path("gpu-owner.lock")
+    assert _gpu_admission.load_window_lock_path() == hardware_anchor_path(
+        "gpu-load-window.lock"
+    )
 
 
 @pytest.fixture

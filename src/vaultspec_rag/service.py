@@ -83,11 +83,18 @@ class ServiceRegistry(
     per project.  Lazily loaded on first use, thread-safe.
     """
 
-    def __init__(self) -> None:
-        """Initialize the registry with empty model and project state."""
+    def __init__(self, *, gpu_owner_anchor: Path | None = None) -> None:
+        """Initialize the registry with empty model and project state.
+
+        Args:
+            gpu_owner_anchor: The GPU owner anchor this registry lends and
+                reclaims the GPU through. The machine's own anchor by default;
+                a caller that owns another anchor names it.
+        """
         from .config._settings import get_config
 
         cfg = get_config()
+        self._gpu_owner_anchor = gpu_owner_anchor
         self._model: EmbeddingModel | None = None
         self._projects: dict[Path, ProjectSlot] = {}
         # A reservation owns one bounded project seat while its root's store
@@ -758,12 +765,10 @@ class ServiceRegistry(
         without paying the model-load cost - and, on a CPU-only host,
         without requiring a GPU at all.
         """
+        from ._source_types import PublicSourceType
+
         with self.lease_store(root) as store:
-            if domain == "code":
-                return store.count_code()
-            if domain == "document":
-                return store.count_document()
-            return store.count()
+            return store.count_source(PublicSourceType(domain))
 
     def vault_doc_count(self, root: Path) -> int:
         """Indexed vault-doc count for *root*, model-free (see _store_count)."""

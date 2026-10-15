@@ -6,6 +6,10 @@ import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
+import {
+  defaultReadinessWindowSeconds,
+  lifecycleBudgetMilliseconds,
+} from "../lifecycle-budget.ts";
 
 const prefix = "/api/monitor";
 const maxResponseBytes = 32 * 1024 * 1024;
@@ -17,7 +21,7 @@ const checkout =
   typeof MONITOR_COMPILED !== "undefined" && MONITOR_COMPILED
     ? undefined
     : fileURLToPath(new URL("../../../", import.meta.url));
-type LifecycleVerb = "status" | "start" | "stop";
+type LifecycleVerb = "status" | "start" | "stop" | "restart";
 let lifecyclePython: string | undefined;
 class InvalidRequestError extends Error {}
 // Loopback is shared by every local account, so the launching owner alone
@@ -202,6 +206,7 @@ function allowedRoute(path: string, method: string): boolean {
       [
         "/lifecycle/start",
         "/lifecycle/stop",
+        "/lifecycle/restart",
         "/pause",
         "/resume",
         "/repositories/enroll",
@@ -229,9 +234,21 @@ function redact(value: unknown): unknown {
   );
 }
 
+// The owner reads its store readiness window from this environment, so the
+// wait on the owner follows the window the operator set rather than the
+// default a page has to assume.
+function readinessWindowSeconds(): number {
+  const configured = Number(process.env.VAULTSPEC_RAG_QDRANT_READY_TIMEOUT);
+  return Number.isFinite(configured) && configured > 0
+    ? configured
+    : defaultReadinessWindowSeconds;
+}
+
 function timeout(path: string): number {
-  if (path === "/lifecycle/start") return 900000;
-  if (path === "/lifecycle/stop") return 120000;
+  const budget = lifecycleBudgetMilliseconds(readinessWindowSeconds());
+  if (path === "/lifecycle/start") return budget.start;
+  if (path === "/lifecycle/restart") return budget.restart;
+  if (path === "/lifecycle/stop") return budget.stop;
   if (["/lifecycle", "/repositories", "/storage/survey"].includes(path))
     return 30000;
   if (
@@ -357,6 +374,9 @@ async function lifecycle(
     if (typeof state !== "string" || !state)
       throw new Error("The lifecycle owner returned no service state.");
     payload.state = state;
+    // The page cannot read the operator's readiness window, so it is given
+    // the waits this server applies and outlasts them.
+    payload.budget = lifecycleBudgetMilliseconds(readinessWindowSeconds());
     return { status: 200, payload };
   }
   return { status: error || !payload.ok ? 503 : 200, payload };
@@ -452,7 +472,9 @@ async function forward(
           ? "status"
           : route.pathname === "/lifecycle/start"
             ? "start"
-            : "stop";
+            : route.pathname === "/lifecycle/restart"
+              ? "restart"
+              : "stop";
       const result = await lifecycle(verb, signal);
       reply(response, result.status, result.payload);
       return;

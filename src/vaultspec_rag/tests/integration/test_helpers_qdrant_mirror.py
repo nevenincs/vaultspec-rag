@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ...qdrant_runtime._provision import file_sha256
+from ...native_binary._install import file_sha256
 from ...qdrant_runtime._resolve import qdrant_bin_dir, resolve_binary
 from ._helpers import _service_env
 

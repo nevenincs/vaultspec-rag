@@ -18,6 +18,7 @@ from ..server._routes_operator import repository_inventory
 from ..server._runtime import ServerRouteRuntime, get_app_runtime
 from ..service import ServiceRegistry
 from ..storage_manifest import load_manifest, record_root
+from ._child_signal import CHILD_PROCESS_TIMEOUT_SECONDS
 from .conftest import managed_env
 
 if TYPE_CHECKING:
@@ -235,7 +236,9 @@ def _git(*arguments: str, root: Path) -> None:
         ["git", "-C", str(root), *arguments],
         check=True,
         capture_output=True,
-        timeout=10,
+        # A hang guard for setup, not a measurement: a loaded hosted runner
+        # can take longer than ten seconds over one commit.
+        timeout=CHILD_PROCESS_TIMEOUT_SECONDS,
     )
 
 

@@ -6,7 +6,6 @@ import asyncio
 import json
 import os
 import queue
-import shutil
 import socket
 import subprocess
 import sys
@@ -31,16 +30,19 @@ from ..cli import app
 from ..cli._service_start import _start_success
 from ..config._types import EnvVar
 from ..monitor_process import MonitorProcess, stop_recorded_monitor
+from ..monitor_runtime._resolve import monitor_for_launch
 from ..server._lifecycle import _DiscoveryPublisher
 from ..server._lifespan import _shutdown_components
 from ..server._runtime import ServerRouteRuntime
 from ..service import ServiceRegistry
 from ..serviceclient._discovery import read_service_status
 from ._ports import bind_released_loopback_port
+from .conftest import managed_env
 from .test_monitor_logs import monitor_http as monitor_http
 from .test_monitor_process import _ports
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
     from pathlib import Path
 
 # The repository's unit tier covers every accelerator-free test, including
@@ -49,14 +51,26 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture(autouse=True)
-def compiled_monitor_required() -> None:
-    binary = os.environ.get(EnvVar.MONITOR_BINARY.value) or shutil.which(
-        "vaultspec-rag-monitor"
-    )
-    assert binary, (
-        "Build/install the compiled monitor or provide its absolute path in "
-        "VAULTSPEC_RAG_MONITOR_BINARY before running compiled lifecycle integration."
-    )
+def compiled_monitor_required() -> Generator[None]:
+    """Resolve the monitor these tests run, the way a service start resolves it.
+
+    These tests run the real executable, so they clear any monitor named
+    through the operator settings and let the resolver answer from this
+    checkout's own digests: one that built its monitor is admitted by its own
+    pin, and one that did not fails here with what the resolver says rather
+    than passing against a file that is not a monitor.
+
+    Yields:
+        Nothing; the settings are cleared for the test's own block.
+    """
+    with managed_env(
+        **{
+            EnvVar.MONITOR_BINARY.value: None,
+            EnvVar.MONITOR_BINARY_SHA256.value: None,
+        }
+    ):
+        assert monitor_for_launch().path.is_file()
+        yield
 
 
 def test_monitor_allocates_after_custom_backend_and_republishes_discovery(

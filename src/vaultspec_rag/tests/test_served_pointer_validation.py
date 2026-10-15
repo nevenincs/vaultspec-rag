@@ -244,13 +244,13 @@ def test_clean_refuses_before_changing_publication_state(
     """
     from .._publication_state import acquire_publication_snapshot
     from ..registry import get_registry
+    from ._publication_assertions import publish_empty_vault_proof
     from ._state_fixtures import reset_registry
-    from .test_api_clean_admission import _publish_empty_vault_proof
 
     with managed_env(**{EnvVar.QDRANT_URL.value: ""}):
         reset_registry()
         try:
-            _publish_empty_vault_proof(tmp_path)
+            publish_empty_vault_proof(tmp_path)
             snapshot = acquire_publication_snapshot(tmp_path, PublicSourceType.VAULT)
             with get_registry().lease_store(tmp_path) as store:
                 store.ensure_code_table()
@@ -308,8 +308,8 @@ def test_poisoned_shared_pointer_cannot_read_write_delete_or_clean_foreign_data(
     """
     from .._publication_state import acquire_publication_snapshot
     from ..registry import get_registry
+    from ._publication_assertions import publish_empty_vault_proof
     from ._state_fixtures import reset_registry
-    from .test_api_clean_admission import _publish_empty_vault_proof
 
     owner = tmp_path / "owner"
     victim = tmp_path / "victim"
@@ -322,7 +322,7 @@ def test_poisoned_shared_pointer_cannot_read_write_delete_or_clean_foreign_data(
     with managed_env(**{EnvVar.QDRANT_URL.value: shared_qdrant_url}):
         reset_registry()
         try:
-            _publish_empty_vault_proof(owner)
+            publish_empty_vault_proof(owner)
             proof = acquire_publication_snapshot(owner, PublicSourceType.VAULT)
             with VaultStore(victim) as victim_store:
                 victim_store.upsert_code_chunks([victim_chunk], write_policy=None)

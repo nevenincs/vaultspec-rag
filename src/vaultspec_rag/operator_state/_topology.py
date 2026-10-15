@@ -12,6 +12,7 @@ control paths, which never import torch and never shell out to ``uv``.
 from __future__ import annotations
 
 import os
+import sys
 from enum import StrEnum
 from pathlib import Path
 
@@ -22,6 +23,7 @@ __all__ = [
     "RuntimeEnvKind",
     "classify_environment",
     "environment_root",
+    "runs_from_a_project_environment",
 ]
 
 #: uv writes this file at the root of every persistent tool environment and
@@ -112,3 +114,19 @@ def classify_environment(root: str | Path) -> RuntimeEnvKind:
     if resolved.name.lower() in {".venv", "venv"}:
         return RuntimeEnvKind.PROJECT_VENV
     return RuntimeEnvKind.OTHER
+
+
+def runs_from_a_project_environment() -> bool:
+    """Whether this interpreter could belong to a target project's own tree.
+
+    A uv tool environment and a uvx cache environment are never synced from a
+    project's ``pyproject.toml``: the torch they run is uv's to resolve, and a
+    torch block written into a project would change a user-owned file without
+    changing anything this installation loads. So nothing about a project's
+    torch configuration applies to such an installation - neither writing it,
+    nor reporting on it.
+    """
+    return classify_environment(environment_root(sys.executable)) not in {
+        RuntimeEnvKind.UV_TOOL,
+        RuntimeEnvKind.UVX_EPHEMERAL,
+    }

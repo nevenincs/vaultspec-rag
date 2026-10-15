@@ -13,12 +13,13 @@ from __future__ import annotations
 import os
 import sys
 from dataclasses import dataclass
-from typing import Annotated
+from typing import Annotated, Final
 
 import typer
 
 import vaultspec_rag.cli as _cli
 
+from .._gpu_owner import observation_wire
 from .._loopback_http import probe_loopback_connect
 from .._operator_commands import server_status_command
 from .._process_probe import (
@@ -31,6 +32,7 @@ from .._process_probe import (
     server_launch_port,
     wait_for_exit,
 )
+from ..gpu_borrow_lease import borrower_stop_notice, observe_gpu_borrower
 from ..serviceclient._discovery import _delete_service_status, read_service_status
 from ..serviceclient._transport import _try_http_health
 from ._app import JSON_ENVELOPE_OPTION_HELP, server_root_app
@@ -52,6 +54,7 @@ from ._service_lifecycle import (
 from ._service_status import _append_lifecycle_shutdown_log
 
 __all__ = [
+    "STOP_BUDGET_SECONDS",
     "_fail_still_running",
     "_fail_stop",
     "_initiator_fields",
@@ -66,6 +69,11 @@ __all__ = [
 
 _STOP_COMMAND = "service.stop"
 
+#: The success outcomes after which no service is running, which is when a
+#: borrower still holding the GPU is worth reporting: the next start will be
+#: refused for it. An orphan reap says nothing about the live service.
+_NO_SERVICE_STATUSES = frozenset({"stopped", "already_stopped", "cleaned", "reclaimed"})
+
 # An operator stop waits for the daemon's own lifespan shutdown so both
 # discovery views are removed by the only lease holder authorized to remove
 # them. The drain covers job drain, store close, GPU release, and managed
@@ -73,6 +81,24 @@ _STOP_COMMAND = "service.stop"
 # escalation and owned-child reap once the drain window expires.
 _STOP_GRACEFUL_DRAIN_SECONDS = 20.0
 _STOP_TERMINATION_BUDGET_SECONDS = 45.0
+
+# How long a terminated pid is watched for its exit after its own budget
+# expired. A kill is asynchronous, not slow; this only covers the gap between
+# the signal and the process table catching up.
+_TERMINATION_EXIT_WAIT_SECONDS = 5.0
+
+# How many terminate-and-confirm escalations one stop can run in sequence: a
+# resident machine-lock holder with no discoverable status file, the service
+# recorded on the port, and the reap of an orphaned daemon.
+_STOP_ESCALATIONS = 3
+
+#: The longest a stop can legitimately take. A caller that waits on a stop
+#: reads it from here. Stop provisions nothing, so the whole bound is the
+#: termination escalations it may have to run; the start path's budget is an
+#: order of magnitude larger and is stated where the start applies it.
+STOP_BUDGET_SECONDS: Final = _STOP_ESCALATIONS * (
+    _STOP_TERMINATION_BUDGET_SECONDS + _TERMINATION_EXIT_WAIT_SECONDS
+)
 
 # Stop's success claims ride on these probes: a live listener misread as gone
 # would report an already-stopped success, or reap without the serving-pid
@@ -266,7 +292,7 @@ def _terminate_and_confirm(
         expected_start_time=expected_start_time,
     )
 
-    wait_for_exit(pid, timeout=5.0, poll_seconds=0.1)
+    wait_for_exit(pid, timeout=_TERMINATION_EXIT_WAIT_SECONDS, poll_seconds=0.1)
 
     if not pid_terminated(pid):
         # Nothing below applies to a survivor. Its discovery records still
@@ -428,6 +454,10 @@ def _stop_success(
     An already-stopped service is a success so a supervising broker treats the
     idempotent case as satisfied rather than as a fault; that rule lives in the
     shared renderer alongside the envelope-versus-human decision.
+
+    A stop is the operator's decision and is never refused for a GPU borrower,
+    but one that leaves no service running while a borrower still holds the GPU
+    says so: the service will not start again until the borrower releases it.
     """
     from ..monitor_process import recorded_monitor_exited, stop_recorded_monitor
 
@@ -456,6 +486,13 @@ def _stop_success(
             message="Monitor stop failed",
             human_lines=("The recorded monitor process is still running.",),
         )
+    if status in _NO_SERVICE_STATUSES:
+        borrower = observe_gpu_borrower()
+        notice = borrower_stop_notice(borrower)
+        if notice is not None:
+            human_lines = (*human_lines, notice)
+            data["gpu_borrower"] = observation_wire(borrower)
+            data["notice"] = notice
     _lifecycle_success(
         json_mode,
         command=_STOP_COMMAND,

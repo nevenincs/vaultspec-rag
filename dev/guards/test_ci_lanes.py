@@ -399,7 +399,7 @@ def test_lifecycle_suites_receive_the_compiled_monitor(job_id: str) -> None:
     """
     steps = _jobs()[job_id]["steps"]
     runs = [step.get("run") for step in steps]
-    assert "just build-monitor-test" in runs, f"{job_id} has no compiled producer"
+    assert "just build-monitor" in runs, f"{job_id} has no compiled producer"
     assert "npm ci" in runs, f"{job_id} does not restore the committed dependencies"
     assert "just init-monitor" not in runs, f"{job_id} mutates operator dev services"
-    assert runs.index("just build-monitor-test") < runs.index("just test-python")
+    assert runs.index("just build-monitor") < runs.index("just test-python")
