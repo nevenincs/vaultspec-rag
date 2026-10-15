@@ -23,10 +23,12 @@ from ..operator_state._compute import ProbeDepth
 from ..operator_state._service_environment import judge_foreign_environment
 from ..operator_state._topology import TOOL_RECEIPT_NAME, environment_root
 from ..service_runtime import (
+    INDEX_SOURCE,
     RUNTIME_REQUEST,
     RuntimeRequirement,
     _record,
     installed_release,
+    launching_source,
     release_runtime_dir,
     uv_executable,
 )
@@ -46,6 +48,7 @@ __all__ = [
     "invoke_the_cli",
     "publish_runtime",
     "reported",
+    "runtime_record_requirement",
     "with_a_cpu_build_of_torch",
 ]
 
@@ -171,7 +174,21 @@ def invoke_the_cli(
     return cast("list[CliRun]", ran["results"])
 
 
-def publish_runtime(*, cpu_torch: bool = False) -> Path:
+def runtime_record_requirement(release: str, source: str | None) -> RuntimeRequirement:
+    """What a published runtime's record says it was built from.
+
+    *source* names the origin, and ``None`` means the origin this process's
+    own distribution came from. The requirement string beside it is the
+    diagnostic field the record carries; the origin is what a start compares
+    against its own distribution before it reuses the runtime.
+    """
+    origin = launching_source() if source is None else source
+    if origin == INDEX_SOURCE:
+        return RuntimeRequirement(f"{RUNTIME_REQUEST}=={release}", origin)
+    return RuntimeRequirement(f"{RUNTIME_REQUEST} @ {origin}", origin)
+
+
+def publish_runtime(*, cpu_torch: bool = False, source: str | None = None) -> Path:
     """Publish this release's service runtime from a real environment.
 
     The environment is built in the runtime directory itself, so the interpreter
@@ -180,6 +197,15 @@ def publish_runtime(*, cpu_torch: bool = False) -> Path:
     writer a build uses, from what the environment's own metadata says it can
     do. Nothing here is a claim about the environment: a reader of the runtime
     judges the interpreter it finds.
+
+    Args:
+        cpu_torch: Whether to install the CPU build of torch into it.
+        source: The origin the record names, which is what decides whose
+            runtime this is: only a start whose own distribution came from
+            there reuses it. Defaults to the origin of the process publishing
+            it, which is the reader in every test that reads it in-process; a
+            test whose reader is a separate installation names that
+            installation's origin instead.
 
     Returns:
         The published runtime directory.
@@ -193,7 +219,7 @@ def publish_runtime(*, cpu_torch: bool = False) -> Path:
     _record(
         directory,
         release,
-        RuntimeRequirement(f"{RUNTIME_REQUEST}=={release}", "index"),
+        runtime_record_requirement(release, source),
         environment,
     )
     return directory

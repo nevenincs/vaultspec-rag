@@ -12,10 +12,12 @@ Three properties make that safe to do on a start:
 - **It is ours.** The runtime lives under the managed service directory, one
   directory per release. No environment the operator installed is read,
   written, replaced or removed.
-- **It is the same release.** A client refuses a service from another release,
+- **It is the same install.** A client refuses a service from another release,
   so the requirement names the installed version, or the same archive the
   launching distribution itself came from. A checkout cannot be reproduced and
-  is refused instead.
+  is refused instead. One version can be installed from more than one origin
+  on one machine, so a runtime is reused only when its record names the origin
+  the launching distribution came from as well as its release.
 - **It is published whole.** The build happens in a staging directory under an
   exclusive lock and becomes the release directory by one rename, with its
   completion record written first. A build that fails or cannot run the
@@ -38,7 +40,7 @@ import uuid
 from dataclasses import dataclass
 from enum import StrEnum
 from importlib import metadata
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Final, cast
 
 from ._program_lookup import Where, find_program
 from ._store_locks import FileLock
@@ -65,6 +67,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "RUNTIME_DIR_NAME",
+    "RUNTIME_PROVISION_BUDGET_SECONDS",
     "RUNTIME_RECORD_NAME",
     "RUNTIME_REQUEST",
     "ManagedRuntime",
@@ -89,9 +92,10 @@ __all__ = [
 #: The directory under the managed service directory holding every runtime.
 RUNTIME_DIR_NAME = "runtime"
 
-#: The completion record a published runtime carries. Its presence is what
-#: makes a release directory usable: a directory without it is a build that
-#: did not finish, and is rebuilt rather than run.
+#: The completion record a published runtime carries. It is what makes a
+#: release directory usable: a directory without it is a build that did not
+#: finish, and one whose record names another origin holds another install of
+#: the same version. Both are rebuilt rather than run.
 RUNTIME_RECORD_NAME = "runtime.json"
 
 #: The distribution the runtime holds, with the extra that carries inference.
@@ -101,6 +105,16 @@ RUNTIME_REQUEST = "vaultspec-rag[gpu]"
 
 #: The distribution name on its own, for reading the launching release.
 _DISTRIBUTION = "vaultspec-rag"
+
+#: What a completion record names for a release that came from a package
+#: index: every install an installer recorded no origin for.
+INDEX_SOURCE = "index"
+
+#: What an origin record that names no URL is called. An installer always
+#: writes one, so this is a malformed record, and no build ever records it:
+#: it matches no published runtime, which is what a start should do with a
+#: distribution whose origin cannot be read.
+_UNNAMED_SOURCE = "unnamed"
 
 #: Error codes a start reports for a runtime it could not use. Distinct from
 #: the launching environment's own refusal, because the remedy is different:
@@ -124,6 +138,14 @@ _LOCK_POLL_SECONDS = 0.5
 #: gigabytes and is allowed the better part of an hour.
 _VENV_TIMEOUT_SECONDS = 300.0
 _INSTALL_TIMEOUT_SECONDS = 3600.0
+
+#: The longest one build of the managed runtime can legitimately take: the
+#: wait for another build's lock, then this build's own two uv steps. A caller
+#: that waits on a start reads its runtime term from here, so a wrapper can
+#: never abandon a build that is still inside its own bounds.
+RUNTIME_PROVISION_BUDGET_SECONDS: Final = (
+    _LOCK_WAIT_SECONDS + _VENV_TIMEOUT_SECONDS + _INSTALL_TIMEOUT_SECONDS
+)
 
 
 class ServiceRuntimeError(Exception):
@@ -191,7 +213,9 @@ class RuntimeRequirement:
     Attributes:
         requirement: The requirement string handed to uv.
         source: The origin, for the completion record: the package index, or
-            the archive the launching distribution itself came from.
+            the archive the launching distribution itself came from. What a
+            later start compares against its own distribution's origin before
+            it reuses the runtime this built.
     """
 
     requirement: str
@@ -269,13 +293,22 @@ def read_runtime_record(directory: Path) -> dict[str, object] | None:
 def complete_runtime(release: str | None = None) -> Path | None:
     """The published runtime directory for *release*, or ``None``.
 
-    Complete means both halves: a record naming this release, and the
-    interpreter it describes. Either one alone is a build that was interrupted.
+    Complete means three things: a record naming this release, a record naming
+    the origin the launching distribution came from, and the interpreter the
+    record describes. A missing record or interpreter is a build that was
+    interrupted. A record naming another origin is a runtime of another
+    install: one version can be installed from two origins on one machine - an
+    index wheel and then a locally rebuilt wheel of the same version - and the
+    release alone cannot tell them apart, so running that runtime would serve
+    package bytes the launcher never installed. Every one of these is rebuilt
+    rather than run.
     """
     wanted = installed_release() if release is None else release
     directory = release_runtime_dir(wanted)
     record = read_runtime_record(directory)
     if record is None or record.get("release") != wanted:
+        return None
+    if record.get("source") != launching_source():
         return None
     if not runtime_interpreter(directory).is_file():
         return None
@@ -420,6 +453,26 @@ def distribution_origin() -> Mapping[str, object] | None:
     return cast("dict[str, object]", parsed) if isinstance(parsed, dict) else None
 
 
+def origin_source(origin: Mapping[str, object] | None) -> str:
+    """Where a distribution came from, in the vocabulary the record carries.
+
+    An index install has no origin record of its own and is named by the
+    index. Every other install is named by the URL it was installed from: an
+    archive, a directory, a repository. That URL is the only thing that tells
+    two installs of one version apart, which is what a later start compares
+    before it runs a runtime it did not build.
+    """
+    if origin is None:
+        return INDEX_SOURCE
+    url = origin.get("url")
+    return url if isinstance(url, str) and url else _UNNAMED_SOURCE
+
+
+def launching_source() -> str:
+    """Where the launching distribution came from, as a record would name it."""
+    return origin_source(distribution_origin())
+
+
 def runtime_requirement(
     release: str, origin: Mapping[str, object] | None
 ) -> RuntimeRequirement:
@@ -433,11 +486,12 @@ def runtime_requirement(
         ServiceRuntimeError: The launching distribution is a checkout - an
             editable or source install - which no requirement reproduces.
     """
+    source = origin_source(origin)
     if origin is None:
-        return RuntimeRequirement(f"{RUNTIME_REQUEST}=={release}", "index")
+        return RuntimeRequirement(f"{RUNTIME_REQUEST}=={release}", source)
     url = origin.get("url")
     if isinstance(url, str) and url and "archive_info" in origin:
-        return RuntimeRequirement(f"{RUNTIME_REQUEST} @ {url}", url)
+        return RuntimeRequirement(f"{RUNTIME_REQUEST} @ {url}", source)
     raise ServiceRuntimeError(
         ERROR_RUNTIME_UNSUPPORTED,
         "This installation is a source checkout, which the service runtime "

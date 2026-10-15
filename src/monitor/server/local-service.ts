@@ -6,6 +6,10 @@ import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
+import {
+  defaultReadinessWindowSeconds,
+  lifecycleBudgetMilliseconds,
+} from "../lifecycle-budget.ts";
 
 const prefix = "/api/monitor";
 const maxResponseBytes = 32 * 1024 * 1024;
@@ -230,11 +234,21 @@ function redact(value: unknown): unknown {
   );
 }
 
+// The owner reads its store readiness window from this environment, so the
+// wait on the owner follows the window the operator set rather than the
+// default a page has to assume.
+function readinessWindowSeconds(): number {
+  const configured = Number(process.env.VAULTSPEC_RAG_QDRANT_READY_TIMEOUT);
+  return Number.isFinite(configured) && configured > 0
+    ? configured
+    : defaultReadinessWindowSeconds;
+}
+
 function timeout(path: string): number {
-  if (path === "/lifecycle/start") return 900000;
-  // A restart is a stop and then a start, each with its own budget.
-  if (path === "/lifecycle/restart") return 1080000;
-  if (path === "/lifecycle/stop") return 120000;
+  const budget = lifecycleBudgetMilliseconds(readinessWindowSeconds());
+  if (path === "/lifecycle/start") return budget.start;
+  if (path === "/lifecycle/restart") return budget.restart;
+  if (path === "/lifecycle/stop") return budget.stop;
   if (["/lifecycle", "/repositories", "/storage/survey"].includes(path))
     return 30000;
   if (

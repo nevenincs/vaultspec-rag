@@ -9,12 +9,26 @@ import {
   Stack,
 } from "@carbon/react";
 import {
+  clientMarginMilliseconds,
+  lifecycleBudgetMilliseconds,
+} from "./lifecycle-budget.ts";
+import {
   MonitorUnreachableError,
   object,
   request,
   text,
   type RecordValue,
 } from "./model";
+
+function lifecycleBudget(action: string): number {
+  // A page cannot read the operator's store readiness window, so the default
+  // one stands here; the monitor's own server honours whatever is set.
+  const budget = lifecycleBudgetMilliseconds();
+  if (action === "restart") return budget.restart;
+  if (action === "start") return budget.start;
+  // Pause, resume and stop all end in the monitor's stop-shaped budget.
+  return budget.stop;
+}
 
 const stoppedWithMonitor =
   "The service stopped, and this monitor closed with it. Run `vaultspec-rag server start` to start it again.";
@@ -46,8 +60,10 @@ export function ServiceControls({
   const quiesce = object(state?.quiesce);
   const mode = text(quiesce.state, text(health?.status, "unknown"));
   const borrowed = quiesce.borrower_bound === true;
-  // Any lifecycle outcome without a healthy service can be started, a crash
-  // included; only a service still warming up is left to finish.
+  // Any lifecycle outcome without a healthy service can be started: a daemon
+  // that still runs but stopped answering or heartbeating, and the window a
+  // failed restart leaves. A daemon process that died takes this monitor with
+  // it. Only a service still warming up is left to finish.
   const stopped = (!health || stale) && lifecycle?.state !== "warming";
   const send = async (action: string) => {
     if (busy.current) return;
@@ -62,7 +78,7 @@ export function ServiceControls({
           ? `/lifecycle/${action}`
           : `/${action}`,
         { method: "POST", body: "{}" },
-        action === "restart" ? 1085000 : action === "start" ? 905000 : 125000,
+        lifecycleBudget(action) + clientMarginMilliseconds,
       );
       const outcome = text(
         result.message,

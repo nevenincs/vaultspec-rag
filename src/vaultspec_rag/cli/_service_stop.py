@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import sys
 from dataclasses import dataclass
-from typing import Annotated
+from typing import Annotated, Final
 
 import typer
 
@@ -54,6 +54,7 @@ from ._service_lifecycle import (
 from ._service_status import _append_lifecycle_shutdown_log
 
 __all__ = [
+    "STOP_BUDGET_SECONDS",
     "_fail_still_running",
     "_fail_stop",
     "_initiator_fields",
@@ -80,6 +81,24 @@ _NO_SERVICE_STATUSES = frozenset({"stopped", "already_stopped", "cleaned", "recl
 # escalation and owned-child reap once the drain window expires.
 _STOP_GRACEFUL_DRAIN_SECONDS = 20.0
 _STOP_TERMINATION_BUDGET_SECONDS = 45.0
+
+# How long a terminated pid is watched for its exit after its own budget
+# expired. A kill is asynchronous, not slow; this only covers the gap between
+# the signal and the process table catching up.
+_TERMINATION_EXIT_WAIT_SECONDS = 5.0
+
+# How many terminate-and-confirm escalations one stop can run in sequence: a
+# resident machine-lock holder with no discoverable status file, the service
+# recorded on the port, and the reap of an orphaned daemon.
+_STOP_ESCALATIONS = 3
+
+#: The longest a stop can legitimately take. A caller that waits on a stop
+#: reads it from here. Stop provisions nothing, so the whole bound is the
+#: termination escalations it may have to run; the start path's budget is an
+#: order of magnitude larger and is stated where the start applies it.
+STOP_BUDGET_SECONDS: Final = _STOP_ESCALATIONS * (
+    _STOP_TERMINATION_BUDGET_SECONDS + _TERMINATION_EXIT_WAIT_SECONDS
+)
 
 # Stop's success claims ride on these probes: a live listener misread as gone
 # would report an already-stopped success, or reap without the serving-pid
@@ -273,7 +292,7 @@ def _terminate_and_confirm(
         expected_start_time=expected_start_time,
     )
 
-    wait_for_exit(pid, timeout=5.0, poll_seconds=0.1)
+    wait_for_exit(pid, timeout=_TERMINATION_EXIT_WAIT_SECONDS, poll_seconds=0.1)
 
     if not pid_terminated(pid):
         # Nothing below applies to a survivor. Its discovery records still

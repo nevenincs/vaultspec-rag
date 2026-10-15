@@ -38,9 +38,9 @@ Generated from the live command surface. Each entry lists the command's argument
   - [resume](#server-resume)
   - [status](#server-status)
   - [reconcile](#server-reconcile)
-  - [restart](#server-restart)
   - [start](#server-start)
   - [stop](#server-stop)
+  - [restart](#server-restart)
   - **job**
     - [show](#server-job-show)
     - [pause](#server-job-pause)
@@ -467,25 +467,6 @@ None.
 | `--timeout` | float | no | 35.0 | Seconds to wait for convergence before reporting unresolved. |
 | `--json` | boolean | no | off | Emit JSON for scripts instead of human text. Preserves exit codes 0 (converged) and 1 (not converged). |
 
-## server restart
-
-Restart the background search service, keeping its monitor.
-
-```bash
-vaultspec-rag server restart
-```
-
-### Arguments
-
-None.
-
-### Options
-
-| Name | Type | Required | Default | Description |
-| --- | --- | --- | --- | --- |
-| `--port` | int | no | - | Service port (defaults to running service). |
-| `--json` | boolean | no | off | Emit JSON for scripts instead of human text. |
-
 ## server start
 
 Start the background search service. The first start downloads what the service needs and does not have yet, each checked against digests pinned in vaultspec-rag, then waits until the service is ready. Later starts download nothing.
@@ -555,6 +536,25 @@ None.
 | `--port` | int | no | - | Stop the service answering on this port, resolving its identity from /health, or from a matching launch identity in the status file before its listener opens. Use when the service runs on a non-default port or the status file diverges from the running instance. |
 | `--json` | boolean | no | off | Emit one structured JSON outcome. An already-stopped service is the success `already_stopped` (exit 0); a stop that leaves the service running (unconfirmed identity) is `identity_unconfirmed` (exit 1) in both output modes. |
 | `--orphans` | boolean | no | off | Reap surplus vaultspec-rag daemons that lost the machine-singleton race and linger holding no port, lock, or discovery pointer, invisible to a normal stop. Confirm-then-reap, scoped to this singleton's port; the live singleton, isolated-config, and foreign-worktree daemons are always spared. |
+
+## server restart
+
+Restart the background search service, keeping its monitor.
+
+```bash
+vaultspec-rag server restart
+```
+
+### Arguments
+
+None.
+
+### Options
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `--port` | int | no | - | Service port (defaults to running service). |
+| `--json` | boolean | no | off | Emit JSON for scripts instead of human text. |
 
 ## server job show
 

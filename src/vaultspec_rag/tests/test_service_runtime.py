@@ -41,12 +41,15 @@ from ..service_runtime import (
     ERROR_RUNTIME_FAILED,
     ERROR_RUNTIME_NO_GPU,
     ERROR_RUNTIME_UNSUPPORTED,
+    INDEX_SOURCE,
     RUNTIME_RECORD_NAME,
     RuntimeRequirement,
     ServiceInterpreterSource,
     ServiceRuntimeError,
+    _record,
     install_arguments,
     installed_release,
+    launching_source,
     planned_service_interpreter,
     remove_superseded_runtimes,
     runtime_interpreter,
@@ -57,7 +60,12 @@ from ..service_runtime import (
     venv_arguments,
 )
 from ..torch_config._index import CU130_INDEX_URL
-from ._real_environments import invoke_the_cli, publish_runtime, reported
+from ._real_environments import (
+    invoke_the_cli,
+    publish_runtime,
+    reported,
+    runtime_record_requirement,
+)
 from ._separate_installation import SeparateInstallation, build_installation
 from .conftest import managed_env
 
@@ -97,14 +105,23 @@ def _launching(interpreter: str, capability: ComputeCapability) -> ServiceEnviro
     return ServiceEnvironment(interpreter, capability)
 
 
-def _publish_runtime(release: str | None = None) -> Path:
-    """A complete runtime for *release* under the redirected status directory."""
+def _publish_runtime(release: str | None = None, *, source: str | None = None) -> Path:
+    """A complete runtime for *release* under the redirected status directory.
+
+    The record is written by the writer a build uses. *source* names the origin
+    it carries, and defaults to the origin this process's own distribution came
+    from, which is the launcher every reading here is made from. The
+    interpreter is a file and nothing more: what the selection reads of it is
+    that it exists.
+    """
     wanted = installed_release() if release is None else release
     directory = runtime_root() / wanted
-    _interpreter_in(directory)
-    (directory / RUNTIME_RECORD_NAME).write_text(
-        json.dumps({"release": wanted, "source": "index", "capability": "ready"}),
-        encoding="utf-8",
+    interpreter = _interpreter_in(directory)
+    _record(
+        directory,
+        wanted,
+        runtime_record_requirement(wanted, source),
+        ServiceEnvironment(interpreter, ComputeCapability.READY),
     )
     return directory
 
@@ -349,6 +366,132 @@ def _without_uv(directory: Path) -> dict[str, str | None]:
     return {EnvVar.UV.value: None, EnvVar.PATH.value: str(directory)}
 
 
+#: A wheel of this release that is not the one any launcher here was installed
+#: from: the locally rebuilt archive an operator produces beside an index
+#: install, carrying the same version and different bytes.
+_A_REBUILT_WHEEL = "file:///rebuilt/vaultspec_rag-0.0.0-py3-none-any.whl"
+
+#: Reports which interpreter a start would serve from, for a launcher whose
+#: own judgement says it cannot serve, in the environment it is given.
+_PLAN_THE_INTERPRETER = """
+import json
+import sys
+
+from vaultspec_rag.operator_state._installation import ComputeCapability
+from vaultspec_rag.operator_state._service_environment import ServiceEnvironment
+from vaultspec_rag.service_runtime import launching_source, planned_service_interpreter
+
+plan = planned_service_interpreter(
+    ServiceEnvironment(sys.executable, ComputeCapability.CPU_ONLY_BUILD)
+)
+print(json.dumps({
+    "source": str(plan.source),
+    "interpreter": plan.interpreter,
+    "origin": launching_source(),
+}))
+"""
+
+
+@pytest.mark.unit
+@pytest.mark.usefixtures("isolated_status_dir")
+class TestWhoseRuntimeItIs:
+    """A runtime serves the installation whose origin its record names.
+
+    One version can be installed from two origins on one machine - an index
+    wheel, and then a wheel rebuilt locally from the same version - and the
+    two hold different package bytes. The release they report is identical, so
+    it cannot tell them apart; the recorded origin is what can.
+    """
+
+    def test_a_same_release_runtime_from_another_origin_is_not_reused(
+        self, tmp_path: Path
+    ) -> None:
+        """Guard assertion: a release does not identify an install.
+
+        The record names this release and an archive this launcher was not
+        installed from, so the environment it describes holds other package
+        bytes under the same version, and serving a daemon from it would run a
+        release the launcher never installed. Mutation check: comparing the
+        release alone - dropping the source comparison from the completeness
+        check - returns ``runtime`` here and fails on the source.
+        """
+        published = _publish_runtime(source=_A_REBUILT_WHEEL)
+        interpreter = _interpreter_in(tmp_path / "project" / ".venv")
+
+        plan = planned_service_interpreter(
+            _launching(interpreter, ComputeCapability.CPU_ONLY_BUILD)
+        )
+
+        assert plan.source is ServiceInterpreterSource.RUNTIME_REQUIRED
+        assert plan.interpreter is None
+        # Nothing was removed: the next start rebuilds the directory in place.
+        assert (published / RUNTIME_RECORD_NAME).is_file()
+
+    def test_a_record_that_names_no_origin_is_not_reused(self, tmp_path: Path) -> None:
+        """Guard assertion: an absent field is not a match.
+
+        A record written before the origin was recorded at all names none, and
+        a reuse check that reads a missing field as agreement is the defect
+        itself. Mutation check: treating an absent source as this launcher's
+        returns ``runtime`` here and fails on the source.
+        """
+        directory = _publish_runtime()
+        record = json.loads(
+            (directory / RUNTIME_RECORD_NAME).read_text(encoding="utf-8")
+        )
+        del record["source"]
+        (directory / RUNTIME_RECORD_NAME).write_text(
+            json.dumps(record), encoding="utf-8"
+        )
+        interpreter = _interpreter_in(tmp_path / "project" / ".venv")
+
+        plan = planned_service_interpreter(
+            _launching(interpreter, ComputeCapability.CPU_ONLY_BUILD)
+        )
+
+        assert plan.source is ServiceInterpreterSource.RUNTIME_REQUIRED
+
+    def test_an_index_install_is_not_served_a_rebuilt_wheels_runtime(
+        self, from_an_index: SeparateInstallation
+    ) -> None:
+        """The two origins are both real distribution records, same version.
+
+        The launcher is an installation of this release whose record names no
+        archive, which is what an index install leaves, and it reads the
+        runtime for itself in a fresh interpreter of its own. The runtime was
+        built from a rebuilt wheel of the same version. Mutation check:
+        comparing the release alone reports ``runtime`` here and fails on the
+        source.
+        """
+        _publish_runtime(source=_A_REBUILT_WHEEL)
+
+        plan = _ran_in(from_an_index, _PLAN_THE_INTERPRETER, {})
+
+        assert plan["origin"] == INDEX_SOURCE
+        assert plan["source"] == ServiceInterpreterSource.RUNTIME_REQUIRED.value
+
+    def test_an_index_install_is_served_an_index_runtime(
+        self, from_an_index: SeparateInstallation
+    ) -> None:
+        """The same runtime directory, recorded for the origin that reads it."""
+        directory = _publish_runtime(source=INDEX_SOURCE)
+
+        plan = _ran_in(from_an_index, _PLAN_THE_INTERPRETER, {})
+
+        assert plan["origin"] == INDEX_SOURCE
+        assert plan["source"] == ServiceInterpreterSource.RUNTIME.value
+        assert plan["interpreter"] == str(runtime_interpreter(directory))
+
+    def test_the_rebuilt_wheel_is_not_where_this_process_came_from(self) -> None:
+        """The premise the in-process refusal rests on, from real metadata.
+
+        The origin is read from this installation's own distribution record.
+        Were it to read as the rebuilt wheel, the refusal above would hold for
+        the wrong reason.
+        """
+        assert launching_source() != _A_REBUILT_WHEEL
+
+
 @pytest.mark.unit
 class TestTheUvTheBuildRunsThrough:
     """uv names itself to its children; otherwise it is found on PATH."""
@@ -581,7 +724,9 @@ class TestBuildingAndPublishingTheRuntime:
             second.start()
             try:
                 _await_the_file(asking, second)
-                published = publish_runtime()
+                # The start waiting for the lock is an installation from an
+                # index, and reuses a runtime built from one.
+                published = publish_runtime(source=INDEX_SOURCE)
             finally:
                 holder.release()
             second.join(timeout=120)

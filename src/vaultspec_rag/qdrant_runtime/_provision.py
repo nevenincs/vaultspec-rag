@@ -48,7 +48,7 @@ import zlib
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import IO, TYPE_CHECKING
+from typing import IO, TYPE_CHECKING, Final
 
 from .._atomic_write import (
     JsonWriteOptions,
@@ -98,6 +98,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "PROVISION_BUDGET_SECONDS",
     "clean_provisioned",
     "provision",
     "provisioned_versions",
@@ -116,6 +117,11 @@ _LOCK_FILENAME = "provision.lock"
 # the lock with its process, so this is never spent waiting on a dead one.
 _LOCK_WAIT_SECONDS = _DOWNLOAD_LIMITS.deadline_seconds + 60.0
 _LOCK_POLL_SECONDS = 0.2
+#: The longest provisioning this binary can legitimately take: the wait for
+#: another run's lock, then this run's own download, verification and
+#: extraction. A caller bounding a command that provisions reads its server
+#: term from here instead of restating the download limits.
+PROVISION_BUDGET_SECONDS: Final = _LOCK_WAIT_SECONDS + _DOWNLOAD_LIMITS.deadline_seconds
 # Kept free beyond what the install itself writes: the manifest, the
 # filesystem's own bookkeeping, and whatever else is writing to the volume
 # while this runs.

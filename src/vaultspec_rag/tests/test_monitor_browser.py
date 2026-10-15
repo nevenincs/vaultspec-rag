@@ -393,6 +393,7 @@ def test_local_bridge_lifecycle_uses_fixed_canonical_commands(
     node = shutil.which("node")
     assert node is not None
     source = Path(__file__).resolve().parents[2] / "monitor/server/local-service.ts"
+    budget_source = Path(__file__).resolve().parents[2] / "monitor/lifecycle-budget.ts"
     tools_directory = tmp_path / "tools"
     if installed:
         interpreter = (
@@ -424,6 +425,9 @@ def test_local_bridge_lifecycle_uses_fixed_canonical_commands(
         "}; syncBuiltinESMExports();"
         "const { monitorAccess, monitorMiddleware }="
         f"await import({json.dumps(source.as_uri())});"
+        "const { lifecycleBudgetMilliseconds }="
+        f"await import({json.dumps(budget_source.as_uri())});"
+        "const budget=lifecycleBudgetMilliseconds();"
         "const server=createServer((req,res)=>monitorMiddleware(req,res,()=>{"
         "res.writeHead(404);res.end();}));"
         "await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));"
@@ -478,8 +482,11 @@ def test_local_bridge_lifecycle_uses_fixed_canonical_commands(
         # Enabling shell execution fails this assertion; restoration passes.
         "assert.equal(call.options.shell,false);assert.equal(call.options.windowsHide,true);"
         "assert.equal(call.options.maxBuffer,1024*1024);"
-        "assert.equal(call.options.timeout,verb==='status'?30000:verb==='start'?900000:"
-        "verb==='restart'?1080000:120000);"
+        # The lifecycle waits come from the monitor's own budget module, so a
+        # verb's wait is one fact; that the budgets cover the owner verbs is
+        # asserted where those budgets are computed.
+        "assert.equal(call.options.timeout,verb==='status'?30000:"
+        "budget[verb]);"
         "}"
         "failure=false;"
         # Accepting browser arguments fails this assertion; restoration passes.

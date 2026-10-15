@@ -27,10 +27,25 @@ from ._service_lifecycle import (
     _lifecycle_success,
     _LifecycleFailure,
 )
+from ._service_start import start_budget_seconds
+from ._service_stop import STOP_BUDGET_SECONDS
 
 _RESTART_COMMAND = "service.restart"
-#: Start's own model and storage budget, plus room for the stop before it.
-_STEP_TIMEOUT_SECONDS = 1020
+
+
+def _step_timeout_seconds(verb: str) -> float:
+    """Return how long the *verb* step of a restart is waited on, in seconds.
+
+    Each step is allowed the whole budget the verb itself applies, read from
+    the verb, so a restart can never abandon a step that is still inside its
+    own bounds. The difference between them is large and load-bearing: a stop
+    provisions nothing, while a start from a release whose managed runtime is
+    absent downloads the GPU stack, the models, the server binary and the
+    monitor before it waits for the daemon to serve. A restart that held the
+    start to anything shorter killed it after the stop had already succeeded,
+    leaving no service running and a half-built runtime behind.
+    """
+    return start_budget_seconds() if verb == "start" else STOP_BUDGET_SECONDS
 
 
 def _run_verb(verb: str, port: int | None) -> dict[str, object]:
@@ -46,7 +61,7 @@ def _run_verb(verb: str, port: int | None) -> dict[str, object]:
             encoding="utf-8",
             errors="replace",
             env={**os.environ, "PYTHONUTF8": "1"},
-            timeout=_STEP_TIMEOUT_SECONDS,
+            timeout=_step_timeout_seconds(verb),
             check=False,
         )
     except subprocess.TimeoutExpired:

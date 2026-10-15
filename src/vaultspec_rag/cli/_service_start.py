@@ -114,6 +114,7 @@ __all__ = [
     "_start_success",
     "_tail_daemon_log",
     "service_start",
+    "start_budget_seconds",
 ]
 
 _START_COMMAND = "service.start"
@@ -174,6 +175,53 @@ def _service_ready_deadline_seconds() -> float:
     return (
         ready_ceiling_seconds(ready_timeout_seconds())
         + _START_OVERHEAD_ALLOWANCE_SECONDS
+    )
+
+
+def start_budget_seconds() -> float:
+    """Return the longest this command can legitimately run, in seconds.
+
+    What a caller that waits on a start must allow it. Every term is read
+    from the module that applies it, so the bound moves with the budgets it
+    is made of and no caller carries a number of its own:
+
+    - the accelerator probe in the daemon interpreter, before anything is
+      fetched or written;
+    - one build of the managed runtime, which downloads the GPU stack and is
+      the largest fixed term: a release whose runtime is absent, started from
+      an installation that cannot serve, pays it in full;
+    - one fetch of each configured model repository, bounded by the fetch's
+      own no-progress limits rather than by file size;
+    - one download of the Qdrant server binary and one of this release's
+      monitor;
+    - the wait for the spawned daemon to serve.
+
+    The terms are summed, not maximised: a first start on a host runs all of
+    them, one after another.
+
+    A model fetch that keeps making progress has no bound here, because it has
+    none in the fetch either: it ends when the files arrive. An operator on a
+    link slow enough for that sees the transfer's own progress, and a caller
+    cannot tell it from a hang, so no finite number covers it.
+    """
+    from ..commands._model_download import DEFAULT_LIMITS
+    from ..config._settings import configured_model_repos
+    from ..monitor_runtime._provision import (
+        PROVISION_BUDGET_SECONDS as MONITOR_PROVISION_BUDGET_SECONDS,
+    )
+    from ..operator_state._environment_probe import VERIFY_TIMEOUT_SECONDS
+    from ..qdrant_runtime._provision import (
+        PROVISION_BUDGET_SECONDS as QDRANT_PROVISION_BUDGET_SECONDS,
+    )
+    from ..service_runtime import RUNTIME_PROVISION_BUDGET_SECONDS
+
+    return (
+        VERIFY_TIMEOUT_SECONDS
+        + RUNTIME_PROVISION_BUDGET_SECONDS
+        + DEFAULT_LIMITS.budget_seconds * len(configured_model_repos())
+        + QDRANT_PROVISION_BUDGET_SECONDS
+        + MONITOR_PROVISION_BUDGET_SECONDS
+        + _service_ready_deadline_seconds()
     )
 
 

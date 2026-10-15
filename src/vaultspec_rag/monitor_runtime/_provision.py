@@ -42,7 +42,7 @@ import zipfile
 import zlib
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from typing import IO, TYPE_CHECKING
+from typing import IO, TYPE_CHECKING, Final
 
 from .._atomic_write import replace_atomically
 from .._rmtree import remove_tree
@@ -88,6 +88,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "MONITOR_PROVISION_FAILED",
+    "PROVISION_BUDGET_SECONDS",
     "provision_monitor",
     "provision_pinned_monitor",
     "retire_superseded",
@@ -111,6 +112,12 @@ _DOWNLOAD_DEADLINE_SECONDS = 2700.0
 _DOWNLOAD_LIMITS = replace(
     DownloadLimits(), deadline_seconds=_DOWNLOAD_DEADLINE_SECONDS
 )
+
+#: The longest obtaining this release's monitor can legitimately take: one
+#: whole download, with its verification and extraction inside the same
+#: deadline. A caller bounding a command that provisions reads its monitor
+#: term from here instead of restating the download limits.
+PROVISION_BUDGET_SECONDS: Final = _DOWNLOAD_DEADLINE_SECONDS
 
 # Everything that can go wrong between creating the first staging file and
 # the executable landing, and is an outcome to report rather than a defect to
