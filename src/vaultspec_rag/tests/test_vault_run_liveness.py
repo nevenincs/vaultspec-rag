@@ -445,6 +445,17 @@ def test_actual_vault_entries_adopt_the_opened_checkpoint_policy(
     path = tmp_path / ".vault" / "adr" / "notes.md"
     path.parent.mkdir(parents=True)
     path.write_text("---\ndate: '2026-10-03'\n---\n# Notes\n\nreal source\n")
+    # This observes which policy each entry adopts, not the deadline. The
+    # profile hook slows every call past the two-second window the deadline
+    # tests rely on, so this run gets a window only a hang exceeds.
+    get_config(
+        {
+            "embedding_dimension": 2,
+            "qdrant_url": None,
+            "sparse_enabled": False,
+            "index_no_progress_timeout_seconds": 60.0,
+        }
+    )
     with VaultStore(tmp_path, embedding_dim=2) as store:
         seed = _open(tmp_path, store, RunControlToken())
         _confirm(store, seed, _chunk())
