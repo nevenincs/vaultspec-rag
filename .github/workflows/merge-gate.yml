@@ -16,7 +16,7 @@ on:
   workflow_call:
     inputs:
       ref:
-        description: Git ref to validate
+        description: Full commit SHA to validate
         required: true
         type: string
   schedule:
@@ -24,7 +24,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: Git ref to validate (defaults to the dispatched ref)
+        description: Full commit SHA to validate (defaults to the dispatched commit)
         required: false
         type: string
 
@@ -423,8 +423,12 @@ jobs:
           PROOF_EVENT: ${{ github.event_name == 'push' && 'push' || github.event_name == 'pull_request' && 'pull_request' || 'workflow_dispatch' }}
         run: |
           set -euo pipefail
+          # Every measuring job checks out inputs.ref. A branch or tag name can
+          # move between those checkouts and this query, so only a commit SHA
+          # ties the proof to the code that was measured.
           if ! [[ "$PROOF_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            PROOF_SHA="$GITHUB_SHA"
+            echo "::error::ref '$PROOF_SHA' is not a full commit SHA; dispatch the gate with the exact commit to prove"
+            exit 1
           fi
           # The check runs separately on the canonical workflow's runner.
           # Poll only its newest run on this SHA, and never reuse an older green.

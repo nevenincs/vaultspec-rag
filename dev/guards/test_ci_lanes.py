@@ -375,6 +375,23 @@ def test_every_dispatch_requires_the_exact_commit_devserver_proof() -> None:
     )
 
 
+def test_a_dispatch_ref_that_is_not_a_commit_sha_is_refused() -> None:
+    """The proof names the commit the measuring jobs checked out, or nothing.
+
+    Mutation proof: restoring the fallback that replaced a non-SHA ref with
+    ``GITHUB_SHA`` fails the refusal assertion; restoring the refusal passes.
+    """
+    name = "Require the release dev server proof on this exact commit"
+    step = next(step for step in _jobs()[GATE_JOB]["steps"] if step.get("name") == name)
+    assert "inputs.ref" in str(step["env"]["PROOF_SHA"])
+    run = str(step["run"])
+    guard = run[: run.index("for _ in")]
+    assert '[[ "$PROOF_SHA" =~ ^[0-9a-f]{40}$ ]]' in guard
+    # The non-SHA branch must fail; any reassignment would prove another commit.
+    assert "exit 1" in guard
+    assert "PROOF_SHA=" not in guard
+
+
 @pytest.mark.parametrize("author", ["CONTRIBUTOR", "NONE", "FIRST_TIMER"])
 @pytest.mark.parametrize("head", [_HOME, "stranger/repo"])
 def test_untrusted_pull_requests_never_run_even_with_a_full_label(
