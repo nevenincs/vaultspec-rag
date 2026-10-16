@@ -26,6 +26,7 @@ from ._content_policy import (
     classify_content,
 )
 from ._preprocess_config import (
+    PREPROCESS_CONFIG_FILENAME,
     OnError,
     PreprocessRule,
     hook_state,
@@ -574,6 +575,18 @@ class ResolvedIndexPolicy:
         if self.hook_state is PreprocessHookState.UNAPPROVED:
             return f"{rel_path}: preprocessing awaiting approval; not extracted"
         return f"{rel_path}: preprocessing disabled; retained work as stale"
+
+    def reads_config_file(self, rel_path: str) -> bool:
+        """Return whether a change to *rel_path* can alter this policy's inputs.
+
+        The ``.vaultragignore`` and preprocess config are read at the root
+        only, and a ``.gitignore`` only where pattern collection reaches it.
+        """
+        if rel_path in {".vaultragignore", PREPROCESS_CONFIG_FILENAME}:
+            return True
+        return rel_path.rsplit("/", 1)[-1] == ".gitignore" and (
+            _ignore_specs.gitignore_is_read(rel_path, self._git_spec, self._rag_spec)
+        )
 
     def classify(self, rel_path: str) -> ClassifiedContent:
         """Classify one path using only this snapshot's resolved inputs."""

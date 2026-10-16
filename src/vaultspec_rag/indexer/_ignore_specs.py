@@ -32,6 +32,23 @@ def is_ignored(
     return rag_spec is not None and rag_spec.match_file(rel_path)
 
 
+def gitignore_is_read(
+    rel_path: str,
+    git_spec: pathspec.GitIgnoreSpec,
+    rag_spec: pathspec.GitIgnoreSpec | None,
+) -> bool:
+    """Return whether pattern collection reads the ``.gitignore`` at *rel_path*.
+
+    Collection prunes every ignored directory before looking inside it, so an
+    ignore file below any ignored ancestor is never read.
+    """
+    parts = rel_path.split("/")[:-1]
+    return not any(
+        is_ignored("/".join(parts[: depth + 1]) + "/", git_spec, rag_spec)
+        for depth in range(len(parts))
+    )
+
+
 def collect_gitignore_patterns(root_dir: pathlib.Path) -> list[str]:
     """Collect the hardcoded and ``.gitignore``-sourced exclusion patterns.
 
