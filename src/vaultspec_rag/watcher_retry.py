@@ -269,8 +269,23 @@ def process_identity_is_live(pid: int, create_time: float) -> bool:
     return math.isclose(live_start, create_time, rel_tol=0.0, abs_tol=0.01)
 
 
+def _prepare_state_directory(path: Path, root: Path) -> None:
+    """Create the state directory below *root* without ever creating *root*.
+
+    A root deleted while its watcher still runs must stay deleted. Recreating
+    it leaves an empty tree that later reads as a project to watch. A state
+    path outside the root gets no directories at all.
+    """
+    if not path.parent.is_relative_to(root):
+        return
+    directory = root
+    for part in path.parent.relative_to(root).parts:
+        directory /= part
+        directory.mkdir(exist_ok=True)
+
+
 @contextmanager
-def locked_state(path: Path) -> Generator[None]:
+def locked_state(path: Path, *, root: Path) -> Generator[None]:
     """Serialize each retry-state transaction across threads and processes."""
     deadline = time.monotonic() + _STATE_LOCK_TIMEOUT_SECONDS
     thread_lock = _thread_lock_for(path, deadline=deadline)
@@ -281,7 +296,7 @@ def locked_state(path: Path) -> Generator[None]:
         )
     try:
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
+            _prepare_state_directory(path, root)
         except OSError as exc:
             raise state_io_failure("prepare", path, exc) from exc
         lock_path = path.with_name(f"{path.name}.lock")
