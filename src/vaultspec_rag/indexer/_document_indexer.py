@@ -19,7 +19,11 @@ from ..job_control import NO_RUN_CONTROL
 from ..store_runtime import StorageGeometryError
 from . import _chunk_worker, _preprocess_glue, _stat_gate
 from ._checkpoint_common import PublicationExecution, publish_checkpoint
-from ._content_discovery import CodeContentDiscovery, validate_admitted_sources
+from ._content_discovery import (
+    CodeContentDiscovery,
+    normalize_changed_paths,
+    validate_admitted_sources,
+)
 from ._content_policy import ContentKind, RootContentPolicy
 from ._document_checkpoint import (
     DocumentRunCheckpoint,
@@ -463,19 +467,6 @@ class DocumentIndexer:
         run_control.checkpoint()
         return DocumentIndexPreflight(self.root_dir, policy, files)
 
-    def _normalize_changed_paths(
-        self,
-        changed_paths: Iterable[pathlib.Path],
-        *,
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> tuple[pathlib.Path, ...]:
-        run_control.checkpoint()
-        normalized = {path.resolve() for path in changed_paths}
-        if any(not path.is_relative_to(self.root_dir) for path in normalized):
-            raise ValueError("document index scope contains a path outside its root")
-        run_control.checkpoint()
-        return tuple(sorted(normalized, key=lambda path: path.as_posix()))
-
     def preflight_changed_paths(
         self,
         changed_paths: Iterable[pathlib.Path],
@@ -484,9 +475,9 @@ class DocumentIndexer:
     ) -> DocumentScopedPreflight:
         """Resolve policy and classify only the exact caller-selected scope."""
         policy = self.resolve_policy_snapshot()
-        normalized = self._normalize_changed_paths(
-            changed_paths,
-            run_control=run_control,
+        run_control.checkpoint()
+        normalized = normalize_changed_paths(
+            self.root_dir, changed_paths, ContentKind.DOCUMENT
         )
         for path in normalized:
             run_control.checkpoint()
@@ -527,9 +518,9 @@ class DocumentIndexer:
             return authority.policy, authority.files
         if changed_paths is None:
             raise ValueError("scoped document preflight requires changed paths")
-        normalized = self._normalize_changed_paths(
-            changed_paths,
-            run_control=run_control,
+        run_control.checkpoint()
+        normalized = normalize_changed_paths(
+            self.root_dir, changed_paths, ContentKind.DOCUMENT
         )
         if normalized != authority.changed_paths:
             raise ValueError("document index scope does not match its preflight")
