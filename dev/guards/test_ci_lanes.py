@@ -334,20 +334,20 @@ def test_pr_verdict_requires_full_proof() -> None:
     assert '${LIGHT}" = "success"' not in script, (
         "light lint must never authorize the merge gate"
     )
-    prior = script.split('if [ "$previous" = "success" ]; then', 1)[1].split("fi", 1)[0]
-    assert 'require_full_run "$run" ||' in prior, (
-        "a prior success must prove that every full job actually passed"
-    )
+    assert 'if require_full_run "$run"; then' in script
+    assert 'if [ "$previous" != "success" ]; then' in script
+    assert 'if [ "$proof" -ne 2 ]; then' in script
+    assert "status=completed&per_page=100" in script
+    assert "if (count && !measured) exit 2" in script
+    assert "sort -t $'\\t' -k1,1nr" in script
     assert 'if ($4 != "success") failed=1' in script
     assert "exit(failed || count != 8)" in script
     assert "jobs?filter=all&per_page=100" in script
     assert "jobs=$(gh api --paginate " in script
     assert "sort -t $'\\t' -k1,1 -k2,2nr -k3,3nr" in script
-    # Removing the history loop failed this assertion; restoration passed.
-    assert "while read -r run previous; do" in script
-    assert 'if [ "$previous" != "success" ]; then' in script
-    assert 'if require_full_run "$run"; then' in script
-    assert "sort -k1,1nr" in script
+    # Reading the history without a tab separator failed this assertion;
+    # restoration passed.
+    assert "while IFS=$'\\t' read -r run previous; do" in script
 
 
 def test_dispatch_cannot_select_partial_merge_proof() -> None:
@@ -359,6 +359,37 @@ def test_dispatch_cannot_select_partial_merge_proof() -> None:
         assert isinstance(inputs, dict)
         assert set(cast("dict[object, object]", inputs)) == {"ref"}
     assert "lint-light" not in _jobs()
+
+
+def test_every_dispatch_requires_the_exact_commit_devserver_proof() -> None:
+    """A feature-branch dispatch cannot bypass frontend verification."""
+    name = "Require the release dev server proof on this exact commit"
+    step = next(step for step in _jobs()[GATE_JOB]["steps"] if step.get("name") == name)
+    assert (
+        workflows.evaluate(
+            str(step["if"]),
+            "workflow_dispatch",
+            {"github.ref_name": "feature"},
+        )
+        is workflows.TRUE
+    )
+
+
+def test_a_dispatch_ref_that_is_not_a_commit_sha_is_refused() -> None:
+    """The proof names the commit the measuring jobs checked out, or nothing.
+
+    Mutation proof: restoring the fallback that replaced a non-SHA ref with
+    ``GITHUB_SHA`` fails the refusal assertion; restoring the refusal passes.
+    """
+    name = "Require the release dev server proof on this exact commit"
+    step = next(step for step in _jobs()[GATE_JOB]["steps"] if step.get("name") == name)
+    assert "inputs.ref" in str(step["env"]["PROOF_SHA"])
+    run = str(step["run"])
+    guard = run[: run.index("for _ in")]
+    assert '[[ "$PROOF_SHA" =~ ^[0-9a-f]{40}$ ]]' in guard
+    # The non-SHA branch must fail; any reassignment would prove another commit.
+    assert "exit 1" in guard
+    assert "PROOF_SHA=" not in guard
 
 
 @pytest.mark.parametrize("author", ["CONTRIBUTOR", "NONE", "FIRST_TIMER"])

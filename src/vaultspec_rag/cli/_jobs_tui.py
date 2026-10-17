@@ -542,11 +542,11 @@ class ServerWatchApp(
 
     def _table(self) -> DataTable[Text] | None:
         """Return the indexing table, or ``None`` when it is not mounted."""
-        return cast("DataTable[Text] | None", self._pane("#jobs", DataTable))
+        return self._pane("#jobs", cast("type[DataTable[Text]]", DataTable))
 
     def _search_table(self) -> DataTable[Text] | None:
         """Return the served-search table, or ``None`` before composition."""
-        return cast("DataTable[Text] | None", self._pane("#searches", DataTable))
+        return self._pane("#searches", cast("type[DataTable[Text]]", DataTable))
 
     def _layout_search_columns(self) -> bool:
         """Divide the served-search table against its actual current width."""

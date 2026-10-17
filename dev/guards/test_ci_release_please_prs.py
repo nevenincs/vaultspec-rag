@@ -73,7 +73,8 @@ def test_release_please_dispatches_the_gate_after_its_last_branch_write() -> Non
     run = str(dispatch.get("run", ""))
     assert "gh workflow run merge-gate.yml" in run
     assert '--ref "${HEAD_BRANCH}"' in run
-    assert '--field ref="${HEAD_BRANCH}"' in run
+    assert "git/ref/heads/${HEAD_BRANCH}" in run
+    assert '--field ref="${HEAD_SHA}"' in run
     assert "--field scope=" not in run
 
 

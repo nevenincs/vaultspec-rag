@@ -12,7 +12,7 @@ supersedes:
   - '2026-09-21-automatic-merge-gate-adr'
 modified: '2026-10-13'
 body_schema: 'body-v2'
-body_hash: 'sha256:606f8d82e0c441b8ea2502fee0dc1aaa8fcbc62e1664690d6d9a58532bdb82c5'
+body_hash: 'sha256:90af9fd5b0d10c7b3f60fdddbae18285355a127f149e6eafce085bdb51405f7e'
 ---
 
 # `automatic-merge-gate` adr: `Merge starts an autonomous verified release` | (**status:** `accepted`)
@@ -92,3 +92,5 @@ tag, source and signer digests, while removing the mutually exclusive
 signer-workflow flag. Windows verification compares actual owner SID and protected
 ACL semantics, resolves canonical paths, and refuses image metadata from exited
 processes. Tests retain the real Windows handles needed to prove that refusal.
+
+Unrelated-label successes preserve the existing full-proof chain on the same SHA. The gate walks only successful preservation runs until it reaches complete measured proof; an intervening failure, cancellation, incomplete measurement or unreadable job record terminates the chain.

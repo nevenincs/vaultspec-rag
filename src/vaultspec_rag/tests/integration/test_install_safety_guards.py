@@ -16,7 +16,10 @@ from ._install_helpers import (
     workspace_inventory,
 )
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.usefixtures("isolated_mcp_trust_home"),
+]
 
 
 class TestSafetyGuards:

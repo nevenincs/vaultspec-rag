@@ -97,10 +97,12 @@ jobs:
             echo "::error::release-please returned a pull request without a head branch"
             exit 1
           fi
+          # The gate proves one commit, so it is handed the branch's tip by SHA.
+          HEAD_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${HEAD_BRANCH}" --jq .object.sha)
           gh workflow run merge-gate.yml \
             --repo "${GITHUB_REPOSITORY}" \
             --ref "${HEAD_BRANCH}" \
-            --field ref="${HEAD_BRANCH}"
+            --field ref="${HEAD_SHA}"
 
   candidate:
     name: "Check: Release candidate (Linux)"

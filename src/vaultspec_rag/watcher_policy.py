@@ -22,6 +22,15 @@ CONFIG_FILENAMES = frozenset(
 )
 
 
+def _changes_policy(rel: str, policy: ResolvedIndexPolicy | None) -> bool:
+    """Return whether a config-file change can advance the policy snapshot.
+
+    Without a snapshot every config file is let through, so the edit that
+    repairs an invalid policy still reaches the refresh.
+    """
+    return policy is None or policy.reads_config_file(rel)
+
+
 def is_vault_change(path: Path, vault_dir: Path) -> bool:
     """Return True if path is a markdown file inside the vault."""
     try:
@@ -44,15 +53,15 @@ def is_code_change(
             "watcher code-path: %s not under vault %s: %s", path, vault_dir, exc
         )
     try:
-        rel = path.relative_to(root_dir)
+        rel = path.relative_to(root_dir).as_posix()
     except ValueError as exc:
         logger.debug("watcher code-path: %s not under root %s: %s", path, root_dir, exc)
         return False
     if path.name in CONFIG_FILENAMES:
-        return True
+        return _changes_policy(rel, policy)
     if policy is None:
         return False
-    disposition = policy.classify(str(rel).replace("\\", "/")).disposition
+    disposition = policy.classify(rel).disposition
     return disposition.admitted and disposition.kind is ContentKind.CODE
 
 
@@ -66,14 +75,14 @@ def is_document_change(
     except ValueError:
         pass
     try:
-        rel = path.relative_to(root_dir)
+        rel = path.relative_to(root_dir).as_posix()
     except ValueError:
         return False
     if path.name in CONFIG_FILENAMES:
-        return True
+        return _changes_policy(rel, policy)
     if policy is None:
         return False
-    disposition = policy.classify(rel.as_posix()).disposition
+    disposition = policy.classify(rel).disposition
     return disposition.admitted and disposition.kind is ContentKind.DOCUMENT
 
 

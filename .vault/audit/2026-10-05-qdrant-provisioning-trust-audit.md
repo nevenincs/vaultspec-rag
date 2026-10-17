@@ -3,9 +3,9 @@ tags:
   - '#audit'
   - '#qdrant-provisioning-trust'
 date: '2026-10-05'
-modified: '2026-10-06'
+modified: '2026-10-13'
 body_schema: 'body-v2'
-body_hash: 'sha256:2befd84e1c17a45091a8b7d11ee3efe539b9f9111c0ac176f12515ccf1fa4dbb'
+body_hash: 'sha256:8ab937a816bd28858ae05403c698ea59b7a67f9a8da73591db37cf16a22e86af'
 related:
   - "[[2026-06-12-qdrant-server-provisioning-adr]]"
   - "[[2026-06-13-provisioning-setup-adr]]"

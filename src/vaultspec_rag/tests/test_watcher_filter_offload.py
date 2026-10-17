@@ -194,16 +194,18 @@ async def test_raw_watch_batches_keep_the_application_filter_authoritative(
 ) -> None:
     # Mutation: omitting watch_filter=None reintroduces watchfiles' default
     # exclusions before the canonical application's path filter can run.
+    # watchfiles drops ``.idea`` by default, while the ignore file there is
+    # one the application policy reads.
     intake = _configure_intake(
         tmp_path,
         monkeypatch,
-        [{(Change.modified, str(tmp_path / ".git" / ".gitignore"))}],
+        [{(Change.modified, str(tmp_path / ".idea" / ".gitignore"))}],
     )
     await watcher_intake.watch_and_reindex(intake.configuration)
     assert [
         item.relative_path
         for item in intake.bindings[1].retry_policy.state.pending_paths
-    ] == [".git/.gitignore"], (
+    ] == [".idea/.gitignore"], (
         "raw event batches must reach the canonical application filter"
     )
 
