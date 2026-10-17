@@ -123,8 +123,8 @@ def test_windows_exited_process_metadata_is_not_a_live_image(
     complements this deterministic policy check. Restore the OS view before
     the real hardware-anchor fixtures tear down.
 
-    Removing the public Windows liveness guard failed the None assertion;
-    restoring it passed, including all three readers.
+    Removing the public Windows liveness guard fails the dead-handle tripwire;
+    restoration passes, including all three readers.
     """
     import psutil
 
@@ -141,12 +141,16 @@ def test_windows_exited_process_metadata_is_not_a_live_image(
     def retained(_pid: int) -> RetainedMetadata:
         return RetainedMetadata()
 
+    def query_dead_process_handle() -> None:
+        raise AssertionError("a dead PID must not reach retained Win32 image metadata")
+
     # Restore the process-global platform before the anchor-safety fixtures
     # inspect this machine during teardown.
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(_process_probe.sys, "platform", "win32")
         monkeypatch.setattr(_process_probe, "pid_alive", exited)
         monkeypatch.setattr(psutil, "Process", retained)
+        monkeypatch.setattr(_process_probe, "win_kernel32", query_dead_process_handle)
         # Use a readable process object so removing the public Win32 guard
         # returns real image metadata despite the substituted exited verdict.
         assert reader(os.getpid()) is None

@@ -181,6 +181,35 @@ def validate_admitted_sources(
             raise ValueError(f"{label} contains a path not admitted as {kind.value}")
 
 
+def normalize_changed_paths(
+    root_dir: pathlib.Path,
+    changed_paths: Iterable[pathlib.Path],
+    kind: ContentKind,
+) -> tuple[pathlib.Path, ...]:
+    """Return the deterministic canonical in-root paths of one changed scope.
+
+    A path named inside the root whose canonical form leaves it was reached
+    through a link or junction. Admission requires canonical sources, so such
+    a path can hold no indexed content: it is left out of the scope rather
+    than failing every other path changed alongside it. Only a path that is
+    neither named nor resolved inside the root is refused.
+    """
+    root = root_dir.resolve()
+    named_roots = (root, pathlib.Path(os.path.abspath(root_dir)))
+    normalized: set[pathlib.Path] = set()
+    for path in changed_paths:
+        canonical = path.resolve()
+        if canonical.is_relative_to(root):
+            normalized.add(canonical)
+            continue
+        named = pathlib.Path(os.path.abspath(path))
+        if not any(named.is_relative_to(named_root) for named_root in named_roots):
+            raise ValueError(
+                f"{kind.value} index scope contains a path outside its root"
+            )
+    return tuple(sorted(normalized, key=lambda path: path.as_posix()))
+
+
 class CodeContentDiscovery:
     """Resolves policy, discovers admissible code, and accepts preflights.
 
@@ -268,7 +297,9 @@ class CodeContentDiscovery:
     ) -> CodeScopedPreflight:
         """Resolve policy and classify one exact normalized changed-path scope."""
         policy = self.resolve_policy()
-        normalized = self.normalize_changed_paths(changed_paths)
+        normalized = normalize_changed_paths(
+            self.root_dir, changed_paths, ContentKind.CODE
+        )
         source_files = 0
         source_bytes = 0
         for path in normalized:
@@ -286,17 +317,6 @@ class CodeContentDiscovery:
             changed_paths=normalized,
             measurement=SupportMeasurement(source_files, source_bytes),
         )
-
-    def normalize_changed_paths(
-        self,
-        changed_paths: Iterable[pathlib.Path],
-    ) -> tuple[pathlib.Path, ...]:
-        """Return deterministic canonical paths wholly contained by this root."""
-        root = self.root_dir.resolve()
-        normalized = {path.resolve() for path in changed_paths}
-        if any(not path.is_relative_to(root) for path in normalized):
-            raise ValueError("code index scope contains a path outside its root")
-        return tuple(sorted(normalized, key=lambda path: path.as_posix()))
 
     @staticmethod
     def _validate_full_preflight(preflight: CodeIndexPreflight) -> None:
@@ -330,7 +350,9 @@ class CodeContentDiscovery:
             return preflight.policy, preflight.scan.files
         if changed_paths is None:
             raise ValueError("scoped code preflight requires changed paths")
-        normalized = self.normalize_changed_paths(changed_paths)
+        normalized = normalize_changed_paths(
+            self.root_dir, changed_paths, ContentKind.CODE
+        )
         if normalized != preflight.changed_paths:
             raise ValueError("code index scope does not match its validated preflight")
         for path in normalized:

@@ -31,14 +31,16 @@ _NEEDLES = ("monkeypatch." + "setattr", "monkeypatch." + "delattr")
 # real). The reason belongs at the call site too; it is repeated here so a
 # reader hitting a failure learns what bar a new entry has to clear.
 _ALLOWED: dict[str, tuple[int, str]] = {
-    # Reducing this bound to two failed count growth; restoration passed.
+    # Reducing this bound to three failed count growth; restoration passed.
     "test_pid_image.py": (
-        3,
+        4,
         "the unit case selects the Windows branch, reports a dead PID and "
         "supplies retained image metadata because the Windows kernel does not "
         "retain that metadata repeatably after a real child exits. This proves "
         "the liveness rejection independently of cleanup timing; the companion "
-        "cases still probe real live and naturally exited children. All three "
+        "cases still probe real live and naturally exited children. The fourth "
+        "substitution fails if the public Windows path queries a dead handle. All "
+        "four "
         "substitutions restore before machine-safety fixture teardown. POSIX "
         "cannot expose retained Windows handles for this policy check",
     ),

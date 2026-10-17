@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#code-file-admission'
 date: '2026-10-04'
-modified: '2026-10-04'
+modified: '2026-10-13'
 body_schema: 'body-v2'
-body_hash: 'sha256:ceef092dc12335f760c735e7d1799f8e5232108c820f157d6600e2e26b56629d'
+body_hash: 'sha256:500ba3acd080ba10139631854dc6e37fb35f5706b24d7a7362e31a5caddad124'
 related:
   - "[[2026-04-04-security-hardening-research]]"
   - "[[2026-04-04-security-hardening-adr]]"

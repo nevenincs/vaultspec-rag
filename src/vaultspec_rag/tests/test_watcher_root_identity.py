@@ -33,6 +33,8 @@ pytestmark = pytest.mark.unit
 
 
 def _policy_controller(root: Path, source: WatcherSource) -> WatcherController:
+    # Retry state is created inside an existing root, never by creating it.
+    root.mkdir(exist_ok=True)
     policy = WatcherRetryPolicy.for_root(root, source, now=10.0)
     return WatcherController(
         ControllerSnapshot(

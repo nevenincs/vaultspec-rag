@@ -21,6 +21,7 @@ from ..watcher_durability import (
     run_durable_retry_transaction,
 )
 from ..watcher_retry import (
+    STATE_DIRECTORY,
     WatcherCircuitState,
     WatcherPathEvent,
     WatcherPathObservation,
@@ -28,6 +29,7 @@ from ..watcher_retry import (
     WatcherRetryStateError,
     WatcherScopeRefusal,
     WatcherSource,
+    locked_state,
 )
 from ..watcher_retry_policy import (
     WatcherRetryPolicy,
@@ -1047,3 +1049,33 @@ async def test_cancellation_hands_off_after_indefinite_lock_contention(
     assert recovered.state.convergence_pending
     assert recovered.state.unscoped_required
     assert recovered.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+
+
+def _state_path(root: Path) -> Path:
+    return root / ".vault" / "data" / "search-data" / STATE_DIRECTORY / "code.json"
+
+
+def test_retry_state_never_recreates_a_deleted_root(tmp_path: Path) -> None:
+    """A transaction against a removed root fails instead of rebuilding it.
+
+    Mutation proof: creating the state directory with ``parents=True`` (the
+    behaviour before this fix) rebuilds the root, so the transaction succeeds
+    and this fails on the missing ``WatcherRetryStateError``; restoring the
+    root-anchored creation passes.
+    """
+    root = tmp_path / "removed-worktree"
+    with (
+        pytest.raises(WatcherRetryStateError, match="state prepare failed"),
+        locked_state(_state_path(root), root=root),
+    ):
+        pass
+    assert not root.exists()
+
+
+def test_retry_state_creates_its_directory_inside_a_live_root(tmp_path: Path) -> None:
+    root = tmp_path / "worktree"
+    root.mkdir()
+    path = _state_path(root)
+    with locked_state(path, root=root):
+        pass
+    assert path.parent.is_dir()

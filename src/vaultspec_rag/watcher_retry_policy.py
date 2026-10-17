@@ -19,6 +19,7 @@ import threading
 import uuid
 from contextlib import suppress
 from dataclasses import asdict, dataclass, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 from ._atomic_write import NotDurableError, replace_durably
@@ -72,7 +73,6 @@ from .watcher_retry import (
 )
 
 if TYPE_CHECKING:
-    from pathlib import Path
     from typing import Self
 
     from .job_models import JobSnapshot
@@ -309,8 +309,6 @@ def _rebuild_publication_is_certified(
     snapshot: JobSnapshot, source: WatcherSource, refusal_at: float | None
 ) -> bool:
     """Require the exact committed FULL owner and its canonical verified proof."""
-    from pathlib import Path
-
     from ._publication_state import (
         UNREADABLE_PUBLICATION_ERRORS,
         acquire_publication_snapshot,
@@ -373,6 +371,7 @@ class WatcherRetryPolicy:
         "_scope_max_paths",
         "_source",
         "_state",
+        "_state_root",
     )
 
     def __init__(
@@ -403,12 +402,13 @@ class WatcherRetryPolicy:
         if self._scope_max_bytes > ABSOLUTE_STATE_MAX_BYTES:
             raise ValueError("scope_max_bytes exceeds the durable state safety bound")
         self._root = options.canonical_root
+        self._state_root = Path(options.canonical_root)
         self._admission_handoff_started = False
         self._owned_attempt_token: str | None = None
         self._source = options.source
 
         timestamp = wall_time(options.now)
-        with locked_state(path):
+        with locked_state(path, root=self._state_root):
             try:
                 loaded = (
                     read_state(
@@ -593,7 +593,7 @@ class WatcherRetryPolicy:
         timestamp = wall_time(now)
         for observation in observations:
             validate_path_observation(observation, source=self._source)
-        with locked_state(self._path):
+        with locked_state(self._path, root=self._state_root):
             state = self._refresh_unlocked()
             generation = state.convergence_generation + 1
             merged = merge_observations(
@@ -622,7 +622,7 @@ class WatcherRetryPolicy:
 
     def refresh(self) -> WatcherRetryState:
         """Refresh this policy's cached view under the state authority lock."""
-        with locked_state(self._path):
+        with locked_state(self._path, root=self._state_root):
             return self._refresh_unlocked()
 
     def reconcile_rebuild(
@@ -637,7 +637,7 @@ class WatcherRetryPolicy:
             return False
         started, finished = window
 
-        with locked_state(self._path):
+        with locked_state(self._path, root=self._state_root):
             state = self._refresh_unlocked()
             active_generation = state.attempt_generation
             release_attempt = _legacy_refused_attempt_is_obsolete(state, started) or (
@@ -767,7 +767,7 @@ class WatcherRetryPolicy:
                 ),
             )
         try:
-            with locked_state(self._path):
+            with locked_state(self._path, root=self._state_root):
                 state = self._refresh_unlocked()
                 if self._owned_attempt_token != attempt_token:
                     _finish_admission_token(attempt_token)
@@ -889,7 +889,7 @@ class WatcherRetryPolicy:
     ) -> WatcherRetryState:
         """Close and reset only after a completed convergence attempt."""
         timestamp = wall_time(now)
-        with locked_state(self._path):
+        with locked_state(self._path, root=self._state_root):
             state = self._refresh_unlocked()
             self._require_active_attempt(state, attempt_generation)
             newer_generation_pending = state.unscoped_required or (
@@ -950,7 +950,7 @@ class WatcherRetryPolicy:
     ) -> WatcherRetryState:
         """Release a cancelled claim without treating operator stop as failure."""
         timestamp = wall_time(now)
-        with locked_state(self._path):
+        with locked_state(self._path, root=self._state_root):
             state = self._refresh_unlocked()
             self._require_active_attempt(state, attempt_generation)
             half_open = state.circuit_state is WatcherCircuitState.HALF_OPEN
@@ -1010,7 +1010,7 @@ class WatcherRetryPolicy:
             if random_unit is None
             else unit_interval("random_unit", random_unit)
         )
-        with locked_state(self._path):
+        with locked_state(self._path, root=self._state_root):
             state = self._refresh_unlocked()
             self._require_active_attempt(state, attempt_generation)
             failures = state.consecutive_failures + 1

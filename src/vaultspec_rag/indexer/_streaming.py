@@ -15,6 +15,8 @@ from functools import partial
 from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 from ..job_control import NO_RUN_CONTROL
+from ..logging_config import log_event
+from ._index_lifecycle import INDEX_EVENT_NAMESPACE
 from ._slicing import (
     code_embed_text,
     document_embed_text,
@@ -69,10 +71,14 @@ __all__ = [
 _WRITER_POLL_SECONDS = 0.1
 
 # Upper bound on how long writer shutdown waits for the writer thread to
-# drain its final upsert and terminate. Generous for any healthy final store
-# write yet finite, so a wedged Qdrant call escalates to a raised error
+# settle its next task. Generous for any healthy store write and its ledger
+# transitions yet finite, so a wedged call escalates to a raised error
 # instead of hanging the encoding thread under the indexer's writer lock.
 _WRITER_SHUTDOWN_TIMEOUT_S = 300.0
+
+# A store mutation taking at least this long is logged with its per-stage
+# breakdown at warning level; faster ones log at debug.
+_SLOW_STORE_MUTATION_SECONDS = 10.0
 
 # How many encoded slices may queue ahead of the writer thread. One in flight
 # plus one waiting is what overlaps slice N's storage I/O with slice N+1's
@@ -349,25 +355,102 @@ def execute_store_mutation(
     before confirming it. Skipping the acknowledgement there would drop the
     file from the evidence and publish a breadth short of what storage holds.
     """
-    if lifecycle is not None:
-        should_apply = lifecycle.prepare()
-        if not isinstance(should_apply, bool):  # pyright: ignore[reportUnnecessaryIsInstance] - callback boundary
-            raise TypeError("mutation lifecycle prepare must return a bool")
-        if not should_apply:
-            if after_acknowledgement is not None:
-                after_acknowledgement()
+    clock = _StageClock()
+    try:
+        if lifecycle is not None:
+            should_apply = lifecycle.prepare()
+            clock.lap("prepare")
+            if not isinstance(should_apply, bool):  # pyright: ignore[reportUnnecessaryIsInstance] - callback boundary
+                raise TypeError("mutation lifecycle prepare must return a bool")
+            if not should_apply:
+                if after_acknowledgement is not None:
+                    after_acknowledgement()
+                    clock.lap("after_acknowledgement")
+                return
+        write()
+        clock.lap("store_write")
+        if lifecycle is not None:
+            lifecycle.mark_applied()
+            if lifecycle.confirm_when_stored:
+                lifecycle.confirm()
+            clock.lap("acknowledge")
+        if after_acknowledgement is not None:
+            after_acknowledgement()
+            clock.lap("after_acknowledgement")
+    finally:
+        clock.report()
+
+
+class _StageClock:
+    """Per-stage wall time of one store mutation.
+
+    The store call is one stage of several. The durable receipt transitions
+    around it can wait on a contended run ledger, so a mutation that is slow
+    while the store answers promptly is attributable to the stage that held it.
+    """
+
+    __slots__ = ("_last", "_stages", "_started")
+
+    def __init__(self) -> None:
+        self._started = time.perf_counter()
+        self._last = self._started
+        self._stages: dict[str, float] = {}
+
+    def lap(self, stage: str) -> None:
+        now = time.perf_counter()
+        self._stages[f"{stage}_s"] = round(now - self._last, 3)
+        self._last = now
+
+    def report(self) -> None:
+        import threading
+
+        elapsed = time.perf_counter() - self._started
+        severity = (
+            logging.WARNING
+            if elapsed >= _SLOW_STORE_MUTATION_SECONDS
+            else logging.DEBUG
+        )
+        if not logger.isEnabledFor(severity):
             return
-    write()
-    if lifecycle is not None:
-        lifecycle.mark_applied()
-        if lifecycle.confirm_when_stored:
-            lifecycle.confirm()
-    if after_acknowledgement is not None:
-        after_acknowledgement()
+        log_event(
+            logger,
+            INDEX_EVENT_NAMESPACE,
+            "store_mutation_timed",
+            severity=severity,
+            thread=threading.current_thread().name,
+            elapsed_s=round(elapsed, 3),
+            fields=self._stages,
+        )
 
 
 class UnsettledStoreWriterError(RuntimeError):
-    """The store writer thread remained live after its bounded shutdown wait."""
+    """The store writer thread settled no task within its bounded wait."""
+
+
+class _ProgressDeadline:
+    """A bound on how long a writer may go without settling a task.
+
+    The backlog a shutdown waits on is several tasks deep, and each may hold
+    a durable ledger transition as well as a store call. Bounding the whole
+    drain fails a writer that is slow but still settling work, so the bound
+    restarts every time a task settles and expires only on a stall.
+    """
+
+    __slots__ = ("_deadline", "_seen", "_timeout", "_writer")
+
+    def __init__(self, writer: _SliceWriter, timeout: float) -> None:
+        self._writer = writer
+        self._timeout = timeout
+        self._seen = writer.settled
+        self._deadline = time.monotonic() + timeout
+
+    def remaining(self) -> float:
+        """Return the seconds left before the writer counts as stalled."""
+        settled = self._writer.settled
+        if settled != self._seen:
+            self._seen = settled
+            self._deadline = time.monotonic() + self._timeout
+        return self._deadline - time.monotonic()
 
 
 class _SliceWriter:
@@ -381,11 +464,19 @@ class _SliceWriter:
     stops writing and only releases the remaining tasks' vector fields; the
     recorded failure re-raises on the encoding side at the next ``submit`` or
     at ``close``. Every shutdown wait (the sentinel put and the join) is
-    liveness-guarded and time-bounded so a wedged store call aborts the run
-    rather than hanging it.
+    liveness-guarded and bounded by how long the writer may go without
+    settling a task, so a wedged store call aborts the run rather than
+    hanging it while a slow but progressing backlog still drains.
     """
 
-    __slots__ = ("_failure", "_poll_seconds", "_queue", "_shutdown_timeout", "_thread")
+    __slots__ = (
+        "_failure",
+        "_poll_seconds",
+        "_queue",
+        "_settled",
+        "_shutdown_timeout",
+        "_thread",
+    )
 
     def __init__(
         self,
@@ -402,6 +493,7 @@ class _SliceWriter:
         self._poll_seconds = poll_seconds
         self._shutdown_timeout = shutdown_timeout_seconds
         self._failure: BaseException | None = None
+        self._settled = 0
         # Daemon because both shutdown paths are bounded and both document
         # giving up: close raises once the bound expires and abandon logs and
         # returns, each leaving a thread that may still be parked or wedged in
@@ -427,6 +519,12 @@ class _SliceWriter:
                 self._failure = exc
             finally:
                 task.release()
+                self._settled += 1
+
+    @property
+    def settled(self) -> int:
+        """Return how many tasks the writer has settled so far."""
+        return self._settled
 
     @property
     def failure(self) -> BaseException | None:
@@ -481,12 +579,12 @@ class _SliceWriter:
         self._raise_if_failed()
 
     def _drain_and_stop(self, run_control: RunControl) -> None:
-        """Deliver the sentinel and wait for the thread, both bounded."""
-        deadline = time.monotonic() + self._shutdown_timeout
+        """Deliver the sentinel and wait for the thread, both stall-bounded."""
+        deadline = _ProgressDeadline(self, self._shutdown_timeout)
         sentinel_delivered = False
         while self._thread.is_alive() and not sentinel_delivered:
             run_control.checkpoint()
-            if time.monotonic() >= deadline:
+            if deadline.remaining() <= 0:
                 break
             try:
                 self._queue.put(None, timeout=self._poll_seconds)
@@ -495,37 +593,41 @@ class _SliceWriter:
             sentinel_delivered = True
         while self._thread.is_alive():
             run_control.checkpoint()
-            remaining = deadline - time.monotonic()
+            remaining = deadline.remaining()
             if remaining <= 0:
                 break
             self._thread.join(timeout=min(self._poll_seconds, remaining))
         if self._thread.is_alive():
             logger.error(
-                "store writer %r did not terminate within %.0fs; aborting the run",
+                "store writer %r settled no task within %.0fs; aborting the run",
                 self._thread.name,
                 self._shutdown_timeout,
             )
             raise UnsettledStoreWriterError(
-                f"store writer {self._thread.name!r} did not terminate within "
+                f"store writer {self._thread.name!r} settled no task within "
                 f"{self._shutdown_timeout:.0f}s"
             )
 
     def abandon(self) -> None:
-        """Best-effort bounded shutdown for the encoding side's error path.
+        """Best-effort stall-bounded shutdown for the encoding side's error path.
 
         Never raises, so the original encoding-side exception propagates; a
-        writer that cannot be settled within the bound is logged and left to
+        writer that settles nothing within the bound is logged and left to
         finish its wedged store call on its own.
         """
-        deadline = time.monotonic() + self._shutdown_timeout
+        deadline = _ProgressDeadline(self, self._shutdown_timeout)
         while self._thread.is_alive():
             try:
                 self._queue.put(None, timeout=self._poll_seconds)
                 break
             except queue.Full:
-                if time.monotonic() >= deadline:
+                if deadline.remaining() <= 0:
                     break
-        self._thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        while self._thread.is_alive():
+            remaining = deadline.remaining()
+            if remaining <= 0:
+                break
+            self._thread.join(timeout=min(self._poll_seconds, remaining))
         if self._thread.is_alive():
             logger.error(
                 "store writer %r still live after abandon; a store call may be wedged",

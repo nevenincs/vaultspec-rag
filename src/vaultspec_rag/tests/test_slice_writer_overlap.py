@@ -609,3 +609,66 @@ class TestSliceWriterContract:
         finally:
             unwedge.set()
             closer.join(timeout=10.0)
+
+
+@pytest.mark.unit
+def test_a_slow_but_progressing_backlog_drains_past_the_stall_bound() -> None:
+    """Close waits on progress, not on the whole backlog.
+
+    Three tasks each settle well inside the bound but together outlast it.
+    Mutation proof: computing one deadline for the whole drain (the bound
+    before this fix) fails here with ``UnsettledStoreWriterError``; restoring
+    the progress-restarted deadline passes.
+    """
+    bound_seconds = 2.0
+    task_seconds = 1.2
+    writer = _SliceWriter(name="slow-writer", shutdown_timeout_seconds=bound_seconds)
+    written: list[int] = []
+
+    def _slow_write(index: int) -> None:
+        time.sleep(task_seconds)
+        written.append(index)
+
+    for index in range(3):
+        writer.submit(
+            StoreWriteTask(
+                write=lambda index=index: _slow_write(index),
+                release=lambda: None,
+            )
+        )
+    started = time.monotonic()
+    writer.close()
+    assert written == [0, 1, 2]
+    assert time.monotonic() - started > bound_seconds
+
+
+@pytest.mark.unit
+def test_a_store_mutation_logs_its_stage_breakdown(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Every mutation names the time each stage took, not just the total.
+
+    A fast mutation reports at debug level and a slow one at warning, so a
+    stall is attributable to the stage that held it.
+
+    Mutation proof: dropping the ``clock.report()`` call fails here on the
+    missing event; restoring it passes.
+    """
+    from ..indexer import _streaming
+
+    lifecycle = StoreMutationLifecycle(
+        prepare=lambda: True,
+        mark_applied=lambda: None,
+        confirm=lambda: None,
+        confirm_when_stored=True,
+    )
+    with caplog.at_level("DEBUG", logger=_streaming.__name__):
+        execute_store_mutation(lambda: None, lifecycle, after_acknowledgement=None)
+    [record] = [
+        record
+        for record in caplog.records
+        if "event=store_mutation_timed" in record.getMessage()
+    ]
+    message = record.getMessage()
+    for stage in ("prepare_s=", "store_write_s=", "acknowledge_s=", "elapsed_s="):
+        assert stage in message

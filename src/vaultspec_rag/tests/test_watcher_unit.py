@@ -1,7 +1,8 @@
 """Unit tests for watcher code-change classification.
 
 ``is_code_change`` rejects vault-contained and out-of-root paths, treats the
-three index-shaping control filenames as reconciliation triggers, and otherwise
+index-shaping control files a snapshot reads as reconciliation triggers (every
+control filename when there is no snapshot), and otherwise
 fails closed without a ``ResolvedIndexPolicy`` snapshot. With a snapshot, only
 an admitted classification whose content kind is ``CODE`` is code-owned. Each
 snapshot assigns one owner; disagreeing explicit targets fail during resolution.
@@ -30,7 +31,7 @@ from ..indexer._resolved_policy import (
     ResolvedIndexPolicy,
     resolve_index_policy,
 )
-from ..watcher_policy import is_code_change, is_vault_change
+from ..watcher_policy import is_code_change, is_document_change, is_vault_change
 
 pytestmark = [pytest.mark.unit]
 
@@ -65,6 +66,38 @@ def test_nested_gitignore_is_admitted(project: tuple[Path, Path]) -> None:
     assert (
         is_code_change(root / "pkg" / "sub" / ".gitignore", root, vault, None) is True
     )
+
+
+def test_control_files_the_snapshot_never_reads_are_not_admitted(
+    project: tuple[Path, Path],
+) -> None:
+    """Only a control file the snapshot reads can trigger a policy refresh.
+
+    Mutation proof: admitting every control filename before classification
+    (the early ``return True`` before this fix) fails on the ignored
+    ``.gitignore`` assertion; restoring the snapshot check passes.
+    """
+    root, vault = project
+    (root / ".gitignore").write_text("var/\n", encoding="utf-8")
+    policy = resolve_index_policy(
+        root,
+        IndexPolicyResolutionOptions(
+            content_policy=RootContentPolicy(SourceProfileVersion.CONVENTIONAL_V1)
+        ),
+    )
+    for is_change in (is_code_change, is_document_change):
+        ignored = root / "var" / "run" / "venv" / ".gitignore"
+        assert is_change(ignored, root, vault, policy) is False
+        assert is_change(root / "src" / ".vaultragignore", root, vault, policy) is False
+        nested_preprocess = root / "src" / PREPROCESS_CONFIG_FILENAME
+        assert is_change(nested_preprocess, root, vault, policy) is False
+        for read in (
+            root / ".gitignore",
+            root / "src" / ".gitignore",
+            root / ".vaultragignore",
+            root / PREPROCESS_CONFIG_FILENAME,
+        ):
+            assert is_change(read, root, vault, policy) is True
 
 
 def test_markdown_outside_vault_is_not_conventional_code(

@@ -19,7 +19,7 @@ from vaultspec_core.core.mcps_mode import (
 )
 from vaultspec_core.core.mcps_native import normalized_sources
 from vaultspec_core.core.mcps_targets import resolve_mcp_targets
-from vaultspec_core.core.mcps_trust import McpApproval, grant
+from vaultspec_core.core.mcps_trust import McpApproval, grant, trust_file_path
 from vaultspec_core.core.types import SyncResult, init_paths
 from vaultspec_core.core.workspace_mode import (
     CORE_DISTRIBUTION_NAME,
@@ -41,6 +41,25 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from ..commands._mcp_host_state import LaunchToEnroll
+
+# Resolved at collection, before any test redirects the user home: the ledger
+# the operator's real provider configs are enrolled against.
+_OPERATOR_TRUST_LEDGER = trust_file_path()
+
+
+def grant_isolated(approvals: list[McpApproval]) -> None:
+    """Grant *approvals* only into a test's own home, never the operator's.
+
+    A grant is a durable executable approval keyed to a workspace path. Written
+    to the operator's ledger it outlives the temp workspace it names, so a test
+    that reaches this without isolating the home is refused rather than leaking.
+    """
+    if trust_file_path() == _OPERATOR_TRUST_LEDGER:
+        raise AssertionError(
+            "test approval would be written to the operator's MCP trust ledger "
+            f"{_OPERATOR_TRUST_LEDGER}; request the isolated_mcp_trust_home fixture"
+        )
+    grant(approvals)
 
 
 def dry_sync(root: Path, *, enrolled: Iterable[Tool] | None = None) -> SyncResult:
@@ -100,12 +119,12 @@ def approve_workspace_launches(root: Path, mode: InstallMode | None = None) -> N
             )
         assert not result.errors, result.errors
     assert approvals, "the test must approve a real executable definition"
-    grant(approvals)
+    grant_isolated(approvals)
 
 
 def grant_planned(authority: Path, launches: Iterable[LaunchToEnroll]) -> None:
     """Grant *launches* at *authority*'s own paths, as an operator reviewing them."""
-    grant(approvals_for(authority, launches))
+    grant_isolated(approvals_for(authority, launches))
 
 
 def grant_launches(
