@@ -43,6 +43,7 @@ from ._singleton_root_fixtures import (
     PYTEST_SESSION_ACTIVE_ENV,
     PYTEST_SESSION_ROOT_ENV,
 )
+from ._tier_gate import MPS
 from .corpus import CorpusManifest, build_synthetic_vault
 
 # GPU-only: Sentence Transformers with Qwen3 dense and ModernBERT SPARSEUP sparse.
@@ -359,7 +360,7 @@ def private_owner_anchor(tmp_path: Path) -> Generator[Path]:
 
 
 @pytest.fixture(autouse=True)
-def no_claim_on_a_machine_anchor() -> Generator[None]:
+def no_claim_on_a_machine_anchor(request: pytest.FixtureRequest) -> Generator[None]:
     """Fail a test that left this process owning one of the machine's anchors.
 
     The machine's own anchors belong to the resident service. A test that has to
@@ -371,6 +372,13 @@ def no_claim_on_a_machine_anchor() -> Generator[None]:
     be on someone else's machine. This names the test that took it, and lets
     the claim go so the rest of the worker still runs.
 
+    The MPS tier is the one exception. Its session borrows from no service: it
+    is the accelerator's owner for the life of its own process, so the claim it
+    takes on the machine's anchor is the one it is meant to hold. Checked under
+    the mutation below: an mps-marked test holding an anchor passed, an
+    unmarked one failed by name, and with the exemption removed the mps-marked
+    one failed too.
+
     Mutation check: counted every anchor this process held as the machine's
     own, which is how a claim on the real anchor looks. A test that held an
     anchor of its own then failed this assertion by name, naming that anchor;
@@ -379,6 +387,8 @@ def no_claim_on_a_machine_anchor() -> Generator[None]:
     provoke the guard is the very thing it exists to stop.
     """
     yield
+    if MPS in request.keywords:
+        return
     from .. import _gpu_owner
     from .._anchor_claim import hardware_anchor_path, release_anchor_claim
 
