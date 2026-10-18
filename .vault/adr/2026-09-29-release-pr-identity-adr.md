@@ -3,24 +3,31 @@ tags:
   - '#adr'
   - '#release-pr-identity'
 date: '2026-09-29'
-modified: '2026-09-29'
+modified: '2026-10-18'
 body_schema: 'body-v2'
-body_hash: 'sha256:c429a996abbc8a0738e4bbaab9d8bf6ab8a90825ca95d1d2e661c07aa2e9a92e'
+body_hash: 'sha256:225f22c0654a8094b822a6f5b89cd721b7f2ae3a02a4ede9b6f5188cea4dbfa3'
 related:
   - "[[2026-09-29-release-pr-identity-research]]"
   - "[[2026-09-21-automatic-merge-gate-adr]]"
+  - '[[2026-10-09-automatic-merge-gate-autonomous-release-adr]]'
 ---
 
-# `release-pr-identity` adr: `release pull requests are written by the release App` | (**status:** `rejected`)
+# `release-pr-identity` adr: `release pull requests are written by the release App` | (**status:** `accepted`)
 
 ## Problem Statement
 
-Rejected 2026-09-29 by the maintainer after a brief rollout: a new App
-credential with write access is not justified when the default-token
-dispatch in `2026-09-21-automatic-merge-gate-adr` already produces the
-required check, and no other repository in the fleet uses one. The held
-runs are left unapproved instead. The record below is the proposal as it
-stood.
+Accepted 2026-10-18 under the fleet release-pipeline standard, which the
+maintainer authorized for every repository under the account and which the
+orchestrating session handed to this repository's custodian. It had been
+rejected on 2026-09-29 on the premise that the default-token dispatch in
+`2026-09-21-automatic-merge-gate-adr` produced the required check. That premise
+is disproven: GitHub links a dispatched run's checks to no pull request. On
+2026-10-17 release PR #596 carried only the held and withheld runs of its own
+events, CodeQL and a dispatched gate the pull request never showed; the
+required `Check: Merge gate (Linux)` stayed expected, and the release cut's
+merge in run 39053510856 failed with "the base branch policy prohibits the
+merge". `protect-main` has no bypass actors, so no actor could land it. An
+earlier release shipped only through an administrator bypass since removed.
 
 A pull request the default token opens or updates now starts its workflows only
 after a maintainer approves them in the Actions tab, and the pull request's
@@ -60,27 +67,33 @@ opposite premise, that default-token changes start no runs. Evidence:
 - The release pull request, and every push to its branch, is written with a
   token minted from the release App, with Contents and Pull requests write on
   this repository only. No fallback to the default token.
-- Tags and GitHub Releases are created with the default token, before the
-  proposal step, so a broken App never blocks a merged release.
+- Tags and GitHub Releases are created with the default token, by the release
+  cut and in a job separate from the proposal, so a broken App never blocks a
+  merged release.
 - Nothing but release-please writes the release branch, and nothing dispatches
-  a second merge gate for it. The `uv.lock` project version is bumped inside
-  release-please's commit.
-- Amends `2026-09-21-automatic-merge-gate-adr`: its release-branch dispatch and
-  the gate's reusable-call entry point are withdrawn; its automatic
-  pull-request gate stands unchanged.
+  a merge gate or Dev Server run for it. The `uv.lock` project version is bumped
+  inside release-please's commit.
+- Amends `2026-10-09-automatic-merge-gate-autonomous-release-adr`: its
+  release-branch dispatches are withdrawn; its proven cut and its reusable-call
+  gate stand unchanged.
 
 ## Implementation
 
-We will run release-please twice in `.github/workflows/release-please.yml`:
-first with `skip-github-pull-request` on the default token, then hold the new
-release and dispatch Publish, then mint the App token with
-`actions/create-github-app-token` from the `RELEASE_APP_CLIENT_ID` variable and
-`RELEASE_APP_PRIVATE_KEY` secret and run the proposal with
-`skip-github-release`. `release-please-config.json` gains a TOML extra file for
-`uv.lock`. The lock-refresh steps, the merge-gate dispatch and the merge gate's
-`workflow_call` trigger are deleted. The guard in
-`dev/guards/test_ci_release_please_prs.py` holds the identity split, the step
-order, the single writer and the lock entry.
+The proposal job in `.github/workflows/release-please.yml` mints the App token
+with `actions/create-github-app-token`, pinned by commit, from the
+`RELEASE_APP_CLIENT_ID` variable and `RELEASE_APP_PRIVATE_KEY` secret, and runs
+release-please with that token and `skip-github-release`. The cut job keeps
+creating the tag and draft release with the default token after its own proof.
+`release-please-config.json` carries a TOML extra file for `uv.lock`. The
+lock-refresh steps and both release-branch dispatches are deleted. The merge
+gate keeps its reusable-call entry point, which the cut's proof uses, and its
+Dev Server proof reads the newest run on the exact commit from any event. The
+merge gate and the shared Dev Server workflow admit the App by the fleet's
+trusted-author clause, which names the owner, collaborators and
+`nevenincs-release[bot]`. The guards in
+`dev/guards/test_ci_release_please_prs.py`,
+`dev/guards/test_ci_fork_containment.py` and `dev/guards/test_ci_lanes.py`
+hold the identity split, the single writer, the lock entry and the clause.
 
 ## Rationale
 
@@ -89,8 +102,8 @@ waking the tag and release triggers, because it is applied to the proposal
 alone. Folding the lock bump into release-please's commit is what makes the
 proposal one head, so the pull-request gate runs once per head instead of
 starting and being superseded seconds later. Both facts are measured in
-`2026-09-29-release-pr-identity-research`. Accepted 2026-09-29 on the
-maintainer's instruction to implement this design after the #558 diagnosis.
+`2026-09-29-release-pr-identity-research`; the dispatched check's missing
+pull-request link is shown by #596 above.
 
 ## Consequences
 

@@ -65,11 +65,12 @@ Nothing in the chain reacts to a pushed tag or to a `release` event. Each lane
 is dispatched explicitly by the lane before it, in this order:
 
 1. `release-please.yml` opens and updates the release PR from conventional
-   commits on pushes to `main`. After the final lockfile refresh it dispatches
-   the full merge gate and the canonical Dev Server check on the release branch.
-   The required aggregate includes the actual Dev Server verdict on the exact SHA;
-   light or skipped measuring jobs cannot authorize the release proposal. The full
-   dispatch releases the bot PR's held merge gate automatically.
+   commits on pushes to `main`, as the `nevenincs-release` GitHub App. The
+   version bump, changelog, manifest and `uv.lock` change land in one commit, and
+   the PR's own events run the full merge gate and the canonical Dev Server check
+   like any trusted PR. The required aggregate includes the actual Dev Server
+   verdict on the exact SHA; light or skipped measuring jobs cannot authorize the
+   release proposal.
 1. Merging that PR starts the cut automatically. It proves the merged commit
    with the full merge gate and both accelerator tiers, then has release-please
    force the tag and create the draft Release. The cut checks the tag against
@@ -134,8 +135,8 @@ rerun for the same tag.
    `feat:`, `fix:`, or `perf:`.
 1. Review the release PR's version, changelog, manifest and lockfile. Wait for
    full lint, both Linux interpreters, Windows tests, dependency audit and Dev Server
-   proof. The bot dispatches those checks and releases its held required gate;
-   no label or workflow approval is needed.
+   proof. The release App's PR starts those checks itself; no label, dispatch
+   or workflow approval is needed.
 1. Press the release PR's merge button. This is the only human release action.
    The merge starts exact-commit checks, CUDA/MPS proof, tag/draft creation,
    package and binary builds, provenance verification, PyPI upload, GitHub
@@ -144,21 +145,21 @@ rerun for the same tag.
 The release stays a draft until all artifacts are verified and PyPI accepts the
 packages. A failure reports red and leaves the draft unpublished where possible.
 Recovery commands below are for failed releases, not normal release steps.
-Do not use the administrator bypass to merge before the full proposal gate passes.
+`protect-main` has no bypass: the release PR merges only once its own required
+check has passed.
 
 ## What a cut needs from the fleet
 
 The fleet must continuously provide these prerequisites; the workflow does not ask
 for per-release setup.
 
-- **Release Please may open pull requests.** The repository setting "Allow
-  GitHub Actions to create and approve pull requests" must be on, or the
-  proposal branch is pushed and no pull request appears:
-
-  ```sh
-  gh api repos/nevenincs/vaultspec-rag/actions/permissions/workflow \
-    --jq .can_approve_pull_request_reviews
-  ```
+- **The release App can write the proposal.** The `nevenincs-release` App is
+  installed on the repository with Contents and Pull requests write, its client
+  id is the repository variable `RELEASE_APP_CLIENT_ID`, and its private key is
+  the repository secret `RELEASE_APP_PRIVATE_KEY`. A missing or revoked key
+  fails the proposal job's `Mint the release pull request token` step by name.
+  There is no fallback to the workflow token: a PR that token opens is withheld
+  by the merge gate and can never report the required check.
 
 - **The CUDA host's accelerator is free.** The GPU tier starts its own service
   and refuses to while an installed `vaultspec-rag` service owns the device.
