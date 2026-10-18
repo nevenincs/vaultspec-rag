@@ -19,8 +19,10 @@ __all__ = [
     "MEASURING_GROUPS",
     "MERGE_BOX",
     "PRODUCT",
+    "RELEASE_BOT",
     "SAME_REPO_CLAUSE",
     "SHARED_WORKFLOW_NAMES",
+    "TRUSTED_AUTHOR_CLAUSE",
     "Workflow",
 ]
 
@@ -51,11 +53,31 @@ PRODUCT = "RAG"
 #: The check required by protect-main; renaming it also requires a ruleset update.
 GATE_CHECK = "Check: Merge gate (Linux)"
 
+#: The clause that excludes a fork's pull request. Present so that a job in
+#: THIS repository's copy of a workflow cannot quietly lose it; it is not what
+#: contains a fork, because a fork's pull request runs the fork's own copy of
+#: the file. See the merge gate's header on what actually holds that line.
+SAME_REPO_CLAUSE = "github.event.pull_request.head.repo.full_name == github.repository"
+
+#: The login of the release App that opens the release pull request. Its pull
+#: request events run the merge gate like a collaborator's.
+RELEASE_BOT = "nevenincs-release[bot]"
+
+#: The authors whose pull requests may reach the self-hosted fleet. This is a
+#: personal account, so there are no organisation members; the release App is
+#: the one bot admitted. The clause is spelled identically across the fleet's
+#: repositories, so it is matched as one literal rather than per term.
+TRUSTED_AUTHOR_CLAUSE = (
+    "(github.event.pull_request.author_association == 'OWNER' || "
+    "github.event.pull_request.author_association == 'COLLABORATOR' || "
+    f"github.event.pull_request.user.login == '{RELEASE_BOT}')"
+)
+
+#: The gate's ``name:``. A pull request the gate refuses reports under a
+#: different name, because GitHub counts a skipped required check as passed.
 GATE_NAME_EXPRESSION = (
     "${{ github.event_name == 'pull_request' && "
-    "(github.event.pull_request.head.repo.full_name != github.repository || "
-    "(github.event.pull_request.author_association != 'OWNER' && "
-    "github.event.pull_request.author_association != 'COLLABORATOR')) && "
+    f"!({SAME_REPO_CLAUSE} && {TRUSTED_AUTHOR_CLAUSE}) && "
     f"'Admission withheld (Linux)' || '{GATE_CHECK}' }}}}"
 )
 
@@ -81,12 +103,6 @@ GATE_JOB = "gate"
 #: adding a label that is already present fires no ``labeled`` event, so the
 #: gate releases it again and pressing it twice means adding it twice.
 FULL_RUN_LABEL = "ci:full"
-
-#: The clause that excludes a fork's pull request. Present so that a job in
-#: THIS repository's copy of a workflow cannot quietly lose it; it is not what
-#: contains a fork, because a fork's pull request runs the fork's own copy of
-#: the file. See the merge gate's header on what actually holds that line.
-SAME_REPO_CLAUSE = "github.event.pull_request.head.repo.full_name == github.repository"
 
 #: The one check ``protect-main`` requires on a pull request's head commit.
 #: The ruleset's context is a repository setting outside the tree, so a change
