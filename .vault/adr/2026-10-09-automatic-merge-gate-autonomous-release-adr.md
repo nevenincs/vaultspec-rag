@@ -8,11 +8,12 @@ related:
   - "[[2026-09-30-release-standard-adr]]"
   - "[[2026-10-02-monitor-delivery-adr]]"
   - "[[2026-10-09-automatic-merge-gate-core-orchestration-reference]]"
+  - '[[2026-09-29-release-pr-identity-adr]]'
 supersedes:
   - '2026-09-21-automatic-merge-gate-adr'
-modified: '2026-10-13'
+modified: '2026-10-18'
 body_schema: 'body-v2'
-body_hash: 'sha256:90af9fd5b0d10c7b3f60fdddbae18285355a127f149e6eafce085bdb51405f7e'
+body_hash: 'sha256:3d004e90ce754c5b60f3f124908a04866cffff7316d15f2324005192d2a4f4b5'
 ---
 
 # `automatic-merge-gate` adr: `Merge starts an autonomous verified release` | (**status:** `accepted`)
@@ -94,3 +95,16 @@ ACL semantics, resolves canonical paths, and refuses image metadata from exited
 processes. Tests retain the real Windows handles needed to prove that refusal.
 
 Unrelated-label successes preserve the existing full-proof chain on the same SHA. The gate walks only successful preservation runs until it reaches complete measured proof; an intervening failure, cancellation, incomplete measurement or unreadable job record terminates the chain.
+
+## Release proposal identity amendment, 2026-10-18
+
+Amended under the fleet release-pipeline standard authorized by the
+maintainer. The release-branch dispatches of the merge gate and the Dev Server
+check are withdrawn: a dispatched run's checks attach to no pull request, so
+the required check never reported on release PR #596 and the cut could not
+merge it. The release App writes the proposal in one commit, as
+`2026-09-29-release-pr-identity-adr` decides, and the proposal's own
+pull-request events run the full gate and the Dev Server check. The required
+aggregate still reads the Dev Server verdict on the exact SHA, now from the
+newest run on that commit whatever event started it. Every other constraint
+above stands.
