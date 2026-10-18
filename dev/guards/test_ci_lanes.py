@@ -2,9 +2,9 @@
 
 A draft runs nothing. Every ready pull-request head runs every merge
 gate; the commit that lands on main runs
-every gate again. A release dispatch reaches the same workflow, so the
-required context has one implementation for contributor and bot-authored
-branches.
+every gate again. The release App's pull request runs the same workflow from
+its own events, so the required context has one implementation for
+contributor and release branches.
 """
 
 from __future__ import annotations
@@ -14,7 +14,12 @@ from typing import Any, cast
 import pytest
 
 from dev.guards import _workflows as workflows
-from dev.guards._ci_names import GATE_JOB, GATE_NAME_EXPRESSION, Workflow
+from dev.guards._ci_names import (
+    GATE_JOB,
+    GATE_NAME_EXPRESSION,
+    RELEASE_BOT,
+    Workflow,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
 
@@ -97,14 +102,6 @@ _HOME = "owner/repo"
 _SCENARIOS: tuple[tuple[str, str, dict[str, object], frozenset[str]], ...] = (
     ("push to main", "push", {}, FULL_JOBS),
     ("dispatch", "workflow_dispatch", {}, FULL_JOBS),
-    (
-        "release dispatch",
-        "workflow_dispatch",
-        {
-            "ref_name": "release-please--branches--main--components--vaultspec-rag",
-        },
-        FULL_JOBS,
-    ),
     ("weekly schedule", "schedule", {}, frozenset({"dependency-audit"})),
     (
         "ready pull request opened",
@@ -202,6 +199,68 @@ _SCENARIOS: tuple[tuple[str, str, dict[str, object], frozenset[str]], ...] = (
         frozenset(),
     ),
     (
+        "the release App's pull request opened",
+        "pull_request",
+        {
+            "action": "opened",
+            "draft": False,
+            "head": _HOME,
+            "author": "NONE",
+            "login": RELEASE_BOT,
+        },
+        FULL_JOBS,
+    ),
+    (
+        "the release App pushed to its pull request",
+        "pull_request",
+        {
+            "action": "synchronize",
+            "draft": False,
+            "head": _HOME,
+            "author": "NONE",
+            "login": RELEASE_BOT,
+        },
+        FULL_JOBS,
+    ),
+    (
+        "the release App labelled its pull request",
+        "pull_request",
+        {
+            "action": "labeled",
+            "label": "autorelease: pending",
+            "draft": False,
+            "head": _HOME,
+            "author": "NONE",
+            "login": RELEASE_BOT,
+            "sender": "Bot",
+        },
+        frozenset(),
+    ),
+    (
+        "the default token's pull request opened",
+        "pull_request",
+        {
+            "action": "opened",
+            "draft": False,
+            "head": _HOME,
+            "author": "CONTRIBUTOR",
+            "login": "github-actions[bot]",
+        },
+        frozenset(),
+    ),
+    (
+        "a fork's branch named like the release App's",
+        "pull_request",
+        {
+            "action": "opened",
+            "draft": False,
+            "head": "stranger/repo",
+            "author": "NONE",
+            "login": RELEASE_BOT,
+        },
+        frozenset(),
+    ),
+    (
         "a bot pressed ci:full",
         "pull_request",
         {
@@ -220,7 +279,7 @@ def _bindings(payload: dict[str, object]) -> dict[str, object]:
     """Return the context references a pull request *payload* resolves.
 
     The author defaults to the owner and the sender to a user, the ordinary
-    case; the Dependabot and bot scenarios override them.
+    case; the Dependabot, bot and release App scenarios override them.
     """
     return {
         "github.repository": _HOME,
@@ -229,6 +288,7 @@ def _bindings(payload: dict[str, object]) -> dict[str, object]:
         "github.event.pull_request.draft": payload.get("draft", False),
         "github.event.pull_request.head.repo.full_name": payload.get("head", ""),
         "github.event.pull_request.author_association": payload.get("author", "OWNER"),
+        "github.event.pull_request.user.login": payload.get("login", "someone"),
         "github.event.sender.type": payload.get("sender", "User"),
         "github.ref_name": payload.get("ref_name", "feature"),
     }
@@ -293,7 +353,10 @@ def test_the_gate_needs_every_measuring_job_and_skips_only_a_draft() -> None:
         verdict = workflows.evaluate(condition, event, _bindings(payload))
         untrusted = event == "pull_request" and (
             payload.get("head") != _HOME
-            or payload.get("author", "OWNER") not in {"OWNER", "COLLABORATOR"}
+            or (
+                payload.get("author", "OWNER") not in {"OWNER", "COLLABORATOR"}
+                and payload.get("login") != RELEASE_BOT
+            )
         )
         skips = untrusted or (
             payload.get("draft") is True and payload.get("label") != "ci:full"
@@ -363,7 +426,7 @@ def test_dispatch_cannot_select_partial_merge_proof() -> None:
 
 def test_every_dispatch_requires_the_exact_commit_devserver_proof() -> None:
     """A feature-branch dispatch cannot bypass frontend verification."""
-    name = "Require the release dev server proof on this exact commit"
+    name = "Require the dev server proof on this exact commit"
     step = next(step for step in _jobs()[GATE_JOB]["steps"] if step.get("name") == name)
     assert (
         workflows.evaluate(
@@ -381,7 +444,7 @@ def test_a_dispatch_ref_that_is_not_a_commit_sha_is_refused() -> None:
     Mutation proof: restoring the fallback that replaced a non-SHA ref with
     ``GITHUB_SHA`` fails the refusal assertion; restoring the refusal passes.
     """
-    name = "Require the release dev server proof on this exact commit"
+    name = "Require the dev server proof on this exact commit"
     step = next(step for step in _jobs()[GATE_JOB]["steps"] if step.get("name") == name)
     assert "inputs.ref" in str(step["env"]["PROOF_SHA"])
     run = str(step["run"])
@@ -434,3 +497,35 @@ def test_lifecycle_suites_receive_the_compiled_monitor(job_id: str) -> None:
     assert "npm ci" in runs, f"{job_id} does not restore the committed dependencies"
     assert "just init-monitor" not in runs, f"{job_id} mutates operator dev services"
     assert runs.index("just build-monitor") < runs.index("just test-python")
+
+
+@pytest.mark.parametrize(
+    ("author", "login"),
+    [("OWNER", "someone"), ("COLLABORATOR", "someone"), ("NONE", RELEASE_BOT)],
+)
+def test_trusted_pull_requests_report_the_required_context(
+    author: str, login: str
+) -> None:
+    """A trusted author's gate, the release App's included, is the required one.
+
+    Mutation proof: dropping the release App's term from the gate's ``name:``
+    in ``merge-gate.yml`` and from ``GATE_NAME_EXPRESSION`` together made the
+    release App case fail on this assertion; restoring both made it pass.
+    """
+    payload: dict[str, object] = {
+        "action": "opened",
+        "head": _HOME,
+        "author": author,
+        "login": login,
+        "draft": False,
+    }
+    gate = _jobs()[GATE_JOB]
+    withheld = (
+        str(gate["name"])
+        .removeprefix("${{ ")
+        .split(" && 'Admission withheld (Linux)'", 1)[0]
+    )
+    assert (
+        workflows.evaluate(withheld, "pull_request", _bindings(payload))
+        is workflows.FALSE
+    ), f"a pull request by {login} ({author}) reports the withheld context"

@@ -127,12 +127,11 @@ jobs:
       github.event_name != 'pull_request' ||
       (github.event.pull_request.head.repo.full_name == github.repository &&
       (github.event.pull_request.author_association == 'OWNER' ||
-      github.event.pull_request.author_association == 'COLLABORATOR') &&
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.user.login == 'nevenincs-release[bot]') &&
       ((github.event.action == 'labeled' && github.event.label.name == 'ci:full' &&
       github.event.sender.type == 'User') ||
-      (github.event.pull_request.draft == false &&
-      (github.event.pull_request.author_association == 'OWNER' ||
-      github.event.pull_request.author_association == 'COLLABORATOR'))))
+      github.event.pull_request.draft == false))
     runs-on: [self-hosted, Linux, X64]
     # The fleet admits this job inside it, so the timeout covers up to two hours
     # of waiting for the host as well as the 20-minute budget its steps get.

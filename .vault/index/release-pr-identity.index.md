@@ -4,9 +4,9 @@ tags:
   - '#index'
   - '#release-pr-identity'
 date: '2026-09-29'
-modified: '2026-09-29'
+modified: '2026-10-18'
 body_schema: 'body-v2'
-body_hash: 'sha256:a78360fa08958b8459a82aa467908e0609f360ff021b045a0a152f4de5fa1c46'
+body_hash: 'sha256:732a08f8680d28af13a035c7fbf9207f27dcf85542a56a51cf06d9c5fe0e47ae'
 related:
   - '[[2026-09-29-release-pr-identity-adr]]'
   - '[[2026-09-29-release-pr-identity-research]]'
@@ -20,7 +20,7 @@ Auto-generated index of all documents tagged with `#release-pr-identity`.
 
 ### adr
 
-- `2026-09-29-release-pr-identity-adr` - `release-pr-identity` adr: `release pull requests are written by the release App` | (**status:** `rejected`)
+- `2026-09-29-release-pr-identity-adr` - `release-pr-identity` adr: `release pull requests are written by the release App` | (**status:** `accepted`)
 
 ### research
 
