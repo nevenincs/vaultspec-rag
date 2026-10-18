@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from dev.guards import _workflows as workflows
-from dev.guards._ci_names import Workflow
+from dev.guards._ci_names import RELEASE_BOT, Workflow
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
 
@@ -22,7 +22,7 @@ def test_shared_devserver_matches_adopted_source() -> None:
     script = Path(__file__).resolve().parents[1] / "devserver.py"
     source = script.read_bytes().replace(b"\r\n", b"\n")
     assert hashlib.sha256(source).hexdigest() == (
-        "676f045c2ba3fd09786af66ca723d8da654886bf6db6aa382462e465fd2742aa"
+        "36e999dea2dbe6056b74df16ae1a290ff121785bfdb3da98a8debf8fca25c1a6"
     ), "The lifecycle script differs from the adopted shared source."
 
 
@@ -67,14 +67,44 @@ def test_shared_workflow_matches_adopted_template() -> None:
             ("NONE", False, "owner/repo", "labeled", "unrelated", "User"),
             workflows.FALSE,
         ),
+        (
+            ("NONE", False, "owner/repo", "opened", "", "Bot", RELEASE_BOT),
+            workflows.TRUE,
+        ),
+        (
+            ("NONE", True, "owner/repo", "opened", "", "Bot", RELEASE_BOT),
+            workflows.FALSE,
+        ),
+        (
+            ("NONE", False, "outside/fork", "opened", "", "Bot", RELEASE_BOT),
+            workflows.FALSE,
+        ),
+        (
+            (
+                "CONTRIBUTOR",
+                False,
+                "owner/repo",
+                "opened",
+                "",
+                "Bot",
+                "github-actions[bot]",
+            ),
+            workflows.FALSE,
+        ),
     ],
 )
 def test_shared_workflow_admits_only_reviewed_pull_requests(
-    case: tuple[str, bool, str, str, str, str],
+    case: tuple[str, bool, str, str, str, str]
+    | tuple[str, bool, str, str, str, str, str],
     expected: workflows.Tri,
 ) -> None:
-    """Verified: replacing author admission with true failed; restoration passed."""
-    association, draft, head_repo, action, label, sender = case
+    """Admit the owner, collaborators and the release App; nobody else.
+
+    Verified: replacing author admission with true failed; restoration passed.
+    Dropping the release App's term from the rendered workflow failed the
+    release App case; restoration passed.
+    """
+    association, draft, head_repo, action, label, sender, *login = case
     job = next(iter(workflows.load_jobs(Workflow.DEVSERVER)))
     bindings = {
         "github.repository": "owner/repo",
@@ -84,5 +114,6 @@ def test_shared_workflow_admits_only_reviewed_pull_requests(
         "github.event.action": action,
         "github.event.label.name": label,
         "github.event.sender.type": sender,
+        "github.event.pull_request.user.login": login[0] if login else "someone",
     }
     assert workflows.evaluate(job.condition or "", "pull_request", bindings) == expected

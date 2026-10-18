@@ -1,7 +1,10 @@
-"""Release proposals require full proof, and merging starts the release cut."""
+"""The release App writes the proposal, and merging starts the proven cut."""
 
 from __future__ import annotations
 
+import json
+import re
+import tomllib
 from typing import Any, cast
 
 import pytest
@@ -12,8 +15,27 @@ pytestmark = [pytest.mark.unit, pytest.mark.repo]
 
 RELEASE_WORKFLOW = "release-please.yml"
 GATE_WORKFLOW = "merge-gate.yml"
-DISPATCH_STEP = "Dispatch the merge gate for the release pull request"
 REF_EXPRESSION = "${{ inputs.ref || github.sha }}"
+DEV_PROOF_STEP = "Require the dev server proof on this exact commit"
+
+#: The release App token's exact inputs. The client id is a variable and the
+#: key a secret; the token gets only the two grants a proposal writes with.
+APP_TOKEN_INPUTS = {
+    "client-id": "${{ vars.RELEASE_APP_CLIENT_ID }}",
+    "private-key": "${{ secrets.RELEASE_APP_PRIVATE_KEY }}",
+    "permission-contents": "write",
+    "permission-pull-requests": "write",
+}
+APP_TOKEN = "${{ steps.proposal-token.outputs.token }}"
+
+#: The ``extra-files`` entry that bumps the project's own version in uv.lock.
+#: The ``.value`` segment is load-bearing: release-please's TOML reader wraps
+#: each value, and the plain ``@.name`` filter matches nothing.
+LOCK_ENTRY = {
+    "type": "toml",
+    "path": "uv.lock",
+    "jsonpath": "$.package[?(@.name.value=='vaultspec-rag')].version",
+}
 
 
 def _triggers(workflow: str) -> dict[object, object]:
@@ -44,38 +66,111 @@ def _release_please_steps(job_id: str) -> list[dict[object, object]]:
     ]
 
 
-def test_release_please_dispatches_the_gate_after_its_last_branch_write() -> None:
-    """The bot proves the lock-refreshed head without a label or operator.
+def test_the_release_app_writes_the_proposal() -> None:
+    """The proposal is opened with a token minted from the release App, only.
 
-    Mutation proof: deleting ``--field ref=`` makes this fail on the dispatch
-    contract, and deleting ``--field scope=full`` fails on the scope;
-    restoring each makes this pass.
+    A pull request the default token opens is authored by github-actions[bot],
+    which the merge gate withholds, so the required check never reports.
+
+    Mutation proof: replacing the proposal's token with
+    ``${{ steps.proposal-token.outputs.token || secrets.GITHUB_TOKEN }}`` made
+    this fail on the token assertion; pinning the token action to ``@v3`` failed
+    the pin assertion; restoring each made this pass.
     """
-    jobs = workflows.document(RELEASE_WORKFLOW).get("jobs")
-    assert isinstance(jobs, dict)
-    release = cast("dict[object, object]", jobs).get("release-please")
-    assert isinstance(release, dict)
-    raw = cast("dict[object, object]", release)
-    permissions = raw.get("permissions")
+    job = _job("release-please")
+    permissions = job.get("permissions")
     assert isinstance(permissions, dict)
-    assert cast("dict[object, object]", permissions).get("actions") == "write"
-    steps = raw.get("steps")
-    assert isinstance(steps, list)
-    named = {
-        str(step.get("name")): (index, step)
-        for index, step in enumerate(steps)
-        if isinstance(step, dict)
-    }
-    assert DISPATCH_STEP in named
-    dispatch_index, dispatch = named[DISPATCH_STEP]
-    lock_index, _ = named["Regenerate and push uv.lock"]
-    assert dispatch_index > lock_index
-    run = str(dispatch.get("run", ""))
-    assert "gh workflow run merge-gate.yml" in run
-    assert '--ref "${HEAD_BRANCH}"' in run
-    assert "git/ref/heads/${HEAD_BRANCH}" in run
-    assert '--field ref="${HEAD_SHA}"' in run
-    assert "--field scope=" not in run
+    assert "write" not in cast("dict[object, object]", permissions).values(), (
+        "the proposal job's own token writes nothing; the App token does"
+    )
+    steps = cast("list[dict[str, Any]]", job["steps"])
+    assert len(steps) == 2, [step.get("name") for step in steps]
+    mint, proposal = steps
+    assert mint.get("id") == "proposal-token"
+    uses = str(mint.get("uses", ""))
+    action, _, ref = uses.partition("@")
+    assert action == "actions/create-github-app-token"
+    assert re.fullmatch(r"[0-9a-f]{40}", ref), f"{uses} is not pinned to a commit"
+    assert mint.get("with") == APP_TOKEN_INPUTS
+    assert str(proposal.get("uses", "")).startswith("googleapis/release-please-action@")
+    options = cast("dict[str, object]", proposal["with"])
+    assert options.get("token") == APP_TOKEN, (
+        f"the proposal is written with {options.get('token')!r}, not the App token"
+    )
+    assert options.get("skip-github-release") is True
+
+
+def test_nothing_else_writes_or_dispatches_for_the_proposal() -> None:
+    """The proposal's own events prove it; nothing pushes to it or dispatches.
+
+    A run another workflow dispatches is linked to no pull request, and a push
+    with the default token raises no pull-request event, so either leaves the
+    required check unreported on the proposal.
+
+    Mutation proof: restoring the ``gh workflow run merge-gate.yml`` step in
+    the proposal job made this fail naming it; restoring the default-token
+    ``git push`` of the lock made this fail naming it; removing each made this
+    pass.
+    """
+    findings: list[str] = []
+    for job in workflows.load_jobs(RELEASE_WORKFLOW):
+        for step in job.steps:
+            script = str(step.get("run") or "")
+            findings.extend(
+                f"{job.job_id}: {step.get('name')!r} runs {banned}"
+                for banned in (
+                    "gh workflow run merge-gate.yml",
+                    "gh workflow run devserver.yml",
+                    "git push",
+                    "github-actions[bot]",
+                )
+                if banned in script
+            )
+    assert not findings, "\n".join(findings)
+
+
+def test_the_lock_bump_rides_in_release_pleases_commit() -> None:
+    """release-please bumps uv.lock in its own commit, and the entry matches.
+
+    The jsonpath must address exactly one locked package, the project itself,
+    at the version pyproject.toml declares; otherwise the bump silently writes
+    nothing and the proposal's lock is stale.
+
+    Mutation proof: deleting the ``uv.lock`` entry from
+    ``release-please-config.json`` made this fail on the entry assertion;
+    restoring it made this pass.
+    """
+    root = workflows.repository_root()
+    config = json.loads((root / "release-please-config.json").read_text("utf-8"))
+    extra = config["packages"]["."]["extra-files"]
+    assert LOCK_ENTRY in extra, f"release-please does not bump uv.lock: {extra}"
+    project = tomllib.loads((root / "pyproject.toml").read_text("utf-8"))["project"]
+    lock = tomllib.loads((root / "uv.lock").read_text("utf-8"))
+    locked = [
+        package["version"]
+        for package in lock["package"]
+        if package["name"] == project["name"]
+    ]
+    assert locked == [project["version"]], (
+        f"uv.lock locks {project['name']} at {locked}, pyproject.toml at "
+        f"{project['version']}"
+    )
+
+
+def test_releases_stay_on_the_default_token() -> None:
+    """The cut's tag and release raise no workflow event of their own.
+
+    Mutation proof: passing the App token to the cut's release-please step made
+    this fail on the token assertion; removing it made this pass.
+    """
+    releases = _release_please_steps("cut")
+    assert len(releases) == 1
+    options = releases[0].get("with")
+    assert isinstance(options, dict)
+    assert "token" not in cast("dict[object, object]", options), (
+        "a tag or release created with any token but the default one starts "
+        "the tag-triggered workflows a second time"
+    )
 
 
 def test_main_push_selects_either_a_proposal_or_an_automatic_cut() -> None:
@@ -97,11 +192,7 @@ def test_main_push_selects_either_a_proposal_or_an_automatic_cut() -> None:
     assert (
         proposal["if"] == "github.event_name == 'push' && !needs.candidate.outputs.sha"
     )
-    proposals = _release_please_steps("release-please")
-    assert len(proposals) == 1
-    assert (
-        cast("dict[str, object]", proposals[0]["with"])["skip-github-release"] is True
-    )
+    assert len(_release_please_steps("release-please")) == 1
 
 
 def test_the_cut_proves_the_head_before_it_releases() -> None:
@@ -167,44 +258,25 @@ def test_every_gate_checkout_uses_the_requested_ref() -> None:
     )
 
 
-def test_release_readiness_requires_dev_server_and_releases_held_checks() -> None:
+def test_readiness_requires_the_dev_server_on_the_exact_commit() -> None:
     """The required aggregate includes the canonical exact-SHA dev proof.
 
+    A release call or dispatch carries no Dev Server run of its own, so the
+    proof reads the newest run on the commit whatever event started it.
+
     Mutation proof: dropping the dev proof's SHA filter failed proof admission
-    (exit 1); exact restoration passed (exit 0).
+    (exit 1); restoring an ``event=`` filter failed the any-event assertion;
+    exact restoration passed (exit 0).
     """
-    proposal = _job("release-please")["steps"]
-    scripts = [str(step.get("run", "")) for step in proposal]
-    dev = next(
-        i
-        for i, script in enumerate(scripts)
-        if "gh workflow run devserver.yml" in script
-    )
-    gate = next(
-        i
-        for i, script in enumerate(scripts)
-        if "gh workflow run merge-gate.yml" in script
-    )
-    lock = next(
-        i
-        for i, step in enumerate(proposal)
-        if step.get("name") == "Regenerate and push uv.lock"
-    )
-    assert lock < dev < gate
-    assert '--ref "$HEAD_BRANCH"' in scripts[dev]
     raw = workflows.document(GATE_WORKFLOW)["jobs"]["gate"]
     assert raw["permissions"]["actions"] == "write"
     steps = {step.get("name"): step for step in raw["steps"]}
-    proof = str(
-        steps["Require the release dev server proof on this exact commit"]["run"]
-    )
+    proof = str(steps[DEV_PROOF_STEP]["run"])
     assert "head_sha=$PROOF_SHA" in proof
+    assert "event=" not in proof, "a dispatch or a call would wait on no run"
     assert '"completed success") exit 0' in proof
     assert "completed*)" in proof and "exit 1" in proof
-    assert "Approve the proven release proposal checks" not in steps
-    assert "github.event_name == 'pull_request'" in str(
-        steps["Require the release dev server proof on this exact commit"]["if"]
-    )
+    assert "github.event_name == 'pull_request'" in str(steps[DEV_PROOF_STEP]["if"])
     verdict = str(steps["Every full check passed on this commit"]["run"])
     assert 'if ($4 != "success") failed=1' in verdict
     assert "exit(failed || count != 8)" in verdict
