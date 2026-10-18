@@ -7,6 +7,7 @@ from typing import Any, cast
 import pytest
 
 from dev.guards import _workflows as workflows
+from dev.guards._ci_names import GATE_CHECK
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
 
@@ -232,3 +233,40 @@ def test_release_result_refuses_a_skipped_selected_path() -> None:
         in script
     )
     assert '"$PROPOSAL_RESULT" != success' in script
+
+
+def test_a_dispatched_verdict_reaches_the_proposal_it_measured() -> None:
+    """A dispatched or called gate records its verdict on the measured commit.
+
+    GitHub links a dispatched run's checks to no pull request, so the release
+    proposal, whose own events measure nothing, reads the required context
+    only from this commit status.
+
+    Mutation proof: dropping ``statuses: write`` from the release cut's gate
+    call failed naming the caller; recording ``success`` unconditionally failed
+    the verdict mapping; shortening the recorded context failed the equality
+    with the canonical check name; restoring each passed.
+    """
+    raw = workflows.document(GATE_WORKFLOW)["jobs"]["gate"]
+    assert raw["permissions"].get("statuses") == "write"
+    assert _job("prove-gate")["permissions"].get("statuses") == "write", (
+        "a called gate cannot write a status its caller's token does not grant"
+    )
+    steps = {step.get("name"): step for step in raw["steps"]}
+    record = steps["Record the verdict on the measured commit"]
+    condition = str(record["if"])
+    assert condition.startswith("always() && ")
+    assert "github.event_name == 'workflow_dispatch'" in condition
+    assert "inputs.ref != ''" in condition
+    assert record["env"]["PROOF_SHA"] == REF_EXPRESSION
+    assert record["env"]["VERDICT"] == "${{ job.status }}"
+    script = str(record["run"])
+    assert "state=failure\n" in script
+    assert 'if [ "$VERDICT" = "success" ]; then\n  state=success' in script
+    assert record["env"]["REQUIRED_CONTEXT"] == GATE_CHECK
+    assert '-f context="$REQUIRED_CONTEXT"' in script
+    assert '"repos/$GITHUB_REPOSITORY/statuses/$PROOF_SHA"' in script
+    last = raw["steps"][-1]
+    assert last.get("name") == "Record the verdict on the measured commit", (
+        "the verdict is recorded only after every check of the gate has run"
+    )

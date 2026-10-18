@@ -385,6 +385,8 @@ jobs:
       # older green verdict after a newer red one.
       actions: write
       pull-requests: write
+      # Records a dispatched or called verdict on the commit it measured.
+      statuses: write
     env:
       CI_RESOURCE_CLASS: verdict
       GH_TOKEN: ${{ github.token }}
@@ -513,3 +515,35 @@ jobs:
           done < <(printf '%s\n' "$previous_runs" | sort -t $'\t' -k1,1nr)
           echo "::error::nothing has fully measured $HEAD_SHA; push to it, mark it ready, or add $FULL_RUN_LABEL"
           exit 1
+
+      # GitHub attaches a dispatched or called run's checks to no pull request,
+      # so a pull request whose own events measure nothing - the release
+      # proposal Release Please opens with the workflow token - would wait on
+      # the required context forever. The verdict this run reached on the
+      # commit it measured is also recorded as a commit status under that
+      # context, which every pull request whose head is this commit reads. A
+      # failed or cancelled run records a failure, never a pass.
+      - name: Record the verdict on the measured commit
+        if: always() && (github.event_name == 'workflow_dispatch' || inputs.ref != '')
+        env:
+          PROOF_SHA: ${{ inputs.ref || github.sha }}
+          VERDICT: ${{ job.status }}
+          # The required context; a guard holds it equal to this job's name.
+          REQUIRED_CONTEXT: "Check: Merge gate (Linux)"
+        run: |
+          set -euo pipefail
+          if ! [[ "$PROOF_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::ref '$PROOF_SHA' is not a full commit SHA; no verdict is recorded"
+            exit 1
+          fi
+          state=failure
+          if [ "$VERDICT" = "success" ]; then
+            state=success
+          fi
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$PROOF_SHA" \
+            -f state="$state" \
+            -f context="$REQUIRED_CONTEXT" \
+            -f description="Full merge gate ${state} on this commit" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --silent
+          echo "recorded ${state} for $PROOF_SHA"

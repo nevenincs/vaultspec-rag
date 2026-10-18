@@ -182,6 +182,7 @@ jobs:
       actions: write
       pull-requests: write
       security-events: write
+      statuses: write
     with:
       ref: ${{ needs.candidate.outputs.sha }}
 
