@@ -45,6 +45,7 @@ class Workflow(StrEnum):
     CODE_HEALTH = "code-health.yml"
     DEVSERVER = "devserver.yml"
     NOTIFY_MARKETING = "notify-marketing.yml"
+    NOTIFY_MARKETING_RETRY = "notify-marketing-retry.yml"
 
 
 #: The product owned workflow names start with, so their runs group together.
