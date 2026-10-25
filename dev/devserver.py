@@ -69,7 +69,7 @@ HARNESS = Path(__file__).resolve()
 STANDARD = {
     "react": "19.3.0",
     "react-dom": "19.3.0",
-    "vite": "8.3.1",
+    "vite": "8.3.5",
     "@vitejs/plugin-react": "6.1.1",
 }
 
