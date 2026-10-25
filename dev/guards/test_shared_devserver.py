@@ -22,7 +22,7 @@ def test_shared_devserver_matches_adopted_source() -> None:
     script = Path(__file__).resolve().parents[1] / "devserver.py"
     source = script.read_bytes().replace(b"\r\n", b"\n")
     assert hashlib.sha256(source).hexdigest() == (
-        "36e999dea2dbe6056b74df16ae1a290ff121785bfdb3da98a8debf8fca25c1a6"
+        "d8809cfb971f8ca144b9dcb608371e23c7b56d06c5516642d569bb3122727b2d"
     ), "The lifecycle script differs from the adopted shared source."
 
 
