@@ -26,23 +26,3 @@
 #   id = "GHSA-rrmf-rvhw-rf47"
 #   reason = "torch.jit memory corruption, no fixed release; dev-only tooling, never shipped in the wheel. Remove when a fixed torch lands."
 #   expires = 2026-12-31
-
-[[suppression]]
-expires = 2026-11-04
-id = "GHSA-vfj7-8cjw-p6xm"
-reason = "braces 3.0.3 stack exhaustion on deeply nested patterns, no fixed release. Reached only through patch-package > find-yarn-workspace-root > micromatch at npm install time, on patterns this repository writes; never shipped in the wheel or the monitor bundle. Remove when a fixed braces lands or patch-package stops depending on it."
-
-[[suppression]]
-expires = 2026-11-04
-id = "GHSA-587h-7wmj-h5pm"
-reason = "launch-editor through vite 8.3.1: the Windows-only open-in-editor middleware of the local dev server, never shipped in the wheel or the monitor bundle. Fixed in vite 8.3.3, but the vite version is the fleet dev-server standard (dev/devserver.py STANDARD), bumped in the devservers repository and synced, not here. Remove when that standard reaches 8.3.3 or later."
-
-[[suppression]]
-expires = 2026-11-04
-id = "GHSA-698v-4r3x-3vcv"
-reason = "launch-editor through vite 8.3.1: the Windows-only open-in-editor middleware of the local dev server, never shipped in the wheel or the monitor bundle. Fixed in vite 8.3.3, but the vite version is the fleet dev-server standard (dev/devserver.py STANDARD), bumped in the devservers repository and synced, not here. Remove when that standard reaches 8.3.3 or later."
-
-[[suppression]]
-expires = 2026-11-04
-id = "GHSA-r825-w8mm-5pxw"
-reason = "launch-editor through vite 8.3.1: the Windows-only open-in-editor middleware of the local dev server, never shipped in the wheel or the monitor bundle. Fixed in vite 8.3.3, but the vite version is the fleet dev-server standard (dev/devserver.py STANDARD), bumped in the devservers repository and synced, not here. Remove when that standard reaches 8.3.3 or later."
