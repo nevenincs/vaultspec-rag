@@ -5,7 +5,7 @@ tags:
 date: '2026-10-26'
 modified: '2026-10-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:e38323d9d1fc74e419703be682a3f74ec290fd3a55fc571bf6c0958ff0e8f7cd'
+body_hash: 'sha256:c091f0e803ab38ce877d7cd699549957cf5c91eeb64fa6d06f1ce3ad64beac14'
 related:
   - "[[2026-10-26-stale-search-hits-plan]]"
 ---
@@ -74,7 +74,25 @@ related:
 - `S06` `verify:` `identical isolated vault audit18pass and mutation fail restore pass` -> `pass`
 - `S06` `verify:` `integrated configured complexity Xenon imports nesting pylint0` -> `pass`
 - `S06` `by:` `principal`
+- `S05` `M` `src/vaultspec_rag/_search_freshness.py`
+- `S05` `M` `src/vaultspec_rag/_search_drift.py`
+- `S05` `A` `src/vaultspec_rag/indexer/_vault_identity.py`
+- `S05` `M` `src/vaultspec_rag/indexer/_vault_incremental.py`
+- `S05` `M` `src/vaultspec_rag/indexer/_vault_prep.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_search_drift.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_search_hit_freshness.py`
+- `S05` `A` `src/vaultspec_rag/tests/integration/test_search_stale_delivery.py`
+- `S05` `verify:` `integrated full Ruff lint and affected format ty basedpyright exit0` -> `pass`
+- `S05` `verify:` `final configured complexity gate including Xenon exit0` -> `pass`
+- `S05` `verify:` `integrated drift freshness substitution numeric and vault producer310pass` -> `pass`
+- `S05` `verify:` `real subprocess stale_delivery initial116.84seconds and restored90.80seconds pass` -> `pass`
+- `S05` `verify:` `mutation guards queue readcache vaultproof docscontainment retirement intendedfail exactrestorepass` -> `pass`
+- `S05` `verify:` `live earlyaudit deliverycorrelation guard intentionalfail and exactsource restored nodepass` -> `pass`
+- `S05` `by:` `principal`
+- `S01` `verify:` `reopened feature real canonical checkpoint and actual delivery incremental repair verification after S05` -> `pass`
+- `S01` `verify:` `integrated feature review no unresolved code findings` -> `pass`
 
 ## Notes
 
 - `S08` User explicitly authorized including existing staged uv.lock update. Digest derivation executed no downloaded native binary. Full GPU baseline resource failures are unrelated and remain tracked in S02.
+- `S05` No guard exemption or suppression added. Live proof initially expected later timestamp guard but earlier same ordering correlation guard caught the mutation; paired-artifact verification0 records exact assertion and restored source SHA. Initial pointer-missing attempt excluded from proof. Full matrix remains S02 open.

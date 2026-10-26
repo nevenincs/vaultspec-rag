@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sys
+from contextlib import contextmanager
 from dataclasses import replace
-from typing import TYPE_CHECKING, cast
-from unittest.mock import Mock
+from typing import TYPE_CHECKING, Literal
 
 import pytest
 
@@ -18,22 +19,23 @@ from .._search_freshness import (
     verify_search_hits,
 )
 from .._source_types import IndexSource, PublicSourceType
+from ..config._settings import get_config
 from ..indexer._publication_proof import ProofEvidence
 from ..indexer._run_ledger_models import FETCH_BATCH, RunAuthority
 from ..indexer._run_ledger_runtime import RunLedger
 from ..indexer._vault_fingerprint import fingerprint_bytes
+from ..indexer._vault_identity import vault_document_id, vault_relative_path
 from ..search._models import DocumentSearchResult, SearchResult
-from ..server import _routes_search
 from ..server._models import SearchResultItem
-from ..server._routes_search import SearchRequest, _execute_search_request
-from ..service import ServiceRegistry
 from ._run_ledger_test_support import (
     ledger_test_publish_and_compact,
     ledger_test_signature,
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
     from pathlib import Path
+    from types import FrameType
 
 pytestmark = pytest.mark.unit
 
@@ -49,6 +51,11 @@ def _published(
         if source == "vault"
         else hashlib.blake2b(data).hexdigest()
     )
+    proof_path = relative
+    if source == "vault":
+        docs_relative = vault_relative_path(path, root / get_config().docs_dir)
+        assert docs_relative is not None
+        proof_path = vault_document_id(docs_relative)
     ledger = RunLedger(root / "runs.sqlite3")
     signature = replace(
         ledger_test_signature(root),
@@ -63,7 +70,7 @@ def _published(
     ledger.establish_verified_publication(
         generation.generation_id,
         RunAuthority.REBUILD,
-        (ProofEvidence(relative, digest, ("point-0",)),),
+        (ProofEvidence(proof_path, digest, ("point-0",)),),
     )
     ledger_test_publish_and_compact(ledger, generation.generation_id)
     proof, token = ledger.acquire_current_publication_snapshot(
@@ -203,36 +210,86 @@ def test_content_lookup_is_path_bounded_and_does_not_hydrate_point_lists(
         )
 
 
+@contextmanager
+def _file_reads() -> Generator[list[FrameType]]:
+    """Observe real reads; the result exposes no I/O-count diagnostic."""
+    previous = sys.getprofile()
+    reads: list[FrameType] = []
+
+    def observe(
+        frame: FrameType,
+        event: Literal["call", "return", "c_call", "c_return", "c_exception"],
+        arg: object,
+    ) -> None:
+        if previous is not None:
+            previous(frame, event, arg)
+        if event == "call" and frame.f_code is _search_freshness._read_file.__code__:
+            reads.append(frame)
+
+    sys.setprofile(observe)
+    try:
+        yield reads
+    finally:
+        sys.setprofile(previous)
+
+
 def test_delivered_chunks_share_one_file_read(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     snapshot = _published(tmp_path, "src/a.py", b"return 'old'\n")
-    read = Mock(wraps=_search_freshness.open_source_file)
-    monkeypatch.setattr(_search_freshness, "open_source_file", read)
     hits = [_hit(), replace(_hit(), id="point-1")]
-    verify_search_hits(tmp_path, hits, {"code": snapshot})
+    with _file_reads() as reads:
+        verify_search_hits(tmp_path, hits, {"code": snapshot})
     assert [hit.freshness for hit in hits] == ["current", "current"]
-    assert read.call_count == 1
+    assert len(reads) == 1
 
 
 def test_combined_domains_share_the_same_physical_file_read(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Disabling the page cache failed the exact one-read assertion; restoring
+    # the cache passed in the same run.
     data = b"return 'old'\n"
     code = _published(tmp_path, "shared.md", data)
     document = _published(tmp_path, "shared.md", data, "document")
     (tmp_path / "shared.md").write_bytes(b"return 'new'\n")
-    read = Mock(wraps=_search_freshness.open_source_file)
-    monkeypatch.setattr(_search_freshness, "open_source_file", read)
     hits: list[SearchResult | DocumentSearchResult] = [
         _hit("shared.md"),
         DocumentSearchResult("point-0", "shared.md", "Shared", 0.8, "old"),
     ]
-    verify_search_hits(tmp_path, hits, {"code": code, "document": document})
+    with _file_reads() as reads:
+        verify_search_hits(tmp_path, hits, {"code": code, "document": document})
     assert [hit.freshness for hit in hits] == ["stale", "stale"]
-    assert read.call_count == 1
+    assert len(reads) == 1
+
+
+def test_vault_and_code_share_physical_reads_with_distinct_proof_keys(
+    tmp_path: Path,
+) -> None:
+    relative = ".vault/adr/shared.document.md"
+    data = b"# Shared document\n\nOriginal.\n"
+    code = _published(tmp_path, relative, data)
+    vault = _published(tmp_path, relative, data, "vault")
+    hits = [_hit(relative), replace(_hit(relative), source="vault", id="vault-point")]
+    with _file_reads() as reads:
+        verify_search_hits(tmp_path, hits, {"code": code, "vault": vault})
+    assert [hit.freshness for hit in hits] == ["current", "current"]
+    assert len(reads) == 1
+
+
+def test_vault_outside_docs_root_cannot_borrow_a_basename_proof(
+    tmp_path: Path,
+) -> None:
+    # Permitting basename fallback confirmed outside-root drift and failed the
+    # empty-drift assertion; restoring strict containment passed in the same run.
+    data = b"# Stored index\n\nOriginal.\n"
+    snapshot = _published(tmp_path, ".vault/stored.index.md", data, "vault")
+    outside = tmp_path / "elsewhere" / "stored.index.md"
+    outside.parent.mkdir()
+    outside.write_bytes(data)
+    hit = replace(_hit("elsewhere/stored.index.md"), source="vault")
+    assert verify_search_hits(tmp_path, [hit], {"vault": snapshot}) == ()
+    assert hit.freshness == "unverifiable"
 
 
 def test_missing_root_and_unsafe_paths_are_not_confirmed_drift(tmp_path: Path) -> None:
@@ -247,34 +304,3 @@ def test_missing_root_and_unsafe_paths_are_not_confirmed_drift(tmp_path: Path) -
     hit = _hit()
     verify_search_hits(root, [hit], {"code": snapshot})
     assert hit.freshness == "unverifiable"
-
-
-def test_service_dispatch_verifies_and_serializes_final_combined_page(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    snapshot = _published(tmp_path, "src/a.py", b"return 'old'\n")
-    (tmp_path / "src/a.py").write_bytes(b"return 'new'\n")
-    final = [_hit()]
-    monkeypatch.setattr(
-        _routes_search,
-        "capture_hit_publications",
-        Mock(return_value={"code": snapshot}),
-    )
-    monkeypatch.setattr(
-        _routes_search,
-        "_dispatch_public_search",
-        Mock(return_value=(final, {"code_indexed_count": 1.0}, None)),
-    )
-    monkeypatch.setattr(
-        _routes_search, "_search_integrity", Mock(return_value=(None, None))
-    )
-    monkeypatch.setattr(_routes_search, "_search_index_state", Mock(return_value={}))
-    request = SearchRequest(
-        tmp_path, "query", 1, {}, PublicSourceType.COMBINED, "request-1"
-    )
-    result = _execute_search_request(request, ServiceRegistry())
-    rows = cast("list[dict[str, object]]", result["results"])
-    assert len(rows) == 1
-    assert rows[0]["freshness"] == "stale"
-    assert rows[0]["snippet"] == "return 'old'"

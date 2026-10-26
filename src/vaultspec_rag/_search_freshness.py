@@ -12,6 +12,7 @@ from ._publication_state import acquire_publication_snapshot
 from ._source_types import IndexSource, PublicSourceType
 from .indexer._file_state import validate_rel_path
 from .indexer._source_file import open_source_file, source_file_stat
+from .indexer._vault_identity import vault_document_id, vault_relative_path
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -167,10 +168,25 @@ def _source_checks(
     try:
         for path in paths:
             validate_rel_path(path)
+        proof_paths = {path: path for path in paths}
+        if source == "vault":
+            from .config._settings import get_config
+
+            docs_dir = budget.root / get_config().docs_dir
+            proof_paths = {
+                path: vault_document_id(relative)
+                for path in paths
+                if (relative := vault_relative_path(budget.root / path, docs_dir))
+                is not None
+            }
         expected = snapshot.ledger.publication_content_for_paths(
-            snapshot.proof.compatibility_key, paths
+            snapshot.proof.compatibility_key, tuple(proof_paths.values())
         )
-        expected = {path: expected[path] for path in paths if path in expected}
+        expected = {
+            path: expected[identity]
+            for path, identity in proof_paths.items()
+            if identity in expected
+        }
         checks = _check_paths(budget, source, expected)
         snapshot.validate()
         return checks

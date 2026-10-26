@@ -24,6 +24,7 @@ from .._markdown_passages import parse_markdown
 from .._store_models import VaultChunk, VaultDocument
 from ..job_control import NO_RUN_CONTROL
 from ._chunking import TextSplitter, locate_pieces
+from ._vault_identity import vault_document_id, vault_relative_path
 
 if TYPE_CHECKING:
     import pathlib
@@ -428,16 +429,7 @@ def vault_document_from_text(
     from ..config._settings import get_config
 
     docs_dir = root_dir / get_config().docs_dir
-    try:
-        rel_path = str(path.relative_to(docs_dir)).replace("\\", "/")
-    except ValueError as exc:
-        logger.debug(
-            "relative_to(%s) failed for %s: %s; using basename",
-            docs_dir,
-            path,
-            exc,
-        )
-        rel_path = path.name
+    rel_path = vault_relative_path(path, docs_dir, allow_basename=True)
 
     title = _extract_title(body)
     if not title:
@@ -448,7 +440,7 @@ def vault_document_from_text(
 
     # Use relative path (without extension) as ID to avoid collisions
     # e.g., "adr/overview" instead of just "overview"
-    doc_id = rel_path.rsplit(".", 1)[0] if "." in rel_path else rel_path
+    doc_id = vault_document_id(rel_path)
 
     return VaultDocument(
         id=doc_id,
