@@ -16,7 +16,7 @@ related:
   - '[[2026-10-05-qdrant-provisioning-trust-adr]]'
 modified: '2026-10-26'
 body_schema: body-v2
-body_hash: 'sha256:9f498a9a6624d6206053677b427fa52a8b94c4cd90ca8b4da892e2ebd07691f0'
+body_hash: 'sha256:e3cff6d1938c04d12144fc8b29798fbb94926c11941023ec0f30ef16ae63e24e'
 ---
 
 <!-- RETIRED: S07 -->
@@ -38,7 +38,7 @@ The user authorized implementation of stale-hit detection, bounded automatic aud
 - [ ] `S01` - Implement bounded final-hit freshness and supervised incremental reconciliation across search surfaces, preserving results and surfacing explicit rebuild remediation; `src/vaultspec_rag and docs/search-and-index.md`.
 - [ ] `S02` - Run the complete local test matrix including live integration lanes and independent health audits; triage findings and preserve reproducible evidence; `src/vaultspec_rag/tests, dev, tools, local test artifacts and feature verification records`.
 - [x] `S03` - Reduce the existing Windows stdio target discovery complexity without changing process-anchor ownership or lifetime behavior; verify Windows layered-anchor coverage; `src/vaultspec_rag/server/_stdio_lifetime.py and src/vaultspec_rag/tests/test_stdio_lifetime.py`.
-- [ ] `S04` - Update exact search-result serialization contract coverage for the authorized freshness fields while preserving rank order and private-content exclusion; `src/vaultspec_rag/tests/integration/test_search_result_shape.py`.
+- [x] `S04` - Update exact search-result serialization contract coverage for the authorized freshness fields while preserving rank order and private-content exclusion; `src/vaultspec_rag/tests/integration/test_search_result_shape.py`.
 - [ ] `S05` - Replace undeclared stale-hit substitutions with real components and correct canonical vault evidence identity, preserving live incremental repair and delivery ordering; `src/vaultspec_rag/_search_freshness.py, indexer/_vault_identity.py, _vault_incremental.py, _vault_prep.py, freshness/drift tests and focused live integration coverage`.
 - [ ] `S06` - Make the malformed optional-null audit fixture persist the intended invalid payload through the real backend, retaining exact audit rejection and mutation proof; `src/vaultspec_rag/tests/test_vault_audit_validation.py`.
 - [x] `S08` - Align reviewed Qdrant server pins with the existing locked 1.20 client using outgoing-digest reproduction and canonical asset derivation, without changing the user dependency update; `src/vaultspec_rag/qdrant_runtime/_constants.py, user-authorized staged uv.lock update and pin validation evidence`.

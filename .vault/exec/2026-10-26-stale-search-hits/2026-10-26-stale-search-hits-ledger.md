@@ -5,7 +5,7 @@ tags:
 date: '2026-10-26'
 modified: '2026-10-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:8302adbd7e1c49ae5c3fd09c29c10d999c389680271b53cbfa2b64810de49fe8'
+body_hash: 'sha256:06a96a330bad3357f2d1ca0d7a72eefbef1fa1f809b0ce3a240408150612905b'
 related:
   - "[[2026-10-26-stale-search-hits-plan]]"
 ---
@@ -64,6 +64,11 @@ related:
 - `S03` `verify:` `identical isolated Windows stdio unit coverage37pass2POSIXskip` -> `pass`
 - `S03` `verify:` `integrated configured complexity Xenon imports nesting pylint0` -> `pass`
 - `S03` `by:` `principal`
+- `S04` `M` `src/vaultspec_rag/tests/integration/test_search_result_shape.py`
+- `S04` `verify:` `integrated full Ruff lint0 format0 ty0 basedpyright0` -> `pass`
+- `S04` `verify:` `identical isolated result shape6pass and mutation fail restore pass` -> `pass`
+- `S04` `verify:` `integrated configured complexity Xenon imports nesting pylint0` -> `pass`
+- `S04` `by:` `principal`
 
 ## Notes
 
