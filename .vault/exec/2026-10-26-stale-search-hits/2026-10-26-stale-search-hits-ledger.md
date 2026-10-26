@@ -5,7 +5,7 @@ tags:
 date: '2026-10-26'
 modified: '2026-10-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:bb2e4289efdf8f13fdeb319b4581563738ce9e7978f3336f10def068223dda2b'
+body_hash: 'sha256:8302adbd7e1c49ae5c3fd09c29c10d999c389680271b53cbfa2b64810de49fe8'
 related:
   - "[[2026-10-26-stale-search-hits-plan]]"
 ---
@@ -59,6 +59,11 @@ related:
 - `S08` `verify:` `canonical qdrant_pin_digests outgoing1.19 and new1.20 all12 each` -> `pass`
 - `S08` `verify:` `integrated pin runtime/download/install/spawn tests117pass1platformskip` -> `pass`
 - `S08` `by:` `principal`
+- `S03` `M` `src/vaultspec_rag/server/_stdio_lifetime.py`
+- `S03` `verify:` `integrated full Ruff lint0 format0 ty0 basedpyright0` -> `pass`
+- `S03` `verify:` `identical isolated Windows stdio unit coverage37pass2POSIXskip` -> `pass`
+- `S03` `verify:` `integrated configured complexity Xenon imports nesting pylint0` -> `pass`
+- `S03` `by:` `principal`
 
 ## Notes
 
