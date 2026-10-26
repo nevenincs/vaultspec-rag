@@ -218,8 +218,12 @@ def test_release_please_proves_then_publish_dispatches_binaries(
     assert config["packages"]["."]["draft"] is True
     assert config["packages"]["."]["force-tag-creation"] is True
     cut = _load(repo_root, "release-please.yml")["jobs"]
-    assert cut["prove-gate"]["uses"] == "./.github/workflows/merge-gate.yml"
-    assert cut["prove-gate"]["with"]["ref"] == "${{ needs.candidate.outputs.sha }}"
+    gate_checkout = next(
+        step
+        for step in cut["prove-gate"]["steps"]
+        if str(step.get("uses", "")).startswith("actions/checkout@")
+    )
+    assert gate_checkout["with"]["ref"] == "${{ needs.candidate.outputs.sha }}"
     assert cut["prove-hardware"]["uses"] == "./.github/workflows/hardware.yml"
     assert cut["prove-hardware"]["with"]["target_sha"] == (
         "${{ needs.candidate.outputs.sha }}"

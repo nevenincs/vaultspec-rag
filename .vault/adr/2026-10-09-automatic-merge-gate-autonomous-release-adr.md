@@ -11,9 +11,9 @@ related:
   - '[[2026-09-29-release-pr-identity-adr]]'
 supersedes:
   - '2026-09-21-automatic-merge-gate-adr'
-modified: '2026-10-18'
+modified: '2026-10-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:3d004e90ce754c5b60f3f124908a04866cffff7316d15f2324005192d2a4f4b5'
+body_hash: 'sha256:4d5741c8ed63435070d401e1a1977077e5e08c042dfd8749aeae0897254be182'
 ---
 
 # `automatic-merge-gate` adr: `Merge starts an autonomous verified release` | (**status:** `accepted`)
@@ -38,7 +38,7 @@ The draft-first release standard, native four-target and accelerator proof, fork
 
 Release Please dispatches full checks and the canonical Dev Server workflow after the final proposal branch write. A light or skipped result cannot authorize a release proposal. The required aggregate reuses only the full exact-SHA proof and includes Dev Server success. Held bot PR checks are released automatically after that proof.
 
-A maintainer merge starts candidate selection automatically. Full exact-commit checks and both accelerator tiers must pass before tag creation. Candidate, cut, or required publication handoff failures report failure; no normal transition requires dispatch by a person. Manual dispatch remains recovery only.
+A maintainer merge starts candidate selection automatically. Full exact-commit checks and both accelerator tiers must pass before tag creation; the release cut proof amendment of 2026-10-26 below states how a version-only release head meets the first of these. Candidate, cut, or required publication handoff failures report failure; no normal transition requires dispatch by a person. Manual dispatch remains recovery only.
 
 Artifact provenance replaces the human catalog-review stop. Only immutable public archives that passed native offline/browser proof are attested, in an isolated job with no repository checkout or contents write. Verification enforces repository, signing workflow, exact tag ref and source commit before archive inspection/extraction; executable hashes come from that authenticated archive and are checked immediately before execution. Toolchain provisioning continues to use reviewed committed binary pins.
 
@@ -108,3 +108,30 @@ pull-request events run the full gate and the Dev Server check. The required
 aggregate still reads the Dev Server verdict on the exact SHA, now from the
 newest run on that commit whatever event started it. Every other constraint
 above stands.
+
+## Release cut proof amendment, 2026-10-26
+
+Amended on the operator's explicit instruction to stop re-running the full
+pull-request suites in the release gate. The cut no longer calls the merge gate
+on the release head. That head differs from its parent only by Release
+Please's version files, and the parent is a main commit whose merge-gate push
+run already measured every suite, so re-running them repeated about 2.5
+runner-hours per cut on the single Linux build host.
+
+The cut's gate job now satisfies "full exact-commit checks" by proof rather
+than repetition. It requires the release head to change only
+`.release-please-manifest.json`, `CHANGELOG.md`, `pyproject.toml`, `uv.lock`
+and `docs/installation.md`, and in `pyproject.toml` and `uv.lock` only the
+version line. It requires the parent's newest merge-gate run started by a push
+to have succeeded: the weekly schedule's audit-only run carries the same
+aggregate check name, so a check verdict alone does not prove the suites. It
+re-runs the dependency audit on the release head, because advisories can be
+published against the unchanged lock between the merge and the cut. Both
+accelerator tiers still prove the release head itself before any tag exists,
+and the Dev Server and provenance constraints above are unchanged.
+
+Grounding: `.github/workflows/release-please.yml` job `prove-gate`;
+`dev/guards/test_ci_release_please_prs.py`;
+`tools/binaries/tests/test_release_workflow.py`. Release run 40271581654
+re-ran the full gate on 669966ead, a version-only head over 388bdcb96, whose
+push gate had already passed.

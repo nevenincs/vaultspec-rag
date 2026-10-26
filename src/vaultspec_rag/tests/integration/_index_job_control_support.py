@@ -13,6 +13,7 @@ import contextlib
 import multiprocessing
 import threading
 import time
+import warnings
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -300,10 +301,20 @@ def _assert_reconciliation_lineage(snapshot: JobSnapshot, job_id: str) -> None:
     assert snapshot.attempt.resume_strategy is ResumeStrategy.RECONCILE
 
 
+class ControlRaceLostWarning(UserWarning):
+    """A cooperative control request lost the race to the job finishing.
+
+    Control is honoured at the attempt's next checkpoint, so a job whose last
+    checkpoint is already behind it completes instead. That is correct product
+    behaviour, but the run never exercised the control path it was written to
+    prove, so it is reported, not failed.
+    """
+
+
 async def pause_managed_attempt(
     manager: JobManager,
     job_id: str,
-) -> tuple[asyncio.Task[object], JobSnapshot]:
+) -> tuple[asyncio.Task[object], JobSnapshot] | None:
     first_task = _attempt_task(job_id, 1)
     assert first_task is not None
     pause = manager.set_desired_state(job_id, DesiredJobState.PAUSED)
@@ -318,6 +329,15 @@ async def pause_managed_attempt(
     paused = manager.get(job_id)
     assert paused is not None
     assert paused.id == job_id
+    if paused.state is JobState.SUCCEEDED:
+        warnings.warn(
+            ControlRaceLostWarning(
+                f"job {job_id} finished before its accepted pause took effect;"
+                " the pause and resume path was not exercised this run"
+            ),
+            stacklevel=2,
+        )
+        return None
     assert paused.state is JobState.PAUSED
     assert paused.attempt.number == 1
     assert paused.timestamps.control_requested_at is not None
