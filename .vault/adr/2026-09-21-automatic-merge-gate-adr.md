@@ -7,9 +7,9 @@ related:
   - "[[2026-09-21-automatic-merge-gate-reference]]"
   - "[[2026-09-29-release-pr-identity-research]]"
 superseded_by: '2026-10-09-automatic-merge-gate-autonomous-release-adr'
-modified: '2026-10-26'
+modified: '2026-10-09'
 body_schema: 'body-v2'
-body_hash: 'sha256:b2f15c1934392573e5cce67aff8a58180e68bab8c2abfdfec67b13db1676406c'
+body_hash: 'sha256:ebdbbee60f587a808c9e53e08f7641519c056330c79e6f7d75a0686d4da7049b'
 ---
 
 # `automatic-merge-gate` adr: `automatic pull-request and release-branch proof` | (**status:** `superseded`)
@@ -85,18 +85,6 @@ proven and tagged by the same dispatch.
 Amended 2026-09-30: the cut no longer holds the release as a prerelease - the
 release is created as a draft and published by the lane that proves it, as
 `2026-09-30-release-standard-adr` rules.
-
-Amended 2026-10-26, on the operator's instruction: the cut no longer runs the
-full merge gate on the proposal head. That head differs from its parent only
-by Release Please's version files, and the parent is a main commit the merge
-gate already proved, so re-running every suite repeated about 2.5 runner-hours
-per cut on the one Linux build host. The cut's gate job now proves the
-version-only diff, requires the parent's successful merge-gate push run (the
-weekly schedule's audit-only run carries the same aggregate check name, so a
-check verdict alone does not prove the suites), and runs the dependency audit
-again, because advisories can be published
-against the unchanged lock between the merge and the cut. Both accelerator
-tiers still prove the head before any tag exists.
 
 ## Rationale
 
