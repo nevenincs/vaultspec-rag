@@ -7,9 +7,9 @@ related:
   - "[[2026-09-21-automatic-merge-gate-reference]]"
   - "[[2026-09-29-release-pr-identity-research]]"
 superseded_by: '2026-10-09-automatic-merge-gate-autonomous-release-adr'
-modified: '2026-10-09'
+modified: '2026-10-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:ebdbbee60f587a808c9e53e08f7641519c056330c79e6f7d75a0686d4da7049b'
+body_hash: 'sha256:c531f053049e176db10f50838dfb474820ac6d59ce6a3f8e284f146f4bd82db9'
 ---
 
 # `automatic-merge-gate` adr: `automatic pull-request and release-branch proof` | (**status:** `superseded`)
