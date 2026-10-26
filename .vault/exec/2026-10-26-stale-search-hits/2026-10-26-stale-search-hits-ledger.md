@@ -5,7 +5,7 @@ tags:
 date: '2026-10-26'
 modified: '2026-10-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:9b5129f8549b8a38e2be7ac7fb9e42f5d102245ae8d96e5e83b2b01929882125'
+body_hash: 'sha256:bb2e4289efdf8f13fdeb319b4581563738ce9e7978f3336f10def068223dda2b'
 related:
   - "[[2026-10-26-stale-search-hits-plan]]"
 ---
@@ -50,3 +50,16 @@ related:
 - `S01` `verify:` `scoped vault check all and schema` -> `pass`
 - `S01` `verify:` `plan check` -> `pass`
 - `S01` `verify:` `integrated review` -> `pass`
+- `S08` `M` `src/vaultspec_rag/qdrant_runtime/_constants.py`
+- `S08` `M` `uv.lock`
+- `S08` `verify:` `uv run --no-sync ruff check src tools dev conftest.py` -> `pass`
+- `S08` `verify:` `uv run --no-sync ruff format --check src tools dev conftest.py` -> `pass`
+- `S08` `verify:` `uv run --no-sync ty check src tools dev conftest.py` -> `pass`
+- `S08` `verify:` `basedpyright changed pin constants in isolated identical source` -> `pass`
+- `S08` `verify:` `canonical qdrant_pin_digests outgoing1.19 and new1.20 all12 each` -> `pass`
+- `S08` `verify:` `integrated pin runtime/download/install/spawn tests117pass1platformskip` -> `pass`
+- `S08` `by:` `principal`
+
+## Notes
+
+- `S08` User explicitly authorized including existing staged uv.lock update. Digest derivation executed no downloaded native binary. Full GPU baseline resource failures are unrelated and remain tracked in S02.
