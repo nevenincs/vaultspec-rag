@@ -1174,6 +1174,7 @@ def _bind_and_dispatch_admitted(
     *,
     code_preflight: CodeIndexPreflight | None = None,
     document_preflight: DocumentIndexPreflight | None = None,
+    registry: ServiceRegistry | None = None,
 ) -> str:
     """Bind one freshly created index job and dispatch it, failing it durably."""
     bound = _bind_index_dispatch(
@@ -1181,6 +1182,7 @@ def _bind_and_dispatch_admitted(
         job_id,
         code_preflight=code_preflight,
         document_preflight=document_preflight,
+        registry=registry,
     )
     if bound.status is JobOutcomeStatus.ERROR:
         manager.fail_unstarted(job_id, result=bound.message)
@@ -1202,6 +1204,7 @@ def start_reindex_vault(
     *,
     authority: RunAuthority,
     initiator_kind: str = "service",
+    registry: ServiceRegistry | None = None,
 ) -> str:
     """Start a background vault reindexing task and return the job_id."""
     manager, job_id, created = admit_index_job(
@@ -1210,10 +1213,11 @@ def start_reindex_vault(
         clean=clean,
         authority=authority,
         initiator_kind=initiator_kind,
+        registry=registry,
     )
     if not created:
         return job_id
-    return _bind_and_dispatch_admitted(manager, job_id)
+    return _bind_and_dispatch_admitted(manager, job_id, registry=registry)
 
 
 def start_reindex_codebase(
@@ -1222,6 +1226,7 @@ def start_reindex_codebase(
     *,
     authority: RunAuthority,
     initiator_kind: str = "service",
+    registry: ServiceRegistry | None = None,
 ) -> str:
     """Start a background codebase reindexing task and return the job_id."""
     code_preflight = validate_code_job_admission(root)
@@ -1231,10 +1236,16 @@ def start_reindex_codebase(
         clean=clean,
         authority=authority,
         initiator_kind=initiator_kind,
+        registry=registry,
     )
     if not created:
         return job_id
-    return _bind_and_dispatch_admitted(manager, job_id, code_preflight=code_preflight)
+    return _bind_and_dispatch_admitted(
+        manager,
+        job_id,
+        code_preflight=code_preflight,
+        registry=registry,
+    )
 
 
 def start_reindex_documents(
@@ -1243,6 +1254,7 @@ def start_reindex_documents(
     *,
     authority: RunAuthority,
     initiator_kind: str = "service",
+    registry: ServiceRegistry | None = None,
 ) -> str:
     """Start a background document reindexing task and return the job_id."""
     document_preflight = validate_document_job_admission(root)
@@ -1252,9 +1264,13 @@ def start_reindex_documents(
         clean=clean,
         authority=authority,
         initiator_kind=initiator_kind,
+        registry=registry,
     )
     if not created:
         return job_id
     return _bind_and_dispatch_admitted(
-        manager, job_id, document_preflight=document_preflight
+        manager,
+        job_id,
+        document_preflight=document_preflight,
+        registry=registry,
     )

@@ -114,6 +114,41 @@ Verify that worktree's index status, then retry the search. Job success or a zer
 record count alone does not prove that a searchable publication exists; a verified
 empty publication can legitimately have zero records.
 
+## Check whether a returned hit still matches disk
+
+Each returned hit carries `freshness`: `current`, `stale`, or `unverifiable`.
+This checks the file behind that hit, separately from the response's publication
+readiness. A current publication can still contain a file edited since indexing.
+
+Verification reads only the final ranked page, with bounded reads shared by hits
+from the same file. It compares the current file with published file evidence.
+Vault records use their indexed body and metadata fingerprint, so a change only
+to a non-indexed modified stamp does not make a hit stale.
+
+`stale` means a confirmed mismatch or confirmed missing file; `stale_reason`
+is `content_changed` or `file_missing`. `unverifiable` means the check could not
+establish currency, for example because the file or publication evidence was
+unreadable or changed during the check. It does not mean the file is stale.
+
+Stale hits keep their original score, order and indexed snippet. Read the current
+file before relying on a stale location or passage. Verification is a point-in-time
+observation, so a file can change again after the response.
+
+When managed search delivers confirmed stale hits, the service schedules a bounded
+background audit after delivering the response. If the indexed projection remains
+consistent and file drift persists, it requests an ordinary incremental update.
+Repeated observations coalesce by root and source. The `drift_audit` response list
+reports the audit state, reason and repair job when known; search does not wait for
+this work. Local adapter checks never start service jobs. Embedded Python result
+objects may report `unverifiable` until an adapter performs verification.
+
+If the audit proves incompatible schema or publication evidence, or incremental
+reconciliation returns `full_reindex_required`, the response reports
+`rebuild_required` and an executable rebuild command for the affected root and
+source. Follow that command when ready; the service never starts a full rebuild
+automatically. A rebuild deletes the selected old index before constructing its
+replacement.
+
 ## Choose immediate or bounded freshness
 
 Search uses `immediate` freshness by default. It returns against the currently published
