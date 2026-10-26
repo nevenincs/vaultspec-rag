@@ -29,7 +29,7 @@ from typer.testing import CliRunner
 
 from ..._job_values import count
 from ..._loopback_http import probe_loopback_connect
-from ..._process_probe import pid_alive
+from ..._process_probe import pid_alive, wait_for_exit
 from ...cli._process import _terminate_pid
 from ...cli._service_status import (
     _write_service_status,
@@ -45,7 +45,6 @@ from ._helpers import (
     _poll_health,
     _poll_own_health,
     _service_env,
-    _wait_for_exit,
 )
 
 __all__ = [
@@ -106,10 +105,10 @@ def _assert_expired_startup_torn_down(
     assert time.monotonic() - termination_started < _DEFAULT_TERMINATE_SECONDS / 2
     if pid_alive(daemon_pid):
         _terminate_pid(daemon_pid, timeout=15.0)
-    assert _wait_for_exit(daemon_pid, timeout=30.0), (
+    assert wait_for_exit(daemon_pid, timeout=30.0), (
         f"startup-expired service process {daemon_pid} did not exit"
     )
-    assert _wait_for_exit(launcher_pid, timeout=30.0), (
+    assert wait_for_exit(launcher_pid, timeout=30.0), (
         f"startup-expired service launcher {launcher_pid} did not exit"
     )
     if pid_alive(qdrant_pid):
@@ -118,7 +117,7 @@ def _assert_expired_startup_torn_down(
             wait_seconds=15.0,
             expected_start_time=qdrant_start_time,
         )
-    assert _wait_for_exit(qdrant_pid, timeout=30.0), (
+    assert wait_for_exit(qdrant_pid, timeout=30.0), (
         f"startup-expired Qdrant process {qdrant_pid} did not exit"
     )
 
@@ -227,7 +226,7 @@ def _terminate_test_processes(pids: list[int]) -> None:
     for pid in pids:
         if pid_alive(pid):
             _terminate_pid(pid)
-            _wait_for_exit(pid, timeout=15.0)
+            wait_for_exit(pid, timeout=15.0)
 
 
 def _port_is_listening(port: int) -> bool:
@@ -630,8 +629,8 @@ def _terminate_identity_process(
     finally:
         if serving_pid != process.pid:
             _terminate_pid(serving_pid, console_group_signal=False)
-            _wait_for_exit(serving_pid, timeout=15.0)
-    assert _wait_for_exit(process.pid, timeout=15.0), (
+            wait_for_exit(serving_pid, timeout=15.0)
+    assert wait_for_exit(process.pid, timeout=15.0), (
         "identity health process did not stop; log="
         + log_path.read_text(encoding="utf-8", errors="replace")[-2000:]
     )

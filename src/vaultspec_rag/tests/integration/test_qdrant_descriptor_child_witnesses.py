@@ -28,6 +28,7 @@ from ..._process_probe import (
     pid_image_matches,
     pid_image_path,
     pid_listens_on_loopback_port,
+    wait_for_exit,
 )
 from ...qdrant_runtime._constants import QDRANT_SERVER_VERSION, BinarySource
 from ...qdrant_runtime._resolve import (
@@ -42,7 +43,7 @@ from ...qdrant_runtime._supervise import (
     set_active_supervisor,
     start_supervised_from_config,
 )
-from ._helpers import _service_env, _wait_for_exit
+from ._helpers import _service_env
 from ._service_lifecycle_helpers import (
     _cleanup_forced_stop_harness,
     _spawn_posix_qdrant_owner,
@@ -152,7 +153,7 @@ def test_a_dead_owners_child_is_reaped_and_replaced(
 
         replacement = start_supervised_from_config()
         try:
-            assert _wait_for_exit(orphan_pid, timeout=15.0)
+            assert wait_for_exit(orphan_pid, timeout=15.0)
             assert replacement.pid is not None
             assert replacement.pid != orphan_pid
             assert replacement.is_alive()

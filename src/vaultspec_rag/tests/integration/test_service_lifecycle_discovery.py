@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 import pytest
 from typer.testing import CliRunner
 
-from ..._process_probe import pid_alive
+from ..._process_probe import pid_alive, wait_for_exit
 from ...cli import app
 from ...cli._process import _terminate_pid
 from ...cli._service_status import (
@@ -33,7 +33,6 @@ from .._session_job_anchor import spawn_anchored_service
 from ._helpers import (
     _poll_health,
     _service_env,
-    _wait_for_exit,
 )
 from ._service_lifecycle_helpers import (
     _assert_discovery_absent,
@@ -250,7 +249,7 @@ def test_shutdown_cleanup_cannot_be_resurrected_by_a_late_heartbeat(
             env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
         )
         assert result.exit_code == 0, f"stop failed: {result.stdout!r}"
-        assert _wait_for_exit(serving_pid), (
+        assert wait_for_exit(serving_pid, timeout=15.0), (
             f"serving PID {serving_pid} did not exit after stop"
         )
 

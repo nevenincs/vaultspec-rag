@@ -19,13 +19,13 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from ..._process_probe import wait_for_exit
 from ...cli._process import _terminate_pid
 from .._ports import free_loopback_port
 from .._session_job_anchor import spawn_anchored_service
 from ._helpers import (
     _poll_health,
     _service_env,
-    _wait_for_exit,
 )
 
 if TYPE_CHECKING:
@@ -240,7 +240,7 @@ def test_idle_ttl_evicts_quiescent_slots(tmp_path: Path) -> None:
             assert str(proj_c) in roots
         finally:
             _terminate_pid(pid)
-            _wait_for_exit(pid)
+            wait_for_exit(pid, timeout=15.0)
 
 
 def test_lru_cap_evicts_oldest(tmp_path: Path) -> None:
@@ -291,7 +291,7 @@ def test_lru_cap_evicts_oldest(tmp_path: Path) -> None:
             assert results, "warm slot served the search but matched nothing"
         finally:
             _terminate_pid(pid)
-            _wait_for_exit(pid)
+            wait_for_exit(pid, timeout=15.0)
 
 
 def test_log_rotation_creates_backups(tmp_path: Path) -> None:
@@ -345,7 +345,7 @@ def test_log_rotation_creates_backups(tmp_path: Path) -> None:
             assert not log_path.with_name(log_path.name + ".3").exists()
         finally:
             _terminate_pid(pid)
-            _wait_for_exit(pid)
+            wait_for_exit(pid, timeout=15.0)
 
 
 def test_log_rotation_post_rollover_writes_to_active(tmp_path: Path) -> None:
@@ -422,7 +422,7 @@ def test_log_rotation_post_rollover_writes_to_active(tmp_path: Path) -> None:
             assert marker.encode() not in rotated_bytes
         finally:
             _terminate_pid(pid)
-            _wait_for_exit(pid)
+            wait_for_exit(pid, timeout=15.0)
 
 
 def test_close_all_drains_busy_slots(tmp_path: Path) -> None:
@@ -495,7 +495,7 @@ def test_close_all_drains_busy_slots(tmp_path: Path) -> None:
             # the hang-guard (drain + grace + teardown headroom); exiting at
             # all under live client load is the invariant.
             _terminate_pid(pid)
-            assert _wait_for_exit(pid, timeout=30), "service did not exit"
+            assert wait_for_exit(pid, timeout=30), "service did not exit"
             for t in threads:
                 t.join(timeout=10)
             alive = [t.name for t in threads if t.is_alive()]
@@ -519,5 +519,5 @@ def test_close_all_drains_busy_slots(tmp_path: Path) -> None:
             if sys.platform != "win32":
                 assert not (tmp_path / "service.json").exists()
         finally:
-            if _wait_for_exit(pid, timeout=1) is False:
+            if wait_for_exit(pid, timeout=1) is False:
                 _terminate_pid(pid)
