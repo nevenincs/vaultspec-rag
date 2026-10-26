@@ -210,19 +210,22 @@ def test_the_cut_proves_the_head_before_it_releases() -> None:
     assert "if" not in candidate
     gate = _job("prove-gate")
     assert "uses" not in gate, "the cut re-runs the suites its parent already passed"
-    assert gate["permissions"].get("checks") == "read"
+    assert gate["permissions"].get("actions") == "read"
     steps = cast("list[dict[str, object]]", gate["steps"])
     scripts = "\n".join(str(step.get("run", "")) for step in steps)
     assert 'git diff --name-only "${parent}" "${SHA}"' in scripts, (
         "the cut does not prove the release head changes only version files"
     )
     proof_env = [
-        cast("dict[str, object]", step.get("env", {})).get("GATE_CHECK")
+        cast("dict[str, object]", step.get("env", {})).get("GATE_WORKFLOW")
         for step in steps
     ]
-    assert "Check: Merge gate (Linux)" in proof_env, (
+    assert GATE_WORKFLOW in proof_env, (
         "the cut does not require its parent's merge-gate verdict"
     )
+    # The weekly schedule audits alone under the same aggregate check name, so
+    # only the parent's push run proves the suites.
+    assert "event=push" in scripts, "the cut accepts a partial scheduled verdict"
     assert "just audit-deps" in scripts, "the cut releases an unaudited lock"
     assert _job("prove-hardware").get("uses") == "./.github/workflows/hardware.yml"
     needs = _job("cut").get("needs")

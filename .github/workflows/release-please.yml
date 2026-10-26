@@ -142,7 +142,7 @@ jobs:
       VAULTSPEC_INIT_GPU_STACK: "none"
     permissions:
       contents: read
-      checks: read
+      actions: read
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -155,7 +155,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHA: ${{ needs.candidate.outputs.sha }}
-          GATE_CHECK: "Check: Merge gate (Linux)"
+          GATE_WORKFLOW: merge-gate.yml
         run: |
           set -euo pipefail
           parent=$(git rev-parse "${SHA}^")
@@ -171,19 +171,20 @@ jobs:
             echo "::error::pyproject.toml or uv.lock changes more than the version line: ${changed}"
             exit 1
           fi
-          # The parent's own push gate may still be finishing when a proposal
-          # is merged straight after it lands.
+          # Only the parent's push run measured everything: the weekly
+          # schedule audits alone, yet its aggregate check carries the same
+          # name. The newest push run decides, and it may still be finishing
+          # when a proposal is merged straight after the parent lands.
           for _ in $(seq 1 120); do
-            verdict=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${parent}/check-runs" \
-              -f check_name="${GATE_CHECK}" --method GET \
-              --jq '[.check_runs[] | .status + ":" + (.conclusion // "")] | join(" ")')
-            case " ${verdict} " in
-              *" completed:success "*) echo "parent ${parent} passed ${GATE_CHECK}"; exit 0 ;;
-              *" in_progress:"*|*" queued:"*|"  ") sleep 60 ;;
-              *) echo "::error::parent ${parent} did not pass ${GATE_CHECK}: ${verdict}"; exit 1 ;;
+            verdict=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${GATE_WORKFLOW}/runs?head_sha=${parent}&event=push&per_page=10" \
+              --jq '.workflow_runs | sort_by(.created_at) | last | if . == null then "none" else "\(.status):\(.conclusion // "")" end')
+            case "${verdict}" in
+              completed:success) echo "parent ${parent} passed its ${GATE_WORKFLOW} push run"; exit 0 ;;
+              none|queued:*|in_progress:*|waiting:*|pending:*|requested:*) sleep 60 ;;
+              *) echo "::error::parent ${parent}'s ${GATE_WORKFLOW} push run ended ${verdict}"; exit 1 ;;
             esac
           done
-          echo "::error::parent ${parent} has no ${GATE_CHECK} verdict after 120 minutes"
+          echo "::error::parent ${parent} has no finished ${GATE_WORKFLOW} push run after 120 minutes"
           exit 1
 
       - name: Set up Python

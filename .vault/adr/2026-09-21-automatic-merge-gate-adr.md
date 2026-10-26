@@ -9,7 +9,7 @@ related:
 superseded_by: '2026-10-09-automatic-merge-gate-autonomous-release-adr'
 modified: '2026-10-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:c531f053049e176db10f50838dfb474820ac6d59ce6a3f8e284f146f4bd82db9'
+body_hash: 'sha256:b2f15c1934392573e5cce67aff8a58180e68bab8c2abfdfec67b13db1676406c'
 ---
 
 # `automatic-merge-gate` adr: `automatic pull-request and release-branch proof` | (**status:** `superseded`)
@@ -91,8 +91,10 @@ full merge gate on the proposal head. That head differs from its parent only
 by Release Please's version files, and the parent is a main commit the merge
 gate already proved, so re-running every suite repeated about 2.5 runner-hours
 per cut on the one Linux build host. The cut's gate job now proves the
-version-only diff, requires the parent's `Check: Merge gate (Linux)` success,
-and runs the dependency audit again, because advisories can be published
+version-only diff, requires the parent's successful merge-gate push run (the
+weekly schedule's audit-only run carries the same aggregate check name, so a
+check verdict alone does not prove the suites), and runs the dependency audit
+again, because advisories can be published
 against the unchanged lock between the merge and the cut. Both accelerator
 tiers still prove the head before any tag exists.
 
