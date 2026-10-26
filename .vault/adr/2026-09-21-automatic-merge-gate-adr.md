@@ -86,6 +86,16 @@ Amended 2026-09-30: the cut no longer holds the release as a prerelease - the
 release is created as a draft and published by the lane that proves it, as
 `2026-09-30-release-standard-adr` rules.
 
+Amended 2026-10-26, on the operator's instruction: the cut no longer runs the
+full merge gate on the proposal head. That head differs from its parent only
+by Release Please's version files, and the parent is a main commit the merge
+gate already proved, so re-running every suite repeated about 2.5 runner-hours
+per cut on the one Linux build host. The cut's gate job now proves the
+version-only diff, requires the parent's `Check: Merge gate (Linux)` success,
+and runs the dependency audit again, because advisories can be published
+against the unchanged lock between the merge and the cut. Both accelerator
+tiers still prove the head before any tag exists.
+
 ## Rationale
 
 The chosen topology makes repository state the input to CI policy: ready means
