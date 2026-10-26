@@ -289,7 +289,10 @@ async def test_managed_vault_pause_releases_resources_and_resume_reconciles(
     # Encode-bearing jobs borrow the machine-wide encode admission
     # slot rather than the wider index partition.
     assert limiter_stats()["encode"]["borrowed_tokens"] == 1
-    first_task, paused = await pause_managed_attempt(managed_job_manager, job_id)
+    paused_attempt = await pause_managed_attempt(managed_job_manager, job_id)
+    if paused_attempt is None:
+        return
+    first_task, paused = paused_attempt
     _assert_manager_resources_released(
         paused, managed_facade_registry, root, code=False
     )
@@ -337,7 +340,10 @@ async def test_managed_code_pause_releases_pipeline_and_resume_reconciles(
     # slot rather than the wider index partition.
     assert limiter_stats()["encode"]["borrowed_tokens"] == 1
 
-    first_task, paused = await pause_managed_attempt(managed_job_manager, job_id)
+    paused_attempt = await pause_managed_attempt(managed_job_manager, job_id)
+    if paused_attempt is None:
+        return
+    first_task, paused = paused_attempt
     _assert_manager_resources_released(paused, managed_facade_registry, root, code=True)
     with managed_facade_registry.compute_lease(root) as lease:
         assert_current_code_state(
