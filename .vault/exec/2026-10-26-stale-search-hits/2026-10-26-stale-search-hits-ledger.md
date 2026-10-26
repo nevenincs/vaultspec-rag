@@ -5,7 +5,7 @@ tags:
 date: '2026-10-26'
 modified: '2026-10-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:02878b29874492c8140e2b0bd08ac23406a2c893aac7f16973088cd6229b5249'
+body_hash: 'sha256:8231df98a32403c10c9673cc5fe89624864161fc83988c72063033344d508518'
 related:
   - "[[2026-10-26-stale-search-hits-plan]]"
 ---
@@ -128,6 +128,27 @@ related:
 - `S09` `verify:` `AST comparison of all 37 exit-wait timeout budgets` -> `pass`
 - `S09` `by:` `principal with Sol 6.1 Medium bounded executor`
 - `S09` `verify:` `vaultspec-core vault check all --fix --no-hints --json` -> `pass`
+- `S02` `M` `.vault/plan/2026-10-26-stale-search-hits-plan.md`
+- `S02` `verify:` `canonical full Python matrix (8403 passed, 3 failed, 15 platform skips)` -> `fail`
+- `S02` `verify:` `corrected feature and numeric guard CPU covering selection (310 passed)` -> `pass`
+- `S02` `verify:` `unchanged extraction download-fault coverage (34 passed)` -> `pass`
+- `S02` `verify:` `unchanged browser and bridge covering confirmation (4 passed)` -> `pass`
+- `S02` `verify:` `canonical resident GPU matrix (871 passed, 17 failures or errors, 2 platform skips)` -> `fail`
+- `S02` `verify:` `resident recovery and native server selection (19 passed)` -> `pass`
+- `S02` `verify:` `durable subprocess-GPU remaining 81-node batch (78 passed, 3 failed)` -> `fail`
+- `S02` `verify:` `all four unchanged subprocess retries (4 passed)` -> `pass`
+- `S02` `verify:` `post-correction lifecycle selection (4 passed)` -> `pass`
+- `S02` `verify:` `canonical performance lane (14 passed)` -> `pass`
+- `S02` `verify:` `provisioning lane (72 passed)` -> `pass`
+- `S02` `verify:` `Windows lane (90 passed)` -> `pass`
+- `S02` `verify:` `hosted TypeSafe live lane (5 passed)` -> `pass`
+- `S02` `verify:` `full Ruff format ty basedpyright Pylint complexity imports nesting and frontend gates` -> `pass`
+- `S02` `verify:` `canonical dead-code audit and deptry over 378 files` -> `pass`
+- `S02` `verify:` `canonical test service stop and owned Qdrant/listener verification` -> `pass`
+- `S02` `by:` `principal with independent Luna Max test and health supervisors`
+- `S02` `verify:` `vaultspec-core vault feature index --feature stale-search-hits --json` -> `pass`
+- `S02` `verify:` `vaultspec-core vault check all --fix --feature stale-search-hits --no-hints --json (20 checks zero non-info findings)` -> `pass`
+- `S02` `verify:` `vaultspec-core vault plan status stale-search-hits --json` -> `pass`
 
 ## Notes
 
@@ -135,3 +156,4 @@ related:
 - `S05` No guard exemption or suppression added. Live proof initially expected later timestamp guard but earlier same ordering correlation guard caught the mutation; paired-artifact verification0 records exact assertion and restored source SHA. Initial pointer-missing attempt excluded from proof. Full matrix remains S02 open.
 - `S02` S02 remains open: full `subprocess_gpu` selection is currently supervised by sole LunaMax owner, explicit perf follows; MPS is unavailable on Windows. Parallel CPU extraction-space and browser failures passed unchanged serially; numeric bool guard was strengthened and verified in310coveringcases. All initial17 GPU resource failures passed targeted retry without admission changes. User explicitly requires KEEP Ollama running; any remaining resource failures must be reported. Evidence logs under .pytest-tmp/full-validation, actual source checkpointf54a5dfb and pin-lock checkpoint95feef7c.
 - `S02` First full subprocess-GPU attempt lost its foreground execution session without exit status or logs; excluded from coverage, cause unproven. Known borrower/test processes gone. Full selection is being rerun under detached hidden runner with durable per-test progress and safe logs. Product source remains f54a5dfb. Canonical borrower-lease guard respected; only our isolated service recovered by normal stop/start. S02 remains open; user explicitly requests continue and KEEP Ollama.
+- `S02` Original failures and unavailable Windows MPS lane are retained in the audit; all failed applicable cases have corrected or unchanged passing coverage. Existing reviewed Vulture false positives remain documented. Ollama and unrelated workloads were untouched.

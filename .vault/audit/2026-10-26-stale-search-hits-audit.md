@@ -5,7 +5,7 @@ tags:
 date: '2026-10-26'
 modified: '2026-10-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:e53f5607a5eb3bd257afe61a25db987f55bd687da5a9e00ac0605aa684b29907'
+body_hash: 'sha256:e18080f73de1d8b2f6399423cc2fae609cac00b8f7a69bc24409f1f7d16cb37a'
 related:
   - "[[2026-10-26-stale-search-hits-plan]]"
 ---
@@ -14,9 +14,9 @@ related:
 
 ## Scope
 
-Integrated review of S01 on branch `feature/stale`, including the working-tree implementation, focused guide, governing decision refinements and final verification. The scope covers final delivered pages for code, vault, documents and combined search; safe bounded file reads; publication fencing; post-response audit scheduling; canonical incremental admission and operator rebuild remediation; CLI/MCP preservation; and runtime shutdown.
+Integrated review of every implemented Step and the requested full verification matrix on branch `feature/stale`, through `96ebee6e` plus the final verification records. The scope covers final delivered pages for code, vault, documents and combined search; safe bounded file reads; publication fencing; post-response audit scheduling; canonical incremental admission and operator rebuild remediation; CLI/MCP preservation; runtime shutdown; and the bounded corrections found during extended validation.
 
-Verdict: PASS. No unresolved critical, high, medium or low code findings. The principal agent performed the architecture, source/test implementation and integrated review. Delegated work was limited to read-only context, records/documentation and existing CPU test runs.
+Verdict: PASS. No unresolved critical, high, medium or low code findings. The principal performed the architecture, core feature implementation, integration and final review. Sol 6.1 Medium executors handled bounded maintenance corrections; Luna Max agents supplied context and supervised tests and independent health audits.
 
 ## Findings
 
@@ -110,15 +110,23 @@ S09 removes the duplicate integration helper and imports the existing canonical 
 
 The final integrated live selection passes all four cases: refused-stop monitor cleanup, real log rotation, ordinary start/health/stop, and startup-failure rollback. Pytest reports four passed in 143.63 seconds and wrapper exit zero in 165.04 seconds under `.pytest-tmp/full-validation/durable-batch-03`. Test processes were confirmed absent afterward. The original launcher failure passed unchanged before this correction, so its precise cause remains unproven; the independently demonstrated zero-budget false negative is resolved. Current integrated code review is PASS with no unresolved code findings. Full-matrix evidence consists of the retained original invocations plus applicable corrected or unchanged targeted passes, with platform exclusions explicit.
 
+### final-integrated-review | low | Complete applicable verification and canonical cleanup
+
+All planned implementation and corrective work is verified. The final canonical CPU invocation retained its original 8403 passes, three failures and 15 platform skips; the new numeric guard was corrected and passed in the 310-test covering selection, while the two transient cases passed unchanged in targeted extraction and browser coverage. The accelerated lane retained its original 871 passes, 13 failures, four setup errors and two platform skips, followed by the 19 passing recovery/native-server cases. Every exact subprocess case has passing coverage across the 78-pass batch and four unchanged retries, with four additional integrated lifecycle passes after S09. Performance passes all 14 cases; provisioning passes 72, Windows coverage 90 and hosted TypeSafe live coverage five. Original failed invocations remain available and are not claimed green.
+
+Full Ruff/format, ty, basedpyright, Pylint, configured cognitive complexity including Xenon, imports/nesting and frontend lint/format/build checks pass. The final dead-code audit has no new finding: canonical wrapper exit zero, deptry zero over 378 files, and three explicitly reviewed existing Vulture false positives. S09's affected-file and CPU gates were rerun successfully in the main checkout with byte-identical reviewed sources. MPS is unavailable on Windows; existing platform and permission exclusions are recorded rather than silently treated as executed coverage.
+
+The final normal canonical stop returned zero for the isolated service on port 51644, and its owned pinned Qdrant on 51643 exited with it. Both identified PIDs and listeners were confirmed absent; scratch status, storage and evidence remain preserved. Cleanup records are under `.pytest-tmp/full-validation/final-cleanup`. Ollama and unrelated workloads were never stopped or reconfigured. There are no remaining required test runs or unresolved code findings; plan-close review is PASS. The precise causes of the original transient timeouts and launcher delay remain unproven, with unchanged passing retries and the independent cleanup-helper correction recorded separately.
+
 ## Verification
 
 - 24 new CPU tests pass in `.pytest-tmp/stale-feature-tests.log`: actual file and ledger comparisons, same-size/same-mtime edits, changes beyond shown lines, deletion, vault semantic stamps, document bytes, mixed-domain shared reads, publication races, unsafe/offline roots, final combined service serialization, coalescing, incremental authority, rebuild blockers, job refusal projection, shutdown, post-response scheduling and CLI/MCP round trips.
 - 349 existing CPU regressions pass with no skips: 249 search/CLI/MCP/publication cases in `.pytest-tmp/stale-regression.log`, 62 admission/dispatch/rebuild cases in `.pytest-tmp/stale-job-regression.log`, and 38 lifecycle/startup cases in `.pytest-tmp/stale-lifecycle-regression.log`.
 - Four mutation sequences failed at their named assertions and passed after restoration: proof fence, incremental-only admission, audit blockers including transient missing proof, and shutdown admission. Evidence is in `.pytest-tmp/stale-mutation-*-fail.log` and matching pass logs. No mutation remains on disk.
 - Package Ruff lint, touched-file format checks, ty and strict basedpyright checks pass. Scoped pylint, configured cognitive complexity and guide mdformat checks pass. The initial complexity, module-length and formatting findings were corrected within S01 rather than suppressed.
-- GPU inference/end-to-end execution was not run: another process owns the machine GPU. This change adds no inference implementation or model-stack behavior. Existing CPU boundary tests verify the service and adapter paths under isolated state.
+- The initial focused review did not run GPU inference/end-to-end execution because another process owned the GPU. The supplemental full-matrix findings above record the later actual accelerated, live and subprocess execution and recovery evidence.
 
-The supplemental full-matrix review is REVISION REQUIRED until the high findings above are integrated and verified. The initial PASS records the earlier focused review at 15c1146c8 and is not a claim about these later full-matrix findings.
+The initial focused PASS at `15c1146c8` preceded the supplemental findings. Their original failures and later resolutions remain in the rolling Findings log. The current integrated plan-close verdict is PASS.
 
 ## Recommendations
 
