@@ -29,7 +29,6 @@ from ...cli._service_status import (
     read_service_status,
 )
 from .._ports import free_loopback_port
-from .._session_job_anchor import spawn_anchored_service
 from ._helpers import (
     _poll_health,
     _service_env,
@@ -44,6 +43,10 @@ from ._service_lifecycle_helpers import (
     _wait_for_confirmed_storage,
     _wait_for_listeners_closed,
     _wait_for_persisted_job,
+)
+from ._service_spawn import (
+    publish_status_then_await_health,
+    start_service_on_free_port,
 )
 
 if TYPE_CHECKING:
@@ -187,10 +190,8 @@ def _assert_isolation_search_results(
 def test_start_health_stop(request: pytest.FixtureRequest, tmp_path: Path) -> None:
     """Spawn service, verify health, terminate, verify exit."""
     with _service_env(tmp_path):
-        port = free_loopback_port()
-        log_path = tmp_path / "service.log"
-
-        pid = spawn_anchored_service(port, log_path)
+        service = start_service_on_free_port(tmp_path / "service.log")
+        port, pid = service.port, service.pid
         request.addfinalizer(lambda: _terminate_pid(pid))
 
         health = _poll_health(port)
@@ -524,12 +525,9 @@ def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
 def test_start_already_running(request: pytest.FixtureRequest, tmp_path: Path) -> None:
     """Second start on the same port reports 'already in use'."""
     with _service_env(tmp_path):
-        port = free_loopback_port()
-        log_path = tmp_path / "service.log"
-
-        pid = spawn_anchored_service(port, log_path)
+        service = start_service_on_free_port(tmp_path / "service.log")
+        port, pid = service.port, service.pid
         request.addfinalizer(lambda: _terminate_pid(pid))
-        _poll_health(port)
 
         result = runner.invoke(
             app,
@@ -601,12 +599,9 @@ def test_stop_when_not_running(tmp_path: Path) -> None:
 def test_stop_running_service(request: pytest.FixtureRequest, tmp_path: Path) -> None:
     """Stop a running service via CLI and verify cleanup."""
     with _service_env(tmp_path):
-        port = free_loopback_port()
-        log_path = tmp_path / "service.log"
-
-        pid = spawn_anchored_service(port, log_path)
+        service = start_service_on_free_port(tmp_path / "service.log")
+        port, pid = service.port, service.pid
         request.addfinalizer(lambda: _terminate_pid(pid))
-        _poll_health(port)
 
         _write_service_status(pid, port)
 
@@ -632,10 +627,8 @@ def test_stop_running_service_by_port_without_status_file(
     serving pid and stop succeeds without ever reading the status file.
     """
     with _service_env(tmp_path):
-        port = free_loopback_port()
-        log_path = tmp_path / "service.log"
-
-        pid = spawn_anchored_service(port, log_path)
+        service = start_service_on_free_port(tmp_path / "service.log")
+        port, pid = service.port, service.pid
         request.addfinalizer(lambda: _terminate_pid(pid))
         health = _poll_health(port)
         serving_pid = int(str(health["pid"]))
@@ -664,17 +657,16 @@ def test_service_status_running(
 ) -> None:
     """Status command shows running service details."""
     with _service_env(tmp_path):
-        port = free_loopback_port()
-        log_path = tmp_path / "service.log"
-
-        pid = spawn_anchored_service(port, log_path)
-        request.addfinalizer(lambda: _terminate_pid(pid))
         # Write service.json BEFORE the daemon finishes starting, mirroring
         # the production `service start` ordering (spawn -> write -> wait).
         # The daemon's initial heartbeat tick (fired after model load, inside
         # the lifespan) then finds the file and writes ``last_heartbeat``,
         # so status reports "running" rather than "crashed (heartbeat stale)".
-        _write_service_status(pid, port)
+        service = start_service_on_free_port(
+            tmp_path / "service.log", ready=publish_status_then_await_health
+        )
+        port, pid = service.port, service.pid
+        request.addfinalizer(lambda: _terminate_pid(pid))
         health = _poll_health(port)
         serving_pid = int(str(health["pid"]))
         assert serving_pid > 0
@@ -723,12 +715,10 @@ def test_multi_project_search_isolation(
     from ..corpus import build_multi_project_fixture
 
     with _service_env(tmp_path):
-        port = free_loopback_port()
         log_path = tmp_path / "service.log"
-
-        pid = spawn_anchored_service(port, log_path)
+        service = start_service_on_free_port(log_path)
+        port, pid = service.port, service.pid
         request.addfinalizer(lambda: _terminate_pid(pid))
-        _poll_health(port)
 
         manifests = build_multi_project_fixture(
             tmp_path / "projects",

@@ -101,25 +101,26 @@ async def test_start_watcher_disabled_is_pull_only(
     tmp_path: Path,
     request: pytest.FixtureRequest,
 ) -> None:
-    from ...cli._service_status import _write_service_status
-    from .._ports import free_loopback_port
-    from .._session_job_anchor import spawn_anchored_service
-    from ._helpers import _poll_health, _service_env
+    from ._helpers import _service_env
+    from ._service_spawn import (
+        publish_status_then_await_health,
+        start_service_on_free_port,
+    )
     from .conftest import _cleanup_service_process
 
     root = _make_root(tmp_path)
 
     with _service_env(tmp_path, env_overrides={"VAULTSPEC_RAG_WATCH_ENABLED": "0"}):
-        port = free_loopback_port()
         log_path = tmp_path / "service.log"
-        pid = spawn_anchored_service(port, log_path)
+        service = start_service_on_free_port(
+            log_path, ready=publish_status_then_await_health
+        )
+        port, pid = service.port, service.pid
         request.addfinalizer(
             lambda: _cleanup_service_process(
                 pid=pid, port=port, log_path=log_path, timeout=15.0
             )
         )
-        _write_service_status(pid, port)
-        _poll_health(port)
 
         result = await admin.start_watcher(str(root))
         assert result["started"] is False
