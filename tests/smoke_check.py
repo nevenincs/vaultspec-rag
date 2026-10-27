@@ -130,8 +130,8 @@ def check_published_core_floor() -> None:
         for requirement in requirements
         if Requirement(requirement).name == "vaultspec-core"
     )
-    if str(core.specifier) != ">=0.3.2":
-        _fail(f"vaultspec-core floor is {core.specifier}, expected >=0.3.2")
+    if str(core.specifier) != ">=0.3.7":
+        _fail(f"vaultspec-core floor is {core.specifier}, expected >=0.3.7")
     installed = Version(importlib.metadata.version("vaultspec-core"))
     if not core.specifier.contains(installed, prereleases=True):
         _fail(f"resolved vaultspec-core {installed} does not satisfy {core.specifier}")
