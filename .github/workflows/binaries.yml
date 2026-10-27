@@ -454,8 +454,12 @@ jobs:
           if-no-files-found: error
           retention-days: 5
 
+  # A release skips the rehearsal-only monitor job, and a job's implicit
+  # success() also fails on a skipped job anywhere upstream, so the builds
+  # state the results they actually need.
   build:
     needs: [validate, wheel]
+    if: ${{ always() && needs.validate.result == 'success' && needs.wheel.result == 'success' }}
     name: "Build: Standalone binaries (${{ matrix.name }})"
     strategy:
       fail-fast: false
@@ -594,7 +598,7 @@ jobs:
   attest:
     name: "Build: Release provenance (Linux)"
     needs: [validate, build]
-    if: ${{ !inputs.rehearse }}
+    if: ${{ always() && !inputs.rehearse && needs.validate.result == 'success' && needs.build.result == 'success' }}
     timeout-minutes: 150
     runs-on: [self-hosted, Linux, X64, build]
     permissions:
