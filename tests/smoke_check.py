@@ -206,7 +206,10 @@ def _held_for_approval(target: Path, install: dict[str, object]) -> bool:
         _fail(f"the server was held for {held} and enrolled elsewhere")
     warnings = " ".join(install["warnings"])
     if "vaultspec-rag install" not in warnings or "approve" not in warnings:
-        _fail(f"the install held the server back without naming the approval: {warnings!r}")
+        _fail(
+            "the install held the server back without naming the approval: "
+            f"{warnings!r}"
+        )
     return True
 
 
