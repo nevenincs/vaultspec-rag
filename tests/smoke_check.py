@@ -185,25 +185,28 @@ def _install_into(target: Path) -> dict[str, object]:
             f"  stdout: {result.stdout.strip()}\n"
             f"  stderr: {result.stderr.strip()}"
         )
-    return json.loads(result.stdout)["data"]["sync_providers"]
+    return json.loads(result.stdout)["data"]
 
 
-def _held_for_approval(target: Path, providers: dict[str, object]) -> bool:
+def _held_for_approval(target: Path, install: dict[str, object]) -> bool:
     """Whether Core held the server back for its operator's approval.
 
     A Core that asks its operator to approve an executable definition at a
     terminal enrolls nothing until they have, and no script can answer for
     them. An install that was held must have enrolled nothing, on either
-    provider, and must have said how to approve.
+    provider, and must have said how to approve. The install replaces Core's
+    per-provider trust warnings with one warning of its own, so the approval
+    is named once, in the install's warnings.
     """
+    providers = install["sync_providers"]
     held = [name for name, outcome in providers.items() if outcome["skipped"]]
     if not held:
         return False
     if set(held) != {"claude", "codex"} or (target / ".mcp.json").exists():
         _fail(f"the server was held for {held} and enrolled elsewhere")
-    for name in held:
-        if "spec mcps trust" not in " ".join(providers[name]["warnings"]):
-            _fail(f"{name} held the server back without naming the approval")
+    warnings = " ".join(install["warnings"])
+    if "vaultspec-rag install" not in warnings or "approve" not in warnings:
+        _fail(f"the install held the server back without naming the approval: {warnings!r}")
     return True
 
 
