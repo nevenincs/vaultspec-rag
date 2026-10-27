@@ -91,11 +91,12 @@ def test_maintenance_cycle_reclaims_only_time_confirmed_orphans(
     root's grace clock cleared; cycles visible in the jobs registry.
     """
     from ...cli._process import _terminate_pid
-    from ...cli._service_status import _write_service_status
     from ...config._settings import get_config
-    from .._ports import free_loopback_port
-    from .._session_job_anchor import spawn_anchored_service
-    from ._helpers import _poll_health, _service_env
+    from ._helpers import _service_env
+    from ._service_spawn import (
+        publish_status_then_await_health,
+        start_service_on_free_port,
+    )
 
     with _service_env(
         tmp_path,
@@ -115,12 +116,11 @@ def test_maintenance_cycle_reclaims_only_time_confirmed_orphans(
             record_root(root, backend="server")
             prefixes[name] = root_collection_prefix(root)
 
-        port = free_loopback_port()
-        log_path = tmp_path / "service.log"
-        pid = spawn_anchored_service(port, log_path)
+        service = start_service_on_free_port(
+            tmp_path / "service.log", ready=publish_status_then_await_health
+        )
+        port, pid = service.port, service.pid
         request.addfinalizer(lambda: _terminate_pid(pid))
-        _write_service_status(pid, port)
-        _poll_health(port)
         qdrant_port = int(get_config().qdrant_port)
 
         for name in roots:

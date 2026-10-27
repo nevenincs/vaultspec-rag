@@ -22,8 +22,12 @@ def free_loopback_port() -> int:
     Binds an ephemeral port, reads the number the kernel assigned, and closes
     the socket, so the port is unbound by the time the caller sees it. That
     makes the answer a best-effort observation rather than a reservation:
-    another process can claim the port before the caller binds it, which is
-    inherent to asking the kernel for a free port at all.
+    another process can claim the port before the caller binds it. For a caller
+    that binds at once the window is negligible. For a service that loads its
+    models before it binds, it is tens of seconds on a machine shared with
+    other runners, containers and dynamic port reservations, and a service
+    started that way goes through ``start_service_on_free_port``, which starts
+    it again on a fresh port when the bind is lost.
     """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))

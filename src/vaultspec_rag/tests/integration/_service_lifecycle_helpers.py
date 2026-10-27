@@ -32,7 +32,6 @@ from ..._loopback_http import probe_loopback_connect
 from ..._process_probe import pid_alive
 from ...cli._process import _terminate_pid
 from ...cli._service_status import (
-    _write_service_status,
     read_service_status,
 )
 from ...config._types import EnvVar
@@ -42,10 +41,13 @@ from .._model_setup import (
 )
 from .._ports import free_loopback_port
 from ._helpers import (
-    _poll_health,
     _poll_own_health,
     _service_env,
     _wait_for_exit,
+)
+from ._service_spawn import (
+    publish_status_then_await_health,
+    start_service_on_free_port,
 )
 
 __all__ = [
@@ -79,6 +81,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ...job_models import JobSnapshot
+    from ._service_spawn import SpawnedService
 
 runner = CliRunner()
 
@@ -327,15 +330,7 @@ def _signalable_live_service(
         env_overrides=env_overrides,
         qdrant_source=qdrant_source,
     ):
-        port = free_loopback_port()
         log_path = tmp_path / "service.log"
-        command = [
-            sys.executable,
-            "-m",
-            "vaultspec_rag.server",
-            "--port",
-            str(port),
-        ]
         child_env = _build_service_child_env(_ServiceChildEnvRequest(watch=False))
         if storage_witness is not None:
             root, control = storage_witness
@@ -365,22 +360,24 @@ def _signalable_live_service(
             if sys.platform == "win32"
             else 0
         )
-        with log_path.open("ab") as output:
-            process = subprocess.Popen(
-                command,
-                stdin=subprocess.DEVNULL,
-                stdout=output,
-                stderr=subprocess.STDOUT,
-                env=child_env,
-                cwd=tmp_path,
-                creationflags=creationflags,
-                start_new_session=sys.platform != "win32",
-            )
-        try:
-            _write_service_status(process.pid, port)
-            _poll_health(port, timeout=model_setup_timeout_seconds())
-            yield port, process.pid
-        finally:
+        launched: dict[int, subprocess.Popen[bytes]] = {}
+
+        def spawn(port: int, log: Path) -> int:
+            with log.open("ab") as output:
+                process = subprocess.Popen(
+                    [sys.executable, "-m", "vaultspec_rag.server", "--port", str(port)],
+                    stdin=subprocess.DEVNULL,
+                    stdout=output,
+                    stderr=subprocess.STDOUT,
+                    env=child_env,
+                    cwd=tmp_path,
+                    creationflags=creationflags,
+                    start_new_session=sys.platform != "win32",
+                )
+            launched[process.pid] = process
+            return process.pid
+
+        def stop(service: SpawnedService) -> None:
             cleanup_deadline = time.monotonic() + 30.0
             try:
                 if storage_witness is not None:
@@ -388,15 +385,29 @@ def _signalable_live_service(
             finally:
                 try:
                     _cleanup_service_process(
-                        pid=process.pid,
-                        port=port,
+                        pid=service.pid,
+                        port=service.port,
                         log_path=log_path,
                         timeout=max(0.0, cleanup_deadline - time.monotonic()),
                     )
                 finally:
                     # PID cleanup observes native exit; this retained Popen must
                     # also record that exit before releasing its owned handle.
-                    process.wait(timeout=max(0.0, cleanup_deadline - time.monotonic()))
+                    launched[service.pid].wait(
+                        timeout=max(0.0, cleanup_deadline - time.monotonic())
+                    )
+
+        service = start_service_on_free_port(
+            log_path,
+            spawn=spawn,
+            ready=publish_status_then_await_health,
+            cleanup=stop,
+            timeout=model_setup_timeout_seconds(),
+        )
+        try:
+            yield service.port, service.pid
+        finally:
+            stop(service)
 
 
 def _wait_for_confirmed_storage(
