@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.6.2](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.6.0...vaultspec-rag-v0.6.2) (2026-10-27)
+## [0.6.1](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.6.0...vaultspec-rag-v0.6.1) (2026-10-27)
 
 
 ### Features
