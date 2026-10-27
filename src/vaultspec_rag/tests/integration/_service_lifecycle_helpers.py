@@ -397,11 +397,20 @@ def _signalable_live_service(
                         timeout=max(0.0, cleanup_deadline - time.monotonic())
                     )
 
+        def discard_attempt(service: SpawnedService) -> None:
+            # Stopping releases the storage barrier, and a dead attempt may
+            # have published markers of its own; the next attempt must start
+            # against a barrier no earlier child or teardown has touched.
+            stop(service)
+            if storage_witness is not None:
+                for marker in ("release", "installed", "stored", "restored"):
+                    (storage_witness[1] / marker).unlink(missing_ok=True)
+
         service = start_service_on_free_port(
             log_path,
             spawn=spawn,
             ready=publish_status_then_await_health,
-            cleanup=stop,
+            cleanup=discard_attempt,
             timeout=model_setup_timeout_seconds(),
         )
         try:
