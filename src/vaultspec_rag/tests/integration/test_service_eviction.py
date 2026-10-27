@@ -15,18 +15,19 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from ...cli._process import _terminate_pid
-from .._ports import free_loopback_port
 from .._session_job_anchor import spawn_anchored_service
 from ._helpers import (
     _poll_health,
     _service_env,
     _wait_for_exit,
 )
+from ._service_spawn import start_service_on_free_port
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
@@ -204,14 +205,15 @@ def test_idle_ttl_evicts_quiescent_slots(tmp_path: Path) -> None:
         "VAULTSPEC_RAG_SERVICE_MAX_PROJECTS": "4",
     }
     with _service_env(tmp_path, overrides):
-        port = free_loopback_port()
         log_path = tmp_path / "service.log"
         # Watch disabled: otherwise the async watcher would auto-index and
         # admit slots behind the test, and the admission accounting under test
         # would be non-deterministic.
-        pid = spawn_anchored_service(port, log_path, watch=False)
+        service = start_service_on_free_port(
+            log_path, spawn=partial(spawn_anchored_service, watch=False)
+        )
+        port, pid = service.port, service.pid
         try:
-            _poll_health(port)
             proj_a = _make_vault_project(tmp_path / "a", label="alpha")
             proj_b = _make_vault_project(tmp_path / "b", label="beta")
             proj_c = _make_vault_project(tmp_path / "c", label="gamma")
@@ -250,12 +252,13 @@ def test_lru_cap_evicts_oldest(tmp_path: Path) -> None:
         "VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS": "0",
     }
     with _service_env(tmp_path, overrides):
-        port = free_loopback_port()
         log_path = tmp_path / "service.log"
         # Watch disabled so no async watcher admits slots behind the test.
-        pid = spawn_anchored_service(port, log_path, watch=False)
+        service = start_service_on_free_port(
+            log_path, spawn=partial(spawn_anchored_service, watch=False)
+        )
+        port, pid = service.port, service.pid
         try:
-            _poll_health(port)
             proj_a = _make_vault_project(tmp_path / "a", label="alpha")
             proj_b = _make_vault_project(tmp_path / "b", label="beta")
             proj_c = _make_vault_project(tmp_path / "c", label="gamma")
@@ -305,11 +308,10 @@ def test_log_rotation_creates_backups(tmp_path: Path) -> None:
         "VAULTSPEC_RAG_LOCAL_ONLY": "1",
     }
     with _service_env(tmp_path, overrides):
-        port = free_loopback_port()
         log_path = tmp_path / "service.log"
-        pid = spawn_anchored_service(port, log_path)
+        service = start_service_on_free_port(log_path)
+        port, pid = service.port, service.pid
         try:
-            _poll_health(port)
             proj = _make_vault_project(tmp_path / "logs", label="logs")
             # Drive a bounded burst, then stop and let the sink settle before
             # looking. The drain reads in chunks of min(64 KiB, max_bytes), so
@@ -357,11 +359,10 @@ def test_log_rotation_post_rollover_writes_to_active(tmp_path: Path) -> None:
         "VAULTSPEC_RAG_LOCAL_ONLY": "1",
     }
     with _service_env(tmp_path, overrides):
-        port = free_loopback_port()
         log_path = tmp_path / "service.log"
-        pid = spawn_anchored_service(port, log_path)
+        service = start_service_on_free_port(log_path)
+        port, pid = service.port, service.pid
         try:
-            _poll_health(port)
             proj = _make_vault_project(tmp_path / "postroll", label="postroll")
 
             # 1-2: drive a bounded burst to force rollover, then stop before
@@ -432,9 +433,9 @@ def test_close_all_drains_busy_slots(tmp_path: Path) -> None:
         "VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS": "0",
     }
     with _service_env(tmp_path, overrides):
-        port = free_loopback_port()
         log_path = tmp_path / "service.log"
-        pid = spawn_anchored_service(port, log_path)
+        service = start_service_on_free_port(log_path)
+        port, pid = service.port, service.pid
         try:
             token = str(_poll_health(port)["service_token"])
             projects = [

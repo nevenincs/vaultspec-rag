@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from ...embeddings import EmbeddingModel
     from ...store_runtime import VaultStore
     from ._frozen_corpus_evidence import FrozenCorpusEvidence
+    from ._service_spawn import SpawnedService
 
 from ..._job_values import count, measurement
 from ..._machine_lock import (
@@ -591,6 +592,98 @@ def _prepare_service_models(
         )
 
 
+def _spawn_in_startup_budget(
+    startup: _LiveServiceStartup,
+    port: int,
+    log_path: Path,
+    *,
+    watch: bool,
+) -> int:
+    """Spawn the service on *port* with whatever the startup envelope has left."""
+    from .._session_job_anchor import spawn_anchored_service
+
+    startup.current_stage = "service spawn"
+    stage_started = time.monotonic()
+    pid = spawn_anchored_service(
+        port,
+        log_path,
+        watch=watch,
+        timeout=startup.remaining_budget(startup.current_stage),
+        cleanup_timeout=_startup_cleanup_reserve(startup.budget),
+    )
+    try:
+        startup.stages.append(
+            "service spawn "
+            f"elapsed={time.monotonic() - stage_started:.3f}s "
+            f"remaining={startup.remaining_budget('status publication'):.3f}s "
+            f"pid={pid} port={port}"
+        )
+    except BaseException:
+        # The spawned service is not the caller's to stop yet: the caller only
+        # learns its pid from this return.
+        _cleanup_failed_startup(pid=pid, port=port, startup=startup)
+        raise
+    return pid
+
+
+def _await_startup_readiness(
+    startup: _LiveServiceStartup,
+    service: SpawnedService,
+) -> None:
+    """Publish the spawn's status, then wait for health inside the envelope.
+
+    A port taken before the service could bind it is recorded as a stage, so
+    the diagnostics of a run that needed a second attempt say so.
+    """
+    from ...cli._service_status import _write_service_status
+    from ._helpers import _poll_health
+    from ._service_spawn import ServicePortLostError
+
+    pid, port = service.pid, service.port
+    try:
+        startup.current_stage = "status publication"
+        stage_started = time.monotonic()
+        _write_service_status(
+            pid,
+            port,
+            timeout=startup.remaining_budget(startup.current_stage),
+        )
+        published = _wait_for_qdrant_publication(
+            service_pid=pid,
+            service_port=port,
+            timeout=startup.remaining_budget(startup.current_stage),
+        )
+        startup.stages.append(
+            "status publication "
+            f"elapsed={time.monotonic() - stage_started:.3f}s "
+            f"remaining={startup.remaining_budget('health readiness'):.3f}s "
+            f"qdrant_pid={published.get('qdrant_pid')} "
+            f"qdrant_port={published.get('qdrant_port')} "
+            f"qdrant_version={published.get('qdrant_version')!r}"
+        )
+        startup.current_stage = "health readiness"
+        stage_started = time.monotonic()
+        _poll_health(
+            port,
+            timeout=startup.remaining_budget(startup.current_stage),
+            spawn_log=service.log,
+        )
+        startup.stages.append(
+            "health readiness "
+            f"elapsed={time.monotonic() - stage_started:.3f}s "
+            f"total={time.monotonic() - startup.started:.3f}s"
+        )
+        startup.stages.append(
+            _verify_offline_service_startup(startup.log_path, startup.stages)
+        )
+    except ServicePortLostError:
+        startup.stages.append(
+            f"port {port} was taken before the service bound it; "
+            "starting again on a fresh port"
+        )
+        raise
+
+
 @contextmanager
 def _live_service_context(
     tmp_path: Path,
@@ -605,13 +698,8 @@ def _live_service_context(
     daemon was started under, so a caller outliving a single test can re-point
     each test's client at this exact daemon.
     """
-    from ...cli._service_status import _write_service_status
-    from .._ports import free_loopback_port
-    from .._session_job_anchor import spawn_anchored_service
-    from ._helpers import (
-        _poll_health,
-        _service_env,
-    )
+    from ._helpers import _service_env
+    from ._service_spawn import start_service_on_free_port
 
     budget = _resolve_startup_budget(startup_budget)
     cleanup_reserve = _startup_cleanup_reserve(budget)
@@ -641,64 +729,22 @@ def _live_service_context(
                 f"remaining={startup.remaining_budget('service spawn'):.3f}s "
                 f"offline_env={offline_env!r}"
             )
-            port = free_loopback_port()
-            startup.current_stage = "service spawn"
-            stage_started = time.monotonic()
-            pid = spawn_anchored_service(
-                port,
+            service = start_service_on_free_port(
                 startup.log_path,
-                watch=watch,
-                timeout=startup.remaining_budget(startup.current_stage),
-                cleanup_timeout=cleanup_reserve,
-            )
-            try:
-                startup.stages.append(
-                    "service spawn "
-                    f"elapsed={time.monotonic() - stage_started:.3f}s "
-                    f"remaining={startup.remaining_budget('status publication'):.3f}s "
-                    f"pid={pid} port={port}"
-                )
-                startup.current_stage = "status publication"
-                stage_started = time.monotonic()
-                _write_service_status(
-                    pid,
-                    port,
-                    timeout=startup.remaining_budget(startup.current_stage),
-                )
-                published = _wait_for_qdrant_publication(
-                    service_pid=pid,
-                    service_port=port,
-                    timeout=startup.remaining_budget(startup.current_stage),
-                )
-                startup.stages.append(
-                    "status publication "
-                    f"elapsed={time.monotonic() - stage_started:.3f}s "
-                    f"remaining={startup.remaining_budget('health readiness'):.3f}s "
-                    f"qdrant_pid={published.get('qdrant_pid')} "
-                    f"qdrant_port={published.get('qdrant_port')} "
-                    f"qdrant_version={published.get('qdrant_version')!r}"
-                )
-                startup.current_stage = "health readiness"
-                stage_started = time.monotonic()
-                _poll_health(
-                    port,
-                    timeout=startup.remaining_budget(startup.current_stage),
-                )
-                startup.stages.append(
-                    "health readiness "
-                    f"elapsed={time.monotonic() - stage_started:.3f}s "
-                    f"total={time.monotonic() - startup.started:.3f}s"
-                )
-                startup.stages.append(
-                    _verify_offline_service_startup(startup.log_path, startup.stages)
-                )
-            except BaseException:
-                _cleanup_failed_startup(
-                    pid=pid,
-                    port=port,
+                spawn=lambda port, log_path: _spawn_in_startup_budget(
+                    startup, port, log_path, watch=watch
+                ),
+                ready=lambda service, _remaining: _await_startup_readiness(
+                    startup, service
+                ),
+                cleanup=lambda service: _cleanup_failed_startup(
+                    pid=service.pid,
+                    port=service.port,
                     startup=startup,
-                )
-                raise
+                ),
+                timeout=startup.remaining_budget("service spawn"),
+            )
+            pid, port = service.pid, service.port
 
             yielded = True
             try:

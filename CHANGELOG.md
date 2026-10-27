@@ -1,36 +1,5 @@
 # Changelog
 
-## [0.6.1](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.6.0...vaultspec-rag-v0.6.1) (2026-10-26)
-
-
-### Features
-
-* signal complete releases to marketing ([181b1a4](https://github.com/nevenincs/vaultspec-rag/commit/181b1a45a8af6db50dfa6d3e4540c650ab2e81a5))
-
-
-### Bug Fixes
-
-* **ci:** automate verified release publication after proposal merge ([#602](https://github.com/nevenincs/vaultspec-rag/issues/602)) ([380e875](https://github.com/nevenincs/vaultspec-rag/commit/380e875fe92d223431dfe0d30ec60c5a7f613c6b))
-* **ci:** enforce full trusted PR verification and release proof ([#604](https://github.com/nevenincs/vaultspec-rag/issues/604)) ([0076932](https://github.com/nevenincs/vaultspec-rag/commit/007693277ab8c1618f0175ebe7c3563ba3a70a10))
-* **ci:** restore the fleet's actionlint copy; make the client-warning wait ignore collector noise ([#599](https://github.com/nevenincs/vaultspec-rag/issues/599)) ([5e06888](https://github.com/nevenincs/vaultspec-rag/commit/5e068880381e7256c747588e6cb7bdf721789884))
-* **deps:** take certifi 2026.10.19 and accept the vite launch-editor advisories ([#625](https://github.com/nevenincs/vaultspec-rag/issues/625)) ([119956a](https://github.com/nevenincs/vaultspec-rag/commit/119956a5b35dfc621c6112047e5d0071c985e313))
-* **deps:** take vite 8.3.5 and the patched dependency pins ([#629](https://github.com/nevenincs/vaultspec-rag/issues/629)) ([51a0d92](https://github.com/nevenincs/vaultspec-rag/commit/51a0d927f1c6a13068d268dac872bb6fc2b31879))
-* five defects behind today's red runs on main ([#600](https://github.com/nevenincs/vaultspec-rag/issues/600)) ([f58c41d](https://github.com/nevenincs/vaultspec-rag/commit/f58c41db76f5f0a1d52911906ebcffebc1311c6a))
-* **install:** plan previews and replays against the workspace's host-local MCP state ([#605](https://github.com/nevenincs/vaultspec-rag/issues/605)) ([351b081](https://github.com/nevenincs/vaultspec-rag/commit/351b0813ad9ae7970f2fe461b745e1fb2b2c125f))
-* keep graph refresh off the search request path ([a9fe15e](https://github.com/nevenincs/vaultspec-rag/commit/a9fe15eda715a830f921f47a409bdd2b2c9f3bc7))
-* keep install test approvals out of the operator's trust ledger, and land pending workspace state ([#617](https://github.com/nevenincs/vaultspec-rag/issues/617)) ([271c4a9](https://github.com/nevenincs/vaultspec-rag/commit/271c4a95f0a95a539b637cce29ac399ef9c4cc50))
-* monitor restart, GPU borrower lease and install MCP approval, verified together ([#616](https://github.com/nevenincs/vaultspec-rag/issues/616)) ([a18a87c](https://github.com/nevenincs/vaultspec-rag/commit/a18a87c8174f4c216d047fb77acbdb136e1b6746))
-* open the on-disk store without the client's unclosed SQLite probe ([#601](https://github.com/nevenincs/vaultspec-rag/issues/601)) ([1fa2bc4](https://github.com/nevenincs/vaultspec-rag/commit/1fa2bc45112743e9c6f0c8ec88305b9351005034))
-* preserve resumable indexing at durable control boundaries ([536b86a](https://github.com/nevenincs/vaultspec-rag/commit/536b86a8aefe570b86bfd8c939991ab99e162979))
-* recover interrupted source publications safely ([00bc788](https://github.com/nevenincs/vaultspec-rag/commit/00bc78845fb90663f99de754c221c9c9f56a912f))
-* **release:** cut 0.6.1 again, with the pause race reported and the release gate no longer re-running the suites ([#633](https://github.com/nevenincs/vaultspec-rag/issues/633)) ([c614397](https://github.com/nevenincs/vaultspec-rag/commit/c614397074e2f2fb4204f66833cbd26542510167))
-* **release:** let the release chain run unattended on the fleet ([#592](https://github.com/nevenincs/vaultspec-rag/issues/592)) ([165141f](https://github.com/nevenincs/vaultspec-rag/commit/165141f7b76892a913d317d9b90e918ccfc63d34))
-* **release:** take the Windows outbound-denied directory from the host ([#597](https://github.com/nevenincs/vaultspec-rag/issues/597)) ([12e239c](https://github.com/nevenincs/vaultspec-rag/commit/12e239c362c0b7bcb0737f01da0713dfdb46d25a))
-* resume interrupted service index attempts ([8803cf9](https://github.com/nevenincs/vaultspec-rag/commit/8803cf9c618fb6dec00a66dc3c214532133095b1))
-* **tests:** let the MPS tier keep the accelerator claim it owns ([#618](https://github.com/nevenincs/vaultspec-rag/issues/618)) ([1812948](https://github.com/nevenincs/vaultspec-rag/commit/1812948d10e1ff090cd929afd000df9ed8ac9abd))
-* validate refreshed dependencies and preserve ranking result types ([9b0764f](https://github.com/nevenincs/vaultspec-rag/commit/9b0764fd0f00c7d75195ec0d841a9f35375fd486))
-* verify recovery and graph integration against current core ([#603](https://github.com/nevenincs/vaultspec-rag/issues/603)) ([f6d1f01](https://github.com/nevenincs/vaultspec-rag/commit/f6d1f01c21ffe1751347c441b76872702ce9138e))
-
 ## [0.6.0](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.5.3...vaultspec-rag-v0.6.0) (2026-10-07)
 
 
