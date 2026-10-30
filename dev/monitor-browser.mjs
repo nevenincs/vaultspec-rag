@@ -94,12 +94,21 @@ try {
   }
   if (!debuggerPort)
     throw new Error("The installed browser did not open its debugger.");
-  const targets = await (
-    await fetch(`http://127.0.0.1:${debuggerPort}/json/list`)
-  ).json();
-  socket = new WebSocket(
-    targets.find((target) => target.type === "page").webSocketDebuggerUrl,
-  );
+  // The debugger port opens before the browser has created its page target.
+  let page;
+  while (!page && Date.now() < deadline) {
+    try {
+      const targets = await (
+        await fetch(`http://127.0.0.1:${debuggerPort}/json/list`)
+      ).json();
+      page = targets.find((target) => target.type === "page");
+    } catch {
+      // The debugger can refuse a request while the browser is still starting.
+    }
+    if (!page) await delay(50);
+  }
+  if (!page) throw new Error("The installed browser did not open a page.");
+  socket = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((resolve, reject) => {
     socket.addEventListener("open", resolve, { once: true });
     socket.addEventListener("error", reject, { once: true });
