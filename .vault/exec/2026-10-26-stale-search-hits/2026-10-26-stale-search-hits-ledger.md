@@ -1,0 +1,158 @@
+---
+tags:
+  - '#exec'
+  - '#stale-search-hits'
+date: '2026-10-26'
+modified: '2026-10-30'
+body_schema: 'body-v2'
+body_hash: 'sha256:b53272d1cc04c63a107765ace649a0f693f69a3fa00b304ec1ccef74b2e77656'
+related:
+  - "[[2026-10-26-stale-search-hits-plan]]"
+---
+# `stale-search-hits` ledger
+
+## Changes
+
+- `S01` `A` `src/vaultspec_rag/_search_freshness.py`
+- `S01` `A` `src/vaultspec_rag/_search_drift.py`
+- `S01` `A` `src/vaultspec_rag/tests/test_search_hit_freshness.py`
+- `S01` `A` `src/vaultspec_rag/tests/test_search_drift.py`
+- `S01` `A` `.vault/reference/2026-10-26-stale-search-hits-reference.md`
+- `S01` `A` `.vault/adr/2026-10-26-stale-search-hits-adr.md`
+- `S01` `A` `.vault/plan/2026-10-26-stale-search-hits-plan.md`
+- `S01` `A` `.vault/audit/2026-10-26-stale-search-hits-audit.md`
+- `S01` `A` `.vault/index/stale-search-hits.index.md`
+- `S01` `M` `src/vaultspec_rag/_job_admission.py`
+- `S01` `M` `src/vaultspec_rag/jobs.py`
+- `S01` `M` `src/vaultspec_rag/search/_models.py`
+- `S01` `M` `src/vaultspec_rag/server/_models.py`
+- `S01` `M` `src/vaultspec_rag/server/_runtime.py`
+- `S01` `M` `src/vaultspec_rag/server/_routes_search.py`
+- `S01` `M` `src/vaultspec_rag/server/_lifespan.py`
+- `S01` `M` `src/vaultspec_rag/server/_main.py`
+- `S01` `M` `src/vaultspec_rag/indexer/_run_ledger_publication_reads.py`
+- `S01` `M` `src/vaultspec_rag/cli/_render.py`
+- `S01` `M` `src/vaultspec_rag/cli/_search.py`
+- `S01` `M` `src/vaultspec_rag/cli/_search_readiness_render.py`
+- `S01` `M` `docs/search-and-index.md`
+- `S01` `M` `.vault/adr/2026-09-07-explicit-reindex-authority-adr.md`
+- `S01` `M` `.vault/adr/2026-09-08-search-readiness-contract-adr.md`
+- `S01` `M` `.vault/adr/2026-09-08-incremental-publication-cost-adr.md`
+- `S01` `verify:` `24 new CPU tests` -> `pass`
+- `S01` `verify:` `349 existing CPU regressions` -> `pass`
+- `S01` `verify:` `four fail-and-restore guard mutation sequences` -> `pass`
+- `S01` `verify:` `package ruff lint and touched-file format` -> `pass`
+- `S01` `verify:` `touched-file ty and strict basedpyright` -> `pass`
+- `S01` `verify:` `scoped pylint and cognitive complexity` -> `pass`
+- `S01` `verify:` `guide mdformat` -> `pass`
+- `S01` `by:` `principal`
+- `S01` `verify:` `scoped vault check all and schema` -> `pass`
+- `S01` `verify:` `plan check` -> `pass`
+- `S01` `verify:` `integrated review` -> `pass`
+- `S08` `M` `src/vaultspec_rag/qdrant_runtime/_constants.py`
+- `S08` `M` `uv.lock`
+- `S08` `verify:` `uv run --no-sync ruff check src tools dev conftest.py` -> `pass`
+- `S08` `verify:` `uv run --no-sync ruff format --check src tools dev conftest.py` -> `pass`
+- `S08` `verify:` `uv run --no-sync ty check src tools dev conftest.py` -> `pass`
+- `S08` `verify:` `basedpyright changed pin constants in isolated identical source` -> `pass`
+- `S08` `verify:` `canonical qdrant_pin_digests outgoing1.19 and new1.20 all12 each` -> `pass`
+- `S08` `verify:` `integrated pin runtime/download/install/spawn tests117pass1platformskip` -> `pass`
+- `S08` `by:` `principal`
+- `S03` `M` `src/vaultspec_rag/server/_stdio_lifetime.py`
+- `S03` `verify:` `integrated full Ruff lint0 format0 ty0 basedpyright0` -> `pass`
+- `S03` `verify:` `identical isolated Windows stdio unit coverage37pass2POSIXskip` -> `pass`
+- `S03` `verify:` `integrated configured complexity Xenon imports nesting pylint0` -> `pass`
+- `S03` `by:` `principal`
+- `S04` `M` `src/vaultspec_rag/tests/integration/test_search_result_shape.py`
+- `S04` `verify:` `integrated full Ruff lint0 format0 ty0 basedpyright0` -> `pass`
+- `S04` `verify:` `identical isolated result shape6pass and mutation fail restore pass` -> `pass`
+- `S04` `verify:` `integrated configured complexity Xenon imports nesting pylint0` -> `pass`
+- `S04` `by:` `principal`
+- `S06` `M` `src/vaultspec_rag/tests/test_vault_audit_validation.py`
+- `S06` `verify:` `integrated full Ruff lint0 format0 ty0 basedpyright0` -> `pass`
+- `S06` `verify:` `identical isolated vault audit18pass and mutation fail restore pass` -> `pass`
+- `S06` `verify:` `integrated configured complexity Xenon imports nesting pylint0` -> `pass`
+- `S06` `by:` `principal`
+- `S05` `M` `src/vaultspec_rag/_search_freshness.py`
+- `S05` `M` `src/vaultspec_rag/_search_drift.py`
+- `S05` `A` `src/vaultspec_rag/indexer/_vault_identity.py`
+- `S05` `M` `src/vaultspec_rag/indexer/_vault_incremental.py`
+- `S05` `M` `src/vaultspec_rag/indexer/_vault_prep.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_search_drift.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_search_hit_freshness.py`
+- `S05` `A` `src/vaultspec_rag/tests/integration/test_search_stale_delivery.py`
+- `S05` `verify:` `integrated full Ruff lint and affected format ty basedpyright exit0` -> `pass`
+- `S05` `verify:` `final configured complexity gate including Xenon exit0` -> `pass`
+- `S05` `verify:` `integrated drift freshness substitution numeric and vault producer310pass` -> `pass`
+- `S05` `verify:` `real subprocess stale_delivery initial116.84seconds and restored90.80seconds pass` -> `pass`
+- `S05` `verify:` `mutation guards queue readcache vaultproof docscontainment retirement intendedfail exactrestorepass` -> `pass`
+- `S05` `verify:` `live earlyaudit deliverycorrelation guard intentionalfail and exactsource restored nodepass` -> `pass`
+- `S05` `by:` `principal`
+- `S01` `verify:` `reopened feature real canonical checkpoint and actual delivery incremental repair verification after S05` -> `pass`
+- `S01` `verify:` `integrated feature review no unresolved code findings` -> `pass`
+- `S02` `M` `.vault/audit/2026-10-26-stale-search-hits-audit.md`
+- `S02` `verify:` `initial canonical fullCPU8337pass40fail10errors27skips` -> `fail`
+- `S02` `verify:` `final canonical Python matrix8403pass3fail15platformskips0errors` -> `fail`
+- `S02` `verify:` `final integrated changedsearch and numericguard310pass` -> `pass`
+- `S02` `verify:` `unchanged serial extractionfault34pass and browserbridge4pass` -> `pass`
+- `S02` `verify:` `initial residentGPU871pass13fail4errors2Linuxskips` -> `fail`
+- `S02` `verify:` `targeted resident retry prior17failures and2native1.20nodes19pass` -> `pass`
+- `S02` `verify:` `live stale_delivery retainedsnippet afterresponse audit incrementalrepair initial and restored nodepass` -> `pass`
+- `S02` `verify:` `full Ruff format ty basedpyright Pylint complexity Xenon imports nesting and affected reruns exit0` -> `pass`
+- `S02` `verify:` `frontend lint format typecheck and Vite build exit0` -> `pass`
+- `S02` `verify:` `canonical deadcode audit0 deptry0 rawVulture3 reviewedthreefalsepositives` -> `pass`
+- `S02` `verify:` `canonical provisioning72pass windows90pass hostedTypeSafe5livepass` -> `pass`
+- `S02` `verify:` `feature scoped vault checkall exit0` -> `pass`
+- `S02` `by:` `principal`
+- `S02` `verify:` `durable metadata observer real CPU smoke and persisted outcomes` -> `pass`
+- `S09` `M` `src/vaultspec_rag/tests/integration/_helpers.py`
+- `S09` `M` `src/vaultspec_rag/tests/integration/_service_lifecycle_helpers.py`
+- `S09` `M` `src/vaultspec_rag/tests/integration/conftest.py`
+- `S09` `M` `src/vaultspec_rag/tests/integration/test_qdrant_descriptor_child_witnesses.py`
+- `S09` `M` `src/vaultspec_rag/tests/integration/test_service_eviction.py`
+- `S09` `M` `src/vaultspec_rag/tests/integration/test_service_lifecycle_discovery.py`
+- `S09` `M` `src/vaultspec_rag/tests/integration/test_service_lifecycle_orphan_reap.py`
+- `S09` `M` `src/vaultspec_rag/tests/integration/test_service_lifecycle_runtime.py`
+- `S09` `M` `src/vaultspec_rag/tests/integration/test_service_lifecycle_startup.py`
+- `S09` `M` `src/vaultspec_rag/tests/integration/test_teardown_budget.py`
+- `S09` `verify:` `.venv\Scripts\python.exe -P -m ruff check src/vaultspec_rag` -> `pass`
+- `S09` `verify:` `.venv\Scripts\python.exe -P -m ruff format --check src/vaultspec_rag/tests/integration/_helpers.py src/vaultspec_rag/tests/integration/_service_lifecycle_helpers.py src/vaultspec_rag/tests/integration/conftest.py src/vaultspec_rag/tests/integration/test_qdrant_descriptor_child_witnesses.py src/vaultspec_rag/tests/integration/test_service_eviction.py src/vaultspec_rag/tests/integration/test_service_lifecycle_discovery.py src/vaultspec_rag/tests/integration/test_service_lifecycle_orphan_reap.py src/vaultspec_rag/tests/integration/test_service_lifecycle_runtime.py src/vaultspec_rag/tests/integration/test_service_lifecycle_startup.py src/vaultspec_rag/tests/integration/test_teardown_budget.py` -> `pass`
+- `S09` `verify:` `.venv\Scripts\python.exe -P -m ty check --python .venv\Scripts\python.exe src/vaultspec_rag/tests/integration/_helpers.py src/vaultspec_rag/tests/integration/_service_lifecycle_helpers.py src/vaultspec_rag/tests/integration/conftest.py src/vaultspec_rag/tests/integration/test_qdrant_descriptor_child_witnesses.py src/vaultspec_rag/tests/integration/test_service_eviction.py src/vaultspec_rag/tests/integration/test_service_lifecycle_discovery.py src/vaultspec_rag/tests/integration/test_service_lifecycle_orphan_reap.py src/vaultspec_rag/tests/integration/test_service_lifecycle_runtime.py src/vaultspec_rag/tests/integration/test_service_lifecycle_startup.py src/vaultspec_rag/tests/integration/test_teardown_budget.py` -> `pass`
+- `S09` `verify:` `.venv\Scripts\python.exe -P -m basedpyright --pythonpath .venv\Scripts\python.exe src/vaultspec_rag/tests/integration/_helpers.py src/vaultspec_rag/tests/integration/_service_lifecycle_helpers.py src/vaultspec_rag/tests/integration/conftest.py src/vaultspec_rag/tests/integration/test_qdrant_descriptor_child_witnesses.py src/vaultspec_rag/tests/integration/test_service_eviction.py src/vaultspec_rag/tests/integration/test_service_lifecycle_discovery.py src/vaultspec_rag/tests/integration/test_service_lifecycle_orphan_reap.py src/vaultspec_rag/tests/integration/test_service_lifecycle_runtime.py src/vaultspec_rag/tests/integration/test_service_lifecycle_startup.py src/vaultspec_rag/tests/integration/test_teardown_budget.py` -> `pass`
+- `S09` `verify:` `.venv\Scripts\python.exe -P -m pytest src/vaultspec_rag/tests/integration/test_teardown_budget.py src/vaultspec_rag/tests/test_process_termination.py src/vaultspec_rag/tests/test_service_launcher_lifetime.py -q -m unit` -> `pass`
+- `S09` `verify:` `python -m pylint (10 affected integration files)` -> `pass`
+- `S09` `verify:` `pytest four affected subprocess lifecycle cases after canonical exit migration` -> `pass`
+- `S09` `verify:` `real exited-child cleanup guard old-helper mutation` -> `fail`
+- `S09` `verify:` `real exited-child cleanup guard exact canonical restoration` -> `pass`
+- `S09` `verify:` `AST comparison of all 37 exit-wait timeout budgets` -> `pass`
+- `S09` `by:` `principal with Sol 6.1 Medium bounded executor`
+- `S09` `verify:` `vaultspec-core vault check all --fix --no-hints --json` -> `pass`
+- `S02` `M` `.vault/plan/2026-10-26-stale-search-hits-plan.md`
+- `S02` `verify:` `canonical full Python matrix (8403 passed, 3 failed, 15 platform skips)` -> `fail`
+- `S02` `verify:` `corrected feature and numeric guard CPU covering selection (310 passed)` -> `pass`
+- `S02` `verify:` `unchanged extraction download-fault coverage (34 passed)` -> `pass`
+- `S02` `verify:` `unchanged browser and bridge covering confirmation (4 passed)` -> `pass`
+- `S02` `verify:` `canonical resident GPU matrix (871 passed, 17 failures or errors, 2 platform skips)` -> `fail`
+- `S02` `verify:` `resident recovery and native server selection (19 passed)` -> `pass`
+- `S02` `verify:` `durable subprocess-GPU remaining 81-node batch (78 passed, 3 failed)` -> `fail`
+- `S02` `verify:` `all four unchanged subprocess retries (4 passed)` -> `pass`
+- `S02` `verify:` `post-correction lifecycle selection (4 passed)` -> `pass`
+- `S02` `verify:` `canonical performance lane (14 passed)` -> `pass`
+- `S02` `verify:` `provisioning lane (72 passed)` -> `pass`
+- `S02` `verify:` `Windows lane (90 passed)` -> `pass`
+- `S02` `verify:` `hosted TypeSafe live lane (5 passed)` -> `pass`
+- `S02` `verify:` `full Ruff format ty basedpyright Pylint complexity imports nesting and frontend gates` -> `pass`
+- `S02` `verify:` `canonical dead-code audit and deptry over 378 files` -> `pass`
+- `S02` `verify:` `canonical test service stop and owned Qdrant/listener verification` -> `pass`
+- `S02` `by:` `principal with independent Luna Max test and health supervisors`
+- `S02` `verify:` `vaultspec-core vault feature index --feature stale-search-hits --json` -> `pass`
+- `S02` `verify:` `vaultspec-core vault check all --fix --feature stale-search-hits --no-hints --json (20 checks zero non-info findings)` -> `pass`
+- `S02` `verify:` `vaultspec-core vault plan status stale-search-hits --json` -> `pass`
+
+## Notes
+
+- `S08` User explicitly authorized including existing staged uv.lock update. Digest derivation executed no downloaded native binary. Full GPU baseline resource failures are unrelated and remain tracked in S02.
+- `S05` No guard exemption or suppression added. Live proof initially expected later timestamp guard but earlier same ordering correlation guard caught the mutation; paired-artifact verification0 records exact assertion and restored source SHA. Initial pointer-missing attempt excluded from proof. Full matrix remains S02 open.
+- `S02` S02 remains open: full `subprocess_gpu` selection is currently supervised by sole LunaMax owner, explicit perf follows; MPS is unavailable on Windows. Parallel CPU extraction-space and browser failures passed unchanged serially; numeric bool guard was strengthened and verified in310coveringcases. All initial17 GPU resource failures passed targeted retry without admission changes. User explicitly requires KEEP Ollama running; any remaining resource failures must be reported. Evidence logs under .pytest-tmp/full-validation, actual source checkpointf54a5dfb and pin-lock checkpoint95feef7c.
+- `S02` First full subprocess-GPU attempt lost its foreground execution session without exit status or logs; excluded from coverage, cause unproven. Known borrower/test processes gone. Full selection is being rerun under detached hidden runner with durable per-test progress and safe logs. Product source remains f54a5dfb. Canonical borrower-lease guard respected; only our isolated service recovered by normal stop/start. S02 remains open; user explicitly requests continue and KEEP Ollama.
+- `S02` Original failures and unavailable Windows MPS lane are retained in the audit; all failed applicable cases have corrected or unchanged passing coverage. Existing reviewed Vulture false positives remain documented. Ollama and unrelated workloads were untouched.

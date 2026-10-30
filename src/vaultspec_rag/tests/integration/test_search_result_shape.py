@@ -91,6 +91,9 @@ class TestResultShape:
         Mutation proof: removing ``status`` and ``related`` from the transport model
         failed on the exact ``payload[0]["status"]`` assertion (exit 1); restoring
         both fields passed this test (exit 0).
+
+        Excluding ``freshness`` from serialization failed its payload assertion
+        (exit 1); restoring the field passed this test (exit 0).
         """
         ranked = [
             SearchResult(
@@ -117,6 +120,8 @@ class TestResultShape:
                 language="python",
                 line_start=4,
                 line_end=7,
+                freshness="stale",
+                stale_reason="content_changed",
             ),
         ]
 
@@ -134,6 +139,10 @@ class TestResultShape:
         assert payload[1]["language"] == "python"
         assert payload[1]["line_start"] == 4
         assert payload[1]["line_end"] == 7
+        assert payload[0]["freshness"] == "unverifiable"
+        assert payload[0]["stale_reason"] is None
+        assert payload[1]["freshness"] == "stale"
+        assert payload[1]["stale_reason"] == "content_changed"
         assert set(payload[0]) == {
             "id",
             "path",
@@ -161,5 +170,7 @@ class TestResultShape:
             "unit_metadata",
             "extractor_id",
             "extractor_version",
+            "freshness",
+            "stale_reason",
         }
         assert "rerank_text" not in payload[0]

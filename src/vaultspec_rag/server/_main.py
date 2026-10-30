@@ -257,6 +257,7 @@ def _run_http_daemon(port: int) -> None:
         raise
     finally:
         try:
+            runtime.drift_auditor.close()
             runtime.registry.close_all()
         finally:
             capture_closed = log_capture.close()

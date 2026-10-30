@@ -93,6 +93,8 @@ class SearchResultItem(BaseModel):
     extractor_id: str | None = None
     extractor_version: str | None = None
     rerank_text: str | None = Field(default=None, exclude=True)
+    freshness: Literal["current", "stale", "unverifiable"] = "unverifiable"
+    stale_reason: str | None = None
 
     @classmethod
     def serialize(cls, result: object) -> dict[str, object]:

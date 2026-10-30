@@ -13,6 +13,26 @@ _IDENTIFIER_LIMIT = 256
 _REMEDIATION_LIMIT = 1_024
 
 
+def render_drift_audits(
+    payload: dict[str, object],
+    emit: Callable[[str], None],
+) -> None:
+    """Render the service's proven rebuild blockers beside retained stale hits."""
+    audits = payload.get("drift_audit")
+    if not isinstance(audits, list):
+        return
+    for audit in cast("list[object]", audits)[:MAX_SEARCH_EVIDENCE_ITEMS]:
+        if not isinstance(audit, dict):
+            continue
+        item = cast("dict[str, object]", audit)
+        if item.get("status") == "rebuild_required":
+            source = _bounded(item.get("source"))
+            emit(f"{source} index: rebuild required")
+            remediation = _bounded(item.get("remediation"), limit=_REMEDIATION_LIMIT)
+            if remediation:
+                emit(f"  Next action: {remediation}")
+
+
 def _bounded(value: object, *, limit: int = _IDENTIFIER_LIMIT) -> str | None:
     if not isinstance(value, (str, int)) or isinstance(value, bool):
         return None

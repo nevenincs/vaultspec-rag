@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 
 #: Pinned Qdrant server release. Must stay on the same minor line as
-#: the locked qdrant-client (1.19.x as of this pin).
+#: the locked qdrant-client (1.20.x as of this pin).
 #:
 #: The lock tracks the newest client, so this pin is what follows it rather
 #: than what holds it back, and a guard fails the suite whenever the two drift
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 #: Reproducing the digests already committed here is what shows the method and
 #: the transport can be trusted to mint the next set - without that step, a
 #: digest taken alongside the artifact attests to nothing but itself.
-QDRANT_SERVER_VERSION: Final[str] = "1.19.0"
+QDRANT_SERVER_VERSION: Final[str] = "1.20.0"
 
 #: The pinned Qdrant server cannot complete uploaded-snapshot recovery on
 #: Windows. Archives remain portable: restore them with a supported
@@ -79,22 +79,22 @@ ASSET_WINDOWS_X86: Final = "qdrant-x86_64-pc-windows-msvc.zip"
 #: entry.
 QDRANT_ASSET_SHA256: Final[dict[str, str]] = {
     ASSET_MACOS_ARM: (
-        "4e279a80cc1ebe73e859318ff86375af54c123887dd7ae46605c0eb6cb7c44e8"
+        "531904e822050790bb8c1da6705f801ee48b91eb4c229d0d605ff06f6331b20a"
     ),
     ASSET_LINUX_ARM_MUSL: (
-        "8986afbbff9ac32d6e2dbe5cabec80565f613f777126096a461ba066573d3245"
+        "bd8a458b8ef8006ce2c603c5bd6d1d973e39d787f794008dd959112e747c3bb7"
     ),
     ASSET_MACOS_X86: (
-        "e7afefcc125856157b33c6184c00ddee3f1d5b112474649070592d9fdd9a3f54"
+        "94a2e6f6b8ef3a3b5756a11172fd66554ac753e0a71c1d8d8b5349356c084f4d"
     ),
     ASSET_WINDOWS_X86: (
-        "980cb2e1ae771155cf211da8c0a8a9206b6482bd4effdc4db994d3adb707b087"
+        "6d13553584fd0411f00637519e293331ff0aa1fb79bd9e30db45839bb75de2be"
     ),
     ASSET_LINUX_X86_GNU: (
-        "e4405091f67d02f96fb941695ef8a6974e677632507ff7b04a3fcbb332ad9c19"
+        "2361f3df0dedfef31f5444f9f15bd15d6b4a6cba6ad952daecc5fbe3867c5ee6"
     ),
     ASSET_LINUX_X86_MUSL: (
-        "9ec667456443463eee390e43cd36988af6b730c6db807b4e39f57c303d0264a3"
+        "b03a64616a1f41ddab78b480a318466541765f19835318113b1821cbea8df52c"
     ),
 }
 
@@ -123,22 +123,22 @@ QDRANT_ASSET_SHA256: Final[dict[str, str]] = {
 #: start, and the reverse is a digest for something that cannot be fetched.
 QDRANT_EXECUTABLE_SHA256: Final[dict[str, str]] = {
     ASSET_MACOS_ARM: (
-        "036b94e5a39f1ea8f2329c8e528fcea54f83eb9205221a7dc1623c9862acc74d"
+        "830bd61d0efdba90e0737e174cefe32d4f9e0161b0e2b8684d655fb774544fd3"
     ),
     ASSET_LINUX_ARM_MUSL: (
-        "d78155928882a6aa39cca6b79872e32d3902f7f0ae40999812f3481754d0ad09"
+        "6aa0041aa11b9c6326e159c999ebb6b54798afbeca41cca636e32c78c347a917"
     ),
     ASSET_MACOS_X86: (
-        "a4706c528df035ab9c8400cff1e5ebc8147d5a5f02adf383b19400e50a2b37bc"
+        "3c94cd2ad5a8830f58bb3ec654bc030f17c8527dd2c9116bcd1bc346e9b0069b"
     ),
     ASSET_WINDOWS_X86: (
-        "369c562eae3d89333a13abfdb522fa209e3f587c1217a1059d817e80814ea9d4"
+        "3e86f79bd516097586afb5ceacf6b843bc9e32b8e4b311d94b63a3cc11432a40"
     ),
     ASSET_LINUX_X86_GNU: (
-        "f3aa04dd54b303feca241878521e563a2e09ead71e14cbd6caef85e227498d50"
+        "5081acd073ef29701415dc2d1655d98750be8c08008541febc20cf2935800f2f"
     ),
     ASSET_LINUX_X86_MUSL: (
-        "abfe97e1d0225111dec2f048790428f151846c8a049eefc85328b6c9eccaf419"
+        "d60f8c31f7c943849403997562122cce4e3883b7f06936a01187dfd2d2eb81fe"
     ),
 }
 

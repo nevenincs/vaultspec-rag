@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, cast
+
+from .._search_drift import SearchDriftAuditor
 
 if TYPE_CHECKING:
     from starlette.applications import Starlette
@@ -28,6 +30,7 @@ class ServerRouteRuntime:
     registry: ServiceRegistry
     port: int
     monitor: MonitorProcess | None = None
+    drift_auditor: SearchDriftAuditor = field(default_factory=SearchDriftAuditor)
 
     def __post_init__(self) -> None:
         """Refuse route hosts that cannot authenticate or publish themselves."""

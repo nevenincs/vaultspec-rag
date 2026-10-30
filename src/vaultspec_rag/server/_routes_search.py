@@ -25,6 +25,7 @@ from qdrant_client.http.exceptions import (
     ApiException,
     ResponseHandlingException,
 )
+from starlette.background import BackgroundTask
 from starlette.responses import JSONResponse
 
 import vaultspec_rag.server as _m
@@ -33,6 +34,7 @@ from .._error_payload import error_payload
 from .._operator_commands import (
     server_status_command,
 )
+from .._search_freshness import capture_hit_publications, verify_search_hits
 from .._search_state import (
     MAX_SEARCH_EVIDENCE_ITEMS,
     AbsenceAuthority,
@@ -598,6 +600,7 @@ def _execute_search_request(
     compute_ticket_wait_seconds = time.perf_counter() - compute_wait_started
     try:
         integrity_snapshot = acquire_search_integrity_snapshot(request)
+        hit_publications = capture_hit_publications(request.root, request.sources)
         notes: dict[str, object] = {}
         phase_started = time.perf_counter()
         results, phase_timing, combined = _dispatch_public_search(
@@ -606,6 +609,11 @@ def _execute_search_request(
             notes,
         )
         search_seconds = time.perf_counter() - phase_started
+        verification_started = time.perf_counter()
+        verify_search_hits(request.root, results, hit_publications)
+        phase_timing["hit_verification_seconds"] = (
+            time.perf_counter() - verification_started
+        )
         phase_started = time.perf_counter()
         indexed_count = (
             sum(
@@ -1410,7 +1418,27 @@ async def _search_route_response(request: Request) -> JSONResponse:
         finalization.total_seconds = completed.total_seconds
         finalization.availability_cause = completed.availability_cause
         finalization.error_code = None
-        return JSONResponse(completed.result, status_code=completed.status_code)
+        from .._search_drift import served_stale_files
+
+        runtime = get_request_runtime(request)
+        files = served_stale_files(completed.result)
+        audits = runtime.drift_auditor.snapshot(
+            search_request.root, runtime.registry, completed.result, runtime.port
+        )
+        if audits:
+            completed.result["drift_audit"] = audits
+        return JSONResponse(
+            completed.result,
+            status_code=completed.status_code,
+            background=BackgroundTask(
+                runtime.drift_auditor.note_served,
+                search_request.root,
+                files,
+                runtime.registry,
+            )
+            if files
+            else None,
+        )
     except BaseException as exc:
         cancelled = isinstance(exc, asyncio.CancelledError)
         finalization.status_code = 499 if cancelled else 500

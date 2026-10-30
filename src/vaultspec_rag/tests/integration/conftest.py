@@ -451,8 +451,8 @@ def _cleanup_service_process(
     timeout: float,
 ) -> None:
     """Terminate and verify one test-owned service inside the supplied budget."""
+    from ..._process_probe import wait_for_exit
     from ...cli._process import _terminate_pid
-    from ._helpers import _wait_for_exit
 
     daemon_pid, qdrant_pid = _resolve_owned_pids(port=port, fallback_pid=pid)
     started = time.monotonic()
@@ -481,18 +481,18 @@ def _cleanup_service_process(
     if graceful_window > 0.0:
         with suppress(OSError):
             os.kill(pid, signal.SIGTERM)
-    if not _wait_for_exit(daemon_pid, timeout=_bounded(graceful_window)):
+    if not wait_for_exit(daemon_pid, timeout=_bounded(graceful_window)):
         _terminate_pid(
             daemon_pid,
             timeout=_budget_left(),
             console_group_signal=False,
         )
-        if not _wait_for_exit(daemon_pid, timeout=_budget_left()):
+        if not wait_for_exit(daemon_pid, timeout=_budget_left()):
             raise AssertionError(
                 f"Test-owned service process {daemon_pid} did not exit.\n"
                 f"Service output:\n{_service_diagnostics(log_path)}"
             )
-    if daemon_pid != pid and not _wait_for_exit(
+    if daemon_pid != pid and not wait_for_exit(
         pid, timeout=_bounded(_TEARDOWN_LAUNCHER_EXIT_SECONDS)
     ):
         _terminate_pid(
@@ -500,14 +500,12 @@ def _cleanup_service_process(
             timeout=_budget_left(),
             console_group_signal=False,
         )
-        if not _wait_for_exit(pid, timeout=_budget_left()):
+        if not wait_for_exit(pid, timeout=_budget_left()):
             raise AssertionError(
                 f"Test-owned service launcher {pid} did not exit with daemon "
                 f"{daemon_pid}.\nService output:\n{_service_diagnostics(log_path)}"
             )
-    if qdrant_pid is not None and not _wait_for_exit(
-        qdrant_pid, timeout=_budget_left()
-    ):
+    if qdrant_pid is not None and not wait_for_exit(qdrant_pid, timeout=_budget_left()):
         raise AssertionError(
             f"Test-owned Qdrant process {qdrant_pid} did not exit with its "
             f"service {pid}.\nService output:\n"

@@ -8,11 +8,12 @@ related:
   - "[[2026-07-25-non-destructive-index-publication-adr]]"
   - "[[2026-07-21-large-index-resilience-adr]]"
   - '[[2026-10-12-destructive-rebuild-lifecycle-adr]]'
+  - '[[2026-10-26-stale-search-hits-adr]]'
 supersedes:
   - '2026-07-25-index-completeness-guard-adr'
-modified: '2026-10-14'
+modified: '2026-10-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:43f6cce9064c77cbaa1e9e83cfbe40e02cfe6c46331487290419e6b0a051aeca'
+body_hash: 'sha256:52e4e83b14fbbdb3281c55d8037bb4ecf1240eb03adf6685f3f10a422d9fc1de'
 ---
 
 # `explicit-reindex-authority` adr: `Require explicit authority for full-corpus indexing` | (**status:** `accepted`)
@@ -48,6 +49,12 @@ The user authorized reset-first rebuilds and concurrent search on 2026-10-12. Fo
 ### 2026-10-14: the first index of a new source
 
 `2026-10-12-destructive-rebuild-lifecycle-adr` (2026-10-14 amendment) admits an explicit incremental request for a source that has never completed a publication and holds no stored points as that source's first full build, and reports it as the effective operation. Every other first-run, compatibility or scope-loss case keeps the typed refusal below, and watcher and integrity origins never start one.
+
+### 2026-10-26: bounded repair after confirmed stale delivered hits
+
+The user authorized delivered-hit freshness verification and automatic bounded reconciliation on 2026-10-26, while requiring a full rebuild need to bubble to the operator. `2026-10-26-stale-search-hits-adr` refines this record's read-serving default: managed search may initiate coalesced background audit and existing incremental reconciliation only after its final delivered hits contain confirmed stale disk evidence. This scoped exception is enabled for that confirmed-hit path and does not authorize mutation from unknown, unreadable, transient or merely absent proof. Existing breadth-triggered repair policy is unchanged.
+
+Search remains bounded and does not wait for audit or mutation. Automatic work never changes to full rebuild cost. Proven compatibility/schema/evidence incompatibility blocking the audit, or a reconciliation job's typed `full_reindex_required`, is exposed as service-owned `rebuild_required` with an executable root- and source-scoped existing rebuild command through HTTP, CLI and MCP. Full rebuild remains explicit; automatic origins never start a first full build. The retained original default and legacy switch below apply outside this narrow confirmed-hit exception.
 
 ### Retained original ruling, subject to the amendments above
 

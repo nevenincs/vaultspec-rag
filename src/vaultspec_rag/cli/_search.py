@@ -54,6 +54,9 @@ from ._render import (
     exit_with_error,
 )
 from ._search_readiness_render import (
+    render_drift_audits as _render_drift_audits_payload,
+)
+from ._search_readiness_render import (
     render_readiness as _render_readiness_payload,
 )
 from ._search_readiness_render import (
@@ -151,6 +154,8 @@ def _handle_service_results(
     service_results: dict[str, object],
     request: _ServiceSearchRenderRequest,
 ) -> None:
+    if not request.json_mode:
+        _render_drift_audits_payload(service_results, _plain)
     if service_results.get("ok") is False:
         _display_service_error(
             service_results,

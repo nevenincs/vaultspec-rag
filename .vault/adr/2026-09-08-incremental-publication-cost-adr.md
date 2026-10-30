@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#incremental-publication-cost'
 date: '2026-09-08'
-modified: '2026-10-14'
+modified: '2026-10-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:8a24c5b065d68f3c8bd45928ac0e76d5fd7a382d729b5076d5c3ebb0f8684103'
+body_hash: 'sha256:8e1f7786d0f3d25fd463bdf336ee63befa3ed8b6d4bdaf620e74940486e2d875'
 related:
   - "[[2026-09-08-incremental-publication-cost-research]]"
   - "[[2026-09-08-incremental-publication-cost-reference]]"
@@ -14,6 +14,7 @@ related:
   - "[[2026-09-01-generation-accounting-adr]]"
   - "[[2026-07-21-code-document-index-boundary-adr]]"
   - '[[2026-10-12-destructive-rebuild-lifecycle-adr]]'
+  - '[[2026-10-26-stale-search-hits-adr]]'
 ---
 
 # `incremental-publication-cost` adr: `publish exact completeness proofs from committed deltas` | (**status:** `accepted`)
@@ -79,6 +80,12 @@ Missing proof remains the typed rebuild-required boundary, except for a source t
 The user authorized reset-first rebuilds and concurrent search on 2026-10-12. `2026-10-12-destructive-rebuild-lifecycle-adr` replaces the shadow-generation, pointer-last, previous-generation fallback, and stable-non-destructive-parent clauses below for explicit rebuilds. Reset invalidates old source proof before verified deletion and creates a fresh live target with a new reset epoch. Final proof certifies that same collection; it does not select a replacement collection.
 
 An open receipt still forbids complete-proof certification and authoritative absence. It does not forbid useful partial retrieval from compatible storage in the current reset epoch. Such reads are epoch-fenced and marked incomplete; they never borrow a previous generation's proof or counts. This is a serving-state projection of the same ledger, not an alternative completeness authority. Closed, verified finalization retains exact proof and storage-before-proof ordering. Scoped incremental delta costs, backend/source isolation, and refusal to seed new proof from old persisted formats remain binding.
+
+### 2026-10-26: supervised verification after confirmed stale delivered hits
+
+The user authorized automatic bounded audit and incremental reconciliation after confirmed stale returned hits on 2026-10-26. `2026-10-26-stale-search-hits-adr` refines the explicit audit-authority restriction below only for this managed-service path: after delivering a confirmed stale hit, the service may run the existing exact backend projection audit through its runtime-owned bounded queue, coalesced and rate-limited by root and concrete source. This is separately admitted audit work off the serving thread, never normal publication work or an implicit full rebuild.
+
+The audit verifies an existing canonical proof and cannot seed missing proof or create ancestry. Proven incompatibility or exact projection drift requiring full reconciliation remains `rebuild_required` with operator remediation. A consistent projection with continuing source-file drift may request ordinary incremental reconciliation, which retains the typed refusal at the full-cost boundary. Unknown and conflicting evidence is deferred. Normal scoped publication remains proportional to committed deltas; no automatic path gains full-index execution authority.
 
 ### Retained original ruling, subject to the amendment above
 

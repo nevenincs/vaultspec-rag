@@ -20,7 +20,7 @@ import pytest
 from typer.testing import CliRunner
 
 from ..._job_values import count
-from ..._process_probe import pid_alive
+from ..._process_probe import pid_alive, wait_for_exit
 from ...cli import app
 from ...cli._process import _terminate_pid
 from ...cli._service_status import (
@@ -32,7 +32,6 @@ from .._ports import free_loopback_port
 from ._helpers import (
     _poll_health,
     _service_env,
-    _wait_for_exit,
 )
 from ._service_lifecycle_helpers import (
     _assert_interrupted_after_release,
@@ -208,7 +207,9 @@ def test_start_health_stop(request: pytest.FixtureRequest, tmp_path: Path) -> No
         assert health["project_count"] == 0
 
         _terminate_pid(pid)
-        assert _wait_for_exit(pid), f"PID {pid} did not exit after terminate"
+        assert wait_for_exit(pid, timeout=15.0), (
+            f"PID {pid} did not exit after terminate"
+        )
         assert not pid_alive(pid)
 
 
@@ -493,8 +494,8 @@ def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
         _assert_interrupted_after_release(interrupted)
         assert (control / "restored").read_text(encoding="utf-8") == "1"
 
-        assert _wait_for_exit(service_pid, timeout=90.0)
-        assert _wait_for_exit(qdrant_pid, timeout=30.0)
+        assert wait_for_exit(service_pid, timeout=90.0)
+        assert wait_for_exit(qdrant_pid, timeout=30.0)
         assert _wait_for_listeners_closed(port, qdrant_port, timeout=30.0)
 
     output = (tmp_path / "service.log").read_text(encoding="utf-8", errors="replace")
@@ -579,7 +580,7 @@ def test_stale_pid_recovery(tmp_path: Path) -> None:
                 status = cast("dict[str, object]", status)
                 pid = int(str(status["pid"]))
                 _terminate_pid(pid)
-                _wait_for_exit(pid)
+                wait_for_exit(pid, timeout=15.0)
 
 
 def test_stop_when_not_running(tmp_path: Path) -> None:
@@ -611,7 +612,7 @@ def test_stop_running_service(request: pytest.FixtureRequest, tmp_path: Path) ->
             env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
         )
 
-        assert _wait_for_exit(pid), f"PID {pid} did not exit after stop"
+        assert wait_for_exit(pid, timeout=15.0), f"PID {pid} did not exit after stop"
         assert not pid_alive(pid)
         assert not _status_file().exists(), "Status file should be removed after stop"
 
@@ -645,7 +646,7 @@ def test_stop_running_service_by_port_without_status_file(
             env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
         )
         assert "no such option" not in (result.stdout or "").lower()
-        assert _wait_for_exit(serving_pid), (
+        assert wait_for_exit(serving_pid, timeout=15.0), (
             f"serving PID {serving_pid} did not exit after stop --port"
         )
         assert not pid_alive(serving_pid)

@@ -460,6 +460,8 @@ class TestTheWireReading:
 
         Mutation: reported every ``ImportError`` as an absent torch. Observed
         this fail on the warning assertion, with only the debug line captured.
+        Setting the warning's ``exc_info=False`` failed the exception-info
+        assertion; restoring ``True`` passed.
         """
         package = tmp_path / "torch"
         package.mkdir()
@@ -483,7 +485,7 @@ class TestTheWireReading:
         assert [record.getMessage() for record in warned] == [
             "device-load admission probe failed; reporting it absent"
         ]
-        assert warned[0].exc_info is not None
+        assert warned[0].exc_info
         assert "libcudart" in str(warned[0].exc_info[1])
 
 
