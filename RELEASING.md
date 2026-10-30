@@ -77,7 +77,12 @@ is dispatched explicitly by the lane before it, in this order:
    again, and runs both accelerator tiers, then has release-please force the tag
    and create the draft Release. The cut checks the tag against the proven commit
    and dispatches `RAG Publish`. Manual dispatch is recovery only.
-1. `RAG Publish`, release stage, builds the wheel and source distribution,
+1. `RAG Publish`, release stage, restores `package-lock.json` with npm and builds
+   Vite once, then compiles every native monitor from that exact output with the
+   committed Bun pins. Windows resources, macOS signing and Unix modes are finalized
+   before hashing, and each target must pass the isolated executable and
+   installed-browser probe. Their digests go into the package, so a wheel can verify
+   the monitor it downloads. It builds the wheel and source distribution,
    smoke-tests both across the supported Python versions, and attaches them
    with a merged `SHA256SUMS` to the draft. It creates the draft itself only if
    one is missing, for a tag a maintainer pushed by hand. It never edits an
@@ -85,13 +90,11 @@ is dispatched explicitly by the lane before it, in this order:
    then dispatches `RAG Binaries`.
 1. `RAG Binaries` takes the release's own attached wheel, checked against
    `SHA256SUMS`, and verifies that it contains the exact canonical monitor lifecycle
-   and inventory owners. One job restores `package-lock.json` with npm and builds
-   Vite once. Every native target receives that exact handoff, verifies its digest,
-   and compiles the server with the committed Bun archive/executable pins.
-   Windows resources, macOS signing and Unix modes are finalized before hashing.
-   Each target must pass the isolated executable and installed-browser probe before
-   packaging. An isolated job attests the four finalized archives with GitHub/Sigstore
-   provenance after their native proof; it holds the OIDC grant without checking out
+   and inventory owners. It compiles no monitor: it takes each target's monitor
+   archive off the release, verifies it against the wheel's own pins before
+   extracting it, proves those exact bytes natively, and packs them into that
+   target's bundle. An isolated job attests the four bundles and four monitor
+   archives with GitHub/Sigstore provenance after their native proof; it holds the OIDC grant without checking out
    project code or writing release assets. Its release job aggregates the archive checksums, passes
    the complete-target gate, and attaches only the public archives and the
    merged checksum file to the draft.
@@ -150,34 +153,15 @@ Recovery commands below are for failed releases, not normal release steps.
 `protect-main` has no bypass: the release PR merges only once its own required
 check has passed.
 
-## What a cut needs from the fleet
+## What a cut needs
 
-The fleet must continuously provide these prerequisites; the workflow does not ask
-for per-release setup.
-
-- **The release App can write the proposal.** The `nevenincs-release` App is
-  installed on the repository with Contents and Pull requests write, its client
-  id is the repository variable `RELEASE_APP_CLIENT_ID`, and its private key is
-  the repository secret `RELEASE_APP_PRIVATE_KEY`. A missing or revoked key
-  fails the proposal job's `Mint the release pull request token` step by name.
-  There is no fallback to the workflow token: a PR that token opens is withheld
-  by the merge gate and can never report the required check.
-
-- **The CUDA host's accelerator is free.** The GPU tier starts its own service
-  and refuses to while an installed `vaultspec-rag` service owns the device.
-  Use a runner GPU available to the CI service. An unavailable device fails the
-  hardware gate rather than silently skipping accelerator proof.
-
-- **The Apple-silicon host is awake.** It carries the MPS tier, the macOS
-  build and the Linux arm64 runner, and its runners go offline when it sleeps.
-
-- **Every Linux runner has a browser.** The native monitor proof drives an
-  installed Chrome or Chromium and never downloads one, so the browser belongs
-  to the runner image.
-
-- **The Windows host denies outbound traffic to the proof's two program
-  paths, and names their directory in the runner's environment.** See
-  [the Windows outbound-denied directory](#the-windows-outbound-denied-directory).
+The `nevenincs-release` App is installed on the repository with Contents and
+Pull requests write, its client id is the repository variable
+`RELEASE_APP_CLIENT_ID`, and its private key is the repository secret
+`RELEASE_APP_PRIVATE_KEY`. A missing or revoked key fails the proposal job's
+`Mint the release pull request token` step by name. There is no fallback to the
+workflow token: a PR that token opens is withheld by the merge gate and can
+never report the required check.
 
 ## Rehearsing the binaries lane
 
@@ -195,7 +179,7 @@ gh workflow run binaries.yml --repo "$REPO" --ref <branch> \
 
 The tag names the version the binaries are built as and must match the
 version that commit declares; no such tag needs to exist. Rehearse after
-changing `binaries.yml`, a release recipe, or a fleet runner.
+changing `binaries.yml` or a release recipe.
 
 ## Reproducing the binary artifacts locally
 
@@ -320,20 +304,14 @@ verification is separate from acquisition of the final published archives.
 
 ### The Windows outbound-denied directory
 
-A Windows Firewall rule can only be added by an Administrator, and a runner
-account is deliberately not one. So the rules are added once per host, and each
-proof only occupies them. The host carries a directory the runner may write,
-with outbound traffic denied to two fixed program paths inside it. A proof
-copies the pinned network control into both paths and requires each copy to
+The proof needs a writable directory with outbound traffic denied to two fixed
+program paths inside it. A proof copies the pinned network control into both paths and requires each copy to
 fail to connect, having first connected from an ordinary path. Only then does
 the monitor take its path, so it runs under a denial that run watched work.
 
-The host provides that directory and names it in `MONITOR_OUTBOUND_DENIED_DIR`.
-On the fleet's Windows runner both come from the fleet: its repository declares
-the directory and the two rules, converges them from an elevated session, and
-writes the variable into the runner's environment. No workflow here sets it.
+`MONITOR_OUTBOUND_DENIED_DIR` names that directory. No workflow here sets it.
 
-To run the Windows proof on another machine, create the two rules once from
+To run the Windows proof locally, create the two rules once from
 an elevated PowerShell session and set the variable to the directory:
 
 ```powershell
@@ -351,7 +329,7 @@ rules are missing or whose firewall profiles are disabled.
 
 ## Automated monitor provenance
 
-The four native release archives are attested after finalized-byte browser and
+The four native bundles and four monitor archives are attested after finalized-byte browser and
 OS-offline proof. The signing job contains no checkout or project code and can
 write attestations, but cannot write repository contents. Release attachment waits
 for this job; the draft verifier and package-index admission both authenticate the
@@ -490,8 +468,7 @@ stage that publishes it.
 
 ### Missing or incomplete binary archives
 
-Read the failed matrix leg first. Restore the runner or correct the build
-input, then rerun `RAG Binaries` for the same tag and its release commit:
+Read the failed matrix leg first. Correct the build input, then rerun `RAG Binaries` for the same tag and its release commit:
 
 ```sh
 gh workflow run binaries.yml --repo "$REPO" --ref "$TAG" --field tag="$TAG" \

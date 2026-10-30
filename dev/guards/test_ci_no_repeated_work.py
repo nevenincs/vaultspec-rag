@@ -55,7 +55,7 @@ EACH_MERGE_BOX_WORKFLOW = pytest.mark.parametrize("workflow", MERGE_BOX)
 #: Recipes whose ANSWER depends on the platform, so running them on two
 #: platforms is coverage rather than repetition. Each entry states what the
 #: platform actually changes; a gate that only reads committed files can never
-#: qualify, because the committed bytes are the same on every runner.
+#: qualify, because the committed bytes are the same on every platform.
 PLATFORM_SENSITIVE: dict[str, str] = {
     "test-python": (
         "the suite spawns real processes, takes real locks and resolves real "

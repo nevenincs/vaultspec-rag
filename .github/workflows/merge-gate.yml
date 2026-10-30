@@ -49,8 +49,7 @@ env:
 
 jobs:
   # Every measuring job needs this one, so its admission is theirs: when it
-  # skips, they skip. It only reads the API and may wait on a parent's gate, so
-  # it holds no fleet slot a measuring job needs.
+  # skips, they skip. It only reads the API and may wait on a parent's gate.
   scope:
     name: "Check: Proof scope (Linux)"
     # A fork's pull request never runs here: the workflow it would run is the
@@ -213,15 +212,11 @@ jobs:
         run: just build-monitor
 
       # Four workers. The store-heavy tests carry deadlines of
-      # their own, and on the slower Linux runner, with one worker per core,
-      # several of them ran at or past those deadlines and a different one
-      # failed from run to run. Measured there, this bound takes a third to a
-      # half off all of them but the slowest, which it leaves where it was,
-      # and adds about six minutes to the job.
-      #
-      # Set HERE, on the step. The runner's admission hook exports its own
-      # value for this variable, one worker per CPU it admitted, after the
-      # job's `env:` is read, and that export wins over a job-level value.
+      # their own, and with one worker per core several of them ran at or past
+      # those deadlines and a different one failed from run to run. Measured
+      # here, this bound takes a third to a half off all of them but the
+      # slowest, which it leaves where it was, and adds about six minutes to
+      # the job.
       - name: Run tests
         env:
           PYTEST_XDIST_AUTO_NUM_WORKERS: "4"
@@ -232,9 +227,6 @@ jobs:
   # anyway. The full accelerator-free suite runs here: it already includes the
   # provisioning proofs, and running only their subset would let every other
   # Windows-specific path, lock and process behaviour land untested.
-  # Each correctness job gets a fresh VM and its own TCP port pool. Sharing
-  # the developer workstation lets unrelated applications exhaust the pool
-  # while browser tests are using loopback, even with CPU headroom reserved.
   #
   # uv fetches the interpreter named by UV_PYTHON, which is what the suite
   # runs under.
@@ -290,8 +282,8 @@ jobs:
       - name: Build and install the monitor the lifecycle tests run
         run: just build-monitor
 
-      # Two workers on the four-CPU VM leave scheduling capacity for native
-      # monitors, browsers and owner-witness children alongside pytest.
+      # Two workers leave scheduling capacity for native monitors, browsers
+      # and owner-witness children alongside pytest.
       - name: Run full test suite
         env:
           PYTEST_XDIST_AUTO_NUM_WORKERS: "2"
@@ -393,7 +385,6 @@ jobs:
           github.event.sender.type == 'User'))
     timeout-minutes: 125
     # Reads results and edits a label; it never checks out the pull request.
-    # It waits on other runs, so a fleet slot here could starve what it awaits.
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -448,8 +439,8 @@ jobs:
             echo "::error::ref '$PROOF_SHA' is not a full commit SHA; dispatch the gate with the exact commit to prove"
             exit 1
           fi
-          # The check runs separately on the canonical workflow's runner, from
-          # its own push or pull-request event; a dispatch or a release call
+          # The check runs separately in the canonical workflow, from its own
+          # push or pull-request event; a dispatch
           # proves a commit one of those events already ran on. Poll only the
           # newest run on this SHA, whatever started it, and never reuse an
           # older green.

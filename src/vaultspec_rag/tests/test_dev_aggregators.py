@@ -16,7 +16,7 @@ from __future__ import annotations
 import pytest
 
 from dev import exit_codes, gates
-from dev.__main__ import _execute
+from dev.__main__ import _execute, _run_references_in_parallel, _summarise
 from dev.runner import Cmd, Ref
 from dev.toolchain import VERBS, Target, Verb
 
@@ -46,26 +46,22 @@ EXEMPT: dict[tuple[str, str], str] = {
 
 
 @pytest.mark.unit
-def test_a_parallel_target_reports_in_order_and_runs_past_a_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_parallel_target_reports_in_order_and_runs_past_a_failure() -> None:
     """Concurrency changes neither the verdict nor which failure it names.
 
     Mutation proof: returning the last failing code from ``_summarise`` failed
     this on the exit code; restoring the first passed.
     """
-    calls: list[str] = []
 
-    def fake(_verb: Verb, name: str) -> tuple[int, bytes]:
-        calls.append(name)
+    def run_target(_verb: Verb, name: str) -> tuple[int, bytes]:
         return {"one": 0, "two": 3, "three": 4}[name], b""
 
-    monkeypatch.setattr("dev.__main__._reenter", fake)
     refs = tuple(Ref(name) for name in ("one", "two", "three"))
     target = Target("all", "", refs, keep_going=True, parallel=True)
     verb = Verb("demo", "", (target,))
-    assert _execute(verb, target) == 3
-    assert sorted(calls) == ["one", "three", "two"]
+    outcomes = _run_references_in_parallel(verb, target, run_target)
+    assert outcomes == [("one", 0), ("two", 3), ("three", 4)]
+    assert _summarise(verb, target, outcomes) == 3
 
 
 @pytest.mark.unit

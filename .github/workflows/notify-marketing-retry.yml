@@ -2,8 +2,7 @@ name: RAG Notify Marketing Retry
 
 # Notify Marketing is the only path from a published release to the
 # marketing site, and publish.yml dispatches it without waiting for the result.
-# A run that failed or was cancelled - a job no runner took before its timeout,
-# a dispatch the network dropped - left the site on the previous release, and a
+# A run that failed or was cancelled - a job that timed out, a dispatch the network dropped - left the site on the previous release, and a
 # cancelled run is grey, not red. This lane reruns it twice, then fails in its
 # own name, because a failure that survives two reruns is not transient.
 #

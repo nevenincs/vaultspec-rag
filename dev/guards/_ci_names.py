@@ -64,10 +64,9 @@ SAME_REPO_CLAUSE = "github.event.pull_request.head.repo.full_name == github.repo
 #: request events run the merge gate like a collaborator's.
 RELEASE_BOT = "nevenincs-release[bot]"
 
-#: The authors whose pull requests may reach the self-hosted fleet. This is a
-#: personal account, so there are no organisation members; the release App is
-#: the one bot admitted. The clause is spelled identically across the fleet's
-#: repositories, so it is matched as one literal rather than per term.
+#: The authors whose pull requests may run CI jobs. This is a personal account,
+#: so there are no organisation members; the release App is the one bot
+#: admitted. The clause is matched as one literal rather than per term.
 TRUSTED_AUTHOR_CLAUSE = (
     "(github.event.pull_request.author_association == 'OWNER' || "
     "github.event.pull_request.author_association == 'COLLABORATOR' || "

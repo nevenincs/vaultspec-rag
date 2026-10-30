@@ -214,7 +214,7 @@ artifacts = ["src/vaultspec_rag/monitor_runtime/_generated_pins.py"]
 # default `-r` value is `fE`, so a run reports failures and errors and stays
 # SILENT about skips. Almost every lane in this repository is hardware-gated
 # (cuda, mps, subprocess_gpu, integration), which means a lane that skipped
-# every one of its tests - no GPU on the runner, no model downloaded, a
+# every one of its tests - no GPU, no model downloaded, a
 # collection guard tripping - printed the same "no failures" as a lane that
 # actually ran them. `-ra` names every non-passing outcome and its reason, so
 # an all-skipped lane is visible as one.

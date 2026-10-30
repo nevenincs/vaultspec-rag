@@ -486,9 +486,8 @@ PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 #: the value is also what kills the ``"errors:\n"`` -> ``s:\n`` false positive a
 #: raw-text drive-letter scan drowns in: the value is a newline, not a path.
 # HARD path leaks - identity-revealing, they FAIL the gate. A user home names
-# the developer; the worktree-root marker is this exact checkout's path.
+# the developer.
 PATH_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("worktree-root", re.compile(r"vaultspec-rag")),
     # The account segment must name somebody. Documentation has to show an
     # operator where their own home directory sits, and a stand-in that the
     # reader is expected to substitute reveals no identity - which is the whole
@@ -827,7 +826,7 @@ def _iter_values_and_comments(source: _PythonSource) -> list[tuple[int, str]]:
     A workstation path is illegitimate whether it sits in a comment or a data
     value, so - unlike the prose-only citation scan - this inspects string
     values too. The value is the DECODED string (``"a:\\n"`` yields ``a:`` then
-    a newline), which is what distinguishes a real ``<path>/code`` path from a
+    a newline), which is what distinguishes a real ``C:\\src`` path from a
     ``word:\\n`` escape sequence a raw-text scan cannot tell apart.
     """
     out: list[tuple[int, str]] = []

@@ -518,7 +518,7 @@ def test_mps_acceptance_proves_each_model_parameter_device() -> None:
     assert labels == {"dense model", "sparse model", "reranker"}
 
 
-def test_mps_runs_on_schedule_and_for_the_exact_release_sha() -> None:
+def test_mps_runs_on_dispatch_and_for_the_exact_release_sha() -> None:
     """MPS stays off PR/main and proves the candidate before it can be tagged.
 
     Mutation proof: changing the hardware call to ``github.sha`` failed the
@@ -528,7 +528,7 @@ def test_mps_runs_on_schedule_and_for_the_exact_release_sha() -> None:
     ci_workflow = (root / "ci.yml").read_text(encoding="utf-8")
     caller = ci_workflow.split("  hardware:", 1)[1]
     assert "uses: ./.github/workflows/hardware.yml" in caller
-    assert "github.event_name == 'schedule'" in caller
+    assert "github.event_name == 'workflow_dispatch'" in caller
     assert "github.event_name == 'push'" not in caller
     assert "github.event_name == 'pull_request'" not in caller
 

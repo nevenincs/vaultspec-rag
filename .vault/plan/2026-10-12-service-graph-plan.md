@@ -7,9 +7,9 @@ tier: L1
 related:
   - '[[2026-04-02-service-graph-adr]]'
   - '[[2026-03-07-vaultgraph-cache-adr]]'
-modified: '2026-10-13'
+modified: '2026-10-30'
 body_schema: body-v2
-body_hash: 'sha256:da9e812d665d42ff38de25a319bec0a75cfff7a2eeb579ae324b7bb2482ed814'
+body_hash: 'sha256:7e9668c8e1c7dc36167688a6861b9210decc02b529234b3be7f42403dbd3f87c'
 ---
 
 # `service-graph` plan

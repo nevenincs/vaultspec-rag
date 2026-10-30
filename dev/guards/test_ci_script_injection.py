@@ -2,7 +2,7 @@
 
 An expression inside ``run:`` is substituted into the script text before the
 shell parses it, so a value carrying shell syntax - a dispatch input, a tag, a
-pull request title - executes as code on the runner. Passed through ``env:``
+pull request title - executes as code in the job. Passed through ``env:``
 it arrives as data. The rule holds for static matrix values too, so that a
 later edit swapping a literal for an input cannot slip past a reviewer.
 

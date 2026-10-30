@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-#: Set by the Actions runner. Annotations are only meaningful under it.
+#: Set by GitHub Actions. Annotations are only meaningful under it.
 ANNOTATIONS_ENV = "GITHUB_ACTIONS"
 
 

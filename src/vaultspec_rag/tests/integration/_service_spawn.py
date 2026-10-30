@@ -2,7 +2,7 @@
 
 A port picked with ``free_loopback_port`` is released before the service is
 spawned, and the service does not bind it until its models are loaded - tens of
-seconds later. On a workstation shared with other runners, containers and
+seconds later. On a machine shared with other processes, containers and
 dynamic port reservations, something else takes the port in that window. The
 service then logs uvicorn's bind failure and exits, and a test that waits on
 health sits out its whole budget for a service that will never answer.

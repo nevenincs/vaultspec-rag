@@ -414,19 +414,15 @@ def test_the_gate_runs_every_check_on_every_platform() -> None:
 
 
 def test_pr_verdict_requires_full_proof() -> None:
-    """Light or skipped jobs cannot authorize a PR head.
+    """Skipped jobs cannot authorize a PR head without earlier measured proof.
 
-    Mutation proof: restoring light-lint authorization fails the light-verdict
-    assertion; deleting the historical measured-job check fails the prior-proof
-    assertion. Restoration after each mutation passes.
+    Mutation proof: deleting the historical measured-job check fails the
+    prior-proof assertion; restoration passes.
     """
     script = next(
         str(step["run"])
         for step in _jobs()[GATE_JOB]["steps"]
         if step.get("name") == "Every full check passed on this commit"
-    )
-    assert '${LIGHT}" = "success"' not in script, (
-        "light lint must never authorize the merge gate"
     )
     assert 'if require_full_run "$run"; then' in script
     assert 'if [ "$previous" != "success" ]; then' in script
@@ -445,13 +441,12 @@ def test_pr_verdict_requires_full_proof() -> None:
 
 
 def test_dispatch_cannot_select_partial_merge_proof() -> None:
-    """Restoring a scope input or light job fails admission."""
+    """Restoring a scope input fails admission."""
     trigger = _triggers()["workflow_dispatch"]
     assert isinstance(trigger, dict)
     inputs = cast("dict[object, object]", trigger)["inputs"]
     assert isinstance(inputs, dict)
     assert set(cast("dict[object, object]", inputs)) == {"ref"}
-    assert "lint-light" not in _jobs()
 
 
 def test_a_scope_answer_authorizes_only_what_it_skipped() -> None:

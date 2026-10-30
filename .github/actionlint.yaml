@@ -1,6 +1,4 @@
 self-hosted-runner:
-  # Custom labels the workflows select on; actionlint rejects any it does not
-  # know.
   labels:
     - gpu
     - cuda

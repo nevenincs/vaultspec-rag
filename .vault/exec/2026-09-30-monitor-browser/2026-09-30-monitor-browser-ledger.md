@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#monitor-browser'
 date: '2026-09-30'
-modified: '2026-10-01'
+modified: '2026-10-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:49afb2eed96d6ef1aba1e318d285dcd5da3194b2990fbf79ad78048d3e28095b'
+body_hash: 'sha256:5b0cca559f11b7f2f44e24fee58c60ecaf29041784b8497ac92cc41819f81545'
 related:
   - "[[2026-09-30-monitor-browser-plan]]"
 ---

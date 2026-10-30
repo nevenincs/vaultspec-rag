@@ -3,9 +3,9 @@ tags:
   - '#research'
   - '#vault-result-evidence'
 date: '2026-09-23'
-modified: '2026-10-01'
+modified: '2026-10-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:9f171fa14affd97418de5a0569ea0c9789a629ba037b6b6e39f05ca223e18089'
+body_hash: 'sha256:f41513aa06e74ed20839e2c798700ea23c78f56e95b8993cc37604eda975d119'
 related:
   - "[[2026-06-12-service-concurrency-adr]]"
   - "[[2026-06-26-storage-schema-contract-adr]]"

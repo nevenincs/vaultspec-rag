@@ -572,9 +572,9 @@ def test_local_bridge_forwards_operator_inventory_and_controls(
 @pytest.mark.parametrize(
     "host",
     [
-        "<machine>:15420",
-        "<address>:5420",
-        "[<address>]:5420",
+        "machine.tailnet.ts.net:15420",
+        "100.64.0.1:5420",
+        "[fd7a:115c:a1e0::1]:5420",
     ],
 )
 @pytest.mark.parametrize("send_origin", [True, False])
@@ -605,7 +605,7 @@ def test_bridge_accepts_local_proxy_authorities(
     assert "token" not in health
 
 
-@pytest.mark.parametrize("host", ["other.<tailnet>", "100.128.0.1"])
+@pytest.mark.parametrize("host", ["other.tailnet.ts.net", "100.128.0.1"])
 def test_bridge_refuses_undeclared_proxy_authorities(
     browser_bridge: tuple[str, Path], host: str
 ) -> None:

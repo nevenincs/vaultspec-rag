@@ -49,7 +49,7 @@ jobs:
       # The version bump in pyproject.toml would leave uv.lock stale. The
       # `uv.lock` entry in release-please-config.json bumps the lock in the
       # same commit, so every proposal head is one commit, and its own
-      # pull-request events run the full merge gate and the Dev Server check.
+      # pull-request events run the merge gate and the Dev Server check.
       - name: Open or update the release pull request
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
@@ -128,9 +128,6 @@ jobs:
   # files, and the parent is a main commit the merge gate already proved, so
   # the suites are not run again. What can change after that proof - a newly
   # published advisory against the unchanged lock - is audited here.
-  #
-  # The parent's proof only reads the API and can wait on a run still finishing,
-  # so it holds no fleet slot; the fleet is reached once the wait is over.
   prove-parent:
     name: "Check: Release parent proof"
     needs: candidate

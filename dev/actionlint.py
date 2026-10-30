@@ -1,36 +1,12 @@
-"""THE canonical actionlint provisioner. One implementation, five repos.
+"""THE actionlint provisioner: a pinned, verified download run from a recipe.
 
-Deployed, not called: same constraint as the CI contract checker and the
-runner preflight - their source repository is private, every consumer is
-public.
+Running from a recipe means the gate a developer runs before pushing is the
+gate CI runs.
 
-WHY THIS EXISTS. The fleet acquired actionlint four different ways, one per
-repo, and each way was wrong in its own direction:
-
-  vaultspec-core        `curl` the upstream install script, pipe it to bash,
-                        run the result. Unpinned and unverified: whatever the
-                        script downloads today is what gates the workflows.
-  vaultspec-rag         `bash <(curl -sSfL .../download-actionlint.bash)`.
-                        The same, with process substitution.
-  vaultspec-dashboard   a pinned per-architecture tarball with a verified
-                        digest - correct, and 30 lines of YAML nobody can run
-                        before pushing.
-  cadrumo               a second copy of the dashboard's block, with its own
-                        copy of the digests, already at a different version.
-  vaultspec-a2a         `uses: docker://rhysd/actionlint` - a daemon dependency
-                        on a fleet where a lint gate that reddens because
-                        nobody opened Docker Desktop is a gate people learn to
-                        ignore.
-
-The dashboard's approach is the right one and is what this file generalises,
-with the property that made it hard to reuse removed: it now runs from a
-recipe, so the gate a developer runs before pushing is the gate CI runs.
-
-THE ARCHITECTURE PIN IS THE POINT, not tidiness. The dashboard block reached
-its current shape after naming `linux_amd64.tar.gz` unconditionally with a
-single digest. On an ARM64 runner that does not fail - it PASSES, because the
-downloaded file really is the amd64 archive the digest names - and then dies
-at `Exec format error` one line later. A verification step that reports
+THE ARCHITECTURE PIN IS THE POINT, not tidiness. An amd64 archive named
+unconditionally with a single digest does not fail on ARM64 - it PASSES,
+because the downloaded file really is the archive the digest names - and then
+dies at `Exec format error` one line later. A verification step that reports
 success while handing back an unusable binary is worse than none, because it
 reads as assurance. So the digest is per platform, and an unlisted platform is
 refused rather than guessed at.
@@ -62,7 +38,7 @@ VERSION = "1.7.12"
 #:
 #: Every entry is read from `actionlint_<VERSION>_checksums.txt` on the
 #: release, never filled in from memory: a digest nobody checked is not a
-#: verification. Every platform a runner has must be listed, because init's
+#: verification. Every supported platform must be listed, because init's
 #: tools phase provisions actionlint on all of them and an unlisted platform
 #: is refused - which is the honest failure, and says what to add.
 ARCHIVES: dict[tuple[str, str], tuple[str, str]] = {
@@ -115,7 +91,7 @@ def _platform_key() -> tuple[str, str]:
 def _cache_root() -> Path:
     """Where a verified binary is kept between runs.
 
-    Runner-owned storage when CI provides it, so the containment rules that
+    The tool cache when CI provides one, so the containment rules that
     keep a job out of system locations still hold; the project's own `.venv`
     sibling otherwise, which a `just build-clean` already reclaims.
     """
@@ -221,7 +197,7 @@ def ensure() -> Path:
             f"Add it to ARCHIVES in this file with the digest published in "
             f"actionlint_{VERSION}_checksums.txt for that platform, or put "
             "actionlint on PATH. Guessing an archive is how an amd64 binary "
-            "reached an ARM runner and passed its own digest check."
+            "reached an ARM machine and passed its own digest check."
         )
     suffix, expected = ARCHIVES[key]
     root = _cache_root()
@@ -279,12 +255,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         return TOOL_MISSING
     # shellcheck and pyflakes are disabled EXPLICITLY rather than left to
-    # whether a runner happens to carry them. actionlint silently skips a
+    # whether a machine happens to carry them. actionlint silently skips a
     # missing external linter, so leaving them implicit means the gate checks
     # a different set of things on every machine and nobody can tell which.
-    # Runner labels are provisioned by infrastructure outside this codebase.
-    # Keep actionlint's workflow parsing and all code-owned checks without
-    # turning this project into a registry for fleet topology.
     command = [
         str(binary),
         "-no-color",

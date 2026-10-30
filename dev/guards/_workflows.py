@@ -149,7 +149,7 @@ class Job:
         """Return the platforms this job's resolved runners land on.
 
         An unrecognised label set reports ``unknown`` rather than being
-        dropped, so a runner pool renamed tomorrow surfaces as a job the
+        dropped, so a label renamed tomorrow surfaces as a job the
         guards cannot place instead of one they stop comparing.
         """
         found: set[str] = set()

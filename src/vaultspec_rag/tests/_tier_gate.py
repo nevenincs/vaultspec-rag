@@ -98,7 +98,7 @@ def _is_object_list(value: object) -> TypeIs[list[object]]:
 GPU_MARKERS = frozenset({"integration", "quality", "performance", "robustness"})
 
 #: Real-model tests that require Apple silicon through PyTorch MPS. This is a
-#: separate hardware lane: it neither borrows the CUDA runner's resident service
+#: separate hardware lane: it neither borrows the CUDA resident service
 #: nor shares a selection with tests sized and coordinated for discrete VRAM.
 MPS = "mps"
 

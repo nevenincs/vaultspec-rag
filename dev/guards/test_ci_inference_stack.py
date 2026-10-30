@@ -2,8 +2,8 @@
 
 `just init` installs the full local inference stack - torch, its model
 libraries and several gigabytes of CUDA runtime - unless the job says
-otherwise, because that is what a GPU workstation wants. A CI job that runs no
-GPU work must say otherwise, or every run on a GPU-less runner downloads and
+otherwise, because that is what GPU work wants. A CI job that runs no
+GPU work must say otherwise, or every run on a GPU-less machine downloads and
 unpacks the stack for nothing. The job's own recipes decide which answer is
 right, so the guard derives the requirement from them rather than from a list
 of job names that a new job would not be on:
