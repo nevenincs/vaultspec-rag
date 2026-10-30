@@ -24,7 +24,7 @@ import subprocess
 import sys
 import textwrap
 from concurrent.futures import ThreadPoolExecutor
-from typing import assert_never
+from typing import TYPE_CHECKING, assert_never
 
 from dev.exit_codes import (
     NOTHING_SELECTED,
@@ -44,6 +44,9 @@ from dev.runner import (
     run_tool_or_skip,
 )
 from dev.toolchain import DEFAULTS, VERBS, Target, Verb, find_verb, public_targets
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 HELP_TOKENS = frozenset({"help", "--help", "-h"})
 WRAP_WIDTH = 88
@@ -218,7 +221,11 @@ def _reenter(verb: Verb, name: str) -> tuple[int, bytes]:
     return code, result.stdout
 
 
-def _run_references_in_parallel(verb: Verb, target: Target) -> list[tuple[str, int]]:
+def _run_references_in_parallel(
+    verb: Verb,
+    target: Target,
+    run_target: Callable[[Verb, str], tuple[int, bytes]] = _reenter,
+) -> list[tuple[str, int]]:
     """Run a target's references concurrently and report them in declared order.
 
     Each output is held back until its turn, so a log reads as a serial run does
@@ -227,6 +234,7 @@ def _run_references_in_parallel(verb: Verb, target: Target) -> list[tuple[str, i
     Args:
         verb: The owning verb.
         target: A target whose steps are all references.
+        run_target: Runs one referenced target.
 
     Returns:
         Each referenced target's name and exit code, in declared order.
@@ -236,7 +244,7 @@ def _run_references_in_parallel(verb: Verb, target: Target) -> list[tuple[str, i
         raise ValueError(f"{verb.name} {target.name} is parallel, so only references")
     outcomes: list[tuple[str, int]] = []
     with ThreadPoolExecutor(max_workers=PARALLEL_TARGETS) as pool:
-        results = pool.map(lambda name: _reenter(verb, name), names)
+        results = pool.map(lambda name: run_target(verb, name), names)
         for name, (code, output) in zip(names, results, strict=True):
             sys.stdout.buffer.write(output)
             sys.stdout.buffer.flush()

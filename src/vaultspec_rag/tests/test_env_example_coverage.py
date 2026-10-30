@@ -60,6 +60,8 @@ _SET_BY_A_PARENT_PROCESS: Final[dict[str, str]] = {
     "HOME": "the operating system, in every process's environment",
     "USERPROFILE": "the operating system, in every process's environment on Windows",
     "GITHUB_ACTIONS": "the Actions runner, on every step",
+    "GITHUB_OUTPUT": "the Actions runner, on every step",
+    "GITHUB_REPOSITORY": "the Actions runner, on every step",
     "RUNNER_TOOL_CACHE": "the Actions runner, on every step",
 }
 
