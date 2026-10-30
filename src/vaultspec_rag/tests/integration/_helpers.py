@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from ...indexer._content_policy import RootContentPolicy
     from ...qdrant_runtime._supervise import QdrantSupervisor
     from ...store_runtime import VaultStore
+    from ._service_spawn import SpawnLogMark
 
 __all__ = [
     "_content_kind_indexers",
@@ -345,17 +346,29 @@ def _get_ephemeral_qdrant_port() -> int:
     return free_loopback_port()
 
 
-def _poll_health(port: int, timeout: float = 90.0) -> dict[str, object]:
+def _poll_health(
+    port: int,
+    timeout: float = 90.0,
+    *,
+    spawn_log: SpawnLogMark | None = None,
+) -> dict[str, object]:
     """Poll health without allowing a probe or sleep to overrun the deadline.
 
     The backoff cap stays low: readiness lands mid-sleep, so the cap is the
     worst-case detection overshoot added to every service startup this suite
     performs, and a loopback health probe is cheap enough that the extra
     polls a low cap costs are noise by comparison.
+
+    A caller that has just spawned the service passes the mark of its own log
+    output as *spawn_log*. A service that cannot bind *port* never becomes
+    healthy, and its log says so; each poll reads that log and raises
+    ``ServicePortLostError`` at once instead of waiting out the deadline.
     """
     delay = 0.5
     deadline = time.monotonic() + timeout
     while True:
+        if spawn_log is not None:
+            spawn_log.raise_if_port_lost(port)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break

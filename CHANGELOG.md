@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.6.1](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.6.0...vaultspec-rag-v0.6.1) (2026-10-26)
+## [0.6.2](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.6.0...vaultspec-rag-v0.6.2) (2026-10-27)
 
 
 ### Features
@@ -23,7 +23,12 @@
 * open the on-disk store without the client's unclosed SQLite probe ([#601](https://github.com/nevenincs/vaultspec-rag/issues/601)) ([1fa2bc4](https://github.com/nevenincs/vaultspec-rag/commit/1fa2bc45112743e9c6f0c8ec88305b9351005034))
 * preserve resumable indexing at durable control boundaries ([536b86a](https://github.com/nevenincs/vaultspec-rag/commit/536b86a8aefe570b86bfd8c939991ab99e162979))
 * recover interrupted source publications safely ([00bc788](https://github.com/nevenincs/vaultspec-rag/commit/00bc78845fb90663f99de754c221c9c9f56a912f))
+* **release:** build the release binaries a skipped rehearsal job no longer cancels ([#638](https://github.com/nevenincs/vaultspec-rag/issues/638)) ([ca1445c](https://github.com/nevenincs/vaultspec-rag/commit/ca1445c1bd4d7d68995269c858f34f040bcde49c))
+* **release:** cut 0.6.1 again with the test-service port race fixed ([#635](https://github.com/nevenincs/vaultspec-rag/issues/635)) ([7eb3819](https://github.com/nevenincs/vaultspec-rag/commit/7eb38197298bfe3ec7ceb1929cb40f38bd269dc2))
+* **release:** cut 0.6.1 again, with the pause race reported and the release gate no longer re-running the suites ([#633](https://github.com/nevenincs/vaultspec-rag/issues/633)) ([c614397](https://github.com/nevenincs/vaultspec-rag/commit/c614397074e2f2fb4204f66833cbd26542510167))
+* **release:** expect the vaultspec-core floor the package now declares ([#636](https://github.com/nevenincs/vaultspec-rag/issues/636)) ([bb1709c](https://github.com/nevenincs/vaultspec-rag/commit/bb1709cc3e35beee2fec38532a6eff800fc31418))
 * **release:** let the release chain run unattended on the fleet ([#592](https://github.com/nevenincs/vaultspec-rag/issues/592)) ([165141f](https://github.com/nevenincs/vaultspec-rag/commit/165141f7b76892a913d317d9b90e918ccfc63d34))
+* **release:** read the install's approval warning where the install now puts it ([#637](https://github.com/nevenincs/vaultspec-rag/issues/637)) ([fad66e1](https://github.com/nevenincs/vaultspec-rag/commit/fad66e14576dfeb663bb2c82dd112770cba90953))
 * **release:** take the Windows outbound-denied directory from the host ([#597](https://github.com/nevenincs/vaultspec-rag/issues/597)) ([12e239c](https://github.com/nevenincs/vaultspec-rag/commit/12e239c362c0b7bcb0737f01da0713dfdb46d25a))
 * resume interrupted service index attempts ([8803cf9](https://github.com/nevenincs/vaultspec-rag/commit/8803cf9c618fb6dec00a66dc3c214532133095b1))
 * **tests:** let the MPS tier keep the accelerator claim it owns ([#618](https://github.com/nevenincs/vaultspec-rag/issues/618)) ([1812948](https://github.com/nevenincs/vaultspec-rag/commit/1812948d10e1ff090cd929afd000df9ed8ac9abd))

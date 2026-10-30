@@ -218,8 +218,12 @@ def test_release_please_proves_then_publish_dispatches_binaries(
     assert config["packages"]["."]["draft"] is True
     assert config["packages"]["."]["force-tag-creation"] is True
     cut = _load(repo_root, "release-please.yml")["jobs"]
-    assert cut["prove-gate"]["uses"] == "./.github/workflows/merge-gate.yml"
-    assert cut["prove-gate"]["with"]["ref"] == "${{ needs.candidate.outputs.sha }}"
+    gate_checkout = next(
+        step
+        for step in cut["prove-gate"]["steps"]
+        if str(step.get("uses", "")).startswith("actions/checkout@")
+    )
+    assert gate_checkout["with"]["ref"] == "${{ needs.candidate.outputs.sha }}"
     assert cut["prove-hardware"]["uses"] == "./.github/workflows/hardware.yml"
     assert cut["prove-hardware"]["with"]["target_sha"] == (
         "${{ needs.candidate.outputs.sha }}"
@@ -1015,7 +1019,12 @@ def test_a_rehearsal_builds_every_target_and_writes_nothing(repo_root: Path) -> 
     # The build legs run for a rehearsal exactly as for a release. The
     # frontend and monitor jobs are the rehearsal's own handoff, which a
     # release takes from the lane that built its wheel instead.
-    assert "if" not in jobs["build"], "a rehearsal skips build"
+    build_if = str(jobs["build"].get("if", ""))
+    assert "rehearse" not in build_if, "a rehearsal skips build"
+    # A release skips the rehearsal-only monitor job upstream, so build must
+    # state its own needs instead of inheriting the implicit success().
+    assert build_if.startswith("${{ always()"), "a release skips build"
+    assert "needs.wheel.result == 'success'" in build_if
     for job_id in ("frontend", "monitor"):
         assert jobs[job_id]["if"] == "${{ inputs.rehearse }}", job_id
     assert (
@@ -1023,7 +1032,9 @@ def test_a_rehearsal_builds_every_target_and_writes_nothing(repo_root: Path) -> 
     )
     assert "needs.frontend.result == 'skipped'" in jobs["release"]["if"]
     assert "needs.monitor.result == 'skipped'" in jobs["wheel"]["if"]
-    assert jobs["attest"]["if"] == "${{ !inputs.rehearse }}"
+    attest_if = jobs["attest"]["if"]
+    assert attest_if.startswith("${{ always() && !inputs.rehearse"), attest_if
+    assert "needs.build.result == 'success'" in attest_if
     assert not any("if" in step for step in jobs["build"]["steps"])
     proven = [
         step

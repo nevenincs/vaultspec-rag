@@ -126,19 +126,88 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "cutting #${number} at ${sha} (merged=${state})"
 
-  # The full merge gate, on the exact head that will merge.
+  # The release head differs from its parent only by Release Please's version
+  # files, and the parent is a main commit the merge gate already proved, so
+  # the suites are not run again. What can change after that proof - a newly
+  # published advisory against the unchanged lock - is audited here.
   prove-gate:
     name: "Test: Release gate"
     needs: candidate
     if: needs.candidate.outputs.sha != ''
-    uses: ./.github/workflows/merge-gate.yml
+    timeout-minutes: 135
+    runs-on: [self-hosted, Linux, X64]
+    env:
+      CI_EXEC_BUDGET_MINUTES: 15
+      # The audit reads the lock; it needs no inference stack.
+      VAULTSPEC_INIT_GPU_STACK: "none"
     permissions:
       contents: read
-      actions: write
-      pull-requests: write
-      security-events: write
-    with:
-      ref: ${{ needs.candidate.outputs.sha }}
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ needs.candidate.outputs.sha }}
+          fetch-depth: 2
+
+      - name: Require a version-only change over a proven parent
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ needs.candidate.outputs.sha }}
+          GATE_WORKFLOW: merge-gate.yml
+        run: |
+          set -euo pipefail
+          parent=$(git rev-parse "${SHA}^")
+          allowed='^(\.release-please-manifest\.json|CHANGELOG\.md|pyproject\.toml|uv\.lock|docs/installation\.md)$'
+          extra=$(git diff --name-only "${parent}" "${SHA}" | grep -Ev "${allowed}" || true)
+          if [ -n "${extra}" ]; then
+            echo "::error::the release head changes more than its version files: ${extra}"
+            exit 1
+          fi
+          changed=$(git diff -U0 "${parent}" "${SHA}" -- pyproject.toml uv.lock \
+            | grep -E '^[-+]' | grep -Ev '^(\+\+\+|---) ' | grep -Ev '^[-+]version = "' || true)
+          if [ -n "${changed}" ]; then
+            echo "::error::pyproject.toml or uv.lock changes more than the version line: ${changed}"
+            exit 1
+          fi
+          # Only the parent's push run measured everything: the weekly
+          # schedule audits alone, yet its aggregate check carries the same
+          # name. The newest push run decides, and it may still be finishing
+          # when a proposal is merged straight after the parent lands.
+          for _ in $(seq 1 120); do
+            verdict=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${GATE_WORKFLOW}/runs?head_sha=${parent}&event=push&per_page=10" \
+              --jq '.workflow_runs | sort_by(.created_at) | last | if . == null then "none" else "\(.status):\(.conclusion // "")" end')
+            case "${verdict}" in
+              completed:success) echo "parent ${parent} passed its ${GATE_WORKFLOW} push run"; exit 0 ;;
+              none|queued:*|in_progress:*|waiting:*|pending:*|requested:*) sleep 60 ;;
+              *) echo "::error::parent ${parent}'s ${GATE_WORKFLOW} push run ended ${verdict}"; exit 1 ;;
+            esac
+          done
+          echo "::error::parent ${parent} has no finished ${GATE_WORKFLOW} push run after 120 minutes"
+          exit 1
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          prune-cache: false
+          enable-cache: false
+
+      - name: Set up just
+        uses: taiki-e/install-action@6012bba2f8e3e666a2b212f8823c06831704ce92 # just
+        with:
+          tool: just@1.38.0
+
+      - name: Initialize the worktree
+        run: just init
+
+      - name: Python dependency vulnerability audit
+        run: just audit-deps
 
   # Both accelerator tiers, on the same head, before any tag can exist.
   prove-hardware:
