@@ -4,8 +4,7 @@ name: RAG Merge Gate
 # unless their trusted author requests ci:full. A label never admits an
 # external author or a fork. The withheld job has a different name because
 # GitHub treats a skipped required check as successful.
-# Main pushes, reusable calls and dispatches require full proof; the weekly
-# audit checks newly published advisories against the unchanged lock.
+# Main pushes, reusable calls and dispatches require full proof.
 # The aggregate also requires the canonical Dev Server verdict on the same SHA.
 on:
   pull_request:
@@ -19,8 +18,6 @@ on:
         description: Full commit SHA to validate
         required: true
         type: string
-  schedule:
-    - cron: "47 5 * * 3"
   workflow_dispatch:
     inputs:
       ref:
@@ -34,7 +31,7 @@ permissions:
 concurrency:
   # A new push supersedes the previous pull-request run. Label events use the
   # label in their group, so an unrelated label cannot cancel a full run.
-  # Every run on main - a push, a call, a schedule - is grouped by its own
+  # Every run on main - a push, a call, a dispatch - is grouped by its own
   # commit and never cancelled.
   group: merge-gate-${{ github.event.pull_request.number || inputs.ref || github.ref }}-${{ github.event.label.name || github.event_name }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -274,14 +271,11 @@ jobs:
 
   dependency-audit:
     name: "Check: Dependency advisories (Linux)"
-    # Audits the lock that is about to land. The weekly run, which runs this
-    # job alone, catches advisories published against a lock that has not
-    # changed.
+    # Audits the lock that is about to land.
     # A fork's pull request never runs here: the workflow it would run is the
     # fork's own. The gate refuses it instead.
     if: >-
       github.event_name == 'push' ||
-      github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
@@ -478,10 +472,6 @@ jobs:
           full="${LINT} ${TESTS} ${WINDOWS} ${AUDIT} ${SCANNING}"
           if [ "${full}" = "success success success success success" ]; then
             echo "every full check passed in this run"
-            exit 0
-          fi
-          if [ "${EVENT}" = "schedule" ] && [ "${AUDIT}" = "success" ]; then
-            echo "the scheduled dependency audit passed"
             exit 0
           fi
           if [ "${EVENT}" != "pull_request" ] || [ "${full}" != "skipped skipped skipped skipped skipped" ]; then

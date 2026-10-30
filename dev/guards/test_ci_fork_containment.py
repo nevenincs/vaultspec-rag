@@ -235,8 +235,8 @@ def test_the_hardware_tiers_are_unreachable_from_a_pull_request() -> None:
     """No pull request can start the MPS or CUDA tier.
 
     The tiers receive release secrets. They are reachable only through a
-    workflow call, and every caller is started by a tag, a schedule or a
-    dispatch, all of which require write access.
+    workflow call, and every caller is started by a tag or a dispatch, both of
+    which require write access.
 
     Mutation proof: deleting the ``if:`` of the hardware caller in ``ci.yml``
     makes this fail naming ``ci.yml:hardware``; restoring it makes this pass.

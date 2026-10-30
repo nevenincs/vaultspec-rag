@@ -615,7 +615,7 @@ AUDIT = Verb(
         # advisory dashboard meant the same OSV query ran twice for one
         # commit - once as a verdict somebody acts on, once inside a report
         # that cannot fail. The aggregate is every ADVISORY dimension, which
-        # is what makes it safe to run on a schedule rather than on the merge
+        # is what makes it safe to run on demand rather than on the merge
         # path. `ci all` reaches the gate directly.
         Target(
             "all",

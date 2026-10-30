@@ -171,9 +171,8 @@ jobs:
             echo "::error::pyproject.toml or uv.lock changes more than the version line: ${changed}"
             exit 1
           fi
-          # Only the parent's push run measured everything: the weekly
-          # schedule audits alone, yet its aggregate check carries the same
-          # name. The newest push run decides, and it may still be finishing
+          # Only the parent's push run proves the commit that landed.
+          # The newest push run decides, and it may still be finishing
           # when a proposal is merged straight after the parent lands.
           for _ in $(seq 1 120); do
             verdict=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${GATE_WORKFLOW}/runs?head_sha=${parent}&event=push&per_page=10" \

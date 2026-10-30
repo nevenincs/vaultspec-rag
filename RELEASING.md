@@ -614,8 +614,6 @@ gh workflow run acquisition.yml --repo "$REPO" --ref main --field tag="$TAG" \
   --field target_sha="$(git rev-parse "$TAG^{commit}")"
 ```
 
-The weekly scheduled run covers the latest release regardless.
-
 After recovery, verify all three surfaces: the GitHub Release is published with
 the complete archive set and merged checksums, the account channel files name
 the same version and digests, and the

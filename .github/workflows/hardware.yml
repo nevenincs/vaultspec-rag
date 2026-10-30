@@ -5,8 +5,8 @@ name: RAG Hardware Tiers
 # Two callers, one job each, so the jobs cannot drift apart:
 # - The release cut in `release-please.yml` requires both tiers to pass on
 #   the exact head it merges, before the release commit is tagged.
-# - `ci.yml` runs them on schedule and on dispatch against the commit it was
-#   started for, and adds the macOS full suite.
+# - `ci.yml` runs them on dispatch against the commit it was started for, and
+#   adds the macOS full suite.
 #
 # Every precondition the tiers read is provisioned here, inside the job that
 # reads it: the public model cache, the pinned Qdrant
@@ -16,7 +16,7 @@ name: RAG Hardware Tiers
 # step would block every release without measuring anything.
 #
 # Neither tier is reachable from a pull request: both callers start it only
-# from a schedule or a dispatch, both of which require write access.
+# from a dispatch, which requires write access.
 on:
   workflow_call:
     inputs:
@@ -108,7 +108,7 @@ jobs:
         if: inputs.macos_full_suite
         run: just build-monitor
 
-      # Scheduled and dispatched full suites gate their job. Releases do not
+      # Dispatched full suites gate their job. Releases do not
       # run this suite: the MPS guard below is the release's Apple silicon claim.
       #
       # Four workers, as in the merge gate, and set on the step for the same

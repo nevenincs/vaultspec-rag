@@ -223,9 +223,8 @@ def test_the_cut_proves_the_head_before_it_releases() -> None:
     assert GATE_WORKFLOW in proof_env, (
         "the cut does not require its parent's merge-gate verdict"
     )
-    # The weekly schedule audits alone under the same aggregate check name, so
-    # only the parent's push run proves the suites.
-    assert "event=push" in scripts, "the cut accepts a partial scheduled verdict"
+    # Only the parent's push run proves the suites.
+    assert "event=push" in scripts, "the cut accepts a verdict from another event"
     assert "just audit-deps" in scripts, "the cut releases an unaudited lock"
     assert _job("prove-hardware").get("uses") == "./.github/workflows/hardware.yml"
     needs = _job("cut").get("needs")

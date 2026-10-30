@@ -89,7 +89,7 @@ SHARED_WORKFLOW_NAMES = {
 }
 
 #: The workflow that measures pull requests and reports merge readiness.
-#: Release and scheduled hardware workflows answer different questions.
+#: Release and dispatched hardware workflows answer different questions.
 MERGE_BOX = (Workflow.MERGE_GATE,)
 
 #: The justfile consequence groups whose recipes measure the tree, as opposed

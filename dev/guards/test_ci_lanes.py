@@ -102,7 +102,6 @@ _HOME = "owner/repo"
 _SCENARIOS: tuple[tuple[str, str, dict[str, object], frozenset[str]], ...] = (
     ("push to main", "push", {}, FULL_JOBS),
     ("dispatch", "workflow_dispatch", {}, FULL_JOBS),
-    ("weekly schedule", "schedule", {}, frozenset({"dependency-audit"})),
     (
         "ready pull request opened",
         "pull_request",
