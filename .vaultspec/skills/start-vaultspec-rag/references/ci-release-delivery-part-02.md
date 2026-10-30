@@ -26,7 +26,7 @@ This is static evidence. Implementation observations, documentation claims, and 
 
 - Local commands include just init, just build-python, uv lock, uv publish, and uv run ... tools.monitor.provenance; their definitions and behavior were not inspected. The smoke script [tests/smoke_check.py](../../../../tests/smoke_check.py) and provenance module implementation were not inspected.
 - Publish dispatches or references binaries.yml, notify-marketing.yml, channels.yml, and acquisition.yml. Release Please reuses hardware.yml, reads merge-gate.yml's push runs, and dispatches [.github/workflows/publish.yml](../../../../.github/workflows/publish.yml). Their behavior is uninspected. Comments also refer to the requires-python range and release-branch lock behavior; those source declarations were not read.
-- GitHub-hosted services/API behavior, the pinned third-party Actions, self-hosted Linux X64 build runners, gh, git, shell utilities, and the PyPI trusted-publishing environment are external or runner dependencies. Their operation was not verified here.
+- GitHub-hosted services/API behavior, the pinned third-party Actions, gh, git, shell utilities, and the PyPI trusted-publishing environment are external or runner dependencies. Their operation was not verified here.
 - The [.github/workflows/publish.yml](../../../../.github/workflows/publish.yml) comments state that its artifact concurrency group is shared with binaries.yml; the other workflow was not read, so shared locking is a documentation claim in this slice.
 
 ## Evidence

@@ -40,4 +40,4 @@ This is static evidence. Implementation observations, documentation claims, and 
 
 ## Uncertainty and follow-up
 
-- No gaps in the assigned range. To verify command semantics and the documented server/index prerequisites, inspect the `vaultspec-rag` CLI implementation and its server/search documentation in a separate task. To establish test expectations, inspect relevant tests separately. Those files were not assigned and were not read here.
+- No gaps in the assigned range. To verify command semantics and the documented server/index prerequisites, inspect the `vaultspec-rag` CLI implementation and its server/search documentation in a separate task. To establish test expectations, inspect relevant tests separately. Those files were not assigned and was not read here.
