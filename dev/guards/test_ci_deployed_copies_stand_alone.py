@@ -1,14 +1,8 @@
-"""The two deployed CI checkers import nothing this repository owns.
+"""The actionlint provisioner imports nothing this repository owns.
 
-``dev/ci_contract.py`` and ``dev/actionlint.py`` are copies. Their source is
-another repository, which writes them here and compares what this repository's
-default branch carries against it; a copy that differs is reported as a fork.
-
-Pointing one of them at a module of this repository is such a difference, and
-the likeliest one: a constant they define is defined here too, and replacing
-the copy's definition with an import reads as removing a duplicate. It is not.
-The copy has to mean the same in every repository that carries it, so it
-states what it needs itself and reaches for nothing this repository owns.
+``dev/actionlint.py`` runs before the project environment exists, so it states
+what it needs itself: a constant it defines is defined here too, and replacing
+its definition with an import reads as removing a duplicate. It is not.
 """
 
 from __future__ import annotations
@@ -23,8 +17,8 @@ pytestmark = [pytest.mark.unit, pytest.mark.repo]
 #: Repository root: this file is `<root>/dev/guards/<name>.py`.
 ROOT = Path(__file__).resolve().parents[2]
 
-#: The files another repository writes here.
-DEPLOYED = ("dev/ci_contract.py", "dev/actionlint.py")
+#: The files that must stand alone.
+DEPLOYED = ("dev/actionlint.py",)
 
 
 def _owned_here(module: str) -> bool:
@@ -53,9 +47,7 @@ def test_a_deployed_copy_imports_nothing_this_repository_owns(relative: str) -> 
 
     Mutation proof: replacing the exit codes ``dev/actionlint.py`` defines
     with ``from dev.exit_codes import OK, TOOL_MISSING`` made this fail naming
-    that line and module, and a ``from . import exit_codes`` in
-    ``dev/ci_contract.py`` made it fail naming that line; restoring each file
-    made it pass.
+    that line and module; restoring the file made it pass.
     """
     path = ROOT / relative
     imported = _imported(ast.parse(path.read_text(encoding="utf-8")))
@@ -66,6 +58,6 @@ def test_a_deployed_copy_imports_nothing_this_repository_owns(relative: str) -> 
         if _owned_here(module)
     ]
     assert not foreign, (
-        "a deployed copy must mean the same in every repository that carries "
-        "it, so it imports nothing this repository owns:\n" + "\n".join(foreign)
+        "this file runs before the project environment exists, so it imports "
+        "nothing this repository owns:\n" + "\n".join(foreign)
     )

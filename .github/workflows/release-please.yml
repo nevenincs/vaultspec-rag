@@ -128,9 +128,6 @@ jobs:
   # files, and the parent is a main commit the merge gate already proved, so
   # the suites are not run again. What can change after that proof - a newly
   # published advisory against the unchanged lock - is audited here.
-  #
-  # The parent's proof only reads the API and can wait on a run still finishing,
-  # so it holds no fleet slot; the fleet is reached once the wait is over.
   prove-parent:
     name: "Check: Release parent proof"
     needs: candidate

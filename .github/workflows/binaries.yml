@@ -568,10 +568,6 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: just release-monitor-bytes "$TAG" "$TARGET" dist-monitor dist dist-bin
 
-      # On Windows the proof occupies the directory the runner's own
-      # environment names as MONITOR_OUTBOUND_DENIED_DIR. The host denies
-      # outbound traffic to two program paths in it; adding such a rule takes
-      # an Administrator, and the runner account is not one.
       - name: Verify finalized monitor bytes and render in an installed browser
         shell: bash
         env:

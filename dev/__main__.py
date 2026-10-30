@@ -50,8 +50,8 @@ if TYPE_CHECKING:
 
 HELP_TOKENS = frozenset({"help", "--help", "-h"})
 WRAP_WIDTH = 88
-#: Concurrent children of a parallel target: enough to spend the build host's
-#: idle cores on independent scans without crowding the type checkers.
+#: Concurrent children of a parallel target: enough for independent scans
+#: without crowding the type checkers.
 PARALLEL_TARGETS = 4
 
 

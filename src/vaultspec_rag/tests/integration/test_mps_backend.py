@@ -57,9 +57,8 @@ def test_configured_model_stack_runs_together_on_mps(
         "the MPS tier must set PYTORCH_ENABLE_MPS_FALLBACK=0 explicitly"
     )
 
-    # The runner image owns the model cache. The support guard reads it without
-    # downloading or creating a second cache, so a missing provisioned snapshot
-    # is a visible runner failure rather than persistent machine pollution.
+    # The support guard reads the model cache without downloading or creating a
+    # second cache, so a missing provisioned snapshot is a visible failure.
     monkeypatch.setenv("HF_HUB_OFFLINE", "1")
     monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
     monkeypatch.setenv("VAULTSPEC_RAG_SPARSE_ENABLED", "1")

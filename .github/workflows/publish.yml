@@ -222,7 +222,7 @@ jobs:
           retention-days: 5
 
   # EVERY SHIPPED TARGET'S MONITOR, FINALIZED AND PACKED, BEFORE THE WHEEL.
-  # Each leg compiles on its own native host - a Bun compilation cannot cross
+  # Each leg compiles on its own platform - a Bun compilation cannot cross
   # targets - finishes resources, signing and modes, and packs the finalized
   # bytes into the monitor-only archive an installation provisions from. The
   # build job below hashes exactly these artifacts into the package.
@@ -574,8 +574,8 @@ jobs:
   # and the GitHub release disagreed on the latest version.
   #
   # Binaries dispatches this stage from the gate that judged the draft. It
-  # queues behind that run on the shared per-tag lock without holding a
-  # runner, and a maintainer may re-dispatch it to retry a failed upload.
+  # queues behind that run on the shared per-tag lock, and a maintainer may
+  # re-dispatch it to retry a failed upload.
   #
   # ADMISSION IS ITS OWN JOB because the two halves of the stage need grants
   # that must not meet. Reading a draft takes `contents: write`: GitHub lists a

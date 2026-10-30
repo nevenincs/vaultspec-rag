@@ -452,8 +452,8 @@ class TestDurableRequestState:
         """
         # The window this test observes is the gap between the keystroke and
         # the service's answer, so the simulated control has to stay slow for
-        # longer than a loaded runner's scheduling jitter. At 0.6s the answer
-        # landed first on a twelve-worker CI host and the row had already
+        # longer than a loaded machine's scheduling jitter. At 0.6s the answer
+        # landed first under twelve workers and the row had already
         # settled, reported as `pending markers=[none]` - the transient state
         # was gone before any frame sampled it, which says nothing about the
         # repaint being absent. A wider gap makes the same assertion, and

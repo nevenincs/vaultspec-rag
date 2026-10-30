@@ -25,7 +25,7 @@ def free_loopback_port() -> int:
     another process can claim the port before the caller binds it. For a caller
     that binds at once the window is negligible. For a service that loads its
     models before it binds, it is tens of seconds on a machine shared with
-    other runners, containers and dynamic port reservations, and a service
+    other processes, containers and dynamic port reservations, and a service
     started that way goes through ``start_service_on_free_port``, which starts
     it again on a fresh port when the bind is lost.
     """

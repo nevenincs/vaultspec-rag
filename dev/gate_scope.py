@@ -1,7 +1,7 @@
 """Decide how much of the merge gate a commit still has to measure.
 
-Run by the merge gate's scope job and the release workflow's parent proof, on a
-hosted runner that has only the standard library and ``gh``. The script is
+Run by the merge gate's scope job and the release workflow's parent proof, with
+only the standard library and ``gh``. The script is
 invoked with ``python3 -I``, so it imports nothing from this repository.
 
 Three answers, written to the job's ``suites`` output:

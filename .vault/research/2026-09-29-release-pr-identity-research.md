@@ -3,9 +3,9 @@ tags:
   - '#research'
   - '#release-pr-identity'
 date: '2026-09-29'
-modified: '2026-09-29'
+modified: '2026-10-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:3a0299310739bfeb9d7591556cf8fb4119f773668778f3796694d12cfea2a991'
+body_hash: 'sha256:1538e3d09d180be9b12f7c847d93acd88cc15998a54f6d074202f51bd5482433'
 related:
   - "[[2026-09-21-automatic-merge-gate-adr]]"
 ---

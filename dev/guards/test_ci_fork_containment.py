@@ -38,7 +38,7 @@ def _containment_findings(jobs: Sequence[workflows.Job]) -> list[str]:
     """Return every pull-request-reachable job in *jobs* lacking containment.
 
     A job a pull request can reach must name the same-repository clause and
-    the fleet's trusted-author clause, the latter spelled exactly; a
+    the trusted-author clause, the latter spelled exactly; a
     ``ci:full`` path in it must count only a user's label. A folded YAML
     condition is compared with its line breaks collapsed.
 
@@ -69,8 +69,8 @@ def _containment_findings(jobs: Sequence[workflows.Job]) -> list[str]:
     return findings
 
 
-def test_only_a_trusted_author_or_a_users_label_reaches_the_fleet() -> None:
-    """A pull request runs fleet jobs only for a trusted author or a user's label.
+def test_only_a_trusted_author_or_a_users_label_runs_ci_jobs() -> None:
+    """A pull request runs CI jobs only for a trusted author or a user's label.
 
     Dependabot and every other author who is neither the owner, a
     collaborator nor the release App push branches of this repository, so the
@@ -88,8 +88,7 @@ def test_only_a_trusted_author_or_a_users_label_reaches_the_fleet() -> None:
     """
     untrusted = _containment_findings(workflows.load_jobs())
     assert not untrusted, (
-        "these jobs run a pull request by any author on the self-hosted fleet, "
-        f"Dependabot included: {untrusted}"
+        f"these jobs run a pull request by any author, Dependabot included: {untrusted}"
     )
 
 

@@ -997,7 +997,7 @@ def _spawn_windows(
     The preferred path breaks the daemon out of the parent's Job Object with
     ``CREATE_BREAKAWAY_FROM_JOB`` so it survives the launching shell's exit.
     When the parent Job Object denies breakaway (common in terminal emulators,
-    VS Code integrated terminals, and CI runners), this attempts a
+    VS Code integrated terminals, and CI), this attempts a
     console-detached spawn (``DETACHED_PROCESS`` + a new process group) as a
     best-effort survival path. If that too is refused, it raises
     :class:`DaemonBreakawayError` rather than silently spawning a daemon bound

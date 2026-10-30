@@ -3,23 +3,23 @@ tags:
   - '#reference'
   - '#monitor-tooling'
 date: '2026-09-30'
-modified: '2026-09-30'
+modified: '2026-10-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:bd3988fd8ae908e1641a417bc11c2059720bbb211734410f5f4eabcbeb0a657d'
+body_hash: 'sha256:096565bb89435c5625678ec7e6c4a1cc46d1caef08edd4628d5f1374446b11a6'
 related: []
 ---
 
 # `monitor-tooling` reference: `Shared frontend harness and port registry`
 
-Sources: `devservers-worktrees/main` at commit
+Sources: `devservers/` at commit
 `4b25caa896e59bedc51848e8b85b370307b0426a`, and
-`vaultspec-marketing-worktrees/main` at commit
+`vaultspec-marketing/` at commit
 `af28bc0639e25d68c4ec2719459a21ac83632c74`.
 
 ## Summary
 
 The authorized trust correction is committed in
-`devservers-worktrees/rag-monitor-ci` at
+`devservers/` at
 `b15e302441c426ba3604ec8ce2178bcfe8b394af`.
 Its template admits a ready owner/collaborator pull request or a same-repository
 pull request explicitly labeled by a person. Forks and bot labels do not admit

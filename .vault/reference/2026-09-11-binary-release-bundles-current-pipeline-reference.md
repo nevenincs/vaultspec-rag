@@ -3,9 +3,9 @@ tags:
   - '#reference'
   - '#binary-release-bundles'
 date: '2026-09-11'
-modified: '2026-10-01'
+modified: '2026-10-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:1f1aff5afaad01e2747ac63bdaa0a95a4d3b957efa3bec7da4445a7ae83293cf'
+body_hash: 'sha256:cb629fa420ae77693bc01a9c81ad55668c9cbf482f0b3486dccd9837b4a1cf4b'
 related:
   - "[[2026-09-11-binary-release-bundles-rag-port-research]]"
 ---

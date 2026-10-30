@@ -90,7 +90,7 @@ CITATION_EXCLUDED: frozenset[str] = frozenset(
 )
 
 #: Suffixes worth sweeping. A retired invocation only misleads where a reader
-#: or a runner will meet it.
+#: or a CI job will meet it.
 CITATION_SUFFIXES: frozenset[str] = frozenset(
     {
         ".py",

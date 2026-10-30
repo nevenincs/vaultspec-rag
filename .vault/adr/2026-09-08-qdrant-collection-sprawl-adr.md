@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#qdrant-collection-sprawl'
 date: '2026-09-08'
-modified: '2026-10-03'
+modified: '2026-10-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:9d1ca13b29415e29aeabd6f4605277e713af9873db4cd284487c47c1e05a964e'
+body_hash: 'sha256:21a2a20d785c2cbbc708fa426d1aade0ab26a6069dbdc67423fcd4d7079d1c80'
 related:
   - "[[2026-09-08-qdrant-collection-sprawl-research]]"
   - "[[2026-07-14-storage-autoprune-safety-adr]]"

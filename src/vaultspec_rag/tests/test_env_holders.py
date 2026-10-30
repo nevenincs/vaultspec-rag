@@ -39,7 +39,7 @@ _INTERPRETER_RELATIONS = {HolderRelation.IMAGE, HolderRelation.LAUNCH_PATH}
 # the whole process table, so both the scan and the wait get room that a
 # single-threaded developer run never needs. The poll interval is deliberately
 # slack for the same reason: a full table walk ten times a second, times a
-# dozen workers, starves the deadline-sensitive tests sharing the runner.
+# dozen workers, starves the deadline-sensitive tests running beside it.
 _SCAN_TIMEOUT = 180.0
 _WAIT_SECONDS = 180.0
 _POLL_SECONDS = 0.5

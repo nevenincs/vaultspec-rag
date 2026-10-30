@@ -39,7 +39,7 @@ HOOK_CONFIG_FILENAMES: tuple[str, ...] = (
 #: `vaultspec-core install`, which writes no git hook.
 HOOK_INSTALLER_TOKENS: frozenset[str] = frozenset({"prek", "pre-commit"})
 
-#: Surfaces that could run an installer on a developer's or a runner's behalf.
+#: Surfaces that could run an installer on a developer's or a CI job's behalf.
 INSTALLER_SURFACES: tuple[str, ...] = ("justfile", ".github/workflows")
 
 

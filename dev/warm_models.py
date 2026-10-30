@@ -1,7 +1,7 @@
 """Download every model the configured stack loads into the Hugging Face cache.
 
 The accelerator tiers read the model cache with the Hub switched off, so a
-missing snapshot fails as a runner problem instead of downloading gigabytes
+missing snapshot fails as a setup problem instead of downloading gigabytes
 mid-test. This fills that cache first. It needs no device: the product's own
 ``server warmup`` admits the accelerator before downloading, and on a host
 whose card is held by a live service that admission refuses - which says

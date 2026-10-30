@@ -282,7 +282,7 @@ def test_an_install_under_a_short_temp_path_plans_its_projections_whole(
     """A temp directory reached through its 8.3 alias still previews and installs.
 
     Windows hands out the alias in ``TEMP`` for a user whose profile name is
-    longer than eight characters, as on hosted runners. Core resolves source
+    longer than eight characters. Core resolves source
     paths to their long form and then requires them under the projected
     workspace, so a projection rooted at the alias failed every preview and
     replay. Mutation: rooting the preview projection at the unresolved temp

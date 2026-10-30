@@ -87,7 +87,7 @@ JSCPD = ("--min-lines", "20", "--min-tokens", "70", "--reporters", "console")
 #: targeting one real accelerator without the shared CUDA model fixtures.
 #: Excluding only ``integration`` once let a quality/performance/robustness/
 #: subprocess_gpu/cuda test slip through gateless and hard-abort the recipe on
-#: a GPU-less runner; matching conftest's own set is the durable fix, because a
+#: a GPU-less machine; matching conftest's own set is the durable fix, because a
 #: newly-added GPU-marked test is then excluded automatically.
 #:
 #: ``torch`` needs no device, only the local inference stack. It is excluded

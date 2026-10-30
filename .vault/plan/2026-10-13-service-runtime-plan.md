@@ -9,9 +9,9 @@ related:
   - '[[2026-06-24-service-doctor-liveness-adr]]'
   - '[[2026-10-13-service-runtime-audit]]'
   - '[[2026-10-12-destructive-rebuild-lifecycle-adr]]'
-modified: '2026-10-14'
+modified: '2026-10-30'
 body_schema: body-v2
-body_hash: 'sha256:3a4561e7c66949b611b3b5b4a99d06e560e345b01139e1b2b05bbbebaed4325b'
+body_hash: 'sha256:6337587df0d7b4252e64d7723caddcd25e19c1655997517dff080b19abc4e827'
 ---
 
 <!-- RETIRED: S05 -->

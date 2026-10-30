@@ -99,7 +99,7 @@ if TYPE_CHECKING:
 #  flakiness hollows out the rule it is an exception to.
 #
 #  WHAT IT IS WORTH HERE. Three alternating pairs of the accelerator-free lane
-#  on one Windows workstation, twelve workers, warm caches: 197.9s / 208.6s /
+#  on one Windows machine, twelve workers, warm caches: 197.9s / 208.6s /
 #  224.1s with the real call, against 157.0s / 150.8s / 160.0s with it
 #  suppressed. Every suppressed run beat every restored one, and 5083 calls
 #  went - the same count all three times. That is about a quarter of the
@@ -331,20 +331,19 @@ def required_host_provisioned_qdrant_source(
     """Require the captured managed install for real daemon tests."""
     if host_provisioned_qdrant_source is None:
         pytest.fail(
-            "The runner image has no manifest-verified provisioned Qdrant binary. "
-            "Install the pinned binary in the runner image before this lifecycle test."
+            "This machine has no manifest-verified provisioned Qdrant binary. "
+            "Install the pinned binary before this lifecycle test."
         )
     return host_provisioned_qdrant_source
 
 
 def _require_host_provisioned_qdrant_for_gpu_tier() -> None:
-    """Require the runner image's verified Qdrant prerequisite without provisioning."""
+    """Require a verified Qdrant binary without provisioning one."""
     if _HOST_PROVISIONED_QDRANT is not None:
         return
     pytest.exit(
         "The selected GPU pytest tier requires a manifest-verified provisioned "
-        "Qdrant binary in the runner image. Install the pinned binary in the "
-        "runner image before running this tier.",
+        "Qdrant binary. Install the pinned binary before running this tier.",
         returncode=1,
     )
 
@@ -575,7 +574,7 @@ def _require_the_session_runs_inside_a_gpu_loan() -> None:
     pytest.exit(
         "This GPU tier is not running inside a borrow of the resident "
         f"service's GPU (owner state: {ownership.state.value}). Start the "
-        "runner's resident service before selecting a GPU tier.",
+        "resident service before selecting a GPU tier.",
         returncode=1,
     )
 
@@ -841,7 +840,7 @@ def pytest_runtestloop(session: pytest.Session) -> bool | None:
     tiers = selected_tiers(session.items)
     if MPS in tiers:
         # The MPS guard owns its backend and cache preconditions. It must not
-        # enter the CUDA runner's resident-service borrower protocol.
+        # enter the CUDA resident-service borrower protocol.
         return None
     if not tiers & SLOW_TIERS:
         return

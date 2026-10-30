@@ -428,7 +428,7 @@ def test_resident_service_binds_free_ports_not_the_defaults() -> None:
 def test_no_windows_step_hands_powershell_a_heredoc() -> None:
     """A Windows step never carries bash-only syntax into PowerShell.
 
-    A Windows runner's default step shell is PowerShell, which rejects a
+    A Windows job's default step shell is PowerShell, which rejects a
     ``<<`` heredoc as a parse error before anything runs.
 
     Mutation proof: replacing the CUDA job's ``just warm-models`` with a

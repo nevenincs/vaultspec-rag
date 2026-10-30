@@ -11,9 +11,9 @@ related:
   - '[[2026-09-29-release-pr-identity-adr]]'
 supersedes:
   - '2026-09-21-automatic-merge-gate-adr'
-modified: '2026-10-26'
+modified: '2026-10-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:4d5741c8ed63435070d401e1a1977077e5e08c042dfd8749aeae0897254be182'
+body_hash: 'sha256:8d25f9db3a231b031f513484ae4bb9305b3832f370584de9c3e95f5ded5a10f8'
 ---
 
 # `automatic-merge-gate` adr: `Merge starts an autonomous verified release` | (**status:** `accepted`)
