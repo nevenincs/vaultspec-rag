@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, NotRequired, Required, TypedDict
 
 import pytest
+from qdrant_client import models
 
 from .._index_integrity import (
     AuditVerdict,
@@ -211,11 +212,34 @@ def test_vault_audit_rejects_malformed_payloads(
 ) -> None:
     """Bypassing each check failed incompatible-point counts; restoring passed."""
     tail = published_vault.chunks[1]
-    published_vault.store.client.set_payload(
+    point_id = published_vault.store._stable_id(tail.point_key)
+    (point,) = published_vault.store.client.retrieve(
         collection_name=published_vault.store.TABLE_NAME,
-        points=[published_vault.store._stable_id(tail.point_key)],
-        payload={field_name: value},
+        ids=[point_id],
+        with_payload=True,
+        with_vectors=True,
     )
+    assert point.payload is not None
+    assert point.vector is not None
+    payload = dict(point.payload)
+    payload[field_name] = value
+    # Payload merging deletes null fields; a full point write preserves them.
+    published_vault.store.client.upsert(
+        collection_name=published_vault.store.TABLE_NAME,
+        points=[
+            models.PointStruct.model_validate(
+                {"id": point.id, "vector": point.vector, "payload": payload}
+            )
+        ],
+    )
+    (stored,) = published_vault.store.client.retrieve(
+        collection_name=published_vault.store.TABLE_NAME,
+        ids=[point_id],
+        with_payload=True,
+    )
+    assert stored.payload is not None
+    assert field_name in stored.payload
+    assert stored.payload[field_name] == value
 
     result = published_vault.audit()
 

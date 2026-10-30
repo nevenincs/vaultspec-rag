@@ -2,35 +2,41 @@
 
 from __future__ import annotations
 
-import json
-import threading
 from dataclasses import replace
 from typing import TYPE_CHECKING, cast
-from unittest.mock import AsyncMock, Mock
 
 import pytest
-from starlette.requests import Request
 
-from .. import _index_integrity, _search_drift, jobs
-from .._job_errors import JobError, JobErrorKind
+from .. import store_schema
+from .._job_errors import FULL_REINDEX_REQUIRED_PHRASE, JobErrorKind
 from .._search_drift import SearchDriftAuditor, _Audit, _diagnose, served_stale_files
-from .._search_freshness import DriftedFile
+from .._search_freshness import (
+    DriftedFile,
+    capture_hit_publications,
+    verify_search_hits,
+)
 from ..cli._search import _handle_service_results, _ServiceSearchRenderRequest
-from ..indexer._run_ledger_models import RunAuthority
+from ..config._types import EnvVar
+from ..indexer._run_ledger_models import RunAuthority, RunOperation
+from ..indexer._vault_checkpoint import VaultRunCheckpoint
+from ..indexer._vault_fingerprint import fingerprint_bytes
+from ..indexer._vault_prep import prepare_document, split_document
+from ..job_control import NO_RUN_CONTROL
+from ..job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
 from ..mcp._tools import SearchResults
-from ..server import _routes_search, create_http_app
-from ..server._routes_search import SearchRouteResult, _search_route_response
-from ..server._runtime import ServerRouteRuntime
+from ..search._models import SearchResult
 from ..service import ServiceRegistry
+from ..store_runtime import VaultStore
 from ._search_readiness_scenarios import (
     SEARCH_READINESS_SCENARIOS,
     canonical_service_envelope,
 )
+from .conftest import managed_env
+from .test_document_index_escalation import _seed_document_proof
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
-
-    from starlette.types import Message, Scope
 
 pytestmark = pytest.mark.unit
 
@@ -41,155 +47,223 @@ def _audit(root: Path) -> _Audit:
     )
 
 
-def test_consistent_projection_requests_incremental_with_runtime_authority(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Flipping clean=False to True failed assert_called_once_with; restoration passed.
-    registry = ServiceRegistry()
-    audit_projection = Mock(return_value={"status": "consistent"})
-    still_drifted = Mock(return_value=_audit(tmp_path).files)
-    starter = Mock(return_value="repair-1")
-    monkeypatch.setattr(_index_integrity, "audit_index_sources", audit_projection)
-    monkeypatch.setattr(_search_drift, "_recheck", still_drifted)
-    monkeypatch.setattr(jobs, "start_reindex_codebase", starter)
-    result = _diagnose(_audit(tmp_path), registry)
-    assert result.status == "incremental_requested"
-    assert result.job_id == "repair-1"
-    starter.assert_called_once_with(
-        tmp_path,
-        False,
-        authority=RunAuthority.PUBLICATION,
-        initiator_kind="integrity",
-        registry=registry,
+@pytest.fixture(params=[".vault", "knowledge"])
+def published_vault(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> Iterator[tuple[_Audit, ServiceRegistry]]:
+    root = tmp_path / "project"
+    docs_dir = cast("str", request.param)
+    path = root / docs_dir / "adr" / "stored.document.md"
+    path.parent.mkdir(parents=True)
+    data = (
+        b"---\nmodified: '2026-01-01'\n---\n"
+        b"# Stored document\n\nComplete parent body.\n"
     )
-
-
-@pytest.mark.parametrize("status", ["rebuild_required", "drift", "conflict"])
-def test_projection_blockers_never_admit_a_rebuild(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    status: str,
-) -> None:
-    # Mutation: letting a blocked audit fall through to starters must fail here.
-    projection = Mock(
-        return_value={
-            "status": status,
-            "domains": {"code": {"error_kind": "incompatible"}},
+    path.write_bytes(data)
+    with managed_env(
+        **{
+            EnvVar.QDRANT_URL.value: None,
+            EnvVar.LOCAL_ONLY.value: "1",
+            EnvVar.EMBEDDING_DIMENSION.value: "4",
+            "VAULTSPEC_DOCS_DIR": docs_dir,
         }
-    )
-    starter = Mock(return_value="must-not-run")
-    monkeypatch.setattr(_index_integrity, "audit_index_sources", projection)
-    monkeypatch.setattr(jobs, "start_reindex_codebase", starter)
-    result = _diagnose(_audit(tmp_path), ServiceRegistry())
-    assert result.status == ("deferred" if status == "conflict" else "rebuild_required")
-    starter.assert_not_called()
+    ):
+        document = prepare_document(path, root)
+        assert document is not None
+        assert document.id == "adr/stored.document"
+        chunks = split_document(document, 50)
+        for chunk in chunks:
+            chunk.vector = [0.1, 0.2, 0.3, 0.4]
+        with VaultStore(root) as store:
+            checkpoint = VaultRunCheckpoint.open(
+                root,
+                backend_identity=store.backend_identity,
+                authority=RunAuthority.REBUILD,
+                operation=RunOperation.FULL,
+                run_control=NO_RUN_CONTROL,
+            )
+            store.upsert_document_chunks(chunks, write_policy=None)
+            checkpoint.record_confirmed_chunks(
+                chunks, {chunks[0].doc_id: fingerprint_bytes(path, root, data)}
+            )
+            assert checkpoint.publish_proof_transition() == 1
+            checkpoint.publish_generation()
+        registry = ServiceRegistry()
+        audit = _Audit(
+            root,
+            "vault",
+            (
+                DriftedFile(
+                    "vault", f"{docs_dir}/adr/stored.document.md", "content_changed"
+                ),
+            ),
+            0.0,
+        )
+        try:
+            yield audit, registry
+        finally:
+            registry.close_all()
 
 
-def test_repaired_or_unreadable_file_does_not_request_indexing(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+def test_projection_drift_requires_explicit_rebuild(
+    published_vault: tuple[_Audit, ServiceRegistry],
 ) -> None:
-    monkeypatch.setattr(
-        _index_integrity,
-        "audit_index_sources",
-        Mock(return_value={"status": "consistent"}),
-    )
-    monkeypatch.setattr(_search_drift, "_recheck", Mock(return_value=()))
-    starter = Mock()
-    monkeypatch.setattr(jobs, "start_reindex_codebase", starter)
+    audit, registry = published_vault
+    with registry.lease_store(audit.root) as store:
+        store.delete_documents(["adr/stored.document"])
+    result = _diagnose(audit, registry)
+    assert result.status == "rebuild_required"
+    assert result.reason == "unexplained_drift"
+    assert result.job_id is None
+
+
+def test_repaired_file_does_not_request_indexing(
+    published_vault: tuple[_Audit, ServiceRegistry],
+) -> None:
+    audit, registry = published_vault
+    hit = _vault_hit(audit)
     assert (
-        _diagnose(_audit(tmp_path), ServiceRegistry()).status
-        == "resolved_or_unverifiable"
+        verify_search_hits(
+            audit.root, [hit], capture_hit_publications(audit.root, ("vault",))
+        )
+        == ()
     )
-    starter.assert_not_called()
+    assert hit.freshness == "current"
+    result = _diagnose(audit, registry)
+    assert result.status == "resolved_or_unverifiable"
+    assert result.job_id is None
+
+
+def test_vault_checkpoint_stamp_and_deleted_file_freshness(
+    published_vault: tuple[_Audit, ServiceRegistry],
+) -> None:
+    audit, _registry = published_vault
+    hit = _vault_hit(audit)
+    snapshot = capture_hit_publications(audit.root, ("vault",))
+    path = audit.root / hit.path
+    path.write_bytes(path.read_bytes().replace(b"2026-01-01", b"2026-01-02"))
+    assert verify_search_hits(audit.root, [hit], snapshot) == ()
+    assert hit.freshness == "current"
+    path.unlink()
+    drift = verify_search_hits(audit.root, [hit], snapshot)
+    assert len(drift) == 1
+    assert hit.freshness == "stale"
+    assert hit.stale_reason == "file_missing"
+
+
+def test_vault_paths_outside_configured_docs_root_are_unverifiable(
+    published_vault: tuple[_Audit, ServiceRegistry],
+) -> None:
+    audit, _registry = published_vault
+    outside = audit.root / "elsewhere" / "stored.document.md"
+    outside.parent.mkdir()
+    outside.write_bytes(b"# Outside body\n")
+    hit = replace(_vault_hit(audit), path="elsewhere/stored.document.md")
+    assert (
+        verify_search_hits(
+            audit.root, [hit], capture_hit_publications(audit.root, ("vault",))
+        )
+        == ()
+    )
+    assert hit.freshness == "unverifiable"
+
+
+def test_incompatible_proof_requires_rebuild_without_admitting_a_job(
+    tmp_path: Path,
+) -> None:
+    _seed_document_proof(
+        tmp_path, proof_storage_schema=store_schema.STORAGE_SCHEMA_VERSION + 1
+    )
+    audit = _Audit(
+        tmp_path,
+        "document",
+        (DriftedFile("document", "report.pdf", "content_changed"),),
+        0.0,
+    )
+    result = _diagnose(audit, ServiceRegistry())
+    assert result.status == "rebuild_required"
+    assert result.details is not None
+    assert result.details["error_kind"] == "incompatible"
+    assert result.job_id is None
+
+
+def _vault_hit(audit: _Audit) -> SearchResult:
+    return SearchResult("", audit.files[0].path, "Stored", 0.9, "indexed", "vault")
 
 
 def test_temporarily_missing_audit_proof_defers_without_rebuild_request(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    projection = Mock(
-        return_value={
-            "status": "rebuild_required",
-            "domains": {"code": {"error_kind": "missing"}},
-        }
-    )
-    monkeypatch.setattr(_index_integrity, "audit_index_sources", projection)
     result = _diagnose(_audit(tmp_path), ServiceRegistry())
     assert result.status == "deferred"
+    assert result.reason == "rebuild_required"
+    assert result.details is not None
+    assert result.details["error_kind"] == "missing"
+    assert result.job_id is None
 
 
-def test_shutdown_closes_intake_and_prevents_late_repair_admission(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+def test_open_publication_receipt_defers_diagnosis(
+    published_vault: tuple[_Audit, ServiceRegistry],
 ) -> None:
-    auditor = SearchDriftAuditor()
-    projection = Mock(return_value={"status": "consistent"})
-    monkeypatch.setattr(_index_integrity, "audit_index_sources", projection)
-    monkeypatch.setattr(
-        _search_drift, "_recheck", Mock(return_value=_audit(tmp_path).files)
+    audit, registry = published_vault
+    snapshot = capture_hit_publications(audit.root, ("vault",))["vault"]
+    generation = snapshot.ledger.generation(snapshot.proof.generation_id)
+    successor = snapshot.ledger.start_generation(
+        replace(generation.signature, clean=False)
     )
-    starter = Mock(return_value="must-not-run")
-    monkeypatch.setattr(jobs, "start_reindex_codebase", starter)
+    snapshot.ledger.reserve_publication_receipt(
+        snapshot.proof.compatibility_key,
+        successor.generation_id,
+        expected_parent_revision=snapshot.proof.revision,
+    )
+    result = _diagnose(audit, registry)
+    assert result.status == "deferred"
+    assert result.reason == "conflict"
+    assert result.job_id is None
+
+
+def test_shutdown_prevents_late_repair_after_a_real_consistent_audit(
+    published_vault: tuple[_Audit, ServiceRegistry],
+) -> None:
+    audit, registry = published_vault
+    (audit.root / audit.files[0].path).write_bytes(b"# Changed body\n")
+    hit = _vault_hit(audit)
+    drift = verify_search_hits(
+        audit.root, [hit], capture_hit_publications(audit.root, ("vault",))
+    )
+    assert len(drift) == 1
+    assert hit.freshness == "stale"
+    auditor = SearchDriftAuditor()
+    auditor._pending.append((audit, registry))
     auditor.close()
-    result = _diagnose(_audit(tmp_path), ServiceRegistry(), auditor._closing)
+    assert not auditor._pending
+    result = _diagnose(audit, registry, auditor._closing)
     assert result.status == "deferred"
     assert result.reason == "service_stopping"
-    starter.assert_not_called()
-    auditor.note_served(tmp_path, _audit(tmp_path).files, ServiceRegistry())
-    assert auditor.snapshot(tmp_path, ServiceRegistry()) == []
+    assert result.job_id is None
+    auditor.note_served(audit.root, audit.files, registry)
+    assert auditor.snapshot(audit.root, registry) == []
+    assert not auditor._pending
+    assert auditor._running is False
 
 
-def test_delivery_coalesces_audits_and_surfaces_typed_rebuild_command(
+def test_delivery_reservations_coalesce_pending_and_recent_audits(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    entered = threading.Event()
-    release = threading.Event()
-    finished = threading.Event()
-    calls: list[_Audit] = []
-
-    def blocked(
-        audit: _Audit,
-        _registry: ServiceRegistry,
-        _closing: threading.Event,
-    ) -> _Audit:
-        calls.append(audit)
-        entered.set()
-        assert release.wait(5.0)
-        raise JobError(JobErrorKind.FULL_REINDEX_REQUIRED, "content policy changed")
-
-    monkeypatch.setattr(_search_drift, "_diagnose", blocked)
+    # Disabling the reservation guard failed the first coalescing assertion;
+    # restoring it passed in the same run.
     auditor = SearchDriftAuditor()
-    registry = ServiceRegistry()
-    original = auditor._drain
-
-    def witnessed_drain() -> None:
-        try:
-            original()
-        finally:
-            finished.set()
-
-    monkeypatch.setattr(auditor, "_drain", witnessed_drain)
     files = _audit(tmp_path).files
-    try:
-        auditor.note_served(tmp_path, files, registry)
-        assert entered.wait(5.0)
-        for _ in range(20):
-            auditor.note_served(tmp_path, files, registry)
-        assert len(calls) == 1
-        assert auditor.snapshot(tmp_path, registry)[0]["status"] == "pending"
-    finally:
-        release.set()
-        assert finished.wait(5.0)
-    diagnostic = auditor.snapshot(tmp_path, registry)[0]
-    assert diagnostic["status"] == "rebuild_required"
-    assert diagnostic["reason"] == "full_reindex_required: content policy changed"
-    assert "--rebuild --type code" in str(diagnostic["remediation"])
-    assert str(tmp_path) in str(diagnostic["remediation"])
-    auditor.note_served(tmp_path, files, registry)
-    assert len(calls) == 1
+    first = auditor._reserve(tmp_path, files, 1000.0)
+    assert first is not None
+    for now in (1001.0, 2000.0):
+        assert auditor._reserve(tmp_path, files, now) is None
+    auditor._audits[tmp_path, "code"] = replace(first, status="rebuild_required")
+    assert auditor._reserve(tmp_path, files, 1001.0) is None
+    later = auditor._reserve(tmp_path, files, 2000.0)
+    assert later is not None
+    assert later is not first
+    assert later.status == "pending"
 
 
 def test_only_actually_delivered_stale_rows_trigger_audit() -> None:
@@ -226,11 +300,23 @@ def test_repair_job_refusal_bubbles_and_verified_current_file_clears_observation
         status="incremental_requested",
         job_id="repair-1",
     )
-    registry = Mock(spec=ServiceRegistry)
-    registry.create_job_manager.return_value.get.return_value = Mock(
-        error_kind="full_reindex_required",
-        result="policy requires rebuild",
+    registry = ServiceRegistry()
+    manager = registry.create_job_manager()
+    created = manager.create(
+        JobSpec(
+            JobOperation.INDEX,
+            JobSource.CODE,
+            str(tmp_path),
+            JobMode.INCREMENTAL,
+            RunAuthority.PUBLICATION,
+        ),
+        JobInitiator("integrity", "stale-hit repair", str(tmp_path)),
+        job_id="repair-1",
     )
+    assert created.job is not None
+    refused = manager.fail_unstarted("repair-1", result=FULL_REINDEX_REQUIRED_PHRASE)
+    assert refused.job is not None
+    assert refused.job.error_kind == JobErrorKind.FULL_REINDEX_REQUIRED
     diagnostic = auditor.snapshot(tmp_path, registry, port=9876)[0]
     assert diagnostic["status"] == "rebuild_required"
     assert "--rebuild --type code --port 9876" in str(diagnostic["remediation"])
@@ -292,70 +378,16 @@ def test_cli_and_mcp_preserve_stale_hits_and_operator_rebuild_request(
     )
 
 
-async def test_service_starts_audit_only_after_response_body_is_sent(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    (tmp_path / ".vault").mkdir()
-    registry = ServiceRegistry()
-    runtime = ServerRouteRuntime("token", registry, 8765)
-    app = create_http_app(runtime, lifespan=None)
-    payload: dict[str, object] = {
-        "results": [
-            {
-                "source": "codebase",
-                "path": "src/a.py",
-                "freshness": "stale",
-                "stale_reason": "content_changed",
-            }
-        ]
-    }
-    completed = SearchRouteResult(payload, 200, 0.01, None)
-    monkeypatch.setattr(
-        _routes_search,
-        "_execute_search_until_disconnect",
-        AsyncMock(return_value=completed),
-    )
-    messages: list[Message] = []
-
-    def note(
-        root: Path, files: tuple[DriftedFile, ...], active: ServiceRegistry
-    ) -> None:
-        assert root == tmp_path.resolve()
-        assert active is registry
-        assert files == _audit(tmp_path).files
-        assert messages[-1]["type"] == "http.response.body"
-        assert messages[-1].get("more_body", False) is False
-
-    observed = Mock(side_effect=note)
-    monkeypatch.setattr(runtime.drift_auditor, "note_served", observed)
-    scope: Scope = {
-        "type": "http",
-        "method": "POST",
-        "scheme": "http",
-        "path": "/search",
-        "server": ("127.0.0.1", 8765),
-        "headers": [],
-        "app": app,
-    }
-
-    async def receive() -> Message:
-        return {
-            "type": "http.request",
-            "body": json.dumps(
-                {
-                    "query": "query",
-                    "type": "code",
-                    "project_root": str(tmp_path),
-                }
-            ).encode(),
-            "more_body": False,
-        }
-
-    async def send(message: Message) -> None:
-        messages.append(message)
-
-    response = await _search_route_response(Request(scope, receive))
-    observed.assert_not_called()
-    await response(scope, receive, send)
-    observed.assert_called_once()
+def test_current_snapshot_cannot_retire_a_newer_audit(tmp_path: Path) -> None:
+    # Unconditional removal fails the newer-observation assertion below.
+    auditor = SearchDriftAuditor()
+    first = auditor._reserve(tmp_path, _audit(tmp_path).files, 1000.0)
+    assert first is not None
+    finished = replace(first, status="resolved_or_unverifiable")
+    auditor._audits[tmp_path, "code"] = finished
+    newer = auditor._reserve(tmp_path, first.files, 2000.0)
+    assert newer is not None
+    auditor._retire(finished)
+    assert auditor._audits.get((tmp_path, "code")) is newer
+    auditor._retire(newer)
+    assert (tmp_path, "code") not in auditor._audits

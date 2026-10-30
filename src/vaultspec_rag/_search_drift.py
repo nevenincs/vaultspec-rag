@@ -255,6 +255,12 @@ class SearchDriftAuditor:
                 if self._audits.get(key) is audit:
                     self._audits[key] = diagnosed
 
+    def _retire(self, audit: _Audit) -> None:
+        with self._lock:
+            key = (audit.root, audit.source)
+            if self._audits.get(key) is audit:
+                del self._audits[key]
+
     def snapshot(
         self,
         root: Path,
@@ -271,8 +277,7 @@ class SearchDriftAuditor:
         current = _current_files(delivered or {})
         for audit in audits:
             if all((audit.source, file.path) in current for file in audit.files):
-                with self._lock:
-                    self._audits.pop((root, audit.source), None)
+                self._retire(audit)
                 continue
             result.append(_project_audit(audit, registry, port))
         diagnosed_sources = {item["source"] for item in result}
