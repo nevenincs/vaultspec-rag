@@ -3,13 +3,12 @@ tags:
   - '#exec'
   - '#stale-search-hits'
 date: '2026-10-26'
-modified: '2026-10-26'
+modified: '2026-10-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:8231df98a32403c10c9673cc5fe89624864161fc83988c72063033344d508518'
+body_hash: 'sha256:b53272d1cc04c63a107765ace649a0f693f69a3fa00b304ec1ccef74b2e77656'
 related:
   - "[[2026-10-26-stale-search-hits-plan]]"
 ---
-
 # `stale-search-hits` ledger
 
 ## Changes
@@ -116,11 +115,11 @@ related:
 - `S09` `M` `src/vaultspec_rag/tests/integration/test_service_lifecycle_runtime.py`
 - `S09` `M` `src/vaultspec_rag/tests/integration/test_service_lifecycle_startup.py`
 - `S09` `M` `src/vaultspec_rag/tests/integration/test_teardown_budget.py`
-- `S09` `verify:` `vaultspec-rag\stale\.venv\Scripts\python.exe -P -m ruff check src/vaultspec_rag` -> `pass`
-- `S09` `verify:` `vaultspec-rag\stale\.venv\Scripts\python.exe -P -m ruff format --check src/vaultspec_rag/tests/integration/_helpers.py src/vaultspec_rag/tests/integration/_service_lifecycle_helpers.py src/vaultspec_rag/tests/integration/conftest.py src/vaultspec_rag/tests/integration/test_qdrant_descriptor_child_witnesses.py src/vaultspec_rag/tests/integration/test_service_eviction.py src/vaultspec_rag/tests/integration/test_service_lifecycle_discovery.py src/vaultspec_rag/tests/integration/test_service_lifecycle_orphan_reap.py src/vaultspec_rag/tests/integration/test_service_lifecycle_runtime.py src/vaultspec_rag/tests/integration/test_service_lifecycle_startup.py src/vaultspec_rag/tests/integration/test_teardown_budget.py` -> `pass`
-- `S09` `verify:` `vaultspec-rag\stale\.venv\Scripts\python.exe -P -m ty check --python vaultspec-rag\stale\.venv\Scripts\python.exe src/vaultspec_rag/tests/integration/_helpers.py src/vaultspec_rag/tests/integration/_service_lifecycle_helpers.py src/vaultspec_rag/tests/integration/conftest.py src/vaultspec_rag/tests/integration/test_qdrant_descriptor_child_witnesses.py src/vaultspec_rag/tests/integration/test_service_eviction.py src/vaultspec_rag/tests/integration/test_service_lifecycle_discovery.py src/vaultspec_rag/tests/integration/test_service_lifecycle_orphan_reap.py src/vaultspec_rag/tests/integration/test_service_lifecycle_runtime.py src/vaultspec_rag/tests/integration/test_service_lifecycle_startup.py src/vaultspec_rag/tests/integration/test_teardown_budget.py` -> `pass`
-- `S09` `verify:` `vaultspec-rag\stale\.venv\Scripts\python.exe -P -m basedpyright --pythonpath vaultspec-rag\stale\.venv\Scripts\python.exe src/vaultspec_rag/tests/integration/_helpers.py src/vaultspec_rag/tests/integration/_service_lifecycle_helpers.py src/vaultspec_rag/tests/integration/conftest.py src/vaultspec_rag/tests/integration/test_qdrant_descriptor_child_witnesses.py src/vaultspec_rag/tests/integration/test_service_eviction.py src/vaultspec_rag/tests/integration/test_service_lifecycle_discovery.py src/vaultspec_rag/tests/integration/test_service_lifecycle_orphan_reap.py src/vaultspec_rag/tests/integration/test_service_lifecycle_runtime.py src/vaultspec_rag/tests/integration/test_service_lifecycle_startup.py src/vaultspec_rag/tests/integration/test_teardown_budget.py` -> `pass`
-- `S09` `verify:` `vaultspec-rag\stale\.venv\Scripts\python.exe -P -m pytest src/vaultspec_rag/tests/integration/test_teardown_budget.py src/vaultspec_rag/tests/test_process_termination.py src/vaultspec_rag/tests/test_service_launcher_lifetime.py -q -m unit` -> `pass`
+- `S09` `verify:` `.venv\Scripts\python.exe -P -m ruff check src/vaultspec_rag` -> `pass`
+- `S09` `verify:` `.venv\Scripts\python.exe -P -m ruff format --check src/vaultspec_rag/tests/integration/_helpers.py src/vaultspec_rag/tests/integration/_service_lifecycle_helpers.py src/vaultspec_rag/tests/integration/conftest.py src/vaultspec_rag/tests/integration/test_qdrant_descriptor_child_witnesses.py src/vaultspec_rag/tests/integration/test_service_eviction.py src/vaultspec_rag/tests/integration/test_service_lifecycle_discovery.py src/vaultspec_rag/tests/integration/test_service_lifecycle_orphan_reap.py src/vaultspec_rag/tests/integration/test_service_lifecycle_runtime.py src/vaultspec_rag/tests/integration/test_service_lifecycle_startup.py src/vaultspec_rag/tests/integration/test_teardown_budget.py` -> `pass`
+- `S09` `verify:` `.venv\Scripts\python.exe -P -m ty check --python .venv\Scripts\python.exe src/vaultspec_rag/tests/integration/_helpers.py src/vaultspec_rag/tests/integration/_service_lifecycle_helpers.py src/vaultspec_rag/tests/integration/conftest.py src/vaultspec_rag/tests/integration/test_qdrant_descriptor_child_witnesses.py src/vaultspec_rag/tests/integration/test_service_eviction.py src/vaultspec_rag/tests/integration/test_service_lifecycle_discovery.py src/vaultspec_rag/tests/integration/test_service_lifecycle_orphan_reap.py src/vaultspec_rag/tests/integration/test_service_lifecycle_runtime.py src/vaultspec_rag/tests/integration/test_service_lifecycle_startup.py src/vaultspec_rag/tests/integration/test_teardown_budget.py` -> `pass`
+- `S09` `verify:` `.venv\Scripts\python.exe -P -m basedpyright --pythonpath .venv\Scripts\python.exe src/vaultspec_rag/tests/integration/_helpers.py src/vaultspec_rag/tests/integration/_service_lifecycle_helpers.py src/vaultspec_rag/tests/integration/conftest.py src/vaultspec_rag/tests/integration/test_qdrant_descriptor_child_witnesses.py src/vaultspec_rag/tests/integration/test_service_eviction.py src/vaultspec_rag/tests/integration/test_service_lifecycle_discovery.py src/vaultspec_rag/tests/integration/test_service_lifecycle_orphan_reap.py src/vaultspec_rag/tests/integration/test_service_lifecycle_runtime.py src/vaultspec_rag/tests/integration/test_service_lifecycle_startup.py src/vaultspec_rag/tests/integration/test_teardown_budget.py` -> `pass`
+- `S09` `verify:` `.venv\Scripts\python.exe -P -m pytest src/vaultspec_rag/tests/integration/test_teardown_budget.py src/vaultspec_rag/tests/test_process_termination.py src/vaultspec_rag/tests/test_service_launcher_lifetime.py -q -m unit` -> `pass`
 - `S09` `verify:` `python -m pylint (10 affected integration files)` -> `pass`
 - `S09` `verify:` `pytest four affected subprocess lifecycle cases after canonical exit migration` -> `pass`
 - `S09` `verify:` `real exited-child cleanup guard old-helper mutation` -> `fail`
