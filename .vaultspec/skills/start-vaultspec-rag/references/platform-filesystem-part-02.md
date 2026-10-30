@@ -51,4 +51,4 @@ This is static evidence. Implementation observations, documentation claims, and 
 
 ## Uncertainty and follow-up
 
-- No gaps within assigned ranges. To establish external call sites or validate contracts, a later pass would need the specific consumers of `workspace_directories` and the workspace constants, `get_search_limiter`/`get_index_limiter`/`get_encode_limiter`, and the Win32 helpers; these files were not assigned and were not read.
+- No gaps within assigned ranges. To establish external call sites or validate contracts, a later pass would need the specific consumers of `workspace_directories` and the workspace constants, `get_search_limiter`/`get_index_limiter`/`get_encode_limiter`, and the Win32 helpers; these files were not assigned and was not read.

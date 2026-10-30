@@ -47,5 +47,5 @@ This is static evidence. Implementation observations, documentation claims, and 
 
 ## Uncertainty and follow-up
 
-- To map actual public callers and composition, inspect the containing ledger class and its call sites (exact symbols: `RunLedger`, `RunLedgerPublicationProofMethods`, `RunLedgerPublicationReadMethods`, `RunLedgerPublicationReceiptMethods`) in their defining/importing modules. Those files were not assigned and were not read.
+- To map actual public callers and composition, inspect the containing ledger class and its call sites (exact symbols: `RunLedger`, `RunLedgerPublicationProofMethods`, `RunLedgerPublicationReadMethods`, `RunLedgerPublicationReceiptMethods`) in their defining/importing modules. Those files were not assigned and was not read.
 - To verify imported semantics, inspect the exact local dependencies listed under Boundaries, especially `_run_ledger_publication_storage.py` and `_publication_proof.py`. No follow-up is needed to complete this slice’s assigned coverage.
