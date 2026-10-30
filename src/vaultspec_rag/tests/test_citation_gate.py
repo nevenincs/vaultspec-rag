@@ -1066,6 +1066,10 @@ def test_the_checkout_carries_no_active_citation_or_identity_leak(
     introducing a leak, and it says nothing about anybody else's name. A green
     run on a service account is not evidence the tree is clean.
     """
+    if sys.platform != "win32":
+        # `just check-all` scans this same tree on Linux; only the Windows lane
+        # runs no lint, and only there does the identity detector see a new host.
+        pytest.skip("the Linux lint job runs this scan over the same checkout")
     active, _deferred, leaks, _smells = gate.collect_findings(_REPO_ROOT)
 
     assert active == [], f"active development-record citation(s): {active}"

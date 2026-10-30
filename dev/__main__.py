@@ -20,8 +20,10 @@ labelled report-only came to gate and a complexity gate came to never run.
 
 from __future__ import annotations
 
+import subprocess
 import sys
 import textwrap
+from concurrent.futures import ThreadPoolExecutor
 from typing import assert_never
 
 from dev.exit_codes import (
@@ -45,6 +47,9 @@ from dev.toolchain import DEFAULTS, VERBS, Target, Verb, find_verb, public_targe
 
 HELP_TOKENS = frozenset({"help", "--help", "-h"})
 WRAP_WIDTH = 88
+#: Concurrent children of a parallel target: enough to spend the build host's
+#: idle cores on independent scans without crowding the type checkers.
+PARALLEL_TARGETS = 4
 
 
 def _print_verb_help(verb: Verb) -> None:
@@ -192,6 +197,53 @@ def _run_step(
             assert_never(step)
 
 
+def _reenter(verb: Verb, name: str) -> tuple[int, bytes]:
+    """Run one target in a child interpreter and return its code and output.
+
+    Args:
+        verb: The owning verb.
+        name: The target to run.
+
+    Returns:
+        The exit code, with a closed gate reported as
+        :data:`~dev.gates.SKIPPED`, and the child's combined output.
+    """
+    result = subprocess.run(
+        [sys.executable, "-m", "dev", verb.name, name],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    code = SKIPPED if result.returncode == NOTHING_SELECTED else result.returncode
+    return code, result.stdout
+
+
+def _run_references_in_parallel(verb: Verb, target: Target) -> list[tuple[str, int]]:
+    """Run a target's references concurrently and report them in declared order.
+
+    Each output is held back until its turn, so a log reads as a serial run does
+    and "the first failure" still means the first in declared order.
+
+    Args:
+        verb: The owning verb.
+        target: A target whose steps are all references.
+
+    Returns:
+        Each referenced target's name and exit code, in declared order.
+    """
+    names = [step.target for step in target.steps if isinstance(step, Ref)]
+    if len(names) != len(target.steps):
+        raise ValueError(f"{verb.name} {target.name} is parallel, so only references")
+    outcomes: list[tuple[str, int]] = []
+    with ThreadPoolExecutor(max_workers=PARALLEL_TARGETS) as pool:
+        results = pool.map(lambda name: _reenter(verb, name), names)
+        for name, (code, output) in zip(names, results, strict=True):
+            sys.stdout.buffer.write(output)
+            sys.stdout.buffer.flush()
+            outcomes.append((name, code))
+    return outcomes
+
+
 def _execute(verb: Verb, target: Target) -> int:
     """Run one target's steps and return the resulting exit code.
 
@@ -211,6 +263,9 @@ def _execute(verb: Verb, target: Target) -> int:
             flush=True,
         )
         return SKIPPED
+
+    if target.parallel:
+        return _summarise(verb, target, _run_references_in_parallel(verb, target))
 
     outcomes: list[tuple[str, int]] = []
     worst = 0

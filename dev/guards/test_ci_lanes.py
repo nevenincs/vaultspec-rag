@@ -1,10 +1,9 @@
 """One automatic pull-request workflow owns merge readiness.
 
-A draft runs nothing. Every ready pull-request head runs every merge
-gate; the commit that lands on main runs
-every gate again. The release App's pull request runs the same workflow from
-its own events, so the required context has one implementation for
-contributor and release branches.
+A draft runs nothing. Every ready pull-request head reaches the scope job, which
+decides what is left to measure, and the required context reads what ran. The
+release App's pull request runs the same workflow from its own events, so the
+required context has one implementation for contributor and release branches.
 """
 
 from __future__ import annotations
@@ -33,6 +32,8 @@ PULL_REQUEST_TYPES = [
 FULL_JOBS = frozenset(
     {"lint", "tests", "tests-windows", "dependency-audit", "code-scanning"}
 )
+SCOPE_JOB_ID = "scope"
+SCOPE_OUTPUT = "needs.scope.outputs.suites"
 GATE_RECIPES = {
     "check-all": frozenset({"linux"}),
     "test-python": frozenset({"linux", "windows"}),
@@ -77,10 +78,9 @@ def test_pull_request_heads_start_the_gate_automatically() -> None:
     )
 
 
-def test_the_gate_is_reusable_and_measures_every_main_commit() -> None:
-    """Release automation can call the gate, and every commit on main runs it.
+def test_the_gate_answers_every_main_commit() -> None:
+    """Every commit on main reaches the gate, and nothing calls it as a library.
 
-    Both the merge candidate and the landed commit receive full proof;
     Release Please waits on the landed commit's run.
 
     Mutation proof: dropping the ``push`` trigger makes this fail on the
@@ -90,8 +90,38 @@ def test_the_gate_is_reusable_and_measures_every_main_commit() -> None:
     push = triggers.get("push")
     assert isinstance(push, dict), f"{Workflow.MERGE_GATE} does not run on push"
     assert cast("dict[object, object]", push).get("branches") == ["main"]
-    assert "workflow_call" in triggers
+    assert "workflow_call" not in triggers
     assert "workflow_dispatch" in triggers
+
+
+def test_scope_output_selects_the_suites() -> None:
+    """Each answer of the scope job runs exactly its jobs.
+
+    A reused or proof answer that still ran a suite costs an hour; one that
+    skipped the audit or code scanning loses the only check of what changes
+    without the tree changing.
+
+    Mutation proof: adding ``reused`` to the ``tests`` condition failed on
+    the reused answer naming ``tests``; restoring it passed.
+    """
+    jobs = _jobs()
+    expected = {
+        "full": FULL_JOBS,
+        "reused": frozenset({"dependency-audit", "code-scanning"}),
+        "proof": frozenset(),
+    }
+    for suites, wanted in expected.items():
+        selected = {
+            job_id
+            for job_id in FULL_JOBS
+            if workflows.evaluate(
+                str(jobs[job_id]["if"]), "push", {SCOPE_OUTPUT: suites}
+            )
+            is workflows.TRUE
+        }
+        assert selected == wanted, f"{suites} runs {sorted(selected)}"
+    for job_id in FULL_JOBS:
+        assert jobs[job_id]["needs"] == "scope", f"{job_id} does not need the scope"
 
 
 #: The repository the pull requests below are opened against.
@@ -301,20 +331,22 @@ def _bindings(payload: dict[str, object]) -> dict[str, object]:
 def test_pull_request_state_selects_the_cost_tier(
     event: str, payload: dict[str, object], expected: frozenset[str]
 ) -> None:
-    """Drafts run nothing; every ready head runs everything automatically.
+    """Drafts run nothing; every ready head reaches the scope job automatically.
 
-    Mutation proof: replacing the ``tests`` job's draft comparison with
-    ``true`` made the draft cases fail naming ``tests``. Removing
-    ``synchronize`` from the full condition fails the push case naming the
-    missing full jobs; restoration passes.
+    A measuring job skips with the scope job it needs, so that job's admission
+    is theirs; the answer it gives is tested above.
+
+    Mutation proof: replacing the scope job's draft comparison with ``true``
+    made the draft cases fail naming every measuring job. Removing
+    ``synchronize`` from its condition fails the push case naming the missing
+    full jobs; restoration passes.
     """
-    running = {
-        job_id
-        for job_id, body in _jobs().items()
-        if job_id != GATE_JOB
-        and workflows.evaluate(str(body.get("if") or "true"), event, _bindings(payload))
+    jobs = _jobs()
+    admitted = (
+        workflows.evaluate(str(jobs[SCOPE_JOB_ID]["if"]), event, _bindings(payload))
         is workflows.TRUE
-    }
+    )
+    running = set(FULL_JOBS) if admitted else set()
     assert running == expected, f"runs {sorted(running)}, expected {sorted(expected)}"
 
 
@@ -414,13 +446,41 @@ def test_pr_verdict_requires_full_proof() -> None:
 
 def test_dispatch_cannot_select_partial_merge_proof() -> None:
     """Restoring a scope input or light job fails admission."""
-    for event in ("workflow_dispatch", "workflow_call"):
-        trigger = _triggers()[event]
-        assert isinstance(trigger, dict)
-        inputs = cast("dict[object, object]", trigger)["inputs"]
-        assert isinstance(inputs, dict)
-        assert set(cast("dict[object, object]", inputs)) == {"ref"}
+    trigger = _triggers()["workflow_dispatch"]
+    assert isinstance(trigger, dict)
+    inputs = cast("dict[object, object]", trigger)["inputs"]
+    assert isinstance(inputs, dict)
+    assert set(cast("dict[object, object]", inputs)) == {"ref"}
     assert "lint-light" not in _jobs()
+
+
+def test_a_scope_answer_authorizes_only_what_it_skipped() -> None:
+    """The verdict trusts the scope job for its own answer and nothing wider.
+
+    Mutation proof: loosening the reused comparison to accept skipped audit and
+    scanning fails naming it; dropping the ``SCOPE`` term from the preservation
+    path fails naming it; dropping the wait for a measuring run fails naming it;
+    restoring each passes.
+    """
+    script = next(
+        str(step["run"])
+        for step in _jobs()[GATE_JOB]["steps"]
+        if step.get("name") == "Every full check passed on this commit"
+    )
+    assert (
+        '[ "${SUITES}" = "proof" ] && '
+        '[ "${full}" = "skipped skipped skipped skipped skipped" ]'
+    ) in script
+    assert (
+        '[ "${SUITES}" = "reused" ] && '
+        '[ "${full}" = "skipped skipped skipped success success" ]'
+    ) in script
+    assert '[ "${SCOPE}" != "skipped" ]' in script, (
+        "a run whose scope job answered must not fall through to old proof"
+    )
+    assert '"$measuring" || break' in script, (
+        "a label beside a measuring run reports red instead of waiting"
+    )
 
 
 def test_every_dispatch_requires_the_exact_commit_devserver_proof() -> None:
@@ -467,9 +527,12 @@ def test_untrusted_pull_requests_never_run_even_with_a_full_label(
         "author": author,
         "draft": False,
     }
-    for job_id, body in _jobs().items():
+    jobs = _jobs()
+    for job_id in (SCOPE_JOB_ID, GATE_JOB):
         assert (
-            workflows.evaluate(str(body["if"]), "pull_request", _bindings(payload))
+            workflows.evaluate(
+                str(jobs[job_id]["if"]), "pull_request", _bindings(payload)
+            )
             is workflows.FALSE
         ), f"untrusted PR reaches {job_id}"
     withheld = GATE_NAME_EXPRESSION.removeprefix("${{ ").split(

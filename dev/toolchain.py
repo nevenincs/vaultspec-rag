@@ -135,6 +135,9 @@ class Target:
             own ``main`` - so no reader of the steps can tell reliably, and
             the one property a caller needs to know is whether this can fail
             a build.
+        parallel: When true this aggregate runs its references concurrently,
+            each in its own interpreter. Every one must read the tree without
+            writing it, and all of them run even after one fails.
     """
 
     name: str
@@ -146,6 +149,7 @@ class Target:
     lane: bool = False
     aggregate: bool = False
     reports: bool = False
+    parallel: bool = False
 
 
 @dataclass(frozen=True)
@@ -276,21 +280,6 @@ LINT_ALL = (
     "type-strict",
     "vault",
     "docs-cli",
-)
-
-#: The dimensions a push to a ready pull request runs. Each reads committed
-#: files only and needs no type-checker stack, so they answer in minutes; the
-#: full aggregate runs when the pull request opens and again on main.
-LINT_LIGHT = (
-    "python",
-    "devserver",
-    "monitor",
-    "toml",
-    "markdown",
-    "workflow",
-    "absolute-imports",
-    "nesting",
-    "docs-version",
 )
 
 LINT = Verb(
@@ -462,12 +451,7 @@ LINT = Verb(
             "Run every gating dimension; one red dimension never hides the rest.",
             tuple(Ref(name) for name in LINT_ALL),
             keep_going=True,
-        ),
-        Target(
-            "light",
-            "Run the fast dimensions a pull-request push is checked against.",
-            tuple(Ref(name) for name in LINT_LIGHT),
-            keep_going=True,
+            parallel=True,
         ),
     ),
 )

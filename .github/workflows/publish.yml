@@ -1,7 +1,7 @@
 name: RAG Publish
 
 # WHAT STARTS THIS WORKFLOW: the release cut in `release-please.yml`, after it
-# has proven the release commit with the full merge gate and both accelerator
+# has proven the release commit over a gated parent, run both accelerator
 # tiers and tagged it; Binaries, for the package-index stage; and a maintainer
 # repairing a release. Dispatch only: a tag trigger would start a second run
 # for every tag a person pushes, racing the cut's own dispatch.

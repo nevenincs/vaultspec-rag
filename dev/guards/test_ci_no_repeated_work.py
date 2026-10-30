@@ -22,10 +22,10 @@ WHAT COUNTS AS A REPEAT. Two jobs reachable by ONE occasion, running one
 identical argument vector, where the recipe is not declared platform-
 sensitive. An occasion is an event in one payload shape - a pull request
 opening, the same pull request being pushed to, a dispatch choosing a scope -
-because the payload is what selects a lane. The partition matters: a full lint
-on opening and a light lint on a push are the deliberate two-tier split, not a
-repeat, and a guard without that partition reports every such split and gets
-switched off.
+because the payload is what selects a lane. The partition matters: two lanes
+that an event's payload selects between are a deliberate split, not a repeat,
+and a guard without that partition reports every such split and gets switched
+off.
 
 WHAT THIS CANNOT CATCH, AND WHAT COVERS IT INSTEAD. A subset lane's argument
 vector genuinely differs from the lane that contains it - five file paths
