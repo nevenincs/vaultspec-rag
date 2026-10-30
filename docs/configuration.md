@@ -123,7 +123,7 @@ until a search evaluates it. A pending/rejected classifier does not make the loc
 service unhealthy.
 
 For GitHub Actions, store the key as the repository Actions secret
-`VAULTSPEC_RAG_TYPESAFE_API_KEY`. Scheduled/manual CI and release validation pass it
+`VAULTSPEC_RAG_TYPESAFE_API_KEY`. Manually dispatched CI and release validation pass it
 to the reusable hardware workflow. Its CUDA integration lane runs a live classifier
 check before GPU provisioning, supplies the key to the service launch and test
 processes, and refuses to proceed if the running service is not enrolled. A missing

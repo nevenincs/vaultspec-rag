@@ -449,7 +449,7 @@ jobs:
             exit 1
           fi
           # The check runs separately on the canonical workflow's runner, from
-          # its own push or pull-request event; a dispatch or a release call
+          # its own push or pull-request event; a dispatch
           # proves a commit one of those events already ran on. Poll only the
           # newest run on this SHA, whatever started it, and never reuse an
           # older green.

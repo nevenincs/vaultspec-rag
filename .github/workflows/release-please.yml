@@ -49,7 +49,7 @@ jobs:
       # The version bump in pyproject.toml would leave uv.lock stale. The
       # `uv.lock` entry in release-please-config.json bumps the lock in the
       # same commit, so every proposal head is one commit, and its own
-      # pull-request events run the full merge gate and the Dev Server check.
+      # pull-request events run the merge gate and the Dev Server check.
       - name: Open or update the release pull request
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:

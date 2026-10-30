@@ -270,7 +270,7 @@ def test_every_gate_checkout_uses_the_requested_ref() -> None:
 def test_readiness_requires_the_dev_server_on_the_exact_commit() -> None:
     """The required aggregate includes the canonical exact-SHA dev proof.
 
-    A release call or dispatch carries no Dev Server run of its own, so the
+    A dispatch carries no Dev Server run of its own, so the
     proof reads the newest run on the commit whatever event started it.
 
     Mutation proof: dropping the dev proof's SHA filter failed proof admission
@@ -282,7 +282,7 @@ def test_readiness_requires_the_dev_server_on_the_exact_commit() -> None:
     steps = {step.get("name"): step for step in raw["steps"]}
     proof = str(steps[DEV_PROOF_STEP]["run"])
     assert "head_sha=$PROOF_SHA" in proof
-    assert "event=" not in proof, "a dispatch or a call would wait on no run"
+    assert "event=" not in proof, "a dispatch would wait on no run"
     assert '"completed success") exit 0' in proof
     assert "completed*)" in proof and "exit 1" in proof
     assert "github.event_name == 'pull_request'" in str(steps[DEV_PROOF_STEP]["if"])

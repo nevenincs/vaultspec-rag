@@ -77,7 +77,12 @@ is dispatched explicitly by the lane before it, in this order:
    again, and runs both accelerator tiers, then has release-please force the tag
    and create the draft Release. The cut checks the tag against the proven commit
    and dispatches `RAG Publish`. Manual dispatch is recovery only.
-1. `RAG Publish`, release stage, builds the wheel and source distribution,
+1. `RAG Publish`, release stage, restores `package-lock.json` with npm and builds
+   Vite once, then compiles every native monitor from that exact output with the
+   committed Bun pins. Windows resources, macOS signing and Unix modes are finalized
+   before hashing, and each target must pass the isolated executable and
+   installed-browser probe. Their digests go into the package, so a wheel can verify
+   the monitor it downloads. It builds the wheel and source distribution,
    smoke-tests both across the supported Python versions, and attaches them
    with a merged `SHA256SUMS` to the draft. It creates the draft itself only if
    one is missing, for a tag a maintainer pushed by hand. It never edits an
@@ -85,13 +90,11 @@ is dispatched explicitly by the lane before it, in this order:
    then dispatches `RAG Binaries`.
 1. `RAG Binaries` takes the release's own attached wheel, checked against
    `SHA256SUMS`, and verifies that it contains the exact canonical monitor lifecycle
-   and inventory owners. One job restores `package-lock.json` with npm and builds
-   Vite once. Every native target receives that exact handoff, verifies its digest,
-   and compiles the server with the committed Bun archive/executable pins.
-   Windows resources, macOS signing and Unix modes are finalized before hashing.
-   Each target must pass the isolated executable and installed-browser probe before
-   packaging. An isolated job attests the four finalized archives with GitHub/Sigstore
-   provenance after their native proof; it holds the OIDC grant without checking out
+   and inventory owners. It compiles no monitor: it takes each target's monitor
+   archive off the release, verifies it against the wheel's own pins before
+   extracting it, proves those exact bytes natively, and packs them into that
+   target's bundle. An isolated job attests the four bundles and four monitor
+   archives with GitHub/Sigstore provenance after their native proof; it holds the OIDC grant without checking out
    project code or writing release assets. Its release job aggregates the archive checksums, passes
    the complete-target gate, and attaches only the public archives and the
    merged checksum file to the draft.
@@ -351,7 +354,7 @@ rules are missing or whose firewall profiles are disabled.
 
 ## Automated monitor provenance
 
-The four native release archives are attested after finalized-byte browser and
+The four native bundles and four monitor archives are attested after finalized-byte browser and
 OS-offline proof. The signing job contains no checkout or project code and can
 write attestations, but cannot write repository contents. Release attachment waits
 for this job; the draft verifier and package-index admission both authenticate the
