@@ -199,33 +199,31 @@ def test_the_cut_proves_the_head_before_it_releases() -> None:
     """Automatic cuts require a proven parent, the audit and both accelerator tiers.
 
     The release head differs from its parent only by version files, so the
-    gate proves that, requires the parent's merge-gate verdict, and audits the
-    lock again instead of re-running the suites.
+    parent proof establishes that and the parent's merge-gate verdict, and the
+    gate audits the lock again instead of re-running the suites. What the proof
+    accepts is tested in the guard over its implementation.
 
     Mutation proof: removing ``prove-hardware`` from the cut's ``needs`` fails
-    naming it; dropping the version-only diff, the parent verdict or the audit
-    fails naming it; restoring each makes this pass.
+    naming it; dropping the parent proof step, or the ``needs`` that holds the
+    gate behind it, or the audit fails naming it; restoring each makes this pass.
     """
     candidate = _job("candidate")
     assert "if" not in candidate
+    parent = _job("prove-parent")
+    assert parent["needs"] == "candidate"
+    assert parent["permissions"].get("actions") == "read"
+    proof = "\n".join(
+        str(step.get("run", ""))
+        for step in cast("list[dict[str, object]]", parent["steps"])
+    )
+    assert 'dev/gate_scope.py prove "${SHA}"' in proof, (
+        "the cut does not prove the release head over a proven parent"
+    )
     gate = _job("prove-gate")
     assert "uses" not in gate, "the cut re-runs the suites its parent already passed"
-    assert gate["permissions"].get("actions") == "read"
+    assert "prove-parent" in gate["needs"], "the cut audits before the parent proof"
     steps = cast("list[dict[str, object]]", gate["steps"])
     scripts = "\n".join(str(step.get("run", "")) for step in steps)
-    assert 'git diff --name-only "${parent}" "${SHA}"' in scripts, (
-        "the cut does not prove the release head changes only version files"
-    )
-    proof_env = [
-        cast("dict[str, object]", step.get("env", {})).get("GATE_WORKFLOW")
-        for step in steps
-    ]
-    assert GATE_WORKFLOW in proof_env, (
-        "the cut does not require its parent's merge-gate verdict"
-    )
-    # The weekly schedule audits alone under the same aggregate check name, so
-    # only the parent's push run proves the suites.
-    assert "event=push" in scripts, "the cut accepts a partial scheduled verdict"
     assert "just audit-deps" in scripts, "the cut releases an unaudited lock"
     assert _job("prove-hardware").get("uses") == "./.github/workflows/hardware.yml"
     needs = _job("cut").get("needs")
@@ -240,13 +238,11 @@ def test_the_cut_proves_the_head_before_it_releases() -> None:
 
 
 def test_every_gate_checkout_uses_the_requested_ref() -> None:
-    """A release dispatch measures its branch rather than the default branch."""
-    triggers = _triggers(GATE_WORKFLOW)
-    for event in ("workflow_call", "workflow_dispatch"):
-        body = triggers.get(event)
-        assert isinstance(body, dict)
-        inputs = cast("dict[object, object]", body).get("inputs")
-        assert isinstance(inputs, dict) and "ref" in inputs
+    """A dispatch measures its requested commit rather than the default branch."""
+    body = _triggers(GATE_WORKFLOW).get("workflow_dispatch")
+    assert isinstance(body, dict)
+    inputs = cast("dict[object, object]", body).get("inputs")
+    assert isinstance(inputs, dict) and "ref" in inputs
 
     findings: list[str] = []
     checkouts = 0

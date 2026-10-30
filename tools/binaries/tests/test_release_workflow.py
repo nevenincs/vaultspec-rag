@@ -399,10 +399,7 @@ def test_published_bundle_acquisition_checks_digests_and_producer_commit(
             assert step["if"] == "inputs.mode == 'candidate'"
     triggers = document.get("on", document.get(True))
     assert triggers is not None
-    assert set(triggers) == {
-        "schedule",
-        "workflow_dispatch",
-    }
+    assert set(triggers) == {"workflow_dispatch"}
     publication = _load(repo_root, "publish.yml")["jobs"]["publish-release"]
     steps = publication["steps"]
     flip = next(i for i, step in enumerate(steps) if "--draft=false" in step["run"])

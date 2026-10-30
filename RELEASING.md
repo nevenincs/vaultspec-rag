@@ -67,14 +67,16 @@ is dispatched explicitly by the lane before it, in this order:
 1. `release-please.yml` opens and updates the release PR from conventional
    commits on pushes to `main`, as the `nevenincs-release` GitHub App. The
    version bump, changelog, manifest and `uv.lock` change land in one commit, and
-   the PR's own events run the full merge gate and the canonical Dev Server check
-   like any trusted PR. The required aggregate includes the actual Dev Server
-   verdict on the exact SHA; light or skipped measuring jobs cannot authorize the
-   release proposal.
-1. Merging that PR starts the cut automatically. It proves the merged commit
-   with the full merge gate and both accelerator tiers, then has release-please
-   force the tag and create the draft Release. The cut checks the tag against
-   the proven commit and dispatches `RAG Publish`. Manual dispatch is recovery only.
+   the PR's own events run the merge gate and the canonical Dev Server check. The
+   gate's scope job skips the suites only when the proposal is current with main,
+   changes nothing but version files, and main's push gate passed. Anything else
+   measures in full. The required aggregate includes the actual Dev Server verdict
+   on the exact SHA.
+1. Merging that PR starts the cut automatically. It requires the merged commit to
+   change only version files over a parent whose push gate passed, audits the lock
+   again, and runs both accelerator tiers, then has release-please force the tag
+   and create the draft Release. The cut checks the tag against the proven commit
+   and dispatches `RAG Publish`. Manual dispatch is recovery only.
 1. `RAG Publish`, release stage, builds the wheel and source distribution,
    smoke-tests both across the supported Python versions, and attaches them
    with a merged `SHA256SUMS` to the draft. It creates the draft itself only if
@@ -443,8 +445,8 @@ TAG=vaultspec-rag-v<version>
 
 gh release view "$TAG" --repo "$REPO" --json isDraft,isPrerelease,assets \
   --jq '{isDraft, isPrerelease, assets: [.assets[].name]}'
-gh run list --repo "$REPO" --workflow Binaries --limit 20
-gh run list --repo "$REPO" --workflow Publish --limit 20
+gh run list --repo "$REPO" --workflow "RAG Binaries" --limit 20
+gh run list --repo "$REPO" --workflow "RAG Publish" --limit 20
 ```
 
 ### A merged release that was never tagged
@@ -613,8 +615,6 @@ needs the release to be published:
 gh workflow run acquisition.yml --repo "$REPO" --ref main --field tag="$TAG" \
   --field target_sha="$(git rev-parse "$TAG^{commit}")"
 ```
-
-The weekly scheduled run covers the latest release regardless.
 
 After recovery, verify all three surfaces: the GitHub Release is published with
 the complete archive set and merged checksums, the account channel files name

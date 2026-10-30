@@ -6,8 +6,6 @@ run-name: RAG Acquisition ${{ inputs.mode || 'public' }} ${{ inputs.tag || 'late
 # bytes run with an empty PATH/home and no checkout or backend sibling.
 # Live checksums add coverage; authenticated build provenance authorizes launch.
 on:
-  schedule:
-    - cron: "41 6 * * 1"
   workflow_dispatch:
     inputs:
       mode:

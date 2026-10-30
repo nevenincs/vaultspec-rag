@@ -4,8 +4,9 @@ name: RAG Merge Gate
 # unless their trusted author requests ci:full. A label never admits an
 # external author or a fork. The withheld job has a different name because
 # GitHub treats a skipped required check as successful.
-# Main pushes, reusable calls and dispatches require full proof; the weekly
-# audit checks newly published advisories against the unchanged lock.
+# The scope job decides what is left to measure: a commit whose tree a pull
+# request already passed runs only the audit and code scanning, and a version
+# bump over a proven parent runs nothing. Anything unclear measures in full.
 # The aggregate also requires the canonical Dev Server verdict on the same SHA.
 on:
   pull_request:
@@ -13,14 +14,6 @@ on:
     types: [opened, reopened, synchronize, ready_for_review, labeled]
   push:
     branches: [main]
-  workflow_call:
-    inputs:
-      ref:
-        description: Full commit SHA to validate
-        required: true
-        type: string
-  schedule:
-    - cron: "47 5 * * 3"
   workflow_dispatch:
     inputs:
       ref:
@@ -34,8 +27,8 @@ permissions:
 concurrency:
   # A new push supersedes the previous pull-request run. Label events use the
   # label in their group, so an unrelated label cannot cancel a full run.
-  # Every run on main - a push, a call, a schedule - is grouped by its own
-  # commit and never cancelled.
+  # Every run on main - a push, a dispatch - is grouped by its own commit and
+  # never cancelled.
   group: merge-gate-${{ github.event.pull_request.number || inputs.ref || github.ref }}-${{ github.event.label.name || github.event_name }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
@@ -55,17 +48,14 @@ env:
   VAULTSPEC_INIT_GPU_STACK: "none"
 
 jobs:
-  lint:
-    name: "Check: Full lint (Linux)"
-    # Names the aggregate rather than listing its members: a dimension added
-    # to the registry joins this job automatically. `check-all` keeps going
-    # after a failure and reports every dimension, and its membership is data
-    # in `dev/toolchain.py`, so this job and the gates cannot disagree about
-    # what "everything" means.
+  # Every measuring job needs this one, so its admission is theirs: when it
+  # skips, they skip. It only reads the API and may wait on a parent's gate, so
+  # it holds no fleet slot a measuring job needs.
+  scope:
+    name: "Check: Proof scope (Linux)"
     # A fork's pull request never runs here: the workflow it would run is the
-    # fork's own. The gate refuses it instead. A call from another workflow
-    # carries that workflow's event, a dispatch, and runs the full gate.
-    if: &full_gate >-
+    # fork's own. The gate refuses it instead.
+    if: >-
       github.event_name == 'push' ||
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' &&
@@ -78,6 +68,43 @@ jobs:
           github.event.action == 'reopened' ||
           github.event.action == 'synchronize' ||
           github.event.action == 'ready_for_review'))))
+    timeout-minutes: 130
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      suites: ${{ steps.decide.outputs.suites }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Decide what is left to measure
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          LABEL: ${{ github.event.label.name }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          SHA: ${{ github.sha }}
+        run: python3 -I dev/gate_scope.py decide
+
+  lint:
+    name: "Check: Full lint (Linux)"
+    # Names the aggregate rather than listing its members: a dimension added
+    # to the registry joins this job automatically. `check-all` keeps going
+    # after a failure and reports every dimension, and its membership is data
+    # in `dev/toolchain.py`, so this job and the gates cannot disagree about
+    # what "everything" means.
+    needs: scope
+    if: needs.scope.outputs.suites == 'full'
     timeout-minutes: 160
     runs-on: [self-hosted, Linux, X64, build]
     env:
@@ -128,9 +155,8 @@ jobs:
 
   tests:
     name: "Test: Correctness suite (Linux, ${{ matrix.python-version }})"
-    # A fork's pull request never runs here: the workflow it would run is the
-    # fork's own. The gate refuses it instead.
-    if: *full_gate
+    needs: scope
+    if: needs.scope.outputs.suites == 'full'
     timeout-minutes: 165
     runs-on: [self-hosted, Linux, X64]
     strategy:
@@ -214,9 +240,8 @@ jobs:
   # runs under.
   tests-windows:
     name: "Test: Full suite (Windows)"
-    # A fork's pull request never runs here: the workflow it would run is the
-    # fork's own. The gate refuses it instead.
-    if: *full_gate
+    needs: scope
+    if: needs.scope.outputs.suites == 'full'
     timeout-minutes: 136
     runs-on: windows-2025
     env:
@@ -274,25 +299,10 @@ jobs:
 
   dependency-audit:
     name: "Check: Dependency advisories (Linux)"
-    # Audits the lock that is about to land. The weekly run, which runs this
-    # job alone, catches advisories published against a lock that has not
-    # changed.
-    # A fork's pull request never runs here: the workflow it would run is the
-    # fork's own. The gate refuses it instead.
-    if: >-
-      github.event_name == 'push' ||
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' &&
-       github.event.pull_request.head.repo.full_name == github.repository &&
-       (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'COLLABORATOR' || github.event.pull_request.user.login == 'nevenincs-release[bot]') &&
-       ((github.event.action == 'labeled' && github.event.label.name == 'ci:full' &&
-         github.event.sender.type == 'User') ||
-        (github.event.pull_request.draft == false &&
-         (github.event.action == 'opened' ||
-          github.event.action == 'reopened' ||
-          github.event.action == 'synchronize' ||
-          github.event.action == 'ready_for_review'))))
+    # Audits the lock that is about to land. An advisory can be published
+    # against an unchanged tree, so reused proof runs this again.
+    needs: scope
+    if: needs.scope.outputs.suites == 'full' || needs.scope.outputs.suites == 'reused'
     timeout-minutes: 135
     runs-on: [self-hosted, Linux, X64]
     env:
@@ -330,7 +340,10 @@ jobs:
 
   code-scanning:
     name: "Check: Code scanning (Linux, ${{ matrix.language }})"
-    if: *full_gate
+    # The landed commit is the only one whose results reach the default
+    # branch's code-scanning view, so reused proof runs this again.
+    needs: scope
+    if: needs.scope.outputs.suites == 'full' || needs.scope.outputs.suites == 'reused'
     runs-on: [self-hosted, Linux, X64, build]
     timeout-minutes: 150
     env:
@@ -362,12 +375,15 @@ jobs:
     # A skipped untrusted job must never report the required merge context.
     name: >-
       ${{ github.event_name == 'pull_request' && !(github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'COLLABORATOR' || github.event.pull_request.user.login == 'nevenincs-release[bot]')) && 'Admission withheld (Linux)' || 'Check: Merge gate (Linux)' }}
-    needs: [lint, tests, tests-windows, dependency-audit, code-scanning]
+    needs: [scope, lint, tests, tests-windows, dependency-audit, code-scanning]
     # `always()`, never `!cancelled()`: see the header on why a skipped gate
     # would pass a commit nothing measured. Only a draft skips it, unless
-    # `ci:full` was pressed on it.
+    # `ci:full` was pressed on it. A cancelled run off a pull request has no
+    # required check to report and concludes cancelled either way, so it does
+    # not also report a failure nobody caused.
     if: >-
       always() &&
+      !(github.event_name != 'pull_request' && cancelled()) &&
       (github.event_name != 'pull_request' ||
        (github.event.pull_request.head.repo.full_name == github.repository &&
         (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'COLLABORATOR' || github.event.pull_request.user.login == 'nevenincs-release[bot]'))) &&
@@ -377,7 +393,8 @@ jobs:
           github.event.sender.type == 'User'))
     timeout-minutes: 125
     # Reads results and edits a label; it never checks out the pull request.
-    runs-on: [self-hosted, Linux, X64, build]
+    # It waits on other runs, so a fleet slot here could starve what it awaits.
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       # The unrelated-label path asks this workflow for its newest completed
@@ -387,13 +404,14 @@ jobs:
       actions: write
       pull-requests: write
     env:
-      CI_RESOURCE_CLASS: verdict
       GH_TOKEN: ${{ github.token }}
       EVENT: ${{ github.event_name }}
       DRAFT: ${{ github.event.pull_request.draft }}
       PR: ${{ github.event.pull_request.number }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+      SCOPE: ${{ needs.scope.result }}
+      SUITES: ${{ needs.scope.outputs.suites }}
       LINT: ${{ needs.lint.result }}
       TESTS: ${{ needs.tests.result }}
       WINDOWS: ${{ needs.tests-windows.result }}
@@ -454,10 +472,11 @@ jobs:
             echo "::error::pull requests from forks are refused; re-open the change from a branch in this repository"
             exit 1
           fi
-          echo "lint=${LINT} linux=${TESTS} windows=${WINDOWS} audit=${AUDIT} scanning=${SCANNING} draft=${DRAFT:-n/a}"
+          echo "scope=${SCOPE}:${SUITES:-none} lint=${LINT} linux=${TESTS} windows=${WINDOWS} audit=${AUDIT} scanning=${SCANNING} draft=${DRAFT:-n/a}"
           # A measuring job that ran and did not pass fails the gate, whatever
           # path this event took.
-          for job in "Check: Full lint (Linux)=${LINT}" \
+          for job in "Check: Proof scope (Linux)=${SCOPE}" \
+                     "Check: Full lint (Linux)=${LINT}" \
                      "Test: Correctness suite (Linux)=${TESTS}" \
                      "Test: Full suite (Windows)=${WINDOWS}" \
                      "Check: Dependency advisories (Linux)=${AUDIT}" \
@@ -480,39 +499,71 @@ jobs:
             echo "every full check passed in this run"
             exit 0
           fi
-          if [ "${EVENT}" = "schedule" ] && [ "${AUDIT}" = "success" ]; then
-            echo "the scheduled dependency audit passed"
+          # The scope job vouches for exactly what it told the suites to skip.
+          if [ "${SUITES}" = "proof" ] && [ "${full}" = "skipped skipped skipped skipped skipped" ]; then
+            echo "a version bump over a proven parent"
             exit 0
           fi
-          if [ "${EVENT}" != "pull_request" ] || [ "${full}" != "skipped skipped skipped skipped skipped" ]; then
-            echo "::error::the checks this event requires did not all run (lint=${LINT} linux=${TESTS} windows=${WINDOWS} audit=${AUDIT} scanning=${SCANNING})"
+          if [ "${SUITES}" = "reused" ] && [ "${full}" = "skipped skipped skipped success success" ]; then
+            echo "the suites passed this tree on its pull request; the audit and code scanning passed here"
+            exit 0
+          fi
+          if [ "${EVENT}" != "pull_request" ] || [ "${SCOPE}" != "skipped" ] || [ "${full}" != "skipped skipped skipped skipped skipped" ]; then
+            echo "::error::the checks this event requires did not all run (scope=${SCOPE}:${SUITES:-none} lint=${LINT} linux=${TESTS} windows=${WINDOWS} audit=${AUDIT} scanning=${SCANNING})"
             exit 1
           fi
           # An unrelated label can preserve only the newest completed verdict
           # earned by this exact commit. This run is still in progress, so
           # filtering to completed runs excludes it without comparing ids.
           workflow=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq '.workflow_id')
-          previous_runs=$(gh api --paginate \
-            "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?head_sha=$HEAD_SHA&status=completed&per_page=100" \
-            --jq '.workflow_runs[] | [.id, .conclusion] | @tsv')
-          # Preservation-only successes carry the earlier proof forward. Stop
-          # at any intervening failure, cancellation or invalid measured run.
-          while IFS=$'\t' read -r run previous; do
-            [ -n "$run" ] || continue
-            if [ "$previous" != "success" ]; then
-              echo "::error::the last proof chain on $HEAD_SHA ended in $previous; run the full gate again"
-              exit 1
-            fi
-            if require_full_run "$run"; then
-              echo "the last full run on $HEAD_SHA passed"
-              exit 0
-            else
-              proof=$?
-            fi
-            if [ "$proof" -ne 2 ]; then
-              echo "::error::run $run lacks complete measured proof on $HEAD_SHA"
-              exit 1
-            fi
-          done < <(printf '%s\n' "$previous_runs" | sort -t $'\t' -k1,1nr)
+          scope_conclusion() {
+            gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$1/jobs?filter=all&per_page=100" \
+              --jq '.jobs[] | select(.name == "Check: Proof scope (Linux)") | [.run_attempt, .id, .conclusion // "pending"] | @tsv' \
+              | sort -t $'\t' -k1,1nr -k2,2nr | head -n 1 | cut -f 3
+          }
+          # A label arriving with the commit starts this run beside the one that
+          # measures it. Wait for that verdict: reporting red now would replace
+          # the required check with a failure nothing measured. Ninety minutes,
+          # which with the dev server wait stays under this job's ceiling.
+          for _ in $(seq 1 180); do
+            previous_runs=$(gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?head_sha=$HEAD_SHA&status=completed&per_page=100" \
+              --jq '.workflow_runs[] | [.id, .conclusion] | @tsv')
+            # Preservation-only successes carry the earlier proof forward. Stop
+            # at any intervening failure, cancellation or invalid measured run.
+            while IFS=$'\t' read -r run previous; do
+              [ -n "$run" ] || continue
+              if [ "$previous" != "success" ]; then
+                echo "::error::the last proof chain on $HEAD_SHA ended in $previous; run the full gate again"
+                exit 1
+              fi
+              if require_full_run "$run"; then
+                echo "the last full run on $HEAD_SHA passed"
+                exit 0
+              else
+                proof=$?
+              fi
+              if [ "$proof" -ne 2 ]; then
+                echo "::error::run $run lacks complete measured proof on $HEAD_SHA"
+                exit 1
+              fi
+              # Every suite skipped because the scope job said so, not because
+              # a label admitted nothing: that verdict is the proof itself.
+              if [ "$(scope_conclusion "$run")" = "success" ]; then
+                echo "run $run proved $HEAD_SHA a version bump over a proven parent"
+                exit 0
+              fi
+            done < <(printf '%s\n' "$previous_runs" | sort -t $'\t' -k1,1nr)
+            measuring=false
+            active=$(gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?head_sha=$HEAD_SHA&per_page=100" \
+              --jq '.workflow_runs[] | select(.status != "completed") | .id')
+            for run in $active; do
+              [ "$run" != "$GITHUB_RUN_ID" ] || continue
+              if [ "$(scope_conclusion "$run")" != "skipped" ]; then measuring=true; fi
+            done
+            "$measuring" || break
+            sleep 30
+          done
           echo "::error::nothing has fully measured $HEAD_SHA; push to it, mark it ready, or add $FULL_RUN_LABEL"
           exit 1

@@ -129,6 +129,7 @@ class Job:
             that omits them can be recognised as one label over many rows.
         continue_on_error: Whether the job declares ``continue-on-error: true``,
             so its failure is reported without failing the run.
+        needs: The job ids this job waits for.
     """
 
     workflow: str
@@ -141,6 +142,7 @@ class Job:
     steps: tuple[dict[str, Any], ...]
     matrix_axes: tuple[str, ...] = ()
     continue_on_error: bool = False
+    needs: tuple[str, ...] = ()
 
     @property
     def platforms(self) -> frozenset[str]:
@@ -443,6 +445,7 @@ def _job(workflow: str, job_id: str, body: dict[str, Any]) -> Job:
     timeout = body.get("timeout-minutes")
     concurrency = body.get("concurrency")
     condition = body.get("if")
+    needs = body.get("needs") or ()
     return Job(
         workflow=workflow,
         job_id=job_id,
@@ -456,6 +459,7 @@ def _job(workflow: str, job_id: str, body: dict[str, Any]) -> Job:
         ),
         matrix_axes=_matrix_axis_names(body),
         continue_on_error=body.get("continue-on-error") is True,
+        needs=(needs,) if isinstance(needs, str) else tuple(str(n) for n in needs),
     )
 
 

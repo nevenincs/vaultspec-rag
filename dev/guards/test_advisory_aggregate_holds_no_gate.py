@@ -1,7 +1,7 @@
 """A dashboard that cannot fail must not contain a check that can.
 
 ``audit all`` is a REPORT. Every dimension in it yields a lead to confirm
-rather than a verdict, which is what lets it run weekly, off the merge path,
+rather than a verdict, which is what lets it run on demand, off the merge path,
 and exit zero with findings on the board.
 
 ``audit deps`` is the exception inside that verb: a published advisory against

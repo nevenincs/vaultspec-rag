@@ -56,8 +56,7 @@ def _reaches_default_branch(workflow: str) -> bool:
     """Whether *workflow* runs for the default branch.
 
     The merge box counts even without a push trigger: its verdict is what
-    admits a commit to the default branch, and it runs there on schedule and
-    dispatch.
+    admits a commit to the default branch, and it runs there on dispatch.
     """
     if workflow in MERGE_BOX:
         return True

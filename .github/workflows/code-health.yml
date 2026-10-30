@@ -1,6 +1,6 @@
 name: RAG Code Health
 
-# ADVISORY MEASUREMENT, ON A SCHEDULE, OFF THE MERGE PATH.
+# ADVISORY MEASUREMENT, ON DEMAND, OFF THE MERGE PATH.
 #
 # These scanners report leads, not verdicts: vulture infers reachability it
 # cannot always see, bandit reports this project's deliberate subprocess
@@ -8,12 +8,8 @@ name: RAG Code Health
 # transitively. None of them can fail a build, by design.
 #
 # A measurement whose result nobody blocks on does not need to be taken on
-# every commit; it needs to be taken often enough that a trend is visible.
-# Weekly, then, and on demand, off the merge path.
+# every commit, so it is taken when someone asks for it.
 on:
-  schedule:
-    # Sunday 04:00 UTC, off the working week and the release cadence.
-    - cron: "0 4 * * 0"
   workflow_dispatch:
 
 permissions:
@@ -26,8 +22,8 @@ env:
   VAULTSPEC_INIT_GPU_STACK: "none"
 
 concurrency:
-  # A schedule that fires while the previous run is still queued should not
-  # stack: one report a week is the point. This workflow never runs on a
+  # A dispatch made while the previous run is still queued should not stack:
+  # one report is the point. This workflow never runs on a
   # branch whose verdict anything depends on, so collapsing onto one group is
   # the correct behaviour here rather than the hazard it is in `ci.yml`.
   group: code-health

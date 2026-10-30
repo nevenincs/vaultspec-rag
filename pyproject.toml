@@ -362,8 +362,8 @@ root = [".", "src", "dev"]
 exclude = ["dev/devserver.py"]
 
 # Strict-mode type checking — now GATING (the burndown reached zero on
-# 2026-06-10). `ty` remains the fast gate to run by hand; basedpyright gates in CI
-# and `just check-all`. Run via `just check-type-strict` or `just health`.
+# 2026-06-10). Both `ty` and basedpyright gate in CI and `just check-all`. Run this
+# one via `just check-type-strict` or `just health`.
 [tool.basedpyright]
 include = ["src/vaultspec_rag"]
 pythonVersion = "3.13"

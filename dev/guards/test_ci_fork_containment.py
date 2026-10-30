@@ -41,13 +41,25 @@ def _containment_findings(jobs: Sequence[workflows.Job]) -> list[str]:
     the fleet's trusted-author clause, the latter spelled exactly; a
     ``ci:full`` path in it must count only a user's label. A folded YAML
     condition is compared with its line breaks collapsed.
+
+    A job that needs a contained job skips with it, so it inherits containment,
+    unless a status function in its own condition lets it run past that skip.
     """
     findings: list[str] = []
+    contained: set[tuple[str, str]] = set()
     for job in jobs:
         events = PULL_REQUEST_EVENTS & set(workflows.workflow_events(job.workflow))
         if not any(job.reaches(event) for event in events):
             continue
         condition = " ".join((job.condition or "").split())
+        runs_past_a_skip = "always()" in condition or "failure()" in condition
+        if not runs_past_a_skip and any(
+            (job.workflow, needed) in contained for needed in job.needs
+        ):
+            contained.add((job.workflow, job.job_id))
+            continue
+        if SAME_REPO_CLAUSE in condition and TRUSTED_AUTHOR_CLAUSE in condition:
+            contained.add((job.workflow, job.job_id))
         if SAME_REPO_CLAUSE not in condition:
             findings.append(f"{job.workflow}:{job.job_id} (a fork's branch)")
         if TRUSTED_AUTHOR_CLAUSE not in condition:
@@ -67,10 +79,9 @@ def test_only_a_trusted_author_or_a_users_label_reaches_the_fleet() -> None:
     gate included, carries the same-repository and author clauses, and any
     `ci:full` path in it counts only a user's label.
 
-    Mutation proof: dropping the release App's term from the shared
-    ``full_gate`` condition in ``merge-gate.yml`` made this fail naming
-    ``merge-gate.yml:lint``, ``merge-gate.yml:tests``,
-    ``merge-gate.yml:tests-windows`` and ``merge-gate.yml:code-scanning``;
+    Mutation proof: dropping the release App's term from the scope job's
+    condition in ``merge-gate.yml`` made this fail naming
+    ``merge-gate.yml:scope`` and every measuring job that needs it;
     dropping the sender check from the gate's ``ci:full`` draft exemption made
     it fail naming ``merge-gate.yml:gate (a bot's label)``; restoring each made
     this pass.
@@ -90,7 +101,8 @@ def test_a_job_without_the_exact_clause_is_named() -> None:
     same-repository clause or counts a bot's label.
 
     Mutation proof: disabling the reader's same-repository check made this
-    fail without the ``forked`` finding; restoring it made this pass.
+    fail without the ``forked`` finding; dropping the status-function test made
+    it fail without the ``past-a-skip`` findings; restoring each made this pass.
     """
     jobs = [
         workflows.Job(
@@ -102,31 +114,42 @@ def test_a_job_without_the_exact_clause_is_named() -> None:
             condition=condition,
             concurrency=None,
             steps=(),
+            needs=needs,
         )
-        for job_id, condition in (
+        for job_id, condition, needs in (
             (
                 "contained",
                 f"{SAME_REPO_CLAUSE} && {TRUSTED_AUTHOR_CLAUSE} && "
                 f"github.event.label.name == 'ci:full' && {LABEL_BY_USER}",
+                (),
             ),
+            ("inherits", "needs.contained.outputs.suites == 'full'", ("contained",)),
+            ("past-a-skip", "always()", ("contained",)),
             (
                 "respelled",
                 f"{SAME_REPO_CLAUSE} && "
                 "(github.event.pull_request.author_association == 'OWNER' || "
                 "github.event.pull_request.author_association == 'COLLABORATOR')",
+                (),
             ),
-            ("forked", TRUSTED_AUTHOR_CLAUSE),
+            ("forked", TRUSTED_AUTHOR_CLAUSE, ()),
             (
                 "bot-label",
                 f"{SAME_REPO_CLAUSE} && {TRUSTED_AUTHOR_CLAUSE} && "
                 "github.event.label.name == 'ci:full'",
+                (),
             ),
+            ("needs-uncontained", "true", ("forked",)),
         )
     ]
     assert _containment_findings(jobs) == [
+        "merge-gate.yml:past-a-skip (a fork's branch)",
+        "merge-gate.yml:past-a-skip",
         "merge-gate.yml:respelled",
         "merge-gate.yml:forked (a fork's branch)",
         "merge-gate.yml:bot-label (a bot's label)",
+        "merge-gate.yml:needs-uncontained (a fork's branch)",
+        "merge-gate.yml:needs-uncontained",
     ]
 
 
@@ -208,7 +231,7 @@ def test_the_gate_refuses_a_forks_pull_request() -> None:
     assert opening in script, "the verdict no longer refuses a fork"
     refusal = script.index(opening)
     assert "exit 1" in script[refusal : script.index("fi", refusal)]
-    assert refusal < script.index('echo "lint=${LINT}')
+    assert refusal < script.index('echo "scope=${SCOPE}')
 
 
 def _callers(workflow: str) -> list[tuple[str, workflows.Job]]:
@@ -235,8 +258,8 @@ def test_the_hardware_tiers_are_unreachable_from_a_pull_request() -> None:
     """No pull request can start the MPS or CUDA tier.
 
     The tiers receive release secrets. They are reachable only through a
-    workflow call, and every caller is started by a tag, a schedule or a
-    dispatch, all of which require write access.
+    workflow call, and every caller is started by a tag or a dispatch, both of
+    which require write access.
 
     Mutation proof: deleting the ``if:`` of the hardware caller in ``ci.yml``
     makes this fail naming ``ci.yml:hardware``; restoring it makes this pass.

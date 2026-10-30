@@ -135,3 +135,29 @@ Grounding: `.github/workflows/release-please.yml` job `prove-gate`;
 `tools/binaries/tests/test_release_workflow.py`. Release run 40271581654
 re-ran the full gate on 669966ead, a version-only head over 388bdcb96, whose
 push gate had already passed.
+
+## Proof reuse amendment, 2026-10-30
+
+Amended on the operator's explicit instruction to stop repeating measurement
+the tree has already passed, and to land this directly on the default branch.
+A scope job in the merge gate now decides what is left to measure, and any
+unclear answer measures in full. A landed commit whose tree equals a merged pull
+request's head, where that head's newest proof passed all eight measuring jobs,
+reruns only the dependency audit and code scanning. A version-only change over a
+parent whose push gate passed runs no suite, on the release proposal and on its
+landed commit; the cut still audits the lock and runs both accelerator tiers.
+The full-proof-per-ready-head rule holds for every pull request except the
+release App's proposal.
+
+Jobs that only read the API and wait on other runs (scope, verdict, candidate
+selection, parent proof, release result) move to GitHub-hosted runners, so a
+waiting job cannot hold a fleet slot it is waiting on. This extends the
+exception this record already grants the Windows suite. The runner-placement
+rule in `dev/ci_contract.py` is not gated and still reports these jobs.
+Workflow schedules are removed. The merge gate is no longer callable as a
+reusable workflow, and the light lint target is deleted. The administrator
+bypass stays in use for direct landings, which contradicts the removal recorded
+above; such a commit has no same-tree pull-request proof and so measures in full.
+
+Grounding: `dev/gate_scope.py`; `.github/workflows/merge-gate.yml` job `scope`;
+`dev/guards/test_gate_scope.py`.

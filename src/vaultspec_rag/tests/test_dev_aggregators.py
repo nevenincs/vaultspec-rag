@@ -18,7 +18,7 @@ import pytest
 from dev import exit_codes, gates
 from dev.__main__ import _execute
 from dev.runner import Cmd, Ref
-from dev.toolchain import LINT_LIGHT, VERBS, Target, Verb
+from dev.toolchain import VERBS, Target, Verb
 
 #: Targets deliberately outside their verb's ``all``, and why. Most are a
 #: SELECTION within a target that ``all`` already runs, so including one would
@@ -26,10 +26,6 @@ from dev.toolchain import LINT_LIGHT, VERBS, Target, Verb
 #: checked against real pytest collection by the marker guards in this tree.
 #: The audit entry is a different reason and is checked elsewhere - see it.
 EXEMPT: dict[tuple[str, str], str] = {
-    ("lint", "light"): (
-        "a selection of dimensions already run by lint all; the subset guard "
-        "checks its actual references against the full aggregate"
-    ),
     ("test", "fast"): "the unit tier, a subset of the python lane",
     ("test", "provisioning"): "five files the python lane already collects",
     ("test", "windows"): (
@@ -50,25 +46,37 @@ EXEMPT: dict[tuple[str, str], str] = {
 
 
 @pytest.mark.unit
-def test_light_lint_is_a_nonempty_subset_of_the_full_aggregate() -> None:
-    """The light exemption cannot hide a dimension absent from full lint.
+def test_a_parallel_target_reports_in_order_and_runs_past_a_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Concurrency changes neither the verdict nor which failure it names.
 
-    Mutation proof: adding ``Ref(\"uncovered\")`` to the light target failed
-    naming that dimension; removing it passed immediately.
+    Mutation proof: returning the last failing code from ``_summarise`` failed
+    this on the exit code; restoring the first passed.
+    """
+    calls: list[str] = []
+
+    def fake(_verb: Verb, name: str) -> tuple[int, bytes]:
+        calls.append(name)
+        return {"one": 0, "two": 3, "three": 4}[name], b""
+
+    monkeypatch.setattr("dev.__main__._reenter", fake)
+    refs = tuple(Ref(name) for name in ("one", "two", "three"))
+    target = Target("all", "", refs, keep_going=True, parallel=True)
+    verb = Verb("demo", "", (target,))
+    assert _execute(verb, target) == 3
+    assert sorted(calls) == ["one", "three", "two"]
+
+
+@pytest.mark.unit
+def test_lint_all_is_only_references_it_can_run_concurrently() -> None:
+    """Mutation proof: adding an ``Echo`` step to ``lint all`` failed this;
+    removing it passed.
     """
     lint = next(verb for verb in VERBS if verb.name == "lint")
     full = lint.find("all")
-    light = lint.find("light")
-    assert full is not None and light is not None
-    assert light.steps, "light lint must run at least one dimension"
-    assert all(isinstance(step, Ref) for step in light.steps), (
-        "light lint must select dimensions from lint all"
-    )
-    covered = {step.target for step in full.steps if isinstance(step, Ref)}
-    selected = {step.target for step in light.steps if isinstance(step, Ref)}
-    assert selected < covered, (
-        f"light lint dimensions absent from all: {selected - covered}"
-    )
+    assert full is not None and full.parallel
+    assert all(isinstance(step, Ref) for step in full.steps)
 
 
 def _aggregate_verbs() -> list[Verb]:
@@ -85,16 +93,6 @@ def test_every_target_is_reachable_from_its_aggregate(verb: Verb) -> None:
     referenced = {step.target for step in aggregate.steps if isinstance(step, Ref)}
     for target in verb.targets:
         if target.name == "all" or target.name.startswith("_"):
-            continue
-        if (verb.name, target.name) == ("lint", "light"):
-            # Mutation proof: omitting a light dimension fails the tuple check;
-            # adding a dimension absent from all fails the subset check.
-            light_references = tuple(
-                step.target for step in target.steps if isinstance(step, Ref)
-            )
-            assert light_references == LINT_LIGHT
-            assert len(target.steps) == len(light_references)
-            assert set(light_references) < referenced
             continue
         if (verb.name, target.name) in EXEMPT:
             continue
