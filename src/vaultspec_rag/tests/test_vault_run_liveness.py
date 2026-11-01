@@ -48,17 +48,18 @@ if TYPE_CHECKING:
     from .._store_writes import StoreWritePolicy
 
 
+_UNLOADED_OVERRIDES: dict[str, object] = {
+    "embedding_dimension": 2,
+    "qdrant_url": None,
+    "sparse_enabled": False,
+    "index_no_progress_timeout_seconds": 2.0,
+}
+
+
 @pytest.fixture
 def unloaded_model(clean_config: None) -> EmbeddingModel:
     del clean_config
-    cfg = get_config(
-        {
-            "embedding_dimension": 2,
-            "qdrant_url": None,
-            "sparse_enabled": False,
-            "index_no_progress_timeout_seconds": 2.0,
-        }
-    )
+    cfg = get_config(_UNLOADED_OVERRIDES)
     model = EmbeddingModel.__new__(EmbeddingModel)
     # No weights are loaded here, so there is no device to name.
     model._device = "unloaded"
@@ -119,12 +120,16 @@ def test_confirmed_vault_units_extend_a_run_beyond_its_timeout(
 ) -> None:
     """Removing inserted-unit renewal fails on the first real durable count."""
     del unloaded_model
+    # A store write is refused with under a second of budget left, so each
+    # unit gets the timeout minus that floor minus the wait to land in. Five
+    # waits still outlast the timeout, which renewal alone can survive.
+    get_config({**_UNLOADED_OVERRIDES, "index_no_progress_timeout_seconds": 4.0})
     with VaultStore(tmp_path, embedding_dim=2) as store:
         checkpoint = _open(tmp_path, store, RunControlToken())
         started = time.monotonic()
         run = checkpoint.run_policy.snapshot()
         for ordinal in range(5):
-            checkpoint.run_policy.wait(0.55)
+            checkpoint.run_policy.wait(0.9)
             _confirm(store, checkpoint, _chunk(ordinal, 5))
             run = checkpoint.run_policy.snapshot()
             assert run.durable_progress_count == ordinal + 1, (
