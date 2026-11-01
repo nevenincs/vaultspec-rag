@@ -5,7 +5,7 @@ tags:
 date: '2026-10-26'
 modified: '2026-11-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:b41f44b8f3c461d6bbefa02a76c3a67c4208cf4568923e067df7ba9242fe8c44'
+body_hash: 'sha256:98800b9a85a023e03e2be1e7b3db38525dc36f97819a7ad22db6e1ce641321af'
 related:
   - "[[2026-10-26-stale-search-hits-plan]]"
 ---
@@ -155,6 +155,11 @@ related:
 - `S10` `verify:` `ruff check src tools dev conftest.py` -> `pass`
 - `S10` `verify:` `ty check src tools dev conftest.py` -> `pass`
 - `S10` `verify:` `pytest test_search_drift test_search_hit_freshness test_ci_job_names` -> `pass`
+- `S11` `M` `package.json`
+- `S11` `M` `package-lock.json`
+- `S11` `verify:` `python -m dev.audit.dependency_audit` -> `pass`
+- `S11` `verify:` `npm run lint` -> `pass`
+- `S11` `verify:` `npm run typecheck` -> `pass`
 
 ## Notes
 

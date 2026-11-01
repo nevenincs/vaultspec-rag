@@ -16,7 +16,7 @@ related:
   - '[[2026-10-05-qdrant-provisioning-trust-adr]]'
 modified: '2026-11-01'
 body_schema: body-v2
-body_hash: 'sha256:7c1720dd8d2c2feeee968736eb37213b0cf436c0e3bab68cedc9656f89aebb3a'
+body_hash: 'sha256:f943f80ec50210ae1da5eb1e9cf3a6b5f145b14703eb6eb95de3103ae9fd8b18'
 ---
 
 <!-- RETIRED: S07 -->
@@ -44,6 +44,7 @@ The user authorized implementation of stale-hit detection, bounded automatic aud
 - [x] `S08` - Align reviewed Qdrant server pins with the existing locked 1.20 client using outgoing-digest reproduction and canonical asset derivation, without changing the user dependency update; `src/vaultspec_rag/qdrant_runtime/_constants.py, user-authorized staged uv.lock update and pin validation evidence`.
 - [x] `S09` - Replace duplicate integration process-exit waiting with canonical deadline-aware observation, preserving timeout budgets and cleanup assertions; `src/vaultspec_rag/tests/integration process lifecycle helpers and callers, plus focused CPU cleanup coverage`.
 - [x] `S10` - Retire stale-hit audits only on evidence newer than the audit, clearing finished diagnoses on a newer certified publication, and type the workflow-name guard's lookup key; `src/vaultspec_rag/_search_drift.py, server/_routes_search.py, tests/test_search_drift.py and dev/guards/test_ci_job_names.py`.
+- [x] `S11` - Override the dev-only minimatch to the patched 11.0.3 so the dependency audit passes; `package.json and package-lock.json`.
 
 ## Parallelization
 
