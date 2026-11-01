@@ -16,7 +16,7 @@ related:
   - '[[2026-10-05-qdrant-provisioning-trust-adr]]'
 modified: '2026-11-01'
 body_schema: body-v2
-body_hash: 'sha256:f943f80ec50210ae1da5eb1e9cf3a6b5f145b14703eb6eb95de3103ae9fd8b18'
+body_hash: 'sha256:fb4fec476eb0b8f9d1906134924a4b75266420a5b30511bca8c660f00ff48f7a'
 ---
 
 <!-- RETIRED: S07 -->
@@ -45,6 +45,7 @@ The user authorized implementation of stale-hit detection, bounded automatic aud
 - [x] `S09` - Replace duplicate integration process-exit waiting with canonical deadline-aware observation, preserving timeout budgets and cleanup assertions; `src/vaultspec_rag/tests/integration process lifecycle helpers and callers, plus focused CPU cleanup coverage`.
 - [x] `S10` - Retire stale-hit audits only on evidence newer than the audit, clearing finished diagnoses on a newer certified publication, and type the workflow-name guard's lookup key; `src/vaultspec_rag/_search_drift.py, server/_routes_search.py, tests/test_search_drift.py and dev/guards/test_ci_job_names.py`.
 - [x] `S11` - Override the dev-only minimatch to the patched 11.0.3 so the dependency audit passes; `package.json and package-lock.json`.
+- [x] `S12` - Type the smoke check's parsed install payload and restore the ledger's canonical format so every lint lane passes; `tests/smoke_check.py and the feature ledger`.
 
 ## Parallelization
 
