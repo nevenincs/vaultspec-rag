@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.3](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.6.2...vaultspec-rag-v0.6.3) (2026-11-01)
+
+
+### Features
+
+* **search:** flag stale hits and surface rebuild blockers ([#640](https://github.com/nevenincs/vaultspec-rag/issues/640)) ([3105d18](https://github.com/nevenincs/vaultspec-rag/commit/3105d1873bb4ec37240a201d5eb45f2b336857dd))
+
 ## [0.6.2](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.6.0...vaultspec-rag-v0.6.2) (2026-10-27)
 
 
