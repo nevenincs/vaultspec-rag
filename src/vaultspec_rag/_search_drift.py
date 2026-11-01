@@ -66,6 +66,37 @@ class _Audit:
     reason: str | None = None
     job_id: str | None = None
     details: dict[str, object] | None = None
+    publication: tuple[str, int] | None = None
+
+
+def _publication_identity(root: Path, source: IndexSource) -> tuple[str, int] | None:
+    """Name the certified publication; a reset can reuse a bare revision number."""
+    snapshot = capture_hit_publications(root, (source,)).get(source)
+    if snapshot is None:
+        return None
+    return snapshot.proof.generation_id, snapshot.proof.revision
+
+
+def _is_settled(
+    audit: _Audit,
+    current: set[tuple[IndexSource, str]],
+    observed_at: float,
+) -> bool:
+    """Decide whether later evidence has overtaken an audit.
+
+    Only a search begun after the audit was requested can speak for its files.
+    A deleted file never returns as a hit, so a newer certified publication also
+    settles a finished diagnosis; an unreadable proof settles nothing, and a
+    drift the publication left behind is reported again by its next stale hit.
+    """
+    if audit.requested_at <= observed_at and all(
+        (audit.source, file.path) in current for file in audit.files
+    ):
+        return True
+    if audit.status == "pending":
+        return False
+    publication = _publication_identity(audit.root, audit.source)
+    return publication is not None and publication != audit.publication
 
 
 def _recheck(audit: _Audit) -> tuple[DriftedFile, ...]:
@@ -179,6 +210,7 @@ class SearchDriftAuditor:
         root: Path,
         files: tuple[DriftedFile, ...],
         now: float,
+        publication: tuple[str, int] | None,
     ) -> _Audit | None:
         source = files[0].source
         key = (root, source)
@@ -195,7 +227,7 @@ class SearchDriftAuditor:
             if not candidates:
                 return None
             del self._audits[candidates[0]]
-        audit = _Audit(root, source, files, now)
+        audit = _Audit(root, source, files, now, publication=publication)
         self._audits[key] = audit
         return audit
 
@@ -204,14 +236,16 @@ class SearchDriftAuditor:
     ) -> None:
         """Record confirmed stale delivery after the response has been sent."""
         now = time.monotonic()
+        selections = [
+            (selected, _publication_identity(root, source))
+            for source in INDEX_SOURCES
+            if (selected := tuple(file for file in files if file.source == source))
+        ]
         with self._lock:
             if self._closing.is_set():
                 return
-            for source in INDEX_SOURCES:
-                selected = tuple(file for file in files if file.source == source)
-                if not selected:
-                    continue
-                audit = self._reserve(root, selected, now)
+            for selected, publication in selections:
+                audit = self._reserve(root, selected, now, publication)
                 if audit is not None:
                     self._pending.append((audit, registry))
             if not self._pending or self._running:
@@ -267,8 +301,12 @@ class SearchDriftAuditor:
         registry: ServiceRegistry,
         delivered: dict[str, object] | None = None,
         port: int | None = None,
+        observed_at: float = float("-inf"),
     ) -> list[dict[str, object]]:
-        """Project diagnoses and the canonical repair job's typed blockers."""
+        """Project diagnoses and the canonical repair job's typed blockers.
+
+        ``observed_at`` is the monotonic time the delivered search began.
+        """
         with self._lock:
             audits = [
                 audit for (path, _), audit in self._audits.items() if path == root
@@ -276,7 +314,7 @@ class SearchDriftAuditor:
         result: list[dict[str, object]] = []
         current = _current_files(delivered or {})
         for audit in audits:
-            if all((audit.source, file.path) in current for file in audit.files):
+            if _is_settled(audit, current, observed_at):
                 self._retire(audit)
                 continue
             result.append(_project_audit(audit, registry, port))

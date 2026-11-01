@@ -14,9 +14,9 @@ related:
   - '[[2026-07-17-stdio-watchdog-convergence-adr]]'
   - '[[2026-07-28-stdio-orphan-rearm-adr]]'
   - '[[2026-10-05-qdrant-provisioning-trust-adr]]'
-modified: '2026-10-26'
+modified: '2026-11-01'
 body_schema: body-v2
-body_hash: 'sha256:538700cbc74715c0726872b121ab37509891d8bf2cfe343acea4dda00582d980'
+body_hash: 'sha256:7c1720dd8d2c2feeee968736eb37213b0cf436c0e3bab68cedc9656f89aebb3a'
 ---
 
 <!-- RETIRED: S07 -->
@@ -43,6 +43,7 @@ The user authorized implementation of stale-hit detection, bounded automatic aud
 - [x] `S06` - Make the malformed optional-null audit fixture persist the intended invalid payload through the real backend, retaining exact audit rejection and mutation proof; `src/vaultspec_rag/tests/test_vault_audit_validation.py`.
 - [x] `S08` - Align reviewed Qdrant server pins with the existing locked 1.20 client using outgoing-digest reproduction and canonical asset derivation, without changing the user dependency update; `src/vaultspec_rag/qdrant_runtime/_constants.py, user-authorized staged uv.lock update and pin validation evidence`.
 - [x] `S09` - Replace duplicate integration process-exit waiting with canonical deadline-aware observation, preserving timeout budgets and cleanup assertions; `src/vaultspec_rag/tests/integration process lifecycle helpers and callers, plus focused CPU cleanup coverage`.
+- [x] `S10` - Retire stale-hit audits only on evidence newer than the audit, clearing finished diagnoses on a newer certified publication, and type the workflow-name guard's lookup key; `src/vaultspec_rag/_search_drift.py, server/_routes_search.py, tests/test_search_drift.py and dev/guards/test_ci_job_names.py`.
 
 ## Parallelization
 

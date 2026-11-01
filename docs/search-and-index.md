@@ -147,7 +147,7 @@ reconciliation returns `full_reindex_required`, the response reports
 `rebuild_required` and an executable rebuild command for the affected root and
 source. Follow that command when ready; the service never starts a full rebuild
 automatically. A rebuild deletes the selected old index before constructing its
-replacement.
+replacement. A finished diagnosis clears once a newer publication is certified.
 
 ## Choose immediate or bounded freshness
 

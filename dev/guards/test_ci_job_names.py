@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from dev.guards import _workflows as workflows
-from dev.guards._ci_names import PRODUCT, SHARED_WORKFLOW_NAMES
+from dev.guards._ci_names import PRODUCT, SHARED_WORKFLOW_NAMES, Workflow
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
 
@@ -26,7 +26,7 @@ def test_every_workflow_name_starts_with_the_product() -> None:
         f"{workflow}: {name!r}"
         for workflow, name in workflows.workflow_names()
         if (
-            name != SHARED_WORKFLOW_NAMES[workflow]
+            name != SHARED_WORKFLOW_NAMES[Workflow(workflow)]
             if workflow in SHARED_WORKFLOW_NAMES
             else not name.startswith(f"{PRODUCT} ")
         )

@@ -1406,6 +1406,7 @@ async def _search_route_response(request: Request) -> JSONResponse:
             _record_validation_rejection(finalization, search_request)
             return search_request.response
         _record_normalized_activity(activity_ticket, search_request)
+        search_began = time.monotonic()
         completed = await _execute_search_until_disconnect(
             request,
             search_request,
@@ -1423,7 +1424,11 @@ async def _search_route_response(request: Request) -> JSONResponse:
         runtime = get_request_runtime(request)
         files = served_stale_files(completed.result)
         audits = runtime.drift_auditor.snapshot(
-            search_request.root, runtime.registry, completed.result, runtime.port
+            search_request.root,
+            runtime.registry,
+            completed.result,
+            runtime.port,
+            search_began,
         )
         if audits:
             completed.result["drift_audit"] = audits

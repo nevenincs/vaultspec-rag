@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#stale-search-hits'
 date: '2026-10-26'
-modified: '2026-10-30'
+modified: '2026-11-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:b53272d1cc04c63a107765ace649a0f693f69a3fa00b304ec1ccef74b2e77656'
+body_hash: 'sha256:b41f44b8f3c461d6bbefa02a76c3a67c4208cf4568923e067df7ba9242fe8c44'
 related:
   - "[[2026-10-26-stale-search-hits-plan]]"
 ---
@@ -148,6 +148,13 @@ related:
 - `S02` `verify:` `vaultspec-core vault feature index --feature stale-search-hits --json` -> `pass`
 - `S02` `verify:` `vaultspec-core vault check all --fix --feature stale-search-hits --no-hints --json (20 checks zero non-info findings)` -> `pass`
 - `S02` `verify:` `vaultspec-core vault plan status stale-search-hits --json` -> `pass`
+- `S10` `M` `src/vaultspec_rag/_search_drift.py`
+- `S10` `M` `src/vaultspec_rag/server/_routes_search.py`
+- `S10` `M` `src/vaultspec_rag/tests/test_search_drift.py`
+- `S10` `M` `dev/guards/test_ci_job_names.py`
+- `S10` `verify:` `ruff check src tools dev conftest.py` -> `pass`
+- `S10` `verify:` `ty check src tools dev conftest.py` -> `pass`
+- `S10` `verify:` `pytest test_search_drift test_search_hit_freshness test_ci_job_names` -> `pass`
 
 ## Notes
 

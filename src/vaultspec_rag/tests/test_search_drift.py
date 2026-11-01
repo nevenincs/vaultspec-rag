@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import replace
 from typing import TYPE_CHECKING, cast
 
@@ -47,6 +48,28 @@ def _audit(root: Path) -> _Audit:
     )
 
 
+def _publish_vault(store: VaultStore, path: Path, root: Path) -> None:
+    document = prepare_document(path, root)
+    assert document is not None
+    assert document.id == "adr/stored.document"
+    chunks = split_document(document, 50)
+    for chunk in chunks:
+        chunk.vector = [0.1, 0.2, 0.3, 0.4]
+    checkpoint = VaultRunCheckpoint.open(
+        root,
+        backend_identity=store.backend_identity,
+        authority=RunAuthority.REBUILD,
+        operation=RunOperation.FULL,
+        run_control=NO_RUN_CONTROL,
+    )
+    store.upsert_document_chunks(chunks, write_policy=None)
+    checkpoint.record_confirmed_chunks(
+        chunks, {chunks[0].doc_id: fingerprint_bytes(path, root, path.read_bytes())}
+    )
+    assert checkpoint.publish_proof_transition() == 1
+    checkpoint.publish_generation()
+
+
 @pytest.fixture(params=[".vault", "knowledge"])
 def published_vault(
     tmp_path: Path, request: pytest.FixtureRequest
@@ -68,26 +91,8 @@ def published_vault(
             "VAULTSPEC_DOCS_DIR": docs_dir,
         }
     ):
-        document = prepare_document(path, root)
-        assert document is not None
-        assert document.id == "adr/stored.document"
-        chunks = split_document(document, 50)
-        for chunk in chunks:
-            chunk.vector = [0.1, 0.2, 0.3, 0.4]
         with VaultStore(root) as store:
-            checkpoint = VaultRunCheckpoint.open(
-                root,
-                backend_identity=store.backend_identity,
-                authority=RunAuthority.REBUILD,
-                operation=RunOperation.FULL,
-                run_control=NO_RUN_CONTROL,
-            )
-            store.upsert_document_chunks(chunks, write_policy=None)
-            checkpoint.record_confirmed_chunks(
-                chunks, {chunks[0].doc_id: fingerprint_bytes(path, root, data)}
-            )
-            assert checkpoint.publish_proof_transition() == 1
-            checkpoint.publish_generation()
+            _publish_vault(store, path, root)
         registry = ServiceRegistry()
         audit = _Audit(
             root,
@@ -254,13 +259,13 @@ def test_delivery_reservations_coalesce_pending_and_recent_audits(
     # restoring it passed in the same run.
     auditor = SearchDriftAuditor()
     files = _audit(tmp_path).files
-    first = auditor._reserve(tmp_path, files, 1000.0)
+    first = auditor._reserve(tmp_path, files, 1000.0, None)
     assert first is not None
     for now in (1001.0, 2000.0):
-        assert auditor._reserve(tmp_path, files, now) is None
+        assert auditor._reserve(tmp_path, files, now, None) is None
     auditor._audits[tmp_path, "code"] = replace(first, status="rebuild_required")
-    assert auditor._reserve(tmp_path, files, 1001.0) is None
-    later = auditor._reserve(tmp_path, files, 2000.0)
+    assert auditor._reserve(tmp_path, files, 1001.0, None) is None
+    later = auditor._reserve(tmp_path, files, 2000.0, None)
     assert later is not None
     assert later is not first
     assert later.status == "pending"
@@ -329,7 +334,7 @@ def test_repair_job_refusal_bubbles_and_verified_current_file_clears_observation
             }
         ]
     }
-    assert auditor.snapshot(tmp_path, registry, delivered) == []
+    assert auditor.snapshot(tmp_path, registry, delivered, observed_at=1.0) == []
 
 
 def test_cli_and_mcp_preserve_stale_hits_and_operator_rebuild_request(
@@ -381,13 +386,67 @@ def test_cli_and_mcp_preserve_stale_hits_and_operator_rebuild_request(
 def test_current_snapshot_cannot_retire_a_newer_audit(tmp_path: Path) -> None:
     # Unconditional removal fails the newer-observation assertion below.
     auditor = SearchDriftAuditor()
-    first = auditor._reserve(tmp_path, _audit(tmp_path).files, 1000.0)
+    first = auditor._reserve(tmp_path, _audit(tmp_path).files, 1000.0, None)
     assert first is not None
     finished = replace(first, status="resolved_or_unverifiable")
     auditor._audits[tmp_path, "code"] = finished
-    newer = auditor._reserve(tmp_path, first.files, 2000.0)
+    newer = auditor._reserve(tmp_path, first.files, 2000.0, None)
     assert newer is not None
     auditor._retire(finished)
     assert auditor._audits.get((tmp_path, "code")) is newer
     auditor._retire(newer)
     assert (tmp_path, "code") not in auditor._audits
+
+
+def test_search_begun_before_an_audit_cannot_retire_it(tmp_path: Path) -> None:
+    # Dropping the requested_at comparison fails the first assertion: an overlapping
+    # search verified its hit before the newer stale delivery that opened the audit.
+    auditor = SearchDriftAuditor()
+    audit = auditor._reserve(tmp_path, _audit(tmp_path).files, 1000.0, None)
+    assert audit is not None
+    registry = ServiceRegistry()
+    delivered: dict[str, object] = {
+        "results": [
+            {"path": "src/a.py", "source": "codebase", "freshness": "current"},
+        ]
+    }
+    earlier = auditor.snapshot(tmp_path, registry, delivered, observed_at=999.0)
+    assert [item["status"] for item in earlier] == ["pending"]
+    assert auditor._audits.get((tmp_path, "code")) is audit
+    assert auditor.snapshot(tmp_path, registry, delivered, observed_at=1000.0) == []
+    assert (tmp_path, "code") not in auditor._audits
+
+
+def test_rebuild_blocker_clears_only_after_a_newer_publication(
+    published_vault: tuple[_Audit, ServiceRegistry],
+) -> None:
+    # Removing the publication comparison fails the final assertion: the blocker
+    # survives the rebuild. Comparing without the captured baseline fails the first
+    # snapshot: the blocker vanishes with no publication at all.
+    audit, registry = published_vault
+    path = audit.root / audit.files[0].path
+    with registry.lease_store(audit.root) as store:
+        store.delete_documents(["adr/stored.document"])
+    auditor = SearchDriftAuditor()
+    auditor.note_served(audit.root, audit.files, registry)
+    for thread in threading.enumerate():
+        if thread.name == "search-drift-audit":
+            thread.join(timeout=30)
+    diagnosed = auditor.snapshot(audit.root, registry)
+    assert [item["status"] for item in diagnosed] == ["rebuild_required"]
+    assert auditor.snapshot(audit.root, registry) == diagnosed
+    with registry.lease_store(audit.root) as store:
+        _publish_vault(store, path, audit.root)
+    assert auditor.snapshot(audit.root, registry) == []
+
+
+def test_unreadable_publication_keeps_a_finished_audit(tmp_path: Path) -> None:
+    # Treating absent evidence as a changed publication fails this assertion.
+    auditor = SearchDriftAuditor()
+    audit = replace(
+        _audit(tmp_path), status="rebuild_required", publication=("generation", 1)
+    )
+    auditor._audits[tmp_path, "code"] = audit
+    diagnosed = auditor.snapshot(tmp_path, ServiceRegistry())
+    assert [item["status"] for item in diagnosed] == ["rebuild_required"]
+    assert auditor._audits.get((tmp_path, "code")) is audit
