@@ -724,10 +724,8 @@ def pid_listens_on_loopback_port(
         return False
 
     def inspect() -> bool:
-        import psutil
-
         try:
-            connections = pid_tcp_connections(pid)
+            listeners = _pid_tcp_listeners(pid)
         except Exception as exc:
             logger.debug(
                 "could not inspect TCP listener ownership for pid %d port %d: %s",
@@ -736,17 +734,71 @@ def pid_listens_on_loopback_port(
                 exc,
             )
             return False
-        for connection in connections:
-            if connection.status != psutil.CONN_LISTEN:
-                continue
-            address = connection.laddr
-            if int(address.port) == port and str(address.ip) in {"127.0.0.1", "::1"}:
-                return True
-        return False
+        return any(
+            listen_port == port and ip in {"127.0.0.1", "::1"}
+            for ip, listen_port in listeners
+        )
 
     return bounded_call(
         inspect, timeout=timeout, fallback=False, label=f"pid-{pid}-listener"
     )
+
+
+def _pid_tcp_listeners(pid: int) -> list[tuple[str, int]]:
+    """Return *pid*'s listening ``(ip, port)`` endpoints; raise if unreadable.
+
+    Windows reads the listener-only table, where membership makes a row a
+    listener: some builds give every listening socket a state outside the
+    ``MIB_TCP_STATE`` range, so a state-filtered read finds none.
+    """
+    if sys.platform != "win32":
+        import psutil
+
+        return [
+            (str(c.laddr.ip), int(c.laddr.port))
+            for c in pid_tcp_connections(pid)
+            if c.status == psutil.CONN_LISTEN and c.laddr
+        ]
+    import ctypes
+    import socket
+    from ctypes import wintypes
+
+    dword, addr6 = wintypes.DWORD, ctypes.c_ubyte * 16
+
+    class Row4(ctypes.Structure):  # MIB_TCPROW_OWNER_PID
+        _fields_ = (("state", dword), ("addr", dword), ("port", dword))
+        _fields_ += (("raddr", dword), ("rport", dword), ("pid", dword))
+
+    class Row6(ctypes.Structure):  # MIB_TCP6ROW_OWNER_PID
+        _fields_ = (("addr", addr6), ("scope", dword), ("port", dword))
+        _fields_ += (("raddr", addr6), ("rscope", dword), ("rport", dword))
+        _fields_ += (("state", dword), ("pid", dword))
+
+    get_table = ctypes.windll.iphlpapi.GetExtendedTcpTable
+    get_table.restype = dword
+
+    def rows[R: ctypes.Structure](family: int, row_type: type[R]) -> list[R]:
+        size, buf = dword(0), ctypes.create_string_buffer(0)
+        # 3 is TCP_TABLE_OWNER_PID_LISTENER; 122 is ERROR_INSUFFICIENT_BUFFER.
+        while code := get_table(buf, ctypes.byref(size), False, family, 3, 0):
+            if code != 122:
+                raise OSError(code, f"GetExtendedTcpTable failed for {family}")
+            buf = ctypes.create_string_buffer(size.value)
+        step, count = ctypes.sizeof(row_type), dword.from_buffer(buf).value
+        # The row array follows the table's DWORD entry count.
+        return [row_type.from_buffer(buf, 4 + i * step) for i in range(count)]
+
+    listeners = [
+        (socket.inet_ntoa(int(r.addr).to_bytes(4, "little")), r.port)
+        for r in rows(socket.AF_INET, Row4)
+        if r.pid == pid
+    ]
+    listeners += [
+        (socket.inet_ntop(socket.AF_INET6, bytes(r.addr)), r.port)
+        for r in rows(socket.AF_INET6, Row6)
+        if r.pid == pid
+    ]
+    return [(ip, socket.ntohs(int(port) & 0xFFFF)) for ip, port in listeners]
 
 
 def pid_tcp_connections(pid: int) -> list[pconn]:
