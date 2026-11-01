@@ -5,10 +5,11 @@ tags:
 date: '2026-10-26'
 modified: '2026-11-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:98800b9a85a023e03e2be1e7b3db38525dc36f97819a7ad22db6e1ce641321af'
+body_hash: 'sha256:6b46b7d41584f4f154096ebf1e54ddd384106cab0b481b22e932adc7208931da'
 related:
   - "[[2026-10-26-stale-search-hits-plan]]"
 ---
+
 # `stale-search-hits` ledger
 
 ## Changes
@@ -160,6 +161,10 @@ related:
 - `S11` `verify:` `python -m dev.audit.dependency_audit` -> `pass`
 - `S11` `verify:` `npm run lint` -> `pass`
 - `S11` `verify:` `npm run typecheck` -> `pass`
+- `S12` `M` `tests/smoke_check.py`
+- `S12` `verify:` `ty check` -> `pass`
+- `S12` `verify:` `basedpyright` -> `pass`
+- `S12` `verify:` `mdformat --check` -> `pass`
 
 ## Notes
 
