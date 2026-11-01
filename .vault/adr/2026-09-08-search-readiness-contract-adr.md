@@ -12,12 +12,13 @@ related:
   - '[[2026-09-23-status-messages-research]]'
   - '[[2026-09-23-status-messages-adr]]'
   - '[[2026-10-12-destructive-rebuild-lifecycle-adr]]'
+  - '[[2026-10-26-stale-search-hits-adr]]'
 supersedes:
   - '2026-06-11-search-freshness-and-empty-results-adr'
   - '2026-07-21-search-index-availability-adr'
-modified: '2026-10-12'
+modified: '2026-10-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:63289954fd38aa170e6d5a24bc9d65ba4346e13fdba6f3f890dbb25d1e5e1806'
+body_hash: 'sha256:c43dd1a6f485b02b21d1ccb35a317b10c12bd899ecfcdf41162edf33c589ca20'
 ---
 
 # `search-readiness-contract` adr: `canonical search readiness and bounded freshness waits` | (**status:** `accepted`)
@@ -61,6 +62,12 @@ and the cross-surface inventory are in `2026-09-08-search-readiness-contract-res
 The user confirmed on 2026-10-12 that rebuilding must continue to serve indexing and search. `2026-10-12-destructive-rebuild-lifecycle-adr` replaces any implication below that only a previously completed generation can supply useful updating results. During an explicit rebuild the old index is deleted; the serving generation is the new partial build and is separate from completed publication. Compatible nonempty current-epoch results remain successful with `availability=usable`, `freshness=updating`, and `absence_authority=non_authoritative`. A request crossing reset returns a bounded retry or typed transition rather than old-generation results.
 
 The existing non-authoritative empty-result rule, combined-source accounting, immediate default, caller-selected bounded freshness waits, and service-owned classification remain binding. Partial completeness state persists across job failure or pause; job terminality never manufactures an authoritative empty result. An open publication receipt cannot become a whole-rebuild search blockade.
+
+### 2026-10-26: per-hit disk freshness is independent of publication readiness
+
+The user authorized bounded verification of final delivered hits on 2026-10-26. `2026-10-26-stale-search-hits-adr` adds per-hit `current`, `stale`, or `unverifiable` disk evidence without redefining this record's per-source publication freshness, availability, or absence authority. Immediate mode may perform deduplicated bounded safe disk reads of the delivered page; this refines the original snapshot-read-only performance statement below. It adds no convergence wait, full-corpus scan, GPU lock expansion, ranking change or whole-search serialization.
+
+Confirmed stale hits remain useful successful results with their indexed snippets and order. The service additionally projects supervised repair state and actionable `rebuild_required` remediation when bounded recovery proves it cannot proceed; adapters transport those canonical diagnostics. Per-hit currency cannot certify whole-corpus absence or publication completion.
 
 ### Retained original ruling, subject to the amendment above
 

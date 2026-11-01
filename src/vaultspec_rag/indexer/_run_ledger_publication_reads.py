@@ -136,6 +136,41 @@ class RunLedgerPublicationReadMethods:
         """Read canonical heads without opening a second ledger snapshot."""
         return evidence_rows_for_paths(connection, key, rel_paths)
 
+    def publication_content_for_paths(
+        self,
+        key: ProofCompatibilityKey,
+        rel_paths: tuple[str, ...],
+    ) -> dict[str, str]:
+        """Read bounded file identities without materializing their point lists."""
+        if len(rel_paths) > FETCH_BATCH:
+            raise ValueError(f"content lookup accepts at most {FETCH_BATCH} paths")
+        for rel_path in rel_paths:
+            validate_rel_path(rel_path)
+        if not rel_paths:
+            return {}
+        paths = tuple(dict.fromkeys(rel_paths))
+        placeholders = ", ".join("?" for _ in paths)
+        with ledger_connection(self.path) as connection:
+            begin_read(connection)
+            try:
+                require_proof_row(connection, key)
+                rows: list[sqlite3.Row] = fetch_all(
+                    connection,
+                    f"""
+                    SELECT rel_path, content_identity FROM publication_evidence
+                    WHERE source_type = ? AND root_identity = ?
+                      AND backend_identity = ? AND collection_identity = ?
+                      AND rel_path IN ({placeholders})
+                    """,
+                    (*stable_parameters(key), *paths),
+                )
+                return {
+                    column_text(row, "rel_path"): column_text(row, "content_identity")
+                    for row in rows
+                }
+            finally:
+                connection.rollback()
+
     def publication_evidence_for_paths(
         self,
         key: ProofCompatibilityKey,

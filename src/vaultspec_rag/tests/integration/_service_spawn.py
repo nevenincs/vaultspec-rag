@@ -22,11 +22,12 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from ..._process_probe import wait_for_exit
 from ...cli._process import _terminate_pid
 from ...cli._service_status import _write_service_status
 from .._ports import free_loopback_port
 from .._session_job_anchor import spawn_anchored_service
-from ._helpers import _poll_health, _wait_for_exit
+from ._helpers import _poll_health
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -130,7 +131,7 @@ def publish_status_then_await_health(service: SpawnedService, remaining: float) 
 
 def _terminate_and_reap(service: SpawnedService) -> None:
     _terminate_pid(service.pid)
-    if not _wait_for_exit(service.pid, timeout=_ATTEMPT_EXIT_SECONDS):
+    if not wait_for_exit(service.pid, timeout=_ATTEMPT_EXIT_SECONDS):
         msg = (
             f"service launcher {service.pid} on port {service.port} did not "
             f"exit within {_ATTEMPT_EXIT_SECONDS:.0f}s of being terminated"

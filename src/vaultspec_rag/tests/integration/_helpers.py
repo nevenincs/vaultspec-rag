@@ -21,7 +21,6 @@ from vaultspec_core.config import (
     reset_config,
 )
 
-from ..._process_probe import pid_alive
 from ...config._settings import get_config
 from ...config._types import EnvVar
 from ...qdrant_runtime._credential import read_managed_api_key
@@ -53,7 +52,6 @@ __all__ = [
     "_poll_own_health",
     "_resolve_host_provisioned_qdrant",
     "_service_env",
-    "_wait_for_exit",
     "provisioned_qdrant_binary",
     "seed_vault_publication",
     "serve_qdrant",
@@ -444,24 +442,6 @@ def _health_as_holder(
     except (OSError, ValueError):
         return None
     return cast("dict[str, object]", body) if isinstance(body, dict) else None
-
-
-#: Gap between liveness reads while waiting a process out. The poll interval is
-#: pure detection overshoot: every caller here is a teardown or an assertion
-#: that a process is gone, so whatever is slept past the actual exit is charged
-#: to the test. ``pid_alive`` is one kernel handle open and one exit-code read,
-#: so reading it twenty times a second costs nothing worth saving.
-_EXIT_POLL_SECONDS = 0.05
-
-
-def _wait_for_exit(pid: int, timeout: float = 15.0) -> bool:
-    """Wait for a process to exit.  Returns True if exited within timeout."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if not pid_alive(pid):
-            return True
-        time.sleep(min(_EXIT_POLL_SECONDS, max(0.0, deadline - time.monotonic())))
-    return False
 
 
 @contextmanager

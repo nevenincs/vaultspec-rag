@@ -412,6 +412,8 @@ def _display_search_results(
     for rank, result in enumerate(results, start=1):
         location = _search_result_location(result)
         head: list[Segment] = [(f"{rank}. {location}", HEADING)]
+        if result.get("freshness") == "stale":
+            head.append((" [stale]", WARN))
         if show_scores:
             head.append((f" (score {_search_result_score(result):.4f})", MUTED))
         _styled(*head, soft_wrap=True)
@@ -469,6 +471,8 @@ def _search_result_text_lines(
     and printing its current lines would show different text from the JSON
     form of the same search; the indexed snippet is shown instead.
     """
+    if result.get("freshness") == "stale":
+        return _display_text_lines(result.get("snippet", ""))
     source_lines = _source_line_text_lines(result, root=root)
     snippet = _non_empty_result_string(result, "snippet")
     if source_lines and (snippet is None or snippet.strip() in "\n".join(source_lines)):

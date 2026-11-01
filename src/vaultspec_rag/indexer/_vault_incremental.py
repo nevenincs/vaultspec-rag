@@ -32,6 +32,7 @@ from ._streaming import _stream_encode_and_upsert_vault, execute_store_mutation
 from ._streaming_types import VaultStreamRequest
 from ._vault_checkpoint import VaultRunCheckpoint
 from ._vault_fingerprint import VaultDelta
+from ._vault_identity import vault_document_id, vault_relative_path
 from ._vault_prep import IndexResult, prepare_document, split_document
 
 if TYPE_CHECKING:
@@ -254,17 +255,8 @@ class VaultIncrementalMixin:
             run_control.checkpoint()
             doc_type = get_doc_type(path, self.root_dir)
             if doc_type is not None:
-                try:
-                    rel = str(path.relative_to(docs_dir)).replace("\\", "/")
-                except ValueError as exc:
-                    logger.debug(
-                        "relative_to(%s) failed for %s: %s; using basename",
-                        docs_dir,
-                        path,
-                        exc,
-                    )
-                    rel = path.name
-                doc_id = rel.rsplit(".", 1)[0] if "." in rel else rel
+                rel = vault_relative_path(path, docs_dir, allow_basename=True)
+                doc_id = vault_document_id(rel)
                 current_docs[doc_id] = path
             run_control.checkpoint()
         return current_docs
@@ -573,30 +565,6 @@ class VaultIncrementalMixin:
         run_control.checkpoint()
         return docs
 
-    def _vault_doc_id(
-        self,
-        path: pathlib.Path,
-        docs_dir: pathlib.Path,
-    ) -> str | None:
-        """Resolve a filesystem path to its vault document id.
-
-        Mirrors the id scheme used by the full incremental scan: the path
-        relative to ``docs_dir`` with its extension stripped.
-
-        Args:
-            path: A filesystem path (need not exist - pure-path math only).
-            docs_dir: The vault documents root (``root_dir / docs_dir``).
-
-        Returns:
-            The document id, or ``None`` when ``path`` is not under
-            ``docs_dir``.
-        """
-        try:
-            rel = str(path.relative_to(docs_dir)).replace("\\", "/")
-        except ValueError:
-            return None
-        return rel.rsplit(".", 1)[0] if "." in rel else rel
-
     def _classify_scoped_paths(
         self,
         changed_paths: Iterable[pathlib.Path],
@@ -610,7 +578,8 @@ class VaultIncrementalMixin:
         with controlled_phase(reporter, run_control, "scan changed", None):
             for path in changed_paths:
                 run_control.checkpoint()
-                doc_id = self._vault_doc_id(path, docs_dir)
+                relative = vault_relative_path(path, docs_dir)
+                doc_id = vault_document_id(relative) if relative is not None else None
                 if doc_id is not None:
                     if path.is_file() and get_doc_type(path, self.root_dir) is not None:
                         to_hash[doc_id] = path

@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 from typer.testing import CliRunner
 
-from ..._process_probe import pid_alive
+from ..._process_probe import pid_alive, wait_for_exit
 from ...cli._process import _terminate_pid
 from ...cli._service_status import (
     _status_file,
@@ -40,7 +40,6 @@ from .._session_job_anchor import spawn_anchored_service
 from ._helpers import (
     _poll_health,
     _service_env,
-    _wait_for_exit,
 )
 from ._service_lifecycle_helpers import (
     _assert_expired_startup_torn_down,
@@ -240,9 +239,9 @@ def test_running_phase_status_failure_rolls_back_all_started_components(
         daemon_log = tmp_path / "service.log"
         output = _await_models_loaded(daemon_log, daemon_pid=daemon_pid)
         assert "All models loaded" in output, output
-        assert _wait_for_exit(daemon_pid, timeout=30.0)
-        assert _wait_for_exit(launcher_pid, timeout=30.0)
-        assert _wait_for_exit(qdrant_pid, timeout=30.0)
+        assert wait_for_exit(daemon_pid, timeout=30.0)
+        assert wait_for_exit(launcher_pid, timeout=30.0)
+        assert wait_for_exit(qdrant_pid, timeout=30.0)
         assert _wait_for_listeners_closed(port, qdrant_port)
         output = daemon_log.read_text(encoding="utf-8", errors="replace")
         assert "ServiceRegistry shut down" in output
@@ -434,9 +433,9 @@ if sys.platform == "win32":
             )
 
             assert cleanup_error == ""
-            assert _wait_for_exit(launcher_pid, timeout=15.0)
-            assert _wait_for_exit(daemon_pid, timeout=15.0)
-            assert _wait_for_exit(qdrant_pid, timeout=15.0)
+            assert wait_for_exit(launcher_pid, timeout=15.0)
+            assert wait_for_exit(daemon_pid, timeout=15.0)
+            assert wait_for_exit(qdrant_pid, timeout=15.0)
             assert _wait_for_listeners_closed(port, qdrant_port)
 
     @pytest.mark.integration
@@ -504,7 +503,7 @@ if sys.platform == "win32":
                     timeout=15.0,
                 )
                 assert error == ""
-                assert _wait_for_exit(owned.pid, timeout=15.0)
+                assert wait_for_exit(owned.pid, timeout=15.0)
                 assert unrelated.poll() is None
                 assert pid_alive(unrelated.pid)
             finally:
@@ -729,7 +728,7 @@ if sys.platform != "win32":
                 qdrant_pid,
                 expected_start_time=actual_start,
             )
-            assert _wait_for_exit(qdrant_pid, timeout=15.0)
+            assert wait_for_exit(qdrant_pid, timeout=15.0)
             assert _wait_for_listeners_closed(qdrant_port)
 
     @pytest.mark.integration
@@ -748,7 +747,7 @@ if sys.platform != "win32":
             _terminate_pid(service.pid)
 
             assert service.wait(timeout=15.0) is not None
-            assert _wait_for_exit(qdrant_pid, timeout=15.0)
+            assert wait_for_exit(qdrant_pid, timeout=15.0)
             assert _wait_for_listeners_closed(qdrant_port)
             with pytest.raises(ProcessLookupError):
                 os.getpgid(service.pid)
@@ -789,7 +788,7 @@ if sys.platform != "win32":
             assert pid_alive(qdrant_pid)
             assert _port_is_listening(qdrant_port)
             assert reap_qdrant_orphan(qdrant_pid)
-            assert _wait_for_exit(qdrant_pid, timeout=15.0)
+            assert wait_for_exit(qdrant_pid, timeout=15.0)
             assert _wait_for_listeners_closed(qdrant_port)
 
     @pytest.mark.integration
@@ -834,5 +833,5 @@ if sys.platform != "win32":
                 qdrant_pid,
                 expected_start_time=actual_start,
             )
-            assert _wait_for_exit(qdrant_pid, timeout=15.0)
+            assert wait_for_exit(qdrant_pid, timeout=15.0)
             assert _wait_for_listeners_closed(qdrant_port)

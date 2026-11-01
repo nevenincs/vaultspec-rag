@@ -823,6 +823,7 @@ async def _shutdown_components(
     # synchronous guard joins an in-flight tick and makes every later one inert.
     # The join is bounded: a worker wedged mid-publish must not strand teardown
     # here, before any shutdown line is logged.
+    discovery.runtime.drift_auditor.close()
     discovery.quiesce(timeout=_DISCOVERY_SHUTDOWN_GUARD_TIMEOUT_SECONDS)
     monitor_clean = await _run_in_thread(_stop_owned_monitor, discovery.runtime)
     requested, initial_reasons, watcher_stop_ok = _begin_managed_shutdown(manager)

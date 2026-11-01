@@ -138,6 +138,8 @@ class SearchResult:
     section: str | None = None
     rerank_text: str | None = None
     passages: tuple[ResultPassage, ...] = ()
+    freshness: Literal["current", "stale", "unverifiable"] = "unverifiable"
+    stale_reason: str | None = None
 
 
 @dataclass
@@ -158,3 +160,5 @@ class DocumentSearchResult:
     extractor_version: str | None = None
     rerank_text: str | None = None
     source: Literal["document"] = "document"
+    freshness: Literal["current", "stale", "unverifiable"] = "unverifiable"
+    stale_reason: str | None = None

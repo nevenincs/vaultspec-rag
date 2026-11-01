@@ -18,14 +18,42 @@ module read a string someone had just written.
 
 from __future__ import annotations
 
+import subprocess
+import sys
+from typing import TYPE_CHECKING
+
 import pytest
 
+from ..._python_child import inline_command
+from .._child_signal import CHILD_PROCESS_TIMEOUT_SECONDS
 from .conftest import (
     _TEARDOWN_GRACEFUL_COURTESY_SECONDS,
+    _cleanup_service_process,
     teardown_graceful_courtesy_seconds,
 )
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 pytestmark = [pytest.mark.unit]
+
+
+def test_cleanup_confirms_an_exited_process_without_remaining_budget(
+    tmp_path: Path,
+) -> None:
+    """An exhausted wait budget must still observe a real child's completed exit.
+
+    Restoring the old integration wait makes cleanup raise its process-survival
+    assertion for this already-exited child; the canonical wait confirms exit.
+    """
+    with subprocess.Popen(inline_command(sys.executable, "pass")) as process:
+        assert process.wait(timeout=CHILD_PROCESS_TIMEOUT_SECONDS) == 0
+        _cleanup_service_process(
+            pid=process.pid,
+            port=0,
+            log_path=tmp_path / "service.log",
+            timeout=0.0,
+        )
 
 
 class TestTeardownGracefulCourtesy:

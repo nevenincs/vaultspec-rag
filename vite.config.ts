@@ -10,6 +10,14 @@ export default defineConfig({
   root: fileURLToPath(new URL("./src/monitor", import.meta.url)),
   base: "./",
   plugins: [react(), localServicePlugin()],
+  css: {
+    preprocessorOptions: {
+      // Carbon's own stylesheets use Sass syntax that Sass now deprecates; the
+      // warnings are unfixable here, so silence them for dependencies only and
+      // keep reporting deprecations in this project's stylesheets.
+      scss: { quietDeps: true },
+    },
+  },
   server: {
     host: devserver.host,
     port: portless.appPort,

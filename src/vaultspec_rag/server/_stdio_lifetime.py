@@ -424,6 +424,18 @@ if sys.platform == "win32":
             pid for pid in _walk_ancestor_pids(os.getpid(), parents) if pid in parents
         ]
 
+    def _add_precise_target(watched: list[WatchedAncestor], pid: int | None) -> bool:
+        """Retain one precise anchor, reporting whether its PID is watched."""
+        if pid is None:
+            return False
+        if any(target.pid == pid for target in watched):
+            return True
+        target = open_watched(pid, grace_prunable=False)
+        if target is None:
+            return False
+        watched.append(target)
+        return True
+
     def _gather_windows_targets(
         parent_pid: int | None, client_pid: int | None
     ) -> list[WatchedAncestor]:
@@ -435,20 +447,9 @@ if sys.platform == "win32":
         session when its hosting terminal dies.
         """
         watched: list[WatchedAncestor] = []
-        if parent_pid is not None:
-            explicit = open_watched(parent_pid, grace_prunable=False)
-            if explicit is not None:
-                watched.append(explicit)
+        _add_precise_target(watched, parent_pid)
         resolved = client_pid if client_pid is not None else resolve_stdin_client_pid()
-        client_watched = False
-        if resolved is not None:
-            if any(target.pid == resolved for target in watched):
-                client_watched = True
-            else:
-                client = open_watched(resolved, grace_prunable=False)
-                if client is not None:
-                    watched.append(client)
-                    client_watched = True
+        client_watched = _add_precise_target(watched, resolved)
         if not client_watched:
             known = {target.pid for target in watched}
             for target in open_ancestor_handles():

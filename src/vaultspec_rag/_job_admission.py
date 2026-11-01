@@ -13,7 +13,7 @@ import os
 import uuid
 from dataclasses import dataclass, replace
 from enum import StrEnum
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, TypedDict, Unpack
 
 from ._job_progress import record_progress
 from .job_control import NO_RUN_CONTROL
@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from .indexer._run_ledger_models import RunAuthority
     from .job_control import RunControl
     from .job_manager.manager import JobManager
+    from .service import ServiceRegistry
 
 logger = logging.getLogger("vaultspec_rag.jobs")
 
@@ -254,6 +255,12 @@ def index_job_spec(
     )
 
 
+class IndexJobAdmissionDependencies(TypedDict, total=False):
+    """Optional runtime ownership for an admitted background request."""
+
+    registry: ServiceRegistry | None
+
+
 def admit_index_job(
     root: Path,
     *,
@@ -261,13 +268,15 @@ def admit_index_job(
     clean: bool,
     authority: RunAuthority,
     initiator_kind: str,
+    **dependencies: Unpack[IndexJobAdmissionDependencies],
 ) -> tuple[JobManager, str, bool]:
     # Imported inside the call rather than at module scope: the registry
     # surface imports this module to admit a job, so naming it at import time
     # would close a cycle. The call happens long after both modules are built.
     from .jobs import get_job_manager, record_start
 
-    manager = get_job_manager()
+    registry = dependencies.get("registry")
+    manager = get_job_manager() if registry is None else registry.create_job_manager()
     resolved_root = root.resolve()
     commands = {
         JobSource.VAULT: "reindex_vault",

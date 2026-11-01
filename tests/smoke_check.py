@@ -28,6 +28,7 @@ import tempfile
 import tomllib
 from importlib.resources import files
 from pathlib import Path
+from typing import Any
 
 from packaging.requirements import Requirement
 from packaging.version import Version
@@ -165,7 +166,7 @@ def check_mcp_help() -> None:
     print("PASS: vaultspec-search-mcp --help exits 0")
 
 
-def _install_into(target: Path) -> dict[str, object]:
+def _install_into(target: Path) -> dict[str, Any]:
     """Run the installed CLI's MCP install and return each provider's outcome."""
     result = _run_script(
         "vaultspec-rag",
@@ -188,7 +189,7 @@ def _install_into(target: Path) -> dict[str, object]:
     return json.loads(result.stdout)["data"]
 
 
-def _held_for_approval(target: Path, install: dict[str, object]) -> bool:
+def _held_for_approval(target: Path, install: dict[str, Any]) -> bool:
     """Whether Core held the server back for its operator's approval.
 
     A Core that asks its operator to approve an executable definition at a

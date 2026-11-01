@@ -21,12 +21,12 @@ from typing import TYPE_CHECKING, cast
 import pytest
 from typer.testing import CliRunner
 
+from ..._process_probe import wait_for_exit
 from ...cli import app
 from .._ports import free_loopback_port
 from ..test_service_stop_port import _witness_environment, _write_witness_module
 from ._helpers import (
     _service_env,
-    _wait_for_exit,
 )
 
 if TYPE_CHECKING:
@@ -269,7 +269,7 @@ class TestOrphanReapStructuredStop:
                     f"this test spawned ({sorted(spawned)})"
                 )
                 for pid in reaped_pids:
-                    assert _wait_for_exit(pid, timeout=30.0), (
+                    assert wait_for_exit(pid, timeout=30.0), (
                         f"the envelope reported pid {pid} reaped, but it is alive"
                     )
                 assert data["port"] == port
