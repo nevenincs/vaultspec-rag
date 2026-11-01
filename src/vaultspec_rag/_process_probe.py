@@ -724,10 +724,8 @@ def pid_listens_on_loopback_port(
         return False
 
     def inspect() -> bool:
-        import psutil
-
         try:
-            connections = pid_tcp_connections(pid)
+            listeners = _pid_tcp_listeners(pid)
         except Exception as exc:
             logger.debug(
                 "could not inspect TCP listener ownership for pid %d port %d: %s",
@@ -736,17 +734,117 @@ def pid_listens_on_loopback_port(
                 exc,
             )
             return False
-        for connection in connections:
-            if connection.status != psutil.CONN_LISTEN:
-                continue
-            address = connection.laddr
-            if int(address.port) == port and str(address.ip) in {"127.0.0.1", "::1"}:
-                return True
-        return False
+        return any(
+            listen_port == port and ip in {"127.0.0.1", "::1"}
+            for ip, listen_port in listeners
+        )
 
     return bounded_call(
         inspect, timeout=timeout, fallback=False, label=f"pid-{pid}-listener"
     )
+
+
+def _pid_tcp_listeners(pid: int) -> list[tuple[str, int]]:
+    """Return the ``(ip, port)`` endpoints *pid* is listening on.
+
+    Raises when the table cannot be read: an unavailable observation is not an
+    empty one.
+    """
+    if sys.platform == "win32":
+        return _windows_tcp_listeners(pid)
+    import psutil
+
+    return [
+        (str(connection.laddr.ip), int(connection.laddr.port))
+        for connection in pid_tcp_connections(pid)
+        if connection.status == psutil.CONN_LISTEN and connection.laddr
+    ]
+
+
+_AF_INET = 2
+_AF_INET6 = 23
+_TCP_TABLE_OWNER_PID_LISTENER = 3
+_ERROR_INSUFFICIENT_BUFFER = 122
+
+
+def _windows_tcp_listeners(pid: int) -> list[tuple[str, int]]:
+    """Read *pid*'s listeners from the kernel's listener-only TCP tables.
+
+    Membership in the ``TCP_TABLE_OWNER_PID_LISTENER`` class is what makes a
+    row a listener, so the per-row state is deliberately not consulted. Some
+    Windows builds report a listening socket with a state outside the
+    ``MIB_TCP_STATE`` range in every table class; psutil maps that to ``NONE``
+    and a state-filtered read then finds no listener at all, while the socket
+    is accepting connections.
+    """
+    import ctypes
+    import socket
+    from ctypes import wintypes
+
+    class _Row4(ctypes.Structure):
+        _fields_ = (
+            ("state", wintypes.DWORD),
+            ("local_addr", wintypes.DWORD),
+            ("local_port", wintypes.DWORD),
+            ("remote_addr", wintypes.DWORD),
+            ("remote_port", wintypes.DWORD),
+            ("owning_pid", wintypes.DWORD),
+        )
+
+    class _Row6(ctypes.Structure):
+        _fields_ = (
+            ("local_addr", ctypes.c_ubyte * 16),
+            ("local_scope_id", wintypes.DWORD),
+            ("local_port", wintypes.DWORD),
+            ("remote_addr", ctypes.c_ubyte * 16),
+            ("remote_scope_id", wintypes.DWORD),
+            ("remote_port", wintypes.DWORD),
+            ("state", wintypes.DWORD),
+            ("owning_pid", wintypes.DWORD),
+        )
+
+    get_table = ctypes.windll.iphlpapi.GetExtendedTcpTable
+    get_table.argtypes = (
+        ctypes.c_void_p,
+        ctypes.POINTER(wintypes.DWORD),
+        wintypes.BOOL,
+        wintypes.ULONG,
+        ctypes.c_int,
+        wintypes.ULONG,
+    )
+    get_table.restype = wintypes.DWORD
+
+    def rows(family: int, row_type: type[ctypes.Structure]) -> list[ctypes.Structure]:
+        size = wintypes.DWORD(0)
+        buffer = ctypes.create_string_buffer(0)
+        while True:
+            code = get_table(
+                buffer,
+                ctypes.byref(size),
+                False,
+                family,
+                _TCP_TABLE_OWNER_PID_LISTENER,
+                0,
+            )
+            if code == 0:
+                break
+            if code != _ERROR_INSUFFICIENT_BUFFER:
+                raise OSError(code, f"GetExtendedTcpTable failed for family {family}")
+            buffer = ctypes.create_string_buffer(size.value)
+        count = wintypes.DWORD.from_buffer(buffer).value
+        offset = ctypes.sizeof(wintypes.DWORD)
+        return list((row_type * count).from_buffer(buffer, offset))
+
+    listeners: list[tuple[str, int]] = []
+    for row in rows(_AF_INET, _Row4):
+        if row.owning_pid == pid:
+            ip = socket.inet_ntoa(int(row.local_addr).to_bytes(4, "little"))
+            listeners.append((ip, socket.ntohs(row.local_port & 0xFFFF)))
+    for row in rows(_AF_INET6, _Row6):
+        if row.owning_pid == pid:
+            ip = socket.inet_ntop(socket.AF_INET6, bytes(row.local_addr))
+            listeners.append((ip, socket.ntohs(row.local_port & 0xFFFF)))
+    return listeners
 
 
 def pid_tcp_connections(pid: int) -> list[pconn]:
