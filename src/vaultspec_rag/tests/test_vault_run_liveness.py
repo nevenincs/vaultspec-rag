@@ -206,6 +206,9 @@ def test_successful_publication_retires_deadline_but_preserves_control(
 ) -> None:
     """Dropping terminal completion makes a slow successful epilogue time out."""
     del unloaded_model
+    # The confirmation and both publications must land inside the timeout on a
+    # loaded host; only the epilogue's sleep is meant to outlast it.
+    get_config({**_UNLOADED_OVERRIDES, "index_no_progress_timeout_seconds": 6.0})
     with VaultStore(tmp_path, embedding_dim=2) as store:
         control = RunControlToken()
         checkpoint = _open(tmp_path, store, control)
@@ -215,7 +218,7 @@ def test_successful_publication_retires_deadline_but_preserves_control(
                 _confirm(store, checkpoint, _chunk())
                 checkpoint.publish_proof_transition()
                 checkpoint.publish_generation()
-                time.sleep(2.05)
+                time.sleep(6.05)
                 checkpoint.run_policy.checkpoint()
         except JobError as exc:
             failure = exc
@@ -242,6 +245,9 @@ def test_successful_publication_closes_actual_storage_admission(
 ) -> None:
     """Terminal clock publication does not grant another real storage write."""
     del unloaded_model
+    # A deadline this far off cannot refuse the write, so the refusal asserted
+    # below can only come from completion closing the store's admission.
+    get_config({**_UNLOADED_OVERRIDES, "index_no_progress_timeout_seconds": 60.0})
     with VaultStore(tmp_path, embedding_dim=2) as store:
         checkpoint = _open(tmp_path, store, RunControlToken())
         _confirm(store, checkpoint, _chunk())
