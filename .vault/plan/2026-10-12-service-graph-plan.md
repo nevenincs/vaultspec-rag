@@ -7,9 +7,9 @@ tier: L1
 related:
   - '[[2026-04-02-service-graph-adr]]'
   - '[[2026-03-07-vaultgraph-cache-adr]]'
-modified: '2026-10-30'
+modified: '2026-11-02'
 body_schema: body-v2
-body_hash: 'sha256:7e9668c8e1c7dc36167688a6861b9210decc02b529234b3be7f42403dbd3f87c'
+body_hash: 'sha256:84816d9d3a65fe0bae6ebc76c71feb4d83e03afad63ca0791a38d3d3b98b6d64'
 ---
 
 # `service-graph` plan
@@ -31,7 +31,7 @@ storage deletion is required for this work.
 - [x] `S01` - Remove synchronous graph construction from search and verify lifecycle races and live latency; `src/vaultspec_rag/graph_cache.py, search, service.py, _service_eviction.py, tests`.
 - [x] `S02` - Profile and optimize canonical graph calculation separately while preserving graph and filesystem safety semantics; `vaultspec-core/src/vaultspec_core graph, config, core/corpus_io.py and covering tests`.
 - [x] `S03` - Profile cold graph construction with py-spy and process I/O, CPU, memory and handles; optimize measured work and verify cache and filesystem safety; `vaultspec-core/src/vaultspec_core/core/corpus_io.py, graph, config, scanner, covering tests and dev profiling instrument`.
-- [ ] `S04` - Repair integration failures exposed by full CI and verify the combined recovery and graph changes through one RAG pull request; `src/vaultspec_rag tests and affected canonical runtime owners, existing execution records`.
+- [x] `S04` - Repair integration failures exposed by full CI and verify the combined recovery and graph changes through one RAG pull request; `src/vaultspec_rag tests and affected canonical runtime owners, existing execution records`.
 
 ## Parallelization
 
