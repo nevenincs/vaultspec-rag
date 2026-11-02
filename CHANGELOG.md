@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.5](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.6.4...vaultspec-rag-v0.6.5) (2026-11-02)
+
+
+### Bug Fixes
+
+* **ci:** let the hardware tiers outlast the fleet's admission wait ([#646](https://github.com/nevenincs/vaultspec-rag/issues/646)) ([e086c5a](https://github.com/nevenincs/vaultspec-rag/commit/e086c5afa804cba43aefc1189890f6dc972f8047))
+* **release:** keep the downloaded monitors out of the sdist ([#647](https://github.com/nevenincs/vaultspec-rag/issues/647)) ([826da8a](https://github.com/nevenincs/vaultspec-rag/commit/826da8a25863f619df24f98282be8e28bc2f7cfa))
+
 ## [0.6.4](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.6.3...vaultspec-rag-v0.6.4) (2026-11-01)
 
 
