@@ -166,6 +166,7 @@ tmp-ref/
 # Frontend dependencies, generated output and local configuration
 /dist-bin/
 /dist-bundles/
+/dist-monitor/
 /dist-monitor-frontend/
 /dist-release-evidence/
 node_modules/
