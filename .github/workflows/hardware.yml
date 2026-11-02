@@ -59,9 +59,12 @@ jobs:
     # A release waits for this tier before it may advertise MPS support for
     # the selected commit.
     if: inputs.tier == 'macos' || inputs.tier == 'macos-and-gpu'
-    timeout-minutes: 60
+    # The fleet admits this job inside it, so the timeout covers up to two hours
+    # of waiting for the host as well as the 60-minute budget its steps get.
+    timeout-minutes: 180
     runs-on: [self-hosted, macOS, ARM64]
     env:
+      CI_EXEC_BUDGET_MINUTES: 60
       UV_PYTHON: "3.13"
     steps:
       - name: Checkout
@@ -137,8 +140,10 @@ jobs:
 
   cuda:
     name: "Test: GPU correctness (Windows)"
-    # Generous because this tier is the ~40 minute long pole, but still
-    # finite, so a wedged GPU test fails instead of hanging.
+    # The steps get 90 minutes because this tier is the long pole, at about an
+    # hour on a loaded host, but still finite, so a wedged GPU test fails
+    # instead of hanging. The fleet admits this job inside it, so the timeout
+    # adds up to two hours of waiting for the host to that budget.
     #
     # The integration, quality, performance, robustness, subprocess_gpu, and
     # cuda markers that need a GPU run here. It never runs per push.
@@ -147,9 +152,10 @@ jobs:
     # the acknowledged service lease, fails closed on unavailable service,
     # lease, or device evidence, and resumes before release.
     if: inputs.tier == 'gpu' || inputs.tier == 'macos-and-gpu'
-    timeout-minutes: 90
+    timeout-minutes: 210
     runs-on: [self-hosted, windows, gpu, cuda]
     env:
+      CI_EXEC_BUDGET_MINUTES: 90
       # requires-python admits a range, so uv would otherwise pick whichever
       # interpreter it likes here and the CUDA wheel under test would drift
       # between runs. This job exists to exercise ONE known GPU stack, so it
