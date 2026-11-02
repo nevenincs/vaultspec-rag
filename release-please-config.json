@@ -5,8 +5,6 @@
     ".": {
       "release-type": "python",
       "package-name": "vaultspec-rag",
-      "release-as": "0.6.4",
-      "last-release-sha": "4b4ca899ef573e5563a08dfab1c433f6c3456af5",
       "include-component-in-tag": true,
       "draft": true,
       "force-tag-creation": true,

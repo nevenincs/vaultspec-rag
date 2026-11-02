@@ -10,6 +10,7 @@ reproducible only as far as nothing asserts it is.
 
 from __future__ import annotations
 
+import pathspec
 import pytest
 
 from dev.guards import _workflows as workflows
@@ -72,3 +73,44 @@ def test_the_binaries_embed_the_attached_wheel_checked_against_its_digest() -> N
     assert "gh release download" in script, "the wheel is not taken from the release"
     assert "--pattern SHA256SUMS" in script, "the release manifest is not fetched"
     assert "sha256sum -c" in script, "the attached wheel is used unverified"
+
+
+#: The action that writes artifacts into the job's checkout.
+_DOWNLOAD_ACTION = "actions/download-artifact@"
+
+
+def test_the_builder_downloads_nothing_its_sdist_would_carry() -> None:
+    """Every artifact the builder downloads lies outside the sdist.
+
+    The build backend collects the sdist from the checkout, leaving out only
+    what version control ignores, so a download into an unignored directory
+    is packed into the source distribution. The finalized monitors are
+    hundreds of megabytes: carried there, they push the sdist past the
+    package index's size limit and the upload is refused after the wheel
+    has already gone out.
+
+    Mutation proof: deleting ``/dist-monitor/`` from ``.gitignore`` made
+    this fail naming ``dist-monitor/``; restoring it made this pass.
+    """
+    root = workflows.repository_root()
+    ignored = pathspec.GitIgnoreSpec.from_lines(
+        (root / ".gitignore").read_text(encoding="utf-8").splitlines()
+    )
+    builder = next(
+        job for job in workflows.load_jobs(BUILDER[0]) if job.job_id == BUILDER[1]
+    )
+    downloads = [
+        str(step["with"].get("path") or ".") if "with" in step else "."
+        for step in builder.steps
+        if str(step.get("uses") or "").startswith(_DOWNLOAD_ACTION)
+    ]
+    assert downloads, f"{BUILDER[0]}:{BUILDER[1]} no longer downloads anything"
+    carried = [
+        path
+        for path in downloads
+        if not ignored.match_file(f"{path.rstrip('/')}/artifact")
+    ]
+    assert carried == [], (
+        f"{BUILDER[0]}:{BUILDER[1]} downloads into {carried}, which version "
+        "control does not ignore, so the sdist carries the downloaded files"
+    )
