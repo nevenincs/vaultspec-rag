@@ -116,8 +116,13 @@ def _validate_vault_root(root: Path) -> Path:
         The validated path (unchanged).
 
     Raises:
+        RootMissingError: If *root* itself does not exist.
         ValueError: If *root* has no ``.vault/`` subdirectory.
     """
+    from .._root_presence import RootMissingError, root_is_missing
+
+    if root_is_missing(root):
+        raise RootMissingError(root)
     if not (root / VAULT_DIR).is_dir():
         msg = f"not a vaultspec project (no .vault/ directory): {root}"
         raise ValueError(msg)

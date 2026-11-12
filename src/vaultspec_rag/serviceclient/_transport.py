@@ -1118,7 +1118,12 @@ def _resolve_admin_call(
         return _admin_url_with_root(_GET_ROOT_ROUTES[tool_name], args), None
     if tool_name in _POST_BODY_ROUTES:
         return _POST_BODY_ROUTES[tool_name], args
-    if tool_name in ("start_watcher", "stop_watcher", "reconfigure_watcher"):
+    if tool_name in (
+        "start_watcher",
+        "stop_watcher",
+        "reconfigure_watcher",
+        "prune_watchers",
+    ):
         verb = tool_name.split("_")[0]
         return f"/watcher/{verb}", args
     return None

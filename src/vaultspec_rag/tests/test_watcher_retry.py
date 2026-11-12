@@ -29,11 +29,11 @@ from ..watcher_retry import (
     WatcherRetryStateError,
     WatcherScopeRefusal,
     WatcherSource,
-    locked_state,
 )
 from ..watcher_retry_policy import (
     WatcherRetryPolicy,
     _WatcherRetryOptions,
+    watcher_retry_state_path,
 )
 from ._child_signal import (
     CHILD_PROCESS_TIMEOUT_SECONDS,
@@ -519,8 +519,10 @@ def test_missing_publication_proof_is_a_terminal_rebuild_refusal(
     # that as ``other`` resubmitted the same doomed incremental on every change
     # instead of refusing with the rebuild remedy. Mutation: dropping the
     # rebuild phrase from the classifier fails both kind assertions.
+    never_built = tmp_path / "never-built"
+    never_built.mkdir()
     with pytest.raises(ProofMissingError) as missing:
-        acquire_publication_snapshot(tmp_path / "never-built", PublicSourceType.VAULT)
+        acquire_publication_snapshot(never_built, PublicSourceType.VAULT)
     assert classify_error_text(str(missing.value)) is JobErrorKind.FULL_REINDEX_REQUIRED
 
     policy = _policy(tmp_path / "vault.json", tmp_path, source=WatcherSource.VAULT)
@@ -1051,31 +1053,46 @@ async def test_cancellation_hands_off_after_indefinite_lock_contention(
     assert recovered.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
 
 
-def _state_path(root: Path) -> Path:
-    return root / ".vault" / "data" / "search-data" / STATE_DIRECTORY / "code.json"
+def test_retry_state_lives_under_the_status_dir_not_the_root(
+    tmp_path: Path,
+    isolated_status_dir: Path,
+) -> None:
+    """The retry ledger is keyed per root and source inside the status dir.
 
-
-def test_retry_state_never_recreates_a_deleted_root(tmp_path: Path) -> None:
-    """A transaction against a removed root fails instead of rebuilding it.
-
-    Mutation proof: creating the state directory with ``parents=True`` (the
-    behaviour before this fix) rebuilds the root, so the transaction succeeds
-    and this fails on the missing ``WatcherRetryStateError``; restoring the
-    root-anchored creation passes.
+    Mutation proof: building the path from ``root / data_dir`` again (the old
+    in-root location) fails the containment assertions below; restoring the
+    status-dir helper passes.
     """
-    root = tmp_path / "removed-worktree"
-    with (
-        pytest.raises(WatcherRetryStateError, match="state prepare failed"),
-        locked_state(_state_path(root), root=root),
-    ):
-        pass
-    assert not root.exists()
-
-
-def test_retry_state_creates_its_directory_inside_a_live_root(tmp_path: Path) -> None:
     root = tmp_path / "worktree"
     root.mkdir()
-    path = _state_path(root)
-    with locked_state(path, root=root):
-        pass
-    assert path.parent.is_dir()
+    code = watcher_retry_state_path(root, WatcherSource.CODE)
+    vault = watcher_retry_state_path(root, WatcherSource.VAULT)
+    other = watcher_retry_state_path(tmp_path / "other", WatcherSource.CODE)
+
+    assert code.is_relative_to(isolated_status_dir / STATE_DIRECTORY)
+    assert not code.is_relative_to(root)
+    assert code.parent == vault.parent
+    assert code.name == "code.json"
+    assert other.parent != code.parent
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
+def test_retry_state_survives_its_root_being_deleted(tmp_path: Path) -> None:
+    """Failure handling still records state after the watched root is gone.
+
+    A deleted worktree used to make every retry transaction fail, so the
+    failure handler failed too and nothing ever backed off. Mutation proof:
+    pointing the policy back inside the root raises ``WatcherRetryStateError``
+    from the transaction below.
+    """
+    root = tmp_path / "removed-worktree"
+    root.mkdir()
+    policy = WatcherRetryPolicy.for_root(root, WatcherSource.CODE, now=0.0)
+    root.rmdir()
+
+    policy.mark_scope_pending((_path_observation("src/a.py"),), now=2.0)
+    failed = _fail_once(policy, RuntimeError("index failed"), now=3.0, random_unit=0.5)
+
+    assert failed.consecutive_failures == 1
+    assert watcher_retry_state_path(root, WatcherSource.CODE).is_file()
+    assert not root.exists()

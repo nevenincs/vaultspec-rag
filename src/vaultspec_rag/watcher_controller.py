@@ -42,6 +42,8 @@ class ControllerState(StrEnum):
     RETRYING = "retrying"
     REFUSED = "refused"
     CONVERGED = "converged"
+    #: Terminal: the watched root no longer exists, so nothing can converge.
+    STALE = "stale"
 
 
 class ControllerReason(StrEnum):
@@ -67,6 +69,7 @@ class ControllerReason(StrEnum):
     RETRY_DELAY_ACTIVE = "retry_delay_active"
     RETRY_ADMITTED = "retry_admitted"
     CIRCUIT_OPEN = "circuit_open"
+    ROOT_MISSING = "root_missing"
     FULL_REINDEX_REQUIRED = "full_reindex_required"
     SCOPE_STATE_INVALID = "scope_state_invalid"
     SCOPE_CAPACITY_EXCEEDED = "scope_capacity_exceeded"
@@ -372,6 +375,8 @@ class WatcherController:
         """Evaluate collection, cooling, retry, and service-pressure evidence."""
         now = self._monotonic()
         snapshot = self._snapshot
+        if snapshot.state is ControllerState.STALE:
+            return snapshot
         if snapshot.state is ControllerState.REFUSED:
             return self._transition(
                 ControllerState.REFUSED,
@@ -652,6 +657,25 @@ class WatcherController:
             job_id=None,
             scope=self._snapshot.scope if scope is None else scope,
             circuit_state=WatcherCircuitState.OPEN,
+            retry_at=None,
+        )
+
+    def retire_missing_root(self, *, remediation: str) -> ControllerSnapshot:
+        """Terminally stop a controller whose watched root no longer exists.
+
+        The pending scope is kept as evidence of what was never indexed; no
+        deadline, job or retry remains, so nothing can admit it again.
+        """
+        if not remediation:
+            msg = "a missing-root retirement requires remediation"
+            raise ValueError(msg)
+        return self._transition(
+            ControllerState.STALE,
+            ControllerReason.ROOT_MISSING,
+            next_decision_at=None,
+            freshness_deadline=None,
+            remediation=remediation,
+            job_id=None,
             retry_at=None,
         )
 

@@ -31,6 +31,7 @@ from ._source_types import (
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from pathlib import Path
 
     from ._index_breadth import BreadthShortfall
     from ._index_integrity import IndexIntegrity
@@ -53,6 +54,7 @@ __all__ = [
     "SearchWaitCause",
     "WaitObservation",
     "result_collapse",
+    "root_missing_response",
     "search_index_state",
     "search_readiness_block",
 ]
@@ -128,6 +130,7 @@ class SearchReasonCode(StrEnum):
     BACKEND_UNAVAILABLE = "backend_unavailable"
     BAD_REQUEST = "bad_request"
     QUIESCE_ADMISSION_CLOSED = "quiesce_admission_closed"
+    ROOT_MISSING = "root_missing"
 
     @property
     def failure_code(self) -> SearchReasonCode:
@@ -169,6 +172,10 @@ class SearchReasonCode(StrEnum):
             self.QUIESCE_ADMISSION_CLOSED: (
                 "Search is temporarily unavailable while service compute admission "
                 "is closed; retry after the service returns to running."
+            ),
+            self.ROOT_MISSING: (
+                "The project root does not exist. It was deleted or moved, so "
+                "there is nothing to search and retrying cannot succeed."
             ),
         }[self]
 
@@ -601,6 +608,35 @@ class SearchReadinessAggregate:
             "usable_source_count": self.usable_source_count,
             "degraded_sources": list(self.degraded_sources),
         }
+
+
+def root_missing_response(
+    root: str | Path,
+    *,
+    request_id: str,
+    port: int | None,
+) -> dict[str, object]:
+    """Serialize a search refused because its project root no longer exists.
+
+    The condition is permanent for the requested root, so it is never
+    retryable and names no index remedy: a rebuild cannot recreate a root.
+    """
+    from ._operator_commands import server_updates_prune_command
+    from ._root_presence import root_missing_message
+
+    reason = SearchReasonCode.ROOT_MISSING
+    return {
+        "ok": False,
+        "error": reason.value,
+        "message": root_missing_message(root),
+        "request_id": request_id,
+        "retryable": False,
+        "remediation": (
+            "Stop searching this root. If it was deleted, run "
+            f"`{server_updates_prune_command(port)}` to drop its automatic "
+            "updates; if it was moved, search the new location."
+        ),
+    }
 
 
 def search_readiness_block(

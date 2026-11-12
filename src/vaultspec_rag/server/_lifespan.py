@@ -1359,6 +1359,30 @@ def _jobs_health(*, now: float) -> tuple[dict[str, object], list[Degradation]]:
     return jobs_health, degradations
 
 
+#: Stale roots named in the health detail; the rest are counted.
+_STALE_ROOTS_NAMED = 5
+
+
+def _stale_watcher_root_degradations() -> list[Degradation]:
+    """Report watched roots that were deleted or moved, until pruned or back."""
+    from .._root_presence import stale_watcher_roots
+
+    stale = stale_watcher_roots()
+    if not stale:
+        return []
+    named = ", ".join(record.root for record in stale[:_STALE_ROOTS_NAMED])
+    more = len(stale) - _STALE_ROOTS_NAMED
+    return [
+        Degradation(
+            reason=DegradationReason.STALE_WATCHER_ROOTS,
+            detail=(
+                f"{len(stale)} watched project root(s) no longer exist: {named}"
+                + (f" and {more} more" if more > 0 else "")
+            ),
+        )
+    ]
+
+
 async def health_handler(request: Request) -> object:
     """Return service health as the typed health report.
 
@@ -1403,6 +1427,7 @@ async def health_handler(request: Request) -> object:
     )
     jobs_health, jobs_degradations = _jobs_health(now=time.time())
     degradations.extend(jobs_degradations)
+    degradations.extend(await _run_in_thread(_stale_watcher_root_degradations))
     if status is HealthVerdict.READY and degradations:
         status = HealthVerdict.DEGRADED
 

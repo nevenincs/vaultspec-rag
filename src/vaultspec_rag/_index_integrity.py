@@ -48,7 +48,6 @@ from typing import (
 )
 
 from . import store_schema
-from ._job_errors import FULL_REINDEX_REQUIRED_PHRASE
 from ._source_types import PublicSourceType
 from ._store_writes import workspace_volume_path
 from .indexer._file_state import validate_rel_path
@@ -813,12 +812,9 @@ def audit_index_integrity(
     resolved = root.resolve()
     ledger_path = index_run_ledger_path(workspace_volume_path(resolved))
     if not ledger_path.is_file():
-        from .indexer._publication_proof import ProofMissingError
+        from ._publication_state import missing_ledger_error
 
-        raise ProofMissingError(
-            "canonical publication proof does not exist; "
-            f"{FULL_REINDEX_REQUIRED_PHRASE}"
-        )
+        raise missing_ledger_error(resolved)
 
     started = time.perf_counter()
     backend_identity = configured_backend_identity(resolved)

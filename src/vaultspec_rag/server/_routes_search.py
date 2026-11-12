@@ -34,6 +34,7 @@ from .._error_payload import error_payload
 from .._operator_commands import (
     server_status_command,
 )
+from .._root_presence import RootMissingError, root_is_missing
 from .._search_freshness import capture_hit_publications, verify_search_hits
 from .._search_state import (
     MAX_SEARCH_EVIDENCE_ITEMS,
@@ -47,6 +48,7 @@ from .._search_state import (
     SearchSourceFact,
     SearchWaitCause,
     WaitObservation,
+    root_missing_response,
     search_readiness_block,
 )
 from .._source_types import (
@@ -367,9 +369,15 @@ def _complete_classified_search(
     # only the protocol mapping of that code; it must not inherit the legacy
     # classifier's blanket 503 when the canonical state is a rebuild conflict.
     # Capacity remains 503 while no canonical reset deadline can justify 429.
-    response_status = _search_response_status(result)
     root = facts.root
     source = facts.source
+    # A root deleted while its search ran fails for that reason alone, and
+    # retrying, indexing or watching it again cannot help.
+    if result.get("ok") is False and root_is_missing(root):
+        result = root_missing_response(
+            root, request_id=facts.request_id, port=facts.port
+        )
+    response_status = _search_response_status(result)
     _m._ensure_watcher_soon(root, registry)
     hits = result.get("results")
     hit_count = len(cast("list[object]", hits)) if isinstance(hits, list) else 0
@@ -799,7 +807,7 @@ def _normalise_search_request(
             error_code=SearchReasonCode.BAD_REQUEST,
             error_message="query is empty",
         )
-    root = _search_root(project_root)
+    root = _search_root(project_root, request_id)
     if isinstance(root, SearchRouteError):
         return root
     return SearchRequest(
@@ -891,11 +899,22 @@ def _bad_search_field(error_code: str, message: str) -> SearchRouteError:
     )
 
 
-def _search_root(project_root: object) -> Path | SearchRouteError:
+def _search_root(project_root: object, request_id: str) -> Path | SearchRouteError:
     """Resolve the validated root while preserving the established envelopes."""
     # Only reached after _search_field_error confirmed project_root is str | None.
     try:
         return _resolve_root(cast("str | None", project_root))
+    except RootMissingError as exc:
+        # Gone, not unavailable: 410 tells a caller to stop retrying, and the
+        # refusal happens before anything could re-arm the root's watcher.
+        return SearchRouteError(
+            JSONResponse(
+                root_missing_response(exc.root, request_id=request_id, port=None),
+                status_code=410,
+            ),
+            error_code=SearchReasonCode.ROOT_MISSING,
+            error_message=str(exc),
+        )
     except ProjectRootRequiredError:
         return SearchRouteError(
             _BAD_REQUEST_MISSING_ROOT,
@@ -1289,6 +1308,8 @@ def _search_response_status(
     error = result.get("error")
     if error in {SearchReasonCode.REBUILD_REQUIRED, SearchReasonCode.REBUILD_REFUSED}:
         return 409
+    if error == SearchReasonCode.ROOT_MISSING:
+        return 410
     return 503
 
 

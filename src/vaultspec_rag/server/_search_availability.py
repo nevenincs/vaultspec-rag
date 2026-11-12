@@ -42,7 +42,7 @@ __all__ = [
 #: the classification that carries one so the transport's own mapping function
 #: and this field cannot drift to different sets. The classifier cannot import
 #: the transport - the transport imports it - so the alias lives on this side.
-type SearchStatusCode = Literal[200, 409, 503]
+type SearchStatusCode = Literal[200, 409, 410, 503]
 
 
 @dataclass(frozen=True, slots=True)

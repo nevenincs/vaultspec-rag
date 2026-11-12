@@ -14,6 +14,7 @@ from .._operator_commands import (
     SERVICE_NOT_RUNNING_MESSAGE,
     server_start_command,
     server_status_command,
+    server_updates_prune_command,
 )
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
@@ -179,6 +180,7 @@ _UPDATES_STATE_PHRASES = {
         "so this request is queued behind it"
     ),
     "disabled": "automatic updates are switched off for this service",
+    "root_missing": "the project directory does not exist; it was deleted or moved",
     "unavailable": "the service did not start one",
 }
 
@@ -186,6 +188,7 @@ _UPDATES_STATE_ERRORS = {
     "pending": "updates_pending",
     "queued_behind_drain": "updates_pending",
     "disabled": "updates_disabled",
+    "root_missing": "root_missing",
     "unavailable": "updates_not_started",
 }
 
@@ -196,6 +199,8 @@ def _updates_next_actions(status: str, port: int) -> list[str]:
         return [server_start_command(updates=True)]
     if status in ("pending", "queued_behind_drain"):
         return [f"vaultspec-rag server updates status --port {port}"]
+    if status == "root_missing":
+        return [server_updates_prune_command(port)]
     return [
         server_status_command(port),
         f"vaultspec-rag server logs --limit 200 --port {port}",
@@ -244,6 +249,28 @@ _UPDATES_STATUS_COMMAND = "service.updates.status"
 _UPDATES_START_COMMAND = "service.updates.start"
 _UPDATES_STOP_COMMAND = "service.updates.stop"
 _UPDATES_TIMING_COMMAND = "service.updates.timing"
+_UPDATES_PRUNE_COMMAND = "service.updates.prune"
+
+
+def _stale_root_entries(result: dict[str, object], key: str) -> list[dict[str, object]]:
+    raw = result.get(key)
+    entries = cast("list[object]", raw) if isinstance(raw, list) else []
+    return [
+        cast("dict[str, object]", entry) for entry in entries if isinstance(entry, dict)
+    ]
+
+
+def _print_stale_root(entry: dict[str, object]) -> None:
+    root = str(entry.get("root") or "unknown")
+    _plain(f"- Project: {_project_name(root)}")
+    _plain(f"  Path: {root}", soft_wrap=True)
+    raw_sources = entry.get("sources")
+    sources = (
+        ", ".join(str(item) for item in cast("list[object]", raw_sources))
+        if isinstance(raw_sources, list) and raw_sources
+        else "not reported"
+    )
+    _plain(f"  Sources: {sources}")
 
 
 @server_watcher_app.command("status")
@@ -300,6 +327,28 @@ def service_watcher_status(  # noqa: PLR0913 - each value is a public CLI option
     _print_update_address(resolved_port)
     _plain(f"Automatic index updates: {mode}")
     _print_update_timing(result)
+    _print_controllers(result)
+    _print_stale_roots(result, resolved_port)
+    if not watching:
+        _cli.console.print("No projects currently have automatic index updates.")
+        return
+    _cli.console.print(f"Projects updating automatically: {len(watching)}")
+    for entry in watching:
+        _plain(f"- Project: {_project_name(entry)}")
+        _plain(f"  Path: {entry}", soft_wrap=True)
+
+
+def _print_stale_roots(result: dict[str, object], port: int) -> None:
+    stale = _stale_root_entries(result, "stale_roots")
+    if not stale:
+        return
+    _plain(f"Stale projects (directory no longer exists): {len(stale)}")
+    for entry in stale:
+        _print_stale_root(entry)
+    _print_lifecycle_next_actions(server_updates_prune_command(port))
+
+
+def _print_controllers(result: dict[str, object]) -> None:
     raw_controllers = result.get("controllers")
     controllers = (
         cast("list[object]", raw_controllers)
@@ -332,13 +381,6 @@ def service_watcher_status(  # noqa: PLR0913 - each value is a public CLI option
         _plain(f"  Last transition: {controller.get('last_transition')}")
         if remediation := controller.get("remediation"):
             _plain(f"  Remediation: {remediation}")
-    if not watching:
-        _cli.console.print("No projects currently have automatic index updates.")
-        return
-    _cli.console.print(f"Projects updating automatically: {len(watching)}")
-    for entry in watching:
-        _plain(f"- Project: {_project_name(entry)}")
-        _plain(f"  Path: {entry}", soft_wrap=True)
 
 
 class _WatcherCall(NamedTuple):
@@ -528,4 +570,48 @@ def service_watcher_timing(
         return
     _print_update_result(resolved_port, "timing updated", resolved_project)
     _print_update_timing(result)
+    raise typer.Exit(0)
+
+
+@server_watcher_app.command("prune")
+def service_watcher_prune(
+    port: PortOption = None,
+    json_mode: JsonMode = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Report what would be pruned; change nothing."),
+    ] = False,
+) -> None:
+    """Stop automatic updates for every project whose directory is gone.
+
+    Only the watchers are dropped. Indexes, storage and retry history are left
+    as they are, so a project that comes back resumes from them.
+    """
+    resolved_port = port if port is not None else _default_service_port()
+    if resolved_port is None:
+        _watcher_service_unreachable(_UPDATES_PRUNE_COMMAND, json_mode)
+        return
+    result = _try_http_admin("prune_watchers", {"dry_run": dry_run}, resolved_port)
+    if result is None:
+        _watcher_service_unreachable(
+            _UPDATES_PRUNE_COMMAND, json_mode, port=resolved_port
+        )
+        return
+    if result.get("ok") is not True:
+        _watcher_admin_error(_UPDATES_PRUNE_COMMAND, json_mode, result, resolved_port)
+        return
+    if json_mode:
+        _emit_json(True, _UPDATES_PRUNE_COMMAND, data=result)
+        return
+    roots = _stale_root_entries(result, "roots")
+    _print_update_address(resolved_port)
+    if not roots:
+        _plain("Stale projects: none; nothing to prune.")
+        raise typer.Exit(0)
+    verb = "Would prune" if dry_run else "Pruned"
+    _plain(f"{verb} {_counted_unit(len(roots), 'stale project')}:")
+    for entry in roots:
+        _print_stale_root(entry)
+    if dry_run:
+        _print_lifecycle_next_actions(server_updates_prune_command(resolved_port))
     raise typer.Exit(0)

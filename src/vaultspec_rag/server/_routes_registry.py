@@ -19,6 +19,7 @@ import vaultspec_rag.server as _m
 
 from .._error_payload import error_payload
 from .._root_identity import canonical_root_key, canonical_root_path
+from .._root_presence import root_is_missing, stale_watcher_roots
 from ..config._schema import checked_setting
 from ._auth import require_token
 from ._runtime import get_request_runtime
@@ -32,6 +33,7 @@ __all__ = [
     "evict_project_route",
     "get_watcher_state_route",
     "list_projects_route",
+    "prune_watchers_route",
     "reconfigure_watcher_route",
     "start_watcher_route",
     "stop_watcher_route",
@@ -66,8 +68,15 @@ async def list_projects_route(request: Request) -> JSONResponse:
         return denied
     registry = get_request_runtime(request).registry
     projects = registry.snapshot()
-    for p in projects:
-        p["root"] = str(p["root"])
+
+    def mark_missing() -> None:
+        for p in projects:
+            p["root"] = str(p["root"])
+            # A loaded project whose directory is gone is stale: every request
+            # against it is refused until it is unloaded or recreated.
+            p["root_missing"] = root_is_missing(p["root"])
+
+    await run_sync(mark_missing)
     return JSONResponse(registry.projects_envelope(projects))
 
 
@@ -108,6 +117,7 @@ async def get_watcher_state_route(request: Request) -> JSONResponse:
     except ValueError:
         limit = 256
     snapshots, globally_truncated = _controller_snapshots()
+    stale = await run_sync(stale_watcher_roots)
     root_filter = request.query_params.get("root") or project_root
     try:
         root_key = canonical_root_key(root_filter) if root_filter is not None else None
@@ -126,6 +136,12 @@ async def get_watcher_state_route(request: Request) -> JSONResponse:
         and (state_filter is None or snapshot.state.value == state_filter)
     ]
     returned = filtered[:limit]
+    stale_filtered = [
+        record
+        for record in stale
+        if root_key is None or canonical_root_key(record.root) == root_key
+    ]
+    stale_returned = stale_filtered[:limit]
 
     state = {
         "watch_enabled": bool(cfg.watch_enabled),
@@ -138,6 +154,10 @@ async def get_watcher_state_route(request: Request) -> JSONResponse:
         "controllers_total": len(filtered),
         "controllers_returned": len(returned),
         "controllers_truncated": globally_truncated or len(filtered) > len(returned),
+        # Watched roots whose directory was deleted or moved. Their watchers
+        # were stopped; the records stay until pruned or the root returns.
+        "stale_roots": [record.as_dict() for record in stale_returned],
+        "stale_roots_total": len(stale_filtered),
         "filters": {
             "root": root_filter,
             "source": source_filter,
@@ -231,5 +251,47 @@ async def reconfigure_watcher_route(request: Request) -> JSONResponse:
             "status": outcome.value,
             "debounce_ms": db_ms,
             "cooldown_s": db_cs,
+        }
+    )
+
+
+async def prune_watchers_route(request: Request) -> JSONResponse:
+    """Stop every watcher whose root no longer exists and forget its record.
+
+    ``dry_run`` reports the same set without changing anything. Finding nothing
+    to prune is success: the requested state, no stale watchers, holds.
+    """
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    from ._routes import InvalidJobRequestError, job_payload
+    from ._watcher import _prune_stale_watchers, _stale_watcher_candidates
+
+    try:
+        payload = await job_payload(request, required=False)
+    except InvalidJobRequestError as exc:
+        return JSONResponse(error_payload("bad_request", str(exc)), status_code=400)
+    dry_run = payload.get("dry_run", False)
+    if type(dry_run) is not bool:
+        return JSONResponse(
+            error_payload("bad_request", "dry_run must be a boolean."),
+            status_code=400,
+        )
+    candidates = await run_sync(_stale_watcher_candidates)
+    if not dry_run:
+        _prune_stale_watchers(candidates)
+    return JSONResponse(
+        {
+            "ok": True,
+            "dry_run": dry_run,
+            "status": (
+                "nothing_to_prune"
+                if not candidates
+                else "would_prune"
+                if dry_run
+                else "pruned"
+            ),
+            "count": len(candidates),
+            "roots": [candidate.as_dict() for candidate in candidates],
         }
     )

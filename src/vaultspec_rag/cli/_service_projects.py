@@ -95,6 +95,10 @@ def _project_summary(raw_entry: object) -> list[str] | None:
     lines = [
         f"- Project: {_project_name(root_str)}",
         f"  Path: {root_str}",
+    ]
+    if entry.get("root_missing") is True:
+        lines.append("  Directory: missing (deleted or moved); unload this project")
+    lines += [
         f"  Active requests: {use_text}",
         f"  Last activity: {_humanize_idle(idle_s)} ago",
     ]

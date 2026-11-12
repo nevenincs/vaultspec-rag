@@ -77,7 +77,28 @@ if TYPE_CHECKING:
 
     from .job_models import JobSnapshot
 
-__all__ = ["WatcherRetryPolicy"]
+__all__ = ["WatcherRetryPolicy", "watcher_retry_state_path"]
+
+
+def watcher_retry_state_path(root: Path | str, source: WatcherSource) -> Path:
+    """Return the durable retry ledger for one canonical root and source.
+
+    The ledger lives under the managed status directory, never inside the
+    watched root: a root deleted while it is watched must still let its
+    failure handling and shutdown record what happened. Each root owns one
+    directory named by the same stable digest that namespaces its storage, so
+    the path is derivable for a root that no longer exists.
+    """
+    from ._store_models import root_collection_prefix
+    from .config._settings import managed_status_dir
+
+    return (
+        managed_status_dir()
+        / STATE_DIRECTORY
+        / root_collection_prefix(root)
+        / f"{source.value}.json"
+    )
+
 
 #: How many admission reservations one interpreter may hold at once. A
 #: reservation is released on every terminal outcome, so a table that keeps
@@ -371,7 +392,6 @@ class WatcherRetryPolicy:
         "_scope_max_paths",
         "_source",
         "_state",
-        "_state_root",
     )
 
     def __init__(
@@ -402,13 +422,12 @@ class WatcherRetryPolicy:
         if self._scope_max_bytes > ABSOLUTE_STATE_MAX_BYTES:
             raise ValueError("scope_max_bytes exceeds the durable state safety bound")
         self._root = options.canonical_root
-        self._state_root = Path(options.canonical_root)
         self._admission_handoff_started = False
         self._owned_attempt_token: str | None = None
         self._source = options.source
 
         timestamp = wall_time(options.now)
-        with locked_state(path, root=self._state_root):
+        with locked_state(path):
             try:
                 loaded = (
                     read_state(
@@ -557,11 +576,9 @@ class WatcherRetryPolicy:
         from .config._settings import get_config
 
         cfg = get_config()
-        resolved_root = root.resolve()
-        canonical_root = canonical_root_key(resolved_root)
-        path = resolved_root / cfg.data_dir / STATE_DIRECTORY / f"{source.value}.json"
+        canonical_root = canonical_root_key(root)
         return cls(
-            path,
+            watcher_retry_state_path(root, source),
             _WatcherRetryOptions(
                 canonical_root=canonical_root,
                 source=source,
@@ -593,7 +610,7 @@ class WatcherRetryPolicy:
         timestamp = wall_time(now)
         for observation in observations:
             validate_path_observation(observation, source=self._source)
-        with locked_state(self._path, root=self._state_root):
+        with locked_state(self._path):
             state = self._refresh_unlocked()
             generation = state.convergence_generation + 1
             merged = merge_observations(
@@ -622,7 +639,7 @@ class WatcherRetryPolicy:
 
     def refresh(self) -> WatcherRetryState:
         """Refresh this policy's cached view under the state authority lock."""
-        with locked_state(self._path, root=self._state_root):
+        with locked_state(self._path):
             return self._refresh_unlocked()
 
     def reconcile_rebuild(
@@ -637,7 +654,7 @@ class WatcherRetryPolicy:
             return False
         started, finished = window
 
-        with locked_state(self._path, root=self._state_root):
+        with locked_state(self._path):
             state = self._refresh_unlocked()
             active_generation = state.attempt_generation
             release_attempt = _legacy_refused_attempt_is_obsolete(state, started) or (
@@ -767,7 +784,7 @@ class WatcherRetryPolicy:
                 ),
             )
         try:
-            with locked_state(self._path, root=self._state_root):
+            with locked_state(self._path):
                 state = self._refresh_unlocked()
                 if self._owned_attempt_token != attempt_token:
                     _finish_admission_token(attempt_token)
@@ -889,7 +906,7 @@ class WatcherRetryPolicy:
     ) -> WatcherRetryState:
         """Close and reset only after a completed convergence attempt."""
         timestamp = wall_time(now)
-        with locked_state(self._path, root=self._state_root):
+        with locked_state(self._path):
             state = self._refresh_unlocked()
             self._require_active_attempt(state, attempt_generation)
             newer_generation_pending = state.unscoped_required or (
@@ -950,7 +967,7 @@ class WatcherRetryPolicy:
     ) -> WatcherRetryState:
         """Release a cancelled claim without treating operator stop as failure."""
         timestamp = wall_time(now)
-        with locked_state(self._path, root=self._state_root):
+        with locked_state(self._path):
             state = self._refresh_unlocked()
             self._require_active_attempt(state, attempt_generation)
             half_open = state.circuit_state is WatcherCircuitState.HALF_OPEN
@@ -1010,7 +1027,7 @@ class WatcherRetryPolicy:
             if random_unit is None
             else unit_interval("random_unit", random_unit)
         )
-        with locked_state(self._path, root=self._state_root):
+        with locked_state(self._path):
             state = self._refresh_unlocked()
             self._require_active_attempt(state, attempt_generation)
             failures = state.consecutive_failures + 1

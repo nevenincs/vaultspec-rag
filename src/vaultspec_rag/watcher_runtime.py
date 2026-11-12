@@ -559,10 +559,8 @@ def reconcile_completed_rebuild(snapshot: JobSnapshot) -> bool:
     publication and retry ledgers are read and written here; inference and
     corpus discovery are never needed.
     """
-    from .config._settings import get_config
     from .indexer._run_ledger_models import RunAuthority
-    from .watcher_retry import STATE_DIRECTORY
-    from .watcher_retry_policy import WatcherRetryPolicy
+    from .watcher_retry_policy import WatcherRetryPolicy, watcher_retry_state_path
 
     if (
         snapshot.state is not JobState.SUCCEEDED
@@ -575,8 +573,7 @@ def reconcile_completed_rebuild(snapshot: JobSnapshot) -> bool:
         return False
     root = Path(snapshot.spec.project_root).resolve()
     source = WatcherSource(snapshot.spec.source.value)
-    state_path = root / get_config().data_dir / STATE_DIRECTORY / f"{source.value}.json"
-    if not state_path.is_file():
+    if not watcher_retry_state_path(root, source).is_file():
         return False
     policy = WatcherRetryPolicy.for_root(root, source, recover_abandoned_attempt=False)
     if not policy.reconcile_rebuild(snapshot):

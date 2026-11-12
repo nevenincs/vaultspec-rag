@@ -19,7 +19,11 @@ from ..watcher_retry import (
     read_state,
     write_state,
 )
-from ..watcher_retry_policy import _ADMISSION_RESERVATIONS, WatcherRetryPolicy
+from ..watcher_retry_policy import (
+    _ADMISSION_RESERVATIONS,
+    WatcherRetryPolicy,
+    watcher_retry_state_path,
+)
 from ..watcher_runtime import reconcile_completed_rebuild
 from ._child_signal import CHILD_PROCESS_TIMEOUT_SECONDS
 from .test_watcher_rebuild_reconciliation import (
@@ -98,7 +102,7 @@ def _persist_exited_owner_attempt(
     )
     cfg = get_config()
     return read_state(
-        root / cfg.data_dir / "watcher-retry" / f"{source.value}.json",
+        watcher_retry_state_path(root, source),
         scope_max_paths=cfg.watch_scope_max_paths,
         scope_max_bytes=cfg.watch_scope_max_bytes,
     )

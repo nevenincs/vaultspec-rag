@@ -143,6 +143,7 @@ class DegradationReason(StrEnum):
     JOBS_UNDISPATCHED = "jobs_undispatched"
     JOBS_DEGRADED = "jobs_degraded"
     JOB_FAILED = "job_failed"
+    STALE_WATCHER_ROOTS = "stale_watcher_roots"
 
     @property
     def label(self) -> str:
@@ -168,4 +169,7 @@ class DegradationReason(StrEnum):
             ),
             DegradationReason.JOBS_DEGRADED: "indexing jobs are degraded",
             DegradationReason.JOB_FAILED: "the latest indexing job failed",
+            DegradationReason.STALE_WATCHER_ROOTS: (
+                "watched project roots no longer exist"
+            ),
         }[self]

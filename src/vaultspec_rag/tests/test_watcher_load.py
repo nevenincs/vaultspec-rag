@@ -38,6 +38,8 @@ class _Clock:
 
 
 def _controller(root: Path, source: WatcherSource, clock: _Clock) -> WatcherController:
+    # The scheduler retires every controller whose root does not exist.
+    root.mkdir(exist_ok=True)
     return WatcherController(
         ControllerSnapshot(
             canonical_root=str(root.resolve()),

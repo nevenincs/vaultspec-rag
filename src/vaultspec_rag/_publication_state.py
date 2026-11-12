@@ -7,10 +7,12 @@ from typing import TYPE_CHECKING, Final, NamedTuple
 
 from . import store_schema
 from ._job_errors import FULL_REINDEX_REQUIRED_PHRASE
+from ._root_presence import root_is_missing, root_missing_message
 from ._source_types import PublicSourceType
 from ._store_writes import workspace_volume_path
 from .indexer._publication_proof import (
     ProofIncompatibleError,
+    ProofMissingError,
     ProofReadConflictError,
     ProofUnverifiableError,
 )
@@ -31,6 +33,7 @@ __all__ = [
     "PublicationSnapshot",
     "acquire_publication_snapshot",
     "clear_publication_state",
+    "missing_ledger_error",
     "read_all_publication_evidence",
 ]
 
@@ -91,6 +94,20 @@ def _collection(source: PublicSourceType) -> str:
     raise ValueError("publication snapshots require one concrete source")
 
 
+def missing_ledger_error(root: pathlib.Path) -> ProofMissingError:
+    """Explain a root that has no run ledger, and so no publication proof.
+
+    The remedy is an explicit rebuild, unless the root itself is gone: a
+    rebuild cannot restore a deleted root, so that refusal must not ask for one.
+    """
+    cause = (
+        root_missing_message(root)
+        if root_is_missing(root)
+        else FULL_REINDEX_REQUIRED_PHRASE
+    )
+    return ProofMissingError(f"publication proof does not exist; {cause}")
+
+
 def acquire_publication_snapshot(
     root: pathlib.Path,
     source: PublicSourceType,
@@ -99,11 +116,7 @@ def acquire_publication_snapshot(
     resolved = root.resolve()
     ledger_path = index_run_ledger_path(workspace_volume_path(resolved))
     if not ledger_path.is_file():
-        from .indexer._publication_proof import ProofMissingError
-
-        raise ProofMissingError(
-            f"publication proof does not exist; {FULL_REINDEX_REQUIRED_PHRASE}"
-        )
+        raise missing_ledger_error(resolved)
     ledger = RunLedger(ledger_path)
     backend_identity = configured_backend_identity(resolved)
     writer_receipt = publication_recovery_receipt.get()
