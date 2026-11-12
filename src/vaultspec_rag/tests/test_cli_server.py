@@ -550,6 +550,29 @@ class TestServiceProjectsCli:
 
         out = capsys.readouterr().out
         _assert_project_summary_language(tmp_path, out)
+        assert "Directory: missing" not in out
+
+    def test_projects_list_marks_a_project_whose_directory_is_gone(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from ..cli._service_projects import _print_projects_summary
+
+        _print_projects_summary(
+            [
+                {
+                    "root": str(tmp_path / "example"),
+                    "idle_seconds": 125,
+                    "ref_count": 0,
+                    "last_access_iso": "2026-06-12T14:05:06Z",
+                    "root_missing": True,
+                }
+            ],
+            max_projects=16,
+            idle_ttl=1800,
+        )
+
+        out = capsys.readouterr().out
+        assert "  Directory: missing (deleted or moved); unload this project" in out
 
     def test_projects_list_service_down_returns_exit_3(self) -> None:
         port = _find_free_port()

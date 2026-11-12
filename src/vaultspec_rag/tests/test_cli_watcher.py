@@ -160,6 +160,7 @@ _UPDATES_COMMANDS = [
     ["server", "updates", "start", "/tmp/x"],
     ["server", "updates", "stop", "/tmp/x"],
     ["server", "updates", "timing", "/tmp/x"],
+    ["server", "updates", "prune"],
 ]
 
 _UPDATES_COMMAND_IDS = {
@@ -167,6 +168,7 @@ _UPDATES_COMMAND_IDS = {
     "start": "service.updates.start",
     "stop": "service.updates.stop",
     "timing": "service.updates.timing",
+    "prune": "service.updates.prune",
 }
 
 
@@ -233,6 +235,115 @@ def test_updates_status_forwards_controller_filters_and_renders_service_facts() 
     assert "State: backpressured (gpu_pressure)" in result.output
     assert "Pending: 3; oldest age: 7.5 seconds" in result.output
     assert "Remediation: Wait for GPU pressure to clear." in result.output
+
+
+def test_updates_status_lists_stale_roots_with_the_prune_remedy() -> None:
+    payload: dict[str, object] = {
+        "watch_enabled": True,
+        "watching": [],
+        "controllers": [],
+        "stale_roots": [
+            {"root": _TEST_PROJECT_ROOT, "detected_at": 1.0, "sources": ["code"]}
+        ],
+        "stale_roots_total": 1,
+    }
+    with _updates_http_server(payload) as (_server, port):
+        result = runner.invoke(
+            app, ["server", "updates", "status", "--port", str(port)]
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "Stale projects (directory no longer exists): 1" in result.output
+    assert f"Path: {_TEST_PROJECT_ROOT}" in result.output
+    assert f"vaultspec-rag server updates prune --port {port}" in result.output
+
+
+_PRUNED_ROOT: dict[str, object] = {
+    "root": _TEST_PROJECT_ROOT,
+    "detected_at": 1.0,
+    "sources": ["code", "vault"],
+    "watcher_running": True,
+}
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_updates_prune_forwards_dry_run_and_reports_roots(dry_run: bool) -> None:
+    payload: dict[str, object] = {
+        "ok": True,
+        "dry_run": dry_run,
+        "status": "would_prune" if dry_run else "pruned",
+        "count": 1,
+        "roots": [_PRUNED_ROOT],
+    }
+    argv = ["server", "updates", "prune"] + (["--dry-run"] if dry_run else [])
+    with _updates_http_server(payload) as (_server, port):
+        result = runner.invoke(app, [*argv, "--port", str(port)])
+
+    assert result.exit_code == 0, result.output
+    assert _UpdatesHTTPHandler.requests == [
+        {"method": "POST", "path": "/watcher/prune", "body": {"dry_run": dry_run}}
+    ]
+    verb = "Would prune" if dry_run else "Pruned"
+    assert f"{verb} 1 stale project:" in result.output
+    assert "Sources: code, vault" in result.output
+
+
+def test_updates_prune_json_emits_one_envelope() -> None:
+    payload: dict[str, object] = {
+        "ok": True,
+        "dry_run": False,
+        "status": "pruned",
+        "count": 1,
+        "roots": [_PRUNED_ROOT],
+    }
+    with _updates_http_server(payload) as (_server, port):
+        result = runner.invoke(
+            app, ["server", "updates", "prune", "--json", "--port", str(port)]
+        )
+
+    assert result.exit_code == 0, result.output
+    envelope = json.loads(result.stdout)
+    assert envelope["ok"] is True
+    assert envelope["command"] == "service.updates.prune"
+    assert envelope["data"] == payload
+
+
+@pytest.mark.parametrize("json_mode", [False, True])
+def test_updates_prune_with_nothing_to_prune_is_success(json_mode: bool) -> None:
+    payload: dict[str, object] = {
+        "ok": True,
+        "dry_run": False,
+        "status": "nothing_to_prune",
+        "count": 0,
+        "roots": [],
+    }
+    argv = ["server", "updates", "prune"] + (["--json"] if json_mode else [])
+    with _updates_http_server(payload) as (_server, port):
+        result = runner.invoke(app, [*argv, "--port", str(port)])
+
+    assert result.exit_code == 0, result.output
+    if json_mode:
+        assert json.loads(result.stdout)["data"]["status"] == "nothing_to_prune"
+    else:
+        assert "nothing to prune" in result.output
+
+
+def test_updates_prune_service_refusal_exits_non_zero_with_one_envelope() -> None:
+    payload: dict[str, object] = {
+        "ok": False,
+        "error": "bad_request",
+        "message": "dry_run must be a boolean.",
+    }
+    with _updates_http_server(payload) as (_server, port):
+        result = runner.invoke(
+            app, ["server", "updates", "prune", "--json", "--port", str(port)]
+        )
+
+    assert result.exit_code == 1, result.output
+    envelope = json.loads(result.stdout)
+    assert envelope["ok"] is False
+    assert envelope["command"] == "service.updates.prune"
+    assert envelope["error"] == "bad_request"
 
 
 def test_updates_status_json_preserves_canonical_controller_envelope() -> None:
@@ -318,6 +429,7 @@ def test_updates_subcommands_registered() -> None:
         "start",
         "stop",
         "timing",
+        "prune",
     ]
     assert "automatic index update" in result.stdout.lower()
     assert "active roots" not in result.stdout.lower()
@@ -882,4 +994,5 @@ def test_cli_mcp_control_parity() -> None:
         "start",
         "stop",
         "timing",
+        "prune",
     ]

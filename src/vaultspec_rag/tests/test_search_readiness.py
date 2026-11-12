@@ -36,13 +36,14 @@ from ..job_models import (
     JobSpec,
 )
 from ..progress import NullProgressReporter
-from ..server._routes_search import SearchRequest, _admit_requested_freshness
+from ..server._routes_search import _admit_requested_freshness
 from ..server._search_readiness import (
     PublicationTarget,
     ReadinessRegistryClosedError,
     ReadinessRevisionRegistry,
     ReadinessSourceKey,
 )
+from ..server._search_request import SearchRequest
 from ..service import ServiceRegistry
 from ..service_quiesce import ServiceQuiesceController
 from ..store_runtime import VaultStore

@@ -25,6 +25,7 @@ from .._operator_commands import (
     server_restart_remedy,
     server_status_command,
     server_stop_command,
+    server_updates_prune_command,
 )
 from .._source_types import PublicSourceType
 from .._timestamps import parse_iso_timestamp
@@ -631,6 +632,30 @@ def _store_format_finding(
     )
 
 
+def _stale_watcher_roots_finding(
+    health: dict[str, object] | None,
+    now: float,
+) -> DegradedFinding | None:
+    _ = now
+    reported = _reported_degradations(health) if isinstance(health, dict) else []
+    if not any(
+        isinstance(entry, dict)
+        and cast("dict[str, object]", entry).get("reason")
+        == DegradationReason.STALE_WATCHER_ROOTS
+        for entry in reported
+    ):
+        return None
+    return DegradedFinding(
+        cause="watched project roots no longer exist",
+        detail=(
+            "their automatic updates were stopped; pruning forgets them and "
+            "touches no index data"
+        ),
+        command=server_updates_prune_command(),
+        family=DegradationReason.STALE_WATCHER_ROOTS,
+    )
+
+
 #: The structured signal that proves each degradation code and names the verb
 #: that inspects it. The service states WHAT is wrong as a code; the payload's
 #: structured sections say WHERE to look, so a reworded detail never costs the
@@ -648,6 +673,7 @@ _EVIDENCE: dict[
     DegradationReason.VECTOR_SERVICE_UNAVAILABLE: _vector_service_finding,
     DegradationReason.NONCONFORMING: _conformance_finding,
     DegradationReason.MODELS_NOT_LOADED: _models_finding,
+    DegradationReason.STALE_WATCHER_ROOTS: _stale_watcher_roots_finding,
 }
 
 

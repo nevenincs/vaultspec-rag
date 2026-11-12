@@ -49,6 +49,7 @@ import vaultspec_rag.server as _m
 from .. import _job_evidence
 from .. import jobs as _jobs
 from .._operator_lists import list_limit, list_offset, list_order
+from .._root_presence import RootMissingError
 from .._store_locks import VaultStoreLockedError
 from ..indexer._run_ledger_models import RunAuthority
 from ..job_models import JobOutcome
@@ -80,6 +81,7 @@ from ._routes_registry import (
     evict_project_route,
     get_watcher_state_route,
     list_projects_route,
+    prune_watchers_route,
     reconfigure_watcher_route,
     start_watcher_route,
     stop_watcher_route,
@@ -300,6 +302,8 @@ async def validated_index_request(
         )
     try:
         root = _resolve_root(raw_root)
+    except RootMissingError as exc:
+        raise InvalidJobRequestError("root_missing", str(exc)) from exc
     except (ProjectRootRequiredError, ValueError) as exc:
         raise InvalidJobRequestError("invalid_job_spec", str(exc)) from exc
     initiator = _validated_initiator(
@@ -412,6 +416,7 @@ def job_outcome_status(code: str) -> int:
         return 503
     status_codes = {
         "job_not_found": 404,
+        "root_missing": 410,
         "job_capacity_exceeded": 429,
         "corpus_limit_exceeded": 422,
         "profile_requirements_not_met": 422,
@@ -1140,6 +1145,7 @@ ROUTES: list[Route] = [
     Route("/watcher", get_watcher_state_route, methods=["GET"]),
     Route("/watcher/start", start_watcher_route, methods=["POST"]),
     Route("/watcher/stop", stop_watcher_route, methods=["POST"]),
+    Route("/watcher/prune", prune_watchers_route, methods=["POST"]),
     Route("/watcher/reconfigure", reconfigure_watcher_route, methods=["POST"]),
     Route("/monitor/handoff", monitor_ownership_route, methods=["POST"]),
     Route("/monitor/reclaim", monitor_ownership_route, methods=["POST"]),

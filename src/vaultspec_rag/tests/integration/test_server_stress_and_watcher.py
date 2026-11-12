@@ -34,6 +34,7 @@ from ...watcher_retry import (
 )
 from ...watcher_retry_policy import (
     WatcherRetryPolicy,
+    watcher_retry_state_path,
 )
 from .._state_fixtures import reset_limiters, reset_registry
 from ._watcher_test_support import pending_code_observation, seed_vault_publication
@@ -788,7 +789,7 @@ async def test_watcher_restart_refuses_fenced_scope_without_canonical_job_histor
     assert before_results
     assert before_publication.publication_revision is not None
     assert before_publication.published_generation is not None
-    state_path = root / get_config().data_dir / "watcher-retry" / "code.json"
+    state_path = watcher_retry_state_path(root, WatcherSource.CODE)
     script = "\n".join(
         (
             "import os, sys",
@@ -1036,7 +1037,7 @@ async def test_watcher_failure_is_bounded_and_restart_converges(
     root = tmp_path.resolve()
     slot, _trigger, target = _build_watched_code_project(root, registry)
     relative = str(target.relative_to(root)).replace("\\", "/")
-    state_path = root / get_config().data_dir / "watcher-retry" / "code.json"
+    state_path = watcher_retry_state_path(root, WatcherSource.CODE)
 
     await _start_watcher(root, cooldown=0.0)
     try:
@@ -1102,7 +1103,7 @@ async def test_watcher_retries_intent_after_real_state_lock_contention(
     root = tmp_path.resolve()
     slot, _trigger, target = _build_watched_code_project(root, registry)
     relative = str(target.relative_to(root)).replace("\\", "/")
-    state_path = root / get_config().data_dir / "watcher-retry" / "code.json"
+    state_path = watcher_retry_state_path(root, WatcherSource.CODE)
     ready_path = root / "watcher-state-lock-ready.marker"
     holder: subprocess.Popen[str] | None = None
 
@@ -1202,7 +1203,7 @@ async def test_watcher_cancellation_releases_real_admitted_claim(
     borrowers = [object() for _ in range(int(limiter.total_tokens))]
     for borrower in borrowers:
         await limiter.acquire_on_behalf_of(borrower)
-    state_path = root / get_config().data_dir / "watcher-retry" / "code.json"
+    state_path = watcher_retry_state_path(root, WatcherSource.CODE)
 
     await _start_watcher(root, cooldown=0.0)
     try:
@@ -1271,7 +1272,7 @@ async def test_watcher_refreshes_intent_committed_by_retiring_policy(
     )
     await _start_watcher(root, cooldown=0.0)
     try:
-        state_path = root / get_config().data_dir / "watcher-retry" / "code.json"
+        state_path = watcher_retry_state_path(root, WatcherSource.CODE)
         await _wait_for_path(state_path)
         retiring = WatcherRetryPolicy.for_root(root, WatcherSource.CODE)
         observation = pending_code_observation(relative)
@@ -1307,7 +1308,7 @@ async def test_watcher_startup_retries_real_state_lock_contention(
     )
     retiring = WatcherRetryPolicy.for_root(root, WatcherSource.CODE)
     retiring.mark_scope_pending((pending_code_observation(relative),))
-    state_path = root / get_config().data_dir / "watcher-retry" / "code.json"
+    state_path = watcher_retry_state_path(root, WatcherSource.CODE)
     ready_path = root / "watcher-startup-lock-ready.marker"
     holder = _start_state_lock_holder(
         state_path.with_name(f"{state_path.name}.lock"),

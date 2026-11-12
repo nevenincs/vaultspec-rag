@@ -13,7 +13,7 @@ from .._source_types import PublicSourceType
 from ..mcp._tools import _validated_search_result
 from ..search._models import SearchResult
 from ..search._outcomes import CombinedSearchOutcome, SearchDomainOutcome
-from ..server._routes_search import SearchRequest, _normalise_search_request
+from ..server._search_request import SearchRequest, normalise_search_request
 from ._cli_helpers import app, runner
 from .test_cli_search import (
     _readiness_block,
@@ -177,10 +177,10 @@ def test_mcp_schema_and_response_explain_orientation() -> None:
 def test_route_rejects_non_boolean_domain_selection(tmp_path: Path) -> None:
     # Removing boolean validation failed the SearchRouteError assertion;
     # restoring it passed (mutation exit 1, restored exit 0).
-    from ..server._routes_search import SearchRouteError
+    from ..server._search_request import SearchRouteError
 
     (tmp_path / ".vault").mkdir()
-    result = _normalise_search_request(
+    result = normalise_search_request(
         {
             "query": "locking",
             "type": "combined",

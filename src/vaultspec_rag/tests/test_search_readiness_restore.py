@@ -45,7 +45,8 @@ from ..job_models import (
     JobState,
 )
 from ..server import _routes
-from ..server._routes_search import SearchRequest, _admit_requested_freshness
+from ..server._routes_search import _admit_requested_freshness
+from ..server._search_request import SearchRequest
 from ..server._search_route_availability import (
     SearchAvailabilityRequestFacts,
     SearchIndexStateInput,

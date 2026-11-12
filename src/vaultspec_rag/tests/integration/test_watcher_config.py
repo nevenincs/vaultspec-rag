@@ -17,11 +17,12 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ... import server
-from ...config._settings import get_config
 from ...config._types import EnvVar
 from ...registry import get_registry
 from ...server import WatcherStartOutcome
 from ...watcher_intake import watch_and_reindex
+from ...watcher_retry import WatcherSource
+from ...watcher_retry_policy import watcher_retry_state_path
 from .._config_fixtures import reset_config
 from .._state_fixtures import reset_registry
 
@@ -140,7 +141,7 @@ async def test_failed_watcher_task_is_removed_from_running_registry(
     previous = set_env(EnvVar.WATCH_ENABLED, "1")
     try:
         reset_config()
-        corrupt = root / get_config().data_dir / "watcher-retry" / "vault.json"
+        corrupt = watcher_retry_state_path(root, WatcherSource.VAULT)
         corrupt.parent.mkdir(parents=True, exist_ok=True)
         corrupt.write_text("{not-json", encoding="utf-8")
 

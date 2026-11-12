@@ -30,7 +30,6 @@ from ..server import (
 )
 from ..server._routes_search import (
     SearchAvailabilityRequestFacts,
-    SearchRequest,
     _classify_completed_search,
     _classify_search_result,
     _search_response_status,
@@ -42,6 +41,7 @@ from ..server._search_availability import (
     classify_search_response,
 )
 from ..server._search_readiness import ReadinessRevisionSnapshot, ReadinessSourceKey
+from ..server._search_request import SearchRequest
 from ..service import RegistryFullError, ServiceRegistry
 from ..serviceclient._search_transport import (
     _search_response_envelope,

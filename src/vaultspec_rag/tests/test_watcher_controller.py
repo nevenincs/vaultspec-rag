@@ -141,6 +141,7 @@ def test_controller_vocabulary_matches_the_public_contract() -> None:
         "retrying",
         "refused",
         "converged",
+        "stale",
     }
     assert {reason.value for reason in ControllerReason} == {
         "change_observed",
@@ -163,6 +164,7 @@ def test_controller_vocabulary_matches_the_public_contract() -> None:
         "retry_delay_active",
         "retry_admitted",
         "circuit_open",
+        "root_missing",
         "full_reindex_required",
         "scope_state_invalid",
         "scope_capacity_exceeded",

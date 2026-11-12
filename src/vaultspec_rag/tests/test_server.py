@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
     from ..store_runtime import VaultStore
 
+from .._root_presence import RootMissingError
 from ..capabilities import BackendCapabilities
 from ..config._types import EnvVar
 from ..mcp._mcp import mcp
@@ -626,7 +627,7 @@ class TestVaultBoundaryValidation:
 
     def test_nonexistent_path_raises(self, tmp_path: Path) -> None:
         fake: Path = tmp_path / "does-not-exist"
-        with pytest.raises(ValueError, match=r"no \.vault/ directory"):
+        with pytest.raises(RootMissingError, match=r"project root does not exist"):
             _validate_vault_root(fake)
 
     def test_resolve_root_rejects_non_vault(self, tmp_path: Path) -> None:

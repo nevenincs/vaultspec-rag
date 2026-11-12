@@ -19,6 +19,7 @@ import vaultspec_rag.server as _m
 
 from .._error_payload import error_payload
 from .._root_identity import canonical_root_key, canonical_root_path
+from .._root_presence import root_is_missing, stale_watcher_roots
 from ..config._schema import checked_setting
 from ._auth import require_token
 from ._runtime import get_request_runtime
@@ -28,10 +29,14 @@ if TYPE_CHECKING:
 
     from starlette.requests import Request
 
+    from .._root_presence import StaleWatcherRoot
+    from ..watcher_controller import ControllerSnapshot
+
 __all__ = [
     "evict_project_route",
     "get_watcher_state_route",
     "list_projects_route",
+    "prune_watchers_route",
     "reconfigure_watcher_route",
     "start_watcher_route",
     "stop_watcher_route",
@@ -66,8 +71,15 @@ async def list_projects_route(request: Request) -> JSONResponse:
         return denied
     registry = get_request_runtime(request).registry
     projects = registry.snapshot()
-    for p in projects:
-        p["root"] = str(p["root"])
+
+    def mark_missing() -> None:
+        for p in projects:
+            p["root"] = str(p["root"])
+            # A loaded project whose directory is gone is stale: every request
+            # against it is refused until it is unloaded or recreated.
+            p["root_missing"] = root_is_missing(p["root"])
+
+    await run_sync(mark_missing)
     return JSONResponse(registry.projects_envelope(projects))
 
 
@@ -102,12 +114,9 @@ async def get_watcher_state_route(request: Request) -> JSONResponse:
     from ..api import controller_snapshot_envelope
     from ._watcher import _controller_snapshots
 
-    raw_limit = request.query_params.get("limit")
-    try:
-        limit = min(256, max(0, int(raw_limit))) if raw_limit is not None else 256
-    except ValueError:
-        limit = 256
+    limit = _watcher_state_limit(request.query_params.get("limit"))
     snapshots, globally_truncated = _controller_snapshots()
+    stale = await run_sync(stale_watcher_roots)
     root_filter = request.query_params.get("root") or project_root
     try:
         root_key = canonical_root_key(root_filter) if root_filter is not None else None
@@ -121,9 +130,7 @@ async def get_watcher_state_route(request: Request) -> JSONResponse:
     filtered = [
         snapshot
         for snapshot in snapshots
-        if (root_key is None or snapshot.canonical_root == root_key)
-        and (source_filter is None or snapshot.source.value == source_filter)
-        and (state_filter is None or snapshot.state.value == state_filter)
+        if _snapshot_matches(snapshot, root_key, source_filter, state_filter)
     ]
     returned = filtered[:limit]
 
@@ -138,6 +145,7 @@ async def get_watcher_state_route(request: Request) -> JSONResponse:
         "controllers_total": len(filtered),
         "controllers_returned": len(returned),
         "controllers_truncated": globally_truncated or len(filtered) > len(returned),
+        **_stale_roots_block(stale, root_key, limit),
         "filters": {
             "root": root_filter,
             "source": source_filter,
@@ -150,6 +158,48 @@ async def get_watcher_state_route(request: Request) -> JSONResponse:
         state["running"] = project_key in {canonical_root_key(root) for root in roots}
 
     return JSONResponse(state)
+
+
+def _watcher_state_limit(raw_limit: str | None) -> int:
+    """Clamp the requested page size, defaulting to the bounded maximum."""
+    try:
+        return min(256, max(0, int(raw_limit))) if raw_limit is not None else 256
+    except ValueError:
+        return 256
+
+
+def _snapshot_matches(
+    snapshot: ControllerSnapshot,
+    root_key: str | None,
+    source_filter: str | None,
+    state_filter: str | None,
+) -> bool:
+    return (
+        (root_key is None or snapshot.canonical_root == root_key)
+        and (source_filter is None or snapshot.source.value == source_filter)
+        and (state_filter is None or snapshot.state.value == state_filter)
+    )
+
+
+def _stale_roots_block(
+    stale: tuple[StaleWatcherRoot, ...],
+    root_key: str | None,
+    limit: int,
+) -> dict[str, object]:
+    """Report watched roots whose directory was deleted or moved.
+
+    Their watchers were stopped; the records stay until pruned or the root
+    returns.
+    """
+    matching = [
+        record
+        for record in stale
+        if root_key is None or canonical_root_key(record.root) == root_key
+    ]
+    return {
+        "stale_roots": [record.as_dict() for record in matching[:limit]],
+        "stale_roots_total": len(matching),
+    }
 
 
 async def start_watcher_route(request: Request) -> JSONResponse:
@@ -231,5 +281,48 @@ async def reconfigure_watcher_route(request: Request) -> JSONResponse:
             "status": outcome.value,
             "debounce_ms": db_ms,
             "cooldown_s": db_cs,
+        }
+    )
+
+
+async def prune_watchers_route(request: Request) -> JSONResponse:
+    """Stop every watcher whose root no longer exists and forget its record.
+
+    ``dry_run`` reports the same set without changing anything. Finding nothing
+    to prune is success: the requested state, no stale watchers, holds.
+    """
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    from ._routes import InvalidJobRequestError, job_payload
+    from ._watcher import _owned_watcher_roots
+    from ._watcher_stale import prune_stale_watchers, stale_watcher_candidates
+
+    try:
+        payload = await job_payload(request, required=False)
+    except InvalidJobRequestError as exc:
+        return JSONResponse(error_payload("bad_request", str(exc)), status_code=400)
+    dry_run = payload.get("dry_run", False)
+    if type(dry_run) is not bool:
+        return JSONResponse(
+            error_payload("bad_request", "dry_run must be a boolean."),
+            status_code=400,
+        )
+    candidates = await run_sync(stale_watcher_candidates, _owned_watcher_roots())
+    if not dry_run:
+        prune_stale_watchers(candidates)
+    return JSONResponse(
+        {
+            "ok": True,
+            "dry_run": dry_run,
+            "status": (
+                "nothing_to_prune"
+                if not candidates
+                else "would_prune"
+                if dry_run
+                else "pruned"
+            ),
+            "count": len(candidates),
+            "roots": [candidate.as_dict() for candidate in candidates],
         }
     )

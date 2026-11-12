@@ -21,6 +21,7 @@ from watchfiles import (
 )
 
 from . import jobs as _jobs
+from ._root_presence import root_is_missing, root_missing_message
 from .indexer._content_policy import ContentKind
 from .indexer._route_migration import prior_stored_owners
 from .job_models import (
@@ -445,6 +446,9 @@ async def _initialize_watcher_bindings(
     """Recover durable source slots before registering their scheduler controllers."""
     root_dir = configuration.root_dir
     vault_dir = configuration.vault_dir
+    if await _run_in_thread(root_is_missing, root_dir):
+        # The owner reports the missing root once and retires the watcher.
+        raise WatcherInitializationError(root_missing_message(root_dir))
     try:
         vault_retry, code_retry, document_retry = await initialize_retry_policies(
             root_dir,
@@ -636,12 +640,15 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
 
                 _wake_watcher_scheduler()
     except Exception as exc:
+        # Watching a root that was deleted fails by construction; the owner
+        # reports that root once as missing rather than as an intake fault.
+        missing = root_is_missing(root_dir)
         log_event(
             logger,
             "service.watcher",
             "failed",
-            severity=logging.ERROR,
-            exc_info=True,
+            severity=logging.INFO if missing else logging.ERROR,
+            exc_info=not missing,
             root=root_dir,
             error=exc,
         )

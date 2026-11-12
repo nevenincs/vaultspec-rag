@@ -56,6 +56,7 @@ Generated from the live command surface. Each entry lists the command's argument
     - [start](#server-updates-start)
     - [stop](#server-updates-stop)
     - [timing](#server-updates-timing)
+    - [prune](#server-updates-prune)
   - **qdrant**
     - [install](#server-qdrant-install)
     - [status](#server-qdrant-status)
@@ -810,6 +811,26 @@ vaultspec-rag server updates timing
 | `--repeat-update-delay-s` | float | no | - | Minimum wait before automatically updating a project again, in seconds. |
 | `--port` | int | no | - | Service port (defaults to running service). |
 | `--json` | boolean | no | off | Emit JSON for scripts instead of human text. |
+
+## server updates prune
+
+Stop automatic updates for every project whose directory is gone. Only the watchers are dropped. Indexes, storage and retry history are left as they are, so a project that comes back resumes from them.
+
+```bash
+vaultspec-rag server updates prune
+```
+
+### Arguments
+
+None.
+
+### Options
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `--port` | int | no | - | Service port (defaults to running service). |
+| `--json` | boolean | no | off | Emit JSON for scripts instead of human text. |
+| `--dry-run` | boolean | no | off | Report what would be pruned; change nothing. |
 
 ## server qdrant install
 

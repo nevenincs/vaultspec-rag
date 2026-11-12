@@ -23,6 +23,7 @@ __all__ = [
     "_controller_snapshots",
     "_ensure_watcher",
     "_ensure_watcher_soon",
+    "_owned_watcher_roots",
     "_register_watcher_controller",
     "_stop_all_watchers",
     "_stop_watcher",
@@ -31,13 +32,22 @@ __all__ = [
     "_wake_watcher_scheduler",
 ]
 
+from anyio.to_thread import run_sync as _run_in_thread
+
 import vaultspec_rag.server as _m
 
 from .._root_identity import canonical_root_key
+from .._root_presence import clear_stale_watcher_root, root_is_missing
 from .._workspace_layout import (
     VAULT_DIR,
 )
 from ..logging_config import log_event
+from ._watcher_failures import WatcherFailureLog
+from ._watcher_stale import (
+    missing_root_remediation,
+    missing_roots,
+    report_missing_watcher_root,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -51,6 +61,26 @@ if TYPE_CHECKING:
 logger = logging.getLogger("vaultspec_rag.server")
 
 _MAX_CONTROLLER_SNAPSHOTS = 256
+
+
+def _owned_watcher_roots() -> set[Path]:
+    """Return every root a watcher generation currently owns in any phase."""
+    with _m._watcher_lock:
+        return {
+            *_m._watcher_tasks,
+            *_watcher_drains,
+            *_deferred_watcher_roots,
+            *_suppressed_deferred_watcher_roots,
+            *_watcher_starting_generations,
+        }
+
+
+def _retire_missing_watcher_root(canonical_root: str, sources: tuple[str, ...]) -> None:
+    """Report a missing root and stop every watcher generation that owns it."""
+    report_missing_watcher_root(canonical_root, sources)
+    for owned in _owned_watcher_roots():
+        if canonical_root_key(owned) == canonical_root:
+            _m._stop_watcher(owned)
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +136,8 @@ class WatcherStartOutcome(StrEnum):
     QUEUED_BEHIND_DRAIN = "queued_behind_drain"
     #: Watching is switched off for the service; no watcher will start.
     DISABLED = "disabled"
+    #: The root directory does not exist; there is nothing to watch.
+    ROOT_MISSING = "root_missing"
     #: No watcher, and none owed: a stop superseded the request, the owning
     #: registry was replaced, or the service is shutting down.
     UNAVAILABLE = "unavailable"
@@ -170,6 +202,7 @@ class _WatcherScheduler:
         self._released = asyncio.Event()
         self._released.set()
         self._stopping = False
+        self._failures = WatcherFailureLog(monotonic)
 
     @property
     def empty(self) -> bool:
@@ -216,6 +249,7 @@ class _WatcherScheduler:
             for key, registration in self._registrations.items()
             if key[0] != canonical_root
         }
+        self._failures.forget_root(canonical_root)
         if not self._registrations:
             self._stopping = True
         self.wake()
@@ -253,6 +287,10 @@ class _WatcherScheduler:
             self._publish_released()
 
     async def _run_cycle(self) -> None:
+        roots = {key[0] for key in self._registrations}
+        if roots:
+            for missing in await _run_in_thread(missing_roots, roots):
+                await self._retire_root(missing)
         now = self._monotonic()
         registrations = tuple(self._registrations.items())
         for key, registration in registrations:
@@ -262,12 +300,9 @@ class _WatcherScheduler:
             # measurement such as a cleared backlog can change its decision
             # before its own deadline arrives.
             if not self._recovery_delayed(registration, now):
-                try:
-                    await self._invoke(key, registration.reevaluate)
-                except Exception:
-                    logger.exception(
-                        "Watcher controller reevaluation failed for %s/%s", *key
-                    )
+                await self._invoke_reporting(
+                    key, "reevaluation", registration.reevaluate
+                )
 
         current = tuple(
             registration.controller.snapshot
@@ -279,13 +314,53 @@ class _WatcherScheduler:
             return
         key = (selection.canonical_root, selection.source)
         registration = self._registrations.get(key)
-        if registration is not None:
-            try:
-                await self._invoke(key, registration.admit, selection)
-            except Exception:
-                logger.exception(
-                    "Watcher controller admission callback failed for %s/%s", *key
+        if registration is None:
+            return
+        # The root can vanish between reevaluation and admission; a job
+        # dispatched against it could only fail.
+        if await _run_in_thread(root_is_missing, key[0]):
+            await self._retire_root(key[0])
+            return
+        await self._invoke_reporting(key, "admission", registration.admit, selection)
+
+    async def _retire_root(self, canonical_root: str) -> None:
+        """Move every controller of a missing root to its terminal state."""
+        from ..watcher_controller import ControllerState
+
+        registrations = [
+            (key, registration)
+            for key, registration in self._registrations.items()
+            if key[0] == canonical_root
+        ]
+        remediation = missing_root_remediation()
+        for key, registration in registrations:
+            if registration.controller.snapshot.state is not ControllerState.STALE:
+                await self._invoke(
+                    key,
+                    partial(
+                        registration.controller.retire_missing_root,
+                        remediation=remediation,
+                    ),
                 )
+        self.unregister_root(Path(canonical_root))
+        _retire_missing_watcher_root(
+            canonical_root, tuple(key[1].value for key, _ in registrations)
+        )
+
+    async def _invoke_reporting(
+        self,
+        key: ControllerKey,
+        phase: str,
+        callback: Callable[..., Any],
+        *args: object,
+    ) -> None:
+        """Run one callback, logging each distinct failure once per controller."""
+        try:
+            await self._invoke(key, callback, *args)
+        except Exception as exc:
+            self._failures.report(key, phase, exc)
+        else:
+            self._failures.succeeded(key, phase)
 
     async def _invoke(
         self, key: ControllerKey, callback: Callable[..., Any], *args: object
@@ -510,7 +585,11 @@ def _watcher_task_done(
     from ..watcher_intake import WatcherInitializationError
 
     error = None if task.cancelled() else task.exception()
-    init_failed = isinstance(error, WatcherInitializationError)
+    # A root that no longer exists cannot be watched by any replacement
+    # generation, so it ends the watcher as terminally as a failed start.
+    missing = root_is_missing(root)
+    init_failed = missing or isinstance(error, WatcherInitializationError)
+    sources = _registered_sources(root) if missing else ()
     drain: _WatcherDrain | None = None
     with _m._watcher_lock:
         if _m._watcher_tasks.get(root) is not task:
@@ -534,12 +613,33 @@ def _watcher_task_done(
         logger,
         "service.watcher",
         "task_exited",
-        severity=logging.ERROR if error is not None else logging.WARNING,
+        severity=(
+            logging.INFO
+            if missing
+            else logging.ERROR
+            if error is not None
+            else logging.WARNING
+        ),
         root=root,
         error=error,
     )
+    if missing:
+        report_missing_watcher_root(root, sources)
     _unregister_watcher_controllers(root)
     _schedule_watcher_drain(root, drain)
+
+
+def _registered_sources(root: Path) -> tuple[str, ...]:
+    """Return the sources the scheduler still holds controllers for."""
+    scheduler = _watcher_scheduler
+    if scheduler is None:
+        return ()
+    canonical_root = canonical_root_key(root)
+    return tuple(
+        snapshot.source.value
+        for snapshot in scheduler.snapshots()
+        if snapshot.canonical_root == canonical_root
+    )
 
 
 def _ensure_watcher_soon(root: Path, registry: ServiceRegistry) -> None:
@@ -558,6 +658,11 @@ def _ensure_watcher_soon(root: Path, registry: ServiceRegistry) -> None:
     if getattr(registry, "_shutting_down", False):
         return
     root = root.resolve()
+    # A request against a deleted root must not re-arm the watcher that was
+    # retired for it; a root that exists again has recovered.
+    if root_is_missing(root):
+        return
+    clear_stale_watcher_root(root)
     task: asyncio.Task[None] | None = None
     drain: _WatcherDrain | None = None
     with _m._watcher_lock:
@@ -702,17 +807,10 @@ def _ensure_watcher(
     from ..config._settings import get_config
 
     cfg = get_config()
-    # watch_enabled is the sole opt-out: when disabled the service is
-    # pull-only and no watcher is ever started - including explicit
-    # start/reconfigure requests. A closed request-owned registry is likewise
-    # unavailable before any project-slot I/O is attempted.
-    if not cfg.watch_enabled or getattr(registry, "_shutting_down", False):
-        return (
-            WatcherStartOutcome.DISABLED
-            if not cfg.watch_enabled
-            else WatcherStartOutcome.UNAVAILABLE
-        )
     root = root.resolve()
+    refused = _start_refusal(root, registry, cfg)
+    if refused is not None:
+        return refused
     drain: _WatcherDrain | None = None
     generation: int | None = None
     with _m._watcher_lock:
@@ -752,6 +850,30 @@ def _ensure_watcher(
     return _warm_and_publish_watcher(
         _WarmWatcherRequest(root, registry, cfg, debounce_ms, cooldown_s, generation)
     )
+
+
+def _start_refusal(
+    root: Path,
+    registry: ServiceRegistry,
+    cfg: VaultSpecConfigWrapper,
+) -> WatcherStartOutcome | None:
+    """Return why no watcher may start for *root*, or ``None`` when one may.
+
+    ``watch_enabled`` is the sole opt-out: when disabled the service is
+    pull-only and no watcher is ever started - including explicit
+    start/reconfigure requests. A closed request-owned registry is likewise
+    unavailable before any project-slot I/O is attempted, and a root that no
+    longer exists has nothing to watch. A root that exists again has
+    recovered, so its stale record is dropped.
+    """
+    if not cfg.watch_enabled:
+        return WatcherStartOutcome.DISABLED
+    if getattr(registry, "_shutting_down", False):
+        return WatcherStartOutcome.UNAVAILABLE
+    if root_is_missing(root):
+        return WatcherStartOutcome.ROOT_MISSING
+    clear_stale_watcher_root(root)
+    return None
 
 
 def _warm_and_publish_watcher(
@@ -1121,7 +1243,16 @@ async def _wait_for_intake_release(
             raise
         logger.warning("Watcher intake task for %s was cancelled externally", root)
     except Exception:
-        logger.exception("Watcher intake task failed while stopping %s", root)
+        # Intake over a deleted root fails by construction; that root is
+        # already reported once as missing, and its stop still succeeds.
+        if root_is_missing(root):
+            logger.debug(
+                "Watcher intake for missing root %s exited with an error",
+                root,
+                exc_info=True,
+            )
+        else:
+            logger.exception("Watcher intake task failed while stopping %s", root)
     return True
 
 

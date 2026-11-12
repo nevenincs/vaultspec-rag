@@ -38,6 +38,7 @@ __all__ = [
     "server_start_command",
     "server_status_command",
     "server_stop_command",
+    "server_updates_prune_command",
 ]
 
 
@@ -187,6 +188,11 @@ def server_start_command(
 def server_stop_command(port: object | None = None) -> str:
     """Return the ``server stop`` invocation an operator should run."""
     return f"vaultspec-rag server stop{port_option(port)}"
+
+
+def server_updates_prune_command(port: object | None = None) -> str:
+    """Return the ``server updates prune`` invocation that drops missing roots."""
+    return f"vaultspec-rag server updates prune{port_option(port)}"
 
 
 def server_restart_remedy(port: object | None = None) -> str:

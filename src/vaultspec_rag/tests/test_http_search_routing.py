@@ -14,15 +14,17 @@ from .._search_state import FreshnessWaitPolicy
 from ..config._types import EnvVar
 from ..server._main import create_http_app
 from ..server._routes_search import (
-    SearchRequest,
-    SearchRouteError,
     _admit_requested_freshness,
     _capture_publication_targets,
     _execute_search_route,
     _execute_search_until_disconnect,
-    _normalise_search_request,
 )
 from ..server._runtime import ServerRouteRuntime
+from ..server._search_request import (
+    SearchRequest,
+    SearchRouteError,
+    normalise_search_request,
+)
 from ..service import ServiceRegistry
 from ..serviceclient._transport import _logs_route_path
 from ._config_fixtures import reset_config
@@ -89,7 +91,7 @@ def _payload(root: Path, **extra: object) -> dict[str, object]:
 
 
 def _normalised(root: Path, **extra: object) -> SearchRequest:
-    result = _normalise_search_request(_payload(root, **extra), "request-1")
+    result = normalise_search_request(_payload(root, **extra), "request-1")
     assert isinstance(result, SearchRequest)
     return result
 
@@ -144,7 +146,7 @@ def test_search_freshness_policy_rejects_malformed_inputs(
     extra: dict[str, object],
     expected: str,
 ) -> None:
-    body = _error_body(_normalise_search_request(_payload(tmp_path, **extra), "bad"))
+    body = _error_body(normalise_search_request(_payload(tmp_path, **extra), "bad"))
 
     assert body == {"ok": False, "error": "bad_request", "message": expected}
 
@@ -152,7 +154,7 @@ def test_search_freshness_policy_rejects_malformed_inputs(
 def test_bounded_policy_rejects_bool_with_exact_envelope(tmp_path: Path) -> None:
     # Removing the bool guard produced SearchRequest(True -> 1.0), failing
     # _error_body's SearchRouteError assertion; restoration passed this test.
-    result = _normalise_search_request(
+    result = normalise_search_request(
         _payload(
             tmp_path,
             freshness_policy="bounded",
@@ -175,7 +177,7 @@ def test_search_freshness_bound_uses_configured_maximum(tmp_path: Path) -> None:
     reset_config()
     try:
         body = _error_body(
-            _normalise_search_request(
+            normalise_search_request(
                 _payload(
                     tmp_path,
                     freshness_policy="bounded",

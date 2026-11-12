@@ -48,6 +48,7 @@ from ..watcher_retry_policy import (
     _ADMISSION_RESERVATIONS,
     WatcherRetryPolicy,
     _WatcherRetryOptions,
+    watcher_retry_state_path,
 )
 from ..watcher_runtime import (
     WatcherConvergenceSlot,
@@ -196,7 +197,7 @@ def test_verified_rebuild_converges_empty_scope_with_closed_circuit(
     root = tmp_path.resolve()
     policy = _refused_policy(root, WatcherSource.CODE)
     write_state(
-        workspace_volume_path(root) / "watcher-retry" / "code.json",
+        watcher_retry_state_path(root, WatcherSource.CODE),
         replace(policy.state, pending_paths=()),
     )
     controller = _new_controller(policy)
@@ -478,7 +479,7 @@ def test_rebuild_at_refusal_cutoff_still_reads_and_validates_publication(
     started = snapshot.timestamps.started_at
     assert started is not None
     write_state(
-        workspace_volume_path(root) / "watcher-retry" / "code.json",
+        watcher_retry_state_path(root, WatcherSource.CODE),
         replace(policy.state, last_failure_at=started),
     )
     publication_reads: list[PublicSourceType] = []
@@ -509,7 +510,7 @@ def test_rebuild_observation_must_start_after_scope_refusal(
     # that resumed observations from before unknown scope was recorded.
     root = tmp_path.resolve()
     policy = WatcherRetryPolicy(
-        workspace_volume_path(root) / "watcher-retry" / "code.json",
+        watcher_retry_state_path(root, WatcherSource.CODE),
         _WatcherRetryOptions(
             canonical_root=os.path.normcase(str(root)),
             source=WatcherSource.CODE,
@@ -599,7 +600,7 @@ def test_attempt_settlement_preserves_newer_scope_refusal_until_a_new_rebuild(
     # older verified full proof to erase newer unknown scope on restart.
     root = tmp_path.resolve()
     old_rebuild = _published_rebuild(root, WatcherSource.CODE)
-    state_path = workspace_volume_path(root) / "watcher-retry" / "code.json"
+    state_path = watcher_retry_state_path(root, WatcherSource.CODE)
     policy = WatcherRetryPolicy(
         state_path,
         _WatcherRetryOptions(
@@ -679,7 +680,7 @@ def test_abandoned_attempt_rebuild_must_postdate_its_later_scope_refusal(
     # Mutation: using only the abandoned attempt start admits a verified
     # rebuild whose proof predates unknown scope recorded during that attempt.
     root = tmp_path.resolve()
-    state_path = workspace_volume_path(root) / "watcher-retry" / "code.json"
+    state_path = watcher_retry_state_path(root, WatcherSource.CODE)
     policy = WatcherRetryPolicy(
         state_path,
         _WatcherRetryOptions(
@@ -740,7 +741,7 @@ def test_abandoned_attempt_rebuild_must_postdate_its_later_scope_refusal(
 def test_rebuild_does_not_create_state_for_an_unwatched_root(tmp_path: Path) -> None:
     root = tmp_path.resolve()
     snapshot = _published_rebuild(root, WatcherSource.CODE)
-    state_directory = workspace_volume_path(root) / "watcher-retry"
+    state_directory = watcher_retry_state_path(root, WatcherSource.CODE).parent
 
     assert not reconcile_completed_rebuild(snapshot)
     assert not state_directory.exists()

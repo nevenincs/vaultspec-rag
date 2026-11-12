@@ -46,8 +46,8 @@ if TYPE_CHECKING:
     from .._index_integrity import IndexIntegrity, IndexIntegritySnapshot
     from ..search._outcomes import CombinedSearchOutcome
     from ..service import ServiceRegistry
-    from ._routes_search import SearchRequest
     from ._search_readiness import PublicationTarget, ReadinessRevisionSnapshot
+    from ._search_request import SearchRequest
 
 
 @dataclass(frozen=True, slots=True)
