@@ -410,6 +410,10 @@ class TestNoStructurallyIdenticalFunctions:
             "operator_state/_provisioning.py:label",
         ): _ENUM_LABEL_TABLE,
         (
+            "operator_state/_installation.py:label",
+            "operator_state/_service.py:label",
+        ): _ENUM_LABEL_TABLE,
+        (
             "_gpu_admission.py:device_load_wire",
             "_readiness.py:to_dict",
         ): _WIRE_PROJECTION,
