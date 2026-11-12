@@ -524,10 +524,10 @@ class TestInstallTorchConfigFollowups:
         into the warning taxonomy, not propagate up and tear down the
         rest of the install.
         """
-        import click
+        import typer
 
         def click_abort_confirm(_prompt: str) -> bool:
-            raise click.exceptions.Abort
+            raise typer.Abort
 
         # Must NOT raise; install_run must return a populated report.
         report = install_run(
@@ -573,13 +573,13 @@ class TestInstallTorchConfigFollowups:
         the exception chain and route those to ``SKIPPED_EOF`` so the
         user sees the bypass-flag hint, not a generic decline label.
         """
-        import click
+        import typer
 
         def windows_eof_confirm(_prompt: str) -> bool:
             try:
                 raise EOFError("EOF when reading a line")
             except EOFError as eof_exc:
-                raise click.exceptions.Abort from eof_exc
+                raise typer.Abort from eof_exc
 
         report = install_run(
             path=consumer_workspace,

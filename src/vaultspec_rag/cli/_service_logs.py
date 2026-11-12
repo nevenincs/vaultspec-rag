@@ -9,11 +9,9 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypedDict, cast, get_args
+from typing import Annotated
 
 import typer
-from typer._types import TyperChoice
-from typer.core import TyperCommand, TyperOption
 
 from ..logging_config import (
     DEFAULT_MANAGED_LOG_LINES,
@@ -27,100 +25,41 @@ from ..logging_config import (
 )
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
-from ._app import JSON_OPTION_HELP, server_root_app
+from ._app import JsonMode, server_root_app
+from ._option_groups import with_option_group
 from ._render import _emit_json, _emit_json_error_and_exit, _plain
-
-if TYPE_CHECKING:
-    from typer._click import Context as ClickContext
-
-    # Click types ``Context.params`` as ``dict[str, Any]`` because the keys
-    # and value types are only known once a command's options are parsed at
-    # runtime. This TypedDict is the producer-side cast target for
-    # ``_ServiceLogsCommand.invoke``: the field types mirror the
-    # ``TyperOption`` declarations registered in ``__init__``, so a single
-    # cast on ``ctx.params`` replaces every per-field ``Any`` read below it.
-    class _LogsParams(TypedDict):
-        limit: int
-        source: ManagedLogSource
-        job_id: str | None
-        contains: str | None
-        port: int | None
-        json: bool
-
 
 _LOGS_COMMAND = "server.logs"
 
 
 @dataclass(frozen=True, slots=True)
 class _ServiceLogsOptions:
-    lines: int
-    source: ManagedLogSource
-    job_id: str | None
-    contains: str | None
-    port: int | None
-    json_mode: bool
-
-
-class _ServiceLogsCommand(TyperCommand):
-    """Expose managed-log options without expanding the callback signature."""
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self.params.extend(
-            (
-                TyperOption(
-                    param_decls=["--limit"],
-                    type=int,
-                    default=DEFAULT_MANAGED_LOG_LINES,
-                    help="Maximum recent lines returned per selected source.",
-                ),
-                TyperOption(
-                    param_decls=["--source"],
-                    type=TyperChoice(get_args(ManagedLogSource)),
-                    default="all",
-                    help="Managed log source: service, qdrant, or all.",
-                ),
-                TyperOption(
-                    param_decls=["--job-id"],
-                    type=str,
-                    default=None,
-                    help="Keep lines containing this job ID.",
-                ),
-                TyperOption(
-                    param_decls=["--contains"],
-                    type=str,
-                    default=None,
-                    help="Keep lines containing this text.",
-                ),
-                TyperOption(
-                    param_decls=["--port"],
-                    type=int,
-                    default=None,
-                    help=(
-                        "Use this live service port before reading retained local logs."
-                    ),
-                ),
-                TyperOption(
-                    param_decls=["--json"],
-                    default=False,
-                    is_flag=True,
-                    help=JSON_OPTION_HELP,
-                ),
-            )
-        )
-
-    def invoke(self, ctx: ClickContext) -> None:
-        params = cast("_LogsParams", ctx.params)
-        return _run_service_logs(
-            _ServiceLogsOptions(
-                lines=params["limit"],
-                source=params["source"],
-                job_id=params["job_id"],
-                contains=params["contains"],
-                port=params["port"],
-                json_mode=params["json"],
-            )
-        )
+    lines: Annotated[
+        int,
+        typer.Option(
+            "--limit", help="Maximum recent lines returned per selected source."
+        ),
+    ] = DEFAULT_MANAGED_LOG_LINES
+    source: Annotated[
+        ManagedLogSource,
+        typer.Option("--source", help="Managed log source: service, qdrant, or all."),
+    ] = "all"
+    job_id: Annotated[
+        str | None,
+        typer.Option("--job-id", help="Keep lines containing this job ID."),
+    ] = None
+    contains: Annotated[
+        str | None,
+        typer.Option("--contains", help="Keep lines containing this text."),
+    ] = None
+    port: Annotated[
+        int | None,
+        typer.Option(
+            "--port",
+            help="Use this live service port before reading retained local logs.",
+        ),
+    ] = None
+    json_mode: JsonMode = False
 
 
 def _exit_live_log_error(
@@ -148,14 +87,10 @@ def _render_log_groups(groups: list[ManagedLogGroup]) -> None:
 
 @server_root_app.command(
     "logs",
-    cls=_ServiceLogsCommand,
     help="Show grouped raw service and Qdrant logs live or offline.",
 )
-def service_logs() -> None:
-    """Register the custom command; it dispatches through ``_ServiceLogsCommand``."""
-
-
-def _run_service_logs(options: _ServiceLogsOptions) -> None:
+@with_option_group
+def service_logs(options: _ServiceLogsOptions) -> None:
     """Show grouped raw service and Qdrant logs live or offline."""
     filters = managed_log_filters(job_id=options.job_id, contains=options.contains)
     limit = clamp_managed_log_lines(options.lines)

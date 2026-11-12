@@ -14,8 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import typer
-from typer.core import TyperGroup, TyperOption
-from typer.models import TyperPath
+from typer.core import TyperGroup
 from vaultspec_core.config import (
     ConfigurationError,
 )
@@ -29,11 +28,11 @@ import vaultspec_rag.cli as _cli
 
 from .._named_root import named_root
 from ..logging_config import configure_logging
+from ._option_groups import with_option_group
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    import click
     from typer._click import Context as ClickContext
 
 __all__ = [
@@ -140,13 +139,47 @@ RepeatUpdateDelayOption = Annotated[
 
 @dataclass(frozen=True, slots=True)
 class _RootOptions:
-    target: Path | None
-    verbose: bool
-    debug: bool
-    data_dir: str | None
-    storage_dir: str | None
-    status_dir: str | None
-    log_file: str | None
+    target: Annotated[
+        Path | None,
+        typer.Option(
+            "--target",
+            "-t",
+            dir_okay=True,
+            file_okay=False,
+            resolve_path=True,
+            help="Directory containing .vault and .vaultspec",
+        ),
+    ] = None
+    verbose: Annotated[
+        bool, typer.Option("--verbose", "-v", help="Enable INFO logging")
+    ] = False
+    debug: Annotated[
+        bool, typer.Option("--debug", "-d", help="Enable DEBUG logging")
+    ] = False
+    data_dir: Annotated[
+        str | None,
+        typer.Option(
+            "--data-dir",
+            help="Index data directory (default: .vault/data/search-data)",
+        ),
+    ] = None
+    storage_dir: Annotated[
+        str | None,
+        typer.Option(
+            "--storage-dir", help="Index data subdirectory relative to --data-dir"
+        ),
+    ] = None
+    status_dir: Annotated[
+        str | None,
+        typer.Option(
+            "--status-dir",
+            help="Directory for service runtime files (default: ~/.vaultspec-rag)",
+        ),
+    ] = None
+    log_file: Annotated[
+        str | None,
+        typer.Option("--log-file", help="Service log filename inside --status-dir"),
+    ] = None
 
 
 def version_callback(value: bool) -> None:
@@ -160,14 +193,6 @@ def version_callback(value: bool) -> None:
         except metadata.PackageNotFoundError:
             _cli.console.print("vaultspec-rag (unknown version)")
         raise typer.Exit()
-
-
-def _version_option_callback(
-    _ctx: click.Context, _param: click.Parameter, value: bool
-) -> bool:
-    """Adapt the public one-value callback to Click's option callback API."""
-    version_callback(value)
-    return value
 
 
 class _LiteralArgvGroup(TyperGroup):
@@ -209,75 +234,6 @@ class _LiteralArgvGroup(TyperGroup):
             **extra,
         )
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        # TyperGroup.__init__ takes nine-plus keyword-only parameters;
-        # spelling them out here to escape Any trips the too-many-arguments
-        # gate for a pure forwarding wrapper, so this stays a genuinely
-        # dynamic passthrough instead.
-        super().__init__(*args, **kwargs)
-        self.params.extend(
-            (
-                TyperOption(
-                    param_decls=["--target", "-t"],
-                    type=TyperPath(
-                        path_type=Path,
-                        dir_okay=True,
-                        file_okay=False,
-                        resolve_path=True,
-                    ),
-                    default=None,
-                    help="Directory containing .vault and .vaultspec",
-                ),
-                TyperOption(
-                    param_decls=["--verbose", "-v"],
-                    default=False,
-                    is_flag=True,
-                    help="Enable INFO logging",
-                ),
-                TyperOption(
-                    param_decls=["--debug", "-d"],
-                    default=False,
-                    is_flag=True,
-                    help="Enable DEBUG logging",
-                ),
-                TyperOption(
-                    param_decls=["--data-dir"],
-                    type=str,
-                    default=None,
-                    help="Index data directory (default: .vault/data/search-data)",
-                ),
-                TyperOption(
-                    param_decls=["--storage-dir"],
-                    type=str,
-                    default=None,
-                    help="Index data subdirectory relative to --data-dir",
-                ),
-                TyperOption(
-                    param_decls=["--status-dir"],
-                    type=str,
-                    default=None,
-                    help=(
-                        "Directory for service runtime files "
-                        "(default: ~/.vaultspec-rag)"
-                    ),
-                ),
-                TyperOption(
-                    param_decls=["--log-file"],
-                    type=str,
-                    default=None,
-                    help="Service log filename inside --status-dir",
-                ),
-                TyperOption(
-                    param_decls=["--version", "-V"],
-                    default=False,
-                    is_flag=True,
-                    help="Show version",
-                    callback=_version_option_callback,
-                    is_eager=True,
-                ),
-            )
-        )
-
     def make_context(
         self,
         info_name: str | None,
@@ -299,27 +255,6 @@ class _LiteralArgvGroup(TyperGroup):
         ctx = super().make_context(info_name, args, parent=parent, **extra)
         ctx.meta[_ROOT_ARGV_CONTEXT_KEY] = tokens
         return ctx
-
-    def invoke(self, ctx: ClickContext) -> Any:
-        """Invoke the empty registration callback without root option kwargs."""
-        # ctx.params is click's untyped dict[str, Any] of parsed option
-        # values; each cast below narrows one entry to the type its own
-        # option declaration guarantees at runtime.
-        params = ctx.params
-        ctx.meta[_ROOT_OPTIONS_CONTEXT_KEY] = _RootOptions(
-            target=cast("Path | None", params["target"]),
-            verbose=cast("bool", params["verbose"]),
-            debug=cast("bool", params["debug"]),
-            data_dir=cast("str | None", params["data_dir"]),
-            storage_dir=cast("str | None", params["storage_dir"]),
-            status_dir=cast("str | None", params["status_dir"]),
-            log_file=cast("str | None", params["log_file"]),
-        )
-        ctx.params = {}
-        try:
-            return super().invoke(ctx)
-        finally:
-            ctx.params = params
 
 
 app = typer.Typer(
@@ -393,7 +328,6 @@ server_root_app.add_typer(server_storage_app, name="storage")
 app.add_typer(preprocess_app, name="preprocess")
 
 
-_ROOT_OPTIONS_CONTEXT_KEY = "vaultspec_rag.root_options"
 _ROOT_ARGV_CONTEXT_KEY = "vaultspec_rag.root_argv"
 
 
@@ -421,12 +355,8 @@ def server_main(
         from ._service_jobs_collection import ServiceJobsOptions, run_service_jobs
 
         run_service_jobs(
-            ServiceJobsOptions(
-                port=port,
-                interval=interval,
-                watch=True,
-                watch_mode="server",
-            )
+            ServiceJobsOptions(port=port, interval=interval, watch=True),
+            watch_mode="server",
         )
         return
     _show_group_help_if_no_command(ctx)
@@ -494,11 +424,22 @@ class CLIState:
 
 
 @app.callback(invoke_without_command=True)
-def main(ctx: typer.Context) -> None:
-    """Register root options through ``_LiteralArgvGroup``."""
-    options = ctx.meta.get(_ROOT_OPTIONS_CONTEXT_KEY)
-    if not isinstance(options, _RootOptions):
-        raise RuntimeError("root CLI options were not initialized")
+@with_option_group
+def main(
+    ctx: typer.Context,
+    options: _RootOptions,
+    _version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            "-V",
+            help="Show version",
+            callback=version_callback,
+            is_eager=True,
+        ),
+    ] = False,
+) -> None:
+    """Apply the root options to the invocation's context."""
     _configure_root_context(ctx, options)
 
 

@@ -118,7 +118,7 @@ def test_cli_install_flag_defaults_mcp_on() -> None:
     mcp_option = next(
         option
         for option in install.params
-        if isinstance(option, TyperOption) and option.name == "mcp"
+        if isinstance(option, TyperOption) and option.name == "install_mcp"
     )
     assert mcp_option.default is True
 

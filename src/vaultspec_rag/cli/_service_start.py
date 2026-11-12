@@ -14,35 +14,14 @@ import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
+from typing import TYPE_CHECKING, Annotated, Literal, cast
 
-from typer.core import TyperCommand, TyperOption
+import typer
 
 if TYPE_CHECKING:
-    import typer
-    from typer._click import Context as ClickContext
-
     from ..commands._provision import BackendDecision, ProvisionStepResult
     from ..operator_state._service_environment import ServiceEnvironment
     from ..service_runtime import ManagedRuntime, ServiceRuntimeError
-
-    # Click types ``Context.params`` as ``dict[str, Any]`` because the keys
-    # and value types are only known once a command's options are parsed at
-    # runtime. This TypedDict is the producer-side cast target for
-    # ``_ServiceStartCommand.invoke``: the field types mirror the
-    # ``TyperOption`` declarations registered in ``__init__``, so a single
-    # cast on ``ctx.params`` replaces every per-field ``Any`` read below it.
-    class _StartParams(TypedDict):
-        port: int
-        updates: bool | None
-        update_delay_ms: int | None
-        repeat_update_delay_s: float | None
-        local_only: bool
-        qdrant: bool | None
-        qdrant_auto_provision: bool | None
-        no_preprocess: bool
-        json: bool
-
 
 from .._gpu_owner import observation_wire
 from .._operator_commands import (
@@ -77,6 +56,7 @@ from ._app import (
     server_root_app,
 )
 from ._core import logger
+from ._option_groups import with_option_group
 from ._process import (
     DaemonBreakawayError,
     _call_interruptibly,
@@ -250,132 +230,100 @@ class _ServiceReadinessRequest:
 class _ServiceStartOptions:
     """The command-line options accepted by ``server start``."""
 
-    port: int
-    updates: bool | None
-    update_delay_ms: int | None
-    repeat_update_delay_s: float | None
-    local_only: bool
-    qdrant: bool | None
+    port: Annotated[
+        int,
+        typer.Option(
+            "--port",
+            envvar=EnvVar.PORT,
+            help="Port for the background search service.",
+        ),
+    ] = 8766
+    updates: Annotated[
+        bool | None,
+        typer.Option(
+            "--updates/--no-updates",
+            help=(
+                "Enable or disable automatic index updates when files change "
+                "(default: enabled)."
+            ),
+        ),
+    ] = None
+    update_delay_ms: Annotated[
+        int | None,
+        typer.Option(
+            "--update-delay-ms",
+            help="Delay before indexing a burst of file changes, in milliseconds.",
+        ),
+    ] = None
+    repeat_update_delay_s: Annotated[
+        float | None,
+        typer.Option(
+            "--repeat-update-delay-s",
+            help=(
+                "Minimum wait before automatically updating a project again, "
+                "in seconds."
+            ),
+        ),
+    ] = None
+    local_only: Annotated[
+        bool,
+        typer.Option(
+            "--local-only",
+            help=(
+                "Keep the index in an on-disk store instead of the Qdrant "
+                "server, for CI, offline or small projects."
+            ),
+        ),
+    ] = False
+    qdrant: Annotated[
+        bool | None,
+        typer.Option(
+            "--qdrant/--no-qdrant",
+            help=(
+                "Use the managed Qdrant server for this start even when "
+                "--local-only was saved, without changing the saved choice."
+            ),
+        ),
+    ] = None
     #: ``None`` when neither spelling of the flag was passed, which leaves the
     #: configured switch in force.
-    qdrant_auto_provision: bool | None
-    no_preprocess: bool
-    json_mode: bool
-
-
-class _ServiceStartCommand(TyperCommand):
-    """Expose the start options without expanding the callback signature."""
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self.params.extend(
-            (
-                TyperOption(
-                    param_decls=["--port"],
-                    type=int,
-                    default=8766,
-                    envvar=EnvVar.PORT,
-                    help="Port for the background search service.",
-                ),
-                TyperOption(
-                    param_decls=["--updates/--no-updates"],
-                    default=None,
-                    is_flag=True,
-                    help=(
-                        "Enable or disable automatic index updates when files change "
-                        "(default: enabled)."
-                    ),
-                ),
-                TyperOption(
-                    param_decls=["--update-delay-ms"],
-                    type=int,
-                    default=None,
-                    help=(
-                        "Delay before indexing a burst of file changes, "
-                        "in milliseconds."
-                    ),
-                ),
-                TyperOption(
-                    param_decls=["--repeat-update-delay-s"],
-                    type=float,
-                    default=None,
-                    help=(
-                        "Minimum wait before automatically updating a project again, "
-                        "in seconds."
-                    ),
-                ),
-                TyperOption(
-                    param_decls=["--local-only"],
-                    default=False,
-                    is_flag=True,
-                    help=(
-                        "Keep the index in an on-disk store instead of the Qdrant "
-                        "server, for CI, offline or small projects."
-                    ),
-                ),
-                TyperOption(
-                    param_decls=["--qdrant/--no-qdrant"],
-                    default=None,
-                    is_flag=True,
-                    help=(
-                        "Use the managed Qdrant server for this start even when "
-                        "--local-only was saved, without changing the saved choice."
-                    ),
-                ),
-                TyperOption(
-                    param_decls=["--qdrant-auto-provision/--no-qdrant-auto-provision"],
-                    default=None,
-                    is_flag=True,
-                    help=(
-                        "Download the Qdrant server when it is missing (default). "
-                        "With --no-qdrant-auto-provision, start stops and prints "
-                        "the install command instead. Overrides "
-                        f"{EnvVar.QDRANT_AUTO_PROVISION.value} for this run."
-                    ),
-                ),
-                TyperOption(
-                    param_decls=["--no-preprocess"],
-                    hidden=True,
-                    default=False,
-                    is_flag=True,
-                    help=(
-                        "Kill switch: the service loads no document-preprocessing "
-                        "rules "
-                        "for any root (forwards VAULTSPEC_RAG_PREPROCESS=off)."
-                    ),
-                ),
-                TyperOption(
-                    param_decls=["--json"],
-                    default=False,
-                    is_flag=True,
-                    help=(
-                        f"{JSON_ENVELOPE_OPTION_HELP} "
-                        "An already-running owned service is the success "
-                        "`already_running` (exit 0), so a supervising broker can "
-                        "attach "
-                        "rather than treating it as a fault."
-                    ),
-                ),
-            )
-        )
-
-    def invoke(self, ctx: ClickContext) -> None:
-        """Dispatch parsed Click parameters as the typed start options."""
-        params = cast("_StartParams", ctx.params)
-        return _run_service_start(
-            ctx,
-            _ServiceStartOptions(
-                port=params["port"],
-                updates=params["updates"],
-                update_delay_ms=params["update_delay_ms"],
-                repeat_update_delay_s=params["repeat_update_delay_s"],
-                local_only=params["local_only"],
-                qdrant=params["qdrant"],
-                qdrant_auto_provision=params["qdrant_auto_provision"],
-                no_preprocess=params["no_preprocess"],
-                json_mode=params["json"],
+    qdrant_auto_provision: Annotated[
+        bool | None,
+        typer.Option(
+            "--qdrant-auto-provision/--no-qdrant-auto-provision",
+            help=(
+                "Download the Qdrant server when it is missing (default). "
+                "With --no-qdrant-auto-provision, start stops and prints "
+                "the install command instead. Overrides "
+                f"{EnvVar.QDRANT_AUTO_PROVISION.value} for this run."
             ),
-        )
+        ),
+    ] = None
+    no_preprocess: Annotated[
+        bool,
+        typer.Option(
+            "--no-preprocess",
+            hidden=True,
+            help=(
+                "Kill switch: the service loads no document-preprocessing "
+                "rules "
+                "for any root (forwards VAULTSPEC_RAG_PREPROCESS=off)."
+            ),
+        ),
+    ] = False
+    json_mode: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help=(
+                f"{JSON_ENVELOPE_OPTION_HELP} "
+                "An already-running owned service is the success "
+                "`already_running` (exit 0), so a supervising broker can "
+                "attach "
+                "rather than treating it as a fault."
+            ),
+        ),
+    ] = False
 
 
 def _auto_provision_enabled(flag: bool | None) -> bool:
@@ -1055,7 +1003,6 @@ def _spawn_prepared_service(request: _PreparedServiceRequest) -> int:
 
 @server_root_app.command(
     "start",
-    cls=_ServiceStartCommand,
     help=(
         "Start the background search service.\n\n"
         "The first start downloads what the service needs and does not have "
@@ -1063,12 +1010,9 @@ def _spawn_prepared_service(request: _PreparedServiceRequest) -> int:
         "until the service is ready. Later starts download nothing."
     ),
 )
-def service_start() -> None:
-    """Register the custom command; it dispatches through ``_ServiceStartCommand``."""
-
-
-def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None:
-    """Start the background search service from parsed command options."""
+@with_option_group
+def service_start(ctx: typer.Context, options: _ServiceStartOptions) -> None:
+    """Start the background search service."""
     from ..commands._provision import decide_backend
 
     json_mode = options.json_mode

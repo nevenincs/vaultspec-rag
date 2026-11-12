@@ -63,10 +63,12 @@ class TestServerCommands:
         """
         from ..cli import _service_jobs_collection
 
-        seen: list[_service_jobs_collection.ServiceJobsOptions] = []
+        seen: list[tuple[_service_jobs_collection.ServiceJobsOptions, str]] = []
 
-        def _capture(options: _service_jobs_collection.ServiceJobsOptions) -> None:
-            seen.append(options)
+        def _capture(
+            options: _service_jobs_collection.ServiceJobsOptions, *, watch_mode: str
+        ) -> None:
+            seen.append((options, watch_mode))
 
         monkeypatch.setattr(_service_jobs_collection, "run_service_jobs", _capture)
 
@@ -74,8 +76,9 @@ class TestServerCommands:
 
         assert result.exit_code == 0, result.output
         assert len(seen) == 1, seen
-        assert seen[0].watch_mode == "server"
-        assert seen[0].watch is True
+        options, watch_mode = seen[0]
+        assert watch_mode == "server"
+        assert options.watch is True
 
     def test_server_without_watch_still_shows_help(self):
         """The bare group keeps printing help; --watch is the only new path."""
