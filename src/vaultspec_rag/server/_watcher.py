@@ -23,9 +23,8 @@ __all__ = [
     "_controller_snapshots",
     "_ensure_watcher",
     "_ensure_watcher_soon",
-    "_prune_stale_watchers",
+    "_owned_watcher_roots",
     "_register_watcher_controller",
-    "_stale_watcher_candidates",
     "_stop_all_watchers",
     "_stop_watcher",
     "_unregister_watcher_controllers",
@@ -37,19 +36,18 @@ from anyio.to_thread import run_sync as _run_in_thread
 
 import vaultspec_rag.server as _m
 
-from .._operator_commands import server_updates_prune_command
 from .._root_identity import canonical_root_key
-from .._root_presence import (
-    clear_stale_watcher_root,
-    record_stale_watcher_root,
-    root_is_missing,
-    root_missing_message,
-    stale_watcher_roots,
-)
+from .._root_presence import clear_stale_watcher_root, root_is_missing
 from .._workspace_layout import (
     VAULT_DIR,
 )
 from ..logging_config import log_event
+from ._watcher_failures import WatcherFailureLog
+from ._watcher_stale import (
+    missing_root_remediation,
+    missing_roots,
+    report_missing_watcher_root,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -63,36 +61,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger("vaultspec_rag.server")
 
 _MAX_CONTROLLER_SNAPSHOTS = 256
-#: Distinct failures remembered per controller callback. Each is logged in full
-#: once; identical repeats are counted instead of logged.
-_MAX_FAILURE_SIGNATURES = 8
-#: Characters of a failure message that make it "the same" failure.
-_FAILURE_SIGNATURE_CHARS = 512
-#: How often a still-repeating suppressed failure is summarised.
-_FAILURE_SUMMARY_SECONDS = 300.0
-
-
-def _missing_root_remediation() -> str:
-    return (
-        "The watched root was deleted or moved. Run "
-        f"`{server_updates_prune_command()}` to drop it, or recreate the root "
-        "and request it again."
-    )
-
-
-def _report_missing_watcher_root(root: str | Path, sources: tuple[str, ...]) -> None:
-    """Record a missing watched root, warning once per transition into it."""
-    if record_stale_watcher_root(root, sources):
-        log_event(
-            logger,
-            "service.watcher",
-            "root_missing",
-            severity=logging.WARNING,
-            root=root,
-            sources=",".join(sorted(set(sources))) or None,
-            reason=root_missing_message(root),
-            remediation=_missing_root_remediation(),
-        )
 
 
 def _owned_watcher_roots() -> set[Path]:
@@ -109,16 +77,10 @@ def _owned_watcher_roots() -> set[Path]:
 
 def _retire_missing_watcher_root(canonical_root: str, sources: tuple[str, ...]) -> None:
     """Report a missing root and stop every watcher generation that owns it."""
-    _report_missing_watcher_root(canonical_root, sources)
+    report_missing_watcher_root(canonical_root, sources)
     for owned in _owned_watcher_roots():
         if canonical_root_key(owned) == canonical_root:
             _m._stop_watcher(owned)
-
-
-@dataclass(slots=True)
-class _RepeatedFailure:
-    suppressed: int
-    summarized_at: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,10 +202,7 @@ class _WatcherScheduler:
         self._released = asyncio.Event()
         self._released.set()
         self._stopping = False
-        self._failures: dict[
-            tuple[ControllerKey, str],
-            dict[tuple[str, str], _RepeatedFailure],
-        ] = {}
+        self._failures = WatcherFailureLog(monotonic)
 
     @property
     def empty(self) -> bool:
@@ -290,11 +249,7 @@ class _WatcherScheduler:
             for key, registration in self._registrations.items()
             if key[0] != canonical_root
         }
-        self._failures = {
-            failure_key: seen
-            for failure_key, seen in self._failures.items()
-            if failure_key[0][0] != canonical_root
-        }
+        self._failures.forget_root(canonical_root)
         if not self._registrations:
             self._stopping = True
         self.wake()
@@ -334,7 +289,7 @@ class _WatcherScheduler:
     async def _run_cycle(self) -> None:
         roots = {key[0] for key in self._registrations}
         if roots:
-            for missing in await _run_in_thread(_missing_roots, roots):
+            for missing in await _run_in_thread(missing_roots, roots):
                 await self._retire_root(missing)
         now = self._monotonic()
         registrations = tuple(self._registrations.items())
@@ -377,7 +332,7 @@ class _WatcherScheduler:
             for key, registration in self._registrations.items()
             if key[0] == canonical_root
         ]
-        remediation = _missing_root_remediation()
+        remediation = missing_root_remediation()
         for key, registration in registrations:
             if registration.controller.snapshot.state is not ControllerState.STALE:
                 await self._invoke(
@@ -403,53 +358,9 @@ class _WatcherScheduler:
         try:
             await self._invoke(key, callback, *args)
         except Exception as exc:
-            self._report_failure(key, phase, exc)
+            self._failures.report(key, phase, exc)
         else:
-            self._failures.pop((key, phase), None)
-
-    def _report_failure(
-        self,
-        key: ControllerKey,
-        phase: str,
-        error: Exception,
-    ) -> None:
-        """Log a failure in full once, then count identical repeats.
-
-        One broken root fails the same way on every scheduler turn; logging
-        each turn rotates the whole service log away within a minute. A
-        repeat still surfaces as a periodic count, so it is never silent.
-        """
-        now = self._monotonic()
-        signature = (
-            type(error).__qualname__,
-            str(error)[:_FAILURE_SIGNATURE_CHARS],
-        )
-        seen = self._failures.setdefault((key, phase), {})
-        repeated = seen.get(signature)
-        if repeated is None:
-            if len(seen) >= _MAX_FAILURE_SIGNATURES:
-                seen.pop(next(iter(seen)))
-            seen[signature] = _RepeatedFailure(suppressed=0, summarized_at=now)
-            logger.error(
-                "Watcher controller %s failed for %s/%s",
-                phase,
-                *key,
-                exc_info=error,
-            )
-            return
-        repeated.suppressed += 1
-        if now - repeated.summarized_at >= _FAILURE_SUMMARY_SECONDS:
-            logger.error(
-                "Watcher controller %s failed for %s/%s %d more times with the "
-                "same error in the last %.0f seconds: %s: %s",
-                phase,
-                *key,
-                repeated.suppressed,
-                now - repeated.summarized_at,
-                *signature,
-            )
-            repeated.suppressed = 0
-            repeated.summarized_at = now
+            self._failures.succeeded(key, phase)
 
     async def _invoke(
         self, key: ControllerKey, callback: Callable[..., Any], *args: object
@@ -529,11 +440,6 @@ class _WatcherScheduler:
     def _publish_released(self) -> None:
         if not self._active:
             self._released.set()
-
-
-def _missing_roots(roots: set[str]) -> tuple[str, ...]:
-    """Return the canonical roots proven absent, in stable order."""
-    return tuple(sorted(root for root in roots if root_is_missing(root)))
 
 
 async def _wait_for_scheduler_wakeup(event: asyncio.Event, timeout: float) -> None:
@@ -718,7 +624,7 @@ def _watcher_task_done(
         error=error,
     )
     if missing:
-        _report_missing_watcher_root(root, sources)
+        report_missing_watcher_root(root, sources)
     _unregister_watcher_controllers(root)
     _schedule_watcher_drain(root, drain)
 
@@ -1539,60 +1445,3 @@ def _watcher_cleanup_results_ok(
         if warm.cancelled() or warm.exception() is not None:
             return False
     return True
-
-
-@dataclass(frozen=True, slots=True)
-class _StaleWatcherCandidate:
-    """One missing watched root and the watcher generations still owning it."""
-
-    root: str
-    detected_at: float | None
-    sources: tuple[str, ...]
-    owners: tuple[Path, ...]
-
-    def as_dict(self) -> dict[str, object]:
-        return {
-            "root": self.root,
-            "detected_at": self.detected_at,
-            "sources": list(self.sources),
-            "watcher_running": bool(self.owners),
-        }
-
-
-def _stale_watcher_candidates() -> tuple[_StaleWatcherCandidate, ...]:
-    """Return every watched root proven missing, recorded or still owned.
-
-    Reads the filesystem, so call it off the event loop.
-    """
-    records = {
-        canonical_root_key(record.root): record for record in stale_watcher_roots()
-    }
-    owners: dict[str, list[Path]] = {}
-    for owned in _owned_watcher_roots():
-        if root_is_missing(owned):
-            owners.setdefault(canonical_root_key(owned), []).append(owned)
-    candidates: list[_StaleWatcherCandidate] = []
-    for key in sorted(records.keys() | owners.keys()):
-        record = records.get(key)
-        owned_roots = tuple(sorted(owners.get(key, ())))
-        candidates.append(
-            _StaleWatcherCandidate(
-                root=record.root if record is not None else str(owned_roots[0]),
-                detected_at=record.detected_at if record is not None else None,
-                sources=record.sources if record is not None else (),
-                owners=owned_roots,
-            )
-        )
-    return tuple(candidates)
-
-
-def _prune_stale_watchers(candidates: tuple[_StaleWatcherCandidate, ...]) -> None:
-    """Stop every watcher of a missing root and forget its stale record.
-
-    Only watcher ownership is released. Storage, retry history and indexes are
-    never touched: a root that comes back resumes from them.
-    """
-    for candidate in candidates:
-        for owner in candidate.owners:
-            _m._stop_watcher(owner)
-        clear_stale_watcher_root(candidate.root)

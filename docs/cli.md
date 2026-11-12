@@ -814,7 +814,7 @@ vaultspec-rag server updates timing
 
 ## server updates prune
 
-Stop automatic updates for every project whose directory is gone.
+Stop automatic updates for every project whose directory is gone. Only the watchers are dropped. Indexes, storage and retry history are left as they are, so a project that comes back resumes from them.
 
 ```bash
 vaultspec-rag server updates prune

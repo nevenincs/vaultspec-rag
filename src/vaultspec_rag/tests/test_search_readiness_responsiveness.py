@@ -13,7 +13,8 @@ from .._search_state import FreshnessWaitPolicy
 from .._source_types import PublicSourceType
 from ..config._types import EnvVar
 from ..server import _routes
-from ..server._routes_search import SearchRequest, _execute_search_route
+from ..server._routes_search import _execute_search_route
+from ..server._search_request import SearchRequest
 from ..service import ServiceRegistry
 from ._config_fixtures import reset_config
 from .test_search_readiness_restore import _no_jobs, _published

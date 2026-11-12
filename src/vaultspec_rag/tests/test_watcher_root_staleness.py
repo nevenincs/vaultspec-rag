@@ -18,7 +18,7 @@ MUTATION PROOF, each run as one uninterrupted break, run, restore, run:
 - Removing the missing-root sweep from ``_WatcherScheduler._run_cycle`` fails
   ``test_scheduler_retires_a_deleted_root_with_one_warning`` on its
   reevaluation-count assertion.
-- Treating every failure as new in ``_WatcherScheduler._report_failure`` fails
+- Treating every failure as new in ``WatcherFailureLog.report`` fails
   ``test_identical_watcher_failures_are_logged_once_then_summarised`` on its
   single-ERROR assertion (50 errors logged instead of 1).
 - Restoring ``logger.exception`` for a missing root in
@@ -274,7 +274,8 @@ async def test_identical_watcher_failures_are_logged_once_then_summarised(
         message[0] = f"distinct failure {index}"
         await scheduler._run_cycle()
     key = (controller.snapshot.canonical_root, controller.snapshot.source)
-    assert len(scheduler._failures[(key, "reevaluation")]) <= 8, "memory is bounded"
+    remembered = scheduler._failures._seen[(key, "reevaluation")]
+    assert len(remembered) <= 8, "memory is bounded"
 
 
 @pytest.mark.usefixtures("watching_service")
