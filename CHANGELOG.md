@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.6](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.6.5...vaultspec-rag-v0.6.6) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cli:** start on typer 0.29 by declaring grouped options through public typer.Option ([#652](https://github.com/nevenincs/vaultspec-rag/issues/652)) ([f6c2db3](https://github.com/nevenincs/vaultspec-rag/commit/f6c2db37074d417cc946d06cdf1c6ae36b6126d3))
+* **watcher:** retire watchers whose project root was deleted ([#653](https://github.com/nevenincs/vaultspec-rag/issues/653)) ([fe92f1b](https://github.com/nevenincs/vaultspec-rag/commit/fe92f1b591faff4e8542f007a4a64074f021e10c))
+
 ## [0.6.5](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.6.4...vaultspec-rag-v0.6.5) (2026-11-02)
 
 
