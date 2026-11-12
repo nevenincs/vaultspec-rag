@@ -12,9 +12,9 @@ related:
   - '[[2026-06-11-service-jobs-operability-adr]]'
   - '[[2026-07-21-managed-log-contract-adr]]'
   - '[[2026-09-21-typesafe-classifier-adr]]'
-modified: '2026-10-01'
+modified: '2026-11-02'
 body_schema: body-v2
-body_hash: 'sha256:ad4a247710f8f3c54221bbd7cdafcc7a41a48cca5f16af4e7c37e815211657b4'
+body_hash: 'sha256:41447324636c5219086be92c18a12a996882aa10839eecd1d25e79bf91ffb8d0'
 ---
 
 # `monitor-browser` plan
@@ -33,7 +33,7 @@ Reuse the root React/Vite/strict-TypeScript harness and shared lifecycle. Pin of
 
 - [x] `S01` - Implement and verify an automatic local-only monitoring adapter, pin Carbon dependencies, and reconcile frontend decision wording; `src/monitor/server, vite.config.ts, package.json/package-lock.json, bridge covering checks and enrolled Node runtime in existing test workflows, monitor-browser ADR and monitor-tooling ADR`.
 - [x] `S02` - Implement the responsive Carbon operator UI with independent polling, lifecycle views, TypeSafe details, work/global logs and existing job controls; verify and review the integrated browser monitor; `src/monitor, real bridge and installed-browser checks, dev/monitor-browser.mjs, existing test workflows, docs/service-mode.md, frontend verification configuration as needed, monitor-browser audit and focused prior audit formatting maintenance`.
-- [ ] `S03` - Correct monitor enrollment for the shared all-interface devserver and Tailscale reverse proxy; verify strict-port lifecycle, CI parity and live peer access; `package.json, server request-origin/network policy and covering tests, docs/service-mode.md, browser/tooling ADR reconciliations, existing devserver recipe/workflow parity, runtime proxy mapping and audit`.
+- [x] `S03` - Correct monitor enrollment for the shared all-interface devserver and Tailscale reverse proxy; verify strict-port lifecycle, CI parity and live peer access; `package.json, server request-origin/network policy and covering tests, docs/service-mode.md, browser/tooling ADR reconciliations, existing devserver recipe/workflow parity, runtime proxy mapping and audit`.
 
 ## Parallelization
 
