@@ -2,14 +2,11 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypedDict, cast
+from typing import TYPE_CHECKING, Annotated
 
-import click
 import typer
 from tomlkit.exceptions import ParseError
-from typer._types import TyperChoice
-from typer.core import TyperCommand, TyperOption
-from typer.models import TyperPath
+from typer.core import TyperCommand
 from vaultspec_core.config import is_unattended
 from vaultspec_core.core.enums import (
     InstallMode,
@@ -17,7 +14,8 @@ from vaultspec_core.core.enums import (
 
 import vaultspec_rag.cli as _cli
 
-from ._app import JSON_OPTION_HELP, _global_target, app
+from ._app import JsonMode, _global_target, app
+from ._option_groups import with_option_group
 from ._progress import StartupStatusReporter
 from ._provision_progress import ReporterProvisionProgress
 from ._render import _plain, _render_install_report, _render_uninstall_report
@@ -30,316 +28,199 @@ if TYPE_CHECKING:
 
     from ..commands._models import ConfirmFn, InstallReport, UninstallReport
 
-    # Click types ``Context.params`` as ``dict[str, Any]`` because the keys
-    # and value types are only known once a command's options are parsed at
-    # runtime. Each TypedDict below is the producer-side cast target for one
-    # command's ``invoke``: the field types mirror the ``TyperOption``
-    # declarations the corresponding ``__init__`` registers, so a single
-    # cast on ``ctx.params`` replaces every per-field ``Any`` read below it.
-    class _InstallParams(TypedDict):
-        target: Path | None
-        upgrade: bool
-        dry_run: bool
-        force: bool
-        skip: tuple[str, ...]
-        mode: str | None
-        torch_config: bool
-        tool_repair: bool
-        torch_group: str | None
-        yes: bool
-        sync: bool
-        provision: bool
-        mcp: bool
-        local_only: bool
-        skip_models: bool
-        skip_qdrant: bool
-        json: bool
-        no_hints: bool
-
-    class _UninstallParams(TypedDict):
-        target: Path | None
-        remove_data: bool
-        dry_run: bool
-        force: bool
-        skip: tuple[str, ...]
-        yes: bool
-        json: bool
-
 
 # Group name used when ``--torch-group`` is passed without an explicit
-# value. Surfaced both in the help text and as the Click ``flag_value``.
+# value. Surfaced in the help text and substituted for the missing value.
 _DEFAULT_TORCH_GROUP = "dev"
 
-# ``--skip``'s empty default, shared by both commands below. Bound to an
-# explicitly-typed name rather than passed as the inline literal ``()``:
-# ``TyperOption.__init__``'s ``default`` parameter is typed ``Any | None``
-# upstream, and pyright's bidirectional inference widens an inline literal
-# passed there to ``Any``; a pre-typed local keeps the tuple's real type.
-_NO_SKIP: tuple[str, ...] = ()
+_TORCH_GROUP_FLAG = "--torch-group"
+
+_SKIP_HELP = "Skip a component (repeatable)."
 
 
 @dataclass(frozen=True, slots=True)
 class _InstallOptions:
-    target: Path | None
-    upgrade: bool
-    dry_run: bool
-    force: bool
-    skip: tuple[str, ...]
-    mode: InstallMode | None
-    configure_torch: bool
-    tool_repair: bool
-    torch_group: str | None
-    yes: bool
-    sync_after: bool
-    provision: bool
-    install_mcp: bool
-    local_only: bool
-    skip_models: bool
-    skip_qdrant: bool
-    json_output: bool
-    no_hints: bool
+    target: Annotated[
+        Path | None,
+        typer.Option(
+            "--target",
+            "-t",
+            dir_okay=True,
+            file_okay=False,
+            resolve_path=True,
+            help="Workspace path (default: current working directory).",
+        ),
+    ] = None
+    upgrade: Annotated[
+        bool,
+        typer.Option(
+            "--upgrade",
+            help="Refresh bundled rules and integration files even if present.",
+        ),
+    ] = False
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Preview changes without writing.")
+    ] = False
+    force: Annotated[
+        bool, typer.Option("--force", help="Overwrite setup files that already exist.")
+    ] = False
+    skip: Annotated[
+        list[str] | None, typer.Option("--skip", hidden=True, help=_SKIP_HELP)
+    ] = None
+    mode: Annotated[
+        InstallMode | None,
+        typer.Option(
+            "--mode",
+            help=(
+                "How your AI assistant launches vaultspec-rag: 'tool', "
+                "or from this project's environment as a 'dependency' "
+                "or 'dev' dependency. Detected from pyproject.toml when "
+                "omitted."
+            ),
+        ),
+    ] = None
+    configure_torch: Annotated[
+        bool,
+        typer.Option(
+            "--torch-config/--no-torch-config",
+            hidden=True,
+            help=(
+                "Configure the CUDA PyTorch package source in pyproject.toml. "
+                "--no-torch-config takes precedence over --yes."
+            ),
+        ),
+    ] = True
+    tool_repair: Annotated[
+        bool,
+        typer.Option(
+            "--tool-repair/--no-tool-repair",
+            hidden=True,
+            help=(
+                "Check whether a persistent uv tool environment holds a "
+                "processor-only torch build, and report the command that "
+                "repairs it. Nothing is installed or replaced by this "
+                "check. --no-tool-repair skips it entirely."
+            ),
+        ),
+    ] = True
+    torch_group: Annotated[
+        str | None,
+        typer.Option(
+            _TORCH_GROUP_FLAG,
+            hidden=True,
+            help=(
+                "Place the managed CUDA torch direct-dependency under the "
+                "PEP 735 [dependency-groups].NAME surface instead of "
+                "[project].dependencies, so a dev-only consumer does not "
+                "leak torch into its published requirements. Defaults the "
+                "group name to 'dev' when passed without a value. Omit the "
+                "flag entirely to keep the historic [project].dependencies "
+                "placement. The group must be enabled for the resolve "
+                "(`uv sync --group NAME`) for the cu130 pin to apply."
+            ),
+        ),
+    ] = None
+    yes: Annotated[
+        bool,
+        typer.Option(
+            "--yes",
+            "-y",
+            help=(
+                "Answer yes to setup prompts, for runs without a terminal. "
+                "Never approves the MCP launch: run install at a terminal "
+                "to review and approve it."
+            ),
+        ),
+    ] = False
+    sync_after: Annotated[
+        bool,
+        typer.Option(
+            "--sync",
+            hidden=True,
+            help=(
+                "Run `uv sync --reinstall-package torch` after PyTorch "
+                "configuration changes are applied."
+            ),
+        ),
+    ] = False
+    provision: Annotated[
+        bool,
+        typer.Option(
+            "--provision/--no-provision",
+            help=(
+                "Download the search models and the Qdrant server now, "
+                "when this installation carries the GPU packages "
+                "(default). Otherwise `server start` downloads them."
+            ),
+        ),
+    ] = True
+    install_mcp: Annotated[
+        bool,
+        typer.Option(
+            "--mcp/--no-mcp",
+            help=(
+                "Connect your AI assistant through MCP (default). With "
+                "--no-mcp, only the command line is set up."
+            ),
+        ),
+    ] = True
+    local_only: Annotated[
+        bool,
+        typer.Option(
+            "--local-only",
+            help=(
+                "Keep the index in an on-disk store instead of the Qdrant "
+                "server, for CI, offline or small projects. `server start` "
+                "remembers the choice."
+            ),
+        ),
+    ] = False
+    skip_models: Annotated[
+        bool,
+        typer.Option(
+            "--skip-models",
+            hidden=True,
+            help="Skip the embedding/reranker model provisioning step.",
+        ),
+    ] = False
+    skip_qdrant: Annotated[
+        bool,
+        typer.Option(
+            "--skip-qdrant",
+            hidden=True,
+            help="Skip the Qdrant server binary provisioning step.",
+        ),
+    ] = False
+    json_output: JsonMode = False
+    no_hints: Annotated[
+        bool,
+        typer.Option(
+            "--no-hints", hidden=True, help="Suppress next-step advisory hints."
+        ),
+    ] = False
 
 
 class _InstallCommand(TyperCommand):
     """Install command that gives ``--torch-group`` an optional value.
 
-    Typer 0.25's option builder does not forward ``flag_value`` to the
-    underlying Click option, so ``--torch-group`` cannot be expressed as
-    an optional-value flag through ``typer.Option`` alone. This command
-    class re-enables Click's native optional-value behaviour after the
-    params are built: ``--torch-group`` with no value resolves to the
-    default group name, ``--torch-group NAME`` to ``NAME``, and an
-    omitted flag stays ``None`` (the historic ``[project].dependencies``
-    placement). Running per build keeps it effective across every
-    ``get_command`` invocation rather than mutating a throwaway instance.
+    Typer declares an option as either a flag or a value-taking option, so a
+    bare ``--torch-group`` is completed here before parsing: alone it
+    resolves to the default group name, ``--torch-group NAME`` to ``NAME``,
+    and an omitted flag stays ``None`` (the historic
+    ``[project].dependencies`` placement).
     """
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        # ``*args``/``**kwargs`` forward whatever ``TyperCommand.__init__``
-        # (typer instantiates this class directly as its ``cls=``) is
-        # called with. A field-for-field mirror of that constructor was
-        # tried and reverted: it exceeds the project's 5-argument cap
-        # (PLR0913), which is enforced with no per-call suppression
-        # allowed. Genuinely dynamic; left as ``Any``.
-        super().__init__(*args, **kwargs)
-        self.params.extend(
-            (
-                TyperOption(
-                    param_decls=["--target", "-t"],
-                    type=TyperPath(
-                        path_type=Path,
-                        dir_okay=True,
-                        file_okay=False,
-                        resolve_path=True,
-                    ),
-                    default=None,
-                    help="Workspace path (default: current working directory).",
-                ),
-                TyperOption(
-                    param_decls=["--upgrade"],
-                    default=False,
-                    is_flag=True,
-                    help="Refresh bundled rules and integration files even if present.",
-                ),
-                TyperOption(
-                    param_decls=["--dry-run"],
-                    default=False,
-                    is_flag=True,
-                    help="Preview changes without writing.",
-                ),
-                TyperOption(
-                    param_decls=["--force"],
-                    default=False,
-                    is_flag=True,
-                    help="Overwrite setup files that already exist.",
-                ),
-                TyperOption(
-                    param_decls=["--skip"],
-                    hidden=True,
-                    type=str,
-                    multiple=True,
-                    default=_NO_SKIP,
-                    help="Skip a component (repeatable).",
-                ),
-                TyperOption(
-                    param_decls=["--mode"],
-                    type=TyperChoice([member.value for member in InstallMode]),
-                    default=None,
-                    help=(
-                        "How your AI assistant launches vaultspec-rag: 'tool', "
-                        "or from this project's environment as a 'dependency' "
-                        "or 'dev' dependency. Detected from pyproject.toml when "
-                        "omitted."
-                    ),
-                ),
-                TyperOption(
-                    param_decls=["--torch-config/--no-torch-config"],
-                    hidden=True,
-                    default=True,
-                    is_flag=True,
-                    help=(
-                        "Configure the CUDA PyTorch package source in pyproject.toml. "
-                        "--no-torch-config takes precedence over --yes."
-                    ),
-                ),
-                TyperOption(
-                    param_decls=["--tool-repair/--no-tool-repair"],
-                    hidden=True,
-                    default=True,
-                    is_flag=True,
-                    help=(
-                        "Check whether a persistent uv tool environment holds a "
-                        "processor-only torch build, and report the command that "
-                        "repairs it. Nothing is installed or replaced by this "
-                        "check. --no-tool-repair skips it entirely."
-                    ),
-                ),
-                TyperOption(
-                    param_decls=["--torch-group"],
-                    hidden=True,
-                    type=str,
-                    default=None,
-                    help=(
-                        "Place the managed CUDA torch direct-dependency under the "
-                        "PEP 735 [dependency-groups].NAME surface instead of "
-                        "[project].dependencies, so a dev-only consumer does not "
-                        "leak torch into its published requirements. Defaults the "
-                        "group name to 'dev' when passed without a value. Omit the "
-                        "flag entirely to keep the historic [project].dependencies "
-                        "placement. The group must be enabled for the resolve "
-                        "(`uv sync --group NAME`) for the cu130 pin to apply."
-                    ),
-                ),
-                TyperOption(
-                    param_decls=["--yes", "-y"],
-                    default=False,
-                    is_flag=True,
-                    help=(
-                        "Answer yes to setup prompts, for runs without a terminal. "
-                        "Never approves the MCP launch: run install at a terminal "
-                        "to review and approve it."
-                    ),
-                ),
-                TyperOption(
-                    param_decls=["--sync"],
-                    hidden=True,
-                    default=False,
-                    is_flag=True,
-                    help=(
-                        "Run `uv sync --reinstall-package torch` after PyTorch "
-                        "configuration changes are applied."
-                    ),
-                ),
-                TyperOption(
-                    param_decls=["--provision/--no-provision"],
-                    default=True,
-                    is_flag=True,
-                    help=(
-                        "Download the search models and the Qdrant server now, "
-                        "when this installation carries the GPU packages "
-                        "(default). Otherwise `server start` downloads them."
-                    ),
-                ),
-                TyperOption(
-                    param_decls=["--mcp/--no-mcp"],
-                    default=True,
-                    is_flag=True,
-                    help=(
-                        "Connect your AI assistant through MCP (default). With "
-                        "--no-mcp, only the command line is set up."
-                    ),
-                ),
-                TyperOption(
-                    param_decls=["--local-only"],
-                    default=False,
-                    is_flag=True,
-                    help=(
-                        "Keep the index in an on-disk store instead of the Qdrant "
-                        "server, for CI, offline or small projects. `server start` "
-                        "remembers the choice."
-                    ),
-                ),
-                TyperOption(
-                    param_decls=["--skip-models"],
-                    hidden=True,
-                    default=False,
-                    is_flag=True,
-                    help="Skip the embedding/reranker model provisioning step.",
-                ),
-                TyperOption(
-                    param_decls=["--skip-qdrant"],
-                    hidden=True,
-                    default=False,
-                    is_flag=True,
-                    help="Skip the Qdrant server binary provisioning step.",
-                ),
-                TyperOption(
-                    param_decls=["--json"],
-                    default=False,
-                    is_flag=True,
-                    help=JSON_OPTION_HELP,
-                ),
-                TyperOption(
-                    param_decls=["--no-hints"],
-                    hidden=True,
-                    default=False,
-                    is_flag=True,
-                    help="Suppress next-step advisory hints.",
-                ),
-            )
-        )
-        for param in self.params:
-            if isinstance(param, click.Option) and param.name == "torch_group":
-                param.is_flag = False
-                param.flag_value = _DEFAULT_TORCH_GROUP
-                # Click computes ``_flag_needs_value`` in ``Option.__init__``
-                # from the original (no-flag-value) construction; recompute
-                # it so the parser consumes ``--torch-group`` standalone as
-                # the default group rather than demanding an argument.
-                param._flag_needs_value = True  # pyright: ignore[reportPrivateUsage]  # Click optional-value mechanism
-
-    def invoke(self, ctx: "ClickContext") -> None:
-        """Dispatch parsed Click parameters as one install request."""
-        params = cast("_InstallParams", ctx.params)
-        mode = params["mode"]
-        return _run_install(
-            ctx,
-            _InstallOptions(
-                target=params["target"],
-                upgrade=params["upgrade"],
-                dry_run=params["dry_run"],
-                force=params["force"],
-                skip=params["skip"],
-                mode=InstallMode(mode) if mode is not None else None,
-                configure_torch=params["torch_config"],
-                tool_repair=params["tool_repair"],
-                torch_group=params["torch_group"],
-                yes=params["yes"],
-                sync_after=params["sync"],
-                provision=params["provision"],
-                install_mcp=params["mcp"],
-                local_only=params["local_only"],
-                skip_models=params["skip_models"],
-                skip_qdrant=params["skip_qdrant"],
-                json_output=params["json"],
-                no_hints=params["no_hints"],
-            ),
-        )
-
-
-@app.command(
-    "install",
-    cls=_InstallCommand,
-    help=(
-        "Set up vaultspec-rag in this repository.\n\n"
-        "Connects your AI assistant and creates the .vault/ folder. At a "
-        "terminal it asks you to approve the MCP launch it enrolls. Then run "
-        "`vaultspec-rag server start`, which downloads what the service still "
-        "needs. Exits non-zero when a step failed."
-    ),
-)
-def handle_install() -> None:
-    """Register the custom command; it dispatches through ``_InstallCommand``."""
+    def parse_args(self, ctx: "ClickContext", args: list[str]) -> list[str]:
+        completed = list(args)
+        for index, token in enumerate(completed):
+            if token == "--":
+                break
+            following = completed[index + 1] if index + 1 < len(completed) else None
+            if token == _TORCH_GROUP_FLAG and (
+                following is None or following.startswith("-")
+            ):
+                completed[index] = f"{_TORCH_GROUP_FLAG}={_DEFAULT_TORCH_GROUP}"
+        return super().parse_args(ctx, completed)
 
 
 def _confirmation_hook(
@@ -521,7 +402,19 @@ def _install_next_step_hint(status: str, *, no_hints: bool) -> dict[str, object]
     }
 
 
-def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
+@app.command(
+    "install",
+    cls=_InstallCommand,
+    help=(
+        "Set up vaultspec-rag in this repository.\n\n"
+        "Connects your AI assistant and creates the .vault/ folder. At a "
+        "terminal it asks you to approve the MCP launch it enrolls. Then run "
+        "`vaultspec-rag server start`, which downloads what the service still "
+        "needs. Exits non-zero when a step failed."
+    ),
+)
+@with_option_group
+def handle_install(ctx: typer.Context, options: _InstallOptions) -> None:
     """Enrol the workspace and provision dependencies for one install request."""
 
     from ..commands._install import install_run
@@ -558,7 +451,7 @@ def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
                 upgrade=options.upgrade,
                 dry_run=options.dry_run,
                 force=options.force,
-                skip=set(options.skip),
+                skip=set(options.skip or ()),
                 configure_torch=options.configure_torch,
                 assume_yes=options.yes,
                 sync_after=options.sync_after,
@@ -637,111 +530,55 @@ def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
 
 @dataclass(frozen=True, slots=True)
 class _UninstallOptions:
-    target: Path | None
-    remove_data: bool
-    dry_run: bool
-    force: bool
-    skip: tuple[str, ...]
-    yes: bool
-    json_output: bool
-
-
-class _UninstallCommand(TyperCommand):
-    """Expose uninstall options without expanding the callback signature."""
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        # See _InstallCommand.__init__: a field-for-field mirror of
-        # TyperCommand's constructor was tried and reverted (exceeds the
-        # project's 5-argument cap, PLR0913, with no suppression allowed).
-        # Genuinely dynamic; left as ``Any``.
-        super().__init__(*args, **kwargs)
-        self.params.extend(
-            (
-                TyperOption(
-                    param_decls=["--target", "-t"],
-                    type=TyperPath(
-                        path_type=Path,
-                        dir_okay=True,
-                        file_okay=False,
-                        resolve_path=True,
-                    ),
-                    default=None,
-                    help="Workspace path (default: current working directory).",
-                ),
-                TyperOption(
-                    param_decls=["--remove-data"],
-                    default=False,
-                    is_flag=True,
-                    help="Also remove index data under .vault/data/.",
-                ),
-                TyperOption(
-                    param_decls=["--dry-run"],
-                    default=False,
-                    is_flag=True,
-                    help="Preview changes without removing.",
-                ),
-                TyperOption(
-                    param_decls=["--force"],
-                    default=False,
-                    is_flag=True,
-                    help="Required to execute. Uninstall is destructive.",
-                ),
-                TyperOption(
-                    param_decls=["--skip"],
-                    type=str,
-                    multiple=True,
-                    default=_NO_SKIP,
-                    help="Skip a component (repeatable).",
-                ),
-                TyperOption(
-                    param_decls=["--yes", "-y"],
-                    default=False,
-                    is_flag=True,
-                    hidden=True,
-                    help=(
-                        "Deprecated: uninstall has no prompt to bypass. "
-                        "Accepted for backward compatibility only."
-                    ),
-                ),
-                TyperOption(
-                    param_decls=["--json"],
-                    default=False,
-                    is_flag=True,
-                    help=JSON_OPTION_HELP,
-                ),
-            )
-        )
-
-    def invoke(self, ctx: "ClickContext") -> None:
-        """Dispatch parsed Click parameters as one uninstall request."""
-        params = cast("_UninstallParams", ctx.params)
-        return _run_uninstall(
-            ctx,
-            _UninstallOptions(
-                target=params["target"],
-                remove_data=params["remove_data"],
-                dry_run=params["dry_run"],
-                force=params["force"],
-                skip=params["skip"],
-                yes=params["yes"],
-                json_output=params["json"],
+    target: Annotated[
+        Path | None,
+        typer.Option(
+            "--target",
+            "-t",
+            dir_okay=True,
+            file_okay=False,
+            resolve_path=True,
+            help="Workspace path (default: current working directory).",
+        ),
+    ] = None
+    remove_data: Annotated[
+        bool,
+        typer.Option(
+            "--remove-data", help="Also remove index data under .vault/data/."
+        ),
+    ] = False
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Preview changes without removing.")
+    ] = False
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Required to execute. Uninstall is destructive."),
+    ] = False
+    skip: Annotated[list[str] | None, typer.Option("--skip", help=_SKIP_HELP)] = None
+    yes: Annotated[
+        bool,
+        typer.Option(
+            "--yes",
+            "-y",
+            hidden=True,
+            help=(
+                "Deprecated: uninstall has no prompt to bypass. "
+                "Accepted for backward compatibility only."
             ),
-        )
+        ),
+    ] = False
+    json_output: JsonMode = False
 
 
 @app.command(
     "uninstall",
-    cls=_UninstallCommand,
     help=(
         "Remove vaultspec-rag setup from a workspace. Requires --force to "
         "execute; use --dry-run to preview what would be removed instead."
     ),
 )
-def handle_uninstall() -> None:
-    """Register the custom command; it dispatches through ``_UninstallCommand``."""
-
-
-def _run_uninstall(ctx: "ClickContext", options: _UninstallOptions) -> None:
+@with_option_group
+def handle_uninstall(ctx: typer.Context, options: _UninstallOptions) -> None:
     """Remove vaultspec-rag setup from a workspace.
 
     Requires --force to execute; without it (and without --dry-run to
@@ -760,7 +597,7 @@ def _run_uninstall(ctx: "ClickContext", options: _UninstallOptions) -> None:
             remove_data=options.remove_data,
             dry_run=options.dry_run,
             force=options.force,
-            skip=set(options.skip),
+            skip=set(options.skip or ()),
             assume_yes=options.yes,
         )
     except Exception as exc:

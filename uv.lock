@@ -2623,7 +2623,6 @@ source = { editable = "." }
 default-groups = ["dev", "gpu"]
 dependencies = [
     { name = "anyio" },
-    { name = "click" },
     { name = "huggingface-hub" },
     { name = "numpy" },
     { name = "packaging" },
@@ -2689,7 +2688,6 @@ gpu = [
 [package.metadata]
 requires-dist = [
     { name = "anyio", specifier = ">=4.14.2" },
-    { name = "click", specifier = ">=8.1.7" },
     { name = "huggingface-hub", specifier = ">=1.24.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2,<3" },
     { name = "numpy", specifier = ">=2.5.1" },
@@ -2708,7 +2706,7 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'gpu'", specifier = ">=5.3,<6" },
     { name = "tree-sitter", specifier = ">=0.23" },
     { name = "tree-sitter-language-pack", specifier = ">=1.20.0" },
-    { name = "typer", specifier = ">=0.26.7" },
+    { name = "typer", specifier = ">=0.29.1" },
     { name = "uvicorn", specifier = ">=0.51.0" },
     { name = "vaultspec-core", specifier = ">=0.3.7" },
     { name = "watchfiles", specifier = ">=1.0.0" },

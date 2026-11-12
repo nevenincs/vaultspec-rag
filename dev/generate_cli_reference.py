@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, get_args
 
 import typer.main
 
@@ -110,9 +110,24 @@ def _default(param: Any) -> str:
     return _cell(value)
 
 
+_PATH_KINDS = {"dir": "directory", "file": "file"}
+
+
 def _type_name(param: Any) -> str:
-    value = getattr(getattr(param, "type", None), "name", None)
-    return _cell(value or "value")
+    descriptor = getattr(param, "type_descriptor", None)
+    if descriptor is None:
+        return "value"
+    annotation = descriptor.annotation
+    if getattr(param, "is_flag", False) or annotation is bool:
+        return "boolean"
+    if descriptor.is_choice:
+        return "choice"
+    if descriptor.is_path:
+        return _PATH_KINDS.get(descriptor.path_type, "path")
+    if descriptor.is_list:
+        (annotation,) = get_args(annotation)
+    name = getattr(annotation, "__name__", None) or "value"
+    return _cell(f"{name} range" if descriptor.is_ranged else name)
 
 
 def _parameter_rows(command: Any, *, options: bool) -> list[str]:

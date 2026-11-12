@@ -1196,7 +1196,7 @@ class TestArgvPathPatterns:
         matching nothing on disk survives argv untouched even with expansion
         fully enabled, so the test would report success over a regressed CLI.
         """
-        from click.utils import _expand_args
+        from typer._click.utils import _expand_args
 
         assert len(_expand_args([pattern])) > 1, (
             f"{pattern!r} must match several files in the working directory "

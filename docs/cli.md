@@ -219,7 +219,7 @@ None.
 | `--remove-data` | boolean | no | off | Also remove index data under .vault/data/. |
 | `--dry-run` | boolean | no | off | Preview changes without removing. |
 | `--force` | boolean | no | off | Required to execute. Uninstall is destructive. |
-| `--skip` | str | no | () | Skip a component (repeatable). |
+| `--skip` | str | no | - | Skip a component (repeatable). |
 | `--json` | boolean | no | off | Emit JSON for scripts instead of human text. |
 
 ## status

@@ -925,3 +925,34 @@ class TestRefusedInstall:
 
         assert result.exit_code == 0, result.output
         assert len(calls) == 1, calls
+
+
+class TestTorchGroupOptionalValue:
+    """``--torch-group`` takes an optional value that defaults to ``dev``."""
+
+    @staticmethod
+    def _parsed_torch_group(args: list[str]) -> object:
+        from typer._click import Context as ClickContext
+        from typer.main import get_group
+
+        root = get_group(app)
+        install = root.get_command(ClickContext(root), "install")
+        assert install is not None
+        ctx = install.make_context("install", args, parent=ClickContext(root))
+        return ctx.params["torch_group"]
+
+    @pytest.mark.parametrize(
+        ("args", "expected"),
+        [
+            # Dropping the bare-flag completion fails the first two cases:
+            # alone the flag is a usage error, and before another option it
+            # swallows that option as its value.
+            (["--torch-group"], "dev"),
+            (["--torch-group", "--dry-run"], "dev"),
+            (["--torch-group", "rag"], "rag"),
+            (["--torch-group=rag"], "rag"),
+            (["--dry-run"], None),
+        ],
+    )
+    def test_torch_group_value(self, args: list[str], expected: str | None) -> None:
+        assert self._parsed_torch_group(args) == expected

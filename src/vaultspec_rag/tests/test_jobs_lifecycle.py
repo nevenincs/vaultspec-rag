@@ -512,7 +512,7 @@ class TestJobsHumanSummarySignpost:
         option = next(
             parameter
             for parameter in jobs.params
-            if isinstance(parameter, TyperOption) and parameter.name == "json"
+            if isinstance(parameter, TyperOption) and parameter.name == "json_mode"
         )
         assert "scripted waits" in (option.help or "")
 
