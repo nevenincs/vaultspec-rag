@@ -153,7 +153,7 @@ class TestInterruptedJobDegradationSplit:
         # below, so widening the health selector breaks the property this test
         # defends rather than an incidental consequence of it.
         assert degraded_reasons == []
-        assert jobs_health["last_failed"] is None
+        assert cast("dict[str, object]", jobs_health["failing"])["total"] == 0
 
 
 class TestPersistenceFailureClassification:

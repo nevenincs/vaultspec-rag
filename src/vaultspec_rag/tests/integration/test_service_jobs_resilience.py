@@ -254,13 +254,14 @@ def _assert_resilience_health(
     assert detail_resilience["remediation"] == remediation(
         shared_terminal if isinstance(shared_terminal, str) else None
     )
+    failing = cast("dict[str, object]", health_jobs["failing"])
+    entries = cast("list[dict[str, object]]", failing["entries"])
     if error_kind is None or outcome_name == "interrupted":
-        assert health_jobs["last_failed"] is None
+        assert entries == []
         return
-    last_failed = cast("dict[str, object]", health_jobs["last_failed"])
-    assert last_failed["id"] == job_id
-    assert last_failed["source"] == "code"
-    assert last_failed["error_kind"] == error_kind.value
+    assert [entry["id"] for entry in entries] == [job_id]
+    assert entries[0]["source"] == "code"
+    assert entries[0]["error_kind"] == error_kind.value
 
 
 def _assert_resilience_cli_json(

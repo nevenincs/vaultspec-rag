@@ -1109,21 +1109,6 @@ def _latest_job_record(
     )
 
 
-def _failed_job_health(record: dict[str, object] | None) -> dict[str, object] | None:
-    """Project the bounded latest-failure health shape."""
-    if record is None:
-        return None
-    from ._routes_jobs import job_project_root, job_source
-
-    return {
-        "id": record.get("id"),
-        "source": job_source(record),
-        "project_root": job_project_root(record),
-        "error_kind": record.get("error_kind"),
-        "finished_at": record.get("finished_at"),
-    }
-
-
 def _resilience_job_health(
     record: dict[str, object] | None,
 ) -> dict[str, object] | None:
@@ -1201,45 +1186,144 @@ def _failure_belongs_to_this_generation(record: dict[str, object]) -> bool:
     return finished_at >= generation_start
 
 
-def _failure_was_superseded(
-    failed: dict[str, object],
-    records: list[dict[str, object]],
-) -> bool:
-    """Return whether a later run of the same source and project succeeded.
+#: How long an unresolved project index failure may hold the service verdict.
+#: Watched projects re-index on change, so a failure nothing retried within
+#: this window usually belongs to a project nobody is working in. Past it the
+#: failure stays listed but stops degrading.
+_FAILURE_DEGRADES_FOR_SECONDS = 3600.0
 
-    A failure degrades health because it says the index is not being kept
-    current. A success afterwards on the same source of the same project
-    answers that: the run that mattered got through. Another project's
-    success answers nothing about this one. Without this, one transient failure - a
-    momentary memory ceiling, a file that vanished mid-scan - degrades the
-    service for the rest of the generation no matter how many runs succeed
-    after it, and the operator is told the *latest* job failed while newer
-    ones are visibly finishing clean.
+#: Failing project indexes named in the health payload; the rest are counted.
+_FAILING_NAMED = 5
+
+
+def _decisive_outcome(record: dict[str, object]) -> str | None:
+    """Return ``succeeded`` or ``failed`` when the record proves either.
+
+    A success proves the project's index can be built; a failure proves it
+    could not. A missing or rebuild-required index is normal repository
+    readiness, not a broken service, so a refusal stays in job history but
+    never counts. An interrupted run left the published data intact, the
+    models resident and the backend live, so serving is unimpaired. A
+    cancelled run is an operator or watcher decision. Neither those nor a
+    superseded record say whether the index can be built, so none of them may
+    clear or create a failure.
     """
-    from ._routes_jobs import (
-        job_project_root,
-        job_source,
-        job_state,
-        job_updated_timestamp,
+    from .._job_errors import JobErrorKind
+    from ._routes_jobs import job_state
+
+    state = job_state(record)
+    if state == "succeeded":
+        return state
+    if (
+        state == "failed"
+        and record.get("error_kind") != JobErrorKind.FULL_REINDEX_REQUIRED
+    ):
+        return state
+    return None
+
+
+def _project_key(root: str | None) -> str | None:
+    """Return the canonical identity of a recorded project root.
+
+    Health must answer even for a record whose root cannot be resolved, so
+    such a root keys by its recorded spelling instead of raising.
+    """
+    if not root:
+        return None
+    from .._root_identity import canonical_root_key
+
+    try:
+        return canonical_root_key(root)
+    except (OSError, RuntimeError, ValueError):
+        return root
+
+
+def _failing_project_indexes(
+    records: list[dict[str, object]],
+    *,
+    now: float,
+) -> list[dict[str, object]]:
+    """Return each project and source whose newest decisive outcome failed.
+
+    Records are folded once per project root and source. A key fails when
+    the newest record that proves anything about it is a failure, so a later
+    success clears it and a later cancellation leaves it standing. Each entry
+    says whether it degrades health: only a failure inside this generation
+    and inside the degradation window does. Older failures stay listed so the
+    operator never loses the fact. Degrading entries come first, newest
+    first within each group.
+    """
+    from .._job_values import measurement
+    from ._routes_jobs import job_project_root, job_source, job_updated_timestamp
+
+    newest: dict[tuple[str | None, str], tuple[float, dict[str, object]]] = {}
+    for record in records:
+        outcome = _decisive_outcome(record)
+        if outcome is None:
+            continue
+        key = (_project_key(job_project_root(record)), job_source(record))
+        stamp = job_updated_timestamp(record) or float("-inf")
+        held = newest.get(key)
+        # A tie between a success and a failure cannot say which came last,
+        # so the failure stands: hiding a live fault costs more than reporting
+        # one that a later run will clear.
+        if (
+            held is None
+            or stamp > held[0]
+            or (stamp == held[0] and outcome == "failed")
+        ):
+            newest[key] = (stamp, record)
+
+    entries: list[tuple[float, dict[str, object]]] = []
+    for stamp, record in newest.values():
+        if _decisive_outcome(record) != "failed":
+            continue
+        finished_at = measurement(record.get("finished_at"))
+        # A failure that cannot be placed in time degrades, for the reason
+        # the generation check gives: under-reporting hides the only signal.
+        recent = (
+            finished_at is None or now - finished_at <= _FAILURE_DEGRADES_FOR_SECONDS
+        )
+        entries.append(
+            (
+                stamp,
+                {
+                    "id": record.get("id"),
+                    "project_root": job_project_root(record),
+                    "source": job_source(record),
+                    "error_kind": record.get("error_kind"),
+                    "finished_at": record.get("finished_at"),
+                    "degrading": recent and _failure_belongs_to_this_generation(record),
+                },
+            )
+        )
+    entries.sort(key=lambda item: (not item[1]["degrading"], -item[0]))
+    return [entry for _stamp, entry in entries]
+
+
+def _failing_health(
+    failing: list[dict[str, object]],
+) -> tuple[dict[str, object], Degradation | None]:
+    """Bound the failing list for the payload and author its degradation."""
+    degrading = [entry for entry in failing if entry["degrading"]]
+    payload: dict[str, object] = {
+        "total": len(failing),
+        "degrading": len(degrading),
+        "entries": failing[:_FAILING_NAMED],
+    }
+    if not degrading:
+        return payload, None
+    first = degrading[0]
+    root = first["project_root"] or "an unrecorded project"
+    kind = first["error_kind"] or "unknown"
+    count = len(degrading)
+    more = count - 1
+    detail = (
+        f"{count} project index run{'s' if count != 1 else ''} failed: "
+        f"{root} ({first['source']}: {kind})"
+        + (f" and {more} more" if more > 0 else "")
     )
-
-    failed_at = job_updated_timestamp(failed)
-    if failed_at is None:
-        return False
-
-    def project_key(record: dict[str, object]) -> str | None:
-        root = job_project_root(record)
-        return os.path.normcase(os.path.normpath(root)) if root else None
-
-    source = job_source(failed)
-    project = project_key(failed)
-    return any(
-        job_state(record) == "succeeded"
-        and job_source(record) == source
-        and project_key(record) == project
-        and (job_updated_timestamp(record) or float("-inf")) > failed_at
-        for record in records
-    )
+    return payload, Degradation(reason=DegradationReason.JOB_FAILED, detail=detail)
 
 
 def _undispatched_job_count(now: float) -> int:
@@ -1259,29 +1343,13 @@ def _undispatched_job_count(now: float) -> int:
 
 def _jobs_health(*, now: float) -> tuple[dict[str, object], list[Degradation]]:
     """Build the bounded job rollup and its service degradation reasons."""
-    from .._job_errors import JobErrorKind
     from ._routes_jobs import _job_summary, job_state
 
     canonical_records, job_records = _health_job_records()
     summary = _job_summary(job_records, now=now)
     undispatched = _undispatched_job_count(now)
-    # Health answers one question: can this process serve a query right now.
-    # Only a failure bears on that, which is why the selector is narrower than
-    # the set of terminal states that are not success. An interrupted run left
-    # the published data intact, the models resident, and the backend live, so
-    # serving is unimpaired and it must not degrade here - whether the index
-    # that run was building is complete is a separate question with its own
-    # answer, and folding it in would report a healthy service as broken.
-    # A missing or rebuild-required index is normal repository readiness, not
-    # a broken service. Keep refusals in job history, but exclude them before
-    # selecting a failure so a newer refusal cannot hide a real service fault.
-    last_failed = _latest_job_record(
-        [
-            record
-            for record in job_records
-            if job_state(record) == "failed"
-            and record.get("error_kind") != JobErrorKind.FULL_REINDEX_REQUIRED
-        ]
+    failing, failed_degradation = _failing_health(
+        _failing_project_indexes(job_records, now=now)
     )
     latest_resilience = _latest_job_record(
         [
@@ -1317,7 +1385,7 @@ def _jobs_health(*, now: float) -> tuple[dict[str, object], list[Degradation]]:
         "effective_operations": effective_operations,
         "control_pending": summary["control_pending"],
         "states": summary["states"],
-        "last_failed": _failed_job_health(last_failed),
+        "failing": failing,
         "resilience": _resilience_job_health(latest_resilience),
     }
     degradations: list[Degradation] = []
@@ -1344,18 +1412,8 @@ def _jobs_health(*, now: float) -> tuple[dict[str, object], list[Degradation]]:
                 detail=f"{summary['degraded']} indexing job(s) are degraded",
             )
         )
-    if (
-        last_failed is not None
-        and _failure_belongs_to_this_generation(last_failed)
-        and not _failure_was_superseded(last_failed, job_records)
-    ):
-        failed_kind = last_failed.get("error_kind") or "unknown"
-        degradations.append(
-            Degradation(
-                reason=DegradationReason.JOB_FAILED,
-                detail=f"the latest indexing job failed: {failed_kind}",
-            )
-        )
+    if failed_degradation is not None:
+        degradations.append(failed_degradation)
     return jobs_health, degradations
 
 
