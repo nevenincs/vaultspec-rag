@@ -1227,22 +1227,6 @@ def _decisive_outcome(record: dict[str, object]) -> str | None:
     return None
 
 
-def _project_key(root: str | None) -> str | None:
-    """Return the canonical identity of a recorded project root.
-
-    Health must answer even for a record whose root cannot be resolved, so
-    such a root keys by its recorded spelling instead of raising.
-    """
-    if not root:
-        return None
-    from .._root_identity import canonical_root_key
-
-    try:
-        return canonical_root_key(root)
-    except (OSError, RuntimeError, ValueError):
-        return root
-
-
 def _failing_project_indexes(
     records: list[dict[str, object]],
     *,
@@ -1259,6 +1243,7 @@ def _failing_project_indexes(
     first within each group.
     """
     from .._job_values import measurement
+    from .._root_identity import canonical_root_key_or_none
     from ._routes_jobs import job_project_root, job_source, job_updated_timestamp
 
     newest: dict[tuple[str | None, str], tuple[float, dict[str, object]]] = {}
@@ -1266,7 +1251,10 @@ def _failing_project_indexes(
         outcome = _decisive_outcome(record)
         if outcome is None:
             continue
-        key = (_project_key(job_project_root(record)), job_source(record))
+        key = (
+            canonical_root_key_or_none(job_project_root(record)),
+            job_source(record),
+        )
         stamp = job_updated_timestamp(record) or float("-inf")
         held = newest.get(key)
         # A tie between a success and a failure cannot say which came last,
