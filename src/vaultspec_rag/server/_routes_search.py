@@ -70,6 +70,7 @@ from ..search._result_shaping import (
 )
 from ..search._validation import (
     InvalidFilterForSearchTypeError,
+    InvalidPreferValueError,
     SearchFilterOptions,
     validate_search_filters,
 )
@@ -533,17 +534,31 @@ def _dispatch_public_search(
     return combined.results, timings, combined
 
 
-def _refuse_inapplicable_document_filters(request: SearchRequest) -> None:
-    """Hand every document filter the body carries to the search domain.
+def _refuse_inapplicable_filters(request: SearchRequest) -> None:
+    """Hand every filter the body carries to the search domain to judge.
 
-    The vault and code searches take no document filters, so without this a
-    filter sent on one of them would be dropped and the caller would get a
-    wider answer than asked for, with nothing to say so.
+    Each search type takes only its own filters, so without this a filter
+    sent on a search that cannot apply it would be dropped and the caller
+    would get a wider answer than asked for, with nothing to say so.
     """
     payload = request.payload
     validate_search_filters(
         request.search_type,
         SearchFilterOptions(
+            language=payload.get("language"),
+            path=payload.get("path"),
+            node_type=payload.get("node_type"),
+            function_name=payload.get("function_name"),
+            class_name=payload.get("class_name"),
+            include_paths=payload.get("include_paths"),
+            exclude_paths=payload.get("exclude_paths"),
+            dedup_locales=payload.get("dedup_locales"),
+            prefer=payload.get("prefer"),
+            doc_type=payload.get("doc_type"),
+            feature=payload.get("feature"),
+            date=payload.get("date"),
+            tag=payload.get("tag"),
+            intent=payload.get("intent"),
             source_path=payload.get("source_path"),
             extractor_id=payload.get("extractor_id"),
             extractor_version=payload.get("extractor_version"),
@@ -559,7 +574,7 @@ def _execute_search_request(
     request: SearchRequest, registry: ServiceRegistry
 ) -> dict[str, object]:
     """Execute and serialize one search off the event loop."""
-    _refuse_inapplicable_document_filters(request)
+    _refuse_inapplicable_filters(request)
     compute_wait_started = time.perf_counter()
     ticket = registry.acquire_compute_ticket()
     compute_ticket_wait_seconds = time.perf_counter() - compute_wait_started
@@ -1012,7 +1027,21 @@ async def _execute_search_route(
         )
     except InvalidFilterForSearchTypeError as exc:
         return _refused_filter_result(
-            exc, search_request, total_seconds=time.perf_counter() - started
+            exc.error_code,
+            str(exc),
+            search_request,
+            total_seconds=time.perf_counter() - started,
+            details={
+                "filter_kind": exc.filter_kind,
+                "offending": list(exc.offending_filters),
+            },
+        )
+    except InvalidPreferValueError as exc:
+        return _refused_filter_result(
+            "invalid_prefer_value",
+            str(exc),
+            search_request,
+            total_seconds=time.perf_counter() - started,
         )
     except (ApiException, ResponseHandlingException) as exc:
         total_seconds = time.perf_counter() - started
@@ -1058,10 +1087,12 @@ async def _execute_search_route(
 
 
 def _refused_filter_result(
-    exc: InvalidFilterForSearchTypeError,
+    error: str,
+    message: str,
     search_request: SearchRequest,
     *,
     total_seconds: float,
+    details: dict[str, object] | None = None,
 ) -> SearchRouteResult:
     """Answer a filter the search domain refused as the caller's error, 400.
 
@@ -1073,12 +1104,11 @@ def _refused_filter_result(
     return SearchRouteResult(
         result={
             "ok": False,
-            "error": exc.error_code,
-            "message": str(exc),
+            "error": error,
+            "message": message,
             "retryable": False,
             "request_id": search_request.request_id,
-            "filter_kind": exc.filter_kind,
-            "offending": list(exc.offending_filters),
+            **(details or {}),
         },
         status_code=400,
         total_seconds=total_seconds,

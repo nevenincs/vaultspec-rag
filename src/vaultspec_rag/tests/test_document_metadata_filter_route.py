@@ -114,8 +114,8 @@ def test_wrong_json_shape_is_a_400_before_the_search_runs(
 def test_document_filter_on_a_vault_or_code_search_is_a_400(
     declared_root: Path, search_type: str, body: dict[str, object], flag: str
 ) -> None:
-    # Guard. Proven to fail: removing the _refuse_inapplicable_document_filters
-    # call from _execute_search_request lets the vault and code branches drop
+    # Guard. Proven to fail: removing the _refuse_inapplicable_filters call
+    # from _execute_search_request lets the vault and code branches drop
     # the filter and run the search, which this unindexed root answers 503,
     # failing the status assertion below.
     response = _search(declared_root, {"type": search_type, **body})
@@ -125,3 +125,58 @@ def test_document_filter_on_a_vault_or_code_search_is_a_400(
     assert payload["error"] == "invalid_filter_for_search_type"
     assert payload["filter_kind"] == "document"
     assert payload["offending"] == [flag]
+
+
+@pytest.mark.parametrize(
+    ("search_type", "body", "kind", "flag"),
+    [
+        ("vault", {"language": "python"}, "code", "--language"),
+        ("vault", {"path": "src/foo.py"}, "code", "--path"),
+        ("vault", {"include_paths": ["src/**"]}, "code", "--include-path"),
+        ("vault", {"dedup_locales": True}, "code", "--dedup-locales"),
+        ("vault", {"prefer": "prod"}, "code", "--prefer"),
+        ("code", {"doc_type": "adr"}, "vault", "--doc-type"),
+        ("code", {"feature": "auth"}, "vault", "--feature"),
+        ("code", {"tag": "auth"}, "vault", "--tag"),
+        ("code", {"intent": "debugging"}, "vault", "--intent"),
+        ("document", {"date": "2026-05-28"}, "vault", "--date"),
+        ("document", {"class_name": "Engine"}, "code", "--class-name"),
+    ],
+)
+def test_filter_of_another_search_type_is_a_400(
+    declared_root: Path,
+    search_type: str,
+    body: dict[str, object],
+    kind: str,
+    flag: str,
+) -> None:
+    # Guard. Proven to fail: leaving language out of the options
+    # _refuse_inapplicable_filters hands validate_search_filters lets the vault
+    # branch drop it and run the search, which this unindexed root answers 503,
+    # failing the status assertion below.
+    response = _search(declared_root, {"type": search_type, **body})
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["error"] == "invalid_filter_for_search_type"
+    assert payload["filter_kind"] == kind
+    assert payload["offending"] == [flag]
+
+
+def test_unsupported_prefer_is_a_400_the_mcp_tool_raises_verbatim(
+    declared_root: Path,
+) -> None:
+    # Guard. Proven to fail: removing the InvalidPreferValueError branch from
+    # _execute_search_route turns the refusal into a 500, failing the status
+    # assertion below.
+    from ..mcp._tools import _validated_search_result
+
+    response = _search(declared_root, {"type": "code", "prefer": "production"})
+    assert response.status_code == 400
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"^invalid_prefer_value: --prefer must be one of production, tests, "
+            r"or documentation; got 'production'\.$"
+        ),
+    ):
+        _validated_search_result(response.json())

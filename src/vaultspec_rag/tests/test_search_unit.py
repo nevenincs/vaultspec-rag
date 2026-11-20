@@ -468,6 +468,29 @@ class TestFilterValidation:
         assert "--doc-type" in excinfo.value.offending_filters
         assert "vault-search filters" in str(excinfo.value)
 
+    @pytest.mark.parametrize("search_type", ["code", "document"])
+    def test_intent_is_refused_outside_vault_search(self, search_type):
+        # Guard. Proven to fail: dropping the intent branch from
+        # _supplied_filters lets the call return, so pytest.raises fails.
+        from ..search import (
+            InvalidFilterForSearchTypeError,
+            SearchFilterOptions,
+            validate_search_filters,
+        )
+
+        with pytest.raises(InvalidFilterForSearchTypeError) as excinfo:
+            validate_search_filters(
+                search_type, SearchFilterOptions(intent="debugging")
+            )
+        assert excinfo.value.filter_kind == "vault"
+        assert excinfo.value.offending_filters == ["--intent"]
+
+    @pytest.mark.parametrize("search_type", ["vault", "combined"])
+    def test_intent_is_accepted_where_vault_ranking_runs(self, search_type):
+        from ..search import SearchFilterOptions, validate_search_filters
+
+        validate_search_filters(search_type, SearchFilterOptions(intent="debugging"))
+
 
 class TestPathPatternMatching:
     """A supplied path pattern narrows to a location, not to one literal path.

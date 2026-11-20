@@ -513,6 +513,7 @@ def search_vault(request: VaultSearchRequest) -> list[SearchResult]:
             feature=request.feature,
             date=request.date,
             tag=request.tag,
+            intent=request.intent,
         ),
     )
     root = _resolve(request.root_dir)
@@ -555,6 +556,7 @@ def search_vault_timed(
             feature=request.feature,
             date=request.date,
             tag=request.tag,
+            intent=request.intent,
         ),
     )
     root = _resolve(request.root_dir)

@@ -40,6 +40,7 @@ class SearchFilterOptions:
     feature: str | None = None
     date: str | None = None
     tag: str | None = None
+    intent: str | None = None
     include_paths: list[str] | None = None
     exclude_paths: list[str] | None = None
     dedup_locales: bool | None = None
@@ -477,6 +478,10 @@ def _supplied_filters(
 
     code_supplied = _supplied(store_schema.CODE_FILTER_KEYS)
     vault_supplied = _supplied(store_schema.VAULT_FILTER_KEYS)
+    if options.intent is not None:
+        # A vault ranking control rather than a payload key, so it is not in
+        # the schema vocabulary; a code or document search has no use for it.
+        vault_supplied.append("intent")
     document_supplied = _supplied(store_schema.DOCUMENT_FILTER_KEYS)
     if options.extractor_prefix is not None:
         document_supplied.append("extractor_prefix")

@@ -536,21 +536,6 @@ class TestMcpFastPath:
         assert result["error"] == "unknown_source_type"
         assert result["received"] == "invalid"
 
-    def test_code_filters_with_vault_returns_usage_error(self):
-        """Filter kwargs with --type vault yield a structured usage error."""
-        result = try_http_search(
-            "test query",
-            "vault",
-            5,
-            1,
-            "/tmp/proj",
-            function_name="foo",
-        )
-        assert isinstance(result, dict)
-        assert result.get("ok") is False
-        assert result.get("error") == "invalid_filter_for_search_type"
-        assert "--function-name" in str(result.get("message", ""))
-
     def test_code_filters_with_all_reach_combined_transport(self):
         """The explicit all alias accepts code filters for combined search."""
         result = try_http_search(
@@ -641,34 +626,6 @@ class TestMcpFastPath:
         assert "Unexpected search options:" in result.output
         assert "Searching code" not in result.output
 
-    def test_path_filter_with_vault_returns_usage_error(self):
-        """--path is a code filter; pairing it with vault must error."""
-        result = try_http_search(
-            "test",
-            "vault",
-            5,
-            1,
-            "/tmp/proj",
-            path="src/foo.py",
-        )
-        assert isinstance(result, dict)
-        assert result.get("error") == "invalid_filter_for_search_type"
-        assert "path" in str(result.get("message", ""))
-
-    def test_vault_filter_with_code_returns_usage_error(self):
-        """doc_type/feature/date/tag with --type code must error."""
-        result = try_http_search(
-            "test",
-            "code",
-            5,
-            1,
-            "/tmp/proj",
-            doc_type="adr",
-        )
-        assert isinstance(result, dict)
-        assert result.get("error") == "invalid_filter_for_search_type"
-        assert "--doc-type" in str(result.get("message", ""))
-
     def test_vault_filters_with_code_attempt_call(self):
         """doc_type/feature/date/tag with --type vault reach the call path."""
         result = try_http_search(
@@ -685,34 +642,6 @@ class TestMcpFastPath:
         # No live service → ConnectionRefused → None.
         assert result is None
 
-    def test_include_path_with_vault_returns_usage_error(self):
-        """--include-path is a code filter; --type vault must error."""
-        result = try_http_search(
-            "test",
-            "vault",
-            5,
-            1,
-            "/tmp/proj",
-            include_paths=["src/foo/**"],
-        )
-        assert isinstance(result, dict)
-        assert result.get("error") == "invalid_filter_for_search_type"
-        assert "--include-path" in str(result.get("message", ""))
-
-    def test_exclude_path_with_vault_returns_usage_error(self):
-        """--exclude-path with --type vault errors out symmetrically."""
-        result = try_http_search(
-            "test",
-            "vault",
-            5,
-            1,
-            "/tmp/proj",
-            exclude_paths=["locales/*.yml"],
-        )
-        assert isinstance(result, dict)
-        assert result.get("error") == "invalid_filter_for_search_type"
-        assert "--exclude-path" in str(result.get("message", ""))
-
     def test_glob_filters_with_code_attempt_call(self):
         """--include-path/--exclude-path with --type code reach the call path."""
         result = try_http_search(
@@ -725,34 +654,6 @@ class TestMcpFastPath:
             exclude_paths=["tests/**"],
         )
         assert result is None
-
-    def test_dedup_locales_with_vault_returns_usage_error(self):
-        """--dedup-locales is a code-only post-process flag."""
-        result = try_http_search(
-            "test",
-            "vault",
-            5,
-            1,
-            "/tmp/proj",
-            dedup_locales=True,
-        )
-        assert isinstance(result, dict)
-        assert result.get("error") == "invalid_filter_for_search_type"
-        assert "--dedup-locales" in str(result.get("message", ""))
-
-    def test_prefer_with_vault_returns_usage_error(self):
-        """--prefer is a code-only post-process flag."""
-        result = try_http_search(
-            "test",
-            "vault",
-            5,
-            1,
-            "/tmp/proj",
-            prefer="prod",
-        )
-        assert isinstance(result, dict)
-        assert result.get("error") == "invalid_filter_for_search_type"
-        assert "--prefer" in str(result.get("message", ""))
 
     def test_postproc_flags_with_code_attempt_call(self):
         """dedup_locales/prefer with --type code reach the call path."""
