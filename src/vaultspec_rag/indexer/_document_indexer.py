@@ -974,39 +974,36 @@ class DocumentIndexer:
         *,
         scoped: bool,
     ) -> set[str]:
-        """Select changed/deleted paths without conflating scoped discovery."""
+        """Select the authorized paths whose content differs from committed proof.
+
+        A file event does not imply new bytes: an editor save or a touch
+        reports a path whose content is unchanged, and republishing it leaves
+        the publication with mutations but no proof change. Every run therefore
+        compares content against the committed fingerprint; creates and
+        pending replays are always selected.
+
+        An unscoped run sees the full membership, so it prunes gate evidence,
+        raises on an unreadable file and selects committed paths that vanished.
+        A scoped run sees partial membership: it never prunes, and leaves
+        deleted or unreadable event paths selected for the reconcile loop.
+        """
         from ._checkpoint_common import publication_replay_paths
 
         discovered = {
             path.relative_to(self.root_dir).as_posix(): path
             for path in authorized_paths
         }
-        if scoped:
-            return self._select_scoped_paths(discovered, previous_files)
-        # The unscoped selection sees the full discovered membership, so it
-        # both consults the stat-evidence gate and prunes its evidence for
-        # files that no longer exist.
+        known = [
+            (rel, path)
+            for rel, path in discovered.items()
+            if rel in previous_files and (not scoped or path.is_file())
+        ]
         with self._stat_gate_cache.acquire() as gate:
-            outcome = _stat_gate.hash_paths(
-                gate,
-                [
-                    (rel, path)
-                    for rel, path in discovered.items()
-                    if rel in previous_files
-                ],
-            )
-            if outcome.failures:
-                # The ungated selection raised on the first unreadable file;
-                # surface the same failure rather than silently deselecting it.
+            outcome = _stat_gate.hash_paths(gate, known)
+            if outcome.failures and not scoped:
                 raise outcome.failures[0][1]
-            selected = {
-                rel
-                for rel in discovered
-                if rel not in previous_files
-                or outcome.hashes[rel] != previous_files[rel].content_fingerprint
-                or rel in publication_replay_paths()
-            }
-            gate.prune(discovered.keys())
+            if not scoped:
+                gate.prune(discovered.keys())
             gate.persist()
             if gate.reused:
                 logger.debug(
@@ -1014,44 +1011,17 @@ class DocumentIndexer:
                     gate.reused,
                     gate.rehashed,
                 )
-            selected.update(set(previous_files) - set(discovered))
-            return selected
-
-    def _select_scoped_paths(
-        self,
-        discovered: dict[str, pathlib.Path],
-        previous_files: dict[str, DocumentFileMetadata],
-    ) -> set[str]:
-        """Keep the event paths whose content differs from committed proof.
-
-        A file event does not imply new bytes: an editor save or a touch
-        reports a path whose content is unchanged. Republishing it rewrites
-        identical points, which leaves the publication with mutations but no
-        proof change, so unchanged paths are dropped here. Creates, deletions,
-        unreadable paths and pending replays stay selected; the reconcile loop
-        owns their outcome. The scope is partial membership, so gate evidence
-        for paths outside it is never pruned.
-        """
-        from ._checkpoint_common import publication_replay_paths
-
-        known = [
-            (rel, path)
-            for rel, path in discovered.items()
-            if rel in previous_files and path.is_file()
-        ]
-        if not known:
-            return set(discovered)
-        with self._stat_gate_cache.acquire() as gate:
-            outcome = _stat_gate.hash_paths(gate, known)
-            gate.persist()
         replay = publication_replay_paths()
-        return {
+        selected = {
             rel
             for rel in discovered
             if rel not in outcome.hashes
             or outcome.hashes[rel] != previous_files[rel].content_fingerprint
             or rel in replay
         }
+        if not scoped:
+            selected.update(set(previous_files) - set(discovered))
+        return selected
 
     def _reconcile_incremental_paths(
         self,
