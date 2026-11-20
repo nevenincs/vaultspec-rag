@@ -20,8 +20,7 @@ from .._cli_helpers import app, runner
 from .._preprocess_approval import approve_preprocess_policy
 
 if TYPE_CHECKING:
-    from ...indexer._codebase_indexer import ContentScanResult
-    from ...indexer._content_discovery import AdmissionSample
+    from ...indexer._content_discovery import AdmissionSample, ContentScanResult
 
 pytestmark = [pytest.mark.integration]
 
@@ -98,7 +97,7 @@ def _assert_discovery_parity(
 ) -> tuple[ContentScanResult, set[str]]:
     """Assert full and scoped discovery agree on admitted source paths."""
     resolved = indexer.resolve_policy_snapshot()
-    full_scan = indexer.scan_content(sample_limit=len(paths))
+    full_scan = indexer.preflight_content(sample_limit=len(paths)).scan
     full = {path.relative_to(tmp_path).as_posix() for path in full_scan.files}
     scoped, rejected = indexer._scan_changed_paths(
         paths.values(),
@@ -107,7 +106,7 @@ def _assert_discovery_parity(
     )
     admitted = {"p0/alpha.py", "p1/beta.ts"}
     assert full == admitted
-    assert set(indexer.scan_files()) == set(full_scan.files)
+    assert set(indexer._scan_codebase()) == set(full_scan.files)
     assert set(scoped) == admitted
     assert rejected == set(paths) - admitted
     assert full_scan.policy_fingerprint == resolved.fingerprints.snapshot

@@ -676,7 +676,7 @@ class TestVaultragignore:
             tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
         )
 
-        files = indexer.scan_files()
+        files = indexer._scan_codebase()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
         assert "main.py" in rel
         assert "generated.py" not in rel
@@ -692,7 +692,7 @@ class TestVaultragignore:
             tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
         )
 
-        files = indexer.scan_files()
+        files = indexer._scan_codebase()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
         assert "app.py" in rel
 
@@ -711,7 +711,7 @@ class TestVaultragignore:
             options=CodebaseIndexer.Options(extra_excludes=["temp.py"]),
         )
 
-        files = indexer.scan_files()
+        files = indexer._scan_codebase()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
         assert "main.py" in rel
         assert "temp.py" not in rel
@@ -731,7 +731,7 @@ class TestVaultragignore:
             tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
         )
 
-        files = indexer.scan_files()
+        files = indexer._scan_codebase()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
         assert "secret.py" not in rel, (
             ".vaultragignore negation must not override .gitignore"
@@ -757,7 +757,7 @@ class TestVaultragignore:
             tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
         )
 
-        files = indexer.scan_files()
+        files = indexer._scan_codebase()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
         assert "main.py" in rel
         assert "foo.test.py" not in rel
@@ -778,24 +778,11 @@ class TestVaultragignore:
             tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
         )
 
-        files = indexer.scan_files()
+        files = indexer._scan_codebase()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
         assert "main.py" in rel
         assert "build_output.py" not in rel
         assert "vendor_lib.py" not in rel
-
-    @pytest.mark.unit
-    def test_scan_files_matches_scan_codebase(self, tmp_path: Path):
-        """scan_files() returns the same result as _scan_codebase()."""
-        from ..indexer import CodebaseIndexer
-
-        (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
-
-        indexer = CodebaseIndexer(
-            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
-        )
-
-        assert indexer.scan_files() == indexer._scan_codebase()
 
     @pytest.mark.unit
     def test_vaultragignore_directory_exclusion(self, tmp_path: Path):
@@ -812,7 +799,7 @@ class TestVaultragignore:
             tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
         )
 
-        files = indexer.scan_files()
+        files = indexer._scan_codebase()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
         assert "main.py" in rel
         assert "vendor/lib.py" not in rel

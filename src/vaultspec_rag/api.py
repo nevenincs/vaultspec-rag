@@ -24,7 +24,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from .indexer import IndexResult
-    from .indexer._codebase_indexer import CodeIndexPreflight, ContentScanResult
+    from .indexer._codebase_indexer import CodeIndexPreflight
+    from .indexer._content_discovery import ContentScanResult
     from .indexer._content_policy import RootContentPolicy
     from .indexer._document_indexer import (
         DocumentIndexPreflight,

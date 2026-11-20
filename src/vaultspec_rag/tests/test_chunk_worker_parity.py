@@ -534,7 +534,7 @@ class TestChunkIdentityParity:
     def test_parallel_matches_serial(self, tmp_path: Path) -> None:
         _make_code_tree(tmp_path, 40)
         indexer = _chunk_only_indexer(tmp_path)
-        paths = indexer.scan_files()
+        paths = indexer._scan_codebase()
         assert len(paths) >= 40
 
         with _Workers(4):
@@ -549,7 +549,7 @@ class TestChunkIdentityParity:
     def test_parallel_pipeline_hashes_every_file(self, tmp_path: Path) -> None:
         _make_code_tree(tmp_path, 20)
         indexer = _chunk_only_indexer(tmp_path)
-        paths = indexer.scan_files()
+        paths = indexer._scan_codebase()
         # An empty scan would make the count below compare 0 to 0 and assert
         # nothing about the worker at all.
         assert len(paths) >= 20
@@ -648,7 +648,7 @@ class TestWorkerGating:
         """The byte gate, not the core count, decides serial vs parallel."""
         _make_code_tree(tmp_path, 20)  # ~tens of KB, well under 8 MiB
         indexer = _chunk_only_indexer(tmp_path)
-        paths = indexer.scan_files()
+        paths = indexer._scan_codebase()
 
         if (os.cpu_count() or 1) < 2:
             # No parallelism is possible; auto must be serial regardless.
@@ -668,7 +668,7 @@ class TestWorkerGating:
     def test_explicit_workers_bypass_gate(self, tmp_path: Path) -> None:
         _make_code_tree(tmp_path, 20)
         indexer = _chunk_only_indexer(tmp_path)
-        paths = indexer.scan_files()
+        paths = indexer._scan_codebase()
         # An explicit request resolves to min(request, n_paths) regardless of
         # core count or the byte gate.
         with _Workers(3):
@@ -696,7 +696,7 @@ class TestHashParity:
     def test_content_hash_matches_file_digest(self, tmp_path: Path) -> None:
         _make_code_tree(tmp_path, 5)
         indexer = _chunk_only_indexer(tmp_path)
-        scanned = indexer.scan_files()
+        scanned = indexer._scan_codebase()
         # Without this the loop body is the whole test: a scan that returns
         # nothing runs zero iterations and the parity below is never checked.
         assert len(scanned) >= 5

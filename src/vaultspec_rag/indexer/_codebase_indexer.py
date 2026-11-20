@@ -35,7 +35,6 @@ from ._content_discovery import (
     CodeExecutionPreflight,
     CodeIndexPreflight,
     CodeScopedPreflight,
-    ContentScanResult,
 )
 from ._content_policy import (
     ClassifiedContent,
@@ -328,25 +327,6 @@ class CodebaseIndexer(CodebasePreprocessMixin):
     ) -> ClassifiedContent:
         """Apply ownership first, then raw-code size and binary capability."""
         return self._discovery.inspect_file(path, rel_path, policy).classified
-
-    def scan_content(
-        self,
-        *,
-        sample_limit: int = _DEFAULT_SCAN_SAMPLE_LIMIT,
-    ) -> ContentScanResult:
-        """Return structured admission from one freshly resolved snapshot."""
-        return self._discovery.scan_admission(sample_limit=sample_limit)
-
-    def scan_files(self) -> list[pathlib.Path]:
-        """Return the list of files that would be indexed.
-
-        Does not require GPU or vector store - safe to call with
-        ``model=None`` and ``store=None`` for dry-run usage.
-
-        Returns:
-            List of absolute paths to indexable source files.
-        """
-        return self._discovery.scan_files()
 
     def _resume_pending_finalization(
         self,
