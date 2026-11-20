@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from functools import partial
 from typing import TYPE_CHECKING, Any, cast
 
-from anyio import move_on_after
+from anyio import CancelScope
 from anyio.to_thread import run_sync as _run_in_thread
 
 if TYPE_CHECKING:
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
     from ..indexer._run_ledger_models import RunAuthority
     from .manager import JobManager
-    from .state import JobLifecycleState
+    from .state import AdmissionSlot, JobLifecycleState
 
 from .._job_errors import classify_error_text
 from ..concurrency import get_encode_limiter, get_index_limiter
@@ -71,10 +71,20 @@ logger = logging.getLogger("vaultspec_rag.jobs")
 #: dispatch the loop then goes on to perform.
 _LOOPLESS_DISPATCH_TIMEOUT_SECONDS = 30.0
 
-# A capacity waiter owns an attempt ticket but has no worker to poll control.
-# AnyIO shields an admitted worker after acquiring the limiter, so this deadline
-# interrupts only admission waits; it never abandons synchronous execution.
-_ADMISSION_CONTROL_POLL_SECONDS = 0.1
+
+def _cancel_from_any_thread(
+    loop: asyncio.AbstractEventLoop, scope: CancelScope
+) -> None:
+    """Cancel *scope* on its own loop from whichever thread requested control.
+
+    Cancelling a scope that has already exited is a no-op, so a request that
+    races the end of an admission wait is harmless.
+    """
+    try:
+        loop.call_soon_threadsafe(scope.cancel)
+    except RuntimeError:
+        # The loop closed: nothing is left waiting on the scope.
+        return
 
 
 @dataclass(frozen=True, slots=True)
@@ -618,21 +628,42 @@ class JobManagerExecution(JobManagerState):
         error: BaseException | None = None
         release_persisted = False
         try:
-            limiter = self._attempt_limiter(job_id)
+            slot, limiter = self._attempt_slot(job_id)
+            loop = asyncio.get_running_loop()
             while True:
-                control.checkpoint()
-                with move_on_after(_ADMISSION_CONTROL_POLL_SECONDS):
-                    result = await _run_in_thread(
-                        self._run_worker_attempt,
-                        context,
-                        binding,
-                        limiter=limiter,
-                        abandon_on_cancel=False,
-                    )
-                    # A deadline can expire while the admitted worker is
-                    # shielded. Returning its result, rather than the deadline
+                # A capacity waiter has no worker to poll control, so a control
+                # request cancels its wait instead. The wait is entered once and
+                # never re-entered on a timer: the limiter grants in arrival
+                # order, and leaving its queue would surrender this attempt's
+                # place. AnyIO shields an admitted worker, so a cancellation
+                # that lands after admission never abandons synchronous work.
+                with (
+                    CancelScope() as wait_scope,
+                    control.wake_on_request(
+                        partial(_cancel_from_any_thread, loop, wait_scope)
+                    ),
+                ):
+                    # Checked after the wake is registered, so a request that
+                    # landed before it is delivered here rather than missed.
+                    control.checkpoint()
+                    self._enter_admission_queue(job_id, slot)
+                    try:
+                        result = await _run_in_thread(
+                            self._run_worker_attempt,
+                            context,
+                            binding,
+                            limiter=limiter,
+                            abandon_on_cancel=False,
+                        )
+                    finally:
+                        self._leave_admission_queue(job_id)
+                    # A cancellation can land while the admitted worker is
+                    # shielded. Returning its result, rather than the scope's
                     # flag, proves execution completed and must not be retried.
                     break
+                # The wait was cancelled before admission. Deliver the request;
+                # a pause withdrawn in the meantime delivers nothing, and the
+                # attempt rejoins the back of the queue.
         except (
             PauseRequested,
             CancelRequested,
@@ -683,8 +714,8 @@ class JobManagerExecution(JobManagerState):
             authority=admission.authority,
         )
 
-    def _attempt_limiter(self, job_id: str) -> anyio.CapacityLimiter:
-        """Return the worker-thread limiter that admits one exact attempt.
+    def _attempt_slot(self, job_id: str) -> tuple[AdmissionSlot, anyio.CapacityLimiter]:
+        """Return the admission slot and limiter that admit one exact attempt.
 
         Encode-bearing jobs pass through the single machine-wide encode
         admission slot so at most one of them is ever in flight; every
@@ -702,14 +733,34 @@ class JobManagerExecution(JobManagerState):
             managed = self._active.get(job_id)
             spec = managed.snapshot.spec if managed is not None else None
         if spec is not None and _is_encode_bearing(spec):
-            return get_encode_limiter()
-        return get_index_limiter()
+            return "encode", get_encode_limiter()
+        return "index", get_index_limiter()
+
+    def _enter_admission_queue(self, job_id: str, slot: AdmissionSlot) -> None:
+        """Record one attempt at the back of its slot's waiter order.
+
+        Called on the loop immediately before the attempt enters the limiter,
+        so registry order and limiter order are the same arrival order.
+        """
+        with self._lock:
+            self._admission_waiters.pop(job_id, None)
+            self._admission_waiters[job_id] = slot
+        self._job_changes.notify()
+
+    def _leave_admission_queue(self, job_id: str) -> None:
+        """Drop one attempt from the waiter order once admitted or unwound."""
+        with self._lock:
+            left = self._admission_waiters.pop(job_id, None) is not None
+        if left:
+            self._job_changes.notify()
 
     def _run_worker_attempt(
         self,
         context: JobAttemptContext,
         binding: JobDispatchBinding,
     ) -> JobExecutionResult:
+        # The limiter admitted this attempt, so it no longer waits.
+        self._leave_admission_queue(context.job_id)
         thread = threading.current_thread()
         worker_persisted = self.set_worker_active(
             context.job_id,

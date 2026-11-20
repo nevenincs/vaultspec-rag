@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import asyncio
+import contextlib
+import threading
+from collections.abc import Callable, Generator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from ..job_models import JobSnapshot
 from .models import JobAttemptContext, JobExecutionResult, QuiescedDispatchClaim
 
 if TYPE_CHECKING:
-    import asyncio
-    import threading
     from collections import deque
     from pathlib import Path
-    from typing import Literal
 
     from .. import job_persistence as _job_persistence
     from ..job_control import (
@@ -45,6 +45,71 @@ if TYPE_CHECKING:
 
 MANAGED_STATE_FILENAME = "jobs-state.json"
 
+type AdmissionSlot = Literal["encode", "index"]
+"""The capacity limiter an attempt waits on: the single encode slot or the
+wider index partition."""
+
+
+@dataclass(frozen=True, slots=True)
+class AdmissionWaiter:
+    """One attempt waiting for its admission slot.
+
+    ``position`` is the 1-based rank among the waiters on the same slot, in
+    arrival order, which is also the order the slot grants them.
+    """
+
+    job_id: str
+    slot: AdmissionSlot
+    position: int
+
+
+type JobWaitUntil = Literal["admitted", "finished"]
+"""The condition a bounded job wait ends on."""
+
+
+@dataclass(frozen=True, slots=True)
+class JobWaitResult:
+    """How one bounded job wait ended."""
+
+    job: JobSnapshot
+    reached: bool
+    waited_seconds: float
+
+
+class JobChangeNotifier:
+    """Wake every async waiter when observable job state changes.
+
+    Changes land on worker threads and on the service loop alike, so
+    notification only schedules ``Event.set`` on each subscriber's own loop
+    and never blocks. A spurious wake costs a waiter one re-read; a missed
+    one costs it the rest of its bounded wait, so every snapshot revision
+    and every admission-queue change notifies.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._subscribers: set[tuple[asyncio.AbstractEventLoop, asyncio.Event]] = set()
+
+    def notify(self) -> None:
+        with self._lock:
+            subscribers = tuple(self._subscribers)
+        for loop, event in subscribers:
+            # A loop that closed since subscribing has no waiter left to wake.
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(event.set)
+
+    @contextlib.contextmanager
+    def subscription(self) -> Generator[asyncio.Event]:
+        """Yield an event set on every change until the block exits."""
+        subscriber = (asyncio.get_running_loop(), asyncio.Event())
+        with self._lock:
+            self._subscribers.add(subscriber)
+        try:
+            yield subscriber[1]
+        finally:
+            with self._lock:
+                self._subscribers.discard(subscriber)
+
 
 if TYPE_CHECKING:
 
@@ -63,8 +128,10 @@ if TYPE_CHECKING:
 
         _accepting_dispatch: bool
         _active: dict[str, ManagedJob]
+        _admission_waiters: dict[str, AdmissionSlot]
         _dispatchers: dict[str, JobDispatchBinding]
         _flushed_generation: int
+        _job_changes: JobChangeNotifier
         _last_flush_monotonic: float
         _lifecycle_state: JobLifecycleState
         _lock: threading.RLock

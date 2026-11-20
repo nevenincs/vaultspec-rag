@@ -506,6 +506,7 @@ class JobManagerPersistence(JobManagerState):
             reuse=(previous.reuse if transition.reuse is ... else transition.reuse),
             drift=(previous.drift if transition.drift is ... else transition.drift),
         )
+        self._job_changes.notify()
 
     def _get_terminal_locked(self, job_id: str) -> ManagedJob | None:
         for managed in reversed(self._terminal):
