@@ -88,11 +88,24 @@ def _ready_health_payload() -> dict[str, object]:
     }
 
 
-def _last_failed_record() -> dict[str, object]:
+def _failed_record() -> dict[str, object]:
     return {
         "id": _FAILED_JOB_ID,
+        "source": "code",
         "error_kind": "other",
         "finished_at": time.time() - _FAILURE_AGE_SECONDS,
+    }
+
+
+def _failing(*records: dict[str, object], degrading: bool = True) -> dict[str, object]:
+    """The service's failing-project rollup naming *records*, in order."""
+    entries = [record | {"degrading": degrading} for record in records]
+    return {
+        "failing": {
+            "total": len(entries),
+            "degrading": len(entries) if degrading else 0,
+            "entries": entries,
+        }
     }
 
 
@@ -100,8 +113,8 @@ def _last_failed_record() -> dict[str, object]:
 #: detail with no entry stands for a newer service's code this build does not
 #: know, which must still be rendered.
 _CODES = {
-    "the latest indexing job failed: other": "job_failed",
-    "the latest indexing job failed: full_reindex_required": "job_failed",
+    "1 project index run failed: /w/demo (code: other)": "job_failed",
+    "1 project index run failed: /w/demo (vault: full_reindex_required)": "job_failed",
     "2 indexing job(s) are stalled": "jobs_stalled",
     "1 indexing job(s) are stalled": "jobs_stalled",
     "1 queued indexing job(s) have nothing to start them": "jobs_undispatched",
@@ -199,15 +212,15 @@ class TestDegradedStatusExplainsItself:
         result = _status_against(
             tmp_path,
             _health_payload(
-                reasons=["the latest indexing job failed: other"],
-                jobs={"last_failed": _last_failed_record()},
+                reasons=["1 project index run failed: /w/demo (code: other)"],
+                jobs=_failing(_failed_record()),
             ),
         )
 
         assert result.exit_code == 0, result.output
         lines = _plain_lines(result.output)
         assert "Degraded because:" in lines
-        assert "- the latest indexing job failed: other" in lines
+        assert "- 1 project index run failed: /w/demo (code: other)" in lines
         assert f"job e8f8ac43, {_FAILURE_AGE_TEXT} ago" in lines
         assert f"vaultspec-rag server logs --job-id {_FAILED_JOB_ID}" in lines
         # The concrete remediation replaces the generic re-run-with-more-rows.
@@ -219,7 +232,7 @@ class TestDegradedStatusExplainsItself:
         self, tmp_path: Path
     ) -> None:
         project = tmp_path / "other project"
-        refused = _last_failed_record() | {
+        refused = _failed_record() | {
             "source": "vault",
             "project_root": str(project),
             "error_kind": "full_reindex_required",
@@ -227,8 +240,10 @@ class TestDegradedStatusExplainsItself:
         result = _status_against(
             tmp_path,
             _health_payload(
-                reasons=["the latest indexing job failed: full_reindex_required"],
-                jobs={"last_failed": refused},
+                reasons=[
+                    "1 project index run failed: /w/demo (vault: full_reindex_required)"
+                ],
+                jobs=_failing(refused),
             ),
         )
 
@@ -247,15 +262,17 @@ class TestDegradedStatusExplainsItself:
     def test_a_refusal_with_no_known_project_points_at_its_logs(
         self, tmp_path: Path
     ) -> None:
-        refused = _last_failed_record() | {
+        refused = _failed_record() | {
             "source": "vault",
             "error_kind": "full_reindex_required",
         }
         result = _status_against(
             tmp_path,
             _health_payload(
-                reasons=["the latest indexing job failed: full_reindex_required"],
-                jobs={"last_failed": refused},
+                reasons=[
+                    "1 project index run failed: /w/demo (vault: full_reindex_required)"
+                ],
+                jobs=_failing(refused),
             ),
         )
 
@@ -272,8 +289,8 @@ class TestDegradedStatusExplainsItself:
         result = _status_against(
             tmp_path,
             _health_payload(
-                reasons=["the latest indexing job failed: other"],
-                jobs={"last_failed": _last_failed_record()},
+                reasons=["1 project index run failed: /w/demo (code: other)"],
+                jobs=_failing(_failed_record()),
             ),
         )
 
@@ -408,8 +425,8 @@ class TestDegradedStatusExplainsItself:
         result = _status_against(
             tmp_path,
             _health_payload(
-                reasons=["the latest indexing job failed: other"],
-                jobs={"last_failed": _last_failed_record()},
+                reasons=["1 project index run failed: /w/demo (code: other)"],
+                jobs=_failing(_failed_record()),
             ),
             "--verbose",
         )
@@ -425,8 +442,8 @@ class TestDegradedStatusExplainsItself:
         result = _status_against(
             tmp_path,
             _health_payload(
-                reasons=["the latest indexing job failed: other"],
-                jobs={"last_failed": _last_failed_record()},
+                reasons=["1 project index run failed: /w/demo (code: other)"],
+                jobs=_failing(_failed_record()),
             ),
             "--json",
         )
@@ -437,7 +454,7 @@ class TestDegradedStatusExplainsItself:
         operational = cast("dict[str, object]", data["operational"])
         findings = cast("list[dict[str, str]]", operational["degraded"])
         assert [finding["cause"] for finding in findings] == [
-            "the latest indexing job failed: other"
+            "1 project index run failed: /w/demo (code: other)"
         ]
         assert findings[0]["family"] == DegradationReason.JOB_FAILED
         assert findings[0]["command"] == (
@@ -445,6 +462,73 @@ class TestDegradedStatusExplainsItself:
         )
         failure = cast("dict[str, object]", operational["failure"])
         assert failure["command"] == "vaultspec-rag server jobs --failed"
+
+
+class TestFailingProjectIndexes:
+    """The CLI renders the service's failing list and derives nothing.
+
+    MUTATION PROOF, one uninterrupted sequence each:
+
+    - Dropping the ``degrading is True`` filter in ``_failed_job_finding``
+      fails ``test_a_listed_failure_past_the_window_explains_no_degradation``
+      on its ``not in lines`` assertion: the stale entry is promoted to a
+      cause beside a reason it does not explain.
+    - Reading the first listed entry instead of the first degrading one fails
+      ``test_the_finding_names_the_first_degrading_entry_and_counts_the_rest``
+      on its job-id command assertion.
+
+    Restoring each returns the class to green.
+    """
+
+    def test_the_finding_names_the_first_degrading_entry_and_counts_the_rest(
+        self, tmp_path: Path
+    ) -> None:
+        stale = _failed_record() | {"id": "0" * 32, "project_root": "/w/old"}
+        live = _failed_record() | {"project_root": "/w/demo"}
+        other = _failed_record() | {"id": "1" * 32, "project_root": "/w/next"}
+        payload = _health_payload(
+            reasons=["1 project index run failed: /w/demo (code: other)"],
+            jobs={
+                "failing": {
+                    "total": 3,
+                    "degrading": 2,
+                    "entries": [
+                        stale | {"degrading": False},
+                        live | {"degrading": True},
+                        other | {"degrading": True},
+                    ],
+                }
+            },
+        )
+        result = _status_against(tmp_path, payload)
+
+        assert result.exit_code == 0, result.output
+        lines = _plain_lines(result.output)
+        assert f"vaultspec-rag server logs --job-id {_FAILED_JOB_ID}" in lines
+        assert (
+            f"job e8f8ac43, {_FAILURE_AGE_TEXT} ago in /w/demo; 1 more failing"
+        ) in lines
+
+    def test_a_listed_failure_past_the_window_explains_no_degradation(
+        self, tmp_path: Path
+    ) -> None:
+        """A stale entry is history even while something unexplained degrades."""
+        result = _status_against(
+            tmp_path,
+            _health_payload(
+                reasons=["the storage volume is nearly full"],
+                jobs=_failing(_failed_record(), degrading=False),
+            ),
+        )
+
+        assert result.exit_code == 0, result.output
+        lines = _plain_lines(result.output)
+        assert "- the storage volume is nearly full" in lines
+        assert "- a project's index run failed: other" not in lines
+        labels = _label_values(result.output)
+        assert (
+            labels["Last failure"] == f"job e8f8ac43 (other), {_FAILURE_AGE_TEXT} ago"
+        )
 
 
 class TestReasonsSurviveRewording:
@@ -514,7 +598,7 @@ class TestReasonsSurviveRewording:
             tmp_path,
             _health_payload(
                 reasons=["the most recent index run did not complete"],
-                jobs={"last_failed": _last_failed_record()},
+                jobs=_failing(_failed_record()),
             ),
         )
 
@@ -522,7 +606,7 @@ class TestReasonsSurviveRewording:
         lines = _plain_lines(result.output)
         assert "- the most recent index run did not complete" in lines
         # Unclaimed by any reason, the proven signal still reports itself.
-        assert "- an indexing job failed: other" in lines
+        assert "- a project's index run failed: other" in lines
         assert f"vaultspec-rag server logs --job-id {_FAILED_JOB_ID}" in lines
 
 
@@ -602,10 +686,10 @@ class TestOneRendererServesEverySurface:
         payload = _health_payload(
             reasons=[
                 "embedding models are not loaded",
-                "the latest indexing job failed: other",
+                "1 project index run failed: /w/demo (code: other)",
             ],
             models_loaded=False,
-            jobs={"last_failed": _last_failed_record()},
+            jobs=_failing(_failed_record()),
         )
 
         assert render_degradation(
@@ -615,7 +699,7 @@ class TestOneRendererServesEverySurface:
         ) == [
             "Serving, with warnings:",
             "  - embedding models are not loaded",
-            "  - the latest indexing job failed: other",
+            "  - 1 project index run failed: /w/demo (code: other)",
         ]
 
     def test_port_qualifier_reaches_every_rendered_command(self) -> None:
@@ -623,8 +707,8 @@ class TestOneRendererServesEverySurface:
 
         lines = render_degradation(
             _health_payload(
-                reasons=["the latest indexing job failed: other"],
-                jobs={"last_failed": _last_failed_record()},
+                reasons=["1 project index run failed: /w/demo (code: other)"],
+                jobs=_failing(_failed_record()),
             ),
             header="Degraded because:",
             port_arg=" --port 8123",
@@ -661,7 +745,7 @@ class TestHealthyServiceStaysQuiet:
             tmp_path,
             _health_payload(
                 status="ready",
-                jobs={"last_failed": _last_failed_record()},
+                jobs=_failing(_failed_record(), degrading=False),
             ),
         )
 
@@ -697,7 +781,7 @@ class TestHealthyServiceStaysQuiet:
             _health_payload(
                 status="degraded",
                 reasons=["1 indexing job(s) are stalled"],
-                jobs={"stalled": 1, "last_failed": _last_failed_record()},
+                jobs={"stalled": 1} | _failing(_failed_record(), degrading=False),
             ),
         )
 

@@ -87,11 +87,11 @@ from ._service_status import _service_phase
 from ._status_labels import (
     DegradedFinding,
     _failed_job_total,
+    _failing_project_label,
     _format_started_label,
     _format_status_duration,
     _get_token_label,
     _held_by_borrower,
-    _last_failure_label,
     _model_ready_label,
     _network_label,
     _plain_status_label,
@@ -820,14 +820,16 @@ def _failure_followup(
 ) -> dict[str, str] | None:
     """Turn a non-zero failed-job count into something the operator can run.
 
-    The latest failure is named here only when the degraded block did not
-    already name it, so the same job is never reported twice.
+    The first failing project index the service listed is named here only
+    when the degraded block did not already name one, so the same job is
+    never reported twice. A failure past the degradation window is named
+    here even though it no longer degrades health.
     """
     failed_total = _failed_job_total(jobs)
     already_reported = any(
         finding.family == DegradationReason.JOB_FAILED for finding in findings
     )
-    summary = "" if already_reported else _last_failure_label(health)
+    summary = "" if already_reported else _failing_project_label(health)
     if failed_total <= 0 and not summary:
         return None
     followup = {"command": server_jobs_command(port, failed=True)}

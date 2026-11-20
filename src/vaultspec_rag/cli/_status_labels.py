@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, NamedTuple, cast
 import pydantic
 
 from .._job_errors import JobErrorKind
-from .._job_values import text
+from .._job_values import count, mapping, text
 from .._operator_commands import (
     IndexCommandOptions,
     index_command,
@@ -62,12 +62,11 @@ __all__ = [
     "DOMAIN_INDEX_FAMILY",
     "DegradedFinding",
     "_failed_job_total",
+    "_failing_project_label",
     "_format_started_label",
     "_format_status_duration",
     "_get_token_label",
     "_held_by_borrower",
-    "_last_failure_job_id",
-    "_last_failure_label",
     "_model_ready_label",
     "_network_label",
     "_plain_status_label",
@@ -406,14 +405,21 @@ def health_section(health: dict[str, object] | None, key: str) -> dict[str, obje
     return cast("dict[str, object]", section) if isinstance(section, dict) else {}
 
 
-def _last_failed_record(health: dict[str, object] | None) -> dict[str, object]:
-    record = health_section(health, "jobs").get("last_failed")
-    return cast("dict[str, object]", record) if isinstance(record, dict) else {}
+def _failing_entries(health: dict[str, object] | None) -> list[dict[str, object]]:
+    """Return the failing project indexes the service named, in its order.
 
-
-def _last_failure_job_id(health: dict[str, object] | None) -> str:
-    job_id = _last_failed_record(health).get("id")
-    return job_id.strip() if isinstance(job_id, str) else ""
+    The service folds job history per project and source, bounds the list,
+    and orders it degrading first, newest first. An entry this build cannot
+    address by job id is dropped rather than rendered without a remedy.
+    """
+    entries = mapping(health_section(health, "jobs").get("failing")).get("entries")
+    if not isinstance(entries, list):
+        return []
+    return [
+        entry
+        for entry in (mapping(item) for item in cast("list[object]", entries))
+        if text(entry.get("id")).strip()
+    ]
 
 
 def _short_job_id(job_id: str) -> str:
@@ -457,28 +463,43 @@ def _failed_job_identity(
     return f"job {_short_job_id(job_id.strip())}{kind_text}{age}"
 
 
-def _last_failure_label(
+def _failing_project_label(
     health: dict[str, object] | None,
     *,
     now: float | None = None,
 ) -> str:
-    """Describe the latest reported job failure, or return an empty string."""
+    """Describe the first failing project index listed, or return ``""``.
+
+    The entry may no longer degrade health; it is still the operator's
+    newest unresolved failure, so it is named either way.
+    """
+    entries = _failing_entries(health)
+    if not entries:
+        return ""
     observed_at = time.time() if now is None else now
-    return _failed_job_identity(
-        _last_failed_record(health),
-        now=observed_at,
-        with_kind=True,
-    )
+    record = entries[0]
+    identity = _failed_job_identity(record, now=observed_at, with_kind=True)
+    project_root = text(record.get("project_root"))
+    return f"{identity} in {project_root}" if project_root else identity
 
 
 def _failed_job_finding(
     health: dict[str, object] | None,
     now: float,
 ) -> DegradedFinding | None:
-    record = _last_failed_record(health)
-    job_id = _last_failure_job_id(health)
-    if not job_id:
+    """Name the first failing project index that degrades health.
+
+    Only a degrading entry explains a ``job_failed`` verdict. A listed entry
+    past the degradation window is history and is named by the failure
+    follow-up instead.
+    """
+    degrading = [
+        entry for entry in _failing_entries(health) if entry.get("degrading") is True
+    ]
+    if not degrading:
         return None
+    record = degrading[0]
+    job_id = text(record.get("id")).strip()
     kind = _error_kind(record)
     # The service serves every project, so a rebuild is named only with the
     # project it belongs to; run anywhere else it would rebuild the wrong one.
@@ -488,9 +509,17 @@ def _failed_job_finding(
         if isinstance(project_root, str) and project_root
         else ""
     )
+    reported = count(
+        mapping(health_section(health, "jobs").get("failing")).get("degrading")
+    )
+    more = (reported or len(degrading)) - 1
+    identity = _failed_job_identity(record, now=now, with_kind=False)
+    where = (
+        f" in {project_root}" if isinstance(project_root, str) and project_root else ""
+    )
     return DegradedFinding(
-        cause=f"an indexing job failed{f': {kind}' if kind else ''}",
-        detail=_failed_job_identity(record, now=now, with_kind=False),
+        cause=f"a project's index run failed{f': {kind}' if kind else ''}",
+        detail=f"{identity}{where}" + (f"; {more} more failing" if more > 0 else ""),
         command=rebuild or f"vaultspec-rag server logs --job-id {job_id}",
         family=DegradationReason.JOB_FAILED,
     )
