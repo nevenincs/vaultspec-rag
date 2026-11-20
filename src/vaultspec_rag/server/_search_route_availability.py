@@ -312,24 +312,51 @@ def classify_search_result(
     classification = replace(classification, source_fact=source_fact)
     results = classification.response.get("results")
     if classification.status_code == 200 and isinstance(results, list) and not results:
-        if source_fact.absence_authority is not AbsenceAuthority.AUTHORITATIVE:
+        if source_fact.serves_updating_empty:
+            classification.response["empty"] = _updating_empty_diagnostics(source_fact)
+        elif source_fact.absence_authority is not AbsenceAuthority.AUTHORITATIVE:
             failure = _non_authoritative_empty_result(
                 classification.response,
                 source_fact=source_fact,
                 request_id=facts.request_id,
             )
             return replace(classification, response=failure, status_code=503)
-        raw_path_filter = classification.response.get("path_filter")
-        classification.response["empty"] = _empty_search_diagnostics(
-            index_state,
-            port=facts.port,
-            path_filter=cast("dict[str, object]", raw_path_filter)
-            if isinstance(raw_path_filter, dict)
-            else None,
-        )
+        else:
+            _attach_empty_diagnostics(classification.response, index_state, facts.port)
     if classification.status_code == 200:
         classification.response["readiness"] = _readiness_block(source_fact)
     return classification
+
+
+def _attach_empty_diagnostics(
+    response: dict[str, object],
+    index_state: dict[str, object],
+    port: int | None,
+) -> None:
+    """Explain an authoritative empty answer on its success envelope."""
+    raw_path_filter = response.get("path_filter")
+    response["empty"] = _empty_search_diagnostics(
+        index_state,
+        port=port,
+        path_filter=cast("dict[str, object]", raw_path_filter)
+        if isinstance(raw_path_filter, dict)
+        else None,
+    )
+
+
+def _updating_empty_diagnostics(source_fact: SearchSourceFact) -> dict[str, object]:
+    """Explain an empty answer that a running index job leaves unproven."""
+    return {
+        "reason": SearchEmptyReason.INDEX_UPDATING.value,
+        "message": (
+            "No indexed item matched the query, but an index job is changing "
+            f"this {source_fact.source} index, so absence is not established. "
+            "Retry after the job publishes for an authoritative answer."
+        ),
+        "remediation": (
+            [source_fact.remediation] if source_fact.remediation is not None else []
+        ),
+    }
 
 
 def readiness_snapshot(
@@ -524,7 +551,11 @@ def apply_combined_search_outcome(
         )
     elif not has_results and (
         combined.partial
-        or combined.readiness.absence_authority is not AbsenceAuthority.AUTHORITATIVE
+        or not all(
+            fact.absence_authority is AbsenceAuthority.AUTHORITATIVE
+            or fact.serves_updating_empty
+            for fact in combined.source_facts
+        )
     ):
         response.pop("results", None)
         response.pop("summary", None)

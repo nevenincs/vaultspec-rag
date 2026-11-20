@@ -502,13 +502,31 @@ async def test_active_job_preserves_updating_and_non_authoritative_empty(
             readiness_snapshot=readiness_snapshot(registry, tmp_path, "document"),
         )
         classified = classify_search_result(_empty_result(tmp_path, "document"), facts)
-        assert classified.status_code == 503
+        # An active job leaves absence unproven, not the answer unusable.
+        assert classified.status_code == 200
         assert classified.source_fact.freshness is SearchFreshness.UPDATING
         assert (
             classified.source_fact.absence_authority
             is AbsenceAuthority.NON_AUTHORITATIVE
         )
-        assert "results" not in classified.response
+        assert classified.response["results"] == []
+        assert "error" not in classified.response
+        empty = cast("dict[str, object]", classified.response["empty"])
+        assert empty["reason"] == "index_updating"
+        assert empty["remediation"] == [classified.source_fact.remediation]
+        readiness = cast("dict[str, object]", classified.response["readiness"])
+        aggregate = cast("dict[str, object]", readiness["aggregate"])
+        assert aggregate["absence_authority"] == "non_authoritative"
+        assert aggregate["freshness"] == "updating"
+        index_state = cast("dict[str, object]", classified.response["index_state"])
+        assert index_state["status"] == "updating"
+        assert index_state["matching_jobs"] == [
+            {
+                "id": paused.job.id,
+                "state": paused.job.state.value,
+                "mode": "incremental",
+            }
+        ]
         combined = _combined_source_fact(
             tmp_path,
             PublicSourceType.DOCUMENT,

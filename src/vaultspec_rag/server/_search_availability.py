@@ -437,6 +437,30 @@ def _index_not_built(context: SearchAvailabilityContext) -> bool:
     )
 
 
+def _job_index_state(
+    context: SearchAvailabilityContext,
+    *,
+    matching_jobs: Sequence[MatchingIndexJobReference],
+    matching_jobs_truncated: bool,
+    rebuilding: bool,
+    source_fact: SearchSourceFact,
+) -> dict[str, object]:
+    """Return the index status and bounded job evidence for an affected source."""
+    return {
+        "status": (
+            SearchIndexStatus.UNAVAILABLE
+            if context.canonical_evidence.collection_present is False
+            else SearchIndexStatus.MISSING
+            if source_fact.reason_code == SearchReasonCode.INDEX_NOT_BUILT
+            else SearchIndexStatus.REBUILDING
+            if rebuilding
+            else SearchIndexStatus.UPDATING
+        ).value,
+        "matching_jobs": [job.to_dict() for job in matching_jobs],
+        "matching_jobs_truncated": matching_jobs_truncated,
+    }
+
+
 def _build_index_unavailable_response(
     context: SearchAvailabilityContext,
     *,
@@ -452,18 +476,13 @@ def _build_index_unavailable_response(
         "indexed_target_root": context.index_state["indexed_target_root"],
         "requested_target_root": context.index_state["requested_target_root"],
         "target_matches": context.index_state["target_matches"],
-        "status": (
-            SearchIndexStatus.UNAVAILABLE
-            if context.canonical_evidence.collection_present is False
-            else SearchIndexStatus.MISSING
-            if source_fact.reason_code == SearchReasonCode.INDEX_NOT_BUILT
-            else SearchIndexStatus.REBUILDING
-            if rebuilding
-            else SearchIndexStatus.UPDATING
-        ).value,
-        "matching_jobs": [job.to_dict() for job in matching_jobs],
-        "matching_jobs_truncated": matching_jobs_truncated,
-    }
+    } | _job_index_state(
+        context,
+        matching_jobs=matching_jobs,
+        matching_jobs_truncated=matching_jobs_truncated,
+        rebuilding=rebuilding,
+        source_fact=source_fact,
+    )
     # The breadth verdict rides through the unavailability rewrite untouched:
     # an index mid-change is exactly when a caller needs to know whether the
     # collection it just read was reconcilable with its publication.
@@ -560,10 +579,37 @@ def classify_search_response(
     source_fact = _project_source_fact(context, matches)
 
     results = result.get("results")
-    if (
-        isinstance(results, list)
-        and not results
-        and (matches or source_fact.reason_code == SearchReasonCode.INDEX_NOT_BUILT)
+    empty = isinstance(results, list) and not results
+    if empty and source_fact.serves_updating_empty:
+        # A usable source answered while a job changes it: the empty answer
+        # succeeds, and the job evidence marks its absence non-authoritative.
+        index_state = result.get("index_state")
+        response = (
+            result
+            if not isinstance(index_state, dict)
+            else result
+            | {
+                "index_state": cast("dict[str, object]", index_state)
+                | _job_index_state(
+                    context,
+                    matching_jobs=matching_jobs,
+                    matching_jobs_truncated=matching_jobs_truncated,
+                    rebuilding=rebuilding,
+                    source_fact=source_fact,
+                )
+            }
+        )
+        return SearchResponseClassification(
+            response=response,
+            status_code=200,
+            matching_jobs=matching_jobs,
+            matching_jobs_truncated=matching_jobs_truncated,
+            rebuilding=rebuilding,
+            availability_cause=None,
+            source_fact=source_fact,
+        )
+    if empty and (
+        matches or source_fact.reason_code == SearchReasonCode.INDEX_NOT_BUILT
     ):
         response = _build_index_unavailable_response(
             context,

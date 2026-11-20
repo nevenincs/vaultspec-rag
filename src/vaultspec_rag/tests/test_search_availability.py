@@ -18,10 +18,12 @@ from .._search_state import (
     SearchAvailability,
     SearchFreshness,
     SearchReadinessAggregate,
+    SearchReasonCode,
     SearchSourceFact,
     SearchWaitCause,
     WaitObservation,
 )
+from .._source_types import PublicSourceType
 from ..indexer._run_ledger_models import RunAuthority
 from ..job_manager.manager import JobManager
 from ..job_models import (
@@ -34,6 +36,7 @@ from ..job_models import (
     JobSpec,
     JobState,
 )
+from ..search._outcomes import CombinedSearchOutcome, SearchDomainOutcome
 from ..server._search_availability import (
     CanonicalSearchEvidence,
     SearchAvailabilityContext,
@@ -41,6 +44,7 @@ from ..server._search_availability import (
     classify_qdrant_collection_disappearance,
     classify_search_response,
 )
+from ..server._search_route_availability import apply_combined_search_outcome
 from ..service_quiesce import ServiceQuiesceController
 
 if TYPE_CHECKING:
@@ -621,7 +625,9 @@ def test_projection_marks_observed_collection_usable_without_a_served_generation
     assert classification.source_fact.availability is SearchAvailability.USABLE
     assert classification.source_fact.freshness is SearchFreshness.UPDATING
     assert classification.source_fact.reason_code == "index_updating"
-    assert classification.status_code == 503
+    # A usable collection answers while its job runs; only absence is unproven.
+    assert classification.status_code == 200
+    assert classification.response["results"] == []
 
 
 def test_projection_keeps_absent_optional_evidence_unknown(tmp_path: Path) -> None:
@@ -740,7 +746,10 @@ def test_empty_authority_follows_the_canonical_source_fact(tmp_path: Path) -> No
         non_authoritative.source_fact.absence_authority
         is AbsenceAuthority.NON_AUTHORITATIVE
     )
-    assert non_authoritative.status_code == 503
+    # The empty answer succeeds, carrying the non-authoritative fact with it.
+    assert non_authoritative.status_code == 200
+    assert non_authoritative.response["results"] == []
+    assert non_authoritative.availability_cause is None
 
 
 def test_projection_and_legacy_job_evidence_share_one_bound(tmp_path: Path) -> None:
@@ -1205,3 +1214,180 @@ def test_qdrant_collection_disappearance_declines_unrelated_failures(
     assert no_matching_job.availability_cause == "collection_missing"
     assert no_matching_job.response["error"] == "index_unavailable"
     assert "results" not in no_matching_job.response
+
+
+def test_empty_answer_during_a_job_marks_the_index_state_updating(
+    tmp_path: Path,
+) -> None:
+    resolved_root = tmp_path.resolve()
+    snapshot = _canonical_snapshot(
+        tmp_path,
+        job_id="marker-job",
+        authority=RunAuthority.REBUILD,
+        mode=JobMode.REBUILD,
+    )
+    classification = classify_search_response(
+        {
+            "request_id": "marker",
+            "results": [],
+            "index_state": {"source": "vault", "status": "available"},
+        },
+        SearchAvailabilityContext(
+            before_snapshot=(),
+            after_snapshot=(snapshot.to_dict(),),
+            requested_root=resolved_root,
+            source="vault",
+            request_id="marker",
+            index_state={
+                "source": "vault",
+                "indexed_count": 3,
+                "indexed_target_root": str(resolved_root),
+                "requested_target_root": str(resolved_root),
+                "target_matches": True,
+            },
+            port=8766,
+            canonical_evidence=CanonicalSearchEvidence(collection_present=True),
+        ),
+    )
+
+    assert classification.status_code == 200
+    index_state = cast("dict[str, object]", classification.response["index_state"])
+    assert index_state["status"] == "rebuilding"
+    assert index_state["matching_jobs"] == [
+        {"id": "marker-job", "state": "running", "mode": "rebuild"}
+    ]
+    assert index_state["matching_jobs_truncated"] is False
+
+
+def test_unbuilt_source_with_a_running_job_still_refuses_an_empty_answer(
+    tmp_path: Path,
+) -> None:
+    # Guard: a first build whose collection is still measured empty cannot
+    # answer. Proven red by dropping the availability clause from
+    # ``SearchSourceFact.serves_updating_empty``: the status below became 200.
+    from .._index_integrity import IntegrityReason
+
+    resolved_root = tmp_path.resolve()
+    snapshot = _canonical_snapshot(
+        tmp_path, job_id="first-build", authority=RunAuthority.PUBLICATION
+    )
+    classification = classify_search_response(
+        {"request_id": "unbuilt", "results": []},
+        SearchAvailabilityContext(
+            before_snapshot=(),
+            after_snapshot=(snapshot.to_dict(),),
+            requested_root=resolved_root,
+            source="vault",
+            request_id="unbuilt",
+            index_state={
+                "source": "vault",
+                "indexed_count": 0,
+                "indexed_target_root": str(resolved_root),
+                "requested_target_root": str(resolved_root),
+                "target_matches": True,
+                "index_integrity": {
+                    "reason": IntegrityReason.PROOF_MISSING,
+                    "live_count": 0,
+                },
+            },
+            port=8766,
+            canonical_evidence=CanonicalSearchEvidence(collection_present=True),
+        ),
+    )
+
+    assert classification.source_fact.availability is SearchAvailability.UNAVAILABLE
+    assert classification.status_code == 503
+    assert classification.response["error"] == "index_unavailable"
+    assert "results" not in classification.response
+
+
+@pytest.mark.parametrize(
+    ("availability", "reason", "serves"),
+    [
+        (SearchAvailability.USABLE, SearchReasonCode.INDEX_UPDATING, True),
+        (SearchAvailability.UNAVAILABLE, SearchReasonCode.INDEX_UPDATING, False),
+        (SearchAvailability.USABLE, SearchReasonCode.INDEX_UNVERIFIABLE, False),
+        (SearchAvailability.USABLE, None, False),
+    ],
+)
+def test_only_a_usable_updating_source_serves_an_empty_answer(
+    availability: SearchAvailability,
+    reason: SearchReasonCode | None,
+    serves: bool,
+) -> None:
+    # Guard: proven red by dropping the reason clause from
+    # ``SearchSourceFact.serves_updating_empty``: the unverifiable and
+    # reasonless usable cases then served an empty answer.
+    fact = SearchSourceFact(
+        source="vault",
+        availability=availability,
+        freshness=SearchFreshness.UPDATING,
+        absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
+        reason_code=reason,
+    )
+
+    assert fact.serves_updating_empty is serves
+
+
+def _empty_domain(
+    source: PublicSourceType, fact: SearchSourceFact
+) -> SearchDomainOutcome:
+    return SearchDomainOutcome.success(source, [], source_fact=fact)
+
+
+def _combined_empty_response(code_fact: SearchSourceFact) -> dict[str, object]:
+    combined = CombinedSearchOutcome(
+        _empty_domain(PublicSourceType.VAULT, _current_source_fact()),
+        _empty_domain(PublicSourceType.CODE, code_fact),
+        None,
+        top_k=5,
+    )
+    response: dict[str, object] = {"results": [], "summary": "none"}
+    apply_combined_search_outcome(
+        response,
+        combined,
+        request_id="combined-empty",
+        index_state={"source": "combined"},
+        has_results=False,
+    )
+    return response
+
+
+def test_combined_empty_answer_succeeds_while_a_constituent_updates() -> None:
+    # Guard: proven red by restoring the aggregate-only authority test in
+    # ``apply_combined_search_outcome``: the response then reported ok False.
+    updating = SearchSourceFact(
+        source="code",
+        availability=SearchAvailability.USABLE,
+        freshness=SearchFreshness.UPDATING,
+        absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
+        reason_code=SearchReasonCode.INDEX_UPDATING,
+        retryable=True,
+    )
+
+    response = _combined_empty_response(updating)
+
+    assert response["ok"] is True
+    assert response["results"] == []
+    assert "error" not in response
+    readiness = cast("dict[str, object]", response["readiness"])
+    aggregate = cast("dict[str, object]", readiness["aggregate"])
+    assert aggregate["absence_authority"] == "non_authoritative"
+
+
+def test_combined_empty_answer_still_fails_for_an_unverifiable_constituent() -> None:
+    # Guard: proven red by treating every non-authoritative constituent as
+    # serving: the unverifiable constituent then returned ok with results.
+    unverifiable = SearchSourceFact(
+        source="code",
+        availability=SearchAvailability.USABLE,
+        freshness=SearchFreshness.UNVERIFIABLE,
+        absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
+        reason_code=SearchReasonCode.INDEX_UNVERIFIABLE,
+    )
+
+    response = _combined_empty_response(unverifiable)
+
+    assert response["ok"] is False
+    assert response["error"] == "index_unverifiable"
+    assert "results" not in response
