@@ -84,7 +84,12 @@ def resolve_jobs_filters(
     failed: bool,
     json_mode: bool,
 ) -> tuple[str | None, bool]:
-    if failed and phase is not None and phase not in ("error", "failed"):
+    if phase == "failed":
+        # The service reports a failed job under either of two raw phases
+        # depending on which record shape it came from, so no single phase
+        # selects them all. Its failed flag is evaluated on lifecycle state.
+        return None, True
+    if failed and phase is not None:
         message = "--failed can only be combined with --state failed."
         _exit_invalid_jobs_filter(json_mode, message)
     return phase, failed
@@ -110,7 +115,7 @@ def _jobs_phase_value(phase: str | None) -> str | None:
     if value in ("finished", "complete", "completed"):
         return "done"
     if value in ("failed", "failure", "error"):
-        return "error"
+        return "failed"
     if value in ("cancelled", "canceled"):
         return "cancelled"
     return value
@@ -126,7 +131,7 @@ def jobs_state_filter(
     requested = state.strip().lower()
     if requested in ("active", "waiting"):
         return "running", requested
-    if normalized in ("done", "error", "cancelled"):
+    if normalized in ("done", "failed", "cancelled"):
         return normalized, None
     _exit_invalid_jobs_filter_value(
         option="--state",
