@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#service-operability'
 date: '2026-06-01'
-modified: '2026-07-27'
-body_hash: 'sha256:98f73240eed14bb53e955be93c6f01ec10d957db7b2fca76acfac754f348cd84'
+modified: '2026-11-20'
+body_hash: 'sha256:8473da41ea7f48e76ee6f22be01cd0cb47b02d869214ae5a487f73895e90701c'
 related:
   - "[[2026-06-01-service-operability-research]]"
   - "[[2026-05-28-cli-backend-parity-adr]]"
@@ -12,6 +12,7 @@ related:
   - "[[2026-04-02-service-graph-adr]]"
   - "[[2026-05-30-service-lifecycle-adr]]"
   - "[[2026-05-30-cli-json-output-adr]]"
+  - '[[2026-11-20-auto-update-opt-out-adr]]'
 ---
 
 # `service-operability` adr: auto-reindex + watcher control — CLI/MCP parity contract | (**status:** `accepted`)
@@ -224,6 +225,13 @@ start.
   tokens to avoid collisions.
 - Whether `reconfigure` on a not-yet-running root is a no-op, an error, or an
   implicit start.
+
+## 2026-11-20 amendment: per-root automatic update opt-out
+
+Amended 2026-11-20 by `2026-11-20-auto-update-opt-out-adr`, under the user's authorization recorded there. This amendment is authoritative over the lifecycle decision that lazy per-root start is gated only by `watch_enabled`, and over the global-only answer under open questions for enablement.
+
+- Lazy per-root watcher start gains a second gate after `watch_enabled`: a persisted per-root opt-out in the managed status directory. `server updates stop` sets it and `server updates start` clears it; no other path sets or clears it. Search, reindex and enrolment do not start an opted-out root's watcher, and the opt-out survives restart. An unreadable opt-out store starts no new watcher for any root.
+- Watcher timing stays global. The opt-out governs enablement only.
 
 ## Considered options
 

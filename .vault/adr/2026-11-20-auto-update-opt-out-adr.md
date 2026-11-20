@@ -5,7 +5,7 @@ tags:
 date: '2026-11-20'
 modified: '2026-11-20'
 body_schema: 'body-v2'
-body_hash: 'sha256:96707838b68402437059c5a420ff18805122b823af2a15549ced40d95feccb0e'
+body_hash: 'sha256:23e73a891d62d69cc3d0b4d8818139214fe9f241f7efdfe486562660f8a22720'
 related:
   - "[[2026-09-08-adaptive-watcher-control-adr]]"
   - "[[2026-10-26-stale-search-hits-adr]]"
@@ -15,7 +15,7 @@ related:
   - '[[2026-06-01-service-operability-adr]]'
 ---
 
-# `auto-update-opt-out` adr: `persisted per-root automatic update opt-out` | (**status:** `proposed`)
+# `auto-update-opt-out` adr: `persisted per-root automatic update opt-out` | (**status:** `accepted`)
 
 ## Problem Statement
 
@@ -50,13 +50,18 @@ An operator cannot keep automatic updates off for one root. `server updates stop
   - the stale-hit drift auditor does not request an incremental job for it and records the audit as `deferred` with reason `auto_update_disabled`;
   - explicit index requests run normally. The opt-out governs automatic work only.
 - The opt-out survives service restart, root deletion and `server updates prune`. A deleted root that returns keeps its opt-out. Missing-root retirement is unchanged and is checked first.
-- Fail closed toward operator intent. If the sidecar is unreadable or malformed, implicit enrolment starts no new watcher for any root, status reports `unverifiable` with the sidecar path, and a write refuses rather than replace the unread file. Watchers already running are not stopped.
+- Fail closed toward operator intent. If the sidecar is unreadable or malformed, implicit enrolment starts no new watcher for any root, status reports `unverifiable` with the sidecar path, and a write refuses rather than replace the unread file. Watchers already running are not stopped. Resolved at acceptance: an unreadable sidecar fails closed as stated here.
 - The request-path check reads a process-local copy. The service is the only writer, so the copy is loaded at startup and replaced on each successful write.
 - `server updates stop` succeeds when no watcher is running. It still records the opt-out and reports `already_stopped`. `server updates start` on a root that is not opted out behaves as today.
 - `watch_enabled=false` still disables every watcher and wins over a cleared opt-out.
 - No version bump. This decision changes no storage schema, storage manifest version, policy or content fingerprint, or package version, and needs no release. The new sidecar is a new file carrying its own format field. Wire responses gain fields additively.
-- Scoped refinement of `2026-06-01-service-operability-adr`: its lifecycle decision gains the per-root opt-out as a second gate after `watch_enabled`.
-- Scoped refinement of `2026-10-26-stale-search-hits-adr`: confirmed stale hits on an opted-out root are verified and reported as before, but do not request repair. The proposed wording for that record is applied only when this decision is accepted.
+- Scoped refinement of `2026-06-01-service-operability-adr`: its lifecycle decision gains the per-root opt-out as a second gate after `watch_enabled`. That record carries the dated amendment.
+- Scoped refinement of `2026-10-26-stale-search-hits-adr`: confirmed stale hits on an opted-out root are verified and reported as before, but do not request repair. Resolved at acceptance: the opt-out also defers stale-hit drift repair, and that record carries the dated amendment.
+- Resolved at acceptance: repository enrolment with `watch: false` does not set the opt-out. Only `server updates stop` sets it.
+
+## Authorization
+
+User instructed on 2026-11-20 that every identified backlog issue lands in one PR; open questions resolved with the drafted recommendations by the coordinating session.
 
 ## Implementation
 

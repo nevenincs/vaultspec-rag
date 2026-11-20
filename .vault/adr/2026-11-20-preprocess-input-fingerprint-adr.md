@@ -5,7 +5,7 @@ tags:
 date: '2026-11-20'
 modified: '2026-11-20'
 body_schema: 'body-v2'
-body_hash: 'sha256:3d11e26970b4aa54b18d3bef2f5de2b9fb7a3e5833f0fda287b6f2467c495109'
+body_hash: 'sha256:a27329f623068b0ee0ced4ff90372f14b7a12820b4457ebd6fee952330034fb3'
 related:
   - "[[2026-06-10-preprocess-hooks-adr]]"
   - "[[2026-10-04-preprocess-root-approval-adr]]"
@@ -17,7 +17,7 @@ related:
   - '[[2026-07-21-code-document-index-boundary-adr]]'
 ---
 
-# `preprocess-input-fingerprint` adr: `declared hook inputs in extractor identity and admission-time rebuild refusal` | (**status:** `proposed`)
+# `preprocess-input-fingerprint` adr: `declared hook inputs in extractor identity and admission-time rebuild refusal` | (**status:** `accepted`)
 
 ## Problem Statement
 
@@ -52,12 +52,12 @@ Two defects share one cause: the index cannot see an edit to a hook script, and 
 
 - A `command` or `entry_point` rule may declare `inputs`: a list of root-relative gitignore-style patterns naming the files whose content defines the extractor, such as its script and helper modules.
 - At policy load, from the same read that yields the approval digest, the loader resolves each pattern beneath the root and hashes every matched regular file. The rule's `inputs_digest` is one blake2b digest over the sorted root-relative paths and their content digests.
-- Fail closed, never drop. A pattern that matches nothing, a path escaping the root, a symlink resolving outside it, an unreadable file, or a match beyond the bounds raises the existing typed `admission_config_invalid` policy error for the root. The rule is not dropped, so routing is unchanged. This follows the `extractor_version` precedent rather than the per-rule drop in `2026-06-10-preprocess-hooks-adr` D3. Initial bounds: 256 files and 32 MiB per rule. The bounds are implementation choices.
+- Fail closed, never drop. A pattern that matches nothing, a path escaping the root, a symlink resolving outside it, an unreadable file, or a match beyond the bounds raises the existing typed `admission_config_invalid` policy error for the root. The rule is not dropped, so routing is unchanged. This follows the `extractor_version` precedent rather than the per-rule drop in `2026-06-10-preprocess-hooks-adr` D3. Bounds: 256 files and 32 MiB per rule, confirmed at acceptance. The bounds are implementation choices.
 - `inputs_digest` joins the rule's content identity in both the aggregate and per-kind payloads, and the extraction cache identity. The key is omitted when a rule declares no inputs, so an undeclared rule keeps a byte-identical fingerprint and cache key.
 - Upgrading forces no rebuild. Only a root that adds `inputs` changes its identity. That edit also changes the policy bytes, so it needs renewed approval and one explicit rebuild of the affected kind. After that, a script edit refuses incrementals for that kind with `full_reindex_required` until an explicit rebuild, and the rebuild re-extracts because the cache key changed.
 - The digest is computed once per operation inside the single policy resolution, so admission, extraction, epochs and publication see the same value (`2026-07-21-code-document-index-boundary-adr`).
 - `extractor_version` stays required and keeps its meaning.
-- Approval is unchanged. Its digest covers the policy file only. Whether approval should also bind `inputs_digest` is left open.
+- Approval is unchanged. Its digest covers the policy file only. Resolved at acceptance: approval does not bind `inputs_digest`. This is a known residual: an edit to a declared input changes extraction identity and forces a rebuild, but does not revoke consent to run the hook.
 
 **Admission-time refusal.**
 
@@ -70,7 +70,11 @@ Two defects share one cause: the index cannot see an edit to a hook script, and 
 
 **Versions.** No version bump and no release. This decision changes none of `SUPPORTED_SCHEMA_VERSION`, `RAW_CHUNK_SEMANTICS_VERSION`, `PARSER_CAPABILITY_VERSION`, the policy schema version, `STORAGE_SCHEMA_VERSION`, the `.vaultragpreprocess.toml` `version`, or the package version. `inputs` is an optional additive rule key. Wire responses gain fields additively.
 
-**Reconciliation.** This refines `2026-06-10-preprocess-hooks-adr` D1 (rule keys) and D7 (cache key). The proposed amendment text for that record is applied only when this decision is accepted.
+**Reconciliation.** This refines `2026-06-10-preprocess-hooks-adr` D1 (rule keys) and D7 (cache key). That record carries the dated amendment.
+
+## Authorization
+
+User instructed on 2026-11-20 that every identified backlog issue lands in one PR; open questions resolved with the drafted recommendations by the coordinating session.
 
 ## Implementation
 
@@ -107,4 +111,5 @@ Declared inputs are exact where command parsing is guesswork. Omitting the key w
 - A missing or oversized declared input stops indexing for the root with a typed configuration error until fixed.
 - Expected refusals stop appearing as failed jobs, so job history and failure filters show real faults.
 - Policy load reads the declared input files once per operation. The bounds cap that cost.
-- Reconsider if authors need inputs outside the root, such as a shared tool environment, or if approval should bind the input digest.
+- Approval does not bind the input digest. A declared-input edit is detected for identity but does not require renewed consent. Reconsider if that residual matters.
+- Reconsider if authors need inputs outside the root, such as a shared tool environment.
