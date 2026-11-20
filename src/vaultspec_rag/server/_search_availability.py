@@ -5,12 +5,11 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 from qdrant_client.http.exceptions import UnexpectedResponse
 
-from .._root_identity import canonical_root_key
+from .._root_identity import canonical_root_key_or_none
 from .._search_state import (
     MAX_SEARCH_EVIDENCE_ITEMS,
     AbsenceAuthority,
@@ -25,6 +24,8 @@ from .._search_state import (
 from ..job_models import JobMode, JobOperation, JobState
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from .._source_types import IndexSource
 
 __all__ = [
@@ -175,17 +176,6 @@ class _MatchingJob:
         return MatchingIndexJobReference(id=self.id, state=self.state, mode=self.mode)
 
 
-def _normalized_root(value: object) -> str | None:
-    if not isinstance(value, (str, Path)):
-        return None
-    if isinstance(value, str) and not value.strip():
-        return None
-    try:
-        return canonical_root_key(Path(value).expanduser())
-    except (OSError, RuntimeError, ValueError):
-        return None
-
-
 def _normalized_mode(value: object) -> JobMode | None:
     """Return the declared mode *value* names, or ``None`` when it names none.
 
@@ -214,7 +204,7 @@ def _canonical_match(
         return None
     if spec.get("operation") != JobOperation.INDEX or spec.get("source") != source:
         return None
-    if _normalized_root(spec.get("project_root")) != requested_root:
+    if canonical_root_key_or_none(spec.get("project_root")) != requested_root:
         return None
     mode = _normalized_mode(spec.get("mode"))
     if mode is None:
@@ -560,7 +550,7 @@ def classify_search_response(
     context: SearchAvailabilityContext,
 ) -> SearchResponseClassification:
     """Classify one response and preserve one bounded before/after evidence set."""
-    normalized_root = _normalized_root(context.requested_root)
+    normalized_root = canonical_root_key_or_none(context.requested_root)
     matches = (
         _combined_matches(
             context.before_snapshot,
