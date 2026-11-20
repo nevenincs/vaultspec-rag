@@ -749,7 +749,7 @@ None.
 
 ## server updates start
 
-Start automatic index updates for a project.
+Start automatic index updates for a project. This clears an earlier `server updates stop` for the project, and is the only command that does.
 
 ```bash
 vaultspec-rag server updates start
@@ -770,7 +770,7 @@ vaultspec-rag server updates start
 
 ## server updates stop
 
-Stop automatic index updates for a project.
+Stop automatic index updates for a project. The stop is recorded and survives searches, index requests, enrolment and service restarts until `server updates start` resumes it. Explicit `index` requests still run.
 
 ```bash
 vaultspec-rag server updates stop
