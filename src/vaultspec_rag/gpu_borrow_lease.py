@@ -14,7 +14,7 @@ import secrets
 import threading
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, TypeGuard
+from typing import TYPE_CHECKING
 
 from ._anchor_claim import (
     AnchorOutcome,
@@ -24,6 +24,7 @@ from ._anchor_claim import (
     read_anchor_record,
     release_anchor_claim,
 )
+from ._job_values import is_object
 from ._machine_lock import machine_lock_path
 from ._process_probe import pid_alive
 
@@ -288,7 +289,7 @@ def _new_capability() -> str:
 def _read_recorded_capability(path: Path) -> str | None:
     """Read a valid private lease record without projecting its contents."""
     parsed = read_anchor_record(path)
-    if not _is_json_object(parsed):
+    if not is_object(parsed):
         return None
     match parsed:
         case {"pid": int() as pid, "capability": str() as capability} if (
@@ -299,11 +300,6 @@ def _read_recorded_capability(path: Path) -> str | None:
         case _:
             return None
     return None
-
-
-def _is_json_object(value: object) -> TypeGuard[dict[str, object]]:
-    """Narrow a decoded JSON value to the object surface this module reads."""
-    return isinstance(value, dict)
 
 
 def _require_active_lease(lease: GPUBorrowLease, *, operation: str) -> None:

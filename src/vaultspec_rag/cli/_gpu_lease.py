@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Final, TypeGuard
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+from .._job_values import is_object
 from ..gpu_borrow_lease import (
     GPUBorrowLease,
     acquire_gpu_borrow_lease,
@@ -294,7 +295,7 @@ def _reject_unrecognised_quiesce(
     if result is None:
         return
     quiesce = result.get("quiesce")
-    if not _is_json_object(quiesce):
+    if not is_object(quiesce):
         return
     unknown = frozenset(quiesce) - QUIESCE_ENVELOPE_FIELDS
     absent = QUIESCE_ENVELOPE_FIELDS - frozenset(quiesce)
@@ -343,7 +344,7 @@ def _is_exact_safe_quiesce(value: object) -> bool:
 
 def _is_exact_quiesce_snapshot(value: object) -> TypeGuard[dict[str, object]]:
     """Accept only the full typed controller envelope published by the service."""
-    if not _is_json_object(value) or frozenset(value) != QUIESCE_ENVELOPE_FIELDS:
+    if not is_object(value) or frozenset(value) != QUIESCE_ENVELOPE_FIELDS:
         return False
     state = value["state"]
     epoch = value["admission_epoch"]
@@ -384,8 +385,3 @@ def _is_optional_finite_timestamp(value: object) -> bool:
         and not isinstance(value, bool)
         and isfinite(float(value))
     )
-
-
-def _is_json_object(value: object) -> TypeGuard[dict[str, object]]:
-    """Narrow one decoded JSON value to the object form this client reads."""
-    return isinstance(value, dict)

@@ -16,11 +16,12 @@ from __future__ import annotations
 import json
 import logging
 from functools import partial
-from typing import TYPE_CHECKING, Final, TypeGuard, cast
+from typing import TYPE_CHECKING, Final, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
 from starlette.responses import JSONResponse
 
+from .._job_values import is_object
 from ..config._settings import rag_default
 from ..gpu_borrow_lease import is_borrower_capability
 from ..logging_config import log_event
@@ -259,7 +260,7 @@ async def _borrower_capability_from_request(
         parsed: object = json.loads(body)
     except (UnicodeDecodeError, ValueError):
         return (None, "invalid_borrower_capability")
-    if not _is_json_object(parsed):
+    if not is_object(parsed):
         return (None, "invalid_borrower_capability")
     if not parsed:
         return (None, None)
@@ -276,11 +277,6 @@ def _single_borrower_capability(payload: dict[str, object]) -> str | None:
             return capability if is_borrower_capability(capability) else None
         case _:
             return None
-
-
-def _is_json_object(value: object) -> TypeGuard[dict[str, object]]:
-    """Narrow a decoded JSON value to the object surface this route reads."""
-    return isinstance(value, dict)
 
 
 async def _borrower_lifecycle_authorization(

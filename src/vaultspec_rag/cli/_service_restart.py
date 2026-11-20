@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, cast
 
 import typer
 
+from .._job_values import mapping
 from .._operator_commands import server_start_command
 from .._python_child import module_command
 from ..monitor_process import HANDOFF_SECONDS, extend_handoff
@@ -175,7 +176,7 @@ def service_restart(
             ),
         )
     data = started.get("data")
-    details = cast("dict[str, object]", data) if isinstance(data, dict) else {}
+    details = mapping(data)
     service_port = details.get("port", resolved_port)
     monitor_url = details.get("monitor_url")
     human_lines = [address_line(service_port)]

@@ -19,6 +19,7 @@ from rich.text import Text
 
 import vaultspec_rag.cli as _cli
 
+from .._job_values import mapping
 from .._operator_commands import (
     SERVICE_NOT_RUNNING_MESSAGE,
     server_start_command,
@@ -738,9 +739,7 @@ def _render_provider_sync(report: object) -> None:
     """Render the same per-provider MCP outcomes exposed by report JSON."""
     to_dict = getattr(report, "to_dict", None)
     raw_data: object = to_dict() if callable(to_dict) else {}
-    data: dict[str, object] = (
-        cast("dict[str, object]", raw_data) if isinstance(raw_data, dict) else {}
-    )
+    data = mapping(raw_data)
     providers = data.get("sync_providers")
     if isinstance(providers, dict):
         for provider, raw_outcome in cast("dict[object, object]", providers).items():
