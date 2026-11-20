@@ -3,12 +3,13 @@ tags:
   - '#adr'
   - '#preprocess-hooks'
 date: '2026-06-10'
-modified: '2026-09-23'
-body_hash: 'sha256:83935d35ea5dcc0c6238b589dcd8208088e63d46513362c20eefb6145b3eddf3'
+modified: '2026-11-20'
+body_hash: 'sha256:c9c7ce61f2bed683e2127f1ad7b6eb51720cc57815f384cc90850a8e7ff5e73d'
 related:
   - "[[2026-06-10-preprocess-hooks-research]]"
   - '[[2026-09-23-status-messages-research]]'
   - '[[2026-09-23-status-messages-adr]]'
+  - '[[2026-11-20-document-metadata-filters-adr]]'
 ---
 
 # `preprocess-hooks` adr: `document preprocessing hook infrastructure` | (**status:** `accepted`)
@@ -254,6 +255,12 @@ above:
   rather than incrementing a separate `preprocess_failed` counter, so that field and the
   `!failed` summary token are intentionally absent. Skip counts are surfaced on **all**
   index paths (full, incremental, scoped/watcher) and in the jobs summary and CLI `--json`.
+
+### 2026-11-20 amendment: filterable metadata
+
+Amended 2026-11-20 by `2026-11-20-document-metadata-filters-adr`, under the user's authorization recorded there. This amendment is authoritative over the D12 sentence on metadata promotion.
+
+- **D12 (metadata indexing), amended.** Only metadata keys the project declares in `.vaultragpreprocess.toml` are filterable. Each declared key names one scope, unit or document, and gets a keyword index on its existing nested field, `unit_metadata.<key>` or `document_metadata.<key>`, in the document collection. No key is promoted to a top-level payload field, and there is no per-rule allowlist. Declaring or undeclaring a key creates or drops only the index and needs no rebuild. Arbitrary keys are never indexed.
 
 ## Codification candidates
 

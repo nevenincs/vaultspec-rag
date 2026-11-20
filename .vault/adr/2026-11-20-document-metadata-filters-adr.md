@@ -5,7 +5,7 @@ tags:
 date: '2026-11-20'
 modified: '2026-11-20'
 body_schema: 'body-v2'
-body_hash: 'sha256:d10e9722c08f3c75cef0106dcac0aa12247a1fdbbdbb55bb72b4af55c3df29d8'
+body_hash: 'sha256:354a5e876def7daa6da8408a6027e875ad80d0c89eaccde2960c42fe6dfe13b4'
 related:
   - "[[2026-05-28-cli-search-filters-adr]]"
   - "[[2026-06-30-search-noise-filtering-adr]]"
@@ -37,8 +37,8 @@ Every filter builder logs and drops an unknown key, then returns unfiltered resu
 - Qdrant keyword indexes support exact and any-of matching on nested keys and on arrays. They have no prefix match (`2026-05-30-cli-path-glob-research`).
 - Filter keys are declared beside the index sets so that every filter key has an index behind it (`src/vaultspec_rag/store_schema.py:269`, `src/vaultspec_rag/store_schema.py:305`).
 - Payload index creation is idempotent and backfills an index on an existing collection (`src/vaultspec_rag/store_collections.py:374`). In local mode it is a no-op and filters run as scans (`2026-03-07-qdrant-payload-indexes-local-adr`).
-- An index-set change that alters query semantics bumps `STORAGE_SCHEMA_VERSION`, and a breaking bump is recovered by clean rebuild (`2026-06-26-storage-schema-contract-adr` D1 and D6; `src/vaultspec_rag/store_schema.py:70`).
-- Detected incompatibility never starts a full rebuild automatically. It surfaces `rebuild_required` with an executable command (`2026-09-07-explicit-reindex-authority-adr`). An explicit rebuild resets the source and serves the growing index (`2026-10-12-destructive-rebuild-lifecycle-adr`).
+- `STORAGE_SCHEMA_VERSION` is one global integer (`2026-06-26-storage-schema-contract-adr` D1; `src/vaultspec_rag/store_schema.py:70`). A bump makes every source on every root incompatible, and recovery is an explicit rebuild of each (`2026-06-26-storage-schema-contract-adr` D6, `2026-09-07-explicit-reindex-authority-adr`, `2026-10-12-destructive-rebuild-lifecycle-adr`). Document rebuilds take hours. One filter does not justify that cost.
+- `extractor_id` already has a keyword index (`src/vaultspec_rag/store_schema.py:272`). The pinned managed server is Qdrant 1.20.0 (`src/vaultspec_rag/qdrant_runtime/_constants.py:41`); the facet API exists from Qdrant 1.12. The locked qdrant-client is 1.20.0 (`uv.lock:1791`). It exposes `QdrantClient.facet` (`qdrant_client/qdrant_client.py:819` in the installed package), and local mode implements it by payload scan (`qdrant_client/local/qdrant_local.py:646`, `qdrant_client/local/local_collection.py:1519`). Facet hits carry no truncation flag.
 - Filters thread as scalar strings through `src/vaultspec_rag/search/_validation.py:26`, `src/vaultspec_rag/search/_searcher.py:1103`, `src/vaultspec_rag/server/_routes_search.py:484`, `src/vaultspec_rag/serviceclient/_search_transport.py:49`, `src/vaultspec_rag/cli/_search.py:1245`, and `src/vaultspec_rag/mcp/_tools.py:551`.
 - A filter combined with a search type it does not apply to is already an explicit error, not a silent drop (`2026-05-28-cli-search-filters-adr`).
 
@@ -48,8 +48,10 @@ Every filter builder logs and drops an unknown key, then returns unfiltered resu
 - **Promote declared keys to new top-level payload fields.** Rejected: duplicates stored data and adds payload fields for values the payload already holds at a stable nested path.
 - **Declare keys and index the existing nested fields.** Chosen.
 - **Prefix match by query-time scan or a full-text index on `extractor_id`.** Rejected: a scan defeats pushdown, and a text index changes exact-match semantics on the existing key.
-- **Store the dotted prefixes of `extractor_id` as an indexed keyword array.** Chosen: a prefix query becomes an exact match.
-- **Coerce non-string metadata values to strings.** Rejected; see Implementation D6 and Rationale.
+- **Store the dotted prefixes of `extractor_id` as an indexed keyword array.** Rejected: stored points lack the field, so it needs a global schema bump and a rebuild of every source.
+- **Resolve the prefix at query time with a facet over the indexed `extractor_id`.** Chosen: no storage change, and the result is an exact `MatchAny`.
+- **Coerce non-string metadata values to strings.** Rejected; see Rationale.
+- **Reject files with non-string values for a declared key.** Rejected: declaring a key would fail files that previously indexed fine.
 
 ## Constraints
 
@@ -57,8 +59,9 @@ Every filter builder logs and drops an unknown key, then returns unfiltered resu
 - Validation, key resolution, and value splitting live in the service search domain. The HTTP route, CLI, MCP tool, and service client pass parameters through and render the domain's typed error. No adapter validates or drops keys itself.
 - Every filter applies to each `Prefetch` branch of a hybrid query, as `2026-03-07-qdrant-filter-on-prefetch-adr` requires.
 - Index declarations stay in `store_schema`. A root's declared metadata keys extend the document index set for that root; they do not create a second index registry.
-- The schema version bump does not authorize automatic rebuild. Explicit reindex authority stays binding.
-- This record amends `2026-06-10-preprocess-hooks-adr` D12. D12's per-rule allowlist that promotes metadata keys to top-level keyword fields is replaced by a project-level declaration that indexes the existing nested fields. D12's rule that arbitrary keys are never indexed stays binding. The D12 amendment text is presented separately and is not applied by this record.
+- This decision does not change `STORAGE_SCHEMA_VERSION` and requires no rebuild of any source.
+- Declared filterable keys are excluded from the membership, content, and policy fingerprints. Changing them never raises `full_reindex_required`.
+- This record amends `2026-06-10-preprocess-hooks-adr` D12. D12's per-rule allowlist that promotes metadata keys to top-level keyword fields is replaced by a project-level declaration that indexes the existing nested fields. D12's rule that arbitrary keys are never indexed stays binding. The amendment is applied in that record.
 - Unchanged: the closed `DocumentLocatorKind` literal (`src/vaultspec_rag/_store_models.py:53`), the metadata size bounds (`src/vaultspec_rag/indexer/_preprocess_schema.py:201`), and the existing per-type filter scoping.
 
 ## Implementation
@@ -81,36 +84,34 @@ The CLI and inline forms split values on commas, so a value containing a comma i
 
 **D4 - Value lists on existing filters.** `extractor_id` and `locator_kind` accept a comma-separated list and resolve to `MatchAny`. A single value keeps exact-match behaviour. A `locator_kind` value outside the closed literal is refused.
 
-**D5 - Extractor-family prefix.** At ingest, each document chunk stores `extractor_id_prefixes`: the dotted prefixes of its `extractor_id`, so `a.b.c` stores `a`, `a.b`, and `a.b.c`. The field joins `DOCUMENT_KEYWORD_INDEXES`. `--extractor-prefix a.b` is an exact match on that field and also accepts a comma list. Prefixes align to segments: `a.b` matches `a.b.c` and not `a.bc`. A prefix argument with an empty segment is refused. The field name is an implementation choice.
+**D5 - Extractor-family prefix.** We will resolve `--extractor-prefix p` at query time. The search domain runs a Qdrant facet over the indexed `extractor_id` key of the root's document collection, with `exact=True` and a limit of 1025. It keeps each value equal to `p` or starting with `p.`, so `a.b` matches `a.b.c` and not `a.bc`. The kept values become a `MatchAny` on `extractor_id`, combined with the other conditions. A comma list of prefixes unions the kept values. The bound is 1024 distinct `extractor_id` values per collection. When the facet returns more than 1024 values, its answer may be truncated, so the search refuses with a typed `extractor_prefix_unbounded` error rather than apply a partial filter. A prefix that matches no value yields an empty result, not an error. A prefix with an empty segment is refused. The facet runs outside the GPU lock. No payload field is added.
 
-**D6 - Non-string values for declared keys are refused at ingest.** When a declared key holds a value that is not a string or a list of strings, including `null`, numbers, booleans, and objects, the source file fails validation. It takes the existing per-file failure path: it is not stored, it is counted and surfaced, and other files continue. Undeclared keys keep the free-form `JsonValue` contract.
+**D6 - Non-string values for declared keys are counted, not rejected.** We will store such a value unchanged. A keyword index does not match a value of another type, so the unit does not match filters on that key. Ingest logs a warning and adds the unit to a per-key counter surfaced in the job result. The file still indexes. This covers `null`, numbers, booleans, objects, and lists that hold a non-string element. Undeclared keys keep the free-form `JsonValue` contract.
 
 **D7 - Unknown keys are refused.** A filter key that is not a filterable key for its collection, or a `meta.<key>` that the root does not declare, raises a typed `unknown_filter_key` error naming the key and the accepted keys. HTTP returns 400. The CLI exits non-zero and emits one JSON envelope in JSON mode. MCP returns a tool error. This applies to the code, vault, and document filter builders, and replaces the log-and-drop branches at `src/vaultspec_rag/_store_search.py:515`, `src/vaultspec_rag/_store_search.py:552`, and `src/vaultspec_rag/_store_search.py:598`.
 
-**D8 - Existing collections.** `STORAGE_SCHEMA_VERSION` bumps from 2 to 3, because the document index set gains `extractor_id_prefixes` and stored points lack it. Per `2026-06-26-storage-schema-contract-adr` D6, recovery is a clean rebuild, not a migration engine. Per `2026-09-07-explicit-reindex-authority-adr`, the service does not rebuild by itself. Each source whose publication carries the old payload schema reports `rebuild_required` with its rebuild command through HTTP, CLI, and MCP. The operator runs that explicit rebuild for each affected root and source. The rebuild follows `2026-10-12-destructive-rebuild-lifecycle-adr`: it resets the source and searches the growing index until completion. The extraction cache survives the rebuild, so extractors do not re-run.
-
-Declared metadata indexes need no schema bump. The ensure pass creates indexes for newly declared keys on the existing collection (`src/vaultspec_rag/store_collections.py:374`) and removes indexes for keys no longer declared, so the live index set matches the declaration. A change to the declared key set enters the document content fingerprint. Incremental document indexing then returns the typed `full_reindex_required`, and the operator rebuilds the document source. That rebuild re-validates every stored unit against D6, so no stored non-string value hides from a filter.
+**D8 - Existing collections.** We will add no stored field and keep `STORAGE_SCHEMA_VERSION` at 2. Existing collections need no rebuild. The metadata payload is already stored, so the ensure pass creates the keyword index for each newly declared key on the existing collection (`src/vaultspec_rag/store_collections.py:374`), and the server builds it over the stored points. When a key is no longer declared, the ensure pass drops its index and leaves the payload untouched. This keeps the live index set equal to the declaration, which the schema conformance check compares. Dropping an index deletes no data, and re-declaring the key rebuilds the index. A change to the declared key set never raises `full_reindex_required`.
 
 ## Rationale
 
-Indexing the nested fields the payload already holds is the smallest change that makes metadata filterable. It adds no storage and keeps one home for each value. Project-level declaration bounds the index count, which preserves the preprocess-hooks rule against arbitrary indexing. Stored prefixes turn a query Qdrant cannot run into an exact match it runs as pushdown.
+Indexing the nested fields the payload already holds is the smallest change that makes metadata filterable. It adds no storage and keeps one home for each value. Project-level declaration bounds the index count, which preserves the preprocess-hooks rule against arbitrary indexing. A facet over the existing `extractor_id` index turns a prefix query into an exact `MatchAny` with no storage change. Extractor-id value sets are small, and a hard bound with refusal keeps the filter exact.
 
 Refusing unknown keys follows `2026-05-28-cli-search-filters-adr`. A wider answer than the caller asked for, with no signal, is worse than an error. The comment at `src/vaultspec_rag/store_schema.py:293` already records one defect of that kind.
 
-Refusal at ingest is the conservative choice for non-string values. Coercion makes match spelling depend on serialization: `1`, `1.0`, and `true` need exact string forms the caller cannot know. Without coercion, a keyword index skips values of other types, so a stored number is invisible to the filter. Both outcomes are silent misses. Refusal surfaces the defect at the extractor that produced it.
+Counting non-string values, rather than rejecting files, is the conservative choice. Rejection would make declaring a key fail files that indexed fine before, and would remove their content from every search. Coercion would make match spelling depend on serialization: `1`, `1.0`, and `true` need exact string forms the caller cannot know. Storing the value unchanged and counting it loses no content, keeps filters exact, and shows the extractor defect.
 
-The rebuild path reuses the existing schema-version, `rebuild_required`, and reset-first rebuild mechanisms. It adds no migration code and grants no automatic full-rebuild authority.
+Avoiding a schema bump keeps the cost of this feature proportional to its scope. No source on any root needs a rebuild.
 
 ## Consequences
 
 - Callers can narrow document search by declared metadata, by several values per key, and by extractor family, on every surface with one contract.
 - Calls that relied on an unknown key being ignored now fail. That is the intended behaviour change. Callers must remove or correct the key.
-- After upgrade, sources report `rebuild_required` until the operator rebuilds them. `STORAGE_SCHEMA_VERSION` is global (`2026-06-26-storage-schema-contract-adr` D1), so this includes code and vault sources whose shape did not change. Each rebuild re-embeds its source and needs GPU time.
-- Changing the declared key set requires a document-source rebuild.
-- An extractor that emits a non-string value for a declared key loses those files from the index until it is fixed. The failure count makes this visible.
-- In local mode the new indexes are no-ops and filters run as scans. Results are the same; only latency differs.
-- Reconsider D8 if per-collection schema versions are adopted, or if declared-key rebuilds become too costly for large document collections. A validate-in-place pass could then replace the rebuild.
+- Upgrading and changing the declared key set need no rebuild. Server-side index creation over existing points takes time proportional to collection size; filters stay correct meanwhile, only slower.
+- An extractor that emits a non-string value for a declared key keeps its files indexed. Those units do not match filters on that key, and the job result counts them.
+- Each `--extractor-prefix` query adds one facet call. A collection with more than 1024 distinct extractor ids cannot use prefix filtering until the bound is revisited.
+- In local mode the new indexes are no-ops, and filters and facets run as payload scans. Results are the same; only latency differs.
+- Reconsider D5 if distinct extractor-id counts approach the bound in practice. A stored prefix field would then need its own schema decision.
 
 ## Authorization
 
-The user authorized this decision on 2026-11-20 by replying "go ahead, no need to ask" to the concrete proposal covering declared filterable metadata, the `meta.<key>` syntax on every surface, value lists on `extractor_id` and `locator_kind`, the extractor-prefix field, refusal of unknown keys, and the schema version bump. D6's refusal of non-string values and D8's operator rebuild path are the author's choices within that authorization. The D12 amendment to `2026-06-10-preprocess-hooks-adr` is pending separate application.
+The user authorized this decision on 2026-11-20 by replying "go ahead, no need to ask" to the concrete proposal covering declared filterable metadata, the `meta.<key>` syntax on every surface, value lists on `extractor_id` and `locator_kind`, extractor-prefix filtering, and refusal of unknown keys. On 2026-11-20, before implementation and on the same authorization, the coordinating session revised it: the prefix is resolved by a bounded facet, the schema version bump and its rebuild are dropped, and a declared-key change needs no rebuild. D6's counted warning and D8's index drop on undeclaration are the author's choices within that authorization. The D12 amendment to `2026-06-10-preprocess-hooks-adr` is applied there.
