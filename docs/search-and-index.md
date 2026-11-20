@@ -179,6 +179,10 @@ Read the response as two separate axes:
 - An empty result is authoritative only when `absence_authority=authoritative` for every requested
   source. A combined search retains each domain's outcome and marks a useful partial answer with
   `partial=true`.
+- While an index job runs for a usable source, an empty result still succeeds. It carries
+  `freshness=updating`, `absence_authority=non_authoritative`, and `empty.reason=index_updating`,
+  so it does not prove absence. A source that was never built, or whose collection is missing,
+  still fails with `index_unavailable`.
 
 A bounded timeout is recoverable and carries canonical readiness facts and remediation. An HTTP
 `Retry-After` header appears only when the service has a future retry deadline; its absence means
