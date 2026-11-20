@@ -24,10 +24,10 @@ from ..api import CodebaseSearchRequest, VaultSearchRequest
 from ..config._types import EnvVar
 from ..serviceclient._compat import resolve_data_plane_service
 from ..serviceclient._search_transport import (
-    document_search_filters,
     get_search_timeout,
     try_http_search,
 )
+from ..serviceclient._transport import DocumentSearchFilters
 from . import _render as search_render
 from ._app import (
     CLIState,
@@ -70,6 +70,7 @@ if TYPE_CHECKING:
 
     from ..search import (
         DocumentSearchResult,
+        InvalidFilterForSearchTypeError,
         InvalidPreferValueError,
         SearchResult,
     )
@@ -371,6 +372,8 @@ class _InProcessSearchRequest:
     json_mode: bool
     envelope: dict[str, object] | None = None
     include_documents: bool = True
+    extractor_prefix: str | None = None
+    metadata_filters: dict[str, list[str]] | None = None
 
 
 def _try_in_process_search(
@@ -443,6 +446,7 @@ def _try_in_process_search(
         VaultCombinedSearchFilters,
     )
     from ..registry import get_registry
+    from ..search import InvalidFilterForSearchTypeError
 
     # An empty or unbuilt index has nothing to search, so skip the
     # "Searching..." status spinner: the search returns an empty, actionable
@@ -562,6 +566,8 @@ def _try_in_process_search(
                         extractor_id=extractor_id,
                         extractor_version=extractor_version,
                         locator_kind=locator_kind,
+                        extractor_prefix=request.extractor_prefix,
+                        metadata_filters=request.metadata_filters,
                     )
                 )
             else:
@@ -593,6 +599,8 @@ def _try_in_process_search(
                             extractor_id=extractor_id,
                             extractor_version=extractor_version,
                             locator_kind=locator_kind,
+                            extractor_prefix=request.extractor_prefix,
+                            metadata_filters=request.metadata_filters,
                         ),
                     )
                 )
@@ -611,6 +619,10 @@ def _try_in_process_search(
     except VaultStoreLockedError as exc:
         search_render.handle_vaultstore_locked_error(exc, json_mode)
         return []
+    except InvalidFilterForSearchTypeError as exc:
+        # Refusals that need the root's index, such as an undeclared metadata
+        # key, can only be raised by the search itself.
+        _fail_invalid_filter(exc, json_mode)
     except (ImportError, RuntimeError) as e:
         _handle_gpu_error(e, command="search", json_mode=request.json_mode)
         return []
@@ -645,24 +657,46 @@ def _validate_and_handle_filters(request: _InProcessSearchRequest) -> None:
                 extractor_id=request.extractor_id,
                 extractor_version=request.extractor_version,
                 locator_kind=request.locator_kind,
+                extractor_prefix=request.extractor_prefix,
+                metadata_filters=request.metadata_filters,
             ),
             include_documents=request.include_documents,
         )
     except InvalidPreferValueError as exc:
         _fail_invalid_prefer(exc, request.json_mode)
     except InvalidFilterForSearchTypeError as exc:
-        msg = str(exc)
-        if request.json_mode:
-            _emit_json_error_and_exit(
-                "search",
-                "invalid_filter_for_search_type",
-                msg,
-                2,
-                filter_kind=exc.filter_kind,
-                offending=exc.offending_filters,
-            )
-        _plain(f"Error: {msg}")
-        raise typer.Exit(code=2) from None
+        _fail_invalid_filter(exc, request.json_mode)
+
+
+def _fail_invalid_filter(
+    exc: InvalidFilterForSearchTypeError, json_mode: bool
+) -> NoReturn:
+    """Render one refused filter and exit 2, with the refusal's own code."""
+    msg = str(exc)
+    if json_mode:
+        _emit_json_error_and_exit(
+            "search",
+            exc.error_code,
+            msg,
+            2,
+            filter_kind=exc.filter_kind,
+            offending=exc.offending_filters,
+        )
+    _plain(f"Error: {msg}")
+    raise typer.Exit(code=2) from None
+
+
+def _metadata_filters_option(
+    assignments: list[str] | None, *, json_mode: bool
+) -> dict[str, list[str]] | None:
+    """Read repeated ``--meta key=v1,v2`` options into the metadata mapping."""
+    from ..search import InvalidFilterForSearchTypeError
+    from ..search._validation import metadata_filters_from_assignments
+
+    try:
+        return metadata_filters_from_assignments(assignments or [])
+    except InvalidFilterForSearchTypeError as exc:
+        _fail_invalid_filter(exc, json_mode)
 
 
 def _fail_invalid_prefer(exc: InvalidPreferValueError, json_mode: bool) -> NoReturn:
@@ -1246,7 +1280,33 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
         str | None,
         typer.Option(
             "--extractor-id",
-            help="Only show document results emitted by this extractor.",
+            help=(
+                "Only show document results emitted by this extractor. A "
+                "comma-separated list matches any of them."
+            ),
+        ),
+    ] = None,
+    extractor_prefix: Annotated[
+        str | None,
+        typer.Option(
+            "--extractor-prefix",
+            help=(
+                "Only show document results from extractors in this dotted "
+                "family: a.b matches a.b and a.b.c, not a.bc. A "
+                "comma-separated list matches any of them."
+            ),
+        ),
+    ] = None,
+    meta: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--meta",
+            metavar="KEY=VALUE[,VALUE]",
+            help=(
+                "Only show document results whose declared metadata key holds "
+                "any of these values. Repeatable; different keys must all "
+                "match."
+            ),
         ),
     ] = None,
     extractor_version: Annotated[
@@ -1260,7 +1320,10 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
         str | None,
         typer.Option(
             "--locator-kind",
-            help="Only show document results with this locator kind.",
+            help=(
+                "Only show document results with this locator kind. A "
+                "comma-separated list matches any of them."
+            ),
         ),
     ] = None,
     show_scores: Annotated[
@@ -1335,6 +1398,7 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
     parameter_source = ctx.get_parameter_source("search_type")
     include_documents = parameter_source is None or parameter_source.name != "DEFAULT"
     search_type = _validate_search_type(search_type, json_mode=json_mode)
+    metadata_filters = _metadata_filters_option(meta, json_mode=json_mode)
     local_request = _InProcessSearchRequest(
         target,
         query,
@@ -1359,6 +1423,8 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
         locator_kind,
         json_mode,
         include_documents=include_documents,
+        extractor_prefix=extractor_prefix,
+        metadata_filters=metadata_filters,
     )
     _validate_and_handle_filters(local_request)
     if not json_mode:
@@ -1415,11 +1481,13 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
             exclude_paths=exclude_paths,
             dedup_locales=dedup_locales,
             prefer=prefer,
-            document_filters=document_search_filters(
+            document_filters=DocumentSearchFilters(
                 source_path=source_path,
                 extractor_id=extractor_id,
                 extractor_version=extractor_version,
                 locator_kind=locator_kind,
+                extractor_prefix=extractor_prefix,
+                metadata_filters=metadata_filters,
             ),
         )
         if service_results is not None:

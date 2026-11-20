@@ -135,9 +135,23 @@ MAX_SERVICE_RESPONSE_BYTES = 8 * 1024 * 1024
 
 type ReindexType = PublicSourceType | str
 type ReindexInitiator = Literal["cli", "mcp"]
-type DocumentSearchFilters = dict[str, str | None]
 type HTTPMethod = Literal["GET", "POST", "PUT", "DELETE"]
 type JobControlMode = Literal["graceful", "force"]
+
+
+class DocumentSearchFilters(TypedDict, total=False):
+    """Document filters one search sends, each as its own payload field.
+
+    Sent unchanged: the service resolves and validates them, so a client never
+    second-guesses which metadata keys a root declares.
+    """
+
+    source_path: str | None
+    extractor_id: str | None
+    extractor_version: str | None
+    locator_kind: str | None
+    extractor_prefix: str | None
+    metadata_filters: dict[str, list[str]] | None
 
 
 class InitialBearerOptions(TypedDict, total=False):

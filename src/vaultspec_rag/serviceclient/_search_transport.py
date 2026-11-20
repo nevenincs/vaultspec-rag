@@ -43,28 +43,6 @@ def get_search_timeout(timeout: float | None) -> float:
     )
 
 
-def document_search_filters(
-    *,
-    source_path: str | None,
-    extractor_id: str | None,
-    extractor_version: str | None,
-    locator_kind: str | None,
-) -> DocumentSearchFilters:
-    """Return the document filter mapping the service accepts.
-
-    Three call sites - the CLI search verb and both MCP document tools - built
-    this dict from the same four arguments. The keys are the schema's
-    DOCUMENT_FILTER_KEYS; what was copied is the projection of arguments onto
-    them, so a fifth filter would have had to be remembered in three places.
-    """
-    return {
-        "source_path": source_path,
-        "extractor_id": extractor_id,
-        "extractor_version": extractor_version,
-        "locator_kind": locator_kind,
-    }
-
-
 def probe_unavailable(kind: str, exc: Exception) -> dict[str, object]:
     """Describe a failed caller-owned diagnostic probe."""
     logger.debug("%s diagnostic probe failed: %s", kind, exc, exc_info=True)
@@ -265,13 +243,30 @@ def _optional_document_filters_search_field(
         )
     raw_mapping = cast("dict[object, object]", value)
     if not all(
-        isinstance(k, str) and (v is None or isinstance(v, str))
+        isinstance(k, str)
+        and (
+            v is None
+            or isinstance(v, str)
+            or (k == "metadata_filters" and _is_metadata_mapping(v))
+        )
         for k, v in raw_mapping.items()
     ):
         raise TypeError(
             f"try_http_search argument {key!r} must be a string-keyed mapping"
         )
     return cast("DocumentSearchFilters", raw_mapping)
+
+
+def _is_metadata_mapping(value: object) -> bool:
+    """Whether *value* maps string keys to lists of strings."""
+    if not isinstance(value, dict):
+        return False
+    for key, values in cast("dict[object, object]", value).items():
+        if not isinstance(key, str) or not isinstance(values, list):
+            return False
+        if not all(isinstance(item, str) for item in cast("list[object]", values)):
+            return False
+    return True
 
 
 def _search_request_from_arguments(
@@ -365,13 +360,19 @@ def _validate_search_request(
                     "extractor_version"
                 ),
                 locator_kind=(request.document_filters or {}).get("locator_kind"),
+                extractor_prefix=(request.document_filters or {}).get(
+                    "extractor_prefix"
+                ),
+                metadata_filters=(request.document_filters or {}).get(
+                    "metadata_filters"
+                ),
             ),
             include_documents=request.include_documents,
         )
     except InvalidFilterForSearchTypeError as exc:
         return None, {
             "ok": False,
-            "error": "invalid_filter_for_search_type",
+            "error": exc.error_code,
             "message": str(exc),
         }
     except InvalidPreferValueError as exc:
