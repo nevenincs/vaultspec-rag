@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ...embeddings import EmbeddingModel
-    from ...indexer import CodebaseIndexer, VaultIndexer
+    from ...indexer import CodebaseIndexer, DocumentIndexer, VaultIndexer
     from ...store_runtime import VaultStore
 
 pytestmark = [pytest.mark.integration]
@@ -295,5 +295,79 @@ class TestCodeScopedReindex:
             )
             ignored_rel = str(ignored.relative_to(tmp_path)).replace("\\", "/")
             assert not code_indexer.store.get_code_ids_by_paths({ignored_rel})
+        finally:
+            store.close()
+
+
+def _build_documents(
+    root: Path, model: EmbeddingModel
+) -> tuple[VaultStore, DocumentIndexer, Path, Path]:
+    """Build two plain-text documents and fully index them at *root*."""
+    from ...indexer import DocumentIndexer
+    from ...store_runtime import VaultStore
+    from ._helpers import _document_policy
+
+    reset_config()
+    reset_rag_config()
+    a = root / "alpha.txt"
+    b = root / "beta.txt"
+    a.write_text("Alpha document about lighthouse keepers.\n", encoding="utf-8")
+    b.write_text("Beta document about orchard pruning.\n", encoding="utf-8")
+    store = VaultStore(root, embedding_dim=model.dimension)
+    indexer = DocumentIndexer(
+        root, model, store, content_policy=_document_policy("*.txt")
+    )
+    indexer.full_index(reporter=NullProgressReporter())
+    return store, indexer, a, b
+
+
+class TestDocumentScopedReindex:
+    """Scoped document reindex publishes only paths whose content changed."""
+
+    @pytest.mark.timeout(180)
+    def test_event_for_unchanged_content_is_an_unchanged_run(
+        self, embedding_model: EmbeddingModel, tmp_path: Path
+    ) -> None:
+        # Guards the scoped content-hash filter: without it, the rewrite below
+        # republishes identical points and the run raises "storage mutations
+        # produced no canonical proof change" instead of returning.
+        store, indexer, a, _b = _build_documents(tmp_path, embedding_model)
+        try:
+            before = published_content_identities(tmp_path, PublicSourceType.DOCUMENT)
+            # Same bytes, new mtime: what an editor save or a touch produces.
+            a.write_text(a.read_text(encoding="utf-8"), encoding="utf-8")
+
+            result = indexer.incremental_index(
+                reporter=NullProgressReporter(), changed_paths=[a]
+            )
+
+            assert (result.added, result.updated, result.removed) == (0, 0, 0)
+            assert (
+                published_content_identities(tmp_path, PublicSourceType.DOCUMENT)
+                == before
+            )
+        finally:
+            store.close()
+
+    @pytest.mark.timeout(180)
+    def test_mixed_event_republishes_only_the_changed_document(
+        self, embedding_model: EmbeddingModel, tmp_path: Path
+    ) -> None:
+        store, indexer, a, b = _build_documents(tmp_path, embedding_model)
+        try:
+            a_rel = a.relative_to(tmp_path).as_posix()
+            b_rel = b.relative_to(tmp_path).as_posix()
+            before = published_content_identities(tmp_path, PublicSourceType.DOCUMENT)
+            a.write_text("Alpha document about tide tables.\n", encoding="utf-8")
+            b.write_text(b.read_text(encoding="utf-8"), encoding="utf-8")
+
+            result = indexer.incremental_index(
+                reporter=NullProgressReporter(), changed_paths=[a, b]
+            )
+
+            after = published_content_identities(tmp_path, PublicSourceType.DOCUMENT)
+            assert result.updated == 1
+            assert after[a_rel] != before[a_rel]
+            assert after[b_rel] == before[b_rel]
         finally:
             store.close()

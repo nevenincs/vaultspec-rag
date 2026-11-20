@@ -958,7 +958,7 @@ class DocumentIndexer:
             for path in authorized_paths
         }
         if scoped:
-            return set(discovered)
+            return self._select_scoped_paths(discovered, previous_files)
         # The unscoped selection sees the full discovered membership, so it
         # both consults the stat-evidence gate and prunes its evidence for
         # files that no longer exist.
@@ -992,6 +992,42 @@ class DocumentIndexer:
                 )
             selected.update(set(previous_files) - set(discovered))
             return selected
+
+    def _select_scoped_paths(
+        self,
+        discovered: dict[str, pathlib.Path],
+        previous_files: dict[str, DocumentFileMetadata],
+    ) -> set[str]:
+        """Keep the event paths whose content differs from committed proof.
+
+        A file event does not imply new bytes: an editor save or a touch
+        reports a path whose content is unchanged. Republishing it rewrites
+        identical points, which leaves the publication with mutations but no
+        proof change, so unchanged paths are dropped here. Creates, deletions,
+        unreadable paths and pending replays stay selected; the reconcile loop
+        owns their outcome. The scope is partial membership, so gate evidence
+        for paths outside it is never pruned.
+        """
+        from ._checkpoint_common import publication_replay_paths
+
+        known = [
+            (rel, path)
+            for rel, path in discovered.items()
+            if rel in previous_files and path.is_file()
+        ]
+        if not known:
+            return set(discovered)
+        with self._stat_gate_cache.acquire() as gate:
+            outcome = _stat_gate.hash_paths(gate, known)
+            gate.persist()
+        replay = publication_replay_paths()
+        return {
+            rel
+            for rel in discovered
+            if rel not in outcome.hashes
+            or outcome.hashes[rel] != previous_files[rel].content_fingerprint
+            or rel in replay
+        }
 
     def _reconcile_incremental_paths(
         self,
