@@ -42,6 +42,7 @@ from .._workspace_layout import (
     VAULT_DIR,
 )
 from ..logging_config import log_event
+from ..watcher_intent import AutoUpdateState, auto_update_state
 from ._watcher_failures import WatcherFailureLog
 from ._watcher_stale import (
     missing_root_remediation,
@@ -663,6 +664,10 @@ def _ensure_watcher_soon(root: Path, registry: ServiceRegistry) -> None:
     if root_is_missing(root):
         return
     clear_stale_watcher_root(root)
+    # Only the explicit start verb may undo an operator's stop, and a store
+    # that cannot be read must not be taken to mean "nobody stopped it".
+    if auto_update_state(root) is not AutoUpdateState.ENABLED:
+        return
     task: asyncio.Task[None] | None = None
     drain: _WatcherDrain | None = None
     with _m._watcher_lock:

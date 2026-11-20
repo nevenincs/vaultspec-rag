@@ -996,3 +996,97 @@ def test_cli_mcp_control_parity() -> None:
         "timing",
         "prune",
     ]
+
+
+def test_updates_stop_names_the_only_command_that_resumes_it() -> None:
+    start = f"vaultspec-rag server updates start {_TEST_PROJECT_ROOT} --port 1"
+    payload: dict[str, object] = {
+        "stopped": False,
+        "status": "already_stopped",
+        "auto_update": "disabled",
+        "start_command": start,
+    }
+    with _updates_http_server(payload) as (_server, port):
+        human = runner.invoke(
+            app,
+            ["server", "updates", "stop", _TEST_PROJECT_ROOT, "--port", str(port)],
+        )
+        json_mode = runner.invoke(
+            app,
+            [
+                "server",
+                "updates",
+                "stop",
+                _TEST_PROJECT_ROOT,
+                "--port",
+                str(port),
+                "--json",
+            ],
+        )
+
+    assert human.exit_code == 0, human.output
+    assert "already stopped for this project" in human.output
+    assert "until resumed" in human.output
+    assert "server updates start" in human.output
+    assert json_mode.exit_code == 0, json_mode.output
+    envelope = json.loads(json_mode.stdout)
+    assert envelope["ok"] is True
+    assert envelope["data"]["status"] == "already_stopped"
+
+
+def test_updates_timing_on_a_stopped_project_is_refused_with_the_start_command() -> (
+    None
+):
+    start = f"vaultspec-rag server updates start {_TEST_PROJECT_ROOT} --port 1"
+    payload: dict[str, object] = {
+        "restarted": False,
+        "status": "disabled_by_operator",
+        "auto_update": "disabled",
+        "start_command": start,
+        "debounce_ms": 500,
+        "cooldown_s": 2.0,
+    }
+    argv = ["server", "updates", "timing", _TEST_PROJECT_ROOT, "--update-delay-ms"]
+    with _updates_http_server(payload) as (_server, port):
+        human = runner.invoke(app, [*argv, "500", "--port", str(port)])
+        json_mode = runner.invoke(app, [*argv, "500", "--port", str(port), "--json"])
+
+    assert human.exit_code == 1, human.output
+    flat = " ".join(human.output.split())
+    assert "only `server updates start` resumes them" in flat
+    assert start in flat
+    assert json_mode.exit_code == 1, json_mode.output
+    envelope = json.loads(json_mode.stdout)
+    assert envelope["ok"] is False
+    assert envelope["error"] == "updates_stopped_by_operator"
+
+
+def test_updates_status_lists_stopped_projects_and_an_unreadable_record() -> None:
+    payload: dict[str, object] = {
+        "watch_enabled": True,
+        "watching": [],
+        "controllers": [],
+        "auto_update_disabled": [
+            {
+                "root": _TEST_PROJECT_ROOT,
+                "auto_update": False,
+                "disabled_at": "2026-11-20T00:00:00+00:00",
+                "initiator": "service",
+            }
+        ],
+        "auto_update_disabled_total": 1,
+        "auto_update_store": {
+            "status": "unverifiable",
+            "path": "/managed/auto-update.json",
+            "reason": "malformed: bad",
+        },
+    }
+    with _updates_http_server(payload) as (_server, port):
+        result = runner.invoke(
+            app, ["server", "updates", "status", "--port", str(port)]
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "stopped by the operator: 1" in result.output
+    assert "Automatic update record: unreadable" in result.output
+    assert "/managed/auto-update.json" in result.output

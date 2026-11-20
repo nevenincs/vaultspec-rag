@@ -429,7 +429,9 @@ uv run vaultspec-rag server updates timing <project>
 
 To re-time updates for a project, pass `--update-delay-ms` or `--repeat-update-delay-s` to `server updates timing`. A value of `0` on either delay means "no delay", not "disabled".
 
-The single off switch is `--no-updates` at start time, or `VAULTSPEC_RAG_WATCH_ENABLED=0`. The legacy debounce and cooldown inputs remain compatibility mappings for the adaptive bounds. See the [automatic convergence reference](automatic-convergence.md) for policy keys, limits, controller states, and telemetry.
+`server updates stop <project>` keeps that project's updates off across searches, index requests and restarts, until `server updates start <project>` resumes them. See [Stopping updates for one project](automatic-convergence.md#stopping-updates-for-one-project).
+
+The off switch for every project is `--no-updates` at start time, or `VAULTSPEC_RAG_WATCH_ENABLED=0`. The legacy debounce and cooldown inputs remain compatibility mappings for the adaptive bounds. See the [automatic convergence reference](automatic-convergence.md) for policy keys, limits, controller states, and telemetry.
 
 ## Manage projects
 

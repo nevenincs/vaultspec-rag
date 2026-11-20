@@ -18,9 +18,19 @@ from starlette.responses import JSONResponse
 import vaultspec_rag.server as _m
 
 from .._error_payload import error_payload
+from .._operator_commands import server_updates_start_command
 from .._root_identity import canonical_root_key, canonical_root_path
 from .._root_presence import root_is_missing, stale_watcher_roots
+from .._root_record_store import RootRecordStoreError
 from ..config._schema import checked_setting
+from ..watcher_intent import (
+    AutoUpdateState,
+    auto_update_state,
+    auto_update_store_path,
+    disable_auto_update,
+    disabled_roots,
+    enable_auto_update,
+)
 from ._auth import require_token
 from ._runtime import get_request_runtime
 
@@ -31,6 +41,7 @@ if TYPE_CHECKING:
 
     from .._root_presence import StaleWatcherRoot
     from ..watcher_controller import ControllerSnapshot
+    from ..watcher_intent import AutoUpdateDisabled
 
 __all__ = [
     "evict_project_route",
@@ -117,6 +128,7 @@ async def get_watcher_state_route(request: Request) -> JSONResponse:
     limit = _watcher_state_limit(request.query_params.get("limit"))
     snapshots, globally_truncated = _controller_snapshots()
     stale = await run_sync(stale_watcher_roots)
+    opted_out, store_fault = await run_sync(disabled_roots)
     root_filter = request.query_params.get("root") or project_root
     try:
         root_key = canonical_root_key(root_filter) if root_filter is not None else None
@@ -146,6 +158,7 @@ async def get_watcher_state_route(request: Request) -> JSONResponse:
         "controllers_returned": len(returned),
         "controllers_truncated": globally_truncated or len(filtered) > len(returned),
         **_stale_roots_block(stale, root_key, limit),
+        **_auto_update_block(opted_out, store_fault, root_key, limit),
         "filters": {
             "root": root_filter,
             "source": source_filter,
@@ -156,6 +169,7 @@ async def get_watcher_state_route(request: Request) -> JSONResponse:
 
     if project_key is not None:
         state["running"] = project_key in {canonical_root_key(root) for root in roots}
+        state["auto_update"] = _auto_update_value(project_key, opted_out, store_fault)
 
     return JSONResponse(state)
 
@@ -202,6 +216,76 @@ def _stale_roots_block(
     }
 
 
+def _auto_update_value(
+    root_key: str,
+    opted_out: tuple[AutoUpdateDisabled, ...],
+    store_fault: str | None,
+) -> str:
+    """Name one root's automatic-update intent from an already-read page."""
+    if store_fault is not None:
+        return AutoUpdateState.UNVERIFIABLE.value
+    if any(canonical_root_key(record.root) == root_key for record in opted_out):
+        return AutoUpdateState.DISABLED.value
+    return AutoUpdateState.ENABLED.value
+
+
+def _auto_update_block(
+    opted_out: tuple[AutoUpdateDisabled, ...],
+    store_fault: str | None,
+    root_key: str | None,
+    limit: int,
+) -> dict[str, object]:
+    """Report roots an operator stopped, and whether that record can be read.
+
+    An unverifiable store starts no new watcher for any root, so it is
+    reported with the file to repair rather than as an empty list.
+    """
+    matching = [
+        record
+        for record in opted_out
+        if root_key is None or canonical_root_key(record.root) == root_key
+    ]
+    return {
+        "auto_update_disabled": [record.as_dict() for record in matching[:limit]],
+        "auto_update_disabled_total": len(matching),
+        "auto_update_store": {
+            "status": "unverifiable" if store_fault is not None else "ok",
+            "path": str(auto_update_store_path()),
+            "reason": store_fault,
+        },
+    }
+
+
+def _auto_update_store_error(
+    exc: OSError,
+    target: Path,
+    **extra: object,
+) -> JSONResponse:
+    """Refuse a change to operator intent that could not be persisted."""
+    if isinstance(exc, RootRecordStoreError):
+        return JSONResponse(
+            {
+                **error_payload("auto_update_store_unverifiable", str(exc)),
+                "root": str(target),
+                "store": str(exc.path),
+                **extra,
+            },
+            status_code=409,
+        )
+    return JSONResponse(
+        {
+            **error_payload(
+                "auto_update_store_unwritable",
+                f"Could not record the automatic update setting: {exc}",
+            ),
+            "root": str(target),
+            "store": str(auto_update_store_path()),
+            **extra,
+        },
+        status_code=503,
+    )
+
+
 async def start_watcher_route(request: Request) -> JSONResponse:
     """Start automatic updates for one root and report the state achieved.
 
@@ -220,6 +304,13 @@ async def start_watcher_route(request: Request) -> JSONResponse:
     except (OSError, ValueError) as exc:
         return JSONResponse(error_payload("bad_request", str(exc)), status_code=400)
     cfg = get_config()
+    # The explicit start is the one path that clears an operator's stop, so
+    # the record goes first: a start that could not clear it would be undone
+    # by the next restart.
+    try:
+        await run_sync(enable_auto_update, target)
+    except OSError as exc:
+        return _auto_update_store_error(exc, target, started=False)
     outcome = _m._ensure_watcher(target, get_request_runtime(request).registry)
     return JSONResponse(
         {
@@ -227,6 +318,7 @@ async def start_watcher_route(request: Request) -> JSONResponse:
             "started": outcome.running,
             "status": outcome.value,
             "watch_enabled": bool(cfg.watch_enabled),
+            "auto_update": AutoUpdateState.ENABLED.value,
         }
     )
 
@@ -235,14 +327,36 @@ async def stop_watcher_route(request: Request) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
         return denied
+    from ._routes import _validated_initiator
+
     try:
-        _, target = await _root_payload(request)
+        payload, target = await _root_payload(request)
+        initiator = _validated_initiator(
+            payload, root=target, default_command="server updates stop"
+        )
     except (OSError, ValueError) as exc:
         return JSONResponse(error_payload("bad_request", str(exc)), status_code=400)
     with _m._watcher_lock:
         was_running = target in _m._watcher_tasks
+    try:
+        await run_sync(partial(disable_auto_update, target, initiator=initiator.kind))
+    except OSError as exc:
+        # The watcher still stops: the operator asked for that, and only the
+        # persistence failed. The refusal says the stop will not survive.
+        _m._stop_watcher(target)
+        return _auto_update_store_error(exc, target, stopped=was_running)
     _m._stop_watcher(target)
-    return JSONResponse({"root": str(target), "stopped": was_running})
+    return JSONResponse(
+        {
+            "root": str(target),
+            "stopped": was_running,
+            "status": "stopped" if was_running else "already_stopped",
+            "auto_update": AutoUpdateState.DISABLED.value,
+            "start_command": server_updates_start_command(
+                str(target), get_request_runtime(request).port
+            ),
+        }
+    )
 
 
 async def reconfigure_watcher_route(request: Request) -> JSONResponse:
@@ -264,6 +378,29 @@ async def reconfigure_watcher_route(request: Request) -> JSONResponse:
         debounce_ms, cooldown_s = _watcher_timing(payload)
     except (OSError, ValueError, OverflowError) as exc:
         return JSONResponse(error_payload("bad_request", str(exc)), status_code=400)
+    db_ms = int(debounce_ms) if debounce_ms is not None else int(cfg.watch_debounce_ms)
+    db_cs = float(cooldown_s) if cooldown_s is not None else float(cfg.watch_cooldown_s)
+    intent = await run_sync(auto_update_state, target)
+    if intent is not AutoUpdateState.ENABLED:
+        # Timing is not a start. An operator's stop, or a record that cannot
+        # be read, stays in force until the explicit start verb.
+        return JSONResponse(
+            {
+                "root": str(target),
+                "restarted": False,
+                "status": (
+                    "disabled_by_operator"
+                    if intent is AutoUpdateState.DISABLED
+                    else "auto_update_unverifiable"
+                ),
+                "auto_update": intent.value,
+                "start_command": server_updates_start_command(
+                    str(target), get_request_runtime(request).port
+                ),
+                "debounce_ms": db_ms,
+                "cooldown_s": db_cs,
+            }
+        )
     _m._stop_watcher(target)
     outcome = _m._ensure_watcher(
         target,
@@ -271,9 +408,6 @@ async def reconfigure_watcher_route(request: Request) -> JSONResponse:
         debounce_ms=debounce_ms,
         cooldown_s=cooldown_s,
     )
-
-    db_ms = int(debounce_ms) if debounce_ms is not None else int(cfg.watch_debounce_ms)
-    db_cs = float(cooldown_s) if cooldown_s is not None else float(cfg.watch_cooldown_s)
     return JSONResponse(
         {
             "root": str(target),

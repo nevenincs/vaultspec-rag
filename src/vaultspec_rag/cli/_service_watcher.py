@@ -15,6 +15,7 @@ from .._operator_commands import (
     server_start_command,
     server_status_command,
     server_updates_prune_command,
+    server_updates_start_command,
 )
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
@@ -181,6 +182,13 @@ _UPDATES_STATE_PHRASES = {
     ),
     "disabled": "automatic updates are switched off for this service",
     "root_missing": "the project directory does not exist; it was deleted or moved",
+    "disabled_by_operator": (
+        "automatic updates were stopped for this project; "
+        "only `server updates start` resumes them"
+    ),
+    "auto_update_unverifiable": (
+        "the record of which projects have automatic updates stopped could not be read"
+    ),
     "unavailable": "the service did not start one",
 }
 
@@ -189,12 +197,21 @@ _UPDATES_STATE_ERRORS = {
     "queued_behind_drain": "updates_pending",
     "disabled": "updates_disabled",
     "root_missing": "root_missing",
+    "disabled_by_operator": "updates_stopped_by_operator",
+    "auto_update_unverifiable": "auto_update_store_unverifiable",
     "unavailable": "updates_not_started",
 }
 
 
-def _updates_next_actions(status: str, port: int) -> list[str]:
+def _updates_next_actions(
+    status: str, port: int, result: dict[str, object]
+) -> list[str]:
     """Return the remediation a caller can act on for one unachieved state."""
+    start_command = result.get("start_command")
+    if status == "disabled_by_operator" and isinstance(start_command, str):
+        return [start_command]
+    if status == "auto_update_unverifiable":
+        return [f"vaultspec-rag server updates status --port {port}"]
     if status == "disabled":
         return [server_start_command(updates=True)]
     if status in ("pending", "queued_behind_drain"):
@@ -241,7 +258,9 @@ def _updates_state_not_achieved(failure: _UpdateStateFailure) -> None:
         )
     _print_update_result(failure.port, failure.verb_phrase, failure.project)
     _plain(f"Reason: {reason}.")
-    _print_lifecycle_next_actions(*_updates_next_actions(status, failure.port))
+    _print_lifecycle_next_actions(
+        *_updates_next_actions(status, failure.port, failure.result)
+    )
     raise typer.Exit(1)
 
 
@@ -329,6 +348,7 @@ def service_watcher_status(  # noqa: PLR0913 - each value is a public CLI option
     _print_update_timing(result)
     _print_controllers(result)
     _print_stale_roots(result, resolved_port)
+    _print_auto_update_intent(result, resolved_port)
     if not watching:
         _cli.console.print("No projects currently have automatic index updates.")
         return
@@ -346,6 +366,29 @@ def _print_stale_roots(result: dict[str, object], port: int) -> None:
     for entry in stale:
         _print_stale_root(entry)
     _print_lifecycle_next_actions(server_updates_prune_command(port))
+
+
+def _print_auto_update_intent(result: dict[str, object], port: int) -> None:
+    """Report projects an operator stopped, and a record that cannot be read."""
+    raw_store = result.get("auto_update_store")
+    store = cast("dict[str, object]", raw_store) if isinstance(raw_store, dict) else {}
+    if store.get("status") == "unverifiable":
+        _plain(
+            "Automatic update record: unreadable; no new project starts updating "
+            "automatically until it is repaired or removed."
+        )
+        _plain(f"  File: {store.get('path')}", soft_wrap=True)
+        _plain(f"  Reason: {store.get('reason')}")
+    stopped = _stale_root_entries(result, "auto_update_disabled")
+    if not stopped:
+        return
+    total = result.get("auto_update_disabled_total", len(stopped))
+    _plain(f"Projects with automatic updates stopped by the operator: {total}")
+    for entry in stopped:
+        root = str(entry.get("root") or "unknown")
+        _plain(f"- Project: {_project_name(root)}")
+        _plain(f"  Path: {root}", soft_wrap=True)
+        _plain(f"  Resume: {server_updates_start_command(root, port)}")
 
 
 def _print_controllers(result: dict[str, object]) -> None:
@@ -442,7 +485,11 @@ def service_watcher_start(
     port: PortOption = None,
     json_mode: JsonMode = False,
 ) -> None:
-    """Start automatic index updates for a project."""
+    """Start automatic index updates for a project.
+
+    This clears an earlier `server updates stop` for the project, and is the
+    only command that does.
+    """
     called = _call_watcher_admin(
         "start_watcher",
         _UPDATES_START_COMMAND,
@@ -486,7 +533,12 @@ def service_watcher_stop(
     port: PortOption = None,
     json_mode: JsonMode = False,
 ) -> None:
-    """Stop automatic index updates for a project."""
+    """Stop automatic index updates for a project.
+
+    The stop is recorded and survives searches, index requests, enrolment and
+    service restarts until `server updates start` resumes it. Explicit `index`
+    requests still run.
+    """
     called = _call_watcher_admin(
         "stop_watcher",
         _UPDATES_STOP_COMMAND,
@@ -501,14 +553,15 @@ def service_watcher_stop(
     if json_mode:
         _emit_json(True, _UPDATES_STOP_COMMAND, data=result)
         return
-    if stopped:
-        _print_update_result(resolved_port, "stopped", resolved_project)
-    else:
-        _print_update_result(
-            resolved_port,
-            "not running for this project",
-            resolved_project,
-        )
+    _print_update_result(
+        resolved_port,
+        "stopped" if stopped else "already stopped for this project",
+        resolved_project,
+    )
+    _plain("Stays off across searches, index requests and restarts until resumed.")
+    _print_lifecycle_next_actions(
+        server_updates_start_command(resolved_project, resolved_port)
+    )
     raise typer.Exit(0)
 
 

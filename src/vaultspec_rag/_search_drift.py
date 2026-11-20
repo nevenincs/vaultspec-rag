@@ -15,6 +15,7 @@ from ._search_freshness import DriftedFile, capture_hit_publications, verify_sea
 from ._source_types import INDEX_SOURCES, IndexSource, PublicSourceType
 from .indexer._run_ledger_models import RunAuthority
 from .search._models import DocumentSearchResult, SearchResult
+from .watcher_intent import AutoUpdateState, auto_update_state
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -168,6 +169,19 @@ def _diagnose(
         return replace(audit, status="deferred", reason=str(status))
     if not _recheck(audit):
         return replace(audit, status="resolved_or_unverifiable")
+    # An operator who stopped automatic updates for this root asked for no
+    # automatic index mutation; the drift stays reported, not repaired.
+    intent = auto_update_state(audit.root)
+    if intent is not AutoUpdateState.ENABLED:
+        return replace(
+            audit,
+            status="deferred",
+            reason=(
+                "auto_update_disabled"
+                if intent is AutoUpdateState.DISABLED
+                else "auto_update_unverifiable"
+            ),
+        )
     starters = {
         "code": start_reindex_codebase,
         "vault": start_reindex_vault,

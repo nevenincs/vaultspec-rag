@@ -28,6 +28,7 @@ from ..mcp._tools import SearchResults
 from ..search._models import SearchResult
 from ..service import ServiceRegistry
 from ..store_runtime import VaultStore
+from ..watcher_intent import disable_auto_update, load_auto_update_store
 from ._search_readiness_scenarios import (
     SEARCH_READINESS_SCENARIOS,
     canonical_service_envelope,
@@ -450,3 +451,38 @@ def test_unreadable_publication_keeps_a_finished_audit(tmp_path: Path) -> None:
     diagnosed = auditor.snapshot(tmp_path, ServiceRegistry())
     assert [item["status"] for item in diagnosed] == ["rebuild_required"]
     assert auditor._audits.get((tmp_path, "code")) is audit
+
+
+@pytest.mark.parametrize(
+    ("store_bytes", "reason"),
+    [(None, "auto_update_disabled"), (b"{not json", "auto_update_unverifiable")],
+)
+def test_opted_out_root_reports_drift_without_requesting_repair(
+    isolated_status_dir: Path,
+    published_vault: tuple[_Audit, ServiceRegistry],
+    store_bytes: bytes | None,
+    reason: str,
+) -> None:
+    """An operator's stop, or an unreadable record of one, defers repair.
+
+    The audit runs with the shutdown latch set, so a diagnosis that ignored
+    the opt-out would stop at the next gate instead of dispatching a job.
+
+    Mutation check: removing the opt-out branch from ``_diagnose`` reaches
+    that shutdown gate and fails here on the reason assertion
+    (``service_stopping``); restoring it passes.
+    """
+    audit, registry = published_vault
+    (audit.root / audit.files[0].path).write_bytes(b"# Changed body\n")
+    if store_bytes is None:
+        disable_auto_update(audit.root, initiator="cli")
+    else:
+        (isolated_status_dir / "auto-update.json").write_bytes(store_bytes)
+        load_auto_update_store()
+    closing = threading.Event()
+    closing.set()
+    result = _diagnose(audit, registry, closing)
+    assert result.status == "deferred"
+    assert result.reason == reason
+    assert result.job_id is None
+    assert registry.create_job_manager().list_jobs() == []
