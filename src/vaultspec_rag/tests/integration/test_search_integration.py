@@ -439,7 +439,7 @@ class TestRerank:
         """When reranker is enabled, CrossEncoder rescores and reorders.
 
         Deliberately constructs the searcher WITHOUT a shared reranker: this is
-        the one integration test that exercises the lazy ``_get_reranker`` load
+        the one integration test that exercises the lazy reranker load
         path end-to-end. Every other test injects the session-shared instance,
         the same wiring the service uses for its project slots.
         """

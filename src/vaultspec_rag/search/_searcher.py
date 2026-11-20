@@ -9,7 +9,6 @@ loaded reranker, and the TTL-cached VaultGraph.
 from __future__ import annotations
 
 import logging
-import threading
 import time
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, fields, replace
@@ -97,7 +96,6 @@ if TYPE_CHECKING:
     import pathlib
     from collections.abc import Callable, Mapping
 
-    from sentence_transformers import CrossEncoder
     from sentence_transformers.base.modality_types import PairInput
     from vaultspec_core.graph import (
         VaultGraph,
@@ -221,10 +219,10 @@ class VaultSearcher:
         self._graph_cache = GraphCache(ttl_seconds=resolved_ttl)
         self._gpu_lock = settings.gpu_lock
         self._reranker_enabled: bool = cfg.reranker_enabled
-        self._reranker_model_name: str = cfg.reranker_model
         self._sparse_enabled: bool = cfg.sparse_enabled
-        self._reranker = settings.reranker
-        self._reranker_lock = threading.Lock()
+        from ..embeddings import LazyReranker
+
+        self._reranker = LazyReranker(settings.gpu_lock, settings.reranker)
 
     def _vault_docs_prefix(self) -> str:
         """The docs directory (e.g. ``.vault``) vault paths are stored under."""
@@ -248,43 +246,6 @@ class VaultSearcher:
             yield
         finally:
             self._gpu_lock.release()
-
-    def _get_reranker(self) -> CrossEncoder:
-        """Lazily load the CrossEncoder reranker model onto GPU.
-
-        Returns the cached CrossEncoder instance on subsequent calls. A
-        searcher the service builds is handed the shared reranker; only a
-        standalone searcher reaches the load here.
-
-        Returns:
-            Cached or newly loaded CrossEncoder instance.
-
-        Raises:
-            RuntimeError: If no CUDA GPU is available.
-            ModelSnapshotError: If the model cache holds no snapshot of the
-                reranker that passes its check.
-        """
-        if self._reranker is not None:
-            return self._reranker
-        with self._reranker_lock:
-            if self._reranker is not None:
-                return self._reranker
-            from ..embeddings import load_reranker
-
-            # Hold the shared GPU lock across the model load. Constructing the
-            # CrossEncoder materialises weights on the device, and that CUDA work
-            # must not run concurrently with another root's forward pass (or a
-            # second searcher's own lazy load) on the one shared GPU - an
-            # unserialised load races and crashes the process. The lock is
-            # released before the forward pass in ``_rerank`` re-acquires it.
-            with self._gpu_section():
-                self._reranker = load_reranker()
-            logger.info(
-                "CrossEncoder reranker loaded on %s: %s",
-                self._reranker.device,
-                self._reranker_model_name,
-            )
-            return self._reranker
 
     def _rerank[T: _Rerankable](
         self,
@@ -350,7 +311,7 @@ class VaultSearcher:
         from ..config._settings import get_config
 
         accelerator = load_accelerator()
-        reranker = self._get_reranker()
+        reranker = self._reranker.get()
         # Declared, not inferred: `list` is invariant, so a `list[tuple[str,
         # str]]` is not assignable to the `list[PairInput]` the overloads accept.
         model_pairs: list[PairInput] = list(pairs)  # pyright: ignore[reportUnknownVariableType]  # sentence_transformers stubs incomplete

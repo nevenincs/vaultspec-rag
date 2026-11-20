@@ -145,9 +145,12 @@ class ServiceRegistry(
         # waits for tickets, or takes GPU/registry locks.
         self._resource_transition_condition = threading.Condition(threading.Lock())
         self._resource_transition: ResourceTransitionOperation | None = None
-        self._reranker: CrossEncoder | None = None
+        from .embeddings import LazyReranker
+
         self._gpu_residency_recipe: GPUResidencyRecipe | None = None
-        self._reranker_lock = threading.Lock()
+        self._reranker = LazyReranker(
+            self._gpu_lock, on_load=self._record_reranker_residency
+        )
         self._on_close_project: Callable[[Path], object] | None = None
         self._shutting_down = False
         self._shutdown_complete = False
@@ -193,7 +196,7 @@ class ServiceRegistry(
                 or self._transient_store_constructions
                 or self._root_locks
                 or self._model is not None
-                or self._reranker is not None
+                or self._reranker.loaded is not None
             ):
                 raise RuntimeError(
                     "ServiceRegistry cannot reopen while owned state remains"
@@ -301,7 +304,7 @@ class ServiceRegistry(
             reranker_loaded = (
                 self._gpu_residency_recipe.restore_reranker
                 if self._gpu_residency_recipe is not None
-                else self._reranker is not None
+                else self._reranker.loaded is not None
             )
             self._gpu_residency_recipe = GPUResidencyRecipe(
                 model_name=model_name,
@@ -343,9 +346,9 @@ class ServiceRegistry(
     def get_reranker(self) -> CrossEncoder:
         """Return the shared CrossEncoder, loading it lazily.
 
-        Thread-safe via double-check lock pattern.  The reranker
-        is project-independent (scores text pairs regardless of
-        which vault they came from).
+        The load runs under the shared GPU lock, so it never overlaps a
+        forward pass.  The reranker is project-independent (scores text
+        pairs regardless of which vault they came from).
 
         Returns:
             Shared ``CrossEncoder`` instance.
@@ -355,46 +358,29 @@ class ServiceRegistry(
         """
         ticket = self._quiesce_controller.acquire_ticket()
         try:
-            return self._get_reranker()
+            return self._reranker.get()
         finally:
             ticket.release()
 
-    def _get_reranker(self) -> CrossEncoder:
-        """Load the shared reranker after compute admission is already held."""
-        if self._reranker is not None:
-            return self._reranker
-        with self._reranker_lock:
-            if self._reranker is not None:
-                return self._reranker
-            from .config._settings import get_config
-            from .embeddings import load_reranker
-
-            cfg = get_config()
-            self._reranker = load_reranker()
-            with self._lock:
-                model_name = (
-                    self._gpu_residency_recipe.model_name
-                    if self._gpu_residency_recipe is not None
-                    else None
-                )
-                self._gpu_residency_recipe = GPUResidencyRecipe(
-                    model_name=model_name,
-                    restore_model=True,
-                    restore_reranker=True,
-                )
-            logger.info(
-                "Shared CrossEncoder loaded on %s: %s",
-                str(getattr(self._reranker, "device", "unknown")),
-                cfg.reranker_model,
+    def _record_reranker_residency(self, _reranker: CrossEncoder) -> None:
+        """Record a freshly loaded reranker in the residency recipe and baseline."""
+        with self._lock:
+            model_name = (
+                self._gpu_residency_recipe.model_name
+                if self._gpu_residency_recipe is not None
+                else None
             )
-            # The reranker loads lazily and outside the GPU lock; re-sample
-            # the resident baseline so a late load raises it rather than
-            # leaving indexing budgets constructed against an understated
-            # figure.
-            from .memory_probe import sample_resident_accelerator_baseline
+            self._gpu_residency_recipe = GPUResidencyRecipe(
+                model_name=model_name,
+                restore_model=True,
+                restore_reranker=True,
+            )
+        # The reranker loads lazily, after the resident baseline was first
+        # sampled; re-sample it so a late load raises it rather than leaving
+        # indexing budgets constructed against an understated figure.
+        from .memory_probe import sample_resident_accelerator_baseline
 
-            sample_resident_accelerator_baseline()
-            return self._reranker
+        sample_resident_accelerator_baseline()
 
     @contextlib.contextmanager
     def _root_store_guard(self, resolved: Path) -> Generator[None]:
@@ -1083,7 +1069,7 @@ class ServiceRegistry(
         self._load_model(model_name)
         model = self.model
         cfg = get_config()
-        reranker = self._get_reranker() if cfg.reranker_enabled else None
+        reranker = self._reranker.get() if cfg.reranker_enabled else None
         with self._lock:
             readiness = self._readiness_registry
         publish_code_readiness = (
@@ -1263,7 +1249,7 @@ class ServiceRegistry(
                 )
             self._projects.clear()
             self._model = None
-            self._reranker = None
+            self._reranker.clear()
             self._complete_shutdown_if_drained_locked()
 
         # Dropping the references is not enough: both stacks are reachable only
@@ -1343,7 +1329,7 @@ class ServiceRegistry(
             )
         return {
             "model_loaded": self._model is not None,
-            "reranker_loaded": self._reranker is not None,
+            "reranker_loaded": self._reranker.loaded is not None,
             "project_count": count,
             "projects": project_list,
             "nonconforming": nonconforming,

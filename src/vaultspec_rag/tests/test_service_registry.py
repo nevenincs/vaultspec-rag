@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 import pytest
 
+from ..embeddings import LazyReranker
 from ..progress import NullProgressReporter
 from ..service import ProjectSlot, RegistryFullError, ServiceRegistry
 
@@ -308,7 +309,7 @@ class TestCloseAll:
         # ~2.3GB copy at slot creation.
         reg = ServiceRegistry()
         reg._model = embedding_model
-        reg._reranker = shared_reranker
+        reg._reranker = LazyReranker(reg.gpu_lock, shared_reranker)
         root = _make_vault_dir(tmp_path)
         slot = reg.peek_project(root)
         store = slot.store
@@ -761,11 +762,13 @@ class TestSharedReranker:
             ):
                 # Both searchers share the same CrossEncoder instance
                 assert (
-                    first.runtime.searcher._reranker
-                    is second.runtime.searcher._reranker
+                    first.runtime.searcher._reranker.loaded
+                    is second.runtime.searcher._reranker.loaded
                 )
                 # And it's the registry's shared instance
-                assert first.runtime.searcher._reranker is registry.get_reranker()
+                assert (
+                    first.runtime.searcher._reranker.loaded is registry.get_reranker()
+                )
         finally:
             registry.close_project(root_a)
             registry.close_project(root_b)
@@ -806,7 +809,7 @@ class TestSharedReranker:
         assert reranker is not None
 
         reg.close_all()
-        assert reg._reranker is None
+        assert reg._reranker.loaded is None
 
 
 class TestGpuLock:
@@ -921,7 +924,7 @@ class TestPerRootLocks:
         # not reranker construction.
         reg = ServiceRegistry()
         reg._model = embedding_model
-        reg._reranker = shared_reranker
+        reg._reranker = LazyReranker(reg.gpu_lock, shared_reranker)
         root = _make_vault_dir(tmp_path)
         reg.peek_project(root)
         assert len(reg._root_locks) > 0
@@ -949,7 +952,7 @@ class TestLeaseApi:
         # module is what once drove the tier into CUDA OOM here.
         reg = ServiceRegistry()
         reg._model = embedding_model
-        reg._reranker = shared_reranker
+        reg._reranker = LazyReranker(reg.gpu_lock, shared_reranker)
         reg._max_projects = max_projects
         reg._idle_ttl_seconds = idle_ttl
         return reg

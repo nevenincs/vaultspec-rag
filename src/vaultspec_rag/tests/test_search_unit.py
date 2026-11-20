@@ -560,9 +560,8 @@ class TestPassageSelectionUnderMemoryExhaustion:
     def test_results_keep_their_first_passage_when_scoring_runs_out_of_memory(
         self,
     ) -> None:
-        import threading
-
         from .._gpu import load_accelerator
+        from ..embeddings import LazyReranker
         from ..search._models import ResultPassage
         from ..search._searcher import VaultSearcher, _EncodedSearchQuery
 
@@ -573,10 +572,11 @@ class TestPassageSelectionUnderMemoryExhaustion:
                 raise torch.cuda.OutOfMemoryError("CUDA out of memory")
 
         searcher = VaultSearcher.__new__(VaultSearcher)
-        searcher._reranker = cast("CrossEncoder", _ExhaustedReranker())
+        searcher._reranker = LazyReranker(
+            None, cast("CrossEncoder", _ExhaustedReranker())
+        )
         searcher._reranker_enabled = True
         searcher._gpu_lock = None
-        searcher._reranker_lock = threading.Lock()
         result = SearchResult(
             id="adr/sample",
             path=".vault/adr/sample.md",
@@ -615,6 +615,7 @@ class TestRerankerForwardScope:
         import threading
 
         from .._gpu import load_accelerator
+        from ..embeddings import LazyReranker
         from ..search._searcher import VaultSearcher
 
         matmul = load_accelerator().torch.backends.cuda.matmul
@@ -628,10 +629,11 @@ class TestRerankerForwardScope:
                 return [0.5 for _ in pairs]
 
         searcher = VaultSearcher.__new__(VaultSearcher)
-        searcher._reranker = cast("CrossEncoder", _RecordingReranker())
+        searcher._reranker = LazyReranker(
+            gpu_lock, cast("CrossEncoder", _RecordingReranker())
+        )
         searcher._reranker_enabled = True
         searcher._gpu_lock = gpu_lock
-        searcher._reranker_lock = threading.Lock()
 
         scores = searcher._predict_scores([("q", "a"), ("q", "b")])
 
