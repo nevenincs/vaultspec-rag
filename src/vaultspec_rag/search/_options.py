@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, TypedDict
 
 if TYPE_CHECKING:
     import threading
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping, Sequence
 
     from sentence_transformers import CrossEncoder
     from vaultspec_core.graph import VaultGraph
@@ -109,6 +109,8 @@ class DocumentSearchOptionArguments(TypedDict, total=False):
     extractor_id: str | None
     extractor_version: str | None
     locator_kind: str | None
+    extractor_prefix: str | None
+    metadata_filters: Mapping[str, Sequence[str]] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +121,8 @@ class DocumentSearchOptions:
     extractor_id: str | None = None
     extractor_version: str | None = None
     locator_kind: str | None = None
+    extractor_prefix: str | None = None
+    metadata_filters: Mapping[str, Sequence[str]] | None = None
 
 
 class CombinedSearchOptionArguments(
@@ -169,5 +173,7 @@ class CombinedSearchOptions:
                 extractor_id=arguments.get("extractor_id"),
                 extractor_version=arguments.get("extractor_version"),
                 locator_kind=arguments.get("locator_kind"),
+                extractor_prefix=arguments.get("extractor_prefix"),
+                metadata_filters=arguments.get("metadata_filters"),
             ),
         )

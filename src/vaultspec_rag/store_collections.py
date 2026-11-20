@@ -11,7 +11,7 @@ from ._store_models import code_collection_matches_derived, read_served_pointer
 
 if TYPE_CHECKING:
     import pathlib
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Iterable, Sequence
     from contextlib import AbstractContextManager
 
     from qdrant_client import QdrantClient
@@ -83,6 +83,30 @@ class _VaultCollectionMixin:
         ) -> None: ...
 
         def _point_lock(self, collection: str) -> AbstractContextManager[object]: ...
+
+        def _retried[T](self, description: str, op: Callable[[int], T]) -> T: ...
+
+    # The metadata keys this root declares filterable. Empty until a caller
+    # that has read the root's declaration hands it over; an immutable default
+    # so an instance assignment never shares state between stores.
+    _document_metadata_keys: tuple[store_schema.DeclaredMetadataKey, ...] = ()
+
+    def declare_document_metadata_keys(
+        self, keys: Iterable[store_schema.DeclaredMetadataKey]
+    ) -> None:
+        """Make *keys* the declared filterable metadata keys of this root.
+
+        A changed declaration releases the document collection's ensure latch,
+        so the next ensure creates the index of each newly declared key and
+        drops the index of each key no longer declared. The stored metadata is
+        never touched, so a change needs no rebuild.
+        """
+        declared = tuple(sorted(set(keys)))
+        with self._lifecycle_lock:
+            if declared == self._document_metadata_keys:
+                return
+            self._document_metadata_keys = declared
+            self._ensured.pop(self.DOCUMENT_TABLE_NAME, None)
 
     def _ensure_collection(self, name: str) -> None:
         """Create a collection with dense + sparse vectors if it doesn't exist.
@@ -398,6 +422,40 @@ class _VaultCollectionMixin:
                 fname,
                 models.PayloadSchemaType.INTEGER,
             )
+        if collection == self.DOCUMENT_TABLE_NAME:
+            self._drop_undeclared_metadata_indexes(collection, keyword_fields)
+
+    def _drop_undeclared_metadata_indexes(
+        self, collection: str, keyword_fields: Sequence[str]
+    ) -> None:
+        """Drop each metadata index whose key is no longer declared.
+
+        Only indexes under a metadata prefix follow the declaration, so no
+        other index is ever dropped here. Dropping an index deletes no payload;
+        re-declaring the key builds it again. Local mode keeps no payload
+        indexes, so it reports none and nothing is dropped.
+        """
+        declared = frozenset(keyword_fields)
+        live = self._retried(
+            f"read payload indexes of {collection}",
+            lambda _timeout: tuple(
+                self.client.get_collection(collection).payload_schema or {}
+            ),
+        )
+        for field in live:
+            if field in declared or not field.startswith(
+                store_schema.METADATA_INDEX_PREFIXES
+            ):
+                continue
+            self._retried(
+                f"drop payload index {collection}.{field}",
+                lambda timeout, field=field: self.client.delete_payload_index(
+                    collection_name=collection,
+                    field_name=field,
+                    timeout=timeout,
+                ),
+            )
+            logger.info("Dropped undeclared metadata index %s.%s", collection, field)
 
     def _ensure_table(
         self,
@@ -604,9 +662,12 @@ class _VaultCollectionMixin:
         )
 
     def ensure_document_table(self) -> None:
-        """Create the document collection and its declared payload indexes."""
+        """Create the document collection and its declared payload indexes.
+
+        The keyword set includes one nested index per declared metadata key.
+        """
         self._ensure_table(
             self.DOCUMENT_TABLE_NAME,
-            store_schema.DOCUMENT_KEYWORD_INDEXES,
+            store_schema.document_keyword_indexes(self._document_metadata_keys),
             store_schema.DOCUMENT_INTEGER_INDEXES,
         )

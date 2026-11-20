@@ -10,7 +10,7 @@ from ._index_integrity import IntegrityVerdict
 from ._search_state import BreadthFindings, SearchReasonCode, search_index_state
 from ._source_types import PublicSourceType
 from .registry import get_registry
-from .search import validate_search_filters
+from .search import InvalidFilterForSearchTypeError, validate_search_filters
 from .search._outcomes import CombinedSearchOutcome, SearchDomainOutcome
 from .server._search_availability import (
     CanonicalSearchEvidence,
@@ -20,7 +20,7 @@ from .server._search_availability import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from ._index_integrity import IndexIntegrity
     from ._search_state import SearchSourceFact
@@ -79,6 +79,8 @@ class DocumentCombinedSearchFilters:
     extractor_id: str | None = None
     extractor_version: str | None = None
     locator_kind: str | None = None
+    extractor_prefix: str | None = None
+    metadata_filters: Mapping[str, Sequence[str]] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +94,8 @@ class DocumentSearchRequest:
     extractor_id: str | None = None
     extractor_version: str | None = None
     locator_kind: str | None = None
+    extractor_prefix: str | None = None
+    metadata_filters: Mapping[str, Sequence[str]] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,6 +153,8 @@ def search_documents_timed(
             extractor_id=request.extractor_id,
             extractor_version=request.extractor_version,
             locator_kind=request.locator_kind,
+            extractor_prefix=request.extractor_prefix,
+            metadata_filters=request.metadata_filters,
         ),
     )
     root = pathlib.Path(request.root_dir).resolve()
@@ -166,6 +172,8 @@ def search_documents_timed(
             extractor_id=request.extractor_id,
             extractor_version=request.extractor_version,
             locator_kind=request.locator_kind,
+            extractor_prefix=request.extractor_prefix,
+            metadata_filters=request.metadata_filters,
         )
     if results is None or timings is None:
         raise RuntimeError("document search lease ended without a result")
@@ -208,6 +216,10 @@ def _search_domain(
         return SearchDomainOutcome.success(
             request.source, list(request.operation()), source_fact=source_fact
         )
+    except InvalidFilterForSearchTypeError:
+        # A refused filter is the caller's error, not one domain failing: the
+        # whole request is refused rather than answered without that domain.
+        raise
     except Exception as exc:
         return _domain_failure(request.source, request.root, exc, source_fact)
 
@@ -407,6 +419,8 @@ def _combined_filter_options(request: CombinedSearchRequest) -> SearchFilterOpti
         extractor_id=request.document_filters.extractor_id,
         extractor_version=request.document_filters.extractor_version,
         locator_kind=request.document_filters.locator_kind,
+        extractor_prefix=request.document_filters.extractor_prefix,
+        metadata_filters=request.document_filters.metadata_filters,
     )
 
 
@@ -474,6 +488,8 @@ def _search_combined_domains(
                 extractor_id=request.document_filters.extractor_id,
                 extractor_version=request.document_filters.extractor_version,
                 locator_kind=request.document_filters.locator_kind,
+                extractor_prefix=request.document_filters.extractor_prefix,
+                metadata_filters=request.document_filters.metadata_filters,
             ),
         ),
         counts,

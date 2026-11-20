@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 import pathspec
 
+from .. import store_schema
 from .._job_errors import JobErrorKind
 from ..operator_state._features import PreprocessHookState
 from ._content_policy import ContentKind
@@ -60,6 +61,7 @@ __all__ = [
     "PreprocessRule",
     "config_hook_state",
     "hook_state",
+    "load_filterable_metadata",
     "load_preprocess_rules",
     "root_hook_state",
 ]
@@ -319,23 +321,10 @@ def load_preprocess_rules(
         PreprocessConfigError: Only when ``strict`` is ``True`` and the config
             is malformed or contains an invalid rule.
     """
-    config_file = root_dir / PREPROCESS_CONFIG_FILENAME
-    if not config_file.is_file():
+    document = _read_config(root_dir, strict=strict)
+    if document is None:
         return PreprocessConfig([])
-
-    data: dict[str, object]
-    try:
-        raw = config_file.read_bytes()
-        data = tomllib.loads(raw.decode("utf-8"))
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
-        message = (
-            f"{PREPROCESS_CONFIG_FILENAME} at {config_file} "
-            f"is unreadable or malformed: {exc}"
-        )
-        if strict:
-            raise PreprocessConfigError(message) from exc
-        logger.warning("%s; ignoring preprocess rules", message)
-        return PreprocessConfig([])
+    raw, data = document
 
     version = data.get("version", 1)
     if not isinstance(version, int) or isinstance(version, bool):
@@ -372,11 +361,122 @@ def load_preprocess_rules(
         rule = _resolve_rule(raw_rule, order, strict=strict)
         if rule is not None:
             rules.append(rule)
+    if strict:
+        # Validated here too so the check verb reports a bad declaration;
+        # the declaration itself is read by load_filterable_metadata.
+        _resolve_filterable_metadata(data, strict=True)
     return PreprocessConfig(
         rules,
         schema_version=version,
         policy_digest=f"sha256:{hashlib.sha256(raw).hexdigest()}",
     )
+
+
+def _read_config(
+    root_dir: pathlib.Path, *, strict: bool
+) -> tuple[bytes, dict[str, object]] | None:
+    """Read and parse the root's config file, or ``None`` when there is none.
+
+    A missing file is ``None``. An unreadable or malformed one is ``None``
+    after a warning, or raises in strict mode.
+    """
+    config_file = root_dir / PREPROCESS_CONFIG_FILENAME
+    if not config_file.is_file():
+        return None
+    try:
+        raw = config_file.read_bytes()
+        return raw, tomllib.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        message = (
+            f"{PREPROCESS_CONFIG_FILENAME} at {config_file} "
+            f"is unreadable or malformed: {exc}"
+        )
+        if strict:
+            raise PreprocessConfigError(message) from exc
+        logger.warning("%s; ignoring it", message)
+        return None
+
+
+#: The array of tables declaring filterable document metadata keys.
+FILTERABLE_METADATA_TABLE = "filterable_metadata"
+
+
+def load_filterable_metadata(
+    root_dir: pathlib.Path,
+) -> tuple[store_schema.DeclaredMetadataKey, ...]:
+    """Return the document metadata keys a root declares filterable.
+
+    Each ``[[filterable_metadata]]`` entry names a ``key`` and one ``scope``,
+    ``unit`` or ``document``. The declaration is neither a rule nor part of
+    any policy fingerprint, so changing it never requires a rebuild.
+
+    Never raises: a missing, unreadable, or unsupported file declares nothing,
+    and an invalid entry is dropped with a warning. The ``preprocess check``
+    verb reports the same defects as errors.
+    """
+    document = _read_config(root_dir, strict=False)
+    if document is None:
+        return ()
+    _raw, data = document
+    if data.get("version", 1) != SUPPORTED_CONFIG_VERSION:
+        logger.warning(
+            "%s: unsupported config version; no metadata key is filterable",
+            PREPROCESS_CONFIG_FILENAME,
+        )
+        return ()
+    return _resolve_filterable_metadata(data, strict=False)
+
+
+def _resolve_filterable_metadata(
+    data: dict[str, object], *, strict: bool
+) -> tuple[store_schema.DeclaredMetadataKey, ...]:
+    """Validate the declaration table into declared keys.
+
+    A key declared in both scopes is a configuration error; outside strict
+    mode it is dropped entirely, because either scope would be a guess.
+    """
+
+    def reject(message: str) -> None:
+        full = f"{PREPROCESS_CONFIG_FILENAME}: {message}"
+        if strict:
+            raise PreprocessConfigError(full)
+        logger.warning("%s", full)
+
+    entries = data.get(FILTERABLE_METADATA_TABLE, [])
+    if not isinstance(entries, list):
+        reject(f"'{FILTERABLE_METADATA_TABLE}' must be an array of tables")
+        return ()
+    scopes: dict[str, set[store_schema.MetadataScope]] = {}
+    for index, entry in enumerate(cast("list[object]", entries)):
+        where = f"{FILTERABLE_METADATA_TABLE} #{index}"
+        if not isinstance(entry, dict):
+            reject(f"{where} must be a table")
+            continue
+        table = cast("dict[str, object]", entry)
+        unknown = sorted(set(table) - {"key", "scope"})
+        if unknown:
+            reject(f"{where} has unknown field(s) {unknown}")
+            continue
+        key = table.get("key")
+        problem = store_schema.metadata_key_problem(key)
+        if problem is not None or not isinstance(key, str):
+            reject(f"{where}: {problem}")
+            continue
+        scope = table.get("scope")
+        if scope not in store_schema.METADATA_SCOPES:
+            reject(
+                f"{where}: 'scope' must be one of "
+                f"{list(store_schema.METADATA_SCOPES)}; got {scope!r}"
+            )
+            continue
+        scopes.setdefault(key, set()).add(cast("store_schema.MetadataScope", scope))
+    declared: list[store_schema.DeclaredMetadataKey] = []
+    for key, key_scopes in sorted(scopes.items()):
+        if len(key_scopes) > 1:
+            reject(f"metadata key {key!r} is declared in more than one scope")
+            continue
+        declared.append(store_schema.DeclaredMetadataKey(key, key_scopes.pop()))
+    return tuple(declared)
 
 
 class _RuleRejectedError(Exception):

@@ -91,6 +91,7 @@ from ._result_shaping import (
 from ._result_shaping import select_combined_results as _select_combined_results
 from ._typesafe_context import classification_scope
 from ._typesafe_transport import TypesafeUnavailableError
+from ._validation import DocumentFilterRequest, resolve_document_filters
 
 if TYPE_CHECKING:
     import pathlib
@@ -1092,22 +1093,37 @@ class VaultSearcher:
         encoded: _EncodedSearchQuery,
         options: DocumentSearchOptions,
     ) -> list[DocumentSearchResult]:
-        """Search documents from one already encoded query."""
-        filters = {
-            key: value
-            for key, value in encoded.parsed.filters.items()
-            if key in store_schema.DOCUMENT_QUERY_FILTER_KEYS
-        }
-        for key, value in (
-            ("source_path", options.source_path),
-            ("extractor_id", options.extractor_id),
-            ("extractor_version", options.extractor_version),
-            ("locator_kind", options.locator_kind),
-        ):
-            if value is not None:
-                filters[key] = value
+        """Search documents from one already encoded query.
 
+        Raises:
+            InvalidFilterForSearchTypeError: A filter the root cannot apply
+                exactly; its subclass names the refusal.
+        """
+        from ..indexer._preprocess_config import load_filterable_metadata
+
+        declared = load_filterable_metadata(self.root_dir)
+        # Handing the declaration to the store before the read is what lets
+        # that read's ensure create or drop the metadata indexes it names.
+        self.store.declare_document_metadata_keys(declared)
         phase_started = time.perf_counter()
+        filters = resolve_document_filters(
+            DocumentFilterRequest(
+                source_path=options.source_path,
+                extractor_id=options.extractor_id,
+                extractor_version=options.extractor_version,
+                locator_kind=options.locator_kind,
+                extractor_prefix=options.extractor_prefix,
+                metadata_filters=options.metadata_filters,
+                inline=encoded.parsed.filters,
+            ),
+            declared,
+            self.store.document_extractor_ids,
+        )
+        if any(not values for values in filters.values()):
+            # A condition with no admissible value matches nothing, so there
+            # is no candidate to fetch.
+            _record_seconds(encoded.timings, PHASE_QDRANT, phase_started)
+            return []
         fetch_limit = (
             max(encoded.top_k * 4, 20) if self._reranker_enabled else encoded.top_k * 2
         )
@@ -1117,7 +1133,7 @@ class VaultSearcher:
             HybridSearchRequest(
                 query_vector=encoded.dense_vector,
                 query_text=encoded.text,
-                filters=filters or None,
+                document_filters=filters or None,
                 limit=fetch_limit,
                 sparse_vector=encoded.sparse_vector,
             )

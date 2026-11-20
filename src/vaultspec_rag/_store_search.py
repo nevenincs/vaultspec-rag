@@ -15,10 +15,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping, Sequence
     from contextlib import AbstractContextManager
 
     from qdrant_client import QdrantClient
@@ -31,6 +31,7 @@ if TYPE_CHECKING:
         VectorInput,
     )
 
+    from . import store_schema
     from ._source_types import IndexSource
     from .embeddings import SparseResult
 
@@ -46,6 +47,7 @@ class HybridSearchRequest:
     query_vector: list[float]
     query_text: str
     filters: dict[str, str] | None = None
+    document_filters: Mapping[str, Sequence[str]] | None = None
     limit: int = 5
     sparse_vector: SparseResult | None = None
     like_ids: list[str | int] | None = None
@@ -76,6 +78,7 @@ class _VaultSearchMixin:
         TABLE_NAME: str
         CODE_TABLE_NAME: str
         DOCUMENT_TABLE_NAME: str
+        _document_metadata_keys: tuple[store_schema.DeclaredMetadataKey, ...]
 
         @property
         def client(self) -> QdrantClient: ...
@@ -177,8 +180,17 @@ class _VaultSearchMixin:
         self,
         request: HybridSearchRequest,
     ) -> list[dict[str, Any]]:
-        """Execute hybrid search against the independent document collection."""
-        query_filter = self._build_document_filter(request.filters)
+        """Execute hybrid search against the independent document collection.
+
+        A filter field mapped to a value list matches when any value matches.
+
+        Raises:
+            UnknownFilterKeyError: A filter field that is neither a document
+                filter key nor a declared metadata field.
+        """
+        query_filter = self._build_document_filter(
+            request.document_filters, self._document_metadata_keys
+        )
         dense_query: list[float] = request.query_vector
         prefetch = self._build_prefetch(
             dense_query,
@@ -192,6 +204,25 @@ class _VaultSearchMixin:
             _HybridQuery(prefetch, dense_query, query_filter, request.limit),
         )
         return self._points_to_dicts(scored_points, "document_id")
+
+    def document_extractor_ids(self, limit: int) -> tuple[str, ...]:
+        """Return up to *limit* distinct ``extractor_id`` values, exactly counted.
+
+        Reads a facet over the indexed field rather than scanning points, and
+        takes the collection's point lock like any other read. An absent
+        collection holds no extractor ids.
+        """
+        collection = self.DOCUMENT_TABLE_NAME
+        if not self._reconcile_for_read(collection, self.ensure_document_table):
+            return ()
+        with self._point_lock(collection):
+            response = self.client.facet(
+                collection_name=collection,
+                key="extractor_id",
+                limit=limit,
+                exact=True,
+            )
+        return tuple(str(hit.value) for hit in response.hits)
 
     def _resolve_vault_feedback_id(self, doc_id: str) -> int:
         """Map a vault document id to an existing feedback point id.
@@ -463,13 +494,21 @@ class _VaultSearchMixin:
         Returns:
             A ``qdrant_client.models.Filter`` instance, or ``None``
             if no valid conditions were produced.
+
+        Raises:
+            UnknownFilterKeyError: A key outside the vault filter keys.
         """
         if not filters:
             return None
         from qdrant_client import models
 
+        from . import store_schema
+
+        accepted = store_schema.VAULT_FILTER_KEYS
         conditions: list[Condition] = []
         for key, value in filters.items():
+            if key not in accepted:
+                _refuse_unknown_key(key, accepted, "vault")
             if not value:
                 continue
             if key == "date":
@@ -511,8 +550,6 @@ class _VaultSearchMixin:
                         match=models.MatchValue(value=value),
                     ),
                 )
-            else:
-                logger.warning("Unknown filter key: %s", key)
         if not conditions:
             return None
         return models.Filter(must=conditions)
@@ -538,6 +575,9 @@ class _VaultSearchMixin:
         Returns:
             A ``qdrant_client.models.Filter`` instance, or ``None``
             if no valid conditions were produced.
+
+        Raises:
+            UnknownFilterKeyError: A key outside the code filter keys.
         """
         from qdrant_client import models
 
@@ -545,12 +585,11 @@ class _VaultSearchMixin:
 
         # Re-listing these was how the document filter came to reject a key
         # the schema had indexed, silently returning unfiltered results.
-        allowed = frozenset(store_schema.CODE_FILTER_KEYS)
+        accepted = store_schema.CODE_FILTER_KEYS
         conditions: list[Condition] = []
         for key, value in (filters or {}).items():
-            if key not in allowed:
-                logger.warning("Unknown filter key: %s", key)
-                continue
+            if key not in accepted:
+                _refuse_unknown_key(key, accepted, "code")
             conditions.append(
                 models.FieldCondition(
                     key=key,
@@ -578,9 +617,19 @@ class _VaultSearchMixin:
 
     @staticmethod
     def _build_document_filter(
-        filters: dict[str, str] | None,
+        filters: Mapping[str, str | Sequence[str]] | None,
+        declared: Sequence[store_schema.DeclaredMetadataKey] = (),
     ) -> Filter | None:
-        """Build exact filters only for declared document payload indexes."""
+        """Build document filters on declared payload indexes only.
+
+        A string value is an exact match. A value list matches when any value
+        matches; one value stays an exact match and no values match nothing.
+        Accepted fields are the document filter keys and the nested field of
+        each metadata key in *declared*.
+
+        Raises:
+            UnknownFilterKeyError: A field that is neither.
+        """
         if not filters:
             return None
         from qdrant_client import models
@@ -591,18 +640,27 @@ class _VaultSearchMixin:
         # this filter may only use those. Re-listing them here meant a keyword
         # index added to the schema would be rejected as unknown, silently
         # dropping a legitimate filter and returning unfiltered results.
-        indexed = frozenset(store_schema.DOCUMENT_KEYWORD_INDEXES)
+        accepted = (
+            *store_schema.DOCUMENT_QUERY_FILTER_KEYS,
+            *sorted(item.field for item in declared),
+        )
         conditions: list[Condition] = []
         for key, value in filters.items():
-            if key not in indexed:
-                logger.warning("Unknown document filter key: %s", key)
-                continue
-            conditions.append(
-                models.FieldCondition(
-                    key=key,
-                    match=models.MatchValue(value=value),
-                )
+            if key not in accepted:
+                _refuse_unknown_key(key, accepted, "document")
+            values = (value,) if isinstance(value, str) else tuple(value)
+            match: models.MatchValue | models.MatchAny = (
+                models.MatchValue(value=values[0])
+                if len(values) == 1
+                else models.MatchAny(any=list(values))
             )
-        if not conditions:
-            return None
+            conditions.append(models.FieldCondition(key=key, match=match))
         return models.Filter(must=conditions)
+
+
+def _refuse_unknown_key(
+    key: str, accepted: Sequence[str], filter_kind: str
+) -> NoReturn:
+    from .search._validation import UnknownFilterKeyError
+
+    raise UnknownFilterKeyError(key, accepted, filter_kind)

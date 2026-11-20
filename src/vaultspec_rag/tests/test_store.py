@@ -170,12 +170,13 @@ class TestStoreHelpers:
         # wrong date reads as a correctly-shaped MatchValue.
         assert cond.match.value == "2026-02-07"
 
-    def test_build_filter_ignores_unknown_keys(self):
-        """_build_filter should ignore keys not in (doc_type, feature, date)."""
+    def test_build_filter_refuses_unknown_keys(self):
+        """_build_filter refuses a key outside the vault filter keys."""
+        from ..search._validation import UnknownFilterKeyError
         from ..store_runtime import VaultStore
 
-        result = VaultStore._build_filter({"unknown_key": "value"})
-        assert result is None
+        with pytest.raises(UnknownFilterKeyError):
+            VaultStore._build_filter({"unknown_key": "value"})
 
     def test_stable_id_deterministic(self):
         """_stable_id should return the same integer for the same input."""
