@@ -330,6 +330,46 @@ rebuilds and on incremental runs, including runs scoped to the changed paths; on
 file still costs one spawn. Code groups run in parallel across the chunk worker pool.
 Document groups run one at a time, each when indexing reaches its first document.
 
+## Filterable metadata
+
+A hook's per-unit and per-document `metadata` is returned with every result.
+To filter searches on a key, declare it in `.vaultragpreprocess.toml`:
+
+```toml
+[[filterable_metadata]]
+key = "lang"
+scope = "unit"        # unit | document
+
+[[filterable_metadata]]
+key = "team"
+scope = "document"
+```
+
+- `scope = "unit"` reads the unit's own `metadata`; `scope = "document"` reads
+  the document-level `metadata` every unit of the file shares. A key is declared
+  in one scope only.
+- A key name is non-empty, at most 128 characters, and contains no `.`, `[`,
+  or `]`.
+- Each declared key gets a keyword index on the metadata the index already
+  holds. Declaring or removing a key needs no rebuild: the next index run or
+  search adds or drops the index, and the stored metadata is never changed.
+- A filterable value is a string or a list of strings; a list matches when any
+  member matches, and a unit without the key matches no filter on it. Any other
+  value, such as a number, `true`, or `null`, is stored unchanged and never
+  matches. The index run logs a warning and counts those units per key in
+  `metadata_non_string` on the `vaultspec-rag index --json` document row and the
+  `service.index completed` event. The file still indexes.
+- Undeclared keys are never indexed and cannot be filtered on; a filter naming
+  one is refused with `unknown_filter_key`.
+- The declaration is part of the file, so editing it withdraws the project's
+  approval like any other edit. Run `preprocess approve` again afterwards.
+- `preprocess check` reports an invalid declaration. Indexing and search drop
+  an invalid entry with a warning instead.
+
+Filter with `--meta key=v1,v2` on the CLI, `meta.key=v1,v2` in the query text,
+or a `metadata_filters` mapping over MCP and HTTP. See
+[the filter surface](query-craft.md#the-filter-surface).
+
 ## Cache and incremental indexing
 
 vaultspec-rag caches successful extraction output under the data directory. The key binds the source
