@@ -4,9 +4,9 @@ tags:
   - '#index'
   - '#search-readiness-contract'
 date: '2026-09-08'
-modified: '2026-09-14'
+modified: '2026-11-20'
 body_schema: 'body-v2'
-body_hash: 'sha256:6dd820f7f852eca3d65dce727380f62e677a71e1cefc812f3dde53f54f2e6417'
+body_hash: 'sha256:b64ce21dfab0dcf1cc5890abc5b17108387012aad0c9b2d3109f3619d5b95a9a'
 related:
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-ledger]]'
@@ -15,6 +15,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-research]]'
   - '[[2026-09-09-search-readiness-contract-audit]]'
   - '[[2026-09-14-search-readiness-contract-final-closeout-audit]]'
+  - '[[2026-11-20-search-readiness-contract-empty-while-updating-adr]]'
 ---
 
 # `search-readiness-contract` feature index
@@ -26,6 +27,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 ### adr
 
 - `2026-09-08-search-readiness-contract-adr` - `search-readiness-contract` adr: `canonical search readiness and bounded freshness waits` | (**status:** `accepted`)
+- `2026-11-20-search-readiness-contract-empty-while-updating-adr` - `search-readiness-contract` adr: `return non-authoritative empty search results as success while an index job runs` | (**status:** `deprecated`)
 
 ### audit
 

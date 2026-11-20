@@ -16,11 +16,12 @@ related:
   - "[[2026-07-25-index-lifecycle-consolidation-adr]]"
   - "[[2026-05-30-cli-index-default-adr]]"
   - "[[2026-07-25-storage-conformance-adr]]"
+  - '[[2026-11-20-search-readiness-contract-empty-while-updating-adr]]'
 supersedes:
   - '2026-07-25-non-destructive-index-publication-adr'
-modified: '2026-10-14'
+modified: '2026-11-20'
 body_schema: 'body-v2'
-body_hash: 'sha256:e545e470550a4a058a06d95446af225d9015b6e9a44dc036ec5669f8806b19b5'
+body_hash: 'sha256:913c31ca76b452e61953745cb77bebd4388cb31c0b31e40bf7912b202c292857'
 ---
 
 # `destructive-rebuild-lifecycle` adr: `discard the old index and search the new build as it grows` | (**status:** `accepted`)
@@ -85,7 +86,7 @@ During the brief reset operation, the selected source may return a typed retryab
 
 Once the empty replacement is ready, search addresses it throughout ingestion. Fresh points become searchable as bounded writes are applied; search never waits for final publication to expose them. Nonempty results carry `availability=usable`, `freshness=updating`, and `absence_authority=non_authoritative` until completeness is certified. The service exposes the current serving generation separately from the last completed publication. Open receipts prevent a claim of completeness, not useful retrieval from a compatible current epoch.
 
-An empty result while rebuilding cannot prove no match in the complete corpus. Preserve the existing structured non-authoritative outcome, with rebuild state and retry information, instead of calling it authoritative empty success. Once a genuinely empty corpus is fully rebuilt and verified, empty success becomes authoritative. Combined search retains the readiness and partial outcomes of every selected source; adapters transport the same service-owned facts.
+An empty result while rebuilding cannot prove no match in the complete corpus. Return it as non-authoritative success, with rebuild state and retry information, never as authoritative empty success; `2026-11-20-search-readiness-contract-empty-while-updating-adr` (amended 2026-11-20) replaces the earlier structured refusal. Once a genuinely empty corpus is fully rebuilt and verified, empty success becomes authoritative. Combined search retains the readiness and partial outcomes of every selected source; adapters transport the same service-owned facts.
 
 Default immediate searches do not wait for completion. An explicitly requested bounded freshness wait still waits for certified completion of its captured target and obeys its own deadline. Paused, failed, or cancelled builds retain searchable new points with explicit incomplete state; retryability and remediation reflect the actual job state, not an invented completion estimate. A physical storage or model-compatibility failure can still make a source unavailable.
 
