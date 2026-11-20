@@ -14,7 +14,7 @@ from .._source_types import PublicSourceType
 from ..mcp._tools import _validated_search_result
 from ..serviceclient._search_transport import _build_http_search_payload
 from ..serviceclient._transport import DocumentSearchFilters, SearchCallRequest
-from ._cli_helpers import app, runner, try_http_search
+from ._cli_helpers import app, runner
 
 pytestmark = pytest.mark.unit
 
@@ -43,18 +43,31 @@ def test_client_sends_the_metadata_mapping_and_prefix_unchanged() -> None:
     assert payload["metadata_filters"] == {"lang": ["en", "de, at"]}
 
 
-def test_client_refuses_document_filters_on_a_code_search() -> None:
-    result = try_http_search(
-        "manual",
-        "code",
-        5,
-        1,
-        "/tmp/proj",
-        document_filters=DocumentSearchFilters(metadata_filters={"lang": ["en"]}),
+@pytest.mark.parametrize("source", [PublicSourceType.VAULT, PublicSourceType.CODE])
+def test_client_sends_document_filters_on_any_search_for_the_service_to_judge(
+    source: PublicSourceType,
+) -> None:
+    # Guard. Proven to fail: gating the document-filter copy in
+    # _build_http_search_payload on a document or combined source drops the
+    # filters here, failing the first assertion below.
+    payload = _build_http_search_payload(
+        SearchCallRequest(
+            query="manual",
+            search_type=source.value,
+            top_k=5,
+            port=1,
+            project_root="/tmp/proj",
+            document_filters=DocumentSearchFilters(
+                source_path="docs/manual.pdf",
+                metadata_filters={"lang": ["en"]},
+            ),
+        ),
+        source,
+        freshness_policy="immediate",
+        freshness_wait_seconds=None,
     )
-    assert isinstance(result, dict)
-    assert result["ok"] is False
-    assert result["error"] == "invalid_filter_for_search_type"
+    assert payload.get("metadata_filters") == {"lang": ["en"]}
+    assert payload.get("source_path") == "docs/manual.pdf"
 
 
 @pytest.mark.parametrize("code", ["unknown_filter_key", "extractor_prefix_unbounded"])

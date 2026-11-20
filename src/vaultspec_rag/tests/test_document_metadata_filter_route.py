@@ -97,3 +97,31 @@ def test_wrong_json_shape_is_a_400_before_the_search_runs(
     response = _search(declared_root, {"type": "document", **body})
     assert response.status_code == 400
     assert message in str(response.json())
+
+
+@pytest.mark.parametrize("search_type", ["vault", "code"])
+@pytest.mark.parametrize(
+    ("body", "flag"),
+    [
+        ({"source_path": "docs/manual.pdf"}, "--source-path"),
+        ({"extractor_id": "pdf.text"}, "--extractor-id"),
+        ({"extractor_version": "1"}, "--extractor-version"),
+        ({"locator_kind": "page"}, "--locator-kind"),
+        ({"extractor_prefix": "pdf"}, "--extractor-prefix"),
+        ({"metadata_filters": {"lang": ["en"]}}, "--meta"),
+    ],
+)
+def test_document_filter_on_a_vault_or_code_search_is_a_400(
+    declared_root: Path, search_type: str, body: dict[str, object], flag: str
+) -> None:
+    # Guard. Proven to fail: removing the _refuse_inapplicable_document_filters
+    # call from _execute_search_request lets the vault and code branches drop
+    # the filter and run the search, which this unindexed root answers 503,
+    # failing the status assertion below.
+    response = _search(declared_root, {"type": search_type, **body})
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["error"] == "invalid_filter_for_search_type"
+    assert payload["filter_kind"] == "document"
+    assert payload["offending"] == [flag]

@@ -316,11 +316,14 @@ class TestTypeScoping:
             SearchFilterOptions(metadata_filters={"lang": ["en"]}),
         ],
     )
-    def test_document_only_filters_are_refused_on_code_search(
-        self, options: SearchFilterOptions
+    @pytest.mark.parametrize("search_type", ["vault", "code"])
+    def test_document_only_filters_are_refused_on_vault_and_code_search(
+        self, options: SearchFilterOptions, search_type: str
     ) -> None:
+        # Guard. Proven to fail: dropping the final document-kind rejection in
+        # validate_search_filters lets the call return, so pytest.raises fails.
         with pytest.raises(InvalidFilterForSearchTypeError) as caught:
-            validate_search_filters("code", options)
+            validate_search_filters(search_type, options)
         assert caught.value.filter_kind == "document"
         assert caught.value.error_code == "invalid_filter_for_search_type"
 

@@ -115,6 +115,8 @@ comma-separated list and match any member. A prefix matches whole dotted
 segments: `--extractor-prefix pdf` matches `pdf` and `pdf.text`, not `pdfx`.
 A collection holding more than 1024 distinct extractor ids refuses a prefix
 filter with `extractor_prefix_unbounded`; filter by `--extractor-id` there.
+These filters apply to `--type document` and `--type combined` only; on a vault
+or code search they are refused with `invalid_filter_for_search_type`.
 
 `--meta` filters on metadata a preprocessing hook emits, for keys the project
 declares filterable (see

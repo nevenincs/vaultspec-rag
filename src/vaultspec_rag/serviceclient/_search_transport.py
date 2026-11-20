@@ -108,8 +108,9 @@ def _build_http_search_payload(
                 "intent": request.intent,
             }
         )
-    if source in {PublicSourceType.DOCUMENT, PublicSourceType.COMBINED}:
-        selected_filters.update(request.document_filters or {})
+    # Sent whatever the source: the service owns the refusal of a document
+    # filter on a search that cannot apply it.
+    selected_filters.update(request.document_filters or {})
     for key, value in selected_filters.items():
         if value is not None:
             payload[key] = value
@@ -354,18 +355,6 @@ def _validate_search_request(
                 exclude_paths=request.exclude_paths,
                 dedup_locales=request.dedup_locales,
                 prefer=request.prefer,
-                source_path=(request.document_filters or {}).get("source_path"),
-                extractor_id=(request.document_filters or {}).get("extractor_id"),
-                extractor_version=(request.document_filters or {}).get(
-                    "extractor_version"
-                ),
-                locator_kind=(request.document_filters or {}).get("locator_kind"),
-                extractor_prefix=(request.document_filters or {}).get(
-                    "extractor_prefix"
-                ),
-                metadata_filters=(request.document_filters or {}).get(
-                    "metadata_filters"
-                ),
             ),
             include_documents=request.include_documents,
         )

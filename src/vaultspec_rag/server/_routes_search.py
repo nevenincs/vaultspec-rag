@@ -68,7 +68,11 @@ from ..search._result_shaping import (
     PHASE_QDRANT,
     PHASE_RERANK,
 )
-from ..search._validation import InvalidFilterForSearchTypeError
+from ..search._validation import (
+    InvalidFilterForSearchTypeError,
+    SearchFilterOptions,
+    validate_search_filters,
+)
 from ..service import RegistryFullError, ServiceRegistry
 from ..service_quiesce import QuiesceAdmissionClosedError
 from . import _search_route_availability as route_availability
@@ -529,10 +533,33 @@ def _dispatch_public_search(
     return combined.results, timings, combined
 
 
+def _refuse_inapplicable_document_filters(request: SearchRequest) -> None:
+    """Hand every document filter the body carries to the search domain.
+
+    The vault and code searches take no document filters, so without this a
+    filter sent on one of them would be dropped and the caller would get a
+    wider answer than asked for, with nothing to say so.
+    """
+    payload = request.payload
+    validate_search_filters(
+        request.search_type,
+        SearchFilterOptions(
+            source_path=payload.get("source_path"),
+            extractor_id=payload.get("extractor_id"),
+            extractor_version=payload.get("extractor_version"),
+            locator_kind=payload.get("locator_kind"),
+            extractor_prefix=payload.get("extractor_prefix"),
+            metadata_filters=payload.get("metadata_filters"),
+        ),
+        include_documents=payload.get("include_documents", True),
+    )
+
+
 def _execute_search_request(
     request: SearchRequest, registry: ServiceRegistry
 ) -> dict[str, object]:
     """Execute and serialize one search off the event loop."""
+    _refuse_inapplicable_document_filters(request)
     compute_wait_started = time.perf_counter()
     ticket = registry.acquire_compute_ticket()
     compute_ticket_wait_seconds = time.perf_counter() - compute_wait_started
