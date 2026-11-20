@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict
 
 from ..config._types import PreprocessMode
 from ..index_profiles import StorageBackend
+from ..watcher_intent import AutoUpdateState
 from ._features import PreprocessHookState, TypesafeState
 from ._installation import ComputeCapability, HardwarePresence, InstallRole
 from ._service import DegradationReason, HealthVerdict
@@ -111,6 +112,8 @@ class RootFeatures(_Wire):
     preprocess_hooks: PreprocessHookState
     preprocess_rule_count: int
     watcher_running: bool
+    # None from a service that does not report the operator's update intent.
+    auto_update: AutoUpdateState | None = None
 
 
 class HealthReport(_Wire):

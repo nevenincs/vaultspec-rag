@@ -1351,6 +1351,7 @@ def get_service_state(
     from .indexer._preprocess_config import root_hook_state
     from .operator_state._models import RootFeatures, ServiceStateReport
     from .qdrant_runtime._supervise import runtime_state
+    from .watcher_intent import auto_update_state
 
     hooks, rule_count = root_hook_state(root, cfg.preprocess_mode)
     report = ServiceStateReport(
@@ -1360,6 +1361,7 @@ def get_service_state(
             preprocess_hooks=hooks,
             preprocess_rule_count=rule_count,
             watcher_running=str(root) in watching,
+            auto_update=auto_update_state(root),
         ),
         index=index_data,
         projects=projects_data,

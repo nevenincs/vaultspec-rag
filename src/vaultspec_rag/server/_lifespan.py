@@ -519,6 +519,11 @@ async def _start_components(
 
     # Wire watcher lifecycle into registry so close_project() stops watchers
     registry._on_close_project = _m._stop_watcher  # pyright: ignore[reportPrivateUsage]
+    # Read the operators' per-root update stops once, off the event loop, so
+    # the per-request watcher check is a dict probe rather than file I/O.
+    from ..watcher_intent import load_auto_update_store
+
+    await _run_in_thread(load_auto_update_store)
 
     # Load models (raises RuntimeError if no CUDA via _check_rag_deps). This is
     # the longest cold-start stage - every pinned weight file is hashed before
