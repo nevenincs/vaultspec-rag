@@ -67,7 +67,13 @@ from ._run_ledger_models import (
 )
 from ._source_file import source_file_stat
 from ._support_budget import CodeSupportBudget
-from ._vault_prep import IndexResult
+from ._vault_prep import (
+    IndexResult,
+    IndexRunCounts,
+    IndexRunTelemetry,
+    finished_index_result,
+    index_run_started,
+)
 
 if TYPE_CHECKING:
     import threading
@@ -340,36 +346,25 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             checkpoint, reporter=reporter
         ):
             return None
-        return IndexResult(
-            total=self.store.count_code(),
-            added=0,
-            updated=0,
-            removed=0,
-            duration_ms=int((time.time() - started_at) * 1000),
-            device=self.model.device,
-            files=0,
-            preprocess_ok=self._prep_ok,
-            preprocess_skipped=len(self._prep_skips),
-            preprocess_failures=list(self._prep_skips),
-            reuse=self._reuse_snapshot(),
-            drift=self._lifecycle.drift_snapshot(),
-        )
+        return self._run_result(started_at, IndexRunCounts())
 
-    def _unchanged_incremental_result(self, *, started_at: float) -> IndexResult:
-        """Return a mutation-free incremental result without publishing metadata."""
-        return IndexResult(
+    def _run_result(
+        self,
+        started_at: float,
+        counts: IndexRunCounts,
+    ) -> IndexResult:
+        """Return this run's result with the run's preprocess, reuse and drift."""
+        return finished_index_result(
+            started_at,
+            counts,
+            IndexRunTelemetry(
+                preprocess_ok=self._prep_ok,
+                preprocess_failures=self._prep_skips,
+                reuse=self._reuse_snapshot(),
+                drift=self._lifecycle.drift_snapshot(),
+            ),
+            model=self.model,
             total=self.store.count_code(),
-            added=0,
-            updated=0,
-            removed=0,
-            duration_ms=int((time.time() - started_at) * 1000),
-            device=self.model.device,
-            files=0,
-            preprocess_ok=self._prep_ok,
-            preprocess_skipped=len(self._prep_skips),
-            preprocess_failures=list(self._prep_skips),
-            reuse=self._reuse_snapshot(),
-            drift=self._lifecycle.drift_snapshot(),
         )
 
     def _pipeline_chunk_and_embed(
@@ -651,7 +646,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         """
         run_control = execution.run_control
         authority = execution.authority
-        start = time.time()
+        start = index_run_started()
         paths = self._prepare_full_paths(
             policy,
             reporter,
@@ -812,23 +807,16 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             )
         run_control.checkpoint()
 
-        duration_ms = int((time.time() - start) * 1000)
-        return IndexResult(
-            total=self.store.count_code(),
-            added=total_chunks,
-            updated=0,
-            # Mirror VaultIndexer.full_index - surface the post-stream
-            # purge count so MCP / CLI clients can observe how many
-            # stale chunks were swept (#68).
-            removed=len(stale_ids),
-            duration_ms=duration_ms,
-            device=self.model.device,
-            files=len(paths),
-            preprocess_ok=self._prep_ok,
-            preprocess_skipped=len(self._prep_skips),
-            preprocess_failures=list(self._prep_skips),
-            reuse=self._reuse_snapshot(),
-            drift=self._lifecycle.drift_snapshot(),
+        return self._run_result(
+            start,
+            IndexRunCounts(
+                added=total_chunks,
+                # Mirror VaultIndexer.full_index - surface the post-stream
+                # purge count so MCP / CLI clients can observe how many
+                # stale chunks were swept (#68).
+                removed=len(stale_ids),
+                files=len(paths),
+            ),
         )
 
     def incremental_index(
@@ -946,7 +934,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                 execution=execution,
             )
 
-        start = time.time()
+        start = index_run_started()
         self._begin_preprocess_run(policy, run_control=run_control)
         run_control.checkpoint()
         from .._publication_state import (
@@ -986,7 +974,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             )
         )
         if not attempted_paths:
-            return self._unchanged_incremental_result(started_at=start)
+            return self._run_result(start, IndexRunCounts())
         limits = self._consumer_pipeline.resolve_limits()
         checkpoint = self._open_incremental_checkpoint(
             policy=policy,
@@ -1033,19 +1021,14 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                         run_control=run_control,
                     )
                 )
-                result = IndexResult(
-                    total=self.store.count_code(),
-                    added=len(new_files),
-                    updated=len(modified_files),
-                    removed=len(deleted_files),
-                    duration_ms=int((time.time() - start) * 1000),
-                    device=self.model.device,
-                    files=len(to_index),
-                    preprocess_ok=self._prep_ok,
-                    preprocess_skipped=len(self._prep_skips),
-                    preprocess_failures=list(self._prep_skips),
-                    reuse=self._reuse_snapshot(),
-                    drift=self._lifecycle.drift_snapshot(),
+                result = self._run_result(
+                    start,
+                    IndexRunCounts(
+                        added=len(new_files),
+                        updated=len(modified_files),
+                        removed=len(deleted_files),
+                        files=len(to_index),
+                    ),
                 )
             return result
 
@@ -1224,7 +1207,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
     ) -> IndexResult:
         """Reconcile only changed paths through the weighted pipeline."""
         run_control = execution.run_control
-        start = time.time()
+        start = index_run_started()
         self._begin_preprocess_run(policy, run_control=run_control)
         run_control.checkpoint()
         from .._publication_state import acquire_publication_snapshot
@@ -1271,7 +1254,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             )
         )
         if not attempted_paths:
-            return self._unchanged_incremental_result(started_at=start)
+            return self._run_result(start, IndexRunCounts())
         limits = self._consumer_pipeline.resolve_limits()
         checkpoint = self._open_incremental_checkpoint(
             policy=policy,
@@ -1317,19 +1300,12 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                     run_control=run_control,
                 )
             )
-            total = self.store.count_code()
-            duration_ms = int((time.time() - start) * 1000)
-            return IndexResult(
-                total=total,
-                added=len(new_files),
-                updated=len(modified_files),
-                removed=len(delete_files.intersection(previous_metadata)),
-                duration_ms=duration_ms,
-                device=self.model.device,
-                files=len(to_index),
-                preprocess_ok=self._prep_ok,
-                preprocess_skipped=len(self._prep_skips),
-                preprocess_failures=list(self._prep_skips),
-                reuse=self._reuse_snapshot(),
-                drift=self._lifecycle.drift_snapshot(),
+            return self._run_result(
+                start,
+                IndexRunCounts(
+                    added=len(new_files),
+                    updated=len(modified_files),
+                    removed=len(delete_files.intersection(previous_metadata)),
+                    files=len(to_index),
+                ),
             )

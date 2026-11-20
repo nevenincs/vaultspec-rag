@@ -10,7 +10,6 @@ from __future__ import annotations
 import contextlib
 import functools
 import logging
-import time
 from typing import TYPE_CHECKING
 
 from vaultspec_core.vaultcore import (
@@ -38,7 +37,13 @@ from ._vault_incremental import (
     classify_documents,
     controlled_phase,
 )
-from ._vault_prep import IndexResult
+from ._vault_prep import (
+    IndexResult,
+    IndexRunCounts,
+    IndexRunTelemetry,
+    finished_index_result,
+    index_run_started,
+)
 
 if TYPE_CHECKING:
     import pathlib
@@ -282,7 +287,7 @@ class VaultIndexer(VaultIncrementalMixin):
         """
         from ..config._settings import get_config
 
-        start = time.time()
+        start = index_run_started()
         slice_size = max(1, get_config().embedding_batch_size)
 
         with controlled_phase(reporter, run_control, "scan vault", None):
@@ -430,18 +435,20 @@ class VaultIndexer(VaultIncrementalMixin):
                 reporter.advance(1)
         run_control.checkpoint()
 
-        duration_ms = int((time.time() - start) * 1000)
-        return IndexResult(
+        return finished_index_result(
+            start,
+            IndexRunCounts(
+                added=len(docs),
+                # Report the post-stream stale-purge count so MCP / CLI /
+                # watcher observability reflects the rows actually deleted
+                # by the failure-safe rebuild (#68).
+                removed=len(stale_ids),
+            ),
+            IndexRunTelemetry(
+                reuse=reuse_stats.snapshot() if reuse_stats is not None else None,
+            ),
+            model=self.model,
             total=len(docs),
-            added=len(docs),
-            updated=0,
-            # Report the post-stream stale-purge count so MCP / CLI /
-            # watcher observability reflects the rows actually deleted
-            # by the failure-safe rebuild (#68).
-            removed=len(stale_ids),
-            duration_ms=duration_ms,
-            device=self.model.device,
-            reuse=reuse_stats.snapshot() if reuse_stats is not None else None,
         )
 
     def incremental_index(
@@ -541,7 +548,7 @@ class VaultIndexer(VaultIncrementalMixin):
 
         from ..config._settings import get_config
 
-        start = time.time()
+        start = index_run_started()
         slice_size = max(1, get_config().embedding_batch_size)
 
         from .._publication_state import (
@@ -653,17 +660,20 @@ class VaultIndexer(VaultIncrementalMixin):
             reporter.advance(1)
 
         run_control.checkpoint()
-        duration_ms = int((time.time() - start) * 1000)
-        return IndexResult(
+        return finished_index_result(
+            start,
+            IndexRunCounts(
+                added=len(new_ids),
+                updated=outcome.re_embedded,
+                payload_updated=outcome.payload_updated,
+                removed=len(deleted_ids),
+                files=len(current_docs),
+            ),
+            IndexRunTelemetry(
+                reuse=outcome.reuse.snapshot() if outcome.reuse is not None else None,
+            ),
+            model=self.model,
             total=total,
-            added=len(new_ids),
-            updated=outcome.re_embedded,
-            payload_updated=outcome.payload_updated,
-            removed=len(deleted_ids),
-            duration_ms=duration_ms,
-            device=self.model.device,
-            files=len(current_docs),
-            reuse=outcome.reuse.snapshot() if outcome.reuse is not None else None,
         )
 
     def _prepare_collection(

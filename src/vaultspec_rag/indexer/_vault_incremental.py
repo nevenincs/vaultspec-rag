@@ -14,7 +14,6 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
-import time
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -33,7 +32,15 @@ from ._streaming_types import VaultStreamRequest
 from ._vault_checkpoint import VaultRunCheckpoint
 from ._vault_fingerprint import VaultDelta
 from ._vault_identity import vault_document_id, vault_relative_path
-from ._vault_prep import IndexResult, prepare_document, split_document
+from ._vault_prep import (
+    IndexResult,
+    IndexRunCounts,
+    IndexRunTelemetry,
+    finished_index_result,
+    index_run_started,
+    prepare_document,
+    split_document,
+)
 
 if TYPE_CHECKING:
     import pathlib
@@ -615,7 +622,7 @@ class VaultIncrementalMixin:
         """
         from ..config._settings import get_config
 
-        start = time.time()
+        start = index_run_started()
         slice_size = max(1, get_config().embedding_batch_size)
         docs_dir = self.root_dir / get_config().docs_dir
         run_control.checkpoint()
@@ -734,17 +741,20 @@ class VaultIncrementalMixin:
             reporter.advance(1)
 
         run_control.checkpoint()
-        duration_ms = int((time.time() - start) * 1000)
-        return IndexResult(
+        return finished_index_result(
+            start,
+            IndexRunCounts(
+                added=len(new_ids),
+                updated=outcome.re_embedded,
+                payload_updated=outcome.payload_updated,
+                removed=len(delete_ids),
+                files=len(changed_paths)
+                if isinstance(changed_paths, list)
+                else 0,  # Approximate
+            ),
+            IndexRunTelemetry(
+                reuse=outcome.reuse.snapshot() if outcome.reuse is not None else None,
+            ),
+            model=self.model,
             total=total,
-            added=len(new_ids),
-            updated=outcome.re_embedded,
-            payload_updated=outcome.payload_updated,
-            removed=len(delete_ids),
-            duration_ms=duration_ms,
-            device=self.model.device,
-            files=len(changed_paths)
-            if isinstance(changed_paths, list)
-            else 0,  # Approximate
-            reuse=outcome.reuse.snapshot() if outcome.reuse is not None else None,
         )

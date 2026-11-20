@@ -61,10 +61,16 @@ from ._streaming import (
     execute_store_mutation,
 )
 from ._streaming_types import DocumentSliceRequest, DocumentSliceStreamRequest
-from ._vault_prep import IndexResult
+from ._vault_prep import (
+    IndexResult,
+    IndexRunCounts,
+    IndexRunTelemetry,
+    finished_index_result,
+    index_run_started,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Iterable, Mapping, Sequence
 
     from .._store_models import DocumentChunk
     from ..embeddings import EmbeddingModel
@@ -243,20 +249,6 @@ class _DocumentSliceWriteRequest:
     run_control: RunControl
     reuse: DonorReuseContext | None = None
     release_cache: bool = True
-
-
-@dataclass(frozen=True, slots=True)
-class _DocumentResultDetails:
-    """Measured output for one document indexing attempt."""
-
-    started: float
-    added: int
-    updated: int
-    removed: int
-    files: int
-    preprocess_ok: int
-    failures: list[str]
-    non_string_metadata: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -916,27 +908,28 @@ class DocumentIndexer:
             reporter.advance(1)
         finally:
             reporter.phase_end()
-        return self._finish_result(
-            _DocumentResultDetails(started, 0, 0, 0, 0, 0, []),
-        )
+        return self._finish_result(started, IndexRunCounts())
 
     def _finish_result(
         self,
-        details: _DocumentResultDetails,
+        started: float,
+        counts: IndexRunCounts,
+        *,
+        preprocess_ok: int = 0,
+        failures: Sequence[str] = (),
+        non_string_metadata: Mapping[str, int] | None = None,
     ) -> IndexResult:
-        return IndexResult(
+        return finished_index_result(
+            started,
+            counts,
+            IndexRunTelemetry(
+                preprocess_ok=preprocess_ok,
+                preprocess_failures=failures,
+                metadata_non_string=dict(non_string_metadata or {}),
+                reuse=self._reuse_snapshot(),
+            ),
+            model=self.model,
             total=self.store.count_document(),
-            added=details.added,
-            updated=details.updated,
-            removed=details.removed,
-            duration_ms=int((time.monotonic() - details.started) * 1000),
-            device=str(getattr(self.model, "device", "unknown")),
-            files=details.files,
-            preprocess_ok=details.preprocess_ok,
-            preprocess_skipped=len(details.failures),
-            preprocess_failures=details.failures,
-            metadata_non_string=details.non_string_metadata,
-            reuse=self._reuse_snapshot(),
         )
 
     def _publish_full_paths(
@@ -1200,7 +1193,7 @@ class DocumentIndexer:
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Reconcile the complete explicitly routed document set."""
-        started = time.monotonic()
+        started = index_run_started()
         run_control.checkpoint()
         if authority is RunAuthority.REBUILD:
             from ._run_ledger_models import index_run_ledger_path
@@ -1371,16 +1364,16 @@ class DocumentIndexer:
                 )
                 publish_checkpoint(checkpoint, self.root_dir, self._publish_readiness)
         return self._finish_result(
-            _DocumentResultDetails(
-                started,
-                counts.added,
-                counts.updated,
-                removed,
-                len(paths),
-                counts.preprocess_ok,
-                failures,
-                dict(request.non_string_metadata),
+            started,
+            IndexRunCounts(
+                added=counts.added,
+                updated=counts.updated,
+                removed=removed,
+                files=len(paths),
             ),
+            preprocess_ok=counts.preprocess_ok,
+            failures=failures,
+            non_string_metadata=request.non_string_metadata,
         )
 
     def incremental_index(
@@ -1393,7 +1386,7 @@ class DocumentIndexer:
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Reconcile changed documents, or discover changes when scope is omitted."""
-        started = time.monotonic()
+        started = index_run_started()
         if changed_paths is not None:
             # A scoped run bypasses discovery, but the creates, deletes, and
             # renames it carries are membership truth a cached walk cannot
@@ -1580,14 +1573,14 @@ class DocumentIndexer:
                     )
                 publish_checkpoint(checkpoint, self.root_dir, self._publish_readiness)
             return self._finish_result(
-                _DocumentResultDetails(
-                    started,
-                    counts.added,
-                    counts.updated,
-                    counts.removed,
-                    len(selected),
-                    counts.preprocess_ok,
-                    failures,
-                    dict(request.non_string_metadata),
+                started,
+                IndexRunCounts(
+                    added=counts.added,
+                    updated=counts.updated,
+                    removed=counts.removed,
+                    files=len(selected),
                 ),
+                preprocess_ok=counts.preprocess_ok,
+                failures=failures,
+                non_string_metadata=request.non_string_metadata,
             )

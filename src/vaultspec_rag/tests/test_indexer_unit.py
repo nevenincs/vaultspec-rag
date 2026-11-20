@@ -133,6 +133,60 @@ class TestIndexResult:
         assert result.total == 100
         assert result.device == "cuda"
 
+    def test_duration_survives_a_wall_clock_step(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A run's duration is elapsed time, untouched by a system clock step.
+
+        The wall clock is stepped back an hour between start and finish while
+        2.5 s pass on the monotonic clock. Mutation: measuring either end of
+        the run with ``time.time`` in ``_vault_prep`` reports a negative
+        duration and fails the equality below.
+        """
+        from ..embeddings import EmbeddingModel
+        from ..indexer import _vault_prep
+
+        monotonic = iter([100.0, 102.5])
+        wall = iter([5_000.0, 1_400.0])
+        monkeypatch.setattr(_vault_prep.time, "monotonic", lambda: next(monotonic))
+        monkeypatch.setattr(_vault_prep.time, "time", lambda: next(wall))
+        model = EmbeddingModel.__new__(EmbeddingModel)
+        model._device = "cuda"
+
+        started = _vault_prep.index_run_started()
+        result = _vault_prep.finished_index_result(
+            started,
+            _vault_prep.IndexRunCounts(added=2),
+            _vault_prep.IndexRunTelemetry(),
+            model=model,
+            total=2,
+        )
+
+        assert result.duration_ms == 2500
+
+    def test_skip_count_is_derived_from_the_failures(self) -> None:
+        """Every source reports one skip per listed preprocess failure."""
+        from ..embeddings import EmbeddingModel
+        from ..indexer import _vault_prep
+
+        model = EmbeddingModel.__new__(EmbeddingModel)
+        model._device = "cuda"
+
+        result = _vault_prep.finished_index_result(
+            _vault_prep.index_run_started(),
+            _vault_prep.IndexRunCounts(),
+            _vault_prep.IndexRunTelemetry(
+                preprocess_failures=("a.pdf: timeout", "b.pdf: refused")
+            ),
+            model=model,
+            total=0,
+        )
+
+        assert result.preprocess_skipped == 2
+        assert result.preprocess_failures == ["a.pdf: timeout", "b.pdf: refused"]
+        assert result.device == "cuda"
+        assert result.drift is None
+
 
 class TestPrepareDocument:
     def test_prepares_valid_document(self, synthetic_vault: CorpusManifest) -> None:
