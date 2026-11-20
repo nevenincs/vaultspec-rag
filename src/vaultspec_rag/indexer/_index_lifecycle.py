@@ -77,6 +77,7 @@ def preprocess_completion_fields(result: IndexResult) -> dict[str, object]:
         "files": result.files,
         "preprocess_ok": result.preprocess_ok,
         "preprocess_skipped": result.preprocess_skipped,
+        "metadata_non_string": dict(result.metadata_non_string),
     }
 
 

@@ -1125,6 +1125,8 @@ def _collect_index_rows(
                 preprocess_skipped=result.preprocess_skipped,
                 preprocess_failures=result.preprocess_failures,
             )
+        if source == "document":
+            row["metadata_non_string"] = dict(result.metadata_non_string)
         if result.reuse is not None:
             row["reuse"] = result.reuse
         rows.append(row)

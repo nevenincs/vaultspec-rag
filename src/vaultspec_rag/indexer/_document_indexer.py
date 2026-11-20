@@ -12,6 +12,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypedDict, Unpack, cast
 
+from .. import store_schema
 from .._job_errors import JobError, JobErrorKind
 from .._source_types import PublicSourceType
 from ..index_profiles import get_index_support_profile
@@ -39,6 +40,7 @@ from ._index_lifecycle import (
     preprocess_completion_fields,
     run_index_lifecycle,
 )
+from ._preprocess_config import load_filterable_metadata
 from ._preprocess_document_batch import DocumentBatchPreprocessor
 from ._route_migration import reconcile_generation_storage, reconcile_scoped_routes
 from ._run_ledger_models import (
@@ -221,6 +223,10 @@ class _DocumentPublishRequest:
     checkpoint: DocumentRunCheckpoint
     reporter: ProgressReporter
     run_control: RunControl
+    metadata_keys: tuple[store_schema.DeclaredMetadataKey, ...] = ()
+    #: Per declared key, the units this run published whose value of that key
+    #: no keyword index can match. Filled as files publish.
+    non_string_metadata: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -250,6 +256,7 @@ class _DocumentResultDetails:
     files: int
     preprocess_ok: int
     failures: list[str]
+    non_string_metadata: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,6 +285,47 @@ class _DocumentIndexerConfig:
     extra_excludes: list[str] | None = None
     content_policy: RootContentPolicy | None = None
     publish_readiness: Callable[[pathlib.Path, str], object] | None = None
+
+
+def _note_unmatchable_metadata(
+    chunks: list[DocumentChunk],
+    declared: tuple[store_schema.DeclaredMetadataKey, ...],
+    unmatchable: dict[str, set[int]],
+) -> None:
+    """Note, per declared key, the units whose value no keyword index matches.
+
+    Units, not chunks: one unit split into several chunks carries one value.
+    """
+    if not declared:
+        return
+    for chunk in chunks:
+        for key in store_schema.non_string_metadata_keys(
+            declared,
+            unit_metadata=chunk.payload.unit_metadata.materialize(),
+            document_metadata=chunk.payload.document_metadata.materialize(),
+        ):
+            unmatchable.setdefault(key, set()).add(chunk.payload.unit_ordinal)
+
+
+def _record_unmatchable_metadata(
+    rel_path: str,
+    unmatchable: dict[str, set[int]],
+    totals: dict[str, int],
+) -> None:
+    """Warn about one published file's unmatchable values and add to *totals*.
+
+    The value is stored unchanged and the file stays indexed; those units just
+    never match a filter on that key, so the count shows the extractor defect.
+    """
+    for key, units in sorted(unmatchable.items()):
+        logger.warning(
+            "%s: %d unit(s) hold a non-string value for declared metadata key "
+            "%r; they are indexed but never match a filter on that key",
+            rel_path,
+            len(units),
+            key,
+        )
+        totals[key] = totals.get(key, 0) + len(units)
 
 
 class DocumentIndexer:
@@ -647,6 +695,7 @@ class DocumentIndexer:
             )
         )
         point_ids: list[str] = []
+        unmatchable: dict[str, set[int]] = {}
         request.reporter.phase_start("embed + upsert document chunks", None)
         writer = _SliceWriter(name="document-slice-writer")
         try:
@@ -658,6 +707,9 @@ class DocumentIndexer:
                     request.run_control.checkpoint()
                     following = next(iterator, None)
                     selected = list(weighted.chunks)
+                    _note_unmatchable_metadata(
+                        selected, request.metadata_keys, unmatchable
+                    )
                     request.budget.reserve(
                         len(selected),
                         weighted.estimated_bytes,
@@ -712,6 +764,9 @@ class DocumentIndexer:
                 content_hash=result.content_hash,
             )
             return None, 0, f"{result.rel_path}: document produced no decodable content"
+        _record_unmatchable_metadata(
+            result.rel_path, unmatchable, request.non_string_metadata
+        )
         return (
             DocumentFileMetadata(
                 result.rel_path,
@@ -880,6 +935,7 @@ class DocumentIndexer:
             preprocess_ok=details.preprocess_ok,
             preprocess_skipped=len(details.failures),
             preprocess_failures=details.failures,
+            metadata_non_string=details.non_string_metadata,
             reuse=self._reuse_snapshot(),
         )
 
@@ -1192,6 +1248,7 @@ class DocumentIndexer:
                         checkpoint=checkpoint,
                         reporter=reporter,
                         run_control=run_control,
+                        metadata_keys=load_filterable_metadata(self.root_dir),
                     ),
                 ),
                 IndexLifecycleRequest(
@@ -1215,6 +1272,9 @@ class DocumentIndexer:
         request: _DocumentPublishRequest,
     ) -> IndexResult:
         """Locked implementation of :meth:`full_index`."""
+        # Before the store is touched, so its ensure creates the index of each
+        # declared key and drops the index of each key no longer declared.
+        self.store.declare_document_metadata_keys(request.metadata_keys)
         policy = request.policy
         checkpoint = request.checkpoint
         reporter = request.reporter
@@ -1319,6 +1379,7 @@ class DocumentIndexer:
                 len(paths),
                 counts.preprocess_ok,
                 failures,
+                dict(request.non_string_metadata),
             ),
         )
 
@@ -1451,6 +1512,7 @@ class DocumentIndexer:
                         checkpoint=checkpoint,
                         reporter=reporter,
                         run_control=run_control,
+                        metadata_keys=load_filterable_metadata(self.root_dir),
                     ),
                     previous_files=previous_files,
                 ),
@@ -1476,6 +1538,7 @@ class DocumentIndexer:
         previous_files: dict[str, DocumentFileMetadata],
     ) -> IndexResult:
         """Locked implementation of :meth:`incremental_index`."""
+        self.store.declare_document_metadata_keys(request.metadata_keys)
         policy = request.policy
         checkpoint = request.checkpoint
         reporter = request.reporter
@@ -1525,5 +1588,6 @@ class DocumentIndexer:
                     len(selected),
                     counts.preprocess_ok,
                     failures,
+                    dict(request.non_string_metadata),
                 ),
             )

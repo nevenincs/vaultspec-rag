@@ -278,3 +278,109 @@ def test_document_collection_appears_in_real_snapshot_manifest(
         assert "metadata_files" not in manifest
     finally:
         store.close()
+
+
+def _metadata_chunk(
+    unit_ordinal: int, extractor_id: str, lang: object
+) -> DocumentChunk:
+    content_fingerprint = f"metadata-{unit_ordinal}"
+    point_id = document_point_id(
+        source_path="inputs/catalog.bin",
+        unit_ordinal=unit_ordinal,
+        content_fingerprint=content_fingerprint,
+        locator=None,
+    )
+    return DocumentChunk(
+        point_id,
+        DocumentPayload(
+            "inputs/catalog.bin",
+            unit_ordinal,
+            content_fingerprint,
+            f"Catalog unit {unit_ordinal}.",
+            unit_metadata=DocumentMetadata.from_mapping({"lang": lang}),
+            extractor_id=extractor_id,
+            extractor_version="1",
+        ),
+        vector=[0.1, 0.2, 0.3, 0.4],
+    )
+
+
+_LANG = store_schema.DeclaredMetadataKey("lang", "unit")
+
+
+def _assert_metadata_filters(store: VaultStore) -> None:
+    """Facet the extractor family and match any-of on a declared key."""
+    from ..._store_search import HybridSearchRequest
+
+    store.declare_document_metadata_keys([_LANG])
+    store.upsert_document_content_chunks(
+        [
+            _metadata_chunk(0, "pdf.text", "en"),
+            _metadata_chunk(1, "pdf.ocr", ["de", "fr"]),
+            _metadata_chunk(2, "pdfx", 3),
+        ],
+        write_policy=None,
+    )
+    assert sorted(store.document_extractor_ids(10)) == ["pdf.ocr", "pdf.text", "pdfx"]
+
+    def matched(filters: dict[str, tuple[str, ...]]) -> set[str]:
+        rows = store.hybrid_search_document(
+            HybridSearchRequest(
+                query_vector=[0.1, 0.2, 0.3, 0.4],
+                query_text="catalog",
+                document_filters=filters,
+                limit=10,
+            )
+        )
+        return {str(row["extractor_id"]) for row in rows}
+
+    assert matched({"unit_metadata.lang": ("fr", "en")}) == {"pdf.text", "pdf.ocr"}
+    # The number is stored unchanged and matches no string filter.
+    assert matched({"unit_metadata.lang": ("3",)}) == set()
+    assert matched({"extractor_id": ("pdf.text", "pdf.ocr")}) == {
+        "pdf.text",
+        "pdf.ocr",
+    }
+    assert matched({"extractor_id": ()}) == set()
+
+
+def test_document_metadata_filters_local(
+    document_local_mode: None,  # noqa: ARG001
+    tmp_path: Path,
+) -> None:
+    """Local mode has no payload indexes; filters and the facet scan instead."""
+    store = VaultStore(tmp_path, embedding_dim=4)
+    try:
+        _assert_metadata_filters(store)
+    finally:
+        store.close()
+
+
+def test_document_metadata_indexes_follow_the_declaration_server(
+    document_server_mode: QdrantSupervisor,  # noqa: ARG001
+    tmp_path: Path,
+) -> None:
+    """Declaring builds the nested index; undeclaring drops it, never the data."""
+    store = VaultStore(tmp_path, embedding_dim=4)
+    try:
+        _assert_metadata_filters(store)
+
+        def live_indexes() -> set[str]:
+            info = store.client.get_collection(store.DOCUMENT_TABLE_NAME)
+            return set(info.payload_schema or {})
+
+        assert "unit_metadata.lang" in live_indexes()
+        store.declare_document_metadata_keys([])
+        store.ensure_document_table()
+        live = live_indexes()
+        assert "unit_metadata.lang" not in live
+        assert set(store_schema.DOCUMENT_KEYWORD_INDEXES) <= live
+        assert store.count_document() == 3
+        rows, _offset = store.scroll_document_content(limit=10)
+        assert {str(row["payload"]["unit_metadata"].get("lang")) for row in rows} == {
+            "en",
+            "['de', 'fr']",
+            "3",
+        }
+    finally:
+        store.close()

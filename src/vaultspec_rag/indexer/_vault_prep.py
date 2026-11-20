@@ -93,6 +93,10 @@ class IndexResult:
             skipped this run (``on_error=skip``), surfaced so coverage gaps are
             never silent (#185).
         preprocess_failures: ``"rel_path: reason"`` for each skipped file.
+        metadata_non_string: Per declared filterable metadata key, the
+            document units this run indexed whose value of that key is not a
+            string or a list of strings. They stay indexed but never match a
+            filter on that key.
         reuse: Donor vector-reuse telemetry for this run (hit/miss counts,
             hit rate, estimated GPU seconds saved, donor availability), or
             ``None`` when reuse is disabled or the run never reached the
@@ -121,6 +125,7 @@ class IndexResult:
     preprocess_ok: int = 0
     preprocess_skipped: int = 0
     preprocess_failures: list[str] = field(default_factory=list)
+    metadata_non_string: dict[str, int] = field(default_factory=dict)
     reuse: dict[str, object] | None = None
     drift: dict[str, object] | None = None
     first_build: bool = False
