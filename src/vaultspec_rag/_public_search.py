@@ -158,6 +158,7 @@ def search_documents_timed(
         ),
     )
     root = pathlib.Path(request.root_dir).resolve()
+    _refuse_document_filters(root, request.query, request)
     active_registry = registry if registry is not None else get_registry()
     indexed_count = active_registry.document_chunk_count(root)
     if indexed_count == 0:
@@ -179,6 +180,34 @@ def search_documents_timed(
         raise RuntimeError("document search lease ended without a result")
     timings["indexed_count"] = float(indexed_count)
     return results, timings
+
+
+def _refuse_document_filters(
+    root: pathlib.Path,
+    query: str,
+    filters: DocumentSearchRequest | DocumentCombinedSearchFilters,
+) -> None:
+    """Refuse document filters the root cannot apply, before any count.
+
+    The answer must not depend on whether the collection holds points: an
+    undeclared key is refused on an empty index exactly as on a full one.
+    """
+    from .indexer._preprocess_config import load_filterable_metadata
+    from .search._parsing import parse_query
+    from .search._validation import DocumentFilterRequest, validate_document_filters
+
+    validate_document_filters(
+        DocumentFilterRequest(
+            source_path=filters.source_path,
+            extractor_id=filters.extractor_id,
+            extractor_version=filters.extractor_version,
+            locator_kind=filters.locator_kind,
+            extractor_prefix=filters.extractor_prefix,
+            metadata_filters=filters.metadata_filters,
+            inline=parse_query(query).filters,
+        ),
+        load_filterable_metadata(root),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -511,6 +540,8 @@ def search_combined_timed(
         include_documents=request.include_documents,
     )
     root = pathlib.Path(request.root_dir).resolve()
+    if request.include_documents:
+        _refuse_document_filters(root, request.query, request.document_filters)
     active_registry = registry if registry is not None else get_registry()
     counts, count_failures, source_facts, timings = _count_combined_domains(
         root, active_registry, include_documents=request.include_documents

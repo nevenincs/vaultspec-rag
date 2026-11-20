@@ -38,6 +38,8 @@ SEARCH_INPUT_FIELDS = frozenset(
         "only_domains",
         "include_domains",
         "intent",
+        "extractor_prefix",
+        "metadata_filters",
     }
 )
 

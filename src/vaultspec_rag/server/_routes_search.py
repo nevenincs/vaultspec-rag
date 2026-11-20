@@ -68,6 +68,7 @@ from ..search._result_shaping import (
     PHASE_QDRANT,
     PHASE_RERANK,
 )
+from ..search._validation import InvalidFilterForSearchTypeError
 from ..service import RegistryFullError, ServiceRegistry
 from ..service_quiesce import QuiesceAdmissionClosedError
 from . import _search_route_availability as route_availability
@@ -484,6 +485,8 @@ def _dispatch_public_search(
                 extractor_id=request.payload.get("extractor_id"),
                 extractor_version=request.payload.get("extractor_version"),
                 locator_kind=request.payload.get("locator_kind"),
+                extractor_prefix=request.payload.get("extractor_prefix"),
+                metadata_filters=request.payload.get("metadata_filters"),
             ),
             registry=registry,
         )
@@ -517,6 +520,8 @@ def _dispatch_public_search(
                 extractor_id=request.payload.get("extractor_id"),
                 extractor_version=request.payload.get("extractor_version"),
                 locator_kind=request.payload.get("locator_kind"),
+                extractor_prefix=request.payload.get("extractor_prefix"),
+                metadata_filters=request.payload.get("metadata_filters"),
             ),
         ),
         registry=registry,
@@ -978,6 +983,10 @@ async def _execute_search_route(
             total_seconds=total_seconds,
             availability_cause=None,
         )
+    except InvalidFilterForSearchTypeError as exc:
+        return _refused_filter_result(
+            exc, search_request, total_seconds=time.perf_counter() - started
+        )
     except (ApiException, ResponseHandlingException) as exc:
         total_seconds = time.perf_counter() - started
         return _complete_backend_unavailable(
@@ -1018,6 +1027,35 @@ async def _execute_search_route(
         availability_cause=(
             classification.availability_cause if classification is not None else None
         ),
+    )
+
+
+def _refused_filter_result(
+    exc: InvalidFilterForSearchTypeError,
+    search_request: SearchRequest,
+    *,
+    total_seconds: float,
+) -> SearchRouteResult:
+    """Answer a filter the search domain refused as the caller's error, 400.
+
+    Raised from the search itself because some refusals need the root's own
+    index, such as a metadata key the root does not declare.
+    """
+    _m.incr("search_total")
+    _m.observe("search_last_duration_seconds", total_seconds)
+    return SearchRouteResult(
+        result={
+            "ok": False,
+            "error": exc.error_code,
+            "message": str(exc),
+            "retryable": False,
+            "request_id": search_request.request_id,
+            "filter_kind": exc.filter_kind,
+            "offending": list(exc.offending_filters),
+        },
+        status_code=400,
+        total_seconds=total_seconds,
+        availability_cause=None,
     )
 
 

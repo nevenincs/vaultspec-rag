@@ -248,6 +248,40 @@ def resolve_document_filters(
         ExtractorPrefixUnboundedError: The collection holds more distinct
             extractor ids than a prefix may resolve against.
     """
+    conditions, prefixes = _static_conditions(request, declared)
+    if prefixes is not None:
+        kept = _extractor_prefix_values(prefixes, extractor_ids)
+        if "extractor_id" in conditions:
+            # Both name one field and conditions combine with AND, so the
+            # effective any-of set is their intersection.
+            allowed = set(kept)
+            kept = tuple(v for v in conditions["extractor_id"] if v in allowed)
+        conditions["extractor_id"] = kept
+    return conditions
+
+
+def validate_document_filters(
+    request: DocumentFilterRequest,
+    declared: Sequence[store_schema.DeclaredMetadataKey],
+) -> None:
+    """Refuse every document filter that can be judged without the index.
+
+    Run before a search counts the collection, so an empty or unbuilt index
+    refuses an undeclared key exactly as a populated one does. Only the
+    extractor-prefix bound needs the collection, and only resolution checks it.
+
+    Raises:
+        UnknownFilterKeyError: A metadata key the root does not declare.
+        InvalidFilterValueError: A value the key can never hold.
+    """
+    _static_conditions(request, declared)
+
+
+def _static_conditions(
+    request: DocumentFilterRequest,
+    declared: Sequence[store_schema.DeclaredMetadataKey],
+) -> tuple[dict[str, tuple[str, ...]], tuple[str, ...] | None]:
+    """Return the conditions known without the index, and any prefixes."""
     inline = dict(request.inline or {})
     explicit: dict[str, str | None] = {
         "source_path": request.source_path,
@@ -269,15 +303,12 @@ def resolve_document_filters(
         )
     _check_locator_kinds(conditions.get("locator_kind", ()))
     conditions.update(_metadata_conditions(request, inline, declared))
-    if request.extractor_prefix is not None:
-        kept = _extractor_prefix_values(request.extractor_prefix, extractor_ids)
-        if "extractor_id" in conditions:
-            # Both name one field and conditions combine with AND, so the
-            # effective any-of set is their intersection.
-            allowed = set(kept)
-            kept = tuple(v for v in conditions["extractor_id"] if v in allowed)
-        conditions["extractor_id"] = kept
-    return conditions
+    prefixes = (
+        None
+        if request.extractor_prefix is None
+        else _checked_prefixes(request.extractor_prefix)
+    )
+    return conditions, prefixes
 
 
 def _check_locator_kinds(kinds: Sequence[str]) -> None:
@@ -331,9 +362,7 @@ def _metadata_values(key: str, values: object) -> tuple[str, ...]:
     )
 
 
-def _extractor_prefix_values(
-    raw: str, extractor_ids: Callable[[int], Sequence[str]]
-) -> tuple[str, ...]:
+def _checked_prefixes(raw: str) -> tuple[str, ...]:
     prefixes = split_filter_values(raw)
     malformed = [p for p in prefixes if any(not part for part in p.split("."))]
     if malformed or not prefixes:
@@ -343,6 +372,12 @@ def _extractor_prefix_values(
             filter_kind="document",
             offending=malformed or [raw],
         )
+    return prefixes
+
+
+def _extractor_prefix_values(
+    prefixes: Sequence[str], extractor_ids: Callable[[int], Sequence[str]]
+) -> tuple[str, ...]:
     bound = store_schema.EXTRACTOR_ID_FACET_BOUND
     values = extractor_ids(bound + 1)
     if len(values) > bound:
