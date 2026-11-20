@@ -39,6 +39,7 @@ from ._index_lifecycle import (
     preprocess_completion_fields,
     run_index_lifecycle,
 )
+from ._preprocess_document_batch import DocumentBatchPreprocessor
 from ._route_migration import reconcile_generation_storage, reconcile_scoped_routes
 from ._run_ledger_models import (
     FETCH_BATCH,
@@ -576,18 +577,40 @@ class DocumentIndexer:
             document_chunk_overlap=policy.document_chunking.chunk_overlap_chars,
         )
 
+    @staticmethod
+    def _extractor_checkpoint(run_control: RunControl) -> Callable[[], None]:
+        """Build the no-progress check one extractor invocation polls."""
+        from ._run_policy import RunPolicy
+
+        extractor_policy = RunPolicy.from_config(run_control=run_control)
+        return lambda: extractor_policy.checkpoint("document extractor polling")
+
+    def _batch_preprocessor(
+        self,
+        paths: Iterable[pathlib.Path],
+        request: _DocumentPublishRequest,
+    ) -> DocumentBatchPreprocessor:
+        """Group this loop's batch-rule documents into one spawn per group."""
+        return DocumentBatchPreprocessor(
+            paths,
+            self.root_dir,
+            request.prep,
+            extractor_checkpoint=lambda: self._extractor_checkpoint(
+                request.run_control
+            ),
+            run_control=request.run_control,
+        )
+
     def _publish_file(
         self,
         path: pathlib.Path,
         *,
         request: _DocumentPublishRequest,
+        batches: DocumentBatchPreprocessor,
     ) -> tuple[DocumentFileMetadata | None, int, str | None]:
         """Chunk and publish one document, returning durable file evidence."""
-        from ._run_policy import RunPolicy
-
         request.run_control.checkpoint()
         request.budget.checkpoint_runtime_resources(f"{path.name} before extraction")
-        extractor_policy = RunPolicy.from_config(run_control=request.run_control)
         result = _chunk_worker.stream_document_and_hash_file(
             path,
             self.root_dir,
@@ -595,9 +618,8 @@ class DocumentIndexer:
                 prep=request.prep,
                 execution_policy=self._execution_policy(request.policy),
                 run_control=request.run_control,
-                preprocess_checkpoint=lambda: extractor_policy.checkpoint(
-                    "document extractor polling"
-                ),
+                preprocess_checkpoint=self._extractor_checkpoint(request.run_control),
+                batch_result=batches.take(path),
             ),
         )
         if result.preprocess_status == "skipped":
@@ -879,6 +901,7 @@ class DocumentIndexer:
         counts = _DocumentRunCounts()
         failures: list[str] = []
         fresh_hashes: dict[str, str] = {}
+        batches = self._batch_preprocessor(paths, request)
         for path in paths:
             rel = path.relative_to(self.root_dir).as_posix()
             if request.policy.transform_disabled(rel):
@@ -890,6 +913,7 @@ class DocumentIndexer:
             metadata, chunk_count, failure = self._publish_file(
                 path,
                 request=request,
+                batches=batches,
             )
             if failure is not None:
                 failures.append(failure)
@@ -1039,11 +1063,22 @@ class DocumentIndexer:
         current = dict(previous_files)
         counts = _DocumentRunCounts()
         failures: list[str] = []
-        for rel in sorted(selected):
-            path = self.root_dir / pathlib.PurePosixPath(rel)
-            disposition = request.policy.classify(rel).disposition
-            admitted = disposition.admitted and disposition.kind is ContentKind.DOCUMENT
-            if not admitted or not self._is_canonical_source(path):
+        ordered = [
+            (rel, self.root_dir / pathlib.PurePosixPath(rel))
+            for rel in sorted(selected)
+        ]
+        batches = self._batch_preprocessor(
+            (
+                path
+                for rel, path in ordered
+                if self._publishable_document(rel, path, request.policy)
+            ),
+            request,
+        )
+        for rel, path in ordered:
+            # Re-checked at publication: the grouping pass above is advisory,
+            # and a path replaced since then must still be refused here.
+            if not self._publishable_document(rel, path, request.policy):
                 old = current.pop(rel, None)
                 if old is not None:
                     execute_store_mutation(
@@ -1066,6 +1101,7 @@ class DocumentIndexer:
             metadata, chunk_count, failure = self._publish_file(
                 path,
                 request=request,
+                batches=batches,
             )
             if failure is not None:
                 failures.append(failure)
@@ -1086,6 +1122,17 @@ class DocumentIndexer:
             if request.policy.match_preprocess(rel) is not None:
                 counts.preprocess_ok += 1
         return current, counts, failures
+
+    def _publishable_document(
+        self,
+        rel: str,
+        path: pathlib.Path,
+        policy: ResolvedIndexPolicy,
+    ) -> bool:
+        """Return whether an incremental path is still an admitted document."""
+        disposition = policy.classify(rel).disposition
+        admitted = disposition.admitted and disposition.kind is ContentKind.DOCUMENT
+        return admitted and self._is_canonical_source(path)
 
     def _replace_incremental_metadata(
         self,

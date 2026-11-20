@@ -318,14 +318,17 @@ Failure handling is per file:
   per file.
 
 `on_error = "fail"` has the same meaning for batch and single-file rules: the first
-affected file raises a preprocessing abort that propagates through the worker pool and
-stops the index run. `skip` and `passthrough` remain per-file outcomes, so unaffected
-members of a valid batch can still succeed.
+affected file raises a preprocessing abort that stops the index run. `skip` and
+`passthrough` remain per-file outcomes, so unaffected members of a valid batch can still
+succeed.
 
 Batch results are cached per file under the same [cache](#cache-and-incremental-indexing)
 key, so cache hits keep bypassing the hook entirely and a mixed hit/miss set shrinks the
 manifest to just the misses. vaultspec-rag groups matched files into manifests of at most 64 paths,
-each group a single spawn.
+each group a single spawn. Grouping applies to code and document targets alike, on full
+rebuilds and on incremental runs, including runs scoped to the changed paths; one changed
+file still costs one spawn. Code groups run in parallel across the chunk worker pool.
+Document groups run one at a time, each when indexing reaches its first document.
 
 ## Cache and incremental indexing
 

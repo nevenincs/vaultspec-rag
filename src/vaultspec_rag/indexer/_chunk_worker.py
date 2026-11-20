@@ -433,6 +433,9 @@ class DocumentChunkingOptions:
     execution_policy: ChunkExecutionPolicy = _DEFAULT_EXECUTION_POLICY
     run_control: RunControl = NO_RUN_CONTROL
     preprocess_checkpoint: Callable[[], None] | None = None
+    #: This document's outcome from a batch spawn already run over its group.
+    #: Honoured only while the source still hashes to the bytes the hook saw.
+    batch_result: DocumentBatchResult | None = None
 
 
 _DEFAULT_DOCUMENT_CHUNKING_OPTIONS = DocumentChunkingOptions()
@@ -474,6 +477,7 @@ class _DocumentPreprocessRequest:
     prep: PreprocessContext
     run_control: RunControl
     preprocess_checkpoint: Callable[[], None] | None = None
+    batch_result: DocumentBatchResult | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -766,6 +770,17 @@ def _document_preprocess_output(
         if rule.path_independent:
             output = output.model_copy(update={"source_path": rel_path})
         return "ok", output, None
+    batched = request.batch_result
+    if (
+        rule.batch
+        and batched is not None
+        and batched.content_hash == request.content_hash
+    ):
+        # The group spawn already wrote the cache entry for a success, so the
+        # outcome is used as is rather than cached a second time.
+        if batched.result.status == "ok" and batched.result.output is not None:
+            return "ok", batched.result.output, None
+        return batched.result.status, None, batched.result.reason
     if rule.batch:
         result = run_preprocessor_batch(
             [request.path],
@@ -878,6 +893,7 @@ def stream_document_and_hash_file(
             prep=options.prep,
             run_control=options.run_control,
             preprocess_checkpoint=options.preprocess_checkpoint,
+            batch_result=options.batch_result,
         )
     )
     if status == "ok" and output is not None:
@@ -1152,6 +1168,90 @@ def _cache_batch_successes(
         )
 
 
+@dataclass(frozen=True, slots=True)
+class _BatchPreprocessRequest:
+    """One batch group handed to the shared batch preprocessing phase."""
+
+    paths: list[pathlib.Path]
+    root_dir: pathlib.Path
+    rule: PreprocessRule
+    prep: PreprocessContext
+    target: ContentKind
+    checkpoint: Callable[[], None] | None = None
+
+
+def _preprocess_batch_members(
+    request: _BatchPreprocessRequest,
+) -> tuple[list[_BatchMember], dict[str, PreprocessResult]]:
+    """Hash every member, run the batch hook once over the cache misses.
+
+    Cache hits never reach the hook, so a mixed hit/miss group shrinks the
+    manifest to the misses. Every successful miss is cached per file under
+    the batch mode key before this returns.
+    """
+    _require_rule_target(request.rule, request.target, batch=True)
+    members: list[_BatchMember] = []
+    misses: list[pathlib.Path] = []
+    source_limit = _effective_source_limit(request.prep, request.rule)
+    for path in request.paths:
+        member, needs_run = _prepare_batch_member(
+            path, request.root_dir, request.rule, request.prep, source_limit
+        )
+        members.append(member)
+        if needs_run:
+            misses.append(path)
+
+    batch_results: dict[str, PreprocessResult] = {}
+    if misses:
+        batch_results = run_preprocessor_batch(
+            misses,
+            request.rule,
+            max_emitted_bytes=request.prep.max_emitted_bytes,
+            project_root=request.prep.project_root,
+            checkpoint=request.checkpoint,
+        )
+        _cache_batch_successes(members, batch_results, request.rule, request.prep)
+    return members, batch_results
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentBatchResult:
+    """One document's batch hook outcome, bound to the bytes it was run over."""
+
+    content_hash: str
+    result: PreprocessResult
+
+
+def preprocess_document_batch(
+    paths: list[pathlib.Path],
+    root_dir: pathlib.Path,
+    rule: PreprocessRule,
+    prep: PreprocessContext,
+    checkpoint: Callable[[], None] | None = None,
+) -> dict[pathlib.Path, DocumentBatchResult]:
+    """Run one document batch group through a single hook spawn.
+
+    Returns the hook outcome for every member that was sent to the hook.
+    Cache hits and sources refused before launch are absent: the per-file
+    document path reads the cache and re-applies the refusal itself, exactly
+    as it does for a file outside any batch.
+
+    Raises:
+        PreprocessAbortError: If any member fails and ``on_error == "fail"``.
+    """
+    members, batch_results = _preprocess_batch_members(
+        _BatchPreprocessRequest(
+            paths, root_dir, rule, prep, ContentKind.DOCUMENT, checkpoint
+        )
+    )
+    outcomes: dict[pathlib.Path, DocumentBatchResult] = {}
+    for member in members:
+        result = batch_results.get(str(member.path))
+        if result is not None:
+            outcomes[member.path] = DocumentBatchResult(member.content_hash, result)
+    return outcomes
+
+
 def chunk_batch_files(
     paths: list[pathlib.Path],
     root_dir: pathlib.Path,
@@ -1173,28 +1273,9 @@ def chunk_batch_files(
         PreprocessAbortError: If any file fails and ``on_error == "fail"`` -
             propagates out of the worker to abort the run.
     """
-    _require_rule_target(rule, ContentKind.CODE, batch=True)
-    members: list[_BatchMember] = []
-    misses: list[pathlib.Path] = []
-    source_limit = _effective_source_limit(prep, rule)
-    for path in paths:
-        member, needs_run = _prepare_batch_member(
-            path, root_dir, rule, prep, source_limit
-        )
-        members.append(member)
-        if needs_run:
-            misses.append(path)
-
-    batch_results: dict[str, PreprocessResult] = {}
-    if misses:
-        batch_results = run_preprocessor_batch(
-            misses,
-            rule,
-            max_emitted_bytes=prep.max_emitted_bytes,
-            project_root=prep.project_root,
-        )
-        _cache_batch_successes(members, batch_results, rule, prep)
-
+    members, batch_results = _preprocess_batch_members(
+        _BatchPreprocessRequest(paths, root_dir, rule, prep, ContentKind.CODE)
+    )
     results: list[FileChunkResult] = []
     for member in members:
         results.append(

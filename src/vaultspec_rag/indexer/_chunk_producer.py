@@ -119,6 +119,61 @@ BATCH_SIZE = 64
 _CHUNK_FUTURE_WINDOW_PER_WORKER = 2
 
 
+def partition_batch_work(
+    paths: list[pathlib.Path],
+    root_dir: pathlib.Path,
+    prep: PreprocessContext | None,
+    *,
+    run_control: RunControl = NO_RUN_CONTROL,
+) -> tuple[list[tuple[PreprocessRule, list[pathlib.Path]]], list[pathlib.Path]]:
+    """Split paths into batch-rule groups and everything else.
+
+    Files matched by a ``batch = true`` rule are grouped per rule (keyed by
+    rule identity - :meth:`PreprocessConfig.match` returns the same rule
+    object each time) and chunked into manifests of at most
+    :data:`BATCH_SIZE`, so each group runs as one batch spawn. Every other
+    file - unmatched, or matched by a non-batch rule - stays a single, so
+    the existing per-file flow is untouched. Code and document runs share
+    this grouping; each hands in only paths of its own content kind.
+
+    Returns:
+        ``(batch_groups, singles)``: batch groups as ``(rule, paths)`` pairs
+        and the single-file paths, together covering every input path.
+    """
+    if prep is None or not any(rule.batch for rule in prep.config.rules):
+        # No batch rule configured: every file keeps the per-file flow and
+        # pays zero extra per-path match cost.
+        return [], list(paths)
+
+    groups: dict[int, list[pathlib.Path]] = {}
+    rules: dict[int, PreprocessRule] = {}
+    singles: list[pathlib.Path] = []
+    for p in paths:
+        run_control.checkpoint()
+        try:
+            rel = str(p.relative_to(root_dir)).replace("\\", "/")
+        except ValueError:
+            singles.append(p)
+            continue
+        rule = prep.config.match(rel)
+        if rule is not None and rule.batch and rule.command is not None:
+            rid = id(rule)
+            groups.setdefault(rid, []).append(p)
+            rules[rid] = rule
+        else:
+            singles.append(p)
+        run_control.checkpoint()
+
+    batch_groups: list[tuple[PreprocessRule, list[pathlib.Path]]] = []
+    for rid, group in groups.items():
+        run_control.checkpoint()
+        rule = rules[rid]
+        for start in range(0, len(group), BATCH_SIZE):
+            batch_groups.append((rule, group[start : start + BATCH_SIZE]))
+        run_control.checkpoint()
+    return batch_groups, singles
+
+
 class WeightedCodeSegmentQueue:
     """Thread-safe queue bounded by queued chunk and byte weights."""
 
@@ -260,6 +315,10 @@ class CodeChunkProducer:
         self._chunk_execution_policy = chunk_execution_policy
         self._prep_ctx = prep_ctx
 
+    def prep_context(self) -> PreprocessContext | None:
+        """Return the run's current preprocess context, read at call time."""
+        return self._prep_ctx()
+
     def resolve_workers(self, n_paths: int) -> int:
         """Resolve the number of chunk worker processes to use.
 
@@ -315,59 +374,6 @@ class CodeChunkProducer:
             if total >= min_bytes:
                 return workers
         return 1
-
-    def partition_batch_work(
-        self,
-        paths: list[pathlib.Path],
-        *,
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> tuple[list[tuple[PreprocessRule, list[pathlib.Path]]], list[pathlib.Path]]:
-        """Split paths into batch-rule groups and everything else (#241).
-
-        Files matched by a ``batch = true`` rule are grouped per rule (keyed by
-        rule identity - :meth:`PreprocessConfig.match` returns the same rule
-        object each time) and chunked into manifests of at most
-        :data:`BATCH_SIZE`, so each group runs as one batch spawn. Every other
-        file - unmatched, or matched by a non-batch rule - stays a single, so
-        the existing per-file flow is untouched.
-
-        Returns:
-            ``(batch_groups, singles)``: batch groups as ``(rule, paths)`` pairs
-            and the single-file paths, together covering every input path.
-        """
-        prep = self._prep_ctx()
-        if prep is None or not any(rule.batch for rule in prep.config.rules):
-            # No batch rule configured: every file keeps the per-file flow and
-            # pays zero extra per-path match cost.
-            return [], list(paths)
-
-        groups: dict[int, list[pathlib.Path]] = {}
-        rules: dict[int, PreprocessRule] = {}
-        singles: list[pathlib.Path] = []
-        for p in paths:
-            run_control.checkpoint()
-            try:
-                rel = str(p.relative_to(self._root_dir)).replace("\\", "/")
-            except ValueError:
-                singles.append(p)
-                continue
-            rule = prep.config.match(rel)
-            if rule is not None and rule.batch and rule.command is not None:
-                rid = id(rule)
-                groups.setdefault(rid, []).append(p)
-                rules[rid] = rule
-            else:
-                singles.append(p)
-            run_control.checkpoint()
-
-        batch_groups: list[tuple[PreprocessRule, list[pathlib.Path]]] = []
-        for rid, group in groups.items():
-            run_control.checkpoint()
-            rule = rules[rid]
-            for start in range(0, len(group), BATCH_SIZE):
-                batch_groups.append((rule, group[start : start + BATCH_SIZE]))
-            run_control.checkpoint()
-        return batch_groups, singles
 
     def run_batch_groups(
         self,

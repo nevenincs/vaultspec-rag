@@ -30,6 +30,7 @@ from ._chunk_producer import (
     SingleProductionOptions,
     WeightedCodeSegmentQueue,
     drain_code_chunks,
+    partition_batch_work,
 )
 from ._content_policy import AdmissionReason
 from ._file_state import FileStateKind
@@ -329,8 +330,11 @@ class CodeConsumerPipeline:
 
             producer_exception: BaseException | None = None
             try:
-                batch_groups, singles = self._producer.partition_batch_work(
-                    paths, run_control=run_control
+                batch_groups, singles = partition_batch_work(
+                    paths,
+                    self._root_dir,
+                    self._producer.prep_context(),
+                    run_control=run_control,
                 )
                 if batch_groups:
                     self._producer.produce_batch_groups(

@@ -29,6 +29,7 @@ from .. import CodebaseIndexer
 from .._store_models import CodeChunk
 from ..config._types import EnvVar
 from ..indexer import _chunk_worker
+from ..indexer._chunk_producer import partition_batch_work
 from ..indexer._content_policy import ContentKind
 from ..indexer._preprocess_cache import preprocess_cache_dir
 from ..indexer._preprocess_config import (
@@ -774,7 +775,7 @@ def test_batch_pool_retains_only_one_worker_window(tmp_path: Path) -> None:
             path.write_bytes(path.name.encode())
 
         indexer = _batch_indexer(tmp_path, ctx)
-        batch_groups, singles = indexer._producer.partition_batch_work(files)
+        batch_groups, singles = partition_batch_work(files, tmp_path, ctx)
         assert (singles, len(batch_groups)) == ([], 6)
 
         handler_started, release_handler = threading.Event(), threading.Event()
