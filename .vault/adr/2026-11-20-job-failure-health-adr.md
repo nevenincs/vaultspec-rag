@@ -5,7 +5,7 @@ tags:
 date: '2026-11-20'
 modified: '2026-11-20'
 body_schema: 'body-v2'
-body_hash: 'sha256:c1a36866cd50035f26ed4ff945454a567982668cdf2b7f2709e178247729fd24'
+body_hash: 'sha256:486b0b4f652392a88c5f2fee167fea18efead61952a528e99ca413adb3b2bf56'
 related:
   - "[[2026-09-23-status-messages-adr]]"
   - "[[2026-06-11-service-status-convergence-adr]]"
@@ -16,7 +16,7 @@ related:
   - '[[2026-06-11-service-jobs-operability-adr]]'
 ---
 
-# `job-failure-health` adr: `per-project failing outcomes decide job-failure health` | (**status:** `proposed`)
+# `job-failure-health` adr: `per-project failing outcomes decide job-failure health` | (**status:** `accepted`)
 
 ## Problem Statement
 
@@ -174,6 +174,13 @@ broken:
   health.
 - A `full_reindex_required` refusal never appears in `failing`.
 
+**Resolved questions.**
+
+- The degradation window stays a code constant at 3600 seconds. No configuration knob
+  is added.
+- The MCP `get_index_status` tool is out of scope. It keeps returning the service-state
+  report, and any later MCP health surface reads the same service field.
+
 ## Rationale
 
 The per-project fold is the only option that fixes all four defects. Visibility comes
@@ -201,3 +208,8 @@ reported symptom. A window over a list passes all three, and it costs one consta
   symptom in a smaller form. Revisit the numeral with operator evidence, not the shape.
 - Reconsider this record if health gains a per-project verdict. A per-project index
   failure would then belong there rather than in the service-wide verdict.
+
+## Authorization
+
+User instructed on 2026-11-20 that every identified backlog issue lands in one PR; open
+questions resolved conservatively by the coordinating session.

@@ -3,10 +3,11 @@ tags:
   - '#adr'
   - '#index-throughput'
 date: '2026-07-24'
-modified: '2026-07-25'
-body_hash: 'sha256:098f997f3ae89230dcd0cf0ce3a19fe63fd0aa1c2866f3e9e0a18ce5df3049bc'
+modified: '2026-11-20'
+body_hash: 'sha256:4119e19ed64881c3836e5f151135842d37552228942344ce1db2ddbacd5aeb83'
 related:
   - "[[2026-07-24-index-throughput-research]]"
+  - '[[2026-11-20-job-admission-visibility-adr]]'
 ---
 
 # `index-throughput` adr: `bound job admission and align pipeline overlap` | (**status:** `accepted`)
@@ -34,6 +35,12 @@ Rebuild-class index jobs on this machine spend 4-6x their working time on wall-c
 - True-incremental vault (scope work to changed paths): DEFERRED - depends on reuse telemetry and its own correctness analysis; separate future decision.
 
 ## Constraints
+
+### 2026-11-20: service-owned admission wait verdict
+
+`2026-11-20-job-admission-visibility-adr` refines Part A's visibility duty. The admission-acquired stamp stays the per-attempt measurement of admission wait. It no longer decides whether a job is waiting. The service decides that from a live, in-process registry of limiter waiters, and projects it as phase `awaiting_admission` with `waiting_on` and a 1-based `queue_position`. `state` stays `running` for a waiter. Admission is first come, first served per limiter: a waiter stays in its limiter queue until it is granted or a control signal ends its wait. The visibility duty below is unchanged; it now has one service-domain owner.
+
+### Retained original ruling, subject to the amendment above
 
 - GPU rules are invariant: exactly one GPU consumer thread; the lock wraps forward passes only; chunk/parse workers stay CPU-only with lazy torch; torch loads only through the centralized gate.
 - Storage rules are invariant: backend-aware locks, no store-wide mutex, no lifecycle surface from maintenance code; the WAL/segment bounds may change only with measurement proving no prealloc regression.

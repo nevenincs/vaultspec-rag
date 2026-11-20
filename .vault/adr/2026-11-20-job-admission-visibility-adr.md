@@ -5,7 +5,7 @@ tags:
 date: '2026-11-20'
 modified: '2026-11-20'
 body_schema: 'body-v2'
-body_hash: 'sha256:ce70bb3cb30edbfab32005a92e0607474889a3f56371d49bb49c368b192d2df0'
+body_hash: 'sha256:53c49d1802cfc6b2988169d69572eabe47ce667511cd199b4de7bb7689d269aa'
 related:
   - "[[2026-07-24-index-throughput-adr]]"
   - "[[2026-07-21-service-job-control-adr]]"
@@ -16,7 +16,7 @@ related:
   - '[[2026-11-20-job-admission-visibility-reference]]'
 ---
 
-# `job-admission-visibility` adr: `service-owned admission wait phase, queue position, and bounded job wait` | (**status:** `proposed`)
+# `job-admission-visibility` adr: `service-owned admission wait phase, queue position, and bounded job wait` | (**status:** `accepted`)
 
 ## Problem Statement
 
@@ -240,6 +240,13 @@ broken:
   Moving the filter after pagination must fail this.
 - A pause on a waiting job is acknowledged within today's control latency.
 
+**Resolved questions.**
+
+- MCP gains no wait tool. MCP stays submission-only, as the job-control record rules.
+- The wait route's timeout defaults to 30 seconds and is capped at 120 seconds.
+- A job waiting for admission when the daemon dies is recovered as `interrupted`, as
+  today. It is not requeued.
+
 ## Rationale
 
 A projection is the only option that removes the entry-point logic without a version
@@ -276,3 +283,8 @@ ends", instead of each one writing a polling loop.
   as today. Revisit that if waiters should be requeued instead.
 - Reconsider the projection if a later change versions the job-state file for other
   reasons. `awaiting_admission` could then become a persisted state.
+
+## Authorization
+
+User instructed on 2026-11-20 that every identified backlog issue lands in one PR; open
+questions resolved conservatively by the coordinating session.
