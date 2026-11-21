@@ -53,7 +53,9 @@ from .test_service_search_diagnostics_mcp import _official_search_call
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = [pytest.mark.integration, pytest.mark.timeout(1800)]
+# Each test spawns a service that loads its own models, so the file belongs in
+# the separate subprocess GPU invocation rather than beside the resident tier.
+pytestmark = [pytest.mark.subprocess_gpu, pytest.mark.timeout(1800)]
 
 _OLD = "obsoletemarkeromicron"
 _FRESH = "freshmarkersigma"
