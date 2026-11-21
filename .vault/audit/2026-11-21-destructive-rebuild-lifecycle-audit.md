@@ -5,7 +5,7 @@ tags:
 date: '2026-11-21'
 modified: '2026-11-21'
 body_schema: 'body-v2'
-body_hash: 'sha256:16815ce36c2ed170137ecf4903a700a0609c0cba55f703ba444e5d5ee9d4cd84'
+body_hash: 'sha256:a5c13bd95bcd407925ea27af7abee749faea8ff8b0c5b68cba61f3151bef9f8e'
 related:
   - "[[2026-10-12-destructive-rebuild-lifecycle-plan]]"
 ---
@@ -85,3 +85,21 @@ The S06 commit and its ledger rows exist, but the Step checkbox is open. It shou
 - `reset-lock-wait-unbounded` reopens S01 and S06. Resolve it together with the GPU-lane deadlock fix on the other branch, and confirm both blocked-write tests pass in both directions.
 - A second explicit rebuild requested while a rebuild is paused is deduplicated by `active_work_identity` (mode and authority match) into the paused job instead of starting a fresh reset. A follow-on decision should state whether "a new rebuild request starts a fresh generation" applies while equivalent work is paused.
 - Verification still pending: the GPU-lane modules `test_rebuild_three_domain_contract`, `test_rebuild_partial_search`, `test_rebuild_replacement_corpus`, `test_index_job_control_*`, `test_first_build_lifecycle` and `test_service_job_control_pause_restart` were only collected. The CPU unit lane passed (8253 passed; parallel-load failures rerun serially, five `test_service_runtime` failures attributed to another worker's torch edits). This review ran no additional checks; no infrastructure was available for the GPU lane.
+
+## Re-review of the merged branch at 20fbf2924
+
+Scope: behaviour changed in `2bc747e8f..20fbf2924`, covering the GPU-fix merges, the post-write epoch re-check, reset ordering, and the strict type fixes. No critical or high findings. On this sha the GPU main selection failed seven tests in `test_rebuild_three_domain_contract.py`, which match the first two findings below.
+
+### reset-intent-before-control-edge | medium | A cancel or deadline at lock acquisition leaves the reset intent recorded with the proof deleted
+
+`src/vaultspec_rag/indexer/_rebuild_lifecycle.py:354-376`: `begin_source_reset` advances the epoch, records the intent, and deletes the proof and receipts (`src/vaultspec_rag/indexer/_run_ledger_source_resets.py:113-119`) before entering `RunPolicy.protected()`. That protected entry is where a pending cancel or latched deadline is delivered (`src/vaultspec_rag/_run_policy.py:153`). A cancel in that window leaves storage untouched, yet search answers `rebuild_required` until the next rebuild. Fix: enter the protected span before recording the intent.
+
+### reset-lock-probe-starvation | medium | Under steady local-mode search load, a reset can wait out its whole budget and fail
+
+`src/vaultspec_rag/_store_writes.py:153-167` only probes each collection lock with a zero timeout. Local searches take the same non-fair reentrant lock (`src/vaultspec_rag/_store_search.py:218`, `:352`), so continuous searches can make every probe miss, and the reset fails with `NO_PROGRESS_TIMEOUT`. Fix: wait a bounded slice on the busy lock while holding nothing, then retry the ordered acquisition immediately.
+
+### reset-lock-set-snapshot | low | The set of collections to lock is listed before any lock is held
+
+`src/vaultspec_rag/store_collections.py:361-369` lists the owned collections before taking locks, and `:390-392` acts on that list. Not reachable today, because only the canonical name is recreated. Fix: list again under the lifecycle lock and refuse on a mismatch.
+
+Resolution: all three are assigned to the worker fixing the seven GPU-lane failures. Their verification runs on the next frozen sha.
