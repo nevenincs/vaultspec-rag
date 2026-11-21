@@ -31,6 +31,7 @@ if TYPE_CHECKING:
         DocumentIndexPreflight,
         DocumentScopedPreflight,
     )
+    from .indexer._run_ledger_models import RunAuthority
     from .operator_state._models import ComputeReport, InstallationReport
     from .progress import ProgressReporter
     from .search import SearchResult
@@ -230,21 +231,53 @@ def _preflight_document_scope(
     ).preflight_changed_paths(changed_paths)
 
 
-def _admits_first_build(
+@dataclass(frozen=True, slots=True)
+class _AdmittedRun:
+    """What one in-process index request runs once admission has decided."""
+
+    rebuild: bool
+    first_build: bool
+
+    @property
+    def authority(self) -> RunAuthority:
+        from .indexer._run_ledger_models import RunAuthority
+
+        return RunAuthority.REBUILD if self.rebuild else RunAuthority.PUBLICATION
+
+
+def _admit_run(
     root_dir: pathlib.Path,
     source: PublicSourceType,
-) -> bool:
-    """Whether this in-process request runs *source*'s first full build.
+    *,
+    rebuild: bool,
+) -> _AdmittedRun:
+    """Admit one in-process index request exactly as the service admits a job.
 
-    The same admission the service uses, asked directly: an incremental
-    request for a source that has never been built has no publication to
-    reconcile against, so it runs the first build instead of refusing. One
+    The service's own admission is asked, not restated: an incremental
+    request for a source that has never been built runs its first full
+    build, and one whose published proof provably cannot parent it is
+    refused here, before any model, lease or checkpoint is touched. One
     reading per selected source, so a root with a built vault and an unbuilt
     code index gets the right answer for each.
-    """
-    from ._job_admission import admits_first_build
 
-    return admits_first_build(root_dir, source, initiator_kind="api")
+    Raises:
+        IncompatibleIncrementalError: an incremental code or document request
+            whose published proof was written under a different policy.
+    """
+    from ._job_admission import index_job_spec
+    from .indexer._run_ledger_models import RunAuthority
+    from .job_models import JobMode, JobSource
+
+    spec = index_job_spec(
+        root_dir,
+        source=JobSource(source.value),
+        clean=rebuild,
+        authority=RunAuthority.REBUILD if rebuild else RunAuthority.PUBLICATION,
+        initiator_kind="api",
+    )
+    return _AdmittedRun(
+        rebuild=spec.mode is JobMode.REBUILD, first_build=spec.is_first_build
+    )
 
 
 def index(
@@ -278,36 +311,27 @@ def index(
     """
     root = _resolve(root_dir)
     rep = reporter if reporter is not None else NullProgressReporter()
+    admitted = _admit_run(root, PublicSourceType.VAULT, rebuild=full or clean)
     registry = get_registry()
     result: IndexResult | None = None
-    first_build = not (full or clean) and _admits_first_build(
-        root, PublicSourceType.VAULT
-    )
     with registry.compute_lease(root, model_name=model_name) as lease:
-        from .indexer._run_ledger_models import RunAuthority
-
-        authority = (
-            RunAuthority.REBUILD
-            if (full or clean or first_build)
-            else RunAuthority.PUBLICATION
-        )
         runtime = lease.runtime
         result = (
             runtime.vault_indexer.full_index(
-                clean=clean or first_build,
+                clean=clean or admitted.first_build,
                 reporter=rep,
-                authority=authority,
+                authority=admitted.authority,
             )
-            if (full or clean or first_build)
+            if admitted.rebuild
             else runtime.vault_indexer.incremental_index(
                 reporter=rep,
-                authority=authority,
+                authority=admitted.authority,
             )
         )
         registry.peek_project(root).graph_cache.invalidate()
     if result is None:
         raise RuntimeError("vault indexing lease ended without a result")
-    result.first_build = first_build
+    result.first_build = admitted.first_build
     return result
 
 
@@ -332,37 +356,30 @@ def index_codebase(
         options = CodeIndexOptions()
     root = _resolve(root_dir)
     rep = options.reporter if options.reporter is not None else NullProgressReporter()
+    admitted = _admit_run(
+        root, PublicSourceType.CODE, rebuild=options.full or options.clean
+    )
     preflight = _preflight_code_index(root, extra_excludes=options.extra_excludes)
     registry = get_registry()
     result: IndexResult | None = None
-    first_build = not (options.full or options.clean) and _admits_first_build(
-        root, PublicSourceType.CODE
-    )
     with registry.compute_lease(root, model_name=options.model_name) as lease:
-        from .indexer._run_ledger_models import RunAuthority
-
-        authority = (
-            RunAuthority.REBUILD
-            if (options.full or options.clean or first_build)
-            else RunAuthority.PUBLICATION
-        )
         runtime = lease.runtime
-        if options.full or options.clean or first_build:
+        if admitted.rebuild:
             result = runtime.code_indexer.full_index(
-                clean=options.clean or first_build,
+                clean=options.clean or admitted.first_build,
                 reporter=rep,
                 preflight=preflight,
-                authority=authority,
+                authority=admitted.authority,
             )
         else:
             result = runtime.code_indexer.incremental_index(
                 reporter=rep,
                 preflight=preflight,
-                authority=authority,
+                authority=admitted.authority,
             )
     if result is None:
         raise RuntimeError("code indexing lease ended without a result")
-    result.first_build = first_build
+    result.first_build = admitted.first_build
     return result
 
 
@@ -377,6 +394,18 @@ def index_documents(
         raise ValueError("scoped document indexing cannot be full or clean")
     root = _resolve(root_dir)
     rep = options.reporter if options.reporter is not None else NullProgressReporter()
+    # A scoped request names its own changed paths, which is the bounded
+    # automatic shape: it never escalates, whatever the source's history, but
+    # is refused like any incremental run its published proof cannot parent.
+    if options.changed_paths is None:
+        admitted = _admit_run(
+            root, PublicSourceType.DOCUMENT, rebuild=options.full or options.clean
+        )
+    else:
+        from ._job_admission import refuse_incompatible_incremental
+
+        refuse_incompatible_incremental(root, PublicSourceType.DOCUMENT)
+        admitted = _AdmittedRun(rebuild=False, first_build=False)
     preflight = (
         _preflight_document_index(
             root,
@@ -393,44 +422,30 @@ def index_documents(
     )
     registry = get_registry()
     result: IndexResult | None = None
-    # A scoped request names its own changed paths, which is the bounded
-    # automatic shape: it never escalates, whatever the source's history.
-    first_build = (
-        options.changed_paths is None
-        and not (options.full or options.clean)
-        and _admits_first_build(root, PublicSourceType.DOCUMENT)
-    )
     with registry.compute_lease(root, model_name=options.model_name) as lease:
-        from .indexer._run_ledger_models import RunAuthority
-
-        authority = (
-            RunAuthority.REBUILD
-            if (options.full or options.clean or first_build)
-            else RunAuthority.PUBLICATION
-        )
         runtime = lease.runtime
-        if options.full or options.clean or first_build:
+        if admitted.rebuild:
             # The scoped-indexing guard above already raises when
             # ``options.full or options.clean`` and ``changed_paths`` is set,
             # and a scoped request is never a first build, so reaching here
             # means ``preflight`` came from ``_preflight_document_index``,
             # never ``_preflight_document_scope``.
             result = runtime.document_indexer.full_index(
-                clean=options.clean or first_build,
+                clean=options.clean or admitted.first_build,
                 reporter=rep,
                 preflight=cast("DocumentIndexPreflight", preflight),
-                authority=authority,
+                authority=admitted.authority,
             )
         else:
             result = runtime.document_indexer.incremental_index(
                 reporter=rep,
                 changed_paths=options.changed_paths,
                 preflight=preflight,
-                authority=authority,
+                authority=admitted.authority,
             )
     if result is None:
         raise RuntimeError("document indexing lease ended without a result")
-    result.first_build = first_build
+    result.first_build = admitted.first_build
     return result
 
 
