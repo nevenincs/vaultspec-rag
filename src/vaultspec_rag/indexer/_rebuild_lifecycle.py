@@ -296,41 +296,45 @@ def _reset_one(
     # Every lock the reset takes is held before its intent is recorded, so a
     # reset queued behind another holder answers pause, cancel and its
     # deadline while nothing has been discarded yet.
-    with store.held_for_reset(source, control.write_policy):
+    # The protected span is entered before the intent is recorded: its entry is
+    # where a cancel or latched deadline that arrived while the locks were being
+    # taken is delivered, and a delivery after the intent would leave the proof
+    # and receipts deleted over storage that was never touched.
+    with (
+        store.held_for_reset(source, control.write_policy),
+        control.run_control.protected(),
+    ):
         state = ledger.begin_source_reset(
             source, root_identity, store.backend_identity, generation_id
         )
         if state.complete:
             return state
-        with control.run_control.protected():
-            stale = (
-                other_backend_code_pointer(
-                    store.root_dir, store.DERIVED_CODE_TABLE_NAME
+        stale = (
+            other_backend_code_pointer(store.root_dir, store.DERIVED_CODE_TABLE_NAME)
+            if source is PublicSourceType.CODE
+            else None
+        )
+        # Discarding again on a replay is idempotent and costs nothing on
+        # absent storage; skipping it would trust that nothing recreated a
+        # collection between the recorded deletion and this replay.
+        store.discard_source_storage(source)
+        if source is PublicSourceType.CODE:
+            # The only code collection a reset recreates is the derived
+            # one, so a pointer or a binding naming anything else would
+            # address a collection that no longer exists.
+            retire_served_code_pointer(store.root_dir)
+            store.CODE_TABLE_NAME = store.DERIVED_CODE_TABLE_NAME
+            if stale is not None:
+                logger.warning(
+                    "Retired %s's served code pointer naming %s, its code "
+                    "collection under the other backend; that collection "
+                    "was left untouched",
+                    root_identity,
+                    stale,
                 )
-                if source is PublicSourceType.CODE
-                else None
-            )
-            # Discarding again on a replay is idempotent and costs nothing on
-            # absent storage; skipping it would trust that nothing recreated a
-            # collection between the recorded deletion and this replay.
-            store.discard_source_storage(source)
-            if source is PublicSourceType.CODE:
-                # The only code collection a reset recreates is the derived
-                # one, so a pointer or a binding naming anything else would
-                # address a collection that no longer exists.
-                retire_served_code_pointer(store.root_dir)
-                store.CODE_TABLE_NAME = store.DERIVED_CODE_TABLE_NAME
-                if stale is not None:
-                    logger.warning(
-                        "Retired %s's served code pointer naming %s, its code "
-                        "collection under the other backend; that collection "
-                        "was left untouched",
-                        root_identity,
-                        stale,
-                    )
-            state = ledger.advance_source_reset(state, SourceResetPhase.DISCARDED)
-            store.recreate_empty_source(source)
-            state = ledger.advance_source_reset(state, SourceResetPhase.COMPLETE)
+        state = ledger.advance_source_reset(state, SourceResetPhase.DISCARDED)
+        store.recreate_empty_source(source)
+        state = ledger.advance_source_reset(state, SourceResetPhase.COMPLETE)
     logger.info(
         "Reset %s for %s at epoch %d",
         source.value,

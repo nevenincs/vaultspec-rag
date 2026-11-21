@@ -9,6 +9,8 @@ leaves behind, then reopening the store the way a restarted process does.
 from __future__ import annotations
 
 import shutil
+import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from typing import TYPE_CHECKING
 
@@ -32,11 +34,14 @@ from ._ledger_fixtures import continue_rebuild
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
+    from concurrent.futures import Future
     from pathlib import Path
 
     from .._store_models import VaultChunk
+    from .._store_writes import StoreWritePolicy
     from ..indexer._run_ledger_models import CommitUnit
     from ..indexer._vault_checkpoint import VaultRunCheckpoint
+    from ..job_control import RunControl
     from ..store_runtime import VaultStore
 
 pytestmark = [pytest.mark.unit]
@@ -1008,3 +1013,86 @@ def test_an_incremental_writer_is_fenced_to_the_epoch_it_opened_under(
             write_policy=incremental.run_policy.store_write_policy,
         )
     assert _points(store, store.TABLE_NAME) == 0
+
+
+def _park_reset(
+    executor: ThreadPoolExecutor,
+    store: VaultStore,
+    source: PublicSourceType,
+    *,
+    run_control: RunControl,
+    write_policy: StoreWritePolicy | None = None,
+) -> Future[tuple[SourceResetState, ...]]:
+    """Start a reset in a thread and confirm it is waiting on a held lock."""
+    resetting = executor.submit(
+        reset_selected_sources,
+        store,
+        source,
+        generation_id="parked",
+        run_control=run_control,
+        write_policy=write_policy,
+    )
+    time.sleep(0.5)
+    assert not resetting.done(), "the reset did not wait on the held lock"
+    return resetting
+
+
+@pytest.mark.parametrize("edge", ["cancel", "deadline"])
+def test_a_control_edge_reached_while_taking_locks_leaves_storage_and_ledger_alone(
+    store: VaultStore, edge: str
+) -> None:
+    """A cancel or expired deadline at lock acquisition records no intent.
+
+    The control edge arrives while the reset is parked on a held collection
+    lock, so it is pending the moment the lock frees. The reset must deliver
+    it before it records anything: the proof survives, no intent exists, and
+    a search is not refused.
+
+    Mutation: recording the intent before entering the protected span left
+    ``_state`` holding an intent, deleted the vault proof, and failed this
+    test on the ``is None`` assertion; restoring the order passed.
+    """
+    from .._job_errors import JobError, JobErrorKind
+    from .._publication_state import (
+        acquire_publication_snapshot,
+        capture_source_read_fence,
+    )
+    from ..indexer._run_policy import RunPolicy
+    from ..job_control import CancelRequested, RunControlToken
+    from ._publication_assertions import publish_empty_vault_proof
+
+    publish_empty_vault_proof(store.root_dir)
+    _seed(store, store.TABLE_NAME)
+    token = RunControlToken()
+    policy = RunPolicy(no_progress_timeout_seconds=1.0, run_control=token)
+    lock = store._lock_for(store.TABLE_NAME)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        lock.acquire()
+        try:
+            # Without the policy as the store's write policy the wait itself
+            # delivers nothing, so the edge is first seen where the reset
+            # enters its protected span.
+            resetting = _park_reset(
+                executor,
+                store,
+                PublicSourceType.VAULT,
+                run_control=token if edge == "cancel" else policy,
+            )
+            if edge == "cancel":
+                token.request_cancel()
+            else:
+                time.sleep(1.0)
+        finally:
+            lock.release()
+        if edge == "cancel":
+            with pytest.raises(CancelRequested):
+                resetting.result(timeout=10.0)
+        else:
+            with pytest.raises(JobError) as stopped:
+                resetting.result(timeout=10.0)
+            assert stopped.value.error_kind is JobErrorKind.NO_PROGRESS_TIMEOUT
+
+    assert _state(store, PublicSourceType.VAULT) is None
+    acquire_publication_snapshot(store.root_dir, PublicSourceType.VAULT)
+    capture_source_read_fence(store.root_dir, PublicSourceType.VAULT)
+    assert _points(store, store.TABLE_NAME) == 1

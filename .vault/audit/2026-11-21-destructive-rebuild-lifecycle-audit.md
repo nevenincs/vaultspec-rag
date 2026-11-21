@@ -94,6 +94,8 @@ Scope: behaviour changed in `2bc747e8f..20fbf2924`, covering the GPU-fix merges,
 
 `src/vaultspec_rag/indexer/_rebuild_lifecycle.py:354-376`: `begin_source_reset` advances the epoch, records the intent, and deletes the proof and receipts (`src/vaultspec_rag/indexer/_run_ledger_source_resets.py:113-119`) before entering `RunPolicy.protected()`. That protected entry is where a pending cancel or latched deadline is delivered (`src/vaultspec_rag/_run_policy.py:153`). A cancel in that window leaves storage untouched, yet search answers `rebuild_required` until the next rebuild. Fix: enter the protected span before recording the intent.
 
+Resolution: `_reset_one` in `src/vaultspec_rag/indexer/_rebuild_lifecycle.py` now enters the run's protected span together with the held locks, so a cancel or latched deadline pending at lock acquisition is delivered before `begin_source_reset` records anything. `test_a_control_edge_reached_while_taking_locks_leaves_storage_and_ledger_alone` in `src/vaultspec_rag/tests/test_rebuild_lifecycle.py` covers cancel and deadline on a real local store. With the intent recorded first again it failed on its no-intent assertion for both edges; restored, it passes.
+
 ### reset-lock-probe-starvation | medium | Under steady local-mode search load, a reset can wait out its whole budget and fail
 
 `src/vaultspec_rag/_store_writes.py:153-167` only probes each collection lock with a zero timeout. Local searches take the same non-fair reentrant lock (`src/vaultspec_rag/_store_search.py:218`, `:352`), so continuous searches can make every probe miss, and the reset fails with `NO_PROGRESS_TIMEOUT`. Fix: wait a bounded slice on the busy lock while holding nothing, then retry the ordered acquisition immediately.
