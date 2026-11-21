@@ -228,6 +228,8 @@ Both commands accept `--json`.
 
 Four job signals are worth knowing. A failed job carries a stable `error_kind` in `--json` and on `GET /jobs`, classified once by the service so every surface agrees, and the human feed renders the matching remediation. A running job whose progress hasn't moved for five minutes is flagged `stalled`, so you never have to infer it. A job still queued after five minutes, on a service that isn't paused, degrades health with `jobs_undispatched`: the service starts queued work the moment it is queued, so a job still waiting was left behind and won't start on its own. `server jobs` lists it right after running work, and restarting the service starts it again. If the service process dies mid-job, the next startup restores what it was running as `interrupted`, with the last progress and who started it.
 
+A running job is not always working. One encode-bearing job holds the GPU slot at a time, and other index jobs share a wider index slot, so a job can be `running` while it waits for its slot. The service reports that wait itself: its `phase` is `awaiting_admission`, `waiting_on` is `admission`, `admission_slot` names the slot (`encode` or `index`), and `queue_position` is its 1-based place in line. Slots admit waiters first come, first served, so the position is the order they start in. A job queued behind its project's writer keeps phase `running` and reports `waiting_on: writer`. `server jobs --state active` lists only working jobs and `--state waiting` only waiting ones; the service filters before it cuts the page, so neither returns a short page while matches exist. `GET /jobs?waiting=true|false` is the same filter.
+
 An index job that reused vectors from an already-indexed sibling worktree carries a `reuse` block describing what it avoided re-encoding. See [reusing vectors across worktrees](indexing.md#reusing-vectors-across-worktrees) for the mechanism, and the [CLI reference](cli.md) for the block's fields.
 
 ### Local Carbon browser monitor
@@ -358,13 +360,18 @@ Use `just dev stop` to stop this checkout's browser servers.
 uv run vaultspec-rag server job show <job-id>
 ```
 
-Five more verbs act on one job:
+Six more verbs act on one job:
 
 - `server job pause` requests a cooperative pause.
 - `server job resume` resumes a paused job through reconciliation.
 - `server job stop` requests cancellation without disabling automatic updates.
 - `server job retry` creates a linked retry for a retryable terminal job.
 - `server job delete` removes one terminal job from retained history.
+- `server job wait` waits until the job is admitted to its slot
+  (`--until admitted`) or has finished (`--until finished`, the default). It
+  waits at most `--timeout` seconds (default 30; the service caps one wait at
+  120), exits 0 once the condition holds, and exits 1 with `wait_timeout` when
+  the wait expires first.
 
 Pausing a single job differs from pausing the service: `server pause` holds
 everything at safe checkpoints, while `server job pause` affects only the job
@@ -467,6 +474,7 @@ The running service exposes token-gated HTTP routes on loopback. Most are read-o
 - `GET /readiness` - dependency readiness. Requires the service token.
 - `GET /logs` and `GET /logs/json` - grouped service and Qdrant log lines. Require the service token.
 - `GET /jobs` - indexing activity. Requires the service token.
+- `GET /jobs/{job_id}/wait?until=admitted|finished&timeout=<seconds>` - holds until the job is admitted or finished, at most `timeout` seconds (default 30, capped at 120), and answers `{job, until, reached, waited_seconds}`. Expiry is `reached: false`, not an error. Requires the service token.
 - `GET /metrics` - Prometheus metrics. Requires the service token.
 
 Token-gated routes take the service token as a bearer: `Authorization: Bearer <service_token>`. The token is in the status file at `~/.vaultspec-rag/service.json`, and `/health` also returns it.

@@ -36,8 +36,6 @@ from ._render import (
 from ._service_jobs_query import (
     empty_jobs_message,
     filter_is_set,
-    job_awaiting_admission,
-    job_is_waiting,
     jobs_from_result,
 )
 from ._service_lifecycle import _print_lifecycle_next_actions
@@ -132,11 +130,22 @@ def _job_superseded(job: dict[str, object]) -> bool:
     )
 
 
+def job_waiting_on(job: dict[str, object]) -> str | None:
+    """Return what the service says this job waits on, or ``None``.
+
+    The service owns the verdict: ``admission`` for a job queued for its
+    slot, ``writer`` for one queued behind the project writer. A payload
+    without ``waiting_on`` is a job that is not waiting.
+    """
+    value = job.get("waiting_on")
+    return value if isinstance(value, str) and value else None
+
+
 def phase_label(job: dict[str, object]) -> str:
     phase = str(job.get("phase", "not-reported"))
     if phase in ("error", "failed"):
         return "failed"
-    if job_is_waiting(job):
+    if job_waiting_on(job) is not None:
         return "waiting"
     if phase == "running":
         return "active"
@@ -147,7 +156,7 @@ def phase_label(job: dict[str, object]) -> str:
 
 def _job_prefix(job: dict[str, object]) -> str:
     phase = str(job.get("phase", ""))
-    if job_is_waiting(job):
+    if job_waiting_on(job) is not None:
         return "~"
     if phase == "running":
         return "*"
@@ -484,7 +493,7 @@ def degradation_evidence_lines(job: dict[str, object]) -> tuple[str, ...]:
 
 
 def stale_progress_label(job: dict[str, object]) -> str:
-    if str(job.get("phase", "")) != "running" or job_is_waiting(job):
+    if str(job.get("phase", "")) != "running" or job_waiting_on(job) is not None:
         return ""
     verdict = degradation_verdict(job)
     if verdict is not None:
@@ -581,28 +590,32 @@ def _waiting_job_detail(detail: str, runtime: float | None) -> str:
     )
 
 
-def _admission_wait_detail(runtime: float | None) -> str:
-    """Name the wait, not just its duration.
+def _admission_wait_detail(job: dict[str, object], runtime: float | None) -> str:
+    """Name the wait and the job's place in line, not just its duration.
 
     An operator reading "waiting for 6 minutes" cannot tell whether the job is
-    stuck or correctly queued. Naming the GPU slot says both what it waits on
-    and that exactly one job holds it, which turns an alarming line into an
-    expected one - and points at the real remedy when it is not expected.
+    stuck or correctly queued. Naming the slot says what it waits on, and the
+    service's queue position says how many jobs go first, which turns an
+    alarming line into an expected one.
     """
-    if runtime is not None:
-        return (
-            f"waiting {_format_seconds(runtime)} for the GPU slot "
-            "(one indexing job encodes at a time)"
-        )
-    return "waiting for the GPU slot (one indexing job encodes at a time)"
+    slot = (
+        "the GPU slot (one indexing job encodes at a time)"
+        if job.get("admission_slot") == "encode"
+        else "an index slot"
+    )
+    duration = f" {_format_seconds(runtime)}" if runtime is not None else ""
+    position = count(job.get("queue_position"), minimum=1)
+    place = f", queue position {position}" if position is not None else ""
+    return f"waiting{duration} for {slot}{place}"
 
 
 def _running_job_detail(job: dict[str, object]) -> str:
     detail = human_progress(job)
     runtime = measurement(job.get("runtime_seconds"))
-    if job_awaiting_admission(job):
-        return _admission_wait_detail(runtime)
-    if job_is_waiting(job):
+    waiting_on = job_waiting_on(job)
+    if waiting_on == "admission":
+        return _admission_wait_detail(job, runtime)
+    if waiting_on is not None:
         return _waiting_job_detail(detail, runtime)
     runtime_detail = (
         f"running for {_format_seconds(runtime)}"
@@ -620,7 +633,7 @@ def _running_job_detail(job: dict[str, object]) -> str:
 
 def _job_summary_detail(job: dict[str, object]) -> str:
     phase = str(job.get("phase", ""))
-    if phase == "running":
+    if phase == "running" or job_waiting_on(job) is not None:
         return _running_job_detail(job)
     if phase in ("error", "failed"):
         result = _human_result(job.get("result"), failed=True)
@@ -714,7 +727,7 @@ def _shown_job_counts(jobs: list[dict[str, object]]) -> tuple[int, int, int, int
             # Superseded is resolved history: counting it anywhere else
             # would report either a phantom failure or uncounted work.
             finished += 1
-        elif job_is_waiting(job):
+        elif job_waiting_on(job) is not None:
             waiting += 1
         elif phase == "running":
             active += 1
@@ -756,22 +769,20 @@ def _filters_label(result: dict[str, object]) -> str:
         "since": "updated within",
     }
     values = {
-        "running": "active or waiting",
         "done": "finished",
         "watcher": "automatic updates",
         "tool": "manual request",
     }
     state = filters.get("state")
-    if state == "active":
-        visible.append("state active")
-    elif state == "waiting":
-        visible.append("state waiting")
+    waiting = filters.get("waiting")
+    if state == "running" and waiting is not None:
+        visible.append("state waiting" if waiting is True else "state active")
+    elif state == "running":
+        visible.append("state active or waiting")
     elif filter_is_set(state):
         visible.append(f"state {state}")
 
     for key in ("phase", "source", "trigger", "query", "job_id", "since"):
-        if key == "phase" and state in ("active", "waiting"):
-            continue
         value = filters.get(key)
         if filter_is_set(value):
             value_text = values.get(str(value), str(value))
@@ -949,8 +960,7 @@ def _render_job_progress_detail(job: dict[str, object]) -> None:
     # stalled job's countdown would contradict the warning above.
     if (
         str(job.get("phase", "")) == "running"
-        and not job_is_waiting(job)
-        and not job_awaiting_admission(job)
+        and job_waiting_on(job) is None
         and not stale_progress
     ):
         estimate = remaining_estimate_label(job)

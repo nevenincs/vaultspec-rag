@@ -140,7 +140,7 @@ def test_jobs_filter_summary_uses_operator_language() -> None:
     rendered = _filters_label(
         {
             "filters": {
-                "phase": "running",
+                "state": "running",
                 "trigger": "watcher",
                 "source": "code",
                 "failed": True,
@@ -244,35 +244,39 @@ def test_jobs_started_by_filter_is_operator_facing_cli_alias() -> None:
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
-    ("state", "phase", "filter_line", "empty_message"),
+    ("state", "expected_query", "echoed_filters", "filter_line", "empty_message"),
     [
         (
             "active",
-            "running",
+            {"state": ["running"], "waiting": ["False"]},
+            {"state": "running", "waiting": False},
             "Filter: state active",
             "There are no active jobs.",
         ),
         (
             "waiting",
-            "running",
+            {"state": ["running"], "waiting": ["True"]},
+            {"state": "running", "waiting": True},
             "Filter: state waiting",
             "There are no waiting jobs.",
         ),
         (
             "finished",
-            "done",
+            {"phase": ["done"]},
+            {"phase": "done"},
             "Filter: state finished",
             "No jobs matched these filters.",
         ),
     ],
 )
-def test_jobs_state_filter_sends_service_phase(
+def test_jobs_state_filter_sends_service_filters(
     state: str,
-    phase: str,
+    expected_query: dict[str, list[str]],
+    echoed_filters: dict[str, object],
     filter_line: str,
     empty_message: str,
 ) -> None:
-    with _jobs_http_server([{"jobs": [], "filters": {"phase": phase}, "total": 0}]) as (
+    with _jobs_http_server([{"jobs": [], "filters": echoed_filters, "total": 0}]) as (
         _server,
         port,
     ):
@@ -284,7 +288,10 @@ def test_jobs_state_filter_sends_service_phase(
     assert result.exit_code == 0, result.stdout
     request = urllib.parse.urlparse(_JobsHTTPHandler.paths[0])
     query = urllib.parse.parse_qs(request.query)
-    assert query["phase"] == [phase]
+    # Every state is a service filter: the CLI sends it and renders what the
+    # service answers, so the page is cut after the filter.
+    assert {key: query[key] for key in expected_query} == expected_query
+    assert {"phase", "state", "waiting"} & query.keys() == expected_query.keys()
     assert filter_line in result.stdout
     assert empty_message in result.stdout
 
@@ -365,7 +372,7 @@ def test_jobs_removed_legacy_filter_flags_are_not_supported(
     ("result", "expected_message", "expected_filter"),
     [
         (
-            {"jobs": [], "filters": {"limit": 5, "phase": "running"}},
+            {"jobs": [], "filters": {"limit": 5, "state": "running"}},
             "There are no active or waiting jobs.",
             "Filter: state active or waiting",
         ),

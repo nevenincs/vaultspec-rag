@@ -15,7 +15,7 @@ module provides.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from .. import _job_evidence, _job_progress, _job_values
 from .. import jobs as _jobs
@@ -27,7 +27,11 @@ from .._job_errors import (
 )
 from ..job_models import JobCapabilities, JobState
 
+if TYPE_CHECKING:
+    from ..job_manager.state import AdmissionWaiter
+
 __all__ = [
+    "AWAITING_ADMISSION_PHASE",
     "_job_degradation",
     "_job_matches",
     "_job_resilience",
@@ -43,11 +47,16 @@ __all__ = [
     "job_source",
     "job_state",
     "job_updated_timestamp",
+    "job_wait_reason",
+    "with_admission",
 ]
 
 _CANONICAL_STATES = frozenset(state.value for state in JobState)
 _TRANSITIONAL_STATES = frozenset({JobState.PAUSING.value, JobState.CANCELLING.value})
 TERMINAL_STATES = frozenset(state.value for state in JobState if state.is_terminal)
+#: The phase of a running job whose attempt still waits for its slot.
+AWAITING_ADMISSION_PHASE = "awaiting_admission"
+_ADMISSION_SLOTS = frozenset({"encode", "index"})
 _LEGACY_TERMINAL_PHASES = {
     "done": JobState.SUCCEEDED.value,
     "error": JobState.FAILED.value,
@@ -74,6 +83,7 @@ class JobFilter:
     state: str | None = None
     desired_state: str | None = None
     controllable: bool | None = None
+    waiting: bool | None = None
 
 
 def _age_seconds(timestamp: float | None, now: float) -> float | None:
@@ -103,7 +113,13 @@ def job_state(record: dict[str, object]) -> str:
 
 
 def _job_phase(record: dict[str, object], state: str) -> str:
-    """Return the truthful lifecycle phase with legacy terminal aliases."""
+    """Return the truthful lifecycle phase with legacy terminal aliases.
+
+    A running job still waiting for its admission slot has not started work,
+    so its phase says so while its canonical state stays ``running``.
+    """
+    if job_wait_reason(record) == "admission":
+        return AWAITING_ADMISSION_PHASE
     phase = str(record.get("phase", "")).strip().lower()
     if state == JobState.SUCCEEDED.value:
         return phase if phase in {"done", "skipped", "superseded"} else "done"
@@ -280,8 +296,45 @@ def _control_pending_age_seconds(
     return _age_seconds(requested, now)
 
 
-def _job_is_waiting(record: dict[str, object]) -> bool:
-    return _job_progress_step(record) == JobState.QUEUED.value
+def with_admission(
+    records: list[dict[str, object]],
+    waiters: tuple[AdmissionWaiter, ...],
+) -> list[dict[str, object]]:
+    """Stamp each admission waiter's slot and queue position onto its record.
+
+    The admission queue is live in-process state, never persisted, so it is
+    read once per request and attached here; every reader below then sees
+    the same queue through :func:`job_wait_reason`.
+    """
+    by_id = {waiter.job_id: waiter for waiter in waiters}
+    stamped: list[dict[str, object]] = []
+    for record in records:
+        waiter = by_id.get(str(record.get("id", "")))
+        stamped.append(
+            record
+            if waiter is None
+            else record
+            | {"admission_slot": waiter.slot, "queue_position": waiter.position}
+        )
+    return stamped
+
+
+def job_wait_reason(record: dict[str, object]) -> str | None:
+    """Return what a running job waits on before it can work, or ``None``.
+
+    ``admission`` while its attempt waits for its capacity slot, ``writer``
+    while its progress step says it is queued behind the project writer.
+    Admission takes precedence: a job cannot reach the writer before it is
+    admitted. This is the one answer to "is this job working" for every
+    reader in the service.
+    """
+    if job_state(record) != JobState.RUNNING.value:
+        return None
+    if record.get("admission_slot") in _ADMISSION_SLOTS:
+        return "admission"
+    if _job_progress_step(record) == JobState.QUEUED.value:
+        return "writer"
+    return None
 
 
 def _job_stalled(
@@ -300,7 +353,7 @@ def _job_stalled(
     if state in _TRANSITIONAL_STATES:
         control_age = _control_pending_age_seconds(record, now)
         return control_age is not None and control_age >= STALL_THRESHOLD_SECONDS
-    if state != "running" or _job_is_waiting(record):
+    if state != "running" or job_wait_reason(record) is not None:
         return False
     age = _age_seconds(
         _job_progress.last_work_timestamp(
@@ -317,8 +370,8 @@ def _job_confirmed_chunk_progress(
     """Capture the CODE acknowledgement facts used throughout one projection."""
     if (
         job_source(record) != "code"
+        or job_wait_reason(record) is not None
         or job_state(record) != JobState.RUNNING.value
-        or _job_is_waiting(record)
     ):
         return None
     identifier = record.get("id")
@@ -366,7 +419,10 @@ def _job_rates(record: dict[str, object]) -> tuple[float | None, float | None]:
     a degraded verdict whose own evidence sits above the threshold that
     earned it.
     """
-    if job_state(record) != JobState.RUNNING.value or _job_is_waiting(record):
+    if (
+        job_state(record) != JobState.RUNNING.value
+        or job_wait_reason(record) is not None
+    ):
         return None, None
     identifier = record.get("id")
     if not isinstance(identifier, str) or not identifier:
@@ -504,7 +560,7 @@ def _job_degradation(
         if control_age is not None and control_age >= DEGRADED_THRESHOLD_SECONDS:
             return "degraded"
         return "healthy"
-    if state != JobState.RUNNING.value or _job_is_waiting(record):
+    if state != JobState.RUNNING.value or job_wait_reason(record) is not None:
         return "healthy"
     ages = [
         age
@@ -727,6 +783,11 @@ def _job_with_liveness(
     if "capabilities" not in record:
         enriched["capabilities"] = _activity_record_capabilities(state)
     enriched["phase"] = _job_phase(record, state)
+    wait_reason = job_wait_reason(record)
+    admission = wait_reason == "admission"
+    enriched["waiting_on"] = wait_reason
+    enriched["admission_slot"] = record.get("admission_slot") if admission else None
+    enriched["queue_position"] = record.get("queue_position") if admission else None
     enriched["source"] = job_source(record)
     enriched["trigger"] = _job_trigger(record)
     enriched["runtime_seconds"] = _job_runtime_seconds(record, now)
@@ -827,6 +888,11 @@ def _job_matches(
             or _job_controllable(record) is filters.controllable,
             filters.source is None or job_source(record) == filters.source,
             filters.trigger is None or _job_trigger(record) == filters.trigger,
+            filters.waiting is None
+            or (
+                record_state == JobState.RUNNING.value
+                and (job_wait_reason(record) is not None) is filters.waiting
+            ),
         )
     )
     return matches_filters and (
@@ -871,6 +937,8 @@ class _JobSummaryTally:
     users: dict[str, int] = field(default_factory=dict)
     stalled: int = 0
     degraded: int = 0
+    waiting: int = 0
+    awaiting_admission: int = 0
     controllable: int = 0
     control_pending: int = 0
     retryable: int = 0
@@ -916,6 +984,11 @@ def _tally_job(tally: _JobSummaryTally, record: dict[str, object], now: float) -
     )
     if verdict == "degraded":
         tally.degraded += 1
+    wait_reason = job_wait_reason(record)
+    if wait_reason is not None:
+        tally.waiting += 1
+    if wait_reason == "admission":
+        tally.awaiting_admission += 1
     if _job_controllable(record):
         tally.controllable += 1
     if _control_pending_age_seconds(record, now) is not None:
@@ -959,7 +1032,12 @@ def _job_summary(
         "users": tally.users,
         # ``phases`` remains the compatibility aggregation; lifecycle rollups
         # are always derived from canonical states.
+        # ``running`` is the canonical state count and includes waiters;
+        # ``working`` and ``waiting`` split it by the service wait verdict.
         "running": states.get("running", 0),
+        "working": states.get("running", 0) - tally.waiting,
+        "waiting": tally.waiting,
+        "awaiting_admission": tally.awaiting_admission,
         "queued": states.get("queued", 0),
         "paused": states.get("paused", 0),
         "transitional": sum(states.get(state, 0) for state in _TRANSITIONAL_STATES),
@@ -999,7 +1077,8 @@ def _machine_pressure(
     running = [
         record
         for record in records
-        if job_state(record) == JobState.RUNNING.value and not _job_is_waiting(record)
+        if job_state(record) == JobState.RUNNING.value
+        and job_wait_reason(record) is None
     ]
     anchor = running[0] if running else None
     return _job_evidence.machine_pressure(

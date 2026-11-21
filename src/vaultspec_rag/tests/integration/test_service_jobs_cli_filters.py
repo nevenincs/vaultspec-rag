@@ -29,16 +29,6 @@ def test_jobs_state_active_only_shows_processing_jobs(
     payload: dict[str, object] = {
         "jobs": [
             {
-                "id": "waiting-job",
-                "source": "code",
-                "trigger": "watcher",
-                "phase": "running",
-                "started_at": now - 30,
-                "progress": {"step": "queued", "completed": 0},
-                "runtime_seconds": 30.0,
-                "initiator": {"project_root": str(tmp_path / "waiting-project")},
-            },
-            {
                 "id": "active-job",
                 "source": "vault",
                 "trigger": "tool",
@@ -50,9 +40,10 @@ def test_jobs_state_active_only_shows_processing_jobs(
             },
         ],
         "total": 7,
-        "returned": 2,
+        "returned": 1,
+        "matched": 1,
         "summary": {"running": 2, "phases": {"running": 2, "done": 5}},
-        "filters": {"limit": 5, "phase": "running"},
+        "filters": {"limit": 5, "state": "running", "waiting": False},
     }
 
     with _jobs_http_server([payload]) as (_server, port):
@@ -73,7 +64,9 @@ def test_jobs_state_active_only_shows_processing_jobs(
     assert result.exit_code == 0, result.output
     request = urllib.parse.urlparse(_JobsHTTPHandler.paths[0])
     query = urllib.parse.parse_qs(request.query)
-    assert query["phase"] == ["running"]
+    assert query["state"] == ["running"]
+    assert query["waiting"] == ["False"]
+    assert "phase" not in query
     lines = _plain_lines(result.output)
     assert "Displayed: 1 matching job" in lines
     assert "Total: 7 jobs" in lines
@@ -95,20 +88,11 @@ def test_jobs_state_waiting_only_shows_queued_jobs(
     payload: dict[str, object] = {
         "jobs": [
             {
-                "id": "active-job",
-                "source": "vault",
-                "trigger": "tool",
-                "phase": "running",
-                "started_at": now - 10,
-                "progress": {"step": "embed", "completed": 2, "total": 4},
-                "runtime_seconds": 10.0,
-                "initiator": {"project_root": str(tmp_path / "active-project")},
-            },
-            {
                 "id": "waiting-job",
                 "source": "code",
                 "trigger": "watcher",
                 "phase": "running",
+                "waiting_on": "writer",
                 "started_at": now - 30,
                 "progress": {"step": "queued", "completed": 0},
                 "runtime_seconds": 30.0,
@@ -116,9 +100,10 @@ def test_jobs_state_waiting_only_shows_queued_jobs(
             },
         ],
         "total": 7,
-        "returned": 2,
+        "returned": 1,
+        "matched": 1,
         "summary": {"running": 2, "phases": {"running": 2, "done": 5}},
-        "filters": {"limit": 5, "phase": "running"},
+        "filters": {"limit": 5, "state": "running", "waiting": True},
     }
 
     with _jobs_http_server([payload]) as (_server, port):
@@ -139,7 +124,9 @@ def test_jobs_state_waiting_only_shows_queued_jobs(
     assert result.exit_code == 0, result.output
     request = urllib.parse.urlparse(_JobsHTTPHandler.paths[0])
     query = urllib.parse.parse_qs(request.query)
-    assert query["phase"] == ["running"]
+    assert query["state"] == ["running"]
+    assert query["waiting"] == ["True"]
+    assert "phase" not in query
     lines = _plain_lines(result.output)
     assert "Displayed: 1 matching job" in lines
     assert "Total: 7 jobs" in lines

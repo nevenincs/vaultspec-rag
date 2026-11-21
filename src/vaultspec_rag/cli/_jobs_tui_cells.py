@@ -28,13 +28,13 @@ from ._jobs_tui_constants import (
 from ._jobs_tui_palette import tone_style
 from ._service_jobs_presentation import (
     human_progress,
+    job_waiting_on,
     operation_label,
     phase_label,
     project_label,
     project_root,
     stale_progress_label,
 )
-from ._service_jobs_query import job_is_waiting
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -203,7 +203,7 @@ def row_animates(job: dict[str, object]) -> bool:
     """
     return (
         str(job.get("phase", "")) == "running"
-        and not job_is_waiting(job)
+        and job_waiting_on(job) is None
         and not stale_progress_label(job)
     )
 
@@ -389,7 +389,7 @@ def time_cell(
     elif (
         ESTIMATE_KEY in job
         and str(job.get("phase", "")) == "running"
-        and not job_is_waiting(job)
+        and job_waiting_on(job) is None
     ):
         # Published null on working work is the service declining to
         # estimate this job - said on the row, because a bare dash there

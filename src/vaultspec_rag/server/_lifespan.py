@@ -1336,10 +1336,14 @@ def _undispatched_job_count(now: float) -> int:
 
 def _jobs_health(*, now: float) -> tuple[dict[str, object], list[Degradation]]:
     """Build the bounded job rollup and its service degradation reasons."""
-    from ._routes_jobs import _job_summary, job_state
+    from .. import jobs as _jobs_registry
+    from ._routes_jobs import _job_summary, job_state, with_admission
 
     canonical_records, job_records = _health_job_records()
-    summary = _job_summary(job_records, now=now)
+    summary = _job_summary(
+        with_admission(job_records, _jobs_registry.get_job_manager().admission_queue()),
+        now=now,
+    )
     undispatched = _undispatched_job_count(now)
     failing, failed_degradation = _failing_health(
         _failing_project_indexes(job_records, now=now)
@@ -1368,6 +1372,9 @@ def _jobs_health(*, now: float) -> tuple[dict[str, object], list[Degradation]]:
         effective_operations[operation] = effective_operations.get(operation, 0) + 1
     jobs_health: dict[str, object] = {
         "running": summary["running"],
+        "working": summary["working"],
+        "waiting": summary["waiting"],
+        "awaiting_admission": summary["awaiting_admission"],
         "queued": summary["queued"],
         "paused": summary["paused"],
         "transitional": summary["transitional"],

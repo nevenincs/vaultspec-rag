@@ -93,6 +93,7 @@ __all__ = [
     "_try_http_retry_job",
     "_try_http_set_job_desired_state",
     "_try_http_vault_document",
+    "_try_http_wait_job",
     "health_answered",
     "health_probe_timed_out",
 ]
@@ -960,6 +961,27 @@ def _try_http_get_job(
     )
 
 
+def _try_http_wait_job(
+    job_id: str,
+    port: int | None,
+    *,
+    until: str,
+    wait_seconds: float,
+) -> dict[str, object] | None:
+    """Hold on the service's bounded wait for one job's admission or finish.
+
+    The HTTP bound is the requested wait plus the ordinary admin bound, so a
+    wait the service answers on expiry is never cut short by the client.
+    """
+    query = urllib.parse.urlencode({"until": until, "timeout": wait_seconds})
+    return _try_http_job_call(
+        port,
+        _job_path(job_id, f"/wait?{query}"),
+        "GET",
+        timeout=wait_seconds + _get_admin_timeout(None),
+    )
+
+
 def _try_http_set_job_desired_state(
     job_id: str,
     state: DesiredJobState,
@@ -1074,6 +1096,7 @@ _JOBS_PARAMS = {
     "job_id",
     "since",
     "state",
+    "waiting",
 }
 
 

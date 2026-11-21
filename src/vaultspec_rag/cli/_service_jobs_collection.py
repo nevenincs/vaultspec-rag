@@ -21,7 +21,6 @@ from ._render import _emit_json
 from ._service_jobs_presentation import render_jobs_result
 from ._service_jobs_query import (
     JobsQuery,
-    apply_client_state_filter,
     exit_jobs_not_running,
     fetch_jobs_result,
     jobs_index_filter,
@@ -114,10 +113,10 @@ def run_service_jobs(
     """Show recent index update activity from the running service."""
     json_mode = options.json_mode
     interval = options.interval
-    phase, client_state = jobs_state_filter(options.state, json_mode)
+    state_filter = jobs_state_filter(options.state, json_mode)
     source = jobs_index_filter(options.index, json_mode)
     trigger = jobs_started_by_filter(options.started_by, json_mode)
-    phase, failed = resolve_jobs_filters(phase, options.failed, json_mode)
+    phase, failed = resolve_jobs_filters(state_filter.phase, options.failed, json_mode)
     resolved_port = (
         options.port if options.port is not None else _default_service_port()
     )
@@ -131,6 +130,8 @@ def run_service_jobs(
         port=resolved_port,
         limit=options.limit,
         phase=phase,
+        state=state_filter.state,
+        waiting=state_filter.waiting,
         source=source,
         trigger=trigger,
         query=options.query,
@@ -146,7 +147,6 @@ def run_service_jobs(
                 job_id=options.job_id,
                 port=resolved_port,
                 interval=interval,
-                client_state=client_state,
                 watch_mode=watch_mode,
             )
         )
@@ -155,7 +155,6 @@ def run_service_jobs(
     result = fetch()
     if result is None:
         exit_jobs_not_running(json_mode, resolved_port)
-    result = apply_client_state_filter(result, client_state)
 
     if json_mode:
         _emit_json(True, "service.jobs", data=result)

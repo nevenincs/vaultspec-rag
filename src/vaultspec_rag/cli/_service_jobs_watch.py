@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Literal, NoReturn
 import typer
 
 from ._render import _emit_json_error_and_exit, _plain
-from ._service_jobs_query import apply_client_state_filter
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -28,7 +27,6 @@ class JobsWatchRequest:
     job_id: str | None
     port: int
     interval: float
-    client_state: str | None
     watch_mode: Literal["server", "jobs"]
 
 
@@ -45,22 +43,15 @@ def exit_invalid_watch_args(json_mode: bool, interval: float) -> NoReturn:
 def watch_jobs(request: JobsWatchRequest) -> None:
     """Run the interactive interface until the operator leaves it.
 
-    The client-side state filter is applied to every fetch here rather than
-    inside the interface, so the interactive and one-shot paths are provably
-    asking the same question of the same service.
+    The interface calls the same fetch the one-shot path does, so both ask
+    the same question of the same service.
     """
     # Imported here so the one-shot and structured paths never pay for the
     # interface, and a terminal-less host can still read the plain feed.
     from ._jobs_tui import run_server_watch
 
-    def watched_fetch() -> dict[str, object] | None:
-        result = request.fetch()
-        if result is None:
-            return None
-        return apply_client_state_filter(result, request.client_state)
-
     run_server_watch(
-        watched_fetch,
+        request.fetch,
         port=request.port,
         interval=request.interval,
         watch_mode=request.watch_mode,

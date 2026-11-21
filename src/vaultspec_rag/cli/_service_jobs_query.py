@@ -12,50 +12,6 @@ from ..serviceclient._transport import _try_http_admin
 from ._render import _display_service_not_running, _emit_json_error_and_exit, _plain
 
 
-def job_awaiting_admission(job: dict[str, object]) -> bool:
-    """Report whether a running job has not yet won its admission slot.
-
-    Only one encode-bearing index job may execute at a time, because a single
-    GPU gains nothing from job-level concurrency. Jobs beyond that one are
-    dispatched and hold the ``running`` phase while parked on the admission
-    limiter, having done no work at all.
-
-    ``admission_acquired_at`` is stamped the moment the attempt's worker
-    actually begins, so a null value is the service's own statement that the
-    job is still waiting. Reporting such a job as active - with a runtime that
-    is really its queue wait - tells an operator that four jobs are competing
-    when three of them have not started.
-
-    The field must be PRESENT and null. A payload that omits it entirely is an
-    older daemon, or a projection that does not carry it, and says nothing
-    either way; inferring a wait from silence would relabel every running job
-    on that daemon as queued. Absent means unknown, and unknown keeps today's
-    reading rather than inventing a more specific one.
-    """
-    if str(job.get("phase", "")) != "running":
-        return False
-    if "admission_acquired_at" not in job:
-        return False
-    return job["admission_acquired_at"] is None
-
-
-def job_is_waiting(job: dict[str, object]) -> bool:
-    """Report whether a running job is waiting rather than working.
-
-    Covers both waits, which are distinct and both invisible in the phase:
-    queued behind the store writer, and queued for the admission slot.
-    """
-    if str(job.get("phase", "")) != "running":
-        return False
-    if job_awaiting_admission(job):
-        return True
-    progress = job.get("progress")
-    return (
-        isinstance(progress, dict)
-        and cast("dict[str, object]", progress).get("step") == "queued"
-    )
-
-
 def _exit_invalid_jobs_filter(json_mode: bool, message: str) -> NoReturn:
     if json_mode:
         _emit_json_error_and_exit(
@@ -110,8 +66,6 @@ def _jobs_phase_value(phase: str | None) -> str | None:
     if phase is None:
         return None
     value = phase.strip().lower()
-    if value in ("running", "active", "waiting"):
-        return "running"
     if value in ("finished", "complete", "completed"):
         return "done"
     if value in ("failed", "failure", "error"):
@@ -121,18 +75,32 @@ def _jobs_phase_value(phase: str | None) -> str | None:
     return value
 
 
+@dataclass(frozen=True, slots=True)
+class JobsStateFilter:
+    """The service filters one ``--state`` value selects.
+
+    Active and waiting are both the running lifecycle state, told apart by
+    the service's own wait verdict; finished, failed and cancelled are
+    phases. Every one is evaluated by the service before it cuts the page.
+    """
+
+    phase: str | None = None
+    state: str | None = None
+    waiting: bool | None = None
+
+
 def jobs_state_filter(
     state: str | None,
     json_mode: bool,
-) -> tuple[str | None, str | None]:
+) -> JobsStateFilter:
     if state is None:
-        return None, None
-    normalized = _jobs_phase_value(state)
+        return JobsStateFilter()
     requested = state.strip().lower()
     if requested in ("active", "waiting"):
-        return "running", requested
+        return JobsStateFilter(state="running", waiting=requested == "waiting")
+    normalized = _jobs_phase_value(state)
     if normalized in ("done", "failed", "cancelled"):
-        return normalized, None
+        return JobsStateFilter(phase=normalized)
     _exit_invalid_jobs_filter_value(
         option="--state",
         value=state,
@@ -190,6 +158,8 @@ class JobsQuery:
     port: int
     limit: int
     phase: str | None = None
+    state: str | None = None
+    waiting: bool | None = None
     source: str | None = None
     trigger: str | None = None
     query: str | None = None
@@ -202,6 +172,8 @@ def _jobs_args(spec: JobsQuery) -> dict[str, object]:
     args: dict[str, object] = {"limit": spec.limit}
     optional_args = {
         "phase": _jobs_phase_value(spec.phase),
+        "state": spec.state,
+        "waiting": spec.waiting,
         "source": spec.source,
         "trigger": _jobs_trigger_value(spec.trigger),
         "query": spec.query,
@@ -253,14 +225,11 @@ def empty_jobs_message(result: dict[str, object], job_id: str | None) -> str:
         filters = cast("dict[str, object]", raw_filters)
         if filters.get("failed") is True:
             message = "There are no failed jobs."
-        elif filters.get("state") == "active":
+        elif filters.get("waiting") is False:
             message = "There are no active jobs."
-        elif filters.get("state") == "waiting":
+        elif filters.get("waiting") is True:
             message = "There are no waiting jobs."
-        elif (
-            isinstance(phase := filters.get("phase"), str)
-            and phase.lower() == "running"
-        ):
+        elif filters.get("state") == "running":
             message = "There are no active or waiting jobs."
         elif any(
             key != "limit" and filter_is_set(value) for key, value in filters.items()
@@ -271,35 +240,3 @@ def empty_jobs_message(result: dict[str, object], job_id: str | None) -> str:
 
 def fetch_jobs_result(spec: JobsQuery) -> dict[str, object] | None:
     return _try_http_admin("get_jobs", _jobs_args(spec), spec.port)
-
-
-def _client_state_matches(job: dict[str, object], state: str | None) -> bool:
-    if state == "active":
-        return str(job.get("phase", "")) == "running" and not job_is_waiting(job)
-    if state == "waiting":
-        return job_is_waiting(job)
-    return True
-
-
-def apply_client_state_filter(
-    result: dict[str, object],
-    state: str | None,
-) -> dict[str, object]:
-    if state not in ("active", "waiting"):
-        return result
-    jobs: list[dict[str, object]] = []
-    for job in jobs_from_result(result):
-        if not isinstance(job, dict):
-            continue
-        job_dict = cast("dict[str, object]", job)
-        if _client_state_matches(job_dict, state):
-            jobs.append(job_dict)
-    filtered = dict(result)
-    filtered["jobs"] = jobs
-    filtered["returned"] = len(jobs)
-    filters = result.get("filters")
-    filter_dict = (
-        cast("dict[str, object]", filters) if isinstance(filters, dict) else {}
-    )
-    filtered["filters"] = {**filter_dict, "state": state}
-    return filtered

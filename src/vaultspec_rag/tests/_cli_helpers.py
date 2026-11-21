@@ -888,6 +888,10 @@ def _jobs_empty_contract_server() -> tuple[
                 "filters": {
                     "limit": int(query.get("limit", ["20"])[0]),
                     "phase": query.get("phase", [None])[0],
+                    "state": query.get("state", [None])[0],
+                    "waiting": {"true": True, "false": False}.get(
+                        query.get("waiting", [""])[0].lower()
+                    ),
                     "source": query.get("source", [None])[0],
                     "trigger": query.get("trigger", [None])[0],
                     "query": query.get("query", [None])[0],
