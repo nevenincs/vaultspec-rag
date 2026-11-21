@@ -5,7 +5,7 @@ tags:
 date: '2026-11-21'
 modified: '2026-11-21'
 body_schema: 'body-v2'
-body_hash: 'sha256:a5c13bd95bcd407925ea27af7abee749faea8ff8b0c5b68cba61f3151bef9f8e'
+body_hash: 'sha256:fdb9f23b1a240a08a0a2dc820c070c05b506aad7e4dd54de85ea1d96e83b1b66'
 related:
   - "[[2026-10-12-destructive-rebuild-lifecycle-plan]]"
 ---
@@ -108,4 +108,8 @@ Resolution: `hold_within_budget` in `src/vaultspec_rag/_store_writes.py` now rel
 
 Resolution: `held_for_reset` in `src/vaultspec_rag/store_collections.py` now lists the owned collections a second time once every lock is held and refuses with a `RuntimeError`, before any intent is recorded, when the set differs from the one it locked. The codebase has no dedicated error for a changed collection set, so it uses the `RuntimeError` that `discard_source_storage` raises for the same class of refusal. `test_a_reset_refuses_when_its_collections_change_while_it_takes_locks` in `src/vaultspec_rag/tests/test_reset_lock_acquisition.py` creates a historical code generation while the reset waits; with the second listing neutralised it failed with DID NOT RAISE, and restored it passes.
 
-Resolution: all three are assigned to the worker fixing the seven GPU-lane failures. Their verification runs on the next frozen sha.
+The seven GPU-lane failures were defects in the test, not in the source. The module was marked for the resident-model tier although it spawns its own service, and its setup and assertions were wrong. Both are corrected in the test. Each narrowed guard there is proven against a production mutation, recorded beside the assertion.
+
+### partial-delete-purge-uncovered | low | No test covers deleting some files before a reset rebuild of vault or code
+
+Skipping the reset's point discard goes undetected for vault and code, because the surviving files rewrite their points under the same ids. A file deleted between the previous index and the rebuild would leave stale points that no test checks. `src/vaultspec_rag/tests/integration/test_indexer_integration.py:1023` covers only the case where every vault file is deleted. Recommendation: in a follow-on, add a real-store test that deletes some vault and code files before an explicit rebuild, and assert that their points are gone.
