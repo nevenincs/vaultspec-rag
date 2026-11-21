@@ -9,7 +9,7 @@ import pytest
 from ..._source_types import PublicSourceType
 from ...indexer._run_ledger_models import RunAuthority
 from ...progress import NullProgressReporter
-from .._ledger_fixtures import latest_generation
+from .._ledger_fixtures import continue_rebuild, latest_generation
 from .conftest import (
     SAMPLE_PYTHON_2,
     _CodeProject,
@@ -121,12 +121,15 @@ class TestIncrementalPublicationRecovery:
         incomplete = checkpoint.ledger.generation(checkpoint.generation_id)
         assert incomplete.terminal_state is RunTerminalState.REBUILD_INCOMPLETE
 
-        indexer.full_index(
-            authority=RunAuthority.REBUILD,
-            clean=True,
-            reporter=NullProgressReporter(),
-            preflight=preflight,
-        )
+        # Resuming is the next attempt of the interrupted request, so it claims
+        # that request's generation; an unclaimed rebuild resets and starts over.
+        with continue_rebuild(checkpoint.generation_id):
+            indexer.full_index(
+                authority=RunAuthority.REBUILD,
+                clean=True,
+                reporter=NullProgressReporter(),
+                preflight=preflight,
+            )
 
         assert set(store.get_all_code_ids()) == expected_ids
         # Chunk identities are deterministic, so matching ids alone cannot tell

@@ -40,6 +40,7 @@ from ..indexer._run_ledger_publication_identity import compatibility_for_signatu
 from ..job_control import NO_RUN_CONTROL
 from ..progress import NullProgressReporter
 from ..store_runtime import VaultStore
+from ._ledger_fixtures import continue_rebuild
 from .test_code_pipeline_retained_ids import _limits, _pipeline, _segments
 from .test_live_checkpoint_resilience import unloaded_model
 
@@ -190,7 +191,10 @@ def rebuild_resume(
         removed.unlink()
         rebuild_only.unlink()
         lifecycle.forget_open_generation()
-        checkpoint = _open_rebuild(indexer, request)
+        # Resuming is the next attempt of the failed request, so it claims that
+        # request's generation; an unclaimed open is a new rebuild.
+        with continue_rebuild(generation_id):
+            checkpoint = _open_rebuild(indexer, request)
         assert checkpoint.generation_id == generation_id
         existing_ids = set(store.get_all_code_ids())
         result = _run(indexer, checkpoint, [survivor])
@@ -393,7 +397,12 @@ def test_full_owner_resumes_removed_own_sources_before_seeding(
     )
     failure: Exception | None = None
     result = None
-    with monkeypatch.context() as patch:
+    # The full invocation is the next attempt of the failed rebuild, so it
+    # claims that generation; an unclaimed full index would reset again.
+    with (
+        monkeypatch.context() as patch,
+        continue_rebuild(case.checkpoint.generation_id),
+    ):
         patch.setattr(case.indexer.store, "_server_mode", True)
         try:
             result = case.indexer.full_index(
@@ -438,7 +447,10 @@ def test_full_owner_keeps_present_source_missing_points_fail_closed(
     from ..store_runtime import IngestVerificationError
 
     failure: Exception | None = None
-    with monkeypatch.context() as patch:
+    with (
+        monkeypatch.context() as patch,
+        continue_rebuild(case.checkpoint.generation_id),
+    ):
         patch.setattr(case.indexer.store, "_server_mode", True)
         try:
             case.indexer.full_index(

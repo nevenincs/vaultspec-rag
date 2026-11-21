@@ -123,11 +123,8 @@ class TestVaultIndexerProgress:
                 "hash documents",
                 "prepare collection",
                 "embed + upsert documents",
-                # Two distinct purges, and the order between them is the
-                # behaviour: points left behind by a superseded layout go
-                # before the stale-document sweep, so a rebuild never drops
-                # what it is still serving.
-                "purge superseded-layout points",
+                # The rebuild's reset emptied the collection before ingestion,
+                # so no superseded layout survives to need a purge of its own.
                 "purge stale documents",
                 "write metadata",
             ]

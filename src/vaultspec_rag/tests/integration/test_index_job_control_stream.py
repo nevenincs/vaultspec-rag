@@ -34,6 +34,7 @@ from ...job_control import (
 )
 from ...progress import NullProgressReporter
 from ...store_runtime import VaultStore
+from .._ledger_fixtures import continue_rebuild
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -246,7 +247,9 @@ def test_clean_rebuild_interrupts_and_resumes_confirmed_units(
         }
         assert confirmed <= {str(record.id) for record in records}
         resumed = _RebuildTrace()
-        with resumed.installed():
+        # The retry is the next attempt of the interrupted request, so it
+        # claims that request's generation; an unclaimed run resets again.
+        with resumed.installed(), continue_rebuild(trace.generation_id):
             _full_rebuild(indexer, RunControlToken())
         proof = acquire_publication_snapshot(tmp_path, source).proof
         assert proof.generation_id == trace.generation_id
@@ -293,7 +296,8 @@ def test_vault_full_resume_reconciles_changed_partial_source(
                 "---\ntype: adr\ntitle: Changed\n---\n# Changed\n\n" + text,
                 encoding="utf-8",
             )
-        _full_rebuild(indexer, RunControlToken())
+        with continue_rebuild(trace.generation_id):
+            _full_rebuild(indexer, RunControlToken())
         snapshot = acquire_publication_snapshot(tmp_path, PublicSourceType.VAULT)
         assert snapshot.proof.generation_id == trace.generation_id
         evidence = read_all_publication_evidence(snapshot)

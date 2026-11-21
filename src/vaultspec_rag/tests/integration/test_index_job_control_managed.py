@@ -68,6 +68,7 @@ from ._index_job_control_support import (
     assert_cancelled_job_is_absorbing,
     assert_cancelled_vault_stops_writes,
     assert_current_code_state,
+    assert_incomplete_code_rebuild,
     cancel_managed_attempt,
     code_pipeline_published,
     pause_managed_attempt,
@@ -342,7 +343,7 @@ async def test_managed_code_pause_releases_pipeline_and_resume_reconciles(
     first_task, paused = paused_attempt
     _assert_manager_resources_released(paused, managed_facade_registry, root, code=True)
     with managed_facade_registry.compute_lease(root) as lease:
-        assert_current_code_state(
+        assert_incomplete_code_rebuild(
             lease.runtime.code_indexer, slot.store, paths, "initial"
         )
 
