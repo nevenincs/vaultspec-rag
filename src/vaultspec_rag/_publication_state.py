@@ -25,8 +25,6 @@ if TYPE_CHECKING:
 
     from .indexer._publication_proof import ProofEvidence, ProofReadToken
     from .indexer._run_ledger_models import PublicationProof, PublicationReceipt
-    from .job_control import RunControl
-    from .store_runtime import VaultStore
 
 __all__ = [
     "UNREADABLE_PUBLICATION_ERRORS",
@@ -180,28 +178,3 @@ def clear_publication_state(
         str(resolved),
         backend_identity,
     )
-
-
-def reset_pending_publication_for_rebuild(
-    store: VaultStore, source: PublicSourceType, run_control: RunControl
-) -> None:
-    """Discard an obsolete in-place publication under explicit rebuild authority.
-
-    The caller owns the source writer lease and has admitted a rebuild. A full
-    generation's resumable work has no incremental receipt and is left intact.
-    """
-    resolved = store.root_dir.resolve()
-    path = index_run_ledger_path(workspace_volume_path(resolved))
-    if not path.is_file():
-        return
-    ledger = RunLedger(path)
-    receipt = ledger.recoverable_publication_receipt(
-        source_type=source,
-        root_identity=str(resolved),
-        backend_identity=store.backend_identity,
-    )
-    if receipt is None or not receipt.state.is_open:
-        return
-    run_control.checkpoint()
-    with run_control.protected():
-        store.reset_source(source)

@@ -686,6 +686,17 @@ def publish_served_code_collection(
     )
 
 
+def retire_served_code_pointer(root_dir: pathlib.Path | str) -> None:
+    """Return *root_dir*'s code reads to the derived name.
+
+    A reset discards every code collection the root owns and recreates only the
+    derived one, so a pointer naming anything else would address a collection
+    that no longer exists. Removing it is idempotent: an absent pointer already
+    resolves to the derived name.
+    """
+    served_code_pointer_path(root_dir).unlink(missing_ok=True)
+
+
 def generation_code_collection(derived_name: str, generation_id: str) -> str:
     """Return the collection a rebuild generation writes into.
 

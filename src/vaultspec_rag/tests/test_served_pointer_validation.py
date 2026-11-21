@@ -225,7 +225,9 @@ def test_explicit_and_cached_foreign_targets_cannot_reach_code_operations(
             with pytest.raises(ValueError, match="root-owned code collection"):
                 store.upsert_code_chunks([], write_policy=None, collection=target)
             with pytest.raises(ValueError, match="root-owned code collection"):
-                store.delete_code_chunks([], collection=target)
+                store.delete_publication_points(
+                    PublicSourceType.CODE, [], collection=target
+                )
             with pytest.raises(ValueError, match="root-owned code collection"):
                 store.drop_code_table(target)
         vars(store)["CODE_TABLE_NAME"] = foreign
@@ -337,7 +339,9 @@ def test_poisoned_shared_pointer_cannot_read_write_delete_or_clean_foreign_data(
                     )
                     owner_store.upsert_code_chunks([owner_chunk], write_policy=None)
                     assert owner_store.count_code() == 1
-                    owner_store.delete_code_chunks([owner_chunk.id])
+                    owner_store.delete_publication_points(
+                        PublicSourceType.CODE, [owner_chunk.id]
+                    )
                     assert owner_store.count_code() == 0
                 with pytest.raises(RuntimeError, match="verifiable served pointer"):
                     clean(owner, clean_type=clean_type, registry=get_registry())
@@ -372,7 +376,11 @@ def test_clean_keeps_valid_base_and_generation_workflows(
                 "code"
             ]
             with get_registry().lease_store(tmp_path) as cleaned:
-                assert target == cleaned.CODE_TABLE_NAME
+                # A clean discards every owned code collection, the served
+                # generation included, and recreates only the derived one.
+                derived = cleaned.DERIVED_CODE_TABLE_NAME
+                assert derived == cleaned.CODE_TABLE_NAME
+                assert cleaned.owned_code_collections() == (derived,)
                 assert cleaned.code_collection_exists()
                 assert cleaned.count_code() == 0
         finally:

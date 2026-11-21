@@ -1004,8 +1004,8 @@ class DocumentIndexer:
                 else CommitUnitKind.DELETE_STALE
             )
             execute_store_mutation(
-                lambda ids=stale_ids: self.store.delete_document_content_chunks(
-                    list(ids)
+                lambda ids=stale_ids: self.store.delete_publication_points(
+                    PublicSourceType.DOCUMENT, list(ids)
                 ),
                 checkpoint.deletion_lifecycle(rel, kind, stale_ids),
             )
@@ -1101,8 +1101,8 @@ class DocumentIndexer:
                 old = current.pop(rel, None)
                 if old is not None:
                     execute_store_mutation(
-                        lambda ids=old.point_ids: (
-                            self.store.delete_document_content_chunks(list(ids))
+                        lambda ids=old.point_ids: self.store.delete_publication_points(
+                            PublicSourceType.DOCUMENT, list(ids)
                         ),
                         request.checkpoint.deletion_lifecycle(
                             rel,
@@ -1165,8 +1165,8 @@ class DocumentIndexer:
         if obsolete:
             obsolete_ids = tuple(sorted(obsolete))
             execute_store_mutation(
-                lambda ids=obsolete_ids: self.store.delete_document_content_chunks(
-                    list(ids)
+                lambda ids=obsolete_ids: self.store.delete_publication_points(
+                    PublicSourceType.DOCUMENT, list(ids)
                 ),
                 replacement.checkpoint.deletion_lifecycle(
                     replacement.rel,
@@ -1195,11 +1195,18 @@ class DocumentIndexer:
         """Reconcile the complete explicitly routed document set."""
         started = index_run_started()
         run_control.checkpoint()
+        began_under = None
         if authority is RunAuthority.REBUILD:
+            from ._rebuild_lifecycle import capture_reset_epoch
             from ._run_ledger_models import index_run_ledger_path
             from ._run_ledger_runtime import set_aside_unsupported_ledger
 
             set_aside_unsupported_ledger(index_run_ledger_path(self._data_root))
+            began_under = capture_reset_epoch(
+                self.store.root_dir,
+                PublicSourceType.DOCUMENT,
+                self.store.backend_identity,
+            )
         policy, paths = self._accept_preflight(
             preflight,
             changed_paths=None,
@@ -1214,11 +1221,14 @@ class DocumentIndexer:
         )
         effective_clean = clean and not preprocessing_disabled
         with self._writer_lock:
-            if authority is RunAuthority.REBUILD:
-                from .._publication_state import reset_pending_publication_for_rebuild
+            if began_under is not None:
+                from ._rebuild_lifecycle import enter_rebuild_ingestion
 
-                reset_pending_publication_for_rebuild(
-                    self.store, PublicSourceType.DOCUMENT, run_control
+                enter_rebuild_ingestion(
+                    self.store,
+                    PublicSourceType.DOCUMENT,
+                    began_under=began_under,
+                    run_control=run_control,
                 )
             checkpoint = self._open_checkpoint(
                 policy=policy,

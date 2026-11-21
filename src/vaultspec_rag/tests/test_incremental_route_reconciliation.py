@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from .._source_types import PublicSourceType
 from .._store_models import CodeChunk, DocumentChunk, DocumentPayload
 from ..config._settings import get_config
 from ..config._types import EnvVar
@@ -226,7 +227,7 @@ def _delete_superseded(
         path, CommitUnitKind.DELETE_STALE, (chunk.id,)
     )
     assert lifecycle is not None and lifecycle.prepare()
-    harness.store.delete_document_content_chunks([chunk.id])
+    harness.store.delete_publication_points(PublicSourceType.DOCUMENT, [chunk.id])
     lifecycle.mark_applied()
     lifecycle.confirm()
     checkpoint.record_confirmed_stale_deletion(path, (chunk.id,))
@@ -375,7 +376,7 @@ def test_cross_kind_cleanup_requires_the_confirmed_destination_to_exist(
     route_store.store.upsert_code_chunks(origins, write_policy=None)
     incremental = _checkpoint(route_store, RunOperation.INCREMENTAL)
     _write(route_store, incremental, [valid, lost])
-    route_store.store.delete_document_content_chunks([lost.id])
+    route_store.store.delete_publication_points(PublicSourceType.DOCUMENT, [lost.id])
 
     result = reconcile_generation_storage(
         route_store.store, incremental, route_store.policy, ContentKind.DOCUMENT

@@ -14,6 +14,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from .._source_types import PublicSourceType
 from .._store_models import (
     CodeChunk,
     DocumentChunk,
@@ -340,9 +341,11 @@ def test_old_sparse_origin_cleanup_is_payload_only_and_destination_first(
             store.scroll_code_content(with_vectors=True)
     with pytest.raises(StorageModelError):
         if case.destination_kind is ContentKind.CODE:
-            store.delete_document_content_chunks([case.unrelated_id])
+            store.delete_publication_points(
+                PublicSourceType.DOCUMENT, [case.unrelated_id]
+            )
         else:
-            store.delete_code_chunks([case.unrelated_id])
+            store.delete_publication_points(PublicSourceType.CODE, [case.unrelated_id])
     with pytest.raises(StorageModelError):
         purge_unpublished_rows(
             store,
@@ -430,6 +433,31 @@ def test_metadata_administration_is_noncreating_and_projection_restricted(
             store.scroll_index_audit_content(
                 store.TABLE_NAME, limit=1, offset=None, source_paths={"missing"}
             )
+    finally:
+        store.close()
+
+
+def test_publication_point_deletion_targets_only_code_collections(
+    clean_config: None,
+    tmp_path: Path,
+) -> None:
+    """Guard: only code deletion takes a target; the others ensure their table.
+
+    Mutation: dropping the explicit-collection check in
+    ``delete_publication_points`` lets the document delete run against the
+    named collection instead of raising, and the ``pytest.raises`` fails.
+    """
+    del clean_config
+    store = VaultStore(tmp_path, embedding_dim=4)
+    try:
+        with pytest.raises(ValueError, match="only code point deletion"):
+            store.delete_publication_points(
+                PublicSourceType.DOCUMENT, ["x"], collection=store.CODE_TABLE_NAME
+            )
+        assert not store._collection_exists(store.CODE_TABLE_NAME)
+        assert not store._collection_exists(store.DOCUMENT_TABLE_NAME)
+        store.delete_publication_points(PublicSourceType.DOCUMENT, ["x"])
+        assert store._collection_exists(store.DOCUMENT_TABLE_NAME)
     finally:
         store.close()
 
@@ -576,7 +604,7 @@ def test_interrupted_destination_first_flip_resumes_idempotently(
             destination_generation_id=checkpoint.generation_id,
             point_ids=(deleted_origin.id,),
         )
-        store.delete_code_chunks([deleted_origin.id])
+        store.delete_publication_points(PublicSourceType.CODE, [deleted_origin.id])
         assert first == second
         assert store.count_code() == 1
         assert store.count_document() == 1

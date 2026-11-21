@@ -168,10 +168,10 @@ def test_clean_does_not_construct_or_import_vault_store_directly() -> None:
 @pytest.mark.parametrize(
     "source", [PublicSourceType.VAULT, PublicSourceType.CODE, PublicSourceType.DOCUMENT]
 )
-def test_reset_source_preserves_sibling_collections(
-    tmp_path: Path, source: PublicSourceType
+def test_clean_preserves_sibling_collections(
+    tmp_path: Path, source: PublicSourceType, isolated_registry: ServiceRegistry
 ) -> None:
-    """The shared reset owner discards only the selected source's points.
+    """Cleaning one source discards only that source's points.
 
     Mutation: deleting all sources failed the sibling point-count assertion;
     restoring selected-source deletion passed.
@@ -204,7 +204,12 @@ def test_reset_source_preserves_sibling_collections(
                 ],
                 wait=True,
             )
-        assert store.reset_source(source) == [source.value]
+
+    assert clean(tmp_path, clean_type=source.value, registry=isolated_registry) == [
+        source.value
+    ]
+
+    with VaultStore(tmp_path, embedding_dim=2) as store:
         for kind, collection in collections.items():
             assert store.client.count(collection, exact=True).count == int(
                 kind is not source

@@ -65,7 +65,7 @@ def test_publication_schema_separates_receipts_from_streaming_mutations() -> Non
 
 def test_publication_ledger_schema_has_a_distinct_current_version() -> None:
     """Mutation: restoring the prior version would admit the old receipt format."""
-    assert SCHEMA_VERSION == 9
+    assert SCHEMA_VERSION == 10
     assert REQUIRED_INDEXES["publication_receipt_deltas_target"] == (
         "publication_receipt_deltas",
         ("receipt_id", "target_rel_path"),
@@ -234,6 +234,67 @@ def test_old_ledger_format_requires_rebuild_without_mutation(
         connection.commit()
 
     ledger_test_assert_rebuild_required_without_mutation(path, match="not supported")
+
+
+def _downgrade_to_prior_format(path: Path) -> None:
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute("DROP TABLE source_resets")
+        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION - 1}")
+
+
+def test_prior_format_gains_the_reset_table_and_keeps_its_publication(
+    tmp_path: Path,
+) -> None:
+    """The prior format upgrades in place; its proof stays the current one.
+
+    Mutation: removing the additive-upgrade branch of the schema writer made
+    the open raise rebuild-required; restoring it passed.
+    """
+    path = tmp_path / "runs.sqlite3"
+    ledger = RunLedger(path)
+    signature = ledger_test_signature(tmp_path)
+    generation = ledger.start_generation(signature)
+    proof = ledger.establish_verified_publication(
+        generation.generation_id, RunAuthority.REBUILD, ()
+    )
+    _downgrade_to_prior_format(path)
+
+    upgraded = RunLedger(path)
+
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == (
+            SCHEMA_VERSION
+        )
+    key = compatibility_for_signature(signature)
+    assert upgraded.publication_proof(key).revision == proof.revision
+    assert (
+        upgraded.source_reset_state(
+            signature.source_type,
+            signature.root_identity,
+            signature.backend_identity,
+        )
+        is None
+    )
+
+
+def test_prior_format_holding_the_new_table_requires_rebuild(tmp_path: Path) -> None:
+    """A prior-format ledger with drift is refused, never blessed by upgrade.
+
+    The prior format is verified both on the read-side version check and
+    again under the write lock before the upgrade, so each covers a ledger
+    changing between the two.
+
+    Mutation: removing both verifications accepted the drifted ledger and
+    failed the ``pytest.raises``; restoring them passed.
+    """
+    path = tmp_path / "runs.sqlite3"
+    RunLedger(path)
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION - 1}")
+
+    ledger_test_assert_rebuild_required_without_mutation(
+        path, match="unexpected tables: source_resets"
+    )
 
 
 def test_live_wal_old_ledger_requires_rebuild_without_durable_mutation(

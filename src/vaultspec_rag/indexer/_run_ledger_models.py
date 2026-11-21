@@ -30,10 +30,14 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator
 
 __all__ = [
+    "ADDITIVE_UPGRADE_FROM_VERSION",
+    "ADDITIVE_UPGRADE_TABLES",
     "INDEX_RUN_LEDGER_FILENAME",
     "LEDGER_BUSY_TIMEOUT_SECONDS",
     "LEDGER_CONTENTION_ATTEMPTS",
     "PUBLICATION_PROOF_SCHEMA",
+    "SOURCE_RESET_ORDER",
+    "SOURCE_RESET_SCHEMA",
     "CommitUnit",
     "CommitUnitKind",
     "EffectivePublicationRead",
@@ -64,6 +68,10 @@ __all__ = [
     "RunOperation",
     "RunSignature",
     "RunTerminalState",
+    "SourceResetEpochError",
+    "SourceResetPhase",
+    "SourceResetRow",
+    "SourceResetState",
     "column_int",
     "column_text",
     "expected_publication_deletion",
@@ -530,7 +538,26 @@ class FileStateTombstoneRow(TypedDict):
     rel_path: str
 
 
-SCHEMA_VERSION: Final = 9
+class SourceResetRow(TypedDict):
+    """The latest reset of one root, backend, and source, and how far it got."""
+
+    source_type: str
+    root_identity: str
+    backend_identity: str
+    epoch: int
+    generation_id: str
+    phase: str
+    updated_at: float
+
+
+SCHEMA_VERSION: Final = 10
+
+#: The one prior format this build upgrades in place rather than refusing. It
+#: differs from the current format only by tables added since, so creating
+#: them leaves every existing generation, receipt, and proof exactly as valid
+#: as it was: a root keeps serving and updating incrementally across the
+#: upgrade instead of paying a full re-embed to gain an empty table.
+ADDITIVE_UPGRADE_FROM_VERSION: Final = 9
 FETCH_BATCH: Final = 256
 INDEX_RUN_LEDGER_FILENAME: Final = "index_runs.sqlite3"
 _BASE_LEDGER_SCHEMA: Final = {
@@ -596,7 +623,19 @@ PUBLICATION_PROOF_SCHEMA: Final = {
     "file_state_tombstones": frozenset(FileStateTombstoneRow.__annotations__),
 }
 
-REQUIRED_SCHEMA: Final = {**_BASE_LEDGER_SCHEMA, **PUBLICATION_PROOF_SCHEMA}
+SOURCE_RESET_SCHEMA: Final = {
+    "source_resets": frozenset(SourceResetRow.__annotations__),
+}
+
+#: Tables the additive upgrade creates. A ledger at the prior format must hold
+#: every other current table exactly and none of these.
+ADDITIVE_UPGRADE_TABLES: Final = frozenset(SOURCE_RESET_SCHEMA)
+
+REQUIRED_SCHEMA: Final = {
+    **_BASE_LEDGER_SCHEMA,
+    **PUBLICATION_PROOF_SCHEMA,
+    **SOURCE_RESET_SCHEMA,
+}
 
 # Named indexes are part of the durable schema contract, not optional tuning.
 # Each tuple is ``(table, ordered columns, unique, partial)`` and is verified on
@@ -854,6 +893,57 @@ class RunTerminalState(StrEnum):
 # attempt inherited the same poisoned state and failed identically, with
 # nothing in the system able to stop trying.
 MAX_RESUME_FAILURES: Final = 3
+
+
+class SourceResetPhase(StrEnum):
+    """Ordered durable phases of one selected-source reset.
+
+    ``INTENT`` is recorded together with the retirement of the source's
+    publication authority, before storage is touched. ``DISCARDED`` follows a
+    verified deletion of every collection the source owns, and ``COMPLETE``
+    follows a verified-empty recreation of its canonical collection. Nothing
+    may write replacement content before ``COMPLETE``.
+    """
+
+    INTENT = "intent"
+    DISCARDED = "discarded"
+    COMPLETE = "complete"
+
+
+SOURCE_RESET_ORDER: Final = tuple(SourceResetPhase)
+
+
+@dataclass(frozen=True, slots=True)
+class SourceResetState:
+    """The latest reset of one source, as the ledger recorded it.
+
+    ``epoch`` counts resets of this root, backend, and source; it advances when
+    a new reset records its intent and never otherwise. ``generation_id`` names
+    the rebuild that owns the reset, so a replay of that rebuild resumes the
+    reset instead of starting another.
+    """
+
+    source_type: PublicSourceType
+    root_identity: str
+    backend_identity: str
+    epoch: int
+    generation_id: str
+    phase: SourceResetPhase
+
+    @property
+    def complete(self) -> bool:
+        """Whether the empty replacement is ready to receive writes."""
+        return self.phase is SourceResetPhase.COMPLETE
+
+
+class SourceResetEpochError(RunLedgerStateError):
+    """The source was reset after the caller captured its reset epoch.
+
+    Carried by a writer or reader whose work began against storage a later
+    reset has discarded. Nothing it observed or would write belongs to the
+    current index.
+    """
+
 
 RESUMABLE_STATES: Final = (
     RunTerminalState.RUNNING,

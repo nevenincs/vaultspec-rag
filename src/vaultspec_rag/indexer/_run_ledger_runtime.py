@@ -9,7 +9,7 @@ import time
 import uuid
 from functools import cache
 from pathlib import Path
-from typing import Final
+from typing import Final, Literal
 
 from .._source_types import PublicSourceType
 from ..logging_config import log_event
@@ -20,6 +20,8 @@ from ._run_ledger_files import (
 )
 from ._run_ledger_finalization import RunLedgerFinalizationMethods
 from ._run_ledger_models import (
+    ADDITIVE_UPGRADE_FROM_VERSION,
+    ADDITIVE_UPGRADE_TABLES,
     MAX_RESUME_FAILURES,
     REQUIRED_INDEX_PREDICATES,
     REQUIRED_INDEXES,
@@ -53,6 +55,7 @@ from ._run_ledger_publication_proofs import RunLedgerPublicationProofMethods
 from ._run_ledger_publication_reads import RunLedgerPublicationReadMethods
 from ._run_ledger_publication_receipts import RunLedgerPublicationReceiptMethods
 from ._run_ledger_recovery import RunLedgerRecoveryMethods
+from ._run_ledger_source_resets import RunLedgerSourceResetMethods
 
 __all__ = ["RunLedger", "set_aside_unsupported_ledger"]
 
@@ -80,6 +83,7 @@ def _execute_schema_statements(
 
 
 class RunLedger(
+    RunLedgerSourceResetMethods,
     RunLedgerPublicationProofMethods,
     RunLedgerPublicationReadMethods,
     RunLedgerPublicationReceiptMethods,
@@ -357,6 +361,11 @@ class RunLedger(
                 "run ledger schema 0 belongs to a nonempty pre-proof database; "
                 "an explicit rebuild is required"
             )
+        if version == ADDITIVE_UPGRADE_FROM_VERSION:
+            # Upgraded in place under the write lock; until then it must hold
+            # the prior format exactly, or the upgrade would bless drift.
+            self._verify_schema(connection, absent_tables=ADDITIVE_UPGRADE_TABLES)
+            return
         if version != SCHEMA_VERSION:
             raise RunLedgerRebuildRequiredError(
                 "run ledger schema "
@@ -389,7 +398,13 @@ class RunLedger(
             elif version == 0 and object_row is None:
                 self._create_base_tables(connection)
                 self._create_publication_tables(connection)
+                self._create_source_reset_tables(connection)
                 self._create_required_indexes(connection)
+                connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                self._verify_schema(connection)
+            elif version == ADDITIVE_UPGRADE_FROM_VERSION:
+                self._verify_schema(connection, absent_tables=ADDITIVE_UPGRADE_TABLES)
+                self._create_source_reset_tables(connection)
                 connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
                 self._verify_schema(connection)
             else:
@@ -810,56 +825,64 @@ class RunLedger(
         )
 
     @staticmethod
-    @cache
-    def _expected_table_definitions() -> tuple[tuple[str, str], ...]:
-        """Build the exact table contract from the current DDL authority.
+    def _create_source_reset_tables(connection: sqlite3.Connection) -> None:
+        """Create the per-source reset record, the one additive table.
 
-        SQLite retains each table's complete definition in ``sqlite_master``.
-        That definition includes nullability, primary and unique keys, CHECK
-        expressions, foreign keys, and their actions. Building it once in an
-        isolated in-memory database makes differently shaped ledgers fail closed
-        while keeping the definition single-sourced.
+        Keyed by source and identity alone, so a root holds one current reset
+        per source and backend: only the latest one fences anything.
         """
-        connection = open_ledger_connection(Path(":memory:"))
-        try:
-            connection.row_factory = sqlite3.Row
-            RunLedger._create_base_tables(connection)
-            RunLedger._create_publication_tables(connection)
-            definitions: list[tuple[str, str]] = []
-            for table in REQUIRED_SCHEMA:
-                row: sqlite3.Row | None = fetch_one(
-                    connection,
-                    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
-                    (table,),
-                )
-                assert row is not None
-                definitions.append(
-                    (table, _normalize_schema_definition(column_text(row, "sql")))
-                )
-            return tuple(definitions)
-        finally:
-            connection.close()
+        _execute_schema_statements(
+            connection,
+            """
+            CREATE TABLE IF NOT EXISTS source_resets (
+                source_type TEXT NOT NULL
+                    CHECK(source_type IN ('vault', 'code', 'document')),
+                root_identity TEXT NOT NULL
+                    CHECK(length(trim(root_identity)) > 0),
+                backend_identity TEXT NOT NULL
+                    CHECK(length(trim(backend_identity)) > 0),
+                epoch INTEGER NOT NULL CHECK(epoch > 0),
+                generation_id TEXT NOT NULL
+                    CHECK(length(trim(generation_id)) > 0),
+                phase TEXT NOT NULL
+                    CHECK(phase IN ('intent', 'discarded', 'complete')),
+                updated_at REAL NOT NULL,
+                PRIMARY KEY(source_type, root_identity, backend_identity)
+            );
+            """,
+        )
 
     @staticmethod
     @cache
-    def _expected_index_definitions() -> tuple[tuple[str, str], ...]:
-        """Build the exact named-index contract from the current DDL authority."""
+    def _expected_schema_definitions(
+        object_type: Literal["table", "index"],
+    ) -> tuple[tuple[str, str], ...]:
+        """Build the exact table or named-index contract from the DDL authority.
+
+        SQLite retains each object's complete definition in ``sqlite_master``.
+        A table's includes nullability, primary and unique keys, CHECK
+        expressions, foreign keys, and their actions. Building every object
+        once in an isolated in-memory database makes differently shaped
+        ledgers fail closed while keeping the definition single-sourced.
+        """
+        names = REQUIRED_SCHEMA if object_type == "table" else REQUIRED_INDEXES
         connection = open_ledger_connection(Path(":memory:"))
         try:
             connection.row_factory = sqlite3.Row
             RunLedger._create_base_tables(connection)
             RunLedger._create_publication_tables(connection)
+            RunLedger._create_source_reset_tables(connection)
             RunLedger._create_required_indexes(connection)
             definitions: list[tuple[str, str]] = []
-            for index_name in REQUIRED_INDEXES:
+            for name in names:
                 row: sqlite3.Row | None = fetch_one(
                     connection,
-                    "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
-                    (index_name,),
+                    "SELECT sql FROM sqlite_master WHERE type = ? AND name = ?",
+                    (object_type, name),
                 )
                 assert row is not None
                 definitions.append(
-                    (index_name, _normalize_schema_definition(column_text(row, "sql")))
+                    (name, _normalize_schema_definition(column_text(row, "sql")))
                 )
             return tuple(definitions)
         finally:
@@ -913,9 +936,19 @@ class RunLedger(
         )
 
     # complexipy: ignore - exhaustive current-schema contract verification
-    def _verify_schema(self, connection: sqlite3.Connection) -> None:
+    def _verify_schema(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        absent_tables: frozenset[str] = frozenset(),
+    ) -> None:
+        """Verify the exact current format, less *absent_tables*.
+
+        *absent_tables* names the tables a prior format lacks. They must then
+        be missing, and every other table must match the current contract.
+        """
         self._verify_schema_objects(connection)
-        self._verify_schema_tables(connection)
+        self._verify_schema_tables(connection, absent_tables=absent_tables)
         for index_name, (
             table,
             expected_columns,
@@ -992,7 +1025,9 @@ class RunLedger(
                 + ", ".join(sorted(unexpected_indexes))
                 + "; an explicit rebuild is required"
             )
-        for index_name, expected_definition in self._expected_index_definitions():
+        for index_name, expected_definition in self._expected_schema_definitions(
+            "index"
+        ):
             definition_row: sqlite3.Row | None = fetch_one(
                 connection,
                 "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
@@ -1029,7 +1064,11 @@ class RunLedger(
             )
 
     @staticmethod
-    def _verify_schema_tables(connection: sqlite3.Connection) -> None:
+    def _verify_schema_tables(
+        connection: sqlite3.Connection,
+        *,
+        absent_tables: frozenset[str] = frozenset(),
+    ) -> None:
         table_rows: list[sqlite3.Row] = fetch_all(
             connection,
             """
@@ -1038,21 +1077,26 @@ class RunLedger(
             """,
         )
         tables = {column_text(row, "name") for row in table_rows}
-        missing_tables = set(REQUIRED_SCHEMA) - tables
+        required = {
+            table: columns
+            for table, columns in REQUIRED_SCHEMA.items()
+            if table not in absent_tables
+        }
+        missing_tables = set(required) - tables
         if missing_tables:
             raise RunLedgerRebuildRequiredError(
                 "run ledger schema is incomplete; missing tables: "
                 + ", ".join(sorted(missing_tables))
                 + "; an explicit rebuild is required"
             )
-        unexpected_tables = tables - set(REQUIRED_SCHEMA)
+        unexpected_tables = tables - set(required)
         if unexpected_tables:
             raise RunLedgerRebuildRequiredError(
                 "run ledger schema contains unexpected tables: "
                 + ", ".join(sorted(unexpected_tables))
                 + "; an explicit rebuild is required"
             )
-        for table, required_columns in REQUIRED_SCHEMA.items():
+        for table, required_columns in required.items():
             info_rows: list[sqlite3.Row] = fetch_all(
                 connection, f"PRAGMA table_info({table})"
             )
@@ -1065,7 +1109,9 @@ class RunLedger(
         for (
             table,
             expected_definition,
-        ) in RunLedger._expected_table_definitions():
+        ) in RunLedger._expected_schema_definitions("table"):
+            if table in absent_tables:
+                continue
             definition_row: sqlite3.Row | None = fetch_one(
                 connection,
                 "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",

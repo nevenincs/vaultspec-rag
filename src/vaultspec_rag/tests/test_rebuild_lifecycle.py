@@ -1,0 +1,594 @@
+"""Durable selected-source reset against real temporary local storage.
+
+Every test opens a real embedded Qdrant store and a real run ledger under the
+test's temporary root. Nothing here loads a model or touches a GPU. A crash is
+reproduced by leaving exactly the durable state a process dying at that point
+leaves behind, then reopening the store the way a restarted process does.
+"""
+
+from __future__ import annotations
+
+import shutil
+from contextlib import ExitStack
+from typing import TYPE_CHECKING
+
+import pytest
+
+from .._source_types import PublicSourceType
+from ..indexer._rebuild_lifecycle import (
+    CONCRETE_SOURCES,
+    ResetEpochFence,
+    capture_reset_epoch,
+    enter_rebuild_ingestion,
+    reset_selected_sources,
+)
+from ..indexer._run_ledger_models import (
+    SourceResetEpochError,
+    SourceResetPhase,
+    SourceResetState,
+    index_run_ledger_path,
+)
+from ..indexer._run_ledger_runtime import RunLedger
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Generator
+    from pathlib import Path
+
+    from ..store_runtime import VaultStore
+
+pytestmark = [pytest.mark.unit]
+
+
+def _open(root: Path) -> VaultStore:
+    from ..store_runtime import VaultStore
+
+    return VaultStore(root, embedding_dim=2)
+
+
+@pytest.fixture
+def local_config() -> None:
+    """Configure local storage with two-wide dense vectors and no sparse ones."""
+    from ..config._settings import get_config
+
+    get_config({"qdrant_url": None, "embedding_dimension": 2, "sparse_enabled": False})
+
+
+@pytest.fixture
+def store(tmp_path: Path, local_config: None) -> Generator[VaultStore]:
+    """Open a real local store holding all three canonical collections."""
+    del local_config
+    with _open(tmp_path) as opened:
+        opened.ensure_table()
+        opened.ensure_code_table()
+        opened.ensure_document_table()
+        yield opened
+
+
+def _collection(store: VaultStore, source: PublicSourceType) -> str:
+    if source is PublicSourceType.VAULT:
+        return store.TABLE_NAME
+    if source is PublicSourceType.CODE:
+        return store.CODE_TABLE_NAME
+    return store.DOCUMENT_TABLE_NAME
+
+
+def _seed(store: VaultStore, collection: str, point_id: int = 1) -> None:
+    from qdrant_client import models
+
+    from .. import store_schema
+
+    store.client.upsert(
+        collection,
+        points=[
+            models.PointStruct(
+                id=point_id,
+                vector={store_schema.DENSE_VECTOR_NAME: [1.0, 0.0]},
+                payload={"content": f"old content {point_id}"},
+            )
+        ],
+        wait=True,
+    )
+
+
+def _points(store: VaultStore, collection: str) -> int:
+    return store.client.count(collection, exact=True).count
+
+
+def _ledger(store: VaultStore) -> RunLedger:
+    from .._store_writes import workspace_volume_path
+
+    return RunLedger(
+        index_run_ledger_path(workspace_volume_path(store.root_dir.resolve()))
+    )
+
+
+def _state(store: VaultStore, source: PublicSourceType) -> SourceResetState | None:
+    return _ledger(store).source_reset_state(
+        source, str(store.root_dir.resolve()), store.backend_identity
+    )
+
+
+def _fence(store: VaultStore, source: PublicSourceType) -> ResetEpochFence:
+    return capture_reset_epoch(store.root_dir, source, store.backend_identity)
+
+
+def _local_dir(store: VaultStore, collection: str) -> Path:
+    from pathlib import Path
+
+    return Path(store.db_path) / "collection" / collection
+
+
+@pytest.mark.parametrize("source", CONCRETE_SOURCES)
+def test_reset_empties_only_the_selected_source(
+    store: VaultStore, source: PublicSourceType
+) -> None:
+    """The selected source ends empty and recreated; its siblings keep points.
+
+    Mutation: resetting every concrete source regardless of selection failed
+    the sibling count assertion; restoring the selection passed.
+    """
+    collections = {kind: _collection(store, kind) for kind in CONCRETE_SOURCES}
+    for collection in collections.values():
+        _seed(store, collection)
+
+    (state,) = reset_selected_sources(store, source, generation_id="rebuild-1")
+
+    assert state.complete
+    assert state.epoch == 1
+    assert store.client.collection_exists(collections[source])
+    for kind, collection in collections.items():
+        assert _points(store, collection) == int(kind is not source), kind
+
+
+def test_reset_leaves_other_roots_and_sibling_ledger_partitions_intact(
+    tmp_path: Path, local_config: None
+) -> None:
+    """A vault reset of one root keeps another root's points and proof.
+
+    Its own document and code partitions record no reset either.
+    """
+    from .._publication_state import acquire_publication_snapshot
+    from ..indexer._publication_proof import ProofMissingError
+    from ._publication_assertions import publish_empty_vault_proof
+
+    del local_config
+    reset_root, other_root = tmp_path / "reset", tmp_path / "other"
+    for root in (reset_root, other_root):
+        publish_empty_vault_proof(root)
+    with ExitStack() as stack:
+        reset_store = stack.enter_context(_open(reset_root))
+        other_store = stack.enter_context(_open(other_root))
+        for opened in (reset_store, other_store):
+            opened.ensure_table()
+            _seed(opened, opened.TABLE_NAME)
+
+        reset_selected_sources(reset_store, PublicSourceType.VAULT, generation_id="r1")
+
+        assert _points(reset_store, reset_store.TABLE_NAME) == 0
+        assert _points(other_store, other_store.TABLE_NAME) == 1
+        assert _state(other_store, PublicSourceType.VAULT) is None
+        for sibling in (PublicSourceType.CODE, PublicSourceType.DOCUMENT):
+            assert _state(reset_store, sibling) is None
+    acquire_publication_snapshot(other_root, PublicSourceType.VAULT)
+    with pytest.raises(ProofMissingError):
+        acquire_publication_snapshot(reset_root, PublicSourceType.VAULT)
+
+
+def test_code_reset_discards_generation_collections_and_retires_the_pointer(
+    store: VaultStore,
+) -> None:
+    """Every owned code collection is discarded and reads return to the base.
+
+    Mutation: dropping only the served collection left the older generation
+    in the owned set; restoring the full owned-set discard passed.
+    """
+    from .._store_models import (
+        generation_code_collection,
+        publish_served_code_collection,
+        served_code_pointer_path,
+    )
+
+    derived = store.DERIVED_CODE_TABLE_NAME
+    older = generation_code_collection(derived, "a" * 32)
+    served = generation_code_collection(derived, "b" * 32)
+    for collection in (derived, older, served):
+        store.ensure_code_table(collection)
+        _seed(store, collection)
+    publish_served_code_collection(store.root_dir, served)
+    store.CODE_TABLE_NAME = served
+
+    reset_selected_sources(store, PublicSourceType.CODE, generation_id="rebuild-1")
+
+    assert store.owned_code_collections() == (derived,)
+    assert not served_code_pointer_path(store.root_dir).exists()
+    served_after = store.CODE_TABLE_NAME
+    assert served_after == derived
+    assert _points(store, derived) == 0
+
+
+def test_code_reset_refuses_to_touch_names_it_does_not_own(store: VaultStore) -> None:
+    """Unknown and foreign code-shaped names survive a code reset untouched.
+
+    Mutation: widening ownership to any name starting with the derived name
+    dropped ``codebase_docs_old`` and failed the survivor assertion;
+    restoring the exact generation-suffix predicate passed.
+    """
+    derived = store.DERIVED_CODE_TABLE_NAME
+    foreign = (f"{derived}_old", f"{derived}_g-tmp", f"other_{derived}")
+    for name in foreign:
+        store.client.create_collection(
+            name,
+            vectors_config=store.client.get_collection(derived).config.params.vectors,
+        )
+        _seed(store, name)
+
+    reset_selected_sources(store, PublicSourceType.CODE, generation_id="rebuild-1")
+
+    for name in foreign:
+        assert store.client.collection_exists(name), name
+        assert _points(store, name) == 1, name
+    with pytest.raises(ValueError, match="root-owned code collection"):
+        store.delete_publication_points(
+            PublicSourceType.CODE, ["x"], collection=foreign[0]
+        )
+
+
+def test_unverifiable_code_pointer_refuses_before_any_source_records_intent(
+    store: VaultStore,
+) -> None:
+    """A combined reset with unestablished code ownership changes nothing.
+
+    Mutation: moving the ownership preflight after the first source's reset
+    let vault record intent and lose its point; restoring the preflight passed.
+    """
+    from .._store_models import served_code_pointer_path
+
+    _seed(store, store.TABLE_NAME)
+    served_code_pointer_path(store.root_dir).write_text("{not json", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="verifiable served pointer"):
+        reset_selected_sources(
+            store, PublicSourceType.COMBINED, generation_id="rebuild-1"
+        )
+
+    assert _points(store, store.TABLE_NAME) == 1
+    for source in CONCRETE_SOURCES:
+        assert _state(store, source) is None
+
+
+def test_reset_retires_only_the_selected_sources_publication(
+    store: VaultStore,
+) -> None:
+    """A document reset keeps the vault proof; a vault reset retires it."""
+    from .._publication_state import acquire_publication_snapshot
+    from ..indexer._publication_proof import ProofMissingError
+    from ._publication_assertions import publish_empty_vault_proof
+
+    publish_empty_vault_proof(store.root_dir)
+
+    reset_selected_sources(store, PublicSourceType.DOCUMENT, generation_id="r1")
+    acquire_publication_snapshot(store.root_dir, PublicSourceType.VAULT)
+
+    reset_selected_sources(store, PublicSourceType.VAULT, generation_id="r2")
+    with pytest.raises(ProofMissingError):
+        acquire_publication_snapshot(store.root_dir, PublicSourceType.VAULT)
+
+
+def test_epoch_fence_rejects_work_that_began_before_a_reset(
+    store: VaultStore,
+) -> None:
+    """Work captured before a reset is stale after it; siblings are not.
+
+    The second reset reaches the same phase as the first, so only the epoch
+    tells the fences apart.
+
+    Mutation: comparing the captured phase instead of the epoch let the
+    fence captured after the first completed reset validate after the second
+    and failed the last ``pytest.raises``; restoring the epoch check passed.
+    """
+    before = _fence(store, PublicSourceType.CODE)
+    sibling = _fence(store, PublicSourceType.VAULT)
+    assert before.epoch == 0
+    assert not before.in_transition
+
+    reset_selected_sources(store, PublicSourceType.CODE, generation_id="rebuild-1")
+
+    with pytest.raises(SourceResetEpochError):
+        before.validate()
+    sibling.validate()
+    after = _fence(store, PublicSourceType.CODE)
+    assert after.epoch == 1
+    assert after.phase is SourceResetPhase.COMPLETE
+    after.validate()
+
+    reset_selected_sources(store, PublicSourceType.CODE, generation_id="rebuild-2")
+
+    with pytest.raises(SourceResetEpochError):
+        after.validate()
+
+
+def test_capturing_an_epoch_creates_no_ledger(tmp_path: Path) -> None:
+    """A read on a never-indexed root leaves no durable state behind."""
+    fence = capture_reset_epoch(tmp_path, PublicSourceType.VAULT, "local:test")
+
+    assert fence.epoch == 0
+    assert not fence.ledger_path.exists()
+    fence.validate()
+
+
+def test_rebuild_ingestion_rejects_a_writer_from_before_a_reset(
+    store: VaultStore,
+) -> None:
+    """A rebuild planned before another reset may not write into its replacement.
+
+    Mutation: deleting the entry's fence validation let the stale rebuild
+    through and failed the ``pytest.raises``; restoring it passed.
+    """
+    stale = _fence(store, PublicSourceType.VAULT)
+    reset_selected_sources(store, PublicSourceType.VAULT, generation_id="newer")
+    _seed(store, store.TABLE_NAME, point_id=9)
+
+    with pytest.raises(SourceResetEpochError, match="after this work began"):
+        enter_rebuild_ingestion(store, PublicSourceType.VAULT, began_under=stale)
+
+    assert _points(store, store.TABLE_NAME) == 1
+    enter_rebuild_ingestion(
+        store,
+        PublicSourceType.VAULT,
+        began_under=_fence(store, PublicSourceType.VAULT),
+    )
+    assert _points(store, store.TABLE_NAME) == 1
+
+
+def test_rebuild_ingestion_on_a_root_without_a_ledger_creates_none(
+    store: VaultStore,
+) -> None:
+    """Entering a first rebuild records no state and discards nothing."""
+    _seed(store, store.TABLE_NAME)
+    fence = _fence(store, PublicSourceType.VAULT)
+
+    enter_rebuild_ingestion(store, PublicSourceType.VAULT, began_under=fence)
+
+    assert not fence.ledger_path.exists()
+    assert _points(store, store.TABLE_NAME) == 1
+
+
+def _crash_after_intent(store: VaultStore, source: PublicSourceType) -> None:
+    _ledger(store).begin_source_reset(
+        source, str(store.root_dir.resolve()), store.backend_identity, "crashed"
+    )
+
+
+def _crash_after_discard(store: VaultStore, source: PublicSourceType) -> None:
+    ledger = _ledger(store)
+    state = ledger.begin_source_reset(
+        source, str(store.root_dir.resolve()), store.backend_identity, "crashed"
+    )
+    store.discard_source_storage(source)
+    ledger.advance_source_reset(state, SourceResetPhase.DISCARDED)
+
+
+def _crash_after_empty_creation(store: VaultStore, source: PublicSourceType) -> None:
+    _crash_after_discard(store, source)
+    store.recreate_empty_source(source)
+
+
+@pytest.mark.parametrize(
+    ("crash", "recorded_phase"),
+    [
+        (_crash_after_intent, SourceResetPhase.INTENT),
+        (_crash_after_discard, SourceResetPhase.DISCARDED),
+        (_crash_after_empty_creation, SourceResetPhase.DISCARDED),
+    ],
+    ids=["after-intent", "after-deletion", "after-empty-creation"],
+)
+@pytest.mark.parametrize("source", CONCRETE_SOURCES)
+def test_rebuild_ingestion_finishes_a_reset_a_crash_interrupted(
+    tmp_path: Path,
+    local_config: None,
+    source: PublicSourceType,
+    crash: Callable[[VaultStore, PublicSourceType], None],
+    recorded_phase: SourceResetPhase,
+) -> None:
+    """A restarted rebuild finishes the interrupted reset under its own epoch.
+
+    Old points are gone and the canonical collection exists and is empty
+    before the rebuild writes anything; the epoch the crash left is kept, so
+    a fence captured after the crash stays valid and the reset is not
+    repeated as a new one.
+
+    Mutation: removing the interrupted-reset recovery from the ingestion
+    entry left the phase short of complete (and, after intent, the old point
+    in place) and failed the phase assertion; restoring it passed.
+    """
+    del local_config
+    with _open(tmp_path) as crashed:
+        crashed.ensure_table()
+        crashed.ensure_code_table()
+        crashed.ensure_document_table()
+        _seed(crashed, _collection(crashed, source))
+        crash(crashed, source)
+        assert _state(crashed, source) == SourceResetState(
+            source_type=source,
+            root_identity=str(tmp_path.resolve()),
+            backend_identity=crashed.backend_identity,
+            epoch=1,
+            generation_id="crashed",
+            phase=recorded_phase,
+        )
+
+    with _open(tmp_path) as restarted:
+        fence = _fence(restarted, source)
+        assert fence.in_transition
+
+        enter_rebuild_ingestion(restarted, source, began_under=fence)
+
+        state = _state(restarted, source)
+        assert state is not None
+        assert (state.epoch, state.generation_id, state.phase) == (
+            1,
+            "crashed",
+            SourceResetPhase.COMPLETE,
+        )
+        collection = _collection(restarted, source)
+        assert restarted.client.collection_exists(collection)
+        assert _points(restarted, collection) == 0
+        fence.validate()
+
+
+def test_a_surviving_local_directory_blocks_ingestion_and_resurrects_nothing(
+    tmp_path: Path, local_config: None
+) -> None:
+    """A collection directory outliving its deletion stops the reset short.
+
+    The crash leaves the reset after its recorded deletion; the old
+    collection's directory is then back on disk, which is what an ``rmtree``
+    defeated by an open handle leaves. Recovery must refuse before it
+    recreates the name, because a local create re-reads that directory and
+    returns the deleted points.
+
+    Mutation: removing the canonical-directory check from
+    ``discard_source_storage`` let recovery recreate the collection over the
+    directory, and the recreated-count guard raised ``holds 1 points``
+    instead of the ``survived`` refusal this test names; restoring it passed.
+    """
+    del local_config
+    saved = tmp_path / "saved-collection"
+    with _open(tmp_path) as crashed:
+        crashed.ensure_document_table()
+        collection = crashed.DOCUMENT_TABLE_NAME
+        _seed(crashed, collection)
+    with _open(tmp_path) as crashed:
+        shutil.copytree(_local_dir(crashed, collection), saved)
+        _crash_after_discard(crashed, PublicSourceType.DOCUMENT)
+        resurrected_dir = _local_dir(crashed, collection)
+    shutil.copytree(saved, resurrected_dir)
+
+    with _open(tmp_path) as restarted:
+        fence = _fence(restarted, PublicSourceType.DOCUMENT)
+        with pytest.raises(RuntimeError, match="survived delete_collection"):
+            enter_rebuild_ingestion(
+                restarted, PublicSourceType.DOCUMENT, began_under=fence
+            )
+
+        state = _state(restarted, PublicSourceType.DOCUMENT)
+        assert state is not None
+        assert state.phase is SourceResetPhase.DISCARDED
+        assert not restarted.client.collection_exists(collection)
+        assert _fence(restarted, PublicSourceType.DOCUMENT).in_transition
+
+
+def test_replaying_a_completed_reset_keeps_confirmed_replacement_work(
+    store: VaultStore,
+) -> None:
+    """Only a new generation discards again; a replay of the same one never does.
+
+    Mutation: removing the completed short-cut discarded the replacement
+    collection on the same-generation replay and failed the existence
+    assertion (the replay then also raised, refusing to move the phase
+    back); restoring it passed.
+    """
+    collection = store.TABLE_NAME
+    reset_selected_sources(store, PublicSourceType.VAULT, generation_id="rebuild-1")
+    _seed(store, collection, point_id=7)
+
+    try:
+        (replayed,) = reset_selected_sources(
+            store, PublicSourceType.VAULT, generation_id="rebuild-1"
+        )
+    finally:
+        # Checked even when the replay raises: a replay that discards has
+        # already lost the replacement before any later step can object.
+        assert store.client.collection_exists(collection)
+        assert _points(store, collection) == 1
+    assert replayed.epoch == 1
+
+    (fresh,) = reset_selected_sources(
+        store, PublicSourceType.VAULT, generation_id="rebuild-2"
+    )
+    assert fresh.epoch == 2
+    assert _points(store, collection) == 0
+
+
+def test_an_open_in_place_publication_is_reset_once_by_its_receipt(
+    store: VaultStore,
+) -> None:
+    """The receipt an interrupted incremental left open resets the source once.
+
+    A second rebuild entry finds the receipt retired with the old proof and
+    resets nothing further, so replacement work written after the first
+    entry survives it.
+    """
+    from ..indexer._run_ledger_models import RunAuthority
+    from ..indexer._run_ledger_publication_identity import (
+        compatibility_for_signature,
+    )
+    from ._run_ledger_test_support import (
+        ledger_test_publish_and_compact,
+        ledger_test_signature,
+    )
+
+    ledger = _ledger(store)
+    signature = ledger_test_signature(
+        store.root_dir, backend_identity=store.backend_identity
+    )
+    parent = ledger.start_generation(signature)
+    proof = ledger.establish_verified_publication(
+        parent.generation_id, RunAuthority.REBUILD, ()
+    )
+    ledger_test_publish_and_compact(ledger, parent.generation_id)
+    successor = ledger.start_generation(signature)
+    receipt = ledger.reserve_publication_receipt(
+        compatibility_for_signature(signature),
+        successor.generation_id,
+        expected_parent_revision=proof.revision,
+    )
+    collection = store.CODE_TABLE_NAME
+    _seed(store, collection)
+
+    enter_rebuild_ingestion(
+        store, PublicSourceType.CODE, began_under=_fence(store, PublicSourceType.CODE)
+    )
+
+    state = _state(store, PublicSourceType.CODE)
+    assert state is not None
+    assert (state.epoch, state.generation_id) == (1, receipt.receipt_id)
+    assert _points(store, collection) == 0
+    _seed(store, collection, point_id=5)
+
+    enter_rebuild_ingestion(
+        store, PublicSourceType.CODE, began_under=_fence(store, PublicSourceType.CODE)
+    )
+
+    assert _state(store, PublicSourceType.CODE) == state
+    assert _points(store, collection) == 1
+
+
+def test_a_superseded_reset_cannot_advance(store: VaultStore) -> None:
+    """An older reset owner is fenced once a newer one records intent."""
+    ledger = _ledger(store)
+    identity = (str(store.root_dir.resolve()), store.backend_identity)
+    older = ledger.begin_source_reset(PublicSourceType.CODE, *identity, "old")
+    ledger.begin_source_reset(PublicSourceType.CODE, *identity, "new")
+
+    with pytest.raises(SourceResetEpochError, match="superseded"):
+        ledger.advance_source_reset(older, SourceResetPhase.DISCARDED)
+
+
+def test_reset_intent_invalidates_other_resumable_generations(
+    store: VaultStore,
+) -> None:
+    """No checkpoint recorded before the reset can seed the replacement."""
+    from ..indexer._run_ledger_models import RunTerminalState
+    from ._run_ledger_test_support import ledger_test_signature
+
+    ledger = _ledger(store)
+    signature = ledger_test_signature(store.root_dir)
+    stale = ledger.start_generation(signature)
+    identity = signature.root_identity, signature.backend_identity
+
+    ledger.begin_source_reset(signature.source_type, *identity, "rebuild-1")
+
+    assert ledger.generation(stale.generation_id).terminal_state is (
+        RunTerminalState.INVALIDATED
+    )

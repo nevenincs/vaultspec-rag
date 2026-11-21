@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from .._source_types import PublicSourceType
 from ._run_ledger_models import RunLedgerIndexedPathCollisionError
 
 if TYPE_CHECKING:
@@ -200,7 +201,9 @@ class CodeDriftOwner:
             sorted({point_id for _digest, ids in evidence for point_id in ids})
         )
         if point_ids:
-            self._store.delete_code_chunks(list(point_ids), collection=self._collection)
+            self._store.delete_publication_points(
+                PublicSourceType.CODE, list(point_ids), collection=self._collection
+            )
         self._checkpoint.retire_retained_upserts(
             rel_path,
             point_ids,
@@ -328,7 +331,9 @@ class CodeDriftOwner:
         left to drop.
         """
         if stale_ids:
-            self._store.delete_code_chunks(list(stale_ids), collection=self._collection)
+            self._store.delete_publication_points(
+                PublicSourceType.CODE, list(stale_ids), collection=self._collection
+            )
             self._superseded_ids.update(stale_ids)
         self._checkpoint.reopen_drifted_path(rel_path, superseded_digest)
         self._superseded.add(rel_path)

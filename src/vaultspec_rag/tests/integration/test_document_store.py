@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ... import store_schema
+from ..._source_types import PublicSourceType
 from ..._store_models import (
     DocumentChunk,
     DocumentLocator,
@@ -149,7 +150,7 @@ def _assert_document_round_trip(store: VaultStore) -> None:
     assert payload["locator_value_int"] == 7
     assert payload["document_metadata"] == {"category": "reference"}
 
-    store.delete_document_content_chunks([chunk.id])
+    store.delete_publication_points(PublicSourceType.DOCUMENT, [chunk.id])
     assert store.count_document() == 0
 
 

@@ -834,10 +834,17 @@ def clean(
     Returns:
         List of cleared source labels (e.g. ['vault', 'codebase']).
     """
+    import uuid
+
+    from .indexer._rebuild_lifecycle import reset_selected_sources
+
     source_type = parse_source_type(clean_type, allow_aliases=True)
     root = _resolve(root_dir)
     with registry.lease_maintenance_store(root) as store:
-        return store.reset_source(source_type)
+        states = reset_selected_sources(
+            store, source_type, generation_id=uuid.uuid4().hex
+        )
+    return [state.source_type.value for state in states]
 
 
 def get_status(root_dir: pathlib.Path) -> dict[str, object]:

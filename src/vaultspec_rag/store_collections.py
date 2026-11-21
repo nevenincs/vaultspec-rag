@@ -224,15 +224,28 @@ class _VaultCollectionMixin:
             if not self._server_mode:
                 close_local_collection(self.client, name)
             self.client.delete_collection(name)
-        if not self._server_mode:
-            import pathlib as _pathlib
+        self._refuse_surviving_local_directory(name)
 
-            collection_dir = _pathlib.Path(self.db_path) / "collection" / name
-            if collection_dir.exists():
-                raise RuntimeError(
-                    f"local collection directory survived delete_collection: "
-                    f"{collection_dir}; same-name recreate would resurrect points"
-                )
+    def _refuse_surviving_local_directory(self, name: str) -> None:
+        """Raise when *name*'s on-disk directory exists in local mode.
+
+        A local create under a name whose directory exists re-reads the
+        storage in it, so a directory outliving its collection would bring
+        the deleted points back. Server mode keeps no local directory.
+
+        Raises:
+            RuntimeError: the directory exists.
+        """
+        if self._server_mode:
+            return
+        import pathlib as _pathlib
+
+        collection_dir = _pathlib.Path(self.db_path) / "collection" / name
+        if collection_dir.exists():
+            raise RuntimeError(
+                f"local collection directory survived delete_collection: "
+                f"{collection_dir}; same-name recreate would resurrect points"
+            )
 
     def _drop_collection(self, collection: str) -> None:
         """Drop one collection if it exists and clear its ensured latch.
@@ -311,37 +324,97 @@ class _VaultCollectionMixin:
             )
         )
 
-    def reset_source(self, source: PublicSourceType) -> list[str]:
-        """Invalidate selected proofs and recreate storage under a writer lease."""
-        from ._publication_state import clear_publication_state
-        from ._source_types import PublicSourceType
+    def owned_source_collections(self, source: PublicSourceType) -> tuple[str, ...]:
+        """Return every existing collection a reset of *source* discards.
 
-        sources = (
-            (PublicSourceType.VAULT, PublicSourceType.CODE, PublicSourceType.DOCUMENT)
-            if source is PublicSourceType.COMBINED
-            else (source,)
+        Vault and documents own one collection each. Code owns the derived
+        name and every generation-named collection minted for this root, as
+        :meth:`owned_code_collections` enumerates them.
+
+        Raises:
+            RuntimeError: code's served pointer is unverifiable, so its
+                ownership is not established and nothing may be discarded.
+        """
+        from ._source_types import PublicSourceType as _Source
+
+        if source is _Source.CODE:
+            return self.owned_code_collections()
+        canonical = self._canonical_source_collection(source)
+        return (canonical,) if self._collection_exists(canonical) else ()
+
+    def _canonical_source_collection(self, source: PublicSourceType) -> str:
+        from ._source_types import PublicSourceType as _Source
+
+        if source is _Source.CODE:
+            return self.DERIVED_CODE_TABLE_NAME
+        if source is _Source.VAULT:
+            return self.TABLE_NAME
+        if source is _Source.DOCUMENT:
+            return self.DOCUMENT_TABLE_NAME
+        raise ValueError("a reset names one concrete source")
+
+    def discard_source_storage(self, source: PublicSourceType) -> None:
+        """Hard-delete every collection *source* owns and verify none survived.
+
+        Each drop closes local handles and checks the on-disk directory is
+        gone, so a later same-name create cannot resurrect a discarded point.
+        The canonical collection's directory is checked even when the backend
+        no longer lists it, because that is the name the reset recreates.
+        Ensure latches and conformance verdicts of the dropped collections go
+        with them, because both describe storage that no longer exists.
+
+        Raises:
+            RuntimeError: the backend still lists a discarded collection, the
+                canonical collection's local directory survived, or code's
+                served pointer is unverifiable.
+        """
+        owned = self.owned_source_collections(source)
+        for collection in owned:
+            self._drop_collection(collection)
+        with self._lifecycle_lock:
+            for collection in owned:
+                self._conformance.pop(collection, None)
+        survivors = self.owned_source_collections(source)
+        if survivors:
+            raise RuntimeError(
+                f"{source.value} reset left collections in storage: "
+                + ", ".join(survivors)
+            )
+        self._refuse_surviving_local_directory(
+            self._canonical_source_collection(source)
         )
-        code_target = None
-        if PublicSourceType.CODE in sources:
-            pointer = read_served_pointer(self.root_dir, self.DERIVED_CODE_TABLE_NAME)
-            if not pointer.verifiable:
-                raise RuntimeError(
-                    "cannot clean code without a verifiable served pointer"
-                )
-            code_target = pointer.collection or self.DERIVED_CODE_TABLE_NAME
-        for selected in sources:
-            clear_publication_state(self.root_dir, selected, self.backend_identity)
-        for selected in sources:
-            if selected is PublicSourceType.VAULT:
-                self.drop_table()
-                self.ensure_table()
-            elif selected is PublicSourceType.CODE:
-                self.drop_code_table(code_target)
-                self.ensure_code_table(code_target)
-            else:
-                self.drop_document_table()
-                self.ensure_document_table()
-        return [selected.value for selected in sources]
+
+    def recreate_empty_source(self, source: PublicSourceType) -> None:
+        """Create *source*'s canonical collection and prove it holds nothing.
+
+        Raises:
+            RuntimeError: the recreated collection already holds points, so a
+                deletion did not take and replacement writes would mix with
+                discarded content.
+        """
+        from ._source_types import PublicSourceType as _Source
+
+        collection = self._canonical_source_collection(source)
+        if source is _Source.CODE:
+            self.ensure_code_table(collection)
+        elif source is _Source.VAULT:
+            self.ensure_table()
+        else:
+            self.ensure_document_table()
+        with self._point_lock(collection):
+            surviving = self._retried(
+                f"count {collection}",
+                lambda timeout: (
+                    self.client.count(
+                        collection_name=collection, exact=True, timeout=timeout
+                    ).count
+                ),
+            )
+        if surviving:
+            raise RuntimeError(
+                f"recreated {source.value} collection {collection} holds "
+                f"{surviving} points; discarded content survived the reset"
+            )
 
     def _record_manifest(self) -> None:
         """Record this root in the storage manifest (server mode only).

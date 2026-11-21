@@ -31,17 +31,23 @@ class _StoreReachedError(Exception):
 
 
 class _StoreStandIn:
-    """Answers the activity stamp, then stops the run at its first real use."""
+    """Answers the root's identity, then stops the run at its first real use.
+
+    The rebuild entry reads the root and backend identity to fence the run
+    before it plans; every storage operation after hashing stops the run.
+    """
 
     def __init__(self, root_dir: Path) -> None:
+        from ..store_runtime import configured_backend_identity
+
         self.root_dir = root_dir
+        self.backend_identity = configured_backend_identity(root_dir)
 
     def touch_manifest_last_indexed(self) -> None:
         return None
 
-    @property
-    def backend_identity(self) -> str:
-        raise _StoreReachedError
+    def __getattr__(self, name: str) -> object:
+        raise _StoreReachedError(name)
 
 
 class _RecordingReporter(NullProgressReporter):

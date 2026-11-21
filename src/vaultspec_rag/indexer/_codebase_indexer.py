@@ -501,15 +501,19 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                             rel, remove_path=True
                         )
                     else:
-                        self.store.delete_code_chunks(
-                            list(point_ids), collection=request.collection
+                        self.store.delete_publication_points(
+                            PublicSourceType.CODE,
+                            list(point_ids),
+                            collection=request.collection,
                         )
                         request.checkpoint.record_confirmed_deletion(rel, point_ids)
                     path_removed_ids.update(point_ids)
                 remaining_stale_ids = sorted(set(stale_ids) - path_removed_ids)
                 if remaining_stale_ids:
-                    self.store.delete_code_chunks(
-                        remaining_stale_ids, collection=request.collection
+                    self.store.delete_publication_points(
+                        PublicSourceType.CODE,
+                        remaining_stale_ids,
+                        collection=request.collection,
                     )
             except OSError:
                 logger.error(
@@ -539,22 +543,30 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         and serializes against concurrent reindex callers (#68).
         """
         run_control.checkpoint()
+        began_under = None
         if authority is RunAuthority.REBUILD:
+            from ._rebuild_lifecycle import capture_reset_epoch
             from ._run_ledger_models import index_run_ledger_path
             from ._run_ledger_runtime import set_aside_unsupported_ledger
 
             set_aside_unsupported_ledger(index_run_ledger_path(self._data_root))
+            began_under = capture_reset_epoch(
+                self.store.root_dir, PublicSourceType.CODE, self.store.backend_identity
+            )
         resolved_policy, discovered_paths = self._accept_preflight(
             preflight,
             changed_paths=None,
         )
         run_control.checkpoint()
         with self._writer_lock:
-            if authority is RunAuthority.REBUILD:
-                from .._publication_state import reset_pending_publication_for_rebuild
+            if began_under is not None:
+                from ._rebuild_lifecycle import enter_rebuild_ingestion
 
-                reset_pending_publication_for_rebuild(
-                    self.store, PublicSourceType.CODE, run_control
+                enter_rebuild_ingestion(
+                    self.store,
+                    PublicSourceType.CODE,
+                    began_under=began_under,
+                    run_control=run_control,
                 )
             self._resolved_policy = resolved_policy
             self._reset_reuse_state()

@@ -278,7 +278,7 @@ def test_unconfirmed_cleanup_cannot_retire_shadow_manifest(
         raise OSError("injected deletion transport failure")
 
     with monkeypatch.context() as patch:
-        patch.setattr(case.indexer.store, "delete_code_chunks", fail_delete)
+        patch.setattr(case.indexer.store, "delete_publication_points", fail_delete)
         with pytest.raises(OSError, match="injected deletion transport failure"):
             case.reconcile()
     # Moving retirement before the actual store acknowledgement fails here.
@@ -452,7 +452,9 @@ def test_full_owner_keeps_present_source_missing_points_fail_closed(
     ids = case.indexer._lifecycle.checkpoint_ids_by_path(
         case.checkpoint, current, retained=True
     )["survivor.py"]
-    case.indexer.store.delete_code_chunks(list(ids), collection=case.target)
+    case.indexer.store.delete_publication_points(
+        PublicSourceType.CODE, list(ids), collection=case.target
+    )
     before = acquire_publication_snapshot(case.indexer.root_dir, PublicSourceType.CODE)
     case.checkpoint.ledger.finish_generation(
         case.checkpoint.generation_id, RunTerminalState.FAILED

@@ -661,11 +661,10 @@ def purge_unpublished_rows(
         if not stale_ids:
             continue
         checkpoint.run_policy.checkpoint("route purge before stale delete")
-        _delete_kind_points(
-            store,
-            stored_kind,
+        store.delete_publication_points(
+            PublicSourceType(stored_kind.value),
             stale_ids,
-            code_collection=options.code_collection,
+            collection=options.code_collection,
         )
         removed += len(stale_ids)
         checkpoint.run_policy.record_durable_progress(
@@ -880,21 +879,6 @@ def _delete_origin_points(store: VaultStore, migration: RouteMigration) -> None:
         else store.DOCUMENT_TABLE_NAME
     )
     store.delete_migration_origin_points(collection, migration.point_ids)
-
-
-def _delete_kind_points(
-    store: VaultStore,
-    kind: ContentKind,
-    point_ids: list[str],
-    *,
-    code_collection: str | None = None,
-) -> None:
-    if kind is ContentKind.CODE:
-        store.delete_code_chunks(point_ids, collection=code_collection)
-    elif code_collection is not None:
-        raise ValueError("only code point deletion accepts an explicit collection")
-    else:
-        store.delete_document_content_chunks(point_ids)
 
 
 def _stored_row_is_retained(

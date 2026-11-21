@@ -206,19 +206,27 @@ class VaultIndexer(VaultIncrementalMixin):
         ``run_control`` defaults to the inert implementation for direct calls.
         """
         run_control.checkpoint()
+        began_under = None
         if authority is RunAuthority.REBUILD:
+            from ._rebuild_lifecycle import capture_reset_epoch
             from ._run_ledger_models import index_run_ledger_path
             from ._run_ledger_runtime import set_aside_unsupported_ledger
 
             set_aside_unsupported_ledger(
                 index_run_ledger_path(workspace_volume_path(self.root_dir.resolve()))
             )
+            began_under = capture_reset_epoch(
+                self.store.root_dir, PublicSourceType.VAULT, self.store.backend_identity
+            )
         with self._writer_lock, self._memory_telemetry():
-            if authority is RunAuthority.REBUILD:
-                from .._publication_state import reset_pending_publication_for_rebuild
+            if began_under is not None:
+                from ._rebuild_lifecycle import enter_rebuild_ingestion
 
-                reset_pending_publication_for_rebuild(
-                    self.store, PublicSourceType.VAULT, run_control
+                enter_rebuild_ingestion(
+                    self.store,
+                    PublicSourceType.VAULT,
+                    began_under=began_under,
+                    run_control=run_control,
                 )
             return run_index_lifecycle(
                 lambda: self._full_index_locked(
