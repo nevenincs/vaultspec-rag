@@ -748,7 +748,10 @@ class TestMcpFastPath:
             SearchSourceFact,
         )
         from .._source_types import IndexSource, PublicSourceType
-        from ..cli._search import _InProcessRenderRequest, _render_in_process_results
+        from ..cli._search_in_process import (
+            InProcessRenderRequest,
+            render_in_process_results,
+        )
         from ..search._outcomes import (
             COMBINED_SEARCH_FAILED,
             COMBINED_SEARCH_FAILED_MESSAGE,
@@ -789,8 +792,8 @@ class TestMcpFastPath:
             top_k=5,
         )
         with pytest.raises(typer.Exit) as raised:
-            _render_in_process_results(
-                _InProcessRenderRequest(
+            render_in_process_results(
+                InProcessRenderRequest(
                     results=outcome,
                     query="anything",
                     search_type=PublicSourceType.COMBINED,

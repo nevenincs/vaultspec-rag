@@ -16,7 +16,10 @@ from .._search_freshness import (
     capture_hit_publications,
     verify_search_hits,
 )
-from ..cli._search import _handle_service_results, _ServiceSearchRenderRequest
+from ..cli._search_results_render import (
+    ServiceSearchRenderRequest,
+    handle_service_results,
+)
 from ..config._types import EnvVar
 from ..indexer._run_ledger_models import RunAuthority, RunOperation
 from ..indexer._vault_checkpoint import VaultRunCheckpoint
@@ -368,8 +371,8 @@ def test_cli_and_mcp_preserve_stale_hits_and_operator_rebuild_request(
             "remediation": "vaultspec-rag index --rebuild --type code",
         }
     ]
-    _handle_service_results(
-        payload, _ServiceSearchRenderRequest("query", "code", False, False, tmp_path)
+    handle_service_results(
+        payload, ServiceSearchRenderRequest("query", "code", False, False, tmp_path)
     )
     output = capsys.readouterr().out
     assert "[stale]" in output

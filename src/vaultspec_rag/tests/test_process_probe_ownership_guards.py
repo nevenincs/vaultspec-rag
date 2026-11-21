@@ -99,10 +99,10 @@ class TestShortfallProseHasOneHome:
         """Neither renderer may read one key and stay blind to the other."""
         import inspect
 
-        from ..cli._search import _render_shortfall_warnings
+        from ..cli._search_results_render import render_shortfall_warnings
         from ..server._routes import search_summary
 
-        for renderer in (_render_shortfall_warnings, search_summary):
+        for renderer in (render_shortfall_warnings, search_summary):
             source = inspect.getsource(renderer)
             assert "shortfall_warnings" in source, (
                 f"{renderer.__name__} must walk the shared reader; keying on one "
