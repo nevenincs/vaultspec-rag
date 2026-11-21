@@ -5,21 +5,14 @@ from __future__ import annotations
 import ast
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, ClassVar
 
 import pytest
 
-from .. import embeddings
 from ..embeddings import LazyReranker
 
 if TYPE_CHECKING:
     from sentence_transformers import CrossEncoder
-
-pytestmark = [pytest.mark.unit]
-
-
-class _Sentinel:
-    device = "sentinel"
 
 
 def _loader_call_sites(path: Path) -> list[str]:
@@ -49,6 +42,7 @@ def _loader_call_sites(path: Path) -> list[str]:
     return sites
 
 
+@pytest.mark.unit
 def test_only_the_lazy_reranker_calls_the_loader() -> None:
     package = Path(__file__).resolve().parents[1]
     sites = sorted(
@@ -62,75 +56,70 @@ def test_only_the_lazy_reranker_calls_the_loader() -> None:
     assert sites == ["embeddings.py:LazyReranker.load_locked"]
 
 
-def test_get_loads_while_the_gpu_lock_is_held(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    gpu_lock = threading.Lock()
-    held_during_load: list[bool] = []
-
-    def _load() -> CrossEncoder:
-        held_during_load.append(gpu_lock.locked())
-        return cast("CrossEncoder", _Sentinel())
-
-    monkeypatch.setattr(embeddings, "load_reranker", _load)
-    slot = LazyReranker(gpu_lock)
-
-    first = slot.get()
-    second = slot.get()
-
-    # Catches the load leaving the lock: removing the ``timed_gpu_lock``
-    # block from ``get`` makes the precondition in ``load_locked`` raise, and
-    # an unlocked load would record ``False`` here.
-    assert held_during_load == [True]
-    assert first is second is slot.loaded
-    assert not gpu_lock.locked()
-
-
-def test_load_locked_refuses_a_caller_without_the_lock(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    loads: list[None] = []
-
-    def _load() -> CrossEncoder:
-        loads.append(None)
-        return cast("CrossEncoder", _Sentinel())
-
-    monkeypatch.setattr(embeddings, "load_reranker", _load)
+@pytest.mark.unit
+def test_load_locked_refuses_a_caller_without_the_lock() -> None:
     slot = LazyReranker(threading.Lock())
 
+    # The refusal precedes the load, so nothing is cached: a load that ran
+    # first would leave a reranker behind.
     with pytest.raises(RuntimeError, match="only while the GPU lock is held"):
         slot.load_locked()
-    assert loads == []
     assert slot.loaded is None
 
 
-def test_load_runs_on_load_under_the_lock_and_clear_drops_it(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    gpu_lock = threading.Lock()
-    observed: list[tuple[object, bool]] = []
-    monkeypatch.setattr(
-        embeddings, "load_reranker", lambda: cast("CrossEncoder", _Sentinel())
-    )
-    slot = LazyReranker(
-        gpu_lock, on_load=lambda r: observed.append((r, gpu_lock.locked()))
-    )
+class TestRealLoad:
+    """The cache around a real CrossEncoder, loaded from the model cache."""
 
-    with gpu_lock:
-        loaded = slot.load_locked()
+    pytestmark: ClassVar = [pytest.mark.cuda]
 
-    assert observed == [(loaded, True)]
-    slot.clear()
-    assert slot.loaded is None
+    def test_get_loads_while_the_gpu_lock_is_held(
+        self, shared_reranker: CrossEncoder
+    ) -> None:
+        gpu_lock = threading.Lock()
+        held_during_load: list[bool] = []
+        slot = LazyReranker(
+            gpu_lock, on_load=lambda _loaded: held_during_load.append(gpu_lock.locked())
+        )
 
+        try:
+            first = slot.get()
+            second = slot.get()
 
-def test_a_preloaded_reranker_is_served_without_loading(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def _load() -> CrossEncoder:
-        raise AssertionError("a pre-loaded reranker must not load again")
+            # Catches the load leaving the lock: removing the ``timed_gpu_lock``
+            # block from ``get`` makes the precondition in ``load_locked``
+            # raise, and a load outside the lock would record ``False`` here.
+            assert held_during_load == [True]
+            assert first is second is slot.loaded
+            assert first is not shared_reranker
+            assert not gpu_lock.locked()
+        finally:
+            slot.clear()
 
-    monkeypatch.setattr(embeddings, "load_reranker", _load)
-    preloaded = cast("CrossEncoder", _Sentinel())
+    @pytest.mark.usefixtures("shared_reranker")
+    def test_load_runs_on_load_under_the_lock_and_clear_drops_it(self) -> None:
+        gpu_lock = threading.Lock()
+        observed: list[tuple[object, bool]] = []
+        slot = LazyReranker(
+            gpu_lock, on_load=lambda r: observed.append((r, gpu_lock.locked()))
+        )
 
-    assert LazyReranker(None, preloaded).get() is preloaded
+        try:
+            with gpu_lock:
+                loaded = slot.load_locked()
+
+            assert observed == [(loaded, True)]
+        finally:
+            slot.clear()
+        assert slot.loaded is None
+
+    def test_a_preloaded_reranker_is_served_without_loading(
+        self, shared_reranker: CrossEncoder
+    ) -> None:
+        loads: list[object] = []
+        slot = LazyReranker(None, shared_reranker, on_load=loads.append)
+
+        # A load would replace the cache and call ``on_load``; the early return
+        # does neither.
+        assert slot.get() is shared_reranker
+        assert slot.loaded is shared_reranker
+        assert loads == []

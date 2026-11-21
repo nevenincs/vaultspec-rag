@@ -17,6 +17,7 @@ MUTATION PROOF, each run as one uninterrupted break, run, restore, run:
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -110,12 +111,20 @@ def test_an_unreadable_store_refuses_a_write_and_is_left_untouched(
 
 def test_a_repaired_store_is_noticed_after_the_retry_window(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path = auto_update_store_path()
     path.write_text("{not json", encoding="utf-8")
     assert load_auto_update_store() is AutoUpdateState.UNVERIFIABLE
     path.unlink()
+    # Inside the window the failed read stands, so a repaired file is not yet
+    # read; this is what fails if the window is not honoured.
     assert auto_update_state(tmp_path) is AutoUpdateState.UNVERIFIABLE
-    monkeypatch.setattr(watcher_intent, "UNVERIFIABLE_RETRY_SECONDS", 0.0)
+
+    # Age the failed read by the window itself on the real monotonic clock
+    # rather than sleeping through it.
+    failed = watcher_intent._snapshot
+    assert failed is not None
+    watcher_intent._snapshot = replace(
+        failed, loaded_at=failed.loaded_at - watcher_intent.UNVERIFIABLE_RETRY_SECONDS
+    )
     assert auto_update_state(tmp_path) is AutoUpdateState.ENABLED

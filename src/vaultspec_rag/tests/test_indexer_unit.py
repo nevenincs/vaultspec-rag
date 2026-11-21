@@ -133,27 +133,22 @@ class TestIndexResult:
         assert result.total == 100
         assert result.device == "cuda"
 
-    def test_duration_survives_a_wall_clock_step(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A run's duration is elapsed time, untouched by a system clock step.
+    def test_duration_is_measured_on_the_monotonic_clock(self) -> None:
+        """A run's duration is elapsed time on the clock a wall step cannot move.
 
-        The wall clock is stepped back an hour between start and finish while
-        2.5 s pass on the monotonic clock. Mutation: measuring either end of
-        the run with ``time.time`` in ``_vault_prep`` reports a negative
-        duration and fails the equality below.
+        The start mark is moved 2.5 s into the past on the real monotonic
+        clock and the run is finished immediately, so the duration must land
+        just above 2500 ms. Mutation: measuring either end of the run with
+        ``time.time`` pairs a wall-clock reading with a monotonic one, which is
+        off by the system's uptime from the epoch and fails the window below.
         """
         from ..embeddings import EmbeddingModel
         from ..indexer import _vault_prep
 
-        monotonic = iter([100.0, 102.5])
-        wall = iter([5_000.0, 1_400.0])
-        monkeypatch.setattr(_vault_prep.time, "monotonic", lambda: next(monotonic))
-        monkeypatch.setattr(_vault_prep.time, "time", lambda: next(wall))
         model = EmbeddingModel.__new__(EmbeddingModel)
         model._device = "cuda"
 
-        started = _vault_prep.index_run_started()
+        started = _vault_prep.index_run_started() - 2.5
         result = _vault_prep.finished_index_result(
             started,
             _vault_prep.IndexRunCounts(added=2),
@@ -162,7 +157,7 @@ class TestIndexResult:
             total=2,
         )
 
-        assert result.duration_ms == 2500
+        assert 2500 <= result.duration_ms < 4500
 
     def test_skip_count_is_derived_from_the_failures(self) -> None:
         """Every source reports one skip per listed preprocess failure."""
