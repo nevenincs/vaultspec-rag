@@ -3,20 +3,23 @@
 Re-running a project extractor (OCR, large PDF, workbook parse) on every full
 or restart reindex is wasteful when the source has not changed. This module
 caches a *successful* :class:`PreprocOutput` per source file under the data dir,
-keyed on the source content hash plus the rule's command and the supported
-schema version, so an unchanged file skips the (potentially expensive)
-extraction.
+keyed on the source path and content hash plus the rule's complete execution
+semantics, so an unchanged file skips the (potentially expensive) extraction.
 
 Only successful outputs are cached. Skips and passthroughs are re-attempted on
 each pass, so a transient extractor failure (e.g. a timeout under load) is never
 made sticky. The cache is consulted inside the CPU-only spawn worker, so this
 module stays torch-free and dependency-light.
 
-Key composition: ``blake2b(source_hash | command | schema_version)``. The
-source hash is the dominant invalidation signal - a changed file produces a new
-hash and therefore a new key. The command is the project's explicit lever: a
-project that upgrades its extractor without touching the source bumps the
-command (or runs a clean rebuild) to force re-extraction. Per-source files under
+Key composition: ``blake2b(source_path | source_hash | execution)``, where
+the execution fingerprint covers the command or entry point, options,
+``extractor_version``, target, invocation mode, emitted-text cap, output schema
+version and, when the rule declares inputs, their ``inputs_digest``. The source
+path is dropped for a path-independent rule. The source hash is the dominant
+invalidation signal - a changed file produces a new hash and therefore a new
+key. A project that changes its extractor without touching the source either
+declares the extractor's files as inputs, so the edit changes the key, or bumps
+``extractor_version``; a rebuild alone reuses the same key. Per-source files under
 a two-char shard directory avoid a single-writer manifest bottleneck across the
 parallel workers.
 """
@@ -115,6 +118,9 @@ class PreprocessCacheIdentity:
             "max_emitted_bytes": max_emitted_bytes,
             "output_schema": SUPPORTED_SCHEMA_VERSION,
         }
+        if rule.inputs_digest is not None:
+            # Omitted when undeclared so an undeclared rule keeps its key.
+            execution["inputs_digest"] = rule.inputs_digest
         encoded = json.dumps(
             execution,
             sort_keys=True,

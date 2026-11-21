@@ -178,9 +178,14 @@ def _emit_json_error_and_exit(
     error: str,
     message: str,
     code: int,
+    /,
     **extra: object,
 ) -> None:
     """Emit an `{"ok": false, ...}` envelope, then raise `typer.Exit`.
+
+    The named parameters are positional-only so a forwarded service field
+    that shares a name with one of them, such as a job outcome's ``code``,
+    travels in ``extra`` instead of colliding with the exit code.
 
     Centralises the JSON error path so every command's failure
     branches converge on one shape. Used by the new `--json` wiring

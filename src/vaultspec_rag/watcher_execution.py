@@ -73,6 +73,7 @@ if TYPE_CHECKING:
     from .indexer._codebase_indexer import CodeExecutionPreflight
     from .indexer._document_indexer import DocumentExecutionPreflight
     from .indexer._vault_prep import IndexResult
+    from .job_models import JobOutcome
     from .service import ProjectComputeRuntime
 
 logger = logging.getLogger(__name__)
@@ -220,8 +221,12 @@ async def _restore_uncreated_admission(
     admission: _ScopedAdmission,
     *,
     error: BaseException | None = None,
+    remediation: str = _REBUILD_REMEDIATION,
 ) -> None:
-    """Settle an exact fence when orchestration stopped before job creation."""
+    """Settle an exact fence when orchestration stopped before job creation.
+
+    *remediation* is what a refused controller tells the operator to run.
+    """
     retry_state = await settle_watcher_attempt(
         slot.retry_policy,
         admission.generation,
@@ -239,7 +244,7 @@ async def _restore_uncreated_admission(
     if retry_state.scope_refusal is not None:
         controller.refuse(
             ControllerReason(retry_state.scope_refusal.value),
-            remediation=_REBUILD_REMEDIATION,
+            remediation=remediation,
             scope=scope,
         )
     else:
@@ -251,6 +256,86 @@ async def _restore_uncreated_admission(
     from .server._watcher import _wake_watcher_scheduler
 
     _wake_watcher_scheduler()
+
+
+async def _create_scoped_job(
+    slot: WatcherConvergenceSlot,
+    controller: WatcherController,
+    admission: _ScopedAdmission,
+    manager: _jobs.JobManager,
+    proposed_job_id: str,
+) -> (
+    tuple[
+        JobOutcome,
+        CodeExecutionPreflight | None,
+        DocumentExecutionPreflight | None,
+    ]
+    | None
+):
+    """Admit one captured scope and create its job, or settle the refusal.
+
+    Returns ``None`` when admission refused the request: no job exists, the
+    captured scope is restored, and the controller stays refused with the
+    rebuild command until an explicit rebuild supersedes it.
+    """
+    try:
+        code_preflight, document_preflight = await _preflight_scoped_paths(
+            slot, admission.candidate_paths
+        )
+        # Through admission like every other index request, so what an
+        # incremental request becomes has one owner. The watcher origin is
+        # refused escalation there before any reading is taken, which keeps
+        # automatic convergence bounded. The compatibility preflight reads
+        # the run ledger and the root's policy, so it runs off the loop.
+        spec = await _run_in_thread(
+            partial(
+                _job_admission.index_job_spec,
+                slot.root,
+                source=slot.source,
+                clean=False,
+                authority=RunAuthority.PUBLICATION,
+                initiator_kind="watcher",
+            )
+        )
+        outcome = await _run_in_thread(
+            partial(
+                manager.create,
+                spec,
+                JobInitiator(
+                    kind="watcher",
+                    command=slot.command,
+                    project_root=str(slot.root),
+                ),
+                job_id=proposed_job_id,
+            )
+        )
+    except _job_admission.IncompatibleIncrementalError as exc:
+        log_event(
+            logger,
+            "service.watcher",
+            "reindex_refused",
+            source=slot.source.value,
+            reason=exc.error_kind.value,
+            identity_changes=list(exc.changed_identities),
+        )
+        await _restore_uncreated_admission(
+            slot,
+            controller,
+            admission,
+            error=exc,
+            remediation=exc.rebuild_command,
+        )
+        return None
+    except BaseException as exc:
+        if manager.get(proposed_job_id) is None:
+            await _restore_uncreated_admission(
+                slot,
+                controller,
+                admission,
+                error=exc if isinstance(exc, Exception) else None,
+            )
+        raise
+    return outcome, code_preflight, document_preflight
 
 
 async def submit_watcher_job(
@@ -285,42 +370,12 @@ async def submit_watcher_job(
         return
     with slot.lock:
         slot.retry_attempt_generations[1] = admission.generation
-    try:
-        code_preflight, document_preflight = await _preflight_scoped_paths(
-            slot, admission.candidate_paths
-        )
-        outcome = await _run_in_thread(
-            partial(
-                manager.create,
-                # Through admission like every other index request, so what
-                # an incremental request becomes has one owner. The watcher
-                # origin is refused escalation there before any reading is
-                # taken, which is what keeps automatic convergence bounded
-                # and costs this path nothing.
-                _job_admission.index_job_spec(
-                    slot.root,
-                    source=slot.source,
-                    clean=False,
-                    authority=RunAuthority.PUBLICATION,
-                    initiator_kind="watcher",
-                ),
-                JobInitiator(
-                    kind="watcher",
-                    command=slot.command,
-                    project_root=str(slot.root),
-                ),
-                job_id=proposed_job_id,
-            )
-        )
-    except BaseException as exc:
-        if manager.get(proposed_job_id) is None:
-            await _restore_uncreated_admission(
-                slot,
-                controller,
-                admission,
-                error=exc if isinstance(exc, Exception) else None,
-            )
-        raise
+    admitted = await _create_scoped_job(
+        slot, controller, admission, manager, proposed_job_id
+    )
+    if admitted is None:
+        return
+    outcome, code_preflight, document_preflight = admitted
     if outcome.status is JobOutcomeStatus.ERROR or outcome.job is None:
         await _settle_retry_failure(
             slot,

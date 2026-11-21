@@ -108,6 +108,7 @@ from ._utils import (
 if TYPE_CHECKING:
     from starlette.requests import Request
 
+    from .._job_admission import IncompatibleIncrementalError
     from ..indexer._codebase_indexer import CodeIndexPreflight
     from ..indexer._document_indexer import DocumentIndexPreflight
     from ..job_models import JobInitiator, JobSpec
@@ -174,11 +175,29 @@ def _service_job_snapshot() -> list[dict[str, object]]:
 
 
 class InvalidJobRequestError(ValueError):
-    """Stable client-input failure for the canonical jobs resource."""
+    """Stable client-input failure for the canonical jobs resource.
+
+    ``extra`` carries the typed fields a refusal adds to its one error
+    envelope; a plain input failure adds none.
+    """
+
+    extra: dict[str, object] | None = None
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+class AdmissionRefusedError(InvalidJobRequestError):
+    """Admission refused an index request before any job record existed.
+
+    The refusal's own fields, such as its rebuild command, travel on the
+    error envelope unchanged.
+    """
+
+    def __init__(self, refusal: IncompatibleIncrementalError) -> None:
+        super().__init__(refusal.error_kind.value, refusal.detail)
+        self.extra = refusal.as_payload()
 
 
 async def job_payload(
@@ -263,7 +282,7 @@ async def validated_index_request(
     JobInitiator,
     CodeIndexPreflight | DocumentIndexPreflight | None,
 ]:
-    from .._job_admission import index_job_spec
+    from .._job_admission import IncompatibleIncrementalError, index_job_spec
     from ..job_models import JobMode, JobOperation, JobSource
 
     operation = job_string(payload, "operation", default="index")
@@ -326,16 +345,19 @@ async def validated_index_request(
     # source gets, so the route reads the request and creates whatever
     # admission says it is. Both of its readings reach SQLite and storage, so
     # they run off the event loop like every other admission check here.
-    spec = await _run_in_thread(
-        partial(
-            index_job_spec,
-            root,
-            source=JobSource(source),
-            clean=JobMode(mode) is JobMode.REBUILD,
-            authority=authority,
-            initiator_kind=initiator.kind,
+    try:
+        spec = await _run_in_thread(
+            partial(
+                index_job_spec,
+                root,
+                source=JobSource(source),
+                clean=JobMode(mode) is JobMode.REBUILD,
+                authority=authority,
+                initiator_kind=initiator.kind,
+            )
         )
-    )
+    except IncompatibleIncrementalError as exc:
+        raise AdmissionRefusedError(exc) from exc
     admission = await _validate_index_job_spec(spec)
     return spec, initiator, admission
 
@@ -440,6 +462,7 @@ def job_outcome_status(code: str) -> int:
         "revision_conflict": 409,
         "force_not_supported": 409,
         "force_termination_unavailable": 409,
+        "full_reindex_required": 409,
     }
     return status_codes.get(code, 500)
 

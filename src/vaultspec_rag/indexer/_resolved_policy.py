@@ -341,6 +341,8 @@ class ResolvedPreprocessRule:
     batch: bool
     path_independent: bool
     max_source_bytes: int | None
+    inputs: tuple[str, ...] = ()
+    inputs_digest: str | None = None
 
     def __post_init__(self) -> None:
         canonical: CanonicalOption = ("mapping", self.options)
@@ -372,6 +374,8 @@ class ResolvedPreprocessRule:
             batch=rule.batch,
             path_independent=rule.path_independent,
             max_source_bytes=rule.max_source_bytes,
+            inputs=tuple(rule.inputs),
+            inputs_digest=rule.inputs_digest,
         )
 
     def materialize(self) -> PreprocessRule:
@@ -391,6 +395,8 @@ class ResolvedPreprocessRule:
             batch=self.batch,
             path_independent=self.path_independent,
             max_source_bytes=self.max_source_bytes,
+            inputs=self.inputs,
+            inputs_digest=self.inputs_digest,
         )
 
 

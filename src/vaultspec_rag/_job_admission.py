@@ -15,7 +15,10 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING, Final, TypedDict, Unpack
 
+from ._job_errors import FULL_REINDEX_REQUIRED_PHRASE, JobError, JobErrorKind
 from ._job_progress import record_progress
+from ._operator_commands import IndexCommandOptions, index_command
+from ._source_types import PublicSourceType
 from .job_control import NO_RUN_CONTROL
 from .job_models import (
     JobInitiator,
@@ -29,7 +32,6 @@ from .job_models import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ._source_types import PublicSourceType
     from .index_profiles import SupportMeasurement
     from .indexer._codebase_indexer import (
         CodeIndexPreflight,
@@ -39,6 +41,7 @@ if TYPE_CHECKING:
         DocumentIndexPreflight,
         DocumentScopedPreflight,
     )
+    from .indexer._publication_proof import ProofCompatibilityKey
     from .indexer._run_ledger_models import RunAuthority
     from .job_control import RunControl
     from .job_manager.manager import JobManager
@@ -106,7 +109,7 @@ def read_source_admission(
     open and lock a backend to compute a number that cannot change the
     answer, on every incremental index of every already-built source.
     """
-    publication = _read_source_publication(root, source)
+    publication, _key = _read_source_publication(root, source)
     if publication is not SourcePublication.ABSENT:
         return SourceAdmissionReading(publication=publication, stored_points=None)
     return SourceAdmissionReading(
@@ -118,8 +121,11 @@ def read_source_admission(
 def _read_source_publication(
     root: Path,
     source: PublicSourceType,
-) -> SourcePublication:
+) -> tuple[SourcePublication, ProofCompatibilityKey | None]:
     """Classify the committed publication authority for one source.
+
+    A published source also returns the compatibility key its proof was
+    committed under; every other classification returns no key.
 
     Admission is reached from the HTTP routes and from the CLI and MCP
     adapters behind them, and it answers per domain. Nothing a publication
@@ -137,11 +143,12 @@ def _read_source_publication(
     from .indexer._publication_proof import ProofMissingError
 
     try:
-        acquire_publication_snapshot(root, source).validate()
+        snapshot = acquire_publication_snapshot(root, source)
+        snapshot.validate()
     except ProofMissingError:
-        return SourcePublication.ABSENT
+        return SourcePublication.ABSENT, None
     except UNREADABLE_PUBLICATION_ERRORS:
-        return SourcePublication.UNREADABLE
+        return SourcePublication.UNREADABLE, None
     except Exception:  # no failure to read publication may escape admission
         logger.warning(
             "could not read the %s publication state of %s; "
@@ -150,8 +157,8 @@ def _read_source_publication(
             root,
             exc_info=True,
         )
-        return SourcePublication.UNREADABLE
-    return SourcePublication.PUBLISHED
+        return SourcePublication.UNREADABLE, None
+    return SourcePublication.PUBLISHED, snapshot.proof.compatibility_key
 
 
 def _count_stored_points(root: Path, source: PublicSourceType) -> int | None:
@@ -205,6 +212,96 @@ def admits_first_build(
     return is_new_source(read_source_admission(root, source))
 
 
+#: The proof identities admission can reproduce exactly from the root's
+#: policy, each with how checkpoint open derives it. The remaining fields of
+#: the compatibility key depend on the model, the backend and the run
+#: configuration, which only a running job resolves.
+_POLICY_IDENTITIES: Final = ("content_identity", "chunking_schema_identity")
+
+
+class IncompatibleIncrementalError(JobError):
+    """An incremental request whose source was published under another policy.
+
+    Carries which policy identities differ and the rebuild command scoped to
+    the root and source, so every adapter renders the same remedy.
+    """
+
+    def __init__(
+        self,
+        root: Path,
+        source: PublicSourceType,
+        changed: tuple[str, ...],
+    ) -> None:
+        self.source = source
+        self.changed_identities = changed
+        self.rebuild_command = index_command(
+            source, IndexCommandOptions(target=str(root), rebuild=True)
+        )
+        super().__init__(
+            JobErrorKind.FULL_REINDEX_REQUIRED,
+            f"the {source.value} index of {root} was published under a different "
+            f"{' and '.join(changed)}, so an incremental run cannot reconcile it; "
+            f"{FULL_REINDEX_REQUIRED_PHRASE}: run {self.rebuild_command}",
+        )
+
+    def as_payload(self) -> dict[str, object]:
+        """Return the wire fields every adapter adds to its error envelope."""
+        return {
+            "rebuild_command": self.rebuild_command,
+            "identity_changes": list(self.changed_identities),
+            "remediation": [self.rebuild_command],
+        }
+
+
+def refuse_incompatible_incremental(root: Path, source: PublicSourceType) -> None:
+    """Refuse an incremental run checkpoint open would refuse, before a job exists.
+
+    Checkpoint open parents an incremental only on a published proof whose
+    compatibility key equals the run's own. The content and chunking
+    identities of that key come from the root's resolved policy alone, so a
+    difference in either one proves the refusal before any job is created.
+    Anything less than proof admits the request unchanged: no readable proof,
+    or a policy that cannot be resolved here. Checkpoint open stays the final
+    authority, and policy validation reports a broken policy with its own
+    typed error.
+
+    Raises:
+        IncompatibleIncrementalError: The published proof and the current
+            policy disagree on the content or chunking identity.
+    """
+    from .indexer._content_discovery import CodeContentDiscovery
+    from .indexer._content_policy import ContentKind
+
+    if source not in (PublicSourceType.CODE, PublicSourceType.DOCUMENT):
+        return
+    publication, published = _read_source_publication(root, source)
+    if publication is not SourcePublication.PUBLISHED or published is None:
+        return
+    try:
+        policy = CodeContentDiscovery(root.resolve()).resolve_policy()
+    except Exception:  # an unresolvable policy is refused by policy validation
+        logger.debug(
+            "could not resolve the policy of %s at admission; admitting the "
+            "%s incremental for checkpoint open to decide",
+            root,
+            source.value,
+            exc_info=True,
+        )
+        return
+    current = (
+        policy.fingerprints_for(ContentKind(source.value)).content,
+        policy.fingerprints.execution,
+    )
+    recorded = (published.content_identity, published.chunking_schema_identity)
+    changed = tuple(
+        name
+        for name, now, then in zip(_POLICY_IDENTITIES, current, recorded, strict=True)
+        if now != then
+    )
+    if changed:
+        raise IncompatibleIncrementalError(root, source, changed)
+
+
 def index_job_spec(
     root: Path,
     *,
@@ -223,6 +320,11 @@ def index_job_spec(
     the job record reports what was asked for next to what runs. Anything
     short of never-built keeps the typed refusal, and automatic origins are
     never escalated.
+
+    Raises:
+        IncompatibleIncrementalError: An incremental code or document request
+            whose published proof provably cannot parent the run. Raised
+            before any job record exists, for every origin.
     """
     from .indexer._run_ledger_models import RunAuthority as _RunAuthority
 
@@ -236,13 +338,14 @@ def index_job_spec(
     )
     if requested is JobMode.REBUILD or not source.is_corpus:
         return spec
-    from ._source_types import PublicSourceType as _Source
-
+    public_source = PublicSourceType(source.value)
     if not admits_first_build(
         root,
-        _Source(source.value),
+        public_source,
         initiator_kind=initiator_kind,
     ):
+        if authority is _RunAuthority.PUBLICATION:
+            refuse_incompatible_incremental(root, public_source)
         return spec
     logger.info(
         "admitting the first %s index of %s as a full build", source.value, root

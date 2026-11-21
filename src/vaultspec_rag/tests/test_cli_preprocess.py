@@ -413,6 +413,51 @@ def test_check_invalid_rule_exits_nonzero(tmp_path: Path) -> None:
     assert result.exit_code == 1
 
 
+def _config_with_inputs(root: Path, inputs: str) -> None:
+    _config_with_rule(root)
+    config = root / ".vaultragpreprocess.toml"
+    body = config.read_text(encoding="utf-8")
+    config.write_text(body + f"inputs = {inputs}\n", encoding="utf-8")
+
+
+def test_check_reports_declared_inputs(tmp_path: Path) -> None:
+    root = make_workspace(tmp_path)
+    _config_with_inputs(root, '["extractor.py"]')
+    result = runner.invoke(
+        app, ["--target", str(root), "preprocess", "check", "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    declared = cast(
+        "list[dict[str, object]]", _data(_json(result.output))["declared_inputs"]
+    )
+    assert len(declared) == 1
+    assert declared[0]["inputs"] == ["extractor.py"]
+    assert str(declared[0]["inputs_digest"]).startswith("blake2b:")
+
+
+def test_list_shows_declared_inputs(tmp_path: Path) -> None:
+    root = make_workspace(tmp_path)
+    _config_with_inputs(root, '["extractor.py"]')
+    result = runner.invoke(app, ["--target", str(root), "preprocess", "list"])
+    assert result.exit_code == 0, result.output
+    # The console wraps the long digest, so match its parts separately.
+    assert "Declared inputs: extractor.py (digest" in result.output
+    assert "blake2b:" in result.output
+
+
+def test_check_refuses_a_missing_declared_input(tmp_path: Path) -> None:
+    root = make_workspace(tmp_path)
+    _config_with_inputs(root, '["missing.py"]')
+    result = runner.invoke(
+        app, ["--target", str(root), "preprocess", "check", "--json"]
+    )
+    assert result.exit_code == 1
+    payload = _json(result.output)
+    assert payload["ok"] is False
+    assert "admission_config_invalid" in json.dumps(payload)
+    assert "matches no file" in json.dumps(payload)
+
+
 def test_run_one_no_match(tmp_path: Path) -> None:
     root = make_workspace(tmp_path)
     _config_with_rule(root)

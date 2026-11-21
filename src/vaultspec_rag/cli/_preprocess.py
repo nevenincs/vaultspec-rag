@@ -131,6 +131,8 @@ def handle_preprocess_list(
             "batch": r.batch,
             "path_independent": r.path_independent,
             "options": dict(r.options),
+            "inputs": list(r.inputs),
+            "inputs_digest": r.inputs_digest,
         }
         for r in config.rules
     ]
@@ -153,6 +155,15 @@ def handle_preprocess_list(
         _plain(f"   Failure handling: {_format_failure_handling(rule['on_error'])}")
         _plain(f"   Timeout: {_format_timeout(rule['timeout_s'])}")
         _plain(f"   Invocation: {rule['command'] or rule['entry_point']}")
+        inputs = _format_inputs(rule["inputs"], rule["inputs_digest"])
+        _plain(f"   Declared inputs: {inputs}")
+
+
+def _format_inputs(inputs: object, digest: object) -> str:
+    if not inputs or not isinstance(inputs, list):
+        return "none (only extractor_version changes invalidate extractions)"
+    patterns = ", ".join(str(pattern) for pattern in cast("list[object]", inputs))
+    return f"{patterns} (digest {digest})"
 
 
 @preprocess_app.command(
@@ -184,6 +195,15 @@ def handle_preprocess_check(
                 "path_independent_rules": sum(
                     rule.path_independent for rule in config.rules
                 ),
+                "declared_inputs": [
+                    {
+                        "pattern": rule.pattern,
+                        "inputs": list(rule.inputs),
+                        "inputs_digest": rule.inputs_digest,
+                    }
+                    for rule in config.rules
+                    if rule.inputs
+                ],
             },
         )
         return
@@ -194,6 +214,12 @@ def handle_preprocess_check(
         return
     rule_word = "rule" if count == 1 else "rules"
     _cli.console.print(f"Preprocess config is valid: {count} {rule_word}.")
+    for rule in config.rules:
+        if rule.inputs:
+            _plain(
+                f"Rule for {rule.pattern} declares inputs "
+                f"{', '.join(rule.inputs)} (digest {rule.inputs_digest})."
+            )
 
 
 def _format_invocation(command: str | None, entry_point: str | None) -> str:

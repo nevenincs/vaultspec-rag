@@ -118,8 +118,17 @@ class _DomainResponse(TypedDict):
     admission: NotRequired[dict[str, object]]
 
 
-def _reindex_failure(*, error_kind: str, detail: str) -> _DomainResponse:
-    """Return one stable failed-domain response."""
+def _reindex_failure(
+    *,
+    error_kind: str,
+    detail: str,
+    extra: dict[str, object] | None = None,
+) -> _DomainResponse:
+    """Return one stable failed-domain response.
+
+    ``extra`` carries a typed refusal's own fields, such as its rebuild
+    command, onto the domain's outcome.
+    """
     return {
         "ok": False,
         "job_id": None,
@@ -129,6 +138,7 @@ def _reindex_failure(*, error_kind: str, detail: str) -> _DomainResponse:
             "status": "error",
             "code": error_kind,
             "message": detail,
+            **(extra or {}),
         },
     }
 
@@ -164,6 +174,7 @@ async def _validate_reindex_domains(
             failures[source.value] = _reindex_failure(
                 error_kind=exc.code,
                 detail=str(exc),
+                extra=exc.extra,
             )
         else:
             validated.append((source, request_parts))
@@ -295,7 +306,7 @@ async def reindex_route(request: Request) -> JSONResponse:
             authority=authority,
         )
     except InvalidJobRequestError as exc:
-        return job_error("create", exc.code, str(exc))
+        return job_error("create", exc.code, str(exc), extra=exc.extra)
 
     first_root, first_admission = await _create_reindex_domains(
         validated,
