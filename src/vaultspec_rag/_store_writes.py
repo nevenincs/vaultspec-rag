@@ -82,13 +82,19 @@ class StoreWritePolicy:
     """Limited capabilities supplied by the indexing run policy.
 
     The caller-owned indexing run policy owns the clock, durable-progress
-    resets, and interruptible waiting. This value binds only the two
-    capabilities the store may consume, keeping retry code independent of
-    indexer lifecycle state and preventing it from advancing the clock.
+    resets, interruptible waiting, and the reset epoch its writes belong to.
+    This value binds only the three capabilities the store may consume,
+    keeping retry code independent of indexer lifecycle state and preventing
+    it from advancing the clock.
+
+    ``admit_write`` runs before every write attempt and raises when the run
+    may no longer write - its source was reset after the run's epoch - so a
+    stale writer stops before its next write lands instead of after.
     """
 
     remaining_seconds: Callable[[], float]
     wait: Callable[[float], None]
+    admit_write: Callable[[], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +199,8 @@ def run_store_operation_with_retry[T](
             ),
             description=description,
         )
+        if policy is not None:
+            policy.admit_write()
         try:
             return op(attempt_timeout)
         except Exception as exc:

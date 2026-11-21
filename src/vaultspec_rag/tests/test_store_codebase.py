@@ -128,6 +128,7 @@ class TestStoreCodebase:
         policy = StoreWritePolicy(
             remaining_seconds=lambda: deadline - time.monotonic(),
             wait=time.sleep,
+            admit_write=lambda: None,
         )
         chunk = CodeChunk(
             id="src/deadline.py:1-1",

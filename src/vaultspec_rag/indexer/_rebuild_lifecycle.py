@@ -19,19 +19,28 @@ The epoch is the fence. A reader or writer captures it before touching
 storage and validates it afterwards; any reset recorded in between makes the
 work stale, so nothing observed from discarded storage is returned and nothing
 an old attempt writes lands in the replacement unnoticed.
+
+A new explicit rebuild and the continuation of one are different operations.
+A rebuild carries a :class:`RebuildClaim`: a new request claims nothing and
+always resets again, while a resumed, retried, restored or replayed request
+claims the generation its durable request recorded and continues only that
+generation, keeping the replacement work it confirmed. A claim on a
+generation another rebuild has since replaced is refused, never resumed.
 """
 
 from __future__ import annotations
 
 import logging
+from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from .._source_types import PublicSourceType
 from .._store_models import retire_served_code_pointer
 from .._store_writes import workspace_volume_path
 from ..job_control import NO_RUN_CONTROL
 from ._run_ledger_models import (
+    RESUMABLE_STATES,
     SourceResetEpochError,
     SourceResetPhase,
     index_run_ledger_path,
@@ -41,16 +50,22 @@ from ._run_ledger_source_resets import read_source_reset
 
 if TYPE_CHECKING:
     import pathlib
+    from collections.abc import Callable
 
     from ..job_control import RunControl
     from ..store_runtime import VaultStore
-    from ._run_ledger_models import SourceResetState
+    from ._run_ledger_models import RunSignature, SourceResetState
 
 __all__ = [
     "CONCRETE_SOURCES",
+    "NEW_REBUILD",
+    "RebuildClaim",
+    "RebuildSupersededError",
     "ResetEpochFence",
     "capture_reset_epoch",
     "enter_rebuild_ingestion",
+    "rebuild_claim",
+    "refuse_superseded_claim",
     "reset_selected_sources",
 ]
 
@@ -74,6 +89,80 @@ def _ledger_path(root: pathlib.Path) -> pathlib.Path:
     return index_run_ledger_path(workspace_volume_path(root.resolve()))
 
 
+class RebuildSupersededError(SourceResetEpochError):
+    """A rebuild claims a generation another rebuild has since replaced.
+
+    The replacing rebuild discarded everything the claimed generation wrote,
+    so continuing it would certify work that no longer exists. Only a new
+    rebuild request may run.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class RebuildClaim:
+    """Which rebuild one attempt carries out.
+
+    ``generation_id`` is ``None`` for a new explicit rebuild, which never
+    continues a generation an earlier rebuild left and so resets the source
+    again. A resumed, retried, restored or replayed request names the
+    generation its durable request recorded and continues only that one.
+
+    ``bind`` durably records the generation an attempt opened, before that
+    generation's reset is recorded, so every later attempt of the same request
+    claims it. A caller without a durable request records nothing.
+    """
+
+    generation_id: str | None = None
+    bind: Callable[[str], None] | None = None
+
+
+#: The claim of a request that starts a rebuild rather than continuing one.
+NEW_REBUILD: Final = RebuildClaim()
+
+#: The claim of the rebuild running in this context. A durable request binds
+#: its own around one attempt; every other caller starts a new rebuild.
+rebuild_claim: ContextVar[RebuildClaim] = ContextVar(
+    "rebuild_claim", default=NEW_REBUILD
+)
+
+
+def refuse_superseded_claim(
+    ledger: RunLedger,
+    signature: RunSignature,
+    claim: RebuildClaim,
+) -> None:
+    """Refuse a claim on a generation another rebuild has since replaced.
+
+    Runs before the claimed generation is reopened, so a refusal changes no
+    durable state. Every reset invalidates each resumable generation except
+    its own owner, so a claimed generation still resumable has not been
+    replaced even when the recorded reset belongs to an earlier rebuild: it
+    was bound before its own reset was recorded.
+
+    Raises:
+        RebuildSupersededError: The source's reset belongs to another
+            generation and the claimed one is no longer resumable.
+    """
+    claimed = claim.generation_id
+    if claimed is None:
+        return
+    reset = ledger.source_reset_state(
+        signature.source_type, signature.root_identity, signature.backend_identity
+    )
+    if reset is None or reset.generation_id == claimed:
+        return
+    try:
+        resumable = ledger.generation(claimed).terminal_state in RESUMABLE_STATES
+    except KeyError:
+        resumable = False
+    if resumable:
+        return
+    raise RebuildSupersededError(
+        f"{signature.source_type.value} rebuild generation {claimed} was replaced "
+        f"by the rebuild that reset it at epoch {reset.epoch}; start a new rebuild"
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ResetEpochFence:
     """The reset epoch one reader or writer began under.
@@ -88,6 +177,37 @@ class ResetEpochFence:
     backend_identity: str
     epoch: int
     phase: SourceResetPhase | None
+
+    @classmethod
+    def capture(
+        cls,
+        ledger: RunLedger,
+        source: PublicSourceType,
+        root_identity: str,
+        backend_identity: str,
+    ) -> ResetEpochFence:
+        """Fence work to *source*'s latest reset as *ledger* records it now."""
+        state = ledger.source_reset_state(source, root_identity, backend_identity)
+        return cls(
+            ledger_path=ledger.path,
+            source_type=source,
+            root_identity=root_identity,
+            backend_identity=backend_identity,
+            epoch=0 if state is None else state.epoch,
+            phase=None if state is None else state.phase,
+        )
+
+    @classmethod
+    def of(cls, ledger_path: pathlib.Path, state: SourceResetState) -> ResetEpochFence:
+        """Fence work to the reset *state* records, as read from *ledger_path*."""
+        return cls(
+            ledger_path=ledger_path,
+            source_type=state.source_type,
+            root_identity=state.root_identity,
+            backend_identity=state.backend_identity,
+            epoch=state.epoch,
+            phase=state.phase,
+        )
 
     @property
     def serving(self) -> bool:
@@ -145,18 +265,17 @@ def capture_reset_epoch(
         raise ValueError("a reset epoch belongs to one concrete source")
     resolved = root.resolve()
     path = _ledger_path(resolved)
-    state = (
-        RunLedger(path).source_reset_state(source, str(resolved), backend_identity)
-        if path.is_file()
-        else None
-    )
+    if path.is_file():
+        return ResetEpochFence.capture(
+            RunLedger(path), source, str(resolved), backend_identity
+        )
     return ResetEpochFence(
         ledger_path=path,
         source_type=source,
         root_identity=str(resolved),
         backend_identity=backend_identity,
-        epoch=0 if state is None else state.epoch,
-        phase=None if state is None else state.phase,
+        epoch=0,
+        phase=None,
     )
 
 
@@ -259,11 +378,17 @@ def enter_rebuild_ingestion(
     - A reset its own generation left unfinished resumes from its recorded
       phase; any other generation's reset, finished or not, is superseded by
       a new one, which also retires every receipt and proof the source held.
+    - The context's :data:`rebuild_claim` records *generation_id* before any
+      reset intent, so the next attempt of the same request continues this
+      generation instead of starting a new rebuild.
 
     Raises:
         SourceResetEpochError: *source* was reset after *began_under*.
     """
     began_under.validate()
+    claim = rebuild_claim.get()
+    if claim.bind is not None and claim.generation_id != generation_id:
+        claim.bind(generation_id)
     (state,) = reset_selected_sources(
         store, source, generation_id=generation_id, run_control=run_control
     )

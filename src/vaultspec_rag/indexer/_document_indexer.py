@@ -1184,15 +1184,7 @@ class DocumentIndexer:
                 limits=limits,
                 execution=PublicationExecution(RunAuthority.REBUILD, run_control),
             )
-            from ._rebuild_lifecycle import enter_rebuild_ingestion
-
-            enter_rebuild_ingestion(
-                self.store,
-                PublicSourceType.DOCUMENT,
-                began_under=began_under,
-                generation_id=checkpoint.generation_id,
-                run_control=checkpoint.run_policy,
-            )
+            checkpoint.reset_for_rebuild(self.store, began_under=began_under)
             with checkpoint.preserve_incomplete_generation():
                 budget = self._begin_resource_budget(limits)
             return run_index_lifecycle(

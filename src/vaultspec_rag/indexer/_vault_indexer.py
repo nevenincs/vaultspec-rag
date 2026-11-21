@@ -305,15 +305,7 @@ class VaultIndexer(VaultIncrementalMixin):
             run_control=run_control,
         )
         run_control = checkpoint.run_policy
-        from ._rebuild_lifecycle import enter_rebuild_ingestion
-
-        enter_rebuild_ingestion(
-            self.store,
-            PublicSourceType.VAULT,
-            began_under=began_under,
-            generation_id=checkpoint.generation_id,
-            run_control=run_control,
-        )
+        checkpoint.reset_for_rebuild(self.store, began_under=began_under)
         # An empty vault is not short-circuited: it still publishes an empty
         # certified index over the empty collection the reset left.
 

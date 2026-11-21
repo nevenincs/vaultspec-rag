@@ -342,6 +342,38 @@ class JobManagerProgress(JobManagerState):
                 return False
             return True
 
+    def bind_rebuild_generation(
+        self,
+        job_id: str,
+        *,
+        task: asyncio.Task[AttemptExit],
+        generation_id: str,
+    ) -> bool:
+        """Durably record the rebuild generation the attached attempt opened.
+
+        Returns ``False`` when *task* is no longer the job's attempt or the
+        record could not be persisted; the attempt must not reset then,
+        because a later attempt would not know which rebuild it continues.
+        """
+        if not generation_id.strip():
+            raise ValueError("a rebuild generation id must be non-empty")
+        with self._lock:
+            backup = self._capture_state_locked()
+            managed = self._active.get(job_id)
+            if managed is None or managed.runtime.task is not task:
+                return False
+            if managed.snapshot.rebuild_generation_id == generation_id:
+                return True
+            managed.snapshot = replace(
+                managed.snapshot, rebuild_generation_id=generation_id
+            )
+            persistence_error = self._persist_locked()
+            if persistence_error is not None:
+                if not persistence_error.published:
+                    self._restore_state_locked(backup)
+                return False
+            return True
+
     def update_terminal_resilience(
         self,
         job_id: str,

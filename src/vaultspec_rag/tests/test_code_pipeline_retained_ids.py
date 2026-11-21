@@ -36,7 +36,7 @@ from ..indexer._streaming_types import CodeFileSegment, CodeFileSegmentRequest
 from ..job_control import NO_RUN_CONTROL
 from ..progress import NullProgressReporter
 from ..store_runtime import VaultStore
-from ._ledger_fixtures import record_reset_over_empty_storage
+from ._ledger_fixtures import continue_rebuild, record_reset_over_empty_storage
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -276,7 +276,8 @@ def test_resumed_partial_edit_preserves_confirmed_shared_chunk_ids(
         checkpoint.ledger.finish_generation(
             checkpoint.generation_id, RunTerminalState.CANCELLED
         )
-        checkpoint = lifecycle.open_checkpoint(request)
+        with continue_rebuild(checkpoint.generation_id):
+            checkpoint = lifecycle.open_checkpoint(request)
         before = set(store.get_all_code_ids())
         for path in paths:
             path.write_text(source.replace("y" * 1000, "z" * 1000), encoding="utf-8")
@@ -353,7 +354,8 @@ def test_reopened_pipeline_excludes_durable_deletion_identities(
         checkpoint.ledger.finish_generation(
             checkpoint.generation_id, RunTerminalState.CANCELLED
         )
-        checkpoint = lifecycle.open_checkpoint(request)
+        with continue_rebuild(checkpoint.generation_id):
+            checkpoint = lifecycle.open_checkpoint(request)
         paths: list[Path] = []
         expected_ids: set[str] = set()
         if with_survivor:
@@ -430,7 +432,8 @@ def test_reopened_pipeline_keeps_unfinished_file_upsert_prefix(
         checkpoint.ledger.finish_generation(
             checkpoint.generation_id, RunTerminalState.CANCELLED
         )
-        checkpoint = lifecycle.open_checkpoint(request)
+        with continue_rebuild(checkpoint.generation_id):
+            checkpoint = lifecycle.open_checkpoint(request)
         result = _pipeline(tmp_path, store, lifecycle).run(
             [],
             CodePipelineRun(

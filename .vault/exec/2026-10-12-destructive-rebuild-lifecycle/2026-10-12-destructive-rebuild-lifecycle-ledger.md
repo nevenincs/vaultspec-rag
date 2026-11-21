@@ -5,7 +5,7 @@ tags:
 date: '2026-10-12'
 modified: '2026-11-21'
 body_schema: 'body-v2'
-body_hash: 'sha256:b32d2b05b1b438768056356146f3141135fd465dbea225a83756d5fa8cd6f0b7'
+body_hash: 'sha256:4e0c73336e71af0923b5759abeecae2e03e09396800781ca55e0206e23f8460e'
 related:
   - "[[2026-10-12-destructive-rebuild-lifecycle-plan]]"
 ---
@@ -148,6 +148,39 @@ related:
 - `S03` `verify:` `pytest rebuild/search-readiness/service/guard modules incl. CPU search-readiness integration (330 passed)` -> `pass`
 - `S03` `verify:` `pytest CPU unit lane (8339 passed; 25 failures only in another worker's in-flight test_cli_service_status files)` -> `pass`
 - `S03` `by:` `vaultspec-high-executor`
+- `S04` `M` `src/vaultspec_rag/indexer/_rebuild_lifecycle.py`
+- `S04` `M` `src/vaultspec_rag/indexer/_checkpoint_common.py`
+- `S04` `M` `src/vaultspec_rag/indexer/_run_policy.py`
+- `S04` `M` `src/vaultspec_rag/indexer/_vault_indexer.py`
+- `S04` `M` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S04` `M` `src/vaultspec_rag/indexer/_document_indexer.py`
+- `S04` `M` `src/vaultspec_rag/_store_writes.py`
+- `S04` `M` `src/vaultspec_rag/job_dispatch.py`
+- `S04` `M` `src/vaultspec_rag/job_models.py`
+- `S04` `M` `src/vaultspec_rag/job_persistence.py`
+- `S04` `M` `src/vaultspec_rag/job_manager/_control.py`
+- `S04` `M` `src/vaultspec_rag/job_manager/_progress.py`
+- `S04` `M` `src/vaultspec_rag/job_manager/models.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_rebuild_lifecycle.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_job_rebuild_resume_dispatch.py`
+- `S04` `M` `src/vaultspec_rag/tests/_ledger_fixtures.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_content_kind_checkpoint_restart.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_weighted_code_resume.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_store_writes.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_store_codebase.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_vault_payload_batching.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_code_pipeline_retained_ids.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_content_route_migration.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_receipt_finalization_recovery.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_job_contracts_persistence.py`
+- `S04` `verify:` `ruff check src/vaultspec_rag` -> `pass`
+- `S04` `verify:` `ruff format --check (changed files)` -> `pass`
+- `S04` `verify:` `ty check (changed files)` -> `pass`
+- `S04` `verify:` `basedpyright (changed files)` -> `pass`
+- `S04` `verify:` `pytest -n 8 CPU lane src/vaultspec_rag/tests (8379 passed)` -> `pass`
+- `S04` `verify:` `pytest test_rebuild_lifecycle.py test_job_rebuild_resume_dispatch.py` -> `pass`
+- `S04` `verify:` `mutation proofs, 8 guards break-fail-restore-pass` -> `pass`
+- `S04` `by:` `vaultspec-high-executor`
 
 ## Notes
 
@@ -157,3 +190,5 @@ related:
 - `S02` Deleted store `drop_table,` `drop_code_table,` `drop_document_table` and `ResetEpochFence.in_transition:` their only production callers were the removed preservation branches; tests repointed to `discard_source_storage`
 - `S03` S03 GPU-lane `test_rebuild_partial_search` (vault/code partial results, bounded wait, empty-corpus authority) collected only: no compatible resident service to borrow the GPU from
 - `S03` S03 Document-domain partial-results search with a real model is left to the integrated three-domain proof; CPU coverage of document fencing and finalisation authority is in `test_search_reset_fence`
+- `S04` GPU and service integration modules `(test_index_job_control_publication.py,` `test_index_job_control_managed.py,` `test_service_job_control_pause_restart.py,` `test_rebuild_replacement_corpus.py)` only collected: no resident service in this environment
+- `S04` `test_model_fetch.py::test_missing_repos_are_downloaded_reported_and_then_left_alone` failed once under -n 8 on a process count; passes alone; untouched by this Step

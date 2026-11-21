@@ -99,6 +99,7 @@ class _BudgetClock:
         return StoreWritePolicy(
             remaining_seconds=lambda: self.remaining,
             wait=self._wait,
+            admit_write=lambda: None,
         )
 
     def _wait(self, seconds: float) -> None:
@@ -128,7 +129,9 @@ class TestFailureOutranksPendingControl:
         def wait(_seconds: float) -> None:
             raise signal
 
-        return StoreWritePolicy(remaining_seconds=lambda: 600.0, wait=wait)
+        return StoreWritePolicy(
+            remaining_seconds=lambda: 600.0, wait=wait, admit_write=lambda: None
+        )
 
     def test_cancel_during_backoff_does_not_mask_the_failure(self) -> None:
         from ..job_control import CancelRequested
@@ -578,6 +581,7 @@ class TestRunWriteWithRetry:
         policy = StoreWritePolicy(
             remaining_seconds=lambda: deadline - time.monotonic(),
             wait=time.sleep,
+            admit_write=lambda: None,
         )
         with _retry_policy(), pytest.raises(JobError) as caught:
             run_store_operation_with_retry(

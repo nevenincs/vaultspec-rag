@@ -29,11 +29,15 @@ from ..indexer._run_ledger_models import (
     index_run_ledger_path,
 )
 from ..indexer._run_ledger_runtime import RunLedger
+from ._ledger_fixtures import continue_rebuild
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
     from pathlib import Path
 
+    from .._store_models import VaultChunk
+    from ..indexer._run_ledger_models import CommitUnit
+    from ..indexer._vault_checkpoint import VaultRunCheckpoint
     from ..store_runtime import VaultStore
 
 pytestmark = [pytest.mark.unit]
@@ -706,4 +710,262 @@ def test_a_rebuild_resumes_only_work_written_after_its_own_reset(
         replacement.generation_id, RunTerminalState.FAILED
     )
 
-    assert open_rebuild().generation_id == replacement.generation_id
+    with continue_rebuild(replacement.generation_id):
+        assert open_rebuild().generation_id == replacement.generation_id
+
+
+def _open_vault_rebuild(store: VaultStore) -> VaultRunCheckpoint:
+    from ..indexer._run_ledger_models import RunAuthority, RunOperation
+    from ..indexer._vault_checkpoint import VaultRunCheckpoint
+    from ..job_control import NO_RUN_CONTROL
+
+    return VaultRunCheckpoint.open(
+        store.root_dir,
+        backend_identity=store.backend_identity,
+        authority=RunAuthority.REBUILD,
+        operation=RunOperation.FULL,
+        run_control=NO_RUN_CONTROL,
+    )
+
+
+def _paused_rebuild(store: VaultStore) -> tuple[VaultRunCheckpoint, CommitUnit]:
+    """Leave a rebuild paused after one confirmed replacement unit.
+
+    The replacement point is written after the rebuild's own completed reset
+    and recorded under its generation, which is the state a paused or
+    interrupted rebuild leaves for its next attempt.
+    """
+    from ..indexer._run_ledger_models import RunTerminalState
+    from ._run_ledger_test_support import ledger_test_unit
+
+    checkpoint = _open_vault_rebuild(store)
+    checkpoint.reset_for_rebuild(
+        store, began_under=_fence(store, PublicSourceType.VAULT)
+    )
+    _seed(store, store.TABLE_NAME, point_id=3)
+    unit = ledger_test_unit("doc", 0, 1)
+    checkpoint.ledger.record_storage_confirmed_units(checkpoint.generation_id, (unit,))
+    checkpoint.ledger.finish_generation(
+        checkpoint.generation_id, RunTerminalState.REBUILD_INCOMPLETE
+    )
+    return checkpoint, unit
+
+
+def test_a_new_rebuild_resets_again_instead_of_continuing_an_earlier_one(
+    store: VaultStore,
+) -> None:
+    """A new request never continues the generation an earlier rebuild left.
+
+    Mutation: treating an unclaimed rebuild as the owner of whatever
+    generation the ledger resumes (``rebuild.generation_id in (None,
+    generation.generation_id)``) reopened the paused generation and failed
+    the generation-id inequality; restoring the claim check passed.
+    """
+    from ..indexer._run_ledger_models import RunTerminalState
+
+    earlier, _unit = _paused_rebuild(store)
+
+    replacement = _open_vault_rebuild(store)
+
+    assert replacement.generation_id != earlier.generation_id
+    assert earlier.ledger.generation(earlier.generation_id).terminal_state is (
+        RunTerminalState.INVALIDATED
+    )
+    replacement.reset_for_rebuild(
+        store, began_under=_fence(store, PublicSourceType.VAULT)
+    )
+    state = _state(store, PublicSourceType.VAULT)
+    assert state is not None
+    assert (state.epoch, state.generation_id) == (2, replacement.generation_id)
+    assert _points(store, store.TABLE_NAME) == 0
+
+
+def test_a_resumed_rebuild_keeps_the_work_its_generation_confirmed(
+    store: VaultStore,
+) -> None:
+    """The claimed generation reopens over its confirmed unit and never resets.
+
+    Mutation: ignoring the context's claim in the shared generation start
+    (opening every rebuild as a new one) retired the paused generation and
+    failed the generation-id equality; restoring it passed.
+    """
+    paused, unit = _paused_rebuild(store)
+
+    with continue_rebuild(paused.generation_id):
+        resumed = _open_vault_rebuild(store)
+        resumed.reset_for_rebuild(
+            store, began_under=_fence(store, PublicSourceType.VAULT)
+        )
+
+    assert resumed.generation_id == paused.generation_id
+    assert resumed.ledger.unit_committed(resumed.generation_id, unit)
+    state = _state(store, PublicSourceType.VAULT)
+    assert state is not None
+    assert state.epoch == 1
+    assert _points(store, store.TABLE_NAME) == 1
+
+
+def test_a_claim_on_a_replaced_rebuild_is_refused_and_changes_nothing(
+    store: VaultStore,
+) -> None:
+    """A retry of a rebuild a newer rebuild replaced may not resume it.
+
+    Mutation: deleting the supersession refusal from the shared generation
+    start let the stale claim open a generation and failed with DID NOT
+    RAISE; restoring it passed.
+    """
+    from ..indexer._rebuild_lifecycle import RebuildSupersededError
+    from ..indexer._run_ledger_models import RunTerminalState
+
+    replaced, _unit = _paused_rebuild(store)
+    newer = _open_vault_rebuild(store)
+    newer.reset_for_rebuild(store, began_under=_fence(store, PublicSourceType.VAULT))
+    newer.ledger.finish_generation(
+        newer.generation_id, RunTerminalState.REBUILD_INCOMPLETE
+    )
+    before = _state(store, PublicSourceType.VAULT)
+
+    with (
+        continue_rebuild(replaced.generation_id),
+        pytest.raises(RebuildSupersededError, match="was replaced"),
+    ):
+        _open_vault_rebuild(store)
+
+    assert _state(store, PublicSourceType.VAULT) == before
+    assert newer.ledger.generation(newer.generation_id).terminal_state is (
+        RunTerminalState.REBUILD_INCOMPLETE
+    )
+
+
+def test_a_claim_recorded_before_its_own_reset_still_resumes(
+    store: VaultStore,
+) -> None:
+    """A generation bound before its reset is not mistaken for a replaced one.
+
+    The job records its generation before the reset, so a crash in between
+    leaves the source's recorded reset owned by the earlier rebuild while the
+    claimed generation is still resumable.
+
+    Mutation: refusing every claim whose generation does not own the
+    recorded reset (dropping the resumable check) raised the supersession
+    refusal here; restoring it passed.
+    """
+    from ..indexer._run_ledger_models import RunTerminalState
+
+    _paused_rebuild(store)
+    bound = _open_vault_rebuild(store)
+    bound.ledger.finish_generation(bound.generation_id, RunTerminalState.FAILED)
+
+    with continue_rebuild(bound.generation_id):
+        resumed = _open_vault_rebuild(store)
+        resumed.reset_for_rebuild(
+            store, began_under=_fence(store, PublicSourceType.VAULT)
+        )
+
+    assert resumed.generation_id == bound.generation_id
+    state = _state(store, PublicSourceType.VAULT)
+    assert state is not None
+    assert (state.epoch, state.generation_id) == (2, bound.generation_id)
+
+
+def _vault_chunk(doc_id: str) -> VaultChunk:
+    from .._store_models import VaultChunk
+
+    return VaultChunk(
+        doc_id=doc_id,
+        ordinal=0,
+        chunk_count=1,
+        text="replacement body",
+        doc_content="replacement body",
+        path=f"{doc_id}.md",
+        doc_type="adr",
+        feature="rebuild",
+        date="2026-10-12",
+        tags=[],
+        related=[],
+        title="Replacement",
+        vector=[1.0, 0.0],
+    )
+
+
+def test_a_writer_from_before_a_later_reset_stops_before_its_next_write(
+    store: VaultStore,
+) -> None:
+    """An old attempt cannot write into the replacement a later reset opened.
+
+    The stale writer's write policy validates its reset epoch before every
+    store write, and its ledger commit refuses because the later reset
+    invalidated its generation.
+
+    Mutation: removing the write admission from the store retry loop let
+    the stale upsert land in the replacement and failed with DID NOT RAISE;
+    restoring it passed.
+    """
+    from ..indexer._run_ledger_models import RunLedgerStateError
+    from ._run_ledger_test_support import ledger_test_unit
+
+    stale = _open_vault_rebuild(store)
+    stale.reset_for_rebuild(store, began_under=_fence(store, PublicSourceType.VAULT))
+    replacement = _open_vault_rebuild(store)
+    replacement.reset_for_rebuild(
+        store, began_under=_fence(store, PublicSourceType.VAULT)
+    )
+
+    with pytest.raises(SourceResetEpochError, match="after this work began"):
+        store.upsert_document_chunks(
+            [_vault_chunk("stale")],
+            write_policy=stale.run_policy.store_write_policy,
+        )
+    assert _points(store, store.TABLE_NAME) == 0
+    with pytest.raises(RunLedgerStateError, match="immutable"):
+        stale.ledger.record_storage_confirmed_units(
+            stale.generation_id, (ledger_test_unit("stale", 0, 1),)
+        )
+
+    store.upsert_document_chunks(
+        [_vault_chunk("fresh")],
+        write_policy=replacement.run_policy.store_write_policy,
+    )
+    assert _points(store, store.TABLE_NAME) == 1
+
+
+def test_an_incremental_writer_is_fenced_to_the_epoch_it_opened_under(
+    store: VaultStore,
+) -> None:
+    """An incremental or watcher update cannot write into a later replacement.
+
+    Mutation: deleting the open-time fence of non-rebuild checkpoints let
+    the incremental upsert land after the reset and failed with DID NOT
+    RAISE; restoring it passed.
+    """
+    from ..indexer._run_ledger_models import RunAuthority, RunOperation
+    from ..indexer._vault_checkpoint import VaultRunCheckpoint
+    from ..job_control import NO_RUN_CONTROL
+    from ._run_ledger_test_support import ledger_test_publish_and_compact
+
+    published = _open_vault_rebuild(store)
+    published.reset_for_rebuild(
+        store, began_under=_fence(store, PublicSourceType.VAULT)
+    )
+    published.ledger.establish_verified_publication(
+        published.generation_id, RunAuthority.REBUILD, ()
+    )
+    ledger_test_publish_and_compact(published.ledger, published.generation_id)
+    incremental = VaultRunCheckpoint.open(
+        store.root_dir,
+        backend_identity=store.backend_identity,
+        authority=RunAuthority.PUBLICATION,
+        operation=RunOperation.INCREMENTAL,
+        run_control=NO_RUN_CONTROL,
+    )
+    replacement = _open_vault_rebuild(store)
+    replacement.reset_for_rebuild(
+        store, began_under=_fence(store, PublicSourceType.VAULT)
+    )
+
+    with pytest.raises(SourceResetEpochError, match="after this work began"):
+        store.upsert_document_chunks(
+            [_vault_chunk("incremental")],
+            write_policy=incremental.run_policy.store_write_policy,
+        )
+    assert _points(store, store.TABLE_NAME) == 0

@@ -44,7 +44,7 @@ from ..indexer._streaming_types import CodeFileSegment, CodeFileSegmentRequest
 from ..job_control import NO_RUN_CONTROL
 from ..progress import NullProgressReporter
 from ..store_runtime import VaultStore
-from ._ledger_fixtures import record_reset_over_empty_storage
+from ._ledger_fixtures import continue_rebuild, record_reset_over_empty_storage
 from ._run_ledger_test_support import ledger_test_digest
 
 if TYPE_CHECKING:
@@ -107,7 +107,8 @@ class _ResumeRun:
         )
         # A new checkpoint and SQLite open discard the prior attempt's state.
         self.lifecycle.forget_open_generation()
-        self.checkpoint = self.lifecycle.open_checkpoint(self.open_request)
+        with continue_rebuild(generation_id):
+            self.checkpoint = self.lifecycle.open_checkpoint(self.open_request)
         assert self.checkpoint.generation_id == generation_id
 
     def consume(self) -> _WeightedConsumerRun:

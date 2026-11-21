@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .._context_scope import bind_context
 from ..indexer._publication_proof import ProofMissingError, ProofReadToken
+from ..indexer._rebuild_lifecycle import RebuildClaim, rebuild_claim
 from ..indexer._run_ledger_models import (
     SourceResetPhase,
     column_int,
@@ -23,6 +25,8 @@ from ..indexer._run_ledger_publication_storage import (
 )
 
 if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
+
     from ..indexer._content_policy import ContentKind
     from ..indexer._publication_proof import ProofCompatibilityKey
     from ..indexer._run_ledger_models import RunGeneration
@@ -54,6 +58,16 @@ def latest_generation(
             parameters,
         )
     return ledger._generation_from_row(row) if row is not None else None
+
+
+def continue_rebuild(generation_id: str) -> AbstractContextManager[None]:
+    """Run as the attempt of a request that owns rebuild *generation_id*.
+
+    A job binds this claim around every attempt after its first; a test
+    reopening an interrupted rebuild does the same, since an unclaimed open is
+    a new rebuild that starts over.
+    """
+    return bind_context(rebuild_claim, RebuildClaim(generation_id=generation_id))
 
 
 def acquire_publication_read_token(

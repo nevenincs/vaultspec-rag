@@ -33,6 +33,7 @@ from ..indexer._streaming_types import CodeFileSegment
 from ..progress import NullProgressReporter
 from ..store_runtime import VaultStore
 from ._config_fixtures import reset_config
+from ._ledger_fixtures import continue_rebuild
 from ._run_ledger_test_support import ledger_test_digest, ledger_test_signature
 
 if TYPE_CHECKING:
@@ -197,7 +198,8 @@ def test_code_rebuild_resumes_publication_after_proof_commit(
     classify_interrupted_generation(
         ledger, checkpoint.generation, RuntimeError("interrupted after proof")
     )
-    resumed = _checkpoint(ledger, signature, RunAuthority.REBUILD)
+    with continue_rebuild(checkpoint.generation_id):
+        resumed = _checkpoint(ledger, signature, RunAuthority.REBUILD)
     lifecycle = CodeGenerationLifecycle(
         CodeGenerationBindings(tmp_path, ledger.path.parent, recovery_code_store)
     )

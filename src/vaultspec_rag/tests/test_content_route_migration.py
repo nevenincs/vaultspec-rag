@@ -60,7 +60,7 @@ from ..indexer._streaming_types import CodeFileSegment
 from ..job_control import CancelRequested, RunControlToken
 from ..storage_identity import sidecar_path
 from ..store_runtime import StorageModelError, VaultStore
-from ._ledger_fixtures import record_reset_over_empty_storage
+from ._ledger_fixtures import continue_rebuild, record_reset_over_empty_storage
 from ._store_fixtures import get_all_document_content_ids
 
 if TYPE_CHECKING:
@@ -753,7 +753,8 @@ def test_same_kind_cleanup_resumes_after_a_real_page_boundary_interruption(
         assert len(caught) == 1 and isinstance(caught[0], CancelRequested)
         assert 1 < store.count_document() < initial_count
 
-        resumed = _document_checkpoint(tmp_path, "guide.txt", retained.id)
+        with continue_rebuild(interrupted.generation_id):
+            resumed = _document_checkpoint(tmp_path, "guide.txt", retained.id)
         assert resumed.generation_id == interrupted.generation_id
         assert (
             purge_unpublished_rows(

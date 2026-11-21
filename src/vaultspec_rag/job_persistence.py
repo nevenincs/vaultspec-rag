@@ -466,6 +466,9 @@ def _job_snapshot_from_dict(value: object) -> JobSnapshot:
         gpu_lock_wait_seconds=_optional_float(
             raw.get("gpu_lock_wait_seconds"), "gpu_lock_wait_seconds"
         ),
+        rebuild_generation_id=_optional_str(
+            raw.get("rebuild_generation_id"), "rebuild_generation_id"
+        ),
     )
 
 

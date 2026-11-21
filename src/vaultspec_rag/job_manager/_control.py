@@ -886,6 +886,8 @@ class JobManagerControl(JobManagerQuiesceControl):
                 initiator=initiator or parent.snapshot.initiator,
                 runtime=self._process_runtime_snapshot(),
                 resources=JobResourceSnapshot(started=None, finished=None),
+                # A linked retry continues the rebuild its parent owned.
+                rebuild_generation_id=parent.snapshot.rebuild_generation_id,
             )
             managed = ManagedJob(
                 snapshot=retried,

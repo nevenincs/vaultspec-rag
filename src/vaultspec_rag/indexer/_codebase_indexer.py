@@ -648,15 +648,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                 authority=RunAuthority.REBUILD,
             )
         )
-        from ._rebuild_lifecycle import enter_rebuild_ingestion
-
-        enter_rebuild_ingestion(
-            self.store,
-            PublicSourceType.CODE,
-            began_under=began_under,
-            generation_id=checkpoint.generation_id,
-            run_control=checkpoint.run_policy,
-        )
+        checkpoint.reset_for_rebuild(self.store, began_under=began_under)
         resumed_publication = self._resume_pending_finalization(
             checkpoint,
             reporter=reporter,
