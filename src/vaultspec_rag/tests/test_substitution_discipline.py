@@ -25,7 +25,11 @@ import pytest
 pytestmark = [pytest.mark.unit]
 
 # Assembled rather than written literally, so this guard does not match itself.
-_NEEDLES = ("monkeypatch." + "setattr", "monkeypatch." + "delattr")
+# The receiver is deliberately not named: a ``monkeypatch.context()`` block, a
+# ``pytest.MonkeyPatch`` instance and a bare ``MonkeyPatch()`` all substitute
+# through the same two methods, and naming only the fixture lets any other
+# receiver hide a site from the count.
+_NEEDLES = ("." + "setattr(", "." + "delattr(")
 
 # Path relative to the tests package -> (count, why it could not be driven for
 # real). The reason belongs at the call site too; it is repeated here so a
@@ -365,8 +369,13 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "them and no real device yields one on demand",
     ),
     "test_hardware_anchor.py": (
-        1,
-        "forces the machine anchor directory to be unresolvable, to prove the "
+        3,
+        "the second and third sites wrap the real native ACL write so each real "
+        "write is counted before it is applied, and supply the ACL API handles "
+        "the wrapper is bound to; the write itself still happens. The count is "
+        "the assertion, because Windows can coalesce duplicate entries and the "
+        "resulting ACL alone cannot show a repeat write. The first forces the "
+        "machine anchor directory to be unresolvable, to prove the "
         "load window then degrades rather than refusing every load. A host "
         "with no directory every account shares does exist, but it cannot be "
         "staged on a runner: the suite cannot remove /dev/shm, /Users/Shared "
@@ -498,21 +507,44 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "verb, including the whole render and envelope path the assertions "
         "read",
     ),
-    "test_donor_admission.py": (
-        12,
-        "isolates the real admission ranking and gate logic from the "
-        "manifest, git, store-transport and settings boundaries it reads, "
-        "because the bounded-inspection-window and family/newest/prefix "
-        "ordering are proved against a hundred synthetic donor candidates "
-        "with controlled per-candidate failures - an unverifiable or unreadable "
-        "pointer, an absent or unreadable proof, a capability refusal, an "
-        "unsupported collection. Building a hundred real donor projects and "
-        "git repositories, and forcing each one's publication reads to fail "
-        "on demand, is not something a unit test can construct. Only the "
-        "manifest load, prefix derivation, pointer and proof readers, git "
-        "lookup, model identity, vector schema and config accessors are "
-        "replaced; the ranking, gating, inspection-bounding and vector "
-        "adoption logic under test run unchanged",
+    "test_cli_search.py": (
+        1,
+        "the search display renders through one console the CLI builds at import "
+        "from the real stdout, so the rendered text can only be read by handing "
+        "the unchanged display function a console that records into a buffer; "
+        "the substitute is the output sink and no behaviour",
+    ),
+    "test_index_run_ledger_drift_lookup.py": (
+        2,
+        "the instruction count of the superseded-point lookup is the assertion, "
+        "and SQLite reports it only to a progress handler on the connection, so "
+        "the ledger's connection opener is wrapped by the shared measuring "
+        "helper, which opens the real connection and only attaches the handler. "
+        "The two sites point the file-state module's own reference to the opener "
+        "at that measured one, because the module imported the name when it "
+        "loaded and would otherwise open unmeasured connections",
+    ),
+    "test_index_run_ledger_file_state_writes.py": (
+        1,
+        "the number of rows a replay changes is the assertion, and it is "
+        "observable only on the connection the ledger opens, so the opener is "
+        "wrapped to open the real connection and record its total changes and "
+        "statements; every write counted is one production issued",
+    ),
+    "test_index_run_ledger_schema.py": (
+        2,
+        "one site wraps the schema preflight to record the version it saw and "
+        "calls the real check, because the file must be seen at its old "
+        "version without being migrated; the other makes schema creation raise "
+        "after the real publication tables are created, because an interruption "
+        "at that exact statement cannot be scheduled against a real process",
+    ),
+    "test_watcher_start_contract.py": (
+        1,
+        "makes path resolution raise an operating-system error inside the root "
+        "identity helper, because a root the filesystem refuses to resolve "
+        "cannot be staged portably; the HTTP route, its error mapping and the "
+        "unchanged watcher lifecycle state are real",
     ),
     "test_install_torch_config.py": (
         1,
@@ -716,8 +748,15 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "the real HTTP route",
     ),
     "_run_ledger_test_support.py": (
-        1,
-        "a peer's schema commit must land between two particular reads of one "
+        3,
+        "two sites replace the ledger's base-table creation with a version that "
+        "calls the real creation and then holds the first opener there, and its "
+        "schema preflight with one that calls the real preflight and signals "
+        "when the second opener reaches it, so two openers racing a fresh file "
+        "can be held at the instant one has created tables and the other has "
+        "not yet read the schema version; a live race cannot be scheduled to "
+        "land there. The other: a peer's schema commit must land between two "
+        "particular reads of one "
         "opener to prove those reads share a snapshot; the read helper is wrapped "
         "only to run the real peer commit at that point, and it still returns the "
         "real row, so every read, lock and refusal stays real",
@@ -801,8 +840,11 @@ def test_no_test_substitutes_production_behaviour_undeclared() -> None:
 
     Proven able to fail: adding a ``monkeypatch.setattr`` anywhere under the
     tests package fails on the unexpected-site assertion naming that file;
-    removing it restores the pass. Raising a declared count has the same
-    effect through the count comparison.
+    removing it restores the pass. The same holds for the form that names no
+    fixture, ``with monkeypatch.context() as patch: patch.setattr(...)``: a
+    site written that way in a file with no declaration fails on the same
+    assertion. Raising a declared count has the same effect through the count
+    comparison.
     """
     found = _substitution_counts()
     expected = {name: count for name, (count, _reason) in _ALLOWED.items()}
