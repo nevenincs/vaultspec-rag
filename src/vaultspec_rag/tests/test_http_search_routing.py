@@ -314,8 +314,11 @@ async def test_bounded_request_returns_typed_timeout_before_retrieval(
     assert source["freshness"] == "updating"
     assert source["absence_authority"] == "non_authoritative"
     assert source["reason_code"] == "freshness_wait_timeout"
+    # A current publication is what storage holds, so the observed generation
+    # equals the served one.
     assert source["generation"] == {
         "served_generation": "served",
+        "observed_generation": "served",
         "desired_generation": "desired",
         "served_revision": 1,
         "desired_revision": 2,
