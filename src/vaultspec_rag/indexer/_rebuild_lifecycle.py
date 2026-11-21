@@ -200,10 +200,14 @@ class ResetEpochFence:
         )
 
     @classmethod
-    def of(cls, ledger_path: pathlib.Path, state: SourceResetState) -> ResetEpochFence:
-        """Fence work to the reset *state* records, as read from *ledger_path*."""
+    def of(cls, root: pathlib.Path, state: SourceResetState) -> ResetEpochFence:
+        """Fence work to the reset *state* records, read where it was recorded.
+
+        A reset records into the ledger of the store's *root*, so the fence
+        reads that same ledger rather than the ledger of whoever runs the work.
+        """
         return cls(
-            ledger_path=ledger_path,
+            ledger_path=_ledger_path(root),
             source_type=state.source_type,
             root_identity=state.root_identity,
             backend_identity=state.backend_identity,
