@@ -354,6 +354,11 @@ class JobManagerProgress(JobManagerState):
         Returns ``False`` when *task* is no longer the job's attempt or the
         record could not be persisted; the attempt must not reset then,
         because a later attempt would not know which rebuild it continues.
+
+        A newly recorded generation is the rebuild about to discard the served
+        index, so it becomes the source's controller target: a bounded
+        freshness wait admitted from here on waits for this rebuild's
+        certified publication rather than the publication it replaces.
         """
         if not generation_id.strip():
             raise ValueError("a rebuild generation id must be non-empty")
@@ -372,7 +377,9 @@ class JobManagerProgress(JobManagerState):
                 if not persistence_error.published:
                     self._restore_state_locked(backup)
                 return False
-            return True
+            target = self._snapshot_locked(managed)
+        self._notify_controller_target(target)
+        return True
 
     def update_terminal_resilience(
         self,

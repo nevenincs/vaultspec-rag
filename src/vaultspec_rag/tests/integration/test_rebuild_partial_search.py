@@ -113,7 +113,9 @@ def _source_fact(body: dict[str, object]) -> dict[str, object]:
 def test_a_running_rebuild_serves_fresh_partial_results_and_nothing_old(
     tmp_path: Path, source: str
 ) -> None:
-    root = make_workspace(tmp_path / "project")
+    root = tmp_path / "project"
+    root.mkdir()
+    make_workspace(root)
     _write_corpus(root, source, _OLD, 3)
     with _live_service_context(tmp_path) as (port, _status_dir, _env):
         token = live_service_token(port)
@@ -123,16 +125,23 @@ def test_a_running_rebuild_serves_fresh_partial_results_and_nothing_old(
         job_id = _rebuild(port, root, source)
 
         partial: dict[str, object] | None = None
+        reset_observed = False
         deadline = time.monotonic() + 300.0
         while partial is None and time.monotonic() < deadline:
             status, body = _search(port, token, root, source)
             still_running = _job_state(port, job_id) not in _TERMINAL
-            results = body.get("results")
-            if status == 200 and results and still_running:
+            served = json.dumps(body.get("results"))
+            # An admitted rebuild discards nothing until its reset, so the old
+            # index may answer until then. Fresh content exists only after the
+            # reset, so once any is served nothing old may come back, and no
+            # answer may mix the two.
+            reset_observed = reset_observed or _FRESH in served
+            if reset_observed:
+                assert _OLD not in served, body
+            if status == 200 and _FRESH in served and still_running:
                 partial = body
             elif not still_running:
                 break
-            assert _OLD not in json.dumps(results), body
         assert partial is not None, "no fresh result was served while indexing ran"
         assert _OLD not in json.dumps(partial["results"])
         assert _FRESH in json.dumps(partial["results"])
@@ -156,16 +165,28 @@ def test_a_running_rebuild_serves_fresh_partial_results_and_nothing_old(
             assert bounded["error"] == "freshness_wait_timeout"
 
         wait_for_succeeded_job(port, token, job_id)
-        status, done = _search(port, token, root, source)
-        assert status == 200, done
-        assert _OLD not in json.dumps(done["results"])
+        # Work queued behind the rebuild, such as an integrity reconcile of the
+        # files it replaced, may still run after it; currency follows that work.
+        settle_deadline = time.monotonic() + 120.0
+        while True:
+            status, done = _search(port, token, root, source)
+            assert status == 200, done
+            assert _OLD not in json.dumps(done["results"])
+            if (
+                _source_fact(done)["freshness"] == "current"
+                or time.monotonic() >= settle_deadline
+            ):
+                break
+            time.sleep(0.25)
         assert _source_fact(done)["freshness"] == "current"
 
 
 def test_an_empty_corpus_is_authoritatively_empty_only_after_its_rebuild(
     tmp_path: Path,
 ) -> None:
-    root = make_workspace(tmp_path / "project")
+    root = tmp_path / "project"
+    root.mkdir()
+    make_workspace(root)
     with _live_service_context(tmp_path) as (port, _status_dir, _env):
         token = live_service_token(port)
         wait_for_succeeded_job(port, token, _rebuild(port, root, "vault"))
