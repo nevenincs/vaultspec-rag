@@ -246,6 +246,11 @@ def _wait_for_partial(
         results = body.get("results")
         served_fresh = _FRESH in json.dumps(results)
         if served_fresh:
+            # Catches a reset that leaves the old points in the collection
+            # (discarding no storage, then recreating nothing): old and fresh
+            # content would then be served together. Only the document domain
+            # trips it that way, because vault and code rewrite the old
+            # points in place under the same ids.
             assert _OLD not in json.dumps(results), body
         if status == 200 and served_fresh and _job_state(port, job_id) not in _TERMINAL:
             return body
@@ -361,6 +366,10 @@ def test_a_cancelled_rebuild_keeps_its_points_and_a_new_rebuild_resets_again(
         _write_corpus(root, source, _NEXT, 3)
         next_job_id = _rebuild_job(port, root, source)
         wait_for_succeeded_job(port, token, next_job_id)
+        # Catches a new explicit rebuild that reopens the cancelled rebuild's
+        # generation instead of retiring it: the job would carry the same
+        # rebuild generation id and skip the reset. A rebuild after a cancel
+        # must always own a new generation.
         assert _rebuild_generation(port, next_job_id) != _rebuild_generation(
             port, job_id
         ), "a new rebuild continued the cancelled one instead of resetting"
