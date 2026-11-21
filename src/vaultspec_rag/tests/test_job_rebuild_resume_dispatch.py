@@ -27,6 +27,7 @@ from ..job_models import (
     JobInitiator,
     JobMode,
     JobOperation,
+    JobOutcome,
     JobSource,
     JobSpec,
     JobState,
@@ -399,17 +400,27 @@ class _RebuildHarness:
             checkpoint.run_policy.checkpoint("durable unit boundary")
         return JobExecutionResult(summary="rebuilt")
 
-    def create(self) -> str:
-        created = self.manager.create(
+    def request(
+        self,
+        *,
+        source: JobSource = JobSource.VAULT,
+        request_id: str | None = None,
+    ) -> JobOutcome:
+        """Submit one explicit rebuild request the way an adapter does."""
+        return self.manager.create(
             JobSpec(
                 JobOperation.INDEX,
-                JobSource.VAULT,
+                source,
                 str(self.root),
                 JobMode.REBUILD,
                 RunAuthority.REBUILD,
             ),
             JobInitiator("test", "rebuild-claim", str(self.root)),
+            job_id=request_id,
         )
+
+    def create(self, *, request_id: str | None = None) -> str:
+        created = self.request(request_id=request_id)
         assert created.job is not None
         return created.job.id
 
@@ -580,4 +591,152 @@ async def test_a_new_rebuild_job_resets_and_a_retry_of_the_replaced_one_fails(
         harness.root, PublicSourceType.VAULT, harness.store.backend_identity
     )
     assert state.epoch == 2
+    assert harness.points() == 1
+
+
+async def test_a_repeated_request_id_resets_the_source_at_most_once(
+    harness: _RebuildHarness,
+) -> None:
+    """Submitting one request id again never starts a second reset.
+
+    While the request runs, the repeat is the same job. Once it has finished,
+    the id stays registered and the repeat is refused. Either way exactly one
+    attempt reset the source, and its replacement point survives.
+
+    Mutation: deleting the registered-id refusal from job creation let the
+    finished request's id create a new job and failed the ``job_id_conflict``
+    assertion; restoring it passed.
+    """
+    job_id = harness.create(request_id="request-1")
+    harness.start(job_id)
+    await _until(harness.unit_recorded.is_set, "the first durable unit")
+
+    running_repeat = harness.request(request_id="request-1")
+    assert running_repeat.code == "active_job_exists"
+    assert running_repeat.job is not None
+    assert running_repeat.job.id == job_id
+    harness.release.set()
+    await harness.finish(job_id, JobState.SUCCEEDED)
+
+    finished_repeat = harness.request(request_id="request-1")
+    assert finished_repeat.code == "job_id_conflict"
+
+    assert len(harness.attempts) == 1
+    state = capture_reset_epoch(
+        harness.root, PublicSourceType.VAULT, harness.store.backend_identity
+    )
+    assert state.epoch == 1
+    assert harness.points() == 1
+
+
+async def test_queued_and_refused_rebuild_requests_delete_nothing(
+    harness: _RebuildHarness,
+) -> None:
+    """Only a dispatched attempt resets; admission alone touches no storage.
+
+    Two queued rebuilds have not run, and a third refused for capacity was
+    never registered. The old point stays and no reset is recorded for any
+    source.
+
+    Mutation: recording the requested source's reset intent inside job
+    creation failed the per-source reset-state assertion for ``vault``;
+    restoring it passed.
+    """
+    from qdrant_client import models
+
+    from .. import store_schema
+
+    harness.store.client.upsert(
+        harness.store.TABLE_NAME,
+        points=[
+            models.PointStruct(
+                id=1,
+                vector={store_schema.DENSE_VECTOR_NAME: [1.0, 0.0]},
+                payload={"content": "old content"},
+            )
+        ],
+        wait=True,
+    )
+
+    queued = harness.request()
+    assert queued.code == "job_created"
+    assert queued.job is not None
+    assert queued.job.state is JobState.QUEUED
+    assert harness.request(source=JobSource.CODE).code == "job_created"
+    over_capacity = harness.request(source=JobSource.DOCUMENT)
+    assert over_capacity.code == "job_capacity_exceeded"
+    assert harness.points() == 1, "old content kept"
+    for source in (
+        PublicSourceType.VAULT,
+        PublicSourceType.CODE,
+        PublicSourceType.DOCUMENT,
+    ):
+        state = capture_reset_epoch(
+            harness.root, source, harness.store.backend_identity
+        )
+        assert (state.epoch, state.phase) == (0, None), source
+
+
+async def test_a_model_change_during_a_pause_never_mixes_epochs(
+    harness: _RebuildHarness,
+) -> None:
+    """Resuming under another embedding model never continues the old generation.
+
+    The paused generation's replacement vectors came from the first model. A
+    resume under the second may not add vectors to that generation or keep
+    them: it opens a fresh generation, resets again, rebuilds from nothing,
+    and records the new generation on the job so a later attempt continues
+    that one.
+
+    Mutation: letting the ledger resume an active generation whatever its
+    signature (dropping the fingerprint comparison) continued the paused
+    generation over its first-model unit and failed the ``fresh generation``
+    assertion; restoring it passed.
+    """
+    from ..config._settings import get_config
+
+    job_id = harness.create()
+    harness.start(job_id)
+    paused = await harness.control(job_id, DesiredJobState.PAUSED)
+    generation_id = paused.rebuild_generation_id
+    assert generation_id is not None
+
+    await harness.stop()
+    get_config(
+        {
+            "qdrant_url": None,
+            "embedding_dimension": 2,
+            "sparse_enabled": False,
+            "embedding_model": "another/dense-model",
+        }
+    )
+    harness.manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=2,
+        state_path=harness.state_path,
+    )
+    assert harness.manager.restore_persisted().code == "job_state_restored"
+    assert harness.manager.set_desired_state(job_id, DesiredJobState.RUNNING).code == (
+        "resume_requested"
+    )
+    harness.start(job_id)
+    harness.release.set()
+    await _until(
+        lambda: (
+            (snapshot := harness.manager.get(job_id)) is not None
+            and snapshot.state.is_terminal
+        ),
+        "the resumed attempt to end",
+    )
+    finished = harness.manager.get(job_id)
+    assert finished is not None
+    state = capture_reset_epoch(
+        harness.root, PublicSourceType.VAULT, harness.store.backend_identity
+    )
+    fresh_generation, fresh_epoch, resumed = harness.attempts[1]
+    assert fresh_generation != generation_id, "fresh generation"
+    assert (fresh_epoch, resumed) == (2, False)
+    assert finished.state is JobState.SUCCEEDED
+    assert finished.rebuild_generation_id == fresh_generation
+    assert (state.epoch, state.generation_id) == (2, fresh_generation)
     assert harness.points() == 1
