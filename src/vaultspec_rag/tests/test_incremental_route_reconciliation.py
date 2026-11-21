@@ -35,7 +35,6 @@ from ..indexer._resolved_policy import (
 from ..indexer._route_migration import (
     RouteScanOptions,
     iter_stored_route_pages,
-    reconcile_checkpoint_routes,
     reconcile_generation_storage,
 )
 from ..indexer._run_ledger_models import CommitUnitKind, RunAuthority, RunOperation
@@ -437,52 +436,3 @@ def test_route_scan_refuses_an_oversized_path_selection(
                 ),
             )
         )
-
-
-def test_cross_kind_reconciliation_rejects_private_origin_collection(
-    route_store: _RouteStore,
-) -> None:
-    """Removing the origin guard failed to raise; restoration retained all rows."""
-    unchanged = _document("unchanged.txt", "unchanged source")
-    _publish_parent(route_store, [unchanged])
-    destination = _document("changed.txt", "confirmed destination")
-    incremental = _checkpoint(route_store, RunOperation.INCREMENTAL)
-    _write(route_store, incremental, [destination])
-    shared_origin = _code("changed.txt")
-    served_only = _code("served-only.txt")
-    private_only = _code("private-only.txt")
-    private_collection = route_store.store.DERIVED_CODE_TABLE_NAME + "_gprivate"
-    route_store.store.upsert_code_chunks(
-        [shared_origin, served_only], write_policy=None
-    )
-    route_store.store.upsert_code_chunks(
-        [shared_origin, private_only],
-        write_policy=None,
-        collection=private_collection,
-    )
-
-    with (
-        _observed_route_scrolls() as calls,
-        pytest.raises(
-            ValueError,
-            match=r"^cross-kind reconciliation requires served origin collections$",
-        ),
-    ):
-        reconcile_checkpoint_routes(
-            route_store.store,
-            incremental,
-            route_store.policy,
-            ContentKind.DOCUMENT,
-            options=RouteScanOptions(code_collection=private_collection),
-        )
-
-    assert calls == []
-    assert route_store.store.get_all_code_ids() == {shared_origin.id, served_only.id}
-    assert route_store.store.get_all_code_ids(private_collection) == {
-        shared_origin.id,
-        private_only.id,
-    }
-    assert get_all_document_content_ids(route_store.store) == {
-        unchanged.id,
-        destination.id,
-    }

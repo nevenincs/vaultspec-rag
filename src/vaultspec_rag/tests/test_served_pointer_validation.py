@@ -12,7 +12,6 @@ from .._source_types import PublicSourceType
 from .._store_models import (
     CodeChunk,
     generation_code_collection,
-    publish_generation_as_served,
     publish_served_code_collection,
     read_served_code_collection,
     read_served_pointer,
@@ -136,26 +135,19 @@ def test_shared_backend_rejects_wrong_kind_and_bare_names(
     assert resolve_served_code_collection(tmp_path, derived) == derived
 
 
-def test_invalid_publication_leaves_pointer_and_breadth_untouched(
+def test_invalid_publication_leaves_the_pointer_untouched(
     tmp_path: Path,
 ) -> None:
-    """An invalid publication cannot replace the pointer or record breadth.
+    """An invalid publication cannot replace the pointer.
 
     Mutation proof: bypassing root ownership failed with DID NOT RAISE
-    ValueError; removing preflight also failed the unchanged-breadth assertion.
-    Restoring both guards passed.
+    ValueError; restoring the guard passed.
     """
     served = "codebase_docs_g1"
     publish_served_code_collection(tmp_path, served)
     foreign = root_collection_prefix(tmp_path / "foreign") + "codebase_docs_g2"
-    recorded: list[bool] = []
     with pytest.raises(ValueError, match="root-owned code collection"):
         publish_served_code_collection(tmp_path, foreign)
-    with pytest.raises(ValueError, match="root-owned code collection"):
-        publish_generation_as_served(
-            tmp_path, collection=foreign, record_breadth=lambda: recorded.append(True)
-        )
-    assert recorded == []
     assert read_served_code_collection(tmp_path) == served
 
 
@@ -205,7 +197,7 @@ def test_default_drop_refuses_a_pointer_poisoned_after_store_open(
         store.ensure_code_table()
         _poison(tmp_path, {"collection": "vault_docs"})
         with pytest.raises(RuntimeError, match="verifiable served pointer"):
-            store.drop_code_table()
+            store.discard_source_storage(PublicSourceType.CODE)
         assert store.code_collection_exists()
 
 
@@ -228,8 +220,6 @@ def test_explicit_and_cached_foreign_targets_cannot_reach_code_operations(
                 store.delete_publication_points(
                     PublicSourceType.CODE, [], collection=target
                 )
-            with pytest.raises(ValueError, match="root-owned code collection"):
-                store.drop_code_table(target)
         vars(store)["CODE_TABLE_NAME"] = foreign
         with pytest.raises(ValueError, match="root-owned code collection"):
             store.count_code()

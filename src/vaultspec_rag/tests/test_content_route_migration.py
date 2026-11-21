@@ -60,6 +60,7 @@ from ..indexer._streaming_types import CodeFileSegment
 from ..job_control import CancelRequested, RunControlToken
 from ..storage_identity import sidecar_path
 from ..store_runtime import StorageModelError, VaultStore
+from ._ledger_fixtures import record_reset_over_empty_storage
 from ._store_fixtures import get_all_document_content_ids
 
 if TYPE_CHECKING:
@@ -320,7 +321,6 @@ def test_old_sparse_origin_cleanup_is_payload_only_and_destination_first(
             checkpoint,
             _resolved_policy(store.root_dir),
             case.destination_kind,
-            include_same_kind=False,
         ) == (0, 0, 1)
     rows, _offset = store.scroll_index_audit_content(
         case.origin_collection, limit=10, offset=None
@@ -390,13 +390,15 @@ def test_incompatible_selected_destination_retains_old_origin(
             == 0
         )
     else:
-        assert reconcile_generation_storage(
-            store,
-            checkpoint,
-            _resolved_policy(store.root_dir),
-            case.destination_kind,
-            include_same_kind=False,
-        ) == (0, 0, 0)
+        # The generation's own same-kind reconciliation reads the incompatible
+        # destination strictly, so it refuses before any origin is touched.
+        with pytest.raises(StorageModelError, match="incompatible sparse vectors"):
+            reconcile_generation_storage(
+                store,
+                checkpoint,
+                _resolved_policy(store.root_dir),
+                case.destination_kind,
+            )
     rows, _offset = store.scroll_index_audit_content(
         case.origin_collection, limit=10, offset=None
     )
@@ -494,9 +496,9 @@ def test_absent_selected_destination_stays_absent_and_retains_origin(
     """Guard: ensure before presence evidence creates a nonexistent replacement."""
     case = migration_case
     if case.destination_kind is ContentKind.CODE:
-        case.store.drop_code_table()
+        case.store.discard_source_storage(PublicSourceType.CODE)
     else:
-        case.store.drop_document_table()
+        case.store.discard_source_storage(PublicSourceType.DOCUMENT)
     assert (
         reconcile_origin_after_destination(
             case.store, case.checkpoint, case.destination_kind, case.rel_path
@@ -642,7 +644,7 @@ def test_stale_destination_confirmation_retains_the_last_origin(
             point_ids=(origin.id,),
         )
 
-        store.drop_document_table()
+        store.discard_source_storage(PublicSourceType.DOCUMENT)
         store.ensure_document_table()
 
         assert (
@@ -710,6 +712,8 @@ def test_same_kind_cleanup_resumes_after_a_real_page_boundary_interruption(
             run_control=token,
         ),
     )
+    # Storage is still empty here, so the reset is recorded in the ledger alone.
+    record_reset_over_empty_storage(interrupted.ledger, interrupted.generation)
     store = VaultStore(tmp_path, embedding_dim=4)
     caught: list[BaseException] = []
 

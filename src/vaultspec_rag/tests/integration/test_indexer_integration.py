@@ -493,23 +493,27 @@ class TestCodeIndexBlockedStoreDeadline:
                     reporter=NullProgressReporter(),
                     preflight=indexer.preflight_content(),
                 )
+                from ..._source_types import PublicSourceType
+                from ...indexer._rebuild_lifecycle import capture_reset_epoch
+                from ...indexer._run_ledger_models import SourceResetPhase
+
                 wait_deadline = time.monotonic() + 5.0
                 while time.monotonic() < wait_deadline:
-                    build_target = indexer._lifecycle.active_build_target
-                    if build_target is not None and store._ensured.get(
-                        build_target, False
-                    ):
-                        point_lock = store._lock_for(build_target)
+                    fence = capture_reset_epoch(
+                        tmp_path, PublicSourceType.CODE, store.backend_identity
+                    )
+                    if fence.phase is SourceResetPhase.COMPLETE:
+                        point_lock = store._lock_for(store.CODE_TABLE_NAME)
                         point_lock.acquire()
                         point_lock_held = True
                         break
                     time.sleep(0.01)
                 else:
                     raise AssertionError(
-                        "generation collection was not prepared before deadline"
+                        "code collection was not reset before deadline"
                     )
 
-                # The generation lock is now held before the consumer can
+                # The collection lock is now held before the consumer can
                 # enter its first write. Releasing the encode gate lets the
                 # consumer reach that lock while the producer fills the
                 # one-item queue behind it; the deadline, not a sampling

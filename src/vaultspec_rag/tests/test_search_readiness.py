@@ -635,7 +635,6 @@ async def test_code_ordinary_and_resumed_publication_notify_once_after_durable(
         checkpoint = lifecycle.open_checkpoint(_code_open_request(tmp_path))
         lifecycle.publish(
             checkpoint,
-            build_target=None,
             reporter=reporter,
             phase_label="ordinary publication",
         )

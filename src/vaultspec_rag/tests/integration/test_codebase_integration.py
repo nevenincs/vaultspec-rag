@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..._source_types import PublicSourceType
 from ...indexer._run_ledger_models import RunAuthority
 from ...progress import NullProgressReporter
 from .._ledger_fixtures import latest_generation
@@ -44,9 +45,10 @@ class TestIncrementalPublicationRecovery:
         code_project: _CodeProject,
     ) -> None:
         """A rebuild-incomplete generation resumes its confirmed collection."""
-        from ..._store_models import generation_code_collection
+        from ..._source_types import PublicSourceType
         from ...indexer import _chunk_worker
         from ...indexer._generation_lifecycle import CodeGenerationOpenRequest
+        from ...indexer._rebuild_lifecycle import reset_selected_sources
         from ...indexer._run_ledger_models import RunOperation, RunTerminalState
         from ...indexer._slicing import iter_code_file_segments
         from ...indexer._streaming_types import CodeFileSegment, CodeFileSegmentRequest
@@ -72,16 +74,12 @@ class TestIncrementalPublicationRecovery:
             )
         )
 
-        # A clean rebuild writes into the collection named for its generation
-        # and leaves the served one answering reads, so an interrupted attempt
-        # is reproduced by seeding the generation collection, not the served
-        # one.
-        build_target = generation_code_collection(
-            store.CODE_TABLE_NAME,
-            checkpoint.generation_id,
+        # A rebuild resets its source under its own generation before it
+        # writes, so the interrupted attempt is reproduced by that reset
+        # followed by confirmed writes into the canonical collection.
+        reset_selected_sources(
+            store, PublicSourceType.CODE, generation_id=checkpoint.generation_id
         )
-        store.ensure_code_table()
-        store.ensure_code_table(build_target)
         chunked = _chunk_worker.chunk_and_hash_file(source, root)
         segments = tuple(
             iter_code_file_segments(
@@ -101,11 +99,7 @@ class TestIncrementalPublicationRecovery:
                 _stored_partial_chunk(segment.path, chunk.id)
                 for chunk in segment.chunks
             )
-            store.upsert_code_chunks(
-                list(stored_chunks),
-                write_policy=None,
-                collection=build_target,
-            )
+            store.upsert_code_chunks(list(stored_chunks), write_policy=None)
             stored_segment = CodeFileSegment(
                 path=segment.path,
                 ordinal=segment.ordinal,
@@ -136,9 +130,9 @@ class TestIncrementalPublicationRecovery:
 
         assert set(store.get_all_code_ids()) == expected_ids
         # Chunk identities are deterministic, so matching ids alone cannot tell
-        # a resumed generation from one that re-encoded the whole file into a
-        # fresh collection. The seeded marker content can: it survives only
-        # where the confirmed points themselves were carried through.
+        # a resumed generation from one that reset again and re-encoded the
+        # whole file. The seeded marker content can: it survives only where
+        # the confirmed points themselves were carried through.
         rows, _ = store.scroll_code_content(
             source_paths={segment.path for segment in segments}
         )
@@ -202,13 +196,12 @@ class TestCodebaseFullIndex:
     def test_rebuild_vault_preserves_code_collection(
         self, code_project: _CodeProject
     ) -> None:
-        """drop_table on vault must not touch code chunks.
+        """Discarding the vault source must not touch code chunks.
 
         A whole-directory rmtree on the shared Qdrant path would
         silently destroy the code collection on
-        ``--rebuild --type vault``. The scoped-drop path uses
-        ``store.drop_table()`` / ``store.drop_code_table()`` so
-        each collection is independent.
+        ``--rebuild --type vault``. The reset discards one source's
+        collections at a time, so each collection is independent.
         """
         from ... import VaultIndexer
 
@@ -230,7 +223,7 @@ class TestCodebaseFullIndex:
         store.ensure_table()
 
         # Simulate the scoped rebuild: drop ONLY vault.
-        store.drop_table()
+        store.discard_source_storage(PublicSourceType.VAULT)
         store.ensure_table()
         vault_indexer.full_index(
             clean=True,

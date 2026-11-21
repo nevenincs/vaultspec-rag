@@ -1149,7 +1149,6 @@ def encode_and_upsert_code_slice(request: CodeSliceRequest) -> None:
                 request.chunks,
                 write_policy=request.write_policy,
                 wait=request.ingest_wait,
-                collection=request.collection,
             ),
             request.mutation_lifecycle,
             after_acknowledgement=request.on_storage_confirmed,

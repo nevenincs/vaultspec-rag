@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from .._source_types import PublicSourceType
 from .._store_search import HybridSearchRequest
 from ._store_fixtures import get_all_document_content_ids, get_all_ids
 
@@ -658,11 +659,11 @@ class TestQdrantServerMode:
             reset_config()
 
 
-class TestDropTable:
-    """Real-Qdrant tests for drop_table / drop_code_table — no embeddings required."""
+class TestDiscardSourceStorage:
+    """Real-Qdrant tests for discarding one source - no embeddings required."""
 
-    def test_drop_table_removes_vault_collection(self, tmp_path: Path) -> None:
-        """drop_table() should delete the vault_docs collection and reset state."""
+    def test_discard_vault_removes_vault_collection(self, tmp_path: Path) -> None:
+        """Discarding vault deletes the vault_docs collection and resets state."""
         from ..store_runtime import VaultStore
 
         store = VaultStore(tmp_path)
@@ -670,26 +671,28 @@ class TestDropTable:
             store.ensure_table()
             assert store.client.collection_exists(store.TABLE_NAME)
 
-            store.drop_table()
+            store.discard_source_storage(PublicSourceType.VAULT)
 
             assert not store.client.collection_exists(store.TABLE_NAME)
             assert store._ensured.get(store.TABLE_NAME) is False
         finally:
             store.close()
 
-    def test_drop_table_idempotent_on_missing_collection(self, tmp_path: Path) -> None:
-        """drop_table() on a non-existent collection must not raise."""
+    def test_discard_vault_idempotent_on_missing_collection(
+        self, tmp_path: Path
+    ) -> None:
+        """Discarding vault with no collection must not raise."""
         from ..store_runtime import VaultStore
 
         store = VaultStore(tmp_path)
         try:
-            store.drop_table()
-            assert store._ensured.get(store.TABLE_NAME) is False
+            store.discard_source_storage(PublicSourceType.VAULT)
+            assert not store.client.collection_exists(store.TABLE_NAME)
         finally:
             store.close()
 
-    def test_drop_table_then_recreate_works(self, tmp_path: Path) -> None:
-        """After drop_table(), ensure_table() should recreate a fresh collection."""
+    def test_discard_vault_then_recreate_works(self, tmp_path: Path) -> None:
+        """After a vault discard, ensure_table() recreates a fresh collection."""
         from ..store_runtime import VaultStore
 
         store = VaultStore(tmp_path)
@@ -697,7 +700,7 @@ class TestDropTable:
             store.ensure_table()
             assert store.count() == 0
 
-            store.drop_table()
+            store.discard_source_storage(PublicSourceType.VAULT)
             assert not store.client.collection_exists(store.TABLE_NAME)
 
             store.ensure_table()
@@ -706,7 +709,7 @@ class TestDropTable:
         finally:
             store.close()
 
-    def test_drop_table_then_recreate_does_not_resurrect_points(
+    def test_discard_vault_then_recreate_does_not_resurrect_points(
         self, tmp_path: Path
     ) -> None:
         """Dropping a populated collection then recreating must yield count 0.
@@ -742,7 +745,7 @@ class TestDropTable:
             )
             assert store.count() == 1
 
-            store.drop_table()
+            store.discard_source_storage(PublicSourceType.VAULT)
             assert not store.client.collection_exists(store.TABLE_NAME)
 
             store.ensure_table()
@@ -750,8 +753,8 @@ class TestDropTable:
         finally:
             store.close()
 
-    def test_drop_code_table_removes_codebase_collection(self, tmp_path: Path) -> None:
-        """drop_code_table() deletes the codebase_docs collection and resets state."""
+    def test_discard_code_removes_codebase_collection(self, tmp_path: Path) -> None:
+        """Discarding code deletes the codebase_docs collection and resets state."""
         from ..store_runtime import VaultStore
 
         store = VaultStore(tmp_path)
@@ -759,28 +762,28 @@ class TestDropTable:
             store.ensure_code_table()
             assert store.client.collection_exists(store.CODE_TABLE_NAME)
 
-            store.drop_code_table()
+            store.discard_source_storage(PublicSourceType.CODE)
 
             assert not store.client.collection_exists(store.CODE_TABLE_NAME)
             assert store._ensured.get(store.CODE_TABLE_NAME) is False
         finally:
             store.close()
 
-    def test_drop_code_table_idempotent_on_missing_collection(
+    def test_discard_code_idempotent_on_missing_collection(
         self, tmp_path: Path
     ) -> None:
-        """drop_code_table() on a non-existent collection must not raise."""
+        """Discarding code with no collection must not raise."""
         from ..store_runtime import VaultStore
 
         store = VaultStore(tmp_path)
         try:
-            store.drop_code_table()
-            assert store._ensured.get(store.CODE_TABLE_NAME) is False
+            store.discard_source_storage(PublicSourceType.CODE)
+            assert not store.client.collection_exists(store.CODE_TABLE_NAME)
         finally:
             store.close()
 
-    def test_drop_code_table_then_recreate_works(self, tmp_path: Path) -> None:
-        """After drop_code_table(), ensure_code_table() recreates a fresh collection."""
+    def test_discard_code_then_recreate_works(self, tmp_path: Path) -> None:
+        """After a code discard, ensure_code_table() recreates a fresh collection."""
         from ..store_runtime import VaultStore
 
         store = VaultStore(tmp_path)
@@ -788,7 +791,7 @@ class TestDropTable:
             store.ensure_code_table()
             assert store.count_code() == 0
 
-            store.drop_code_table()
+            store.discard_source_storage(PublicSourceType.CODE)
             assert not store.client.collection_exists(store.CODE_TABLE_NAME)
 
             store.ensure_code_table()

@@ -95,7 +95,6 @@ class VaultRunCheckpoint(RunCheckpointBase):
                 ledger,
                 signature,
                 authority,
-                run_policy,
             )
             receipt = cls.open_publication_receipt(ledger, generation, authority)
         except RunLedgerCompatibilityError as exc:

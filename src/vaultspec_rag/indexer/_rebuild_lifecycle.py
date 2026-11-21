@@ -11,9 +11,9 @@ Each step is recorded in the run ledger before the next begins, so a run that
 dies mid-reset is finished by replaying the same rebuild generation: the
 completed steps are idempotent and the recorded phase says where to resume.
 A different generation starts a new reset and advances the source's epoch.
-A rebuild entering ingestion finishes any reset left unfinished under the
-generation that recorded it, so a crash between intent and completion never
-leaves discarded content where replacement writes land.
+Every explicit rebuild enters ingestion through one reset keyed by its own
+generation, so a crash between intent and completion is finished by the next
+attempt and never leaves discarded content where replacement writes land.
 
 The epoch is the fence. A reader or writer captures it before touching
 storage and validates it afterwards; any reset recorded in between makes the
@@ -88,15 +88,6 @@ class ResetEpochFence:
     backend_identity: str
     epoch: int
     phase: SourceResetPhase | None
-
-    @property
-    def in_transition(self) -> bool:
-        """Whether a reset had begun but not completed at capture.
-
-        The source's storage is then being discarded or recreated, and holds
-        nothing a read may return.
-        """
-        return self.phase is not None and self.phase is not SourceResetPhase.COMPLETE
 
     def validate(self) -> None:
         """Raise when the source was reset after this fence was captured.
@@ -238,55 +229,31 @@ def enter_rebuild_ingestion(
     source: PublicSourceType,
     *,
     began_under: ResetEpochFence,
+    generation_id: str,
     run_control: RunControl = NO_RUN_CONTROL,
-) -> None:
-    """Admit an explicit rebuild of *source* to write into its storage.
+) -> SourceResetState:
+    """Reset *source* for the rebuild *generation_id* before it writes anything.
 
-    The caller holds the source's writer lease and captured *began_under*
-    before it planned the rebuild. Three things happen, in order, before the
-    first replacement write:
+    The caller holds the source's writer lease, captured *began_under* before
+    it planned the rebuild, and has opened the rebuild's generation. Every
+    explicit rebuild of every content kind passes through here, so the old
+    index is discarded and the canonical collection is empty before the first
+    replacement write, and the rebuild then writes into that one collection.
 
     - A reset recorded since *began_under* rejects the rebuild. It planned
       against storage that reset discarded, and writing now would land work
       from before the reset in the replacement.
-    - A reset left unfinished by a crash is finished under the generation
-      that recorded it. Until then the source may still hold discarded
-      content, or no collection at all.
-    - An in-place publication left open by an interrupted incremental run is
-      discarded by a reset of its own, keyed by that receipt, so a replay
-      after the receipt is retired resets nothing further.
-
-    A root with no run ledger has nothing to fence, recover, or discard, and
-    entering creates none.
+    - The generation's own completed reset is never repeated, so a resumed
+      rebuild keeps the replacement work it already confirmed.
+    - A reset its own generation left unfinished resumes from its recorded
+      phase; any other generation's reset, finished or not, is superseded by
+      a new one, which also retires every receipt and proof the source held.
 
     Raises:
         SourceResetEpochError: *source* was reset after *began_under*.
     """
     began_under.validate()
-    path = _ledger_path(store.root_dir)
-    if not path.is_file():
-        return
-    ledger = RunLedger(path)
-    root_identity = str(store.root_dir.resolve())
-    interrupted = ledger.source_reset_state(
-        source, root_identity, store.backend_identity
+    (state,) = reset_selected_sources(
+        store, source, generation_id=generation_id, run_control=run_control
     )
-    if interrupted is not None and not interrupted.complete:
-        logger.warning(
-            "Finishing %s reset interrupted at %s for %s",
-            source.value,
-            interrupted.phase.value,
-            root_identity,
-        )
-        run_control.checkpoint()
-        _reset_one(store, ledger, source, interrupted.generation_id, run_control)
-    receipt = ledger.recoverable_publication_receipt(
-        source_type=source,
-        root_identity=root_identity,
-        backend_identity=store.backend_identity,
-    )
-    if receipt is None or not receipt.state.is_open:
-        return
-    reset_selected_sources(
-        store, source, generation_id=receipt.receipt_id, run_control=run_control
-    )
+    return state

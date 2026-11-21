@@ -5,7 +5,7 @@ tags:
 date: '2026-10-12'
 modified: '2026-11-21'
 body_schema: 'body-v2'
-body_hash: 'sha256:3b03238d70fc85118531bd0ad058770ebab84a63730a303c447f4a1861d2a2ad'
+body_hash: 'sha256:80416b0e55d2e03c226926db961057a2755afd9a6b45a989c8218ed3edbfdce8'
 related:
   - "[[2026-10-12-destructive-rebuild-lifecycle-plan]]"
 ---
@@ -72,8 +72,66 @@ related:
 - `S01` `verify:` `basedpyright (changed files)` -> `pass`
 - `S01` `verify:` `pytest run-ledger/store/clean CPU modules -n 8 (1929 passed; 2 failures outside S01 files)` -> `pass`
 - `S01` `by:` `vaultspec-high-executor`
+- `S02` `M` `src/vaultspec_rag/_store_models.py`
+- `S02` `M` `src/vaultspec_rag/indexer/_checkpoint_common.py`
+- `S02` `M` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S02` `M` `src/vaultspec_rag/indexer/_consumer_pipeline.py`
+- `S02` `M` `src/vaultspec_rag/indexer/_document_indexer.py`
+- `S02` `M` `src/vaultspec_rag/indexer/_drift_owner.py`
+- `S02` `M` `src/vaultspec_rag/indexer/_generation_lifecycle.py`
+- `S02` `M` `src/vaultspec_rag/indexer/_incremental_commit.py`
+- `S02` `M` `src/vaultspec_rag/indexer/_rebuild_lifecycle.py`
+- `S02` `M` `src/vaultspec_rag/indexer/_route_migration.py`
+- `S02` `M` `src/vaultspec_rag/indexer/_run_ledger_commits.py`
+- `S02` `M` `src/vaultspec_rag/indexer/_run_ledger_publication_reads.py`
+- `S02` `M` `src/vaultspec_rag/indexer/_run_ledger_publication_receipts.py`
+- `S02` `M` `src/vaultspec_rag/indexer/_run_ledger_recovery.py`
+- `S02` `M` `src/vaultspec_rag/indexer/_streaming.py`
+- `S02` `M` `src/vaultspec_rag/indexer/_streaming_types.py`
+- `S02` `M` `src/vaultspec_rag/indexer/_vault_checkpoint.py`
+- `S02` `M` `src/vaultspec_rag/indexer/_vault_indexer.py`
+- `S02` `M` `src/vaultspec_rag/store_catalog.py`
+- `S02` `M` `src/vaultspec_rag/store_collections.py`
+- `S02` `M` `src/vaultspec_rag/tests/_ledger_fixtures.py`
+- `S02` `M` `src/vaultspec_rag/tests/integration/_index_job_control_support.py`
+- `S02` `M` `src/vaultspec_rag/tests/integration/test_codebase_integration.py`
+- `S02` `M` `src/vaultspec_rag/tests/integration/test_document_search.py`
+- `S02` `M` `src/vaultspec_rag/tests/integration/test_document_store.py`
+- `S02` `M` `src/vaultspec_rag/tests/integration/test_index_job_control_publication.py`
+- `S02` `M` `src/vaultspec_rag/tests/integration/test_indexer_integration.py`
+- `S02` `M` `src/vaultspec_rag/tests/integration/test_store_integration.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_code_consumer_progress.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_code_pipeline_retained_ids.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_code_rebuild_stale_evidence.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_content_kind_checkpoint_restart.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_content_route_migration.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_incremental_receipt_recovery.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_incremental_route_reconciliation.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_ledger_set_aside.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_live_checkpoint_resilience.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_rebuild_lifecycle.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_receipt_finalization_recovery.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_route_scan_classification_cache.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_search_readiness.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_served_pointer_validation.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_service_registry.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_storage_identity.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_store.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_vault_readiness_publication.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_weighted_code_resume.py`
+- `S02` `A` `src/vaultspec_rag/tests/integration/test_rebuild_replacement_corpus.py`
+- `S02` `A` `src/vaultspec_rag/tests/test_rebuild_replacement.py`
+- `S02` `verify:` `ruff check (changed files)` -> `pass`
+- `S02` `verify:` `ruff format --check (changed files)` -> `pass`
+- `S02` `verify:` `ty check (changed files)` -> `pass`
+- `S02` `verify:` `basedpyright (changed files)` -> `pass`
+- `S02` `verify:` `pytest -m unit src/vaultspec_rag/tests (8321 passed; failures only in another worker's in-flight test_cli_service_status files and one parallel-lane flake that passes alone)` -> `pass`
+- `S02` `verify:` `pytest test_rebuild_lifecycle test_substitution_discipline test_process_probe_source_structure test_rebuild_replacement test_no_unconsumed_definitions` -> `pass`
+- `S02` `by:` `vaultspec-high-executor`
 
 ## Notes
 
 - `S01` GPU-marked `test_store_codebase` delete test not run: the resident 0.6.5 service refused the GPU borrow from the 0.6.6 client.
 - `S01` Unrelated failures left: duplicate bodies in `cli/_service_jobs_presentation.py` vs `cli/_status_labels.py` (other worker's change set); substitution counts in untouched `test_indexer_unit.py,` `test_lazy_reranker.py,` `test_watcher_intent.py.`
+- `S02` GPU-lane tests not run: `test_rebuild_replacement_corpus` and the edited integration modules collect but need a GPU borrow from a compatible running service, which the resident service refused
+- `S02` Deleted store `drop_table,` `drop_code_table,` `drop_document_table` and `ResetEpochFence.in_transition:` their only production callers were the removed preservation branches; tests repointed to `discard_source_storage`

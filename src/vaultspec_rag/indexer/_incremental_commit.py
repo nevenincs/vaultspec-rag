@@ -294,7 +294,6 @@ class CodeIncrementalCommit:
                 request.reporter.phase_end()
             self._lifecycle.publish(
                 request.checkpoint,
-                build_target=None,
                 reporter=request.reporter,
                 phase_label="write metadata",
                 affected_paths=(

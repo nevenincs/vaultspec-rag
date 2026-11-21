@@ -49,7 +49,6 @@ if TYPE_CHECKING:
         GenerationRow,
         PublicationProof,
         RunGeneration,
-        RunSignature,
     )
 
 
@@ -557,8 +556,6 @@ class RunLedgerCommitMethods:
             generation_id: str,
             key: ProofCompatibilityKey,
             proof: PublicationProof,
-            *,
-            rebuild_signature: RunSignature | None = None,
         ) -> RunGeneration: ...
 
     def prepare_publication_mutation(

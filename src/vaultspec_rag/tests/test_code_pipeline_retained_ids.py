@@ -36,6 +36,7 @@ from ..indexer._streaming_types import CodeFileSegment, CodeFileSegmentRequest
 from ..job_control import NO_RUN_CONTROL
 from ..progress import NullProgressReporter
 from ..store_runtime import VaultStore
+from ._ledger_fixtures import record_reset_over_empty_storage
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -89,7 +90,9 @@ def _open_generation(
         run_control=NO_RUN_CONTROL,
         authority=RunAuthority.REBUILD,
     )
-    return lifecycle, lifecycle.open_checkpoint(request), request
+    checkpoint = lifecycle.open_checkpoint(request)
+    record_reset_over_empty_storage(checkpoint.ledger, checkpoint.generation)
+    return lifecycle, checkpoint, request
 
 
 def _pipeline(
@@ -212,7 +215,6 @@ def test_resumed_pipeline_retains_only_live_committed_ids(
                 checkpoint=checkpoint,
                 limits=limits,
                 content_epoch=None,
-                code_build_target=None,
             ),
         )
         live = set(store.get_all_code_ids())
@@ -374,7 +376,6 @@ def test_reopened_pipeline_excludes_durable_deletion_identities(
                 checkpoint=checkpoint,
                 limits=limits,
                 content_epoch=None,
-                code_build_target=None,
             ),
         )
         assert not lifecycle.drift_owner.superseded_point_ids
@@ -437,7 +438,6 @@ def test_reopened_pipeline_keeps_unfinished_file_upsert_prefix(
                 checkpoint=checkpoint,
                 limits=limits,
                 content_epoch=None,
-                code_build_target=None,
             ),
         )
         # Manifest-only seeding loses confirmed unfinished-file prefixes.

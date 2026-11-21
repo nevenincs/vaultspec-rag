@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ._ledger_fixtures import record_reset_over_empty_storage
 from .integration._helpers import _document_policy
 
 if TYPE_CHECKING:
@@ -129,7 +130,9 @@ def test_each_kind_replays_only_its_final_unconfirmed_unit(
     document_digest = hashlib.blake2b(b"document restart input").hexdigest()
 
     code = _open_code()
+    record_reset_over_empty_storage(code.ledger, code.generation)
     document = _open_document()
+    record_reset_over_empty_storage(document.ledger, document.generation)
     for segment in code_segments[:2]:
         assert (
             code.record_confirmed_segments((segment,), {segment.path: code_digest}) == 1
@@ -209,6 +212,7 @@ def test_vault_rebuild_keeps_its_confirmed_generation_after_interruption(
         )
 
     checkpoint = _open()
+    record_reset_over_empty_storage(checkpoint.ledger, checkpoint.generation)
     confirmed = CommitUnit(
         rel_path="notes",
         kind=CommitUnitKind.UPSERT,

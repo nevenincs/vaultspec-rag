@@ -277,10 +277,9 @@ class StoredRouteRow:
 
 @dataclass(frozen=True, slots=True)
 class RouteScanOptions:
-    """Bounded page and optional private code-target selection for a scan."""
+    """Bounded page and optional path selection for one stored-route scan."""
 
     page_size: int = _DEFAULT_PAGE_SIZE
-    code_collection: str | None = None
     origin_metadata_only: bool = False
     source_paths: frozenset[str] | None = None
 
@@ -296,13 +295,11 @@ def _scroll_stored_route_page(
     options: RouteScanOptions,
 ) -> tuple[list[dict[str, Any]], PointId | None, str, str]:
     """Read one bounded collection page with its payload field names."""
-    page_size, code_collection = options.page_size, options.code_collection
+    page_size = options.page_size
     source_paths = (
         set(options.source_paths) if options.source_paths is not None else None
     )
     if options.origin_metadata_only:
-        if code_collection is not None:
-            raise ValueError("origin metadata must name the active content projection")
         collection = (
             store.CODE_TABLE_NAME
             if stored_kind is ContentKind.CODE
@@ -319,7 +316,6 @@ def _scroll_stored_route_page(
         return rows, next_offset, path_key, id_key
     if stored_kind is ContentKind.CODE:
         rows, next_offset = store.scroll_code_content(
-            collection=code_collection,
             limit=page_size,
             offset=offset,
             source_paths=source_paths,
@@ -374,11 +370,8 @@ def iter_stored_route_pages(
 ) -> Iterator[tuple[StoredRouteRow, ...]]:
     """Yield freshly classified store rows without trusting a sidecar."""
     page_size = options.page_size
-    code_collection = options.code_collection
     if isinstance(page_size, bool) or page_size <= 0 or page_size > 1000:
         raise ValueError("route migration page size must be between 1 and 1000")
-    if code_collection is not None and stored_kind is not ContentKind.CODE:
-        raise ValueError("only code route scans accept an explicit collection")
     if options.source_paths is not None:
         if len(options.source_paths) > _LEDGER_LOOKUP_BATCH:
             raise ValueError("route path selection exceeds the bounded lookup batch")
@@ -537,8 +530,6 @@ def reconcile_checkpoint_routes(
     options: RouteScanOptions = _DEFAULT_ROUTE_SCAN_OPTIONS,
 ) -> int:
     """Reconcile complete destinations through one bounded origin scan."""
-    if options.code_collection is not None:
-        raise ValueError("cross-kind reconciliation requires served origin collections")
     origin_kind = (
         ContentKind.DOCUMENT
         if destination_kind is ContentKind.CODE
@@ -633,12 +624,7 @@ def purge_unpublished_rows(
     *,
     options: RouteScanOptions = _DEFAULT_ROUTE_SCAN_OPTIONS,
 ) -> int:
-    """Remove stale same-kind or rejected rows through bounded store pages.
-
-    ``options.code_collection`` makes a clean code build's pre-publication purge name
-    its replacement collection explicitly. Document storage has one canonical
-    collection and rejects that argument.
-    """
+    """Remove stale same-kind or rejected rows through bounded store pages."""
     removed = 0
     for page in iter_stored_route_pages(
         store,
@@ -664,7 +650,6 @@ def purge_unpublished_rows(
         store.delete_publication_points(
             PublicSourceType(stored_kind.value),
             stale_ids,
-            collection=options.code_collection,
         )
         removed += len(stale_ids)
         checkpoint.run_policy.record_durable_progress(
@@ -707,17 +692,12 @@ def reconcile_generation_storage(
     checkpoint: DestinationCheckpoint,
     policy: ResolvedIndexPolicy,
     destination_kind: ContentKind,
-    *,
-    include_same_kind: bool = True,
 ) -> tuple[int, int, int]:
-    """Converge the store's selected destination and cross-kind ownership.
+    """Converge the source's canonical collection and cross-kind ownership.
 
-    Code reconciliation resolves its destination from ``store.CODE_TABLE_NAME``.
-    A clean code generation first purges its explicit build target, records
-    breadth, then publishes and binds that target before using this operation
-    for route migration. ``include_same_kind=False`` preserves that measured
-    breadth while allowing only destination-confirmed cross-kind cleanup.
-    In-place code and document generations already select their destinations.
+    Every generation, rebuild or incremental, wrote the one canonical
+    collection of its kind, so its stale same-kind rows and its cross-kind
+    routes are reconciled there before its breadth is recorded.
     """
     path_batches: tuple[frozenset[str] | None, ...] = (None,)
     if checkpoint.receipt is not None:
@@ -746,14 +726,13 @@ def reconcile_generation_storage(
     purged = 0
     migrated = 0
     for source_paths in path_batches:
-        if include_same_kind:
-            purged += purge_unpublished_rows(
-                store,
-                checkpoint,
-                policy,
-                destination_kind,
-                options=RouteScanOptions(source_paths=source_paths),
-            )
+        purged += purge_unpublished_rows(
+            store,
+            checkpoint,
+            policy,
+            destination_kind,
+            options=RouteScanOptions(source_paths=source_paths),
+        )
         migrated += reconcile_checkpoint_routes(
             store,
             checkpoint,

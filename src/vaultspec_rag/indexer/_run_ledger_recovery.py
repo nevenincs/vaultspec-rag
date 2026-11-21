@@ -35,7 +35,6 @@ if TYPE_CHECKING:
         PublicationProof,
         PublicationReceipt,
         RunGeneration,
-        RunSignature,
     )
 
 
@@ -88,8 +87,6 @@ class RunLedgerRecoveryMethods:
             generation_id: str,
             key: ProofCompatibilityKey,
             proof: PublicationProof,
-            *,
-            rebuild_signature: RunSignature | None = None,
         ) -> RunGeneration: ...
 
     def generation_storage_reset_paths(self, generation_id: str) -> tuple[str, ...]:

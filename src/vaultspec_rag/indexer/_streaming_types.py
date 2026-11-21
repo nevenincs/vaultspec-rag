@@ -151,7 +151,6 @@ class CodeSliceRequest:
     on_cuda_oom: Callable[[BaseException], None] | None = None
     run_control: RunControl = NO_RUN_CONTROL
     reuse: DonorReuseContext | None = None
-    collection: str | None = None
     mutation_lifecycle: StoreMutationLifecycle | None = None
 
 

@@ -175,9 +175,12 @@ def test_publication_authority_never_sets_a_ledger_aside(
     before = sqlite_contents(path)
     run = build(root, RunAuthority.PUBLICATION)
 
-    with pytest.raises(_StandInReachedError):
+    # A full index is a rebuild, so publication authority is refused before
+    # the ledger is touched. Mutation: dropping the authority check let the
+    # run reach the stand-in after setting the ledger aside, and failed the
+    # ``pytest.raises``; restoring it passed.
+    with pytest.raises(PermissionError, match="requires rebuild authority"):
         run()
 
-    # Mutation: dropping the rebuild-authority condition moves the ledger here.
     assert _set_aside_siblings(path) == []
     assert_sqlite_unchanged(path, before)

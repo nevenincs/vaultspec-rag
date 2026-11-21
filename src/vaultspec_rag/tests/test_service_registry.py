@@ -356,12 +356,11 @@ class TestServedConformanceHealth:
 
     pytestmark: ClassVar = [pytest.mark.unit]
 
-    def test_health_changes_when_replacement_becomes_served(
+    def test_health_changes_when_the_code_source_is_reset(
         self, tmp_path: Path, clean_config: None
     ) -> None:
-        """Catch old-cache degradation, premature build selection and reprobes."""
+        """A reset code source stops degrading health; publication reprobes nothing."""
         del clean_config
-        from .. import store_schema
         from .test_storage_identity import (
             _code_replacement,
             _seed_nonconforming_namespaces,
@@ -372,18 +371,16 @@ class TestServedConformanceHealth:
         try:
             slot = registry.peek_project(tmp_path)
             store = slot.store
-            with _code_replacement(store) as (indexer, checkpoint, target):
-                old = store.CODE_TABLE_NAME
+            with _code_replacement(store) as (indexer, checkpoint, _target):
                 unchanged = {store.TABLE_NAME, store.DOCUMENT_TABLE_NAME}
                 root = str(tmp_path.resolve())
                 before = registry.health()
                 assert set(before["nonconforming"]) == {
-                    f"{root}:{name}" for name in unchanged | {old}
-                }, "active served degradation was hidden during rebuild"
+                    f"{root}:{name}" for name in unchanged
+                }, "the discarded code collection still degrades health"
                 assert slot.compute_runtime is None
                 indexer._lifecycle.publish(
                     checkpoint,
-                    build_target=target,
                     reporter=NullProgressReporter(),
                     phase_label="CPU health replacement",
                 )
@@ -403,12 +400,10 @@ class TestServedConformanceHealth:
                     sys.setprofile(prior_profile)
                 assert set(after["nonconforming"]) == {
                     f"{root}:{name}" for name in unchanged
-                }, "health still degrades on the superseded code generation"
+                }
                 assert not backend_calls, "health reprobed the backend"
                 assert not after["model_loaded"] and not after["reranker_loaded"]
                 assert slot.compute_runtime is None
-                assert store._conformance[old].verdict == store_schema.NONCONFORMING
-                assert store.client.count(collection_name=old).count == 1
         finally:
             registry.close_all()
 
@@ -429,10 +424,9 @@ class TestServedConformanceHealth:
             if source == "code":
                 from .test_storage_identity import _code_replacement
 
-                with _code_replacement(store) as (indexer, checkpoint, target):
+                with _code_replacement(store) as (indexer, checkpoint, _target):
                     indexer._lifecycle.publish(
                         checkpoint,
-                        build_target=target,
                         reporter=NullProgressReporter(),
                         phase_label="CPU active refusal publication",
                     )

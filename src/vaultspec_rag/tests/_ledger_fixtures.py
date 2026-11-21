@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from ..indexer._publication_proof import ProofMissingError, ProofReadToken
 from ..indexer._run_ledger_models import (
     GenerationRow,
+    SourceResetPhase,
     column_int,
     fetch_one,
     ledger_connection,
@@ -71,3 +72,24 @@ def acquire_publication_read_token(
         reservation_sequence=column_int(row, "reservation_sequence"),
         has_open_receipt=has_open_receipt(row),
     )
+
+
+def record_reset_over_empty_storage(
+    ledger: RunLedger, generation: RunGeneration
+) -> None:
+    """Record *generation*'s own completed reset before any storage exists.
+
+    A full rebuild resumes only work written after its own reset. A test
+    whose source holds no points yet, or that drives checkpoints without a
+    store, has nothing to discard, so the reset is recorded in the ledger
+    alone.
+    """
+    signature = generation.signature
+    state = ledger.begin_source_reset(
+        signature.source_type,
+        signature.root_identity,
+        signature.backend_identity,
+        generation.generation_id,
+    )
+    for phase in (SourceResetPhase.DISCARDED, SourceResetPhase.COMPLETE):
+        state = ledger.advance_source_reset(state, phase)

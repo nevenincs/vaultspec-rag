@@ -167,7 +167,7 @@ def test_document_store_round_trip_local(
             is not (store._collection_locks[store.CODE_TABLE_NAME])
         )
         _assert_document_round_trip(store)
-        store.drop_document_table()
+        store.discard_source_storage(PublicSourceType.DOCUMENT)
         assert not store.client.collection_exists(store.DOCUMENT_TABLE_NAME)
         store.ensure_document_table()
         assert store.client.collection_exists(store.DOCUMENT_TABLE_NAME)

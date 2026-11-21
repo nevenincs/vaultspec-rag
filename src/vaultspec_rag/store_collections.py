@@ -260,10 +260,6 @@ class _VaultCollectionMixin:
                 logger.info("Dropped collection '%s'", collection)
             self._ensured[collection] = False
 
-    def drop_table(self) -> None:
-        """Drop the vault_docs collection if it exists."""
-        self._drop_collection(self.TABLE_NAME)
-
     def _code_collection(self, collection: str | None) -> str:
         """Return the code collection a call targets.
 
@@ -280,21 +276,6 @@ class _VaultCollectionMixin:
         if not code_collection_matches_derived(target, self.DERIVED_CODE_TABLE_NAME):
             raise ValueError("collection must be a root-owned code collection")
         return target
-
-    def drop_code_table(self, collection: str | None = None) -> None:
-        """Drop a code collection if it exists, defaulting to the served one."""
-        if collection is None:
-            pointer = read_served_pointer(self.root_dir, self.DERIVED_CODE_TABLE_NAME)
-            if not pointer.verifiable:
-                raise RuntimeError(
-                    "cannot drop code without a verifiable served pointer"
-                )
-            collection = pointer.collection or self.DERIVED_CODE_TABLE_NAME
-        self._drop_collection(self._code_collection(collection))
-
-    def drop_document_table(self) -> None:
-        """Drop only the independently owned document collection."""
-        self._drop_collection(self.DOCUMENT_TABLE_NAME)
 
     def owned_code_collections(self) -> tuple[str, ...]:
         """Return every existing code collection this root owns.

@@ -19,12 +19,9 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from .._store_models import generation_code_collection, publish_generation_as_served
 from ._content_policy import ContentKind
 from ._drift_owner import CodeDriftOwner
 from ._route_migration import (
-    RouteScanOptions,
-    purge_unpublished_rows,
     reconcile_generation_storage,
     reconcile_scoped_routes,
 )
@@ -82,7 +79,6 @@ class CodeGenerationLifecycle:
     """Own one root's code generation, its ledger authority, and its drift."""
 
     __slots__ = (
-        "_active_build_target",
         "_data_root",
         "_drift_owner",
         "_last_checkpoint",
@@ -107,7 +103,6 @@ class CodeGenerationLifecycle:
         self._store = bindings.store
         self._publish_readiness = bindings.publish_readiness
         self._last_checkpoint: CodeRunCheckpoint | None = None
-        self._active_build_target: str | None = None
         # Bound to the generation once a run opens its checkpoint, because
         # superseding evidence is meaningless without one to supersede in.
         self._drift_owner: CodeDriftOwner | None = None
@@ -138,15 +133,9 @@ class CodeGenerationLifecycle:
         owner = self._drift_owner
         return owner.snapshot() if owner is not None else None
 
-    @property
-    def active_build_target(self) -> str | None:
-        """Return the open generation's derived build collection."""
-        return self._active_build_target
-
     def forget_open_generation(self) -> None:
         """Drop the drift owner so a new run cannot inherit the prior one."""
         self._drift_owner = None
-        self._active_build_target = None
 
     def open_checkpoint(
         self, request: CodeGenerationOpenRequest, /
@@ -201,12 +190,7 @@ class CodeGenerationLifecycle:
             )
             checkpoint = _open(request)
         self._last_checkpoint = checkpoint
-        self._active_build_target = self.build_collection(checkpoint)
-        self._drift_owner = CodeDriftOwner(
-            checkpoint,
-            self._store,
-            collection=self._active_build_target,
-        )
+        self._drift_owner = CodeDriftOwner(checkpoint, self._store)
         return checkpoint
 
     def evidence_lost(self, checkpoint: CodeRunCheckpoint) -> bool:
@@ -223,9 +207,7 @@ class CodeGenerationLifecycle:
             checkpoint.ingestion_complete
             or checkpoint.ledger.committed_unit_count(checkpoint.generation_id) > 0
         )
-        return has_evidence and not self._store.code_collection_exists(
-            self.build_collection(checkpoint)
-        )
+        return has_evidence and not self._store.code_collection_exists()
 
     def published_evidence_lost(self) -> bool:
         """Return whether storage contradicts the canonical code proof.
@@ -259,7 +241,7 @@ class CodeGenerationLifecycle:
         )
         return True
 
-    def recover_removed_shadow_paths(
+    def recover_removed_rebuild_paths(
         self,
         checkpoint: CodeRunCheckpoint,
         *,
@@ -292,132 +274,46 @@ class CodeGenerationLifecycle:
         for rel in sorted(absent):
             self.drift_owner.retire_retained_outcome(rel, remove_path=True)
 
-    def build_collection(self, checkpoint: CodeRunCheckpoint) -> str | None:
-        """Return the collection *checkpoint* populates, or ``None`` for in-place.
-
-        A generation opened ``clean`` builds beside the served collection under
-        a name minted from this root's DERIVED name and its own identifier, so
-        the name is a pure function of two things a resuming run still has.
-        Every other generation writes into the served collection and has no
-        build target at all.
-
-        Deriving it here rather than remembering it is what lets a run that
-        died before publication finish the generation it left behind: the
-        derived name is a function of the root alone, so the same input yields
-        the same name no matter what the pointer did meanwhile.
-
-        Minting from the derived name rather than the served one is what keeps
-        the name bounded. Publication makes the new collection the served one,
-        so a served-derived name accumulates one suffix per clean generation
-        and grows without limit - collections whose names carry a dozen
-        generations of history, each rebuild widening the next.
-        """
-        if not checkpoint.generation.signature.clean:
-            return None
-        return generation_code_collection(
-            self._store.DERIVED_CODE_TABLE_NAME,
-            checkpoint.generation_id,
-        )
-
     def publish(
         self,
         checkpoint: CodeRunCheckpoint,
         *,
-        build_target: str | None,
         reporter: ProgressReporter,
         phase_label: str,
         affected_paths: set[str] | None = None,
     ) -> None:
-        """Publish one finished code generation, breadth first and pointer second.
+        """Publish one finished code generation into the collection it wrote.
 
-        The single publication for every code run - a rebuild into a
-        generation collection, an in-place incremental, and a run resuming a
-        generation whose ingestion already finished. A second copy of this is
-        what let a resumed publication count one collection while claiming
-        another, so the ordering, the counted target, and the pointer move all
-        live here and nowhere else.
-
-        ``build_target`` is the collection the generation actually populated.
-        BOTH published figures are counted from it, never from whatever the
-        served pointer currently resolves to: a claim measured against a
-        different collection than the one it describes is not a claim about
-        anything.
-
-        The pointer moves only after the breadth of that same collection is on
-        disk, and the store is rebound to it in the same step, so no reader can
-        resolve a generation whose published figure is missing and no later run
-        inherits a served name the publication never certified.
+        The single publication for every code run - a rebuild, an in-place
+        incremental, and a run resuming a generation whose ingestion already
+        finished. Every one of them wrote the canonical code collection, so
+        the breadth it records and the completion it certifies describe that
+        same collection; there is no second collection to switch to.
         """
         reporter.phase_start(phase_label, 1)
         try:
             policy = checkpoint.policy
             if policy is None:
                 raise RuntimeError("code checkpoint has no resolved policy")
-
-            def _record_breadth() -> None:
-                checkpoint.publish_proof_transition()
-
-            already_committed = checkpoint.ledger.publication_already_committed(
+            if not checkpoint.ledger.publication_already_committed(
                 checkpoint.generation_id
-            )
-            if build_target is None:
-                if not already_committed:
-                    if affected_paths is None:
-                        reconcile_generation_storage(
-                            self._store,
-                            checkpoint,
-                            policy,
-                            ContentKind.CODE,
-                        )
-                    else:
-                        reconcile_scoped_routes(
-                            self._store,
-                            checkpoint,
-                            ContentKind.CODE,
-                            affected_paths,
-                        )
-                with checkpoint.run_policy.protected("code proof publication"):
-                    _record_breadth()
-            else:
-                # The complete replacement remains private until its own
-                # stale rows are gone and its breadth has been recorded. This
-                # explicit collection keeps that mutation out of the old
-                # served generation while making the published count exact.
-                if not already_committed:
-                    purge_unpublished_rows(
+            ):
+                if affected_paths is None:
+                    reconcile_generation_storage(
                         self._store,
                         checkpoint,
                         policy,
                         ContentKind.CODE,
-                        options=RouteScanOptions(code_collection=build_target),
                     )
-                # Breadth first, pointer second - a reader must never resolve a
-                # generation whose published figure is missing.
-                with checkpoint.run_policy.protected("code served publication"):
-                    publish_generation_as_served(
-                        self._root_dir,
-                        collection=build_target,
-                        record_breadth=_record_breadth,
+                else:
+                    reconcile_scoped_routes(
+                        self._store,
+                        checkpoint,
+                        ContentKind.CODE,
+                        affected_paths,
                     )
-                    self._store.CODE_TABLE_NAME = build_target
-                # Both collections are complete at this instant: the old one
-                # served throughout and the new one has just reconciled. A
-                # reader mid-flight sees one or the other, never a partial
-                # index, which is what makes this assignment the swap rather
-                # than a race.
-                # Route reconciliation evaluates destination evidence and
-                # deletes code points through the store's selected collection.
-                # It therefore cannot run while that selection still names the
-                # old served generation: its completed replacement is now
-                # published and bound, so every code operation names the build
-                # collection that this checkpoint actually populated.
-                reconcile_generation_storage(
-                    self._store,
-                    checkpoint,
-                    policy,
-                    ContentKind.CODE,
-                    include_same_kind=False,
-                )
+            with checkpoint.run_policy.protected("code proof publication"):
+                checkpoint.publish_proof_transition()
             with checkpoint.run_policy.protected("code generation certification"):
                 published = checkpoint.publish_generation()
                 if self._publish_readiness is not None:
@@ -434,43 +330,14 @@ class CodeGenerationLifecycle:
     ) -> bool:
         """Finish an ingestion-complete generation without re-entering writes.
 
-        A generation that built beside the served collection is publishable
-        only while that collection is still there. Absent, it has nothing left
-        to publish - certifying it anyway would stamp its identifier over
-        whatever the served pointer happens to name and claim breadth measured
-        from a collection the generation never wrote - so it is retired and the
-        caller re-encodes from scratch.
-
         Returns:
             ``True`` when the generation was published, ``False`` when it is
-            still ingesting or was retired, and the caller must run the
-            ordinary path.
+            still ingesting and the caller must run the ordinary path.
         """
         if checkpoint.generation.finalization_phase is FinalizationPhase.INGESTING:
             return False
-        build_target = self.build_collection(checkpoint)
-        if build_target is not None and not self._store.code_collection_exists(
-            build_target
-        ):
-            logger.warning(
-                "generation %s finished ingesting into a collection that is no "
-                "longer in storage; retiring it rather than publishing a claim "
-                "over an index that does not exist",
-                checkpoint.generation_id,
-            )
-            checkpoint.ledger.finish_generation(
-                checkpoint.generation_id,
-                RunTerminalState.INVALIDATED,
-                detail=(
-                    "the generation's own code collection is missing from "
-                    "storage; its finished ingestion no longer describes "
-                    "anything to publish"
-                ),
-            )
-            return False
         self.publish(
             checkpoint,
-            build_target=build_target,
             reporter=reporter,
             phase_label="resume publication",
         )

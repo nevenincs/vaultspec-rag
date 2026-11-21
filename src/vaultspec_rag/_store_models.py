@@ -24,7 +24,7 @@ from ._domain import classify_domain
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Iterable
 
     from . import store_schema
     from ._markdown_passages import Passage
@@ -718,31 +718,6 @@ def generation_code_collection(derived_name: str, generation_id: str) -> str:
     if not token:
         raise ValueError("generation_id must contain alphanumeric characters")
     return f"{derived_name}_g{token[:_GENERATION_TOKEN_MAX_LENGTH]}"
-
-
-def publish_generation_as_served(
-    root_dir: pathlib.Path | str,
-    *,
-    collection: str,
-    record_breadth: Callable[[], None],
-) -> None:
-    """Make *collection* the served one, but only once its breadth is recorded.
-
-    The ordering is the whole point and it is one-way: breadth first, pointer
-    second. A pointer moved ahead of the record names a collection whose
-    published figure is missing or stale, and the completeness predicate reads
-    that as a shortfall - so a correct, complete generation would be treated as
-    truncated and drive a reconcile on every later run.
-
-    ``record_breadth`` raising leaves the pointer where it was, which keeps the
-    previous generation serving. That is the safe direction: a build whose
-    breadth could not be recorded has not proven what it holds, and serving the
-    older complete collection is better than serving an unverified one.
-    """
-    if not _root_owned_code_collection(root_dir, collection):
-        raise ValueError("collection must be a root-owned code collection")
-    record_breadth()
-    publish_served_code_collection(root_dir, collection)
 
 
 def reclaimable_generation_collections(

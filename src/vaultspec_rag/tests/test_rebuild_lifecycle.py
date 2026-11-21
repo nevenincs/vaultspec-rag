@@ -289,7 +289,7 @@ def test_epoch_fence_rejects_work_that_began_before_a_reset(
     before = _fence(store, PublicSourceType.CODE)
     sibling = _fence(store, PublicSourceType.VAULT)
     assert before.epoch == 0
-    assert not before.in_transition
+    assert before.phase is None
 
     reset_selected_sources(store, PublicSourceType.CODE, generation_id="rebuild-1")
 
@@ -329,28 +329,38 @@ def test_rebuild_ingestion_rejects_a_writer_from_before_a_reset(
     _seed(store, store.TABLE_NAME, point_id=9)
 
     with pytest.raises(SourceResetEpochError, match="after this work began"):
-        enter_rebuild_ingestion(store, PublicSourceType.VAULT, began_under=stale)
+        enter_rebuild_ingestion(
+            store, PublicSourceType.VAULT, began_under=stale, generation_id="stale"
+        )
 
     assert _points(store, store.TABLE_NAME) == 1
     enter_rebuild_ingestion(
         store,
         PublicSourceType.VAULT,
         began_under=_fence(store, PublicSourceType.VAULT),
+        generation_id="newer",
     )
     assert _points(store, store.TABLE_NAME) == 1
 
 
-def test_rebuild_ingestion_on_a_root_without_a_ledger_creates_none(
+def test_a_first_rebuild_discards_content_from_before_any_ledger(
     store: VaultStore,
 ) -> None:
-    """Entering a first rebuild records no state and discards nothing."""
+    """A rebuild of a root that never recorded a reset still discards first."""
     _seed(store, store.TABLE_NAME)
     fence = _fence(store, PublicSourceType.VAULT)
-
-    enter_rebuild_ingestion(store, PublicSourceType.VAULT, began_under=fence)
-
     assert not fence.ledger_path.exists()
-    assert _points(store, store.TABLE_NAME) == 1
+
+    state = enter_rebuild_ingestion(
+        store, PublicSourceType.VAULT, began_under=fence, generation_id="first"
+    )
+
+    assert (state.epoch, state.generation_id, state.phase) == (
+        1,
+        "first",
+        SourceResetPhase.COMPLETE,
+    )
+    assert _points(store, store.TABLE_NAME) == 0
 
 
 def _crash_after_intent(store: VaultStore, source: PublicSourceType) -> None:
@@ -390,16 +400,16 @@ def test_rebuild_ingestion_finishes_a_reset_a_crash_interrupted(
     crash: Callable[[VaultStore, PublicSourceType], None],
     recorded_phase: SourceResetPhase,
 ) -> None:
-    """A restarted rebuild finishes the interrupted reset under its own epoch.
+    """The crashed rebuild's next attempt finishes its own reset under its epoch.
 
     Old points are gone and the canonical collection exists and is empty
     before the rebuild writes anything; the epoch the crash left is kept, so
     a fence captured after the crash stays valid and the reset is not
     repeated as a new one.
 
-    Mutation: removing the interrupted-reset recovery from the ingestion
-    entry left the phase short of complete (and, after intent, the old point
-    in place) and failed the phase assertion; restoring it passed.
+    Mutation: returning a reset its own generation recorded without
+    finishing it left the phase short of complete (and, after intent, the
+    old point in place) and failed the phase assertion; restoring it passed.
     """
     del local_config
     with _open(tmp_path) as crashed:
@@ -419,9 +429,11 @@ def test_rebuild_ingestion_finishes_a_reset_a_crash_interrupted(
 
     with _open(tmp_path) as restarted:
         fence = _fence(restarted, source)
-        assert fence.in_transition
+        assert fence.phase is not SourceResetPhase.COMPLETE
 
-        enter_rebuild_ingestion(restarted, source, began_under=fence)
+        enter_rebuild_ingestion(
+            restarted, source, began_under=fence, generation_id="crashed"
+        )
 
         state = _state(restarted, source)
         assert state is not None
@@ -468,14 +480,20 @@ def test_a_surviving_local_directory_blocks_ingestion_and_resurrects_nothing(
         fence = _fence(restarted, PublicSourceType.DOCUMENT)
         with pytest.raises(RuntimeError, match="survived delete_collection"):
             enter_rebuild_ingestion(
-                restarted, PublicSourceType.DOCUMENT, began_under=fence
+                restarted,
+                PublicSourceType.DOCUMENT,
+                began_under=fence,
+                generation_id="crashed",
             )
 
         state = _state(restarted, PublicSourceType.DOCUMENT)
         assert state is not None
         assert state.phase is SourceResetPhase.DISCARDED
         assert not restarted.client.collection_exists(collection)
-        assert _fence(restarted, PublicSourceType.DOCUMENT).in_transition
+        assert (
+            _fence(restarted, PublicSourceType.DOCUMENT).phase
+            is SourceResetPhase.DISCARDED
+        )
 
 
 def test_replaying_a_completed_reset_keeps_confirmed_replacement_work(
@@ -510,13 +528,13 @@ def test_replaying_a_completed_reset_keeps_confirmed_replacement_work(
     assert _points(store, collection) == 0
 
 
-def test_an_open_in_place_publication_is_reset_once_by_its_receipt(
+def test_a_rebuild_retires_an_open_in_place_publication_with_its_reset(
     store: VaultStore,
 ) -> None:
-    """The receipt an interrupted incremental left open resets the source once.
+    """The receipt an interrupted incremental left open goes with the reset.
 
-    A second rebuild entry finds the receipt retired with the old proof and
-    resets nothing further, so replacement work written after the first
+    A second entry of the same rebuild finds its own reset complete and
+    discards nothing further, so replacement work written after the first
     entry survives it.
     """
     from ..indexer._run_ledger_models import RunAuthority
@@ -538,26 +556,39 @@ def test_an_open_in_place_publication_is_reset_once_by_its_receipt(
     )
     ledger_test_publish_and_compact(ledger, parent.generation_id)
     successor = ledger.start_generation(signature)
-    receipt = ledger.reserve_publication_receipt(
+    ledger.reserve_publication_receipt(
         compatibility_for_signature(signature),
         successor.generation_id,
         expected_parent_revision=proof.revision,
     )
     collection = store.CODE_TABLE_NAME
     _seed(store, collection)
+    identity = (str(store.root_dir.resolve()), store.backend_identity)
 
-    enter_rebuild_ingestion(
-        store, PublicSourceType.CODE, began_under=_fence(store, PublicSourceType.CODE)
+    state = enter_rebuild_ingestion(
+        store,
+        PublicSourceType.CODE,
+        began_under=_fence(store, PublicSourceType.CODE),
+        generation_id="rebuild-1",
     )
 
-    state = _state(store, PublicSourceType.CODE)
-    assert state is not None
-    assert (state.epoch, state.generation_id) == (1, receipt.receipt_id)
+    assert (state.epoch, state.generation_id) == (1, "rebuild-1")
+    assert (
+        ledger.recoverable_publication_receipt(
+            source_type=PublicSourceType.CODE,
+            root_identity=identity[0],
+            backend_identity=identity[1],
+        )
+        is None
+    )
     assert _points(store, collection) == 0
     _seed(store, collection, point_id=5)
 
     enter_rebuild_ingestion(
-        store, PublicSourceType.CODE, began_under=_fence(store, PublicSourceType.CODE)
+        store,
+        PublicSourceType.CODE,
+        began_under=_fence(store, PublicSourceType.CODE),
+        generation_id="rebuild-1",
     )
 
     assert _state(store, PublicSourceType.CODE) == state
@@ -592,3 +623,87 @@ def test_reset_intent_invalidates_other_resumable_generations(
     assert ledger.generation(stale.generation_id).terminal_state is (
         RunTerminalState.INVALIDATED
     )
+
+
+def test_a_new_generation_supersedes_a_reset_a_crash_interrupted(
+    tmp_path: Path, local_config: None
+) -> None:
+    """A different rebuild does not finish another's reset; it resets anew."""
+    del local_config
+    with _open(tmp_path) as crashed:
+        crashed.ensure_table()
+        _seed(crashed, crashed.TABLE_NAME)
+        _crash_after_intent(crashed, PublicSourceType.VAULT)
+
+    with _open(tmp_path) as restarted:
+        state = enter_rebuild_ingestion(
+            restarted,
+            PublicSourceType.VAULT,
+            began_under=_fence(restarted, PublicSourceType.VAULT),
+            generation_id="successor",
+        )
+
+        assert (state.epoch, state.generation_id, state.phase) == (
+            2,
+            "successor",
+            SourceResetPhase.COMPLETE,
+        )
+        assert _points(restarted, restarted.TABLE_NAME) == 0
+
+
+def test_a_rebuild_resumes_only_work_written_after_its_own_reset(
+    store: VaultStore,
+) -> None:
+    """Confirmed units under a generation that never owned the reset are retired.
+
+    A rebuild writes nothing before its reset completes, so units recorded
+    under a generation whose completed reset is not its own describe storage
+    the reset discards. Resuming would skip them and certify an index
+    missing their points.
+
+    Mutation: removing the own-reset check from the shared generation start
+    resumed the generation holding pre-reset work and failed the
+    generation-id inequality; restoring it passed.
+    """
+    from ..indexer._run_ledger_models import (
+        RunAuthority,
+        RunOperation,
+        RunTerminalState,
+    )
+    from ..indexer._vault_checkpoint import VaultRunCheckpoint
+    from ..job_control import NO_RUN_CONTROL
+    from ._run_ledger_test_support import ledger_test_unit
+
+    def open_rebuild() -> VaultRunCheckpoint:
+        return VaultRunCheckpoint.open(
+            store.root_dir,
+            backend_identity=store.backend_identity,
+            authority=RunAuthority.REBUILD,
+            operation=RunOperation.FULL,
+            run_control=NO_RUN_CONTROL,
+        )
+
+    unit = ledger_test_unit("doc", 0, 1)
+    unreset = open_rebuild()
+    unreset.ledger.record_storage_confirmed_units(unreset.generation_id, (unit,))
+    unreset.ledger.finish_generation(unreset.generation_id, RunTerminalState.FAILED)
+
+    replacement = open_rebuild()
+
+    assert replacement.generation_id != unreset.generation_id
+    assert (
+        unreset.ledger.generation(unreset.generation_id).terminal_state
+        is RunTerminalState.INVALIDATED
+    )
+
+    reset_selected_sources(
+        store, PublicSourceType.VAULT, generation_id=replacement.generation_id
+    )
+    replacement.ledger.record_storage_confirmed_units(
+        replacement.generation_id, (unit,)
+    )
+    replacement.ledger.finish_generation(
+        replacement.generation_id, RunTerminalState.FAILED
+    )
+
+    assert open_rebuild().generation_id == replacement.generation_id

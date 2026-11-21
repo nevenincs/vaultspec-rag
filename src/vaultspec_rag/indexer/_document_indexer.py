@@ -17,7 +17,6 @@ from .._job_errors import JobError, JobErrorKind
 from .._source_types import PublicSourceType
 from ..index_profiles import get_index_support_profile
 from ..job_control import NO_RUN_CONTROL
-from ..store_runtime import StorageGeometryError
 from . import _chunk_worker, _preprocess_glue, _stat_gate
 from ._checkpoint_common import PublicationExecution, publish_checkpoint
 from ._content_discovery import (
@@ -935,18 +934,15 @@ class DocumentIndexer:
     def _publish_full_paths(
         self,
         paths: tuple[pathlib.Path, ...],
-        previous_files: dict[str, DocumentFileMetadata],
         request: _DocumentPublishRequest,
-    ) -> tuple[
-        list[DocumentFileMetadata], _DocumentRunCounts, list[str], dict[str, str]
-    ]:
-        """Publish a full discovered set while retaining failed prior points.
+    ) -> tuple[_DocumentRunCounts, list[str], dict[str, str]]:
+        """Publish a full discovered set into the empty rebuilt collection.
 
-        The final mapping carries only the hashes this run computed itself -
-        retained prior rows are excluded, because a carried hash cannot be
-        honestly bound to the file's current stat identity.
+        A path that fails, or whose transform is disabled, publishes nothing:
+        the reset discarded its old points, and nothing from before the reset
+        may stand in for it. The final mapping carries only the hashes this
+        run computed itself.
         """
-        published: list[DocumentFileMetadata] = []
         counts = _DocumentRunCounts()
         failures: list[str] = []
         fresh_hashes: dict[str, str] = {}
@@ -954,9 +950,6 @@ class DocumentIndexer:
         for path in paths:
             rel = path.relative_to(self.root_dir).as_posix()
             if request.policy.transform_disabled(rel):
-                retained = previous_files.get(rel)
-                if retained is not None:
-                    published.append(retained)
                 failures.append(request.policy.stale_note(rel))
                 continue
             metadata, chunk_count, failure = self._publish_file(
@@ -966,55 +959,13 @@ class DocumentIndexer:
             )
             if failure is not None:
                 failures.append(failure)
-                retained = previous_files.get(rel)
-                if retained is not None:
-                    published.append(retained)
                 continue
             assert metadata is not None
-            published.append(metadata)
             fresh_hashes[rel] = metadata.content_fingerprint
-            if rel in previous_files:
-                counts.updated += chunk_count
-            else:
-                counts.added += chunk_count
+            counts.added += chunk_count
             if request.policy.match_preprocess(rel) is not None:
                 counts.preprocess_ok += 1
-        return published, counts, failures, fresh_hashes
-
-    def _reconcile_full_stale(
-        self,
-        previous_files: dict[str, DocumentFileMetadata],
-        published: Iterable[DocumentFileMetadata],
-        checkpoint: DocumentRunCheckpoint,
-    ) -> int:
-        """Delete and checkpoint points absent from the replacement manifest."""
-        published_by_path = {item.source_path: item for item in published}
-        removed = 0
-        for rel, old in previous_files.items():
-            current = published_by_path.get(rel)
-            if current is None:
-                stale_ids = old.point_ids
-            else:
-                stale_ids = tuple(sorted(set(old.point_ids) - set(current.point_ids)))
-            if not stale_ids:
-                continue
-            kind = (
-                CommitUnitKind.DELETE_PATH
-                if current is None
-                else CommitUnitKind.DELETE_STALE
-            )
-            execute_store_mutation(
-                lambda ids=stale_ids: self.store.delete_publication_points(
-                    PublicSourceType.DOCUMENT, list(ids)
-                ),
-                checkpoint.deletion_lifecycle(rel, kind, stale_ids),
-            )
-            if current is None:
-                checkpoint.record_confirmed_deletion(rel, stale_ids)
-            else:
-                checkpoint.record_confirmed_stale_deletion(rel, stale_ids)
-            removed += len(stale_ids)
-        return removed
+        return counts, failures, fresh_hashes
 
     def _select_incremental_paths(
         self,
@@ -1192,21 +1143,27 @@ class DocumentIndexer:
         authority: RunAuthority = RunAuthority.REBUILD,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
-        """Reconcile the complete explicitly routed document set."""
+        """Rebuild the complete explicitly routed document set from empty.
+
+        Every full run is an explicit rebuild: the old document index is
+        discarded before the first replacement write and the rebuild writes
+        the one canonical document collection. ``clean`` only labels the
+        run's events.
+        """
+        if authority is not RunAuthority.REBUILD:
+            raise PermissionError("a full document index requires rebuild authority")
         started = index_run_started()
         run_control.checkpoint()
-        began_under = None
-        if authority is RunAuthority.REBUILD:
-            from ._rebuild_lifecycle import capture_reset_epoch
-            from ._run_ledger_models import index_run_ledger_path
-            from ._run_ledger_runtime import set_aside_unsupported_ledger
+        from ._rebuild_lifecycle import capture_reset_epoch
+        from ._run_ledger_models import index_run_ledger_path
+        from ._run_ledger_runtime import set_aside_unsupported_ledger
 
-            set_aside_unsupported_ledger(index_run_ledger_path(self._data_root))
-            began_under = capture_reset_epoch(
-                self.store.root_dir,
-                PublicSourceType.DOCUMENT,
-                self.store.backend_identity,
-            )
+        set_aside_unsupported_ledger(index_run_ledger_path(self._data_root))
+        began_under = capture_reset_epoch(
+            self.store.root_dir,
+            PublicSourceType.DOCUMENT,
+            self.store.backend_identity,
+        )
         policy, paths = self._accept_preflight(
             preflight,
             changed_paths=None,
@@ -1215,27 +1172,26 @@ class DocumentIndexer:
         self._resolve_reuse(policy)
         limits = self._support_limits()
         prep = self._preprocess_context(policy, limits)
-        preprocessing_disabled = any(
-            policy.transform_disabled(path.relative_to(self.root_dir).as_posix())
-            for path in paths
-        )
-        effective_clean = clean and not preprocessing_disabled
         with self._writer_lock:
-            if began_under is not None:
-                from ._rebuild_lifecycle import enter_rebuild_ingestion
-
-                enter_rebuild_ingestion(
-                    self.store,
-                    PublicSourceType.DOCUMENT,
-                    began_under=began_under,
-                    run_control=run_control,
-                )
+            # Declared before the reset recreates the collection, so its
+            # ensure creates the index of each declared key.
+            metadata_keys = load_filterable_metadata(self.root_dir)
+            self.store.declare_document_metadata_keys(metadata_keys)
             checkpoint = self._open_checkpoint(
                 policy=policy,
                 operation=RunOperation.FULL,
-                clean=authority is RunAuthority.REBUILD,
+                clean=True,
                 limits=limits,
-                execution=PublicationExecution(authority, run_control),
+                execution=PublicationExecution(RunAuthority.REBUILD, run_control),
+            )
+            from ._rebuild_lifecycle import enter_rebuild_ingestion
+
+            enter_rebuild_ingestion(
+                self.store,
+                PublicSourceType.DOCUMENT,
+                began_under=began_under,
+                generation_id=checkpoint.generation_id,
+                run_control=checkpoint.run_policy,
             )
             with checkpoint.preserve_incomplete_generation():
                 budget = self._begin_resource_budget(limits)
@@ -1243,7 +1199,6 @@ class DocumentIndexer:
                 lambda: self._full_index_locked(
                     paths,
                     started=started,
-                    effective_clean=effective_clean,
                     request=_DocumentPublishRequest(
                         policy=policy,
                         prep=prep,
@@ -1251,7 +1206,7 @@ class DocumentIndexer:
                         checkpoint=checkpoint,
                         reporter=reporter,
                         run_control=run_control,
-                        metadata_keys=load_filterable_metadata(self.root_dir),
+                        metadata_keys=metadata_keys,
                     ),
                 ),
                 IndexLifecycleRequest(
@@ -1271,13 +1226,9 @@ class DocumentIndexer:
         paths: tuple[pathlib.Path, ...],
         *,
         started: float,
-        effective_clean: bool,
         request: _DocumentPublishRequest,
     ) -> IndexResult:
         """Locked implementation of :meth:`full_index`."""
-        # Before the store is touched, so its ensure creates the index of each
-        # declared key and drops the index of each key no longer declared.
-        self.store.declare_document_metadata_keys(request.metadata_keys)
         policy = request.policy
         checkpoint = request.checkpoint
         reporter = request.reporter
@@ -1288,61 +1239,13 @@ class DocumentIndexer:
         )
         if resumed is not None:
             return resumed
-        from .._publication_state import (
-            acquire_publication_snapshot,
-            read_all_publication_evidence,
-        )
-        from ._publication_proof import (
-            ProofIncompatibleError,
-            ProofMissingError,
-            ProofReadConflictError,
-        )
-
-        try:
-            previous_snapshot = acquire_publication_snapshot(
-                self.root_dir,
-                PublicSourceType.DOCUMENT,
-            )
-        except (ProofIncompatibleError, ProofMissingError, ProofReadConflictError):
-            previous_files = {}
-        else:
-            previous_files = {
-                rel: DocumentFileMetadata(
-                    rel,
-                    evidence.content_identity,
-                    evidence.point_ids,
-                )
-                for rel, evidence in read_all_publication_evidence(
-                    previous_snapshot
-                ).items()
-            }
-            previous_snapshot.validate()
-        clean_has_confirmed_units = (
-            effective_clean
-            and next(
-                checkpoint.ledger.iter_units(checkpoint.generation_id),
-                None,
-            )
-            is not None
-        )
         # Durable per-file writes protect their own mutation boundaries;
         # retain confirmed work when control interrupts the remaining rebuild.
         with checkpoint.preserve_incomplete_generation():
-            try:
-                self.store.ensure_document_table()
-            except StorageGeometryError:
-                if not effective_clean or clean_has_confirmed_units:
-                    raise
-                logger.warning(
-                    "document collection geometry cannot hold this "
-                    "configuration; recreating it for the clean rebuild",
-                )
-                self.store.drop_document_table()
-                self.store.ensure_document_table()
+            self.store.ensure_document_table()
             publish_started_ns = time.time_ns()
-            published, counts, failures, fresh_hashes = self._publish_full_paths(
+            counts, failures, fresh_hashes = self._publish_full_paths(
                 paths,
-                previous_files=previous_files,
                 request=request,
             )
             # Bank the hashes this run computed as stat evidence so the first
@@ -1357,11 +1260,6 @@ class DocumentIndexer:
                 ),
                 computed_not_before_ns=publish_started_ns,
                 keep={path.relative_to(self.root_dir).as_posix() for path in paths},
-            )
-            removed = self._reconcile_full_stale(
-                previous_files,
-                published,
-                checkpoint,
             )
             if failures:
                 checkpoint.mark_failed("; ".join(failures))
@@ -1378,7 +1276,6 @@ class DocumentIndexer:
             IndexRunCounts(
                 added=counts.added,
                 updated=counts.updated,
-                removed=removed,
                 files=len(paths),
             ),
             preprocess_ok=counts.preprocess_ok,

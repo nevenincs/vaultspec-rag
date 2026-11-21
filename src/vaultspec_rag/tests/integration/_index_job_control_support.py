@@ -454,7 +454,7 @@ def prepare_empty_code_collection(
 ) -> ProjectSlot:
     registry.close_project(root)
     with VaultStore(root, embedding_dim=registry.model.dimension) as empty_store:
-        empty_store.drop_code_table()
+        empty_store.discard_source_storage(PublicSourceType.CODE)
         empty_store.ensure_code_table()
     _write_code_files(root, file_count, "empty-collection")
     return registry.peek_project(root)
