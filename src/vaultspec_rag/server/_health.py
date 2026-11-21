@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import os
 import time
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Final, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
 
 import vaultspec_rag.server as _m
 
+from .._job_errors import JobErrorKind
 from .._runtime_identity import interpreter_fields
 from ..capabilities import backend_capabilities_dict
 from ..operator_state._models import Degradation
@@ -282,24 +283,29 @@ def _decisive_outcome(record: dict[str, object]) -> str | None:
     A success proves the project's index can be built; a failure proves it
     could not. A missing or rebuild-required index is normal repository
     readiness, not a broken service, so a refusal stays in job history but
-    never counts. An interrupted run left the published data intact, the
-    models resident and the backend live, so serving is unimpaired. A
+    never counts. A run an explicit rebuild's reset fenced was stopped by the
+    rebuild that now owns the source, which says nothing about whether the
+    index can be built either. An interrupted run left the published data
+    intact, the models resident and the backend live, so serving is
+    unimpaired. A
     cancelled run is an operator or watcher decision. Neither those nor a
     superseded record say whether the index can be built, so none of them may
     clear or create a failure.
     """
-    from .._job_errors import JobErrorKind
     from ._routes_jobs import job_state
 
     state = job_state(record)
     if state == "succeeded":
         return state
-    if (
-        state == "failed"
-        and record.get("error_kind") != JobErrorKind.FULL_REINDEX_REQUIRED
-    ):
+    if state == "failed" and record.get("error_kind") not in _NON_DECISIVE_FAILURES:
         return state
     return None
+
+
+#: Failure kinds that stay in job history without proving the index broken.
+_NON_DECISIVE_FAILURES: Final = frozenset(
+    {JobErrorKind.FULL_REINDEX_REQUIRED, JobErrorKind.INDEX_TRANSITION}
+)
 
 
 def _failing_project_indexes(

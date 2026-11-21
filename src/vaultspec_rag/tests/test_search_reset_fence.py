@@ -47,7 +47,7 @@ from .._search_state import (
     SearchReasonCode,
     SearchSourceFact,
 )
-from .._source_types import PublicSourceType
+from .._source_types import CONCRETE_SOURCES, PublicSourceType
 from .._store_writes import workspace_volume_path
 from ..api import (
     CodebaseSearchRequest,
@@ -56,7 +56,7 @@ from ..api import (
     search_vault_timed,
 )
 from ..cli._search_in_process import InProcessSearchRequest, try_in_process_search
-from ..indexer._rebuild_lifecycle import CONCRETE_SOURCES, reset_selected_sources
+from ..indexer._rebuild_lifecycle import reset_selected_sources
 from ..indexer._run_ledger_models import SourceResetPhase, index_run_ledger_path
 from ..indexer._run_ledger_runtime import RunLedger
 from ..registry import get_registry
@@ -387,3 +387,84 @@ async def test_an_empty_corpus_is_authoritative_only_once_its_rebuild_finalizes(
         _document_fact(local_root, registry).absence_authority
         is AbsenceAuthority.AUTHORITATIVE
     )
+
+
+async def test_a_reset_retires_the_readiness_claim_on_the_discarded_generation(
+    local_root: Path,
+) -> None:
+    """Readiness never names a generation a reset discarded as served.
+
+    The claim is retired at the reset and replaced only by the rebuild's own
+    publication; the revision stays so bounded waits keep their ordering.
+
+    Mutation: making ``_current_locked`` return the cached snapshot unchanged
+    kept the discarded generation served and failed the ``retired`` assertion;
+    restoring the epoch comparison passed.
+    """
+    import asyncio
+
+    from ._hook_publication import publish_empty_document_proof
+
+    registry = ServiceRegistry()
+    registry.start_readiness(asyncio.get_running_loop())
+    readiness = registry.readiness_registry
+    publish_empty_document_proof(local_root)
+    discarded = _published_document_generation(local_root)
+    readiness.publish_next(local_root, "document", generation=discarded)
+    assert readiness.snapshot(local_root, "document").published_generation == (
+        discarded
+    )
+
+    with _open(local_root) as store:
+        reset_selected_sources(
+            store, PublicSourceType.DOCUMENT, generation_id="rebuild-2"
+        )
+
+    retired = readiness.snapshot(local_root, "document")
+    assert retired.published_generation is None, "retired"
+    assert retired.publication_revision == 1
+    assert _document_fact(local_root, registry).generation.served_generation is None
+
+    publish_empty_document_proof(local_root)
+    rebuilt = _published_document_generation(local_root)
+    readiness.publish_next(local_root, "document", generation=rebuilt)
+    assert readiness.snapshot(local_root, "document").published_generation == rebuilt
+    assert _document_fact(local_root, registry).generation.served_generation == rebuilt
+
+
+async def test_a_publication_proven_before_a_reset_is_never_served_after_it(
+    local_root: Path,
+) -> None:
+    """A proof read before a reset cannot be stamped with the reset's epoch.
+
+    The service captures the epoch before it reads the proof it publishes; a
+    reset landing between the two leaves the claim on the earlier epoch, so
+    the next read retires it.
+
+    Mutation: ignoring ``reset_epoch`` in ``publish_next`` and reading the
+    epoch afresh stamped the discarded generation with the new epoch and
+    failed the ``published_generation is None`` assertion; restoring the
+    parameter passed.
+    """
+    import asyncio
+
+    from ..server._search_readiness import current_reset_epoch
+    from ._hook_publication import publish_empty_document_proof
+
+    registry = ServiceRegistry()
+    registry.start_readiness(asyncio.get_running_loop())
+    readiness = registry.readiness_registry
+    publish_empty_document_proof(local_root)
+    before = current_reset_epoch(local_root, "document")
+    proven = _published_document_generation(local_root)
+    with _open(local_root) as store:
+        reset_selected_sources(
+            store, PublicSourceType.DOCUMENT, generation_id="rebuild-2"
+        )
+
+    readiness.publish_next(
+        local_root, "document", generation=proven, reset_epoch=before
+    )
+
+    assert before == 0
+    assert readiness.snapshot(local_root, "document").published_generation is None

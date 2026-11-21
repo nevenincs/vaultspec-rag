@@ -232,7 +232,7 @@ class SourceReadFence:
         try:
             self.fence.validate()
         except SourceResetEpochError as exc:
-            raise IndexTransitionError(source, str(exc)) from exc
+            raise IndexTransitionError(source, exc.detail) from exc
         except (RunLedgerError, sqlite3.Error) as exc:
             if self.baseline_readable:
                 raise IndexTransitionError(

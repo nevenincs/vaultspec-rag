@@ -600,11 +600,32 @@ class ServedPointer(NamedTuple):
     safe direction. Deletion matters entirely. A consumer that treats an
     unreadable pointer as "nothing points here" would take a live served
     collection for an unreferenced one, so a reset refuses on it and a donor
-    lookup skips it.
+    lookup skips it. The one exception is a pointer naming this root's code
+    collection under the other backend, which :func:`other_backend_code_pointer`
+    recognises and a reset retires.
     """
 
     collection: str | None
     verifiable: bool
+
+
+def _pointer_name(path: pathlib.Path) -> tuple[bool, str | None]:
+    """Return whether the pointer file exists and the name it holds.
+
+    The name is ``None`` when the file is unreadable, malformed, or holds no
+    string ``collection``; only the first element proves absence.
+    """
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return False, None
+    except (OSError, ValueError) as exc:
+        logger.debug("served-collection pointer %s unreadable: %s", path, exc)
+        return True, None
+    if not isinstance(raw, dict):
+        return True, None
+    name = cast("dict[str, object]", raw).get("collection")
+    return True, name if isinstance(name, str) else None
 
 
 def read_served_pointer(
@@ -613,28 +634,44 @@ def read_served_pointer(
 ) -> ServedPointer:
     """Read a root-owned pointer for the configured or explicitly named backend."""
     path = served_code_pointer_path(root_dir)
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
+    present, name = _pointer_name(path)
+    if not present:
         return ServedPointer(collection=None, verifiable=True)
-    except (OSError, ValueError) as exc:
-        logger.debug("served-collection pointer %s unreadable: %s", path, exc)
-        return ServedPointer(collection=None, verifiable=False)
-    if not isinstance(raw, dict):
-        return ServedPointer(collection=None, verifiable=False)
-    name = cast("dict[str, object]", raw).get("collection")
     if derived_name is None:
         from .config._settings import get_config
 
         derived_name = root_code_collection_names(root_dir)[
             bool(get_config().qdrant_url)
         ]
-    if isinstance(name, str) and _root_owned_code_collection(
-        root_dir, name, derived_name
-    ):
+    if name is not None and _root_owned_code_collection(root_dir, name, derived_name):
         return ServedPointer(collection=name, verifiable=True)
     logger.debug("served-collection pointer %s has an unowned or invalid name", path)
     return ServedPointer(collection=None, verifiable=False)
+
+
+def other_backend_code_pointer(
+    root_dir: pathlib.Path | str,
+    derived_name: str,
+) -> str | None:
+    """Return the pointer's name when it names this root's other-backend code.
+
+    A backend migration before the canonical layout could leave the pointer
+    naming the code collection this root owned under the backend it migrated
+    away from. That name lives in the other backend's storage, so for the
+    backend *derived_name* belongs to the pointer says nothing about which
+    collection is served: reads already fall back to the derived name, and
+    a reset of this backend may retire the pointer without touching the
+    named collection. Any other unverifiable pointer returns ``None`` and
+    keeps refusing deletion.
+    """
+    names = root_code_collection_names(root_dir)
+    if derived_name not in names:
+        return None
+    other = names[1] if derived_name == names[0] else names[0]
+    _present, name = _pointer_name(served_code_pointer_path(root_dir))
+    if name is not None and code_collection_matches_derived(name, other):
+        return name
+    return None
 
 
 def resolve_served_code_collection(

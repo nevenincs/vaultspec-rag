@@ -14,9 +14,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from .._source_types import PublicSourceType
+from .._source_types import CONCRETE_SOURCES, PublicSourceType
 from ..indexer._rebuild_lifecycle import (
-    CONCRETE_SOURCES,
     ResetEpochFence,
     capture_reset_epoch,
     enter_rebuild_ingestion,

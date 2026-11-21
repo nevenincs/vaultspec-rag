@@ -5,7 +5,7 @@ tags:
 date: '2026-10-12'
 modified: '2026-11-21'
 body_schema: 'body-v2'
-body_hash: 'sha256:2be55e449b27f4ef7755e92c5243c9b7c6ba606aeb30b698a14ce6842f2fb0a9'
+body_hash: 'sha256:eedddba3b442e1b789264bf3cb8edb0086cf2ef55bbd47c19cb0f22a90a7e51f'
 related:
   - "[[2026-10-12-destructive-rebuild-lifecycle-plan]]"
 ---
@@ -230,6 +230,44 @@ related:
 - `S05` `verify:` `pytest store/generation/survey/reclamation/status/rebuild modules plus rebuild_lifecycle, rebuild_replacement, search_reset_fence, substitution_discipline, no_unconsumed_definitions, no_reexports, process_probe_source_structure` -> `pass`
 - `S05` `verify:` `mutation proofs, 9 guards break-fail-restore-pass` -> `pass`
 - `S05` `by:` `vaultspec-high-executor`
+- `S06` `M` `README.md`
+- `S06` `M` `docs/automatic-convergence.md`
+- `S06` `M` `docs/glossary.md`
+- `S06` `M` `docs/indexing.md`
+- `S06` `M` `docs/search-and-index.md`
+- `S06` `M` `docs/service-mode.md`
+- `S06` `M` `docs/storage-maintenance.md`
+- `S06` `M` `src/vaultspec_rag/_index_integrity.py`
+- `S06` `M` `src/vaultspec_rag/_job_errors.py`
+- `S06` `M` `src/vaultspec_rag/_publication_state.py`
+- `S06` `M` `src/vaultspec_rag/_source_types.py`
+- `S06` `M` `src/vaultspec_rag/_store_models.py`
+- `S06` `M` `src/vaultspec_rag/indexer/_rebuild_lifecycle.py`
+- `S06` `M` `src/vaultspec_rag/indexer/_run_ledger_models.py`
+- `S06` `M` `src/vaultspec_rag/server/_health.py`
+- `S06` `M` `src/vaultspec_rag/server/_routes_reindex.py`
+- `S06` `M` `src/vaultspec_rag/server/_search_readiness.py`
+- `S06` `M` `src/vaultspec_rag/service.py`
+- `S06` `M` `src/vaultspec_rag/store_collections.py`
+- `S06` `M` `src/vaultspec_rag/watcher_retry_policy.py`
+- `S06` `A` `src/vaultspec_rag/tests/integration/test_rebuild_three_domain_contract.py`
+- `S06` `M` `src/vaultspec_rag/tests/integration/test_rebuild_replacement_corpus.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_health_degraded_clears.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_rebuild_lifecycle.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_rebuild_replacement.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_search_reset_fence.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_served_pointer_validation.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_watcher_retry.py`
+- `S06` `verify:` `ruff check src/vaultspec_rag` -> `pass`
+- `S06` `verify:` `ruff format --check (changed files)` -> `pass`
+- `S06` `verify:` `ty check (changed files)` -> `pass`
+- `S06` `verify:` `basedpyright (changed files)` -> `pass`
+- `S06` `verify:` `python -m dev lint size` -> `pass`
+- `S06` `verify:` `python -m dev lint complexity` -> `pass`
+- `S06` `verify:` `python -m dev.generate_cli_reference --check` -> `pass`
+- `S06` `verify:` `pytest -m unit -n 8 (8253 passed; 101 parallel-load failures rerun serially: 96 pass, 5 test_service_runtime failures from another worker's in-flight torch_config edits)` -> `pass`
+- `S06` `verify:` `mutation proofs, 7 guards break-fail-restore-pass` -> `pass`
+- `S06` `by:` `vaultspec-high-executor`
 
 ## Notes
 
@@ -243,3 +281,6 @@ related:
 - `S04` `test_model_fetch.py::test_missing_repos_are_downloaded_reported_and_then_left_alone` failed once under -n 8 on a process count; passes alone; untouched by this Step
 - `S05` GPU and service integration modules `(test_first_build_lifecycle,` `test_index_job_control_managed/stream/publication,` `test_rebuild_replacement_corpus,` `test_store_integration,` `test_storage_ops_integration)` only collected: no resident service to borrow the GPU from
 - `S05` Deleted `service.ServiceRegistry.has_live_lease:` its only production caller was the removed generation reclaim pass
+- `S06` S06 User decision 2026-11-21: an explicit code reset deletes a stale served pointer naming the root's other-backend code collection, logs it, and never deletes that collection; other unverifiable pointers still refuse
+- `S06` S06 GPU-lane `test_rebuild_three_domain_contract` (7 tests) collected only: no resident service; service restart mid-rebuild relies on `test_service_job_control_pause_restart,` also collected only
+- `S06` S06 Not fixed: `storage_archive` and the donor lookup still refuse a stale other-backend pointer; CLI clean emits no JSON envelope when a reset refuses on an unverifiable pointer

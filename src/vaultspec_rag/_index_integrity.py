@@ -48,7 +48,7 @@ from typing import (
 )
 
 from . import store_schema
-from ._source_types import PublicSourceType
+from ._source_types import PublicSourceType, concrete_sources
 from ._store_writes import workspace_volume_path
 from .indexer._file_state import validate_rel_path
 from .indexer._publication_proof import (
@@ -374,8 +374,8 @@ def _evaluate_claim(
 
     The comparison is exact and one-sided, no tolerance. Every publication
     counts the store immediately after storage reconciliation and writes the
-    figure atomically with the generation it describes - for a rebuilt
-    generation the proof lands before the served pointer moves, and an
+    figure atomically with the generation it describes - a rebuild certifies
+    the collection it wrote only after its last write applied, and an
     in-place incremental republishes the figure at the same protected commit
     edge that performs its deletions - so a complete served collection always
     reads back at least its claim. A count above the claim is the legitimate
@@ -876,17 +876,8 @@ def audit_index_sources(
     """Audit one or all source projections without acquiring publication rights."""
     if authority is not RunAuthority.AUDIT_VERIFICATION:
         raise PermissionError("exact audit requires audit-verification authority")
-    sources = (
-        (
-            PublicSourceType.VAULT,
-            PublicSourceType.CODE,
-            PublicSourceType.DOCUMENT,
-        )
-        if source is PublicSourceType.COMBINED
-        else (source,)
-    )
     domains: dict[str, dict[str, object]] = {}
-    for current in sources:
+    for current in concrete_sources(source):
         try:
             result = audit_index_integrity(
                 root,

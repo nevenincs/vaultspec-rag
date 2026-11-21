@@ -20,7 +20,7 @@ import uuid
 from contextlib import suppress
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, NamedTuple
 
 from ._atomic_write import NotDurableError, replace_durably
 from ._job_errors import JobError, JobErrorKind, classify_error_text
@@ -140,6 +140,14 @@ def _decision(
         attempt_generation=(state.attempt_generation if admitted else None),
         requires_unscoped=state.unscoped_required,
     )
+
+
+class _Failure(NamedTuple):
+    """One classified attempt failure."""
+
+    error: BaseException
+    kind: JobErrorKind
+    retryable: bool
 
 
 def _classify_failure(error: BaseException) -> tuple[JobErrorKind, bool]:
@@ -970,47 +978,61 @@ class WatcherRetryPolicy:
         with locked_state(self._path):
             state = self._refresh_unlocked()
             self._require_active_attempt(state, attempt_generation)
-            half_open = state.circuit_state is WatcherCircuitState.HALF_OPEN
-            structural_refusal = (
-                state.scope_refusal is not None
-                or state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
-            )
             committed = self._commit_unlocked(
-                replace(
-                    state,
-                    next_retry_at=(
-                        0.0
-                        if structural_refusal
-                        else (
-                            timestamp + self._base_seconds
-                            if half_open
-                            else state.next_retry_at
-                        )
-                    ),
-                    circuit_state=(
-                        WatcherCircuitState.OPEN
-                        if half_open or structural_refusal
-                        else WatcherCircuitState.CLOSED
-                    ),
-                    convergence_pending=True,
-                    # Cancellation restores exact captured paths without
-                    # replacing unrelated unknown handoff intent.
-                    unscoped_required=state.unscoped_required,
-                    pending_paths=restore_captured_paths(state),
-                    captured_paths=(),
-                    attempt_job_id=None,
-                    attempt_generation=None,
-                    attempt_token=None,
-                    attempt_started_at=None,
-                    attempt_owner_pid=None,
-                    attempt_owner_create_time=None,
-                    updated_at=max(state.updated_at, timestamp),
-                )
+                self._released_attempt(state, timestamp, defer=False)
             )
             owned_token = self._owned_attempt_token
             if owned_token is not None:
                 self._clear_owned_admission_token(owned_token)
             return committed
+
+    def _released_attempt(
+        self,
+        state: WatcherRetryState,
+        timestamp: float,
+        *,
+        defer: bool,
+    ) -> WatcherRetryState:
+        """Release the active attempt and keep its exact scope pending.
+
+        Neither an operator stop nor a reset fence says anything about whether
+        the index can be updated, so neither counts a failure. *defer* holds
+        the next attempt off for the base delay: a reset fence means a rebuild
+        owns the source, and retrying at once would only meet the fence again.
+        """
+        half_open = state.circuit_state is WatcherCircuitState.HALF_OPEN
+        structural_refusal = (
+            state.scope_refusal is not None
+            or state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+        )
+        if structural_refusal:
+            next_retry_at = 0.0
+        elif half_open or defer:
+            next_retry_at = max(state.next_retry_at, timestamp + self._base_seconds)
+        else:
+            next_retry_at = state.next_retry_at
+        return replace(
+            state,
+            next_retry_at=next_retry_at,
+            circuit_state=(
+                WatcherCircuitState.OPEN
+                if half_open or structural_refusal
+                else WatcherCircuitState.CLOSED
+            ),
+            convergence_pending=True,
+            # Release restores exact captured paths without replacing
+            # unrelated unknown handoff intent.
+            unscoped_required=state.unscoped_required,
+            pending_paths=restore_captured_paths(state),
+            captured_paths=(),
+            attempt_job_id=None,
+            attempt_generation=None,
+            attempt_token=None,
+            attempt_started_at=None,
+            attempt_owner_pid=None,
+            attempt_owner_create_time=None,
+            updated_at=max(state.updated_at, timestamp),
+        )
 
     def record_failure(
         self,
@@ -1020,7 +1042,11 @@ class WatcherRetryPolicy:
         now: float | None = None,
         random_unit: float | None = None,
     ) -> WatcherRetryState:
-        """Persist classification, exponential backoff, and circuit transition."""
+        """Persist classification, exponential backoff, and circuit transition.
+
+        A reset fence is not a failure: the attempt is released with its scope
+        kept pending and the next attempt deferred by the base delay.
+        """
         timestamp = wall_time(now)
         unit = (
             random.random()
@@ -1030,77 +1056,88 @@ class WatcherRetryPolicy:
         with locked_state(self._path):
             state = self._refresh_unlocked()
             self._require_active_attempt(state, attempt_generation)
-            failures = state.consecutive_failures + 1
             error_kind, retryable = _classify_failure(error)
-            structural_refusal = (
-                state.scope_refusal is not None or state.unscoped_required
-            )
-            requires_explicit_rebuild = (
-                structural_refusal or error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
-            )
-            delay = self._retry_delay(failures, random_unit=unit)
-            was_half_open = state.circuit_state is WatcherCircuitState.HALF_OPEN
-            open_circuit = (
-                requires_explicit_rebuild
-                or was_half_open
-                or not retryable
-                or failures >= self._failure_threshold
-            )
-            detail = str(error).strip() or type(error).__name__
-            newer_failure = (
-                state.last_failure_at is not None and state.last_failure_at > timestamp
-            )
-            if (structural_refusal or newer_failure) and state.last_error_detail:
-                detail = state.last_error_detail
             committed = self._commit_unlocked(
-                replace(
+                self._released_attempt(state, timestamp, defer=True)
+                if error_kind is JobErrorKind.INDEX_TRANSITION
+                else self._failed_attempt(
                     state,
-                    consecutive_failures=failures,
-                    last_error_kind=(
-                        JobErrorKind.FULL_REINDEX_REQUIRED
-                        if structural_refusal
-                        else error_kind
-                    ),
-                    last_error_detail=detail[:MAX_ERROR_DETAIL_CHARS],
-                    last_failure_at=(
-                        state.last_failure_at
-                        if structural_refusal
-                        else max(state.last_failure_at or timestamp, timestamp)
-                    ),
-                    next_retry_at=(
-                        0.0 if requires_explicit_rebuild else timestamp + delay
-                    ),
-                    circuit_state=(
-                        WatcherCircuitState.OPEN
-                        if open_circuit
-                        else WatcherCircuitState.CLOSED
-                    ),
-                    convergence_pending=True,
-                    unscoped_required=state.unscoped_required,
-                    pending_paths=restore_captured_paths(state),
-                    captured_paths=(),
-                    scope_refusal=(
-                        state.scope_refusal
-                        if structural_refusal
-                        else (
-                            WatcherScopeRefusal.FULL_REINDEX_REQUIRED
-                            if requires_explicit_rebuild
-                            else None
-                        )
-                    ),
-                    attempt_job_id=None,
-                    attempt_generation=None,
-                    attempt_token=None,
-                    attempt_started_at=None,
-                    attempt_owner_pid=None,
-                    attempt_owner_create_time=None,
-                    updated_at=max(state.updated_at, timestamp),
+                    _Failure(error, error_kind, retryable),
+                    timestamp,
+                    random_unit=unit,
                 )
             )
             owned_token = self._owned_attempt_token
             if owned_token is not None:
                 self._clear_owned_admission_token(owned_token)
             return committed
+
+    def _failed_attempt(
+        self,
+        state: WatcherRetryState,
+        failure: _Failure,
+        timestamp: float,
+        *,
+        random_unit: float,
+    ) -> WatcherRetryState:
+        """Count one failure, back off, and open the circuit when warranted."""
+        error, error_kind, retryable = failure
+        failures = state.consecutive_failures + 1
+        structural_refusal = state.scope_refusal is not None or state.unscoped_required
+        requires_explicit_rebuild = (
+            structural_refusal or error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+        )
+        delay = self._retry_delay(failures, random_unit=random_unit)
+        was_half_open = state.circuit_state is WatcherCircuitState.HALF_OPEN
+        open_circuit = (
+            requires_explicit_rebuild
+            or was_half_open
+            or not retryable
+            or failures >= self._failure_threshold
+        )
+        detail = str(error).strip() or type(error).__name__
+        newer_failure = (
+            state.last_failure_at is not None and state.last_failure_at > timestamp
+        )
+        if (structural_refusal or newer_failure) and state.last_error_detail:
+            detail = state.last_error_detail
+        return replace(
+            state,
+            consecutive_failures=failures,
+            last_error_kind=(
+                JobErrorKind.FULL_REINDEX_REQUIRED if structural_refusal else error_kind
+            ),
+            last_error_detail=detail[:MAX_ERROR_DETAIL_CHARS],
+            last_failure_at=(
+                state.last_failure_at
+                if structural_refusal
+                else max(state.last_failure_at or timestamp, timestamp)
+            ),
+            next_retry_at=(0.0 if requires_explicit_rebuild else timestamp + delay),
+            circuit_state=(
+                WatcherCircuitState.OPEN if open_circuit else WatcherCircuitState.CLOSED
+            ),
+            convergence_pending=True,
+            unscoped_required=state.unscoped_required,
+            pending_paths=restore_captured_paths(state),
+            captured_paths=(),
+            scope_refusal=(
+                state.scope_refusal
+                if structural_refusal
+                else (
+                    WatcherScopeRefusal.FULL_REINDEX_REQUIRED
+                    if requires_explicit_rebuild
+                    else None
+                )
+            ),
+            attempt_job_id=None,
+            attempt_generation=None,
+            attempt_token=None,
+            attempt_started_at=None,
+            attempt_owner_pid=None,
+            attempt_owner_create_time=None,
+            updated_at=max(state.updated_at, timestamp),
+        )
 
     def _retry_delay(self, failures: int, *, random_unit: float) -> float:
         # Failures are counted from one, so the first failure waits the base.

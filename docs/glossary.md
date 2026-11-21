@@ -58,11 +58,11 @@ A shell-style filename pattern, for example `*.md` or `notes/**/draft-*`, used i
 
 ## Freshness
 
-How current a search's answer is compared with your files. A search reports `freshness` as `current`, `updating`, `unverifiable`, or `rebuild_required`, separately from whether any published index can answer at all. By default a search answers from the last published generation without waiting for a running index job. See [choose immediate or bounded freshness](search-and-index.md#choose-immediate-or-bounded-freshness).
+How current a search's answer is compared with your files. A search reports `freshness` as `current`, `updating`, `unverifiable`, or `rebuild_required`, separately from whether any published index can answer at all. By default a search answers from what the index holds now, without waiting for a running index job. See [choose immediate or bounded freshness](search-and-index.md#choose-immediate-or-bounded-freshness).
 
 ## Generation
 
-One published version of an index. Indexing builds new content and publishes it as a whole, so a search always reads a complete generation and never a half-written one. A rebuild publishes a new generation next to the one still answering. Automatic updates capture a generation for each attempt so a stale job cannot overwrite a newer one; see [automatic convergence](automatic-convergence.md).
+One indexing run's identity, recorded when it finishes and verifies its work. An incremental update publishes a new generation over the existing index. A rebuild deletes the old index first and writes its generation into the same collection, so search answers from the new generation while it grows and marks missing matches as not proven absent until it finishes. Only one generation's content is ever stored. Automatic updates capture a generation for each attempt so a stale job cannot overwrite a newer one; see [automatic convergence](automatic-convergence.md).
 
 ## Host installation
 
@@ -126,11 +126,15 @@ The directory vaultspec-rag treats as the project boundary, the folder holding `
 
 ## Provisioning
 
-The one-time setup, run during `install` and completed by `server start` for any model file or Qdrant binary still missing, that obtains the external dependencies vaultspec-rag needs: search models cached from Hugging Face, the managed Qdrant server binary, and, when the [host installation](#host-installation) is a project dependency, the CUDA PyTorch source in that project's `pyproject.toml`. CUDA uses the configured cu130 source; macOS uses the standard MPS-capable wheel. A [client installation](#client-installation) needs none of these, and `install` skips them for it automatically. See [the installation guide](installation.md).
+The one-time setup, run during `install` and completed by `server start` for any model file or Qdrant binary still missing, that obtains the external dependencies vaultspec-rag needs: search models cached from Hugging Face, the managed Qdrant server binary, and, when the [host installation](#host-installation) is a project dependency, the CUDA PyTorch source in that project's `pyproject.toml`. CUDA uses the configured CUDA 13.4 source; macOS uses the standard MPS-capable wheel. A [client installation](#client-installation) needs none of these, and `install` skips them for it automatically. See [the installation guide](installation.md).
 
 ## Readiness
 
-Whether the service can serve requests: torch sees a supported accelerator, the models are cached, and the active storage backend is present and usable. The `server doctor` command reports it. A search response also carries readiness facts for each domain, such as `availability`, which say whether a published index can answer. See [the service-mode guide](service-mode.md) and [Freshness](#freshness).
+Whether the service can serve requests: torch sees a supported accelerator, the models are cached, and the active storage backend is present and usable. The `server doctor` command reports it. A search response also carries readiness facts for each domain, such as `availability`, which say whether the index can answer, including a rebuild's partial index. See [the service-mode guide](service-mode.md) and [Freshness](#freshness).
+
+## Rebuild
+
+An explicit request to delete one domain's index and build it again, such as `index --rebuild --type code`. It discards the old index first, keeps no copy, and serves searches from the new index while it grows. Missing matches stay unproven until it finishes. See [search during a rebuild](search-and-index.md#search-during-a-rebuild).
 
 ## Reciprocal rank fusion (RRF)
 

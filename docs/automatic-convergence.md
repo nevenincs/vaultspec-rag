@@ -201,6 +201,12 @@ prevents path loss and duplicate consumption.
 Persisted scope and retry state survive service restart. Generation fencing prevents a
 stale job or callback from publishing over a newer attempt.
 
+An explicit rebuild that resets a source stops any automatic update writing to it at that
+update's next write. The update ends with `error_kind=index_transition`. That is not counted as
+a failure: the retry state keeps its exact changed paths, adds no failure, leaves the circuit
+closed, and holds the next attempt off for the base retry delay so it does not spin against the
+running rebuild. Service health does not degrade for it.
+
 ## Refusals and remediation
 
 A `refused` controller needs operator action. Read `reason`, `remediation`,

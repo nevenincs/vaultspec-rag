@@ -119,6 +119,42 @@ class TestDegradedVerdictTracksCurrentState:
         assert reasons == []
         assert _failing(jobs_health) == {"total": 0, "degrading": 0, "entries": []}
 
+    def test_a_run_a_reset_fenced_neither_fails_nor_clears_the_project(
+        self, isolated_status_dir: Path
+    ) -> None:
+        """A writer an explicit rebuild's reset stopped is an expected outcome.
+
+        It stays listed in job history with its own kind, does not degrade
+        health, and does not clear an earlier real failure either.
+
+        Mutation: dropping ``INDEX_TRANSITION`` from the non-decisive kinds
+        made the fenced code run the newest decisive failure and failed the
+        ``failing`` entry assertion; restoring it passed.
+        """
+        from ..indexer._run_ledger_models import SourceResetEpochError
+
+        del isolated_status_dir
+        reset()
+        try:
+            failed_id = _failed(JobSource.VAULT)
+            fenced_id = record_start(JobSource.CODE, "watcher")
+            record_finish(
+                fenced_id,
+                error=str(SourceResetEpochError("code was reset after this began")),
+            )
+            fenced_vault = record_start(JobSource.VAULT, "watcher")
+            record_finish(
+                fenced_vault,
+                error=str(SourceResetEpochError("vault was reset after this began")),
+            )
+            jobs_health, reasons = _jobs_health(now=time.time())
+            records = {str(record["id"]): record for record in snapshot()}
+        finally:
+            reset()
+        assert records[fenced_id]["error_kind"] == JobErrorKind.INDEX_TRANSITION
+        assert _job_failed(reasons)
+        assert [entry["id"] for entry in _entries(jobs_health)] == [failed_id]
+
     def test_rebuild_refusal_does_not_hide_a_real_failure(
         self, isolated_status_dir: Path
     ) -> None:

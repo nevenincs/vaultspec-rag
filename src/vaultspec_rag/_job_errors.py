@@ -95,6 +95,7 @@ class JobErrorKind(StrEnum):
     LEDGER_CONTENDED = "ledger_contended"
     INGEST_VERIFICATION_FAILED = "ingest_verification_failed"
     FULL_REINDEX_REQUIRED = "full_reindex_required"
+    INDEX_TRANSITION = "index_transition"
 
 
 _REMEDIATION: Final = MappingProxyType(
@@ -177,6 +178,12 @@ _REMEDIATION: Final = MappingProxyType(
         JobErrorKind.FULL_REINDEX_REQUIRED: (
             "the requested incremental operation cannot safely reconcile this index; "
             "explicitly request a rebuild for the affected source and project"
+        ),
+        JobErrorKind.INDEX_TRANSITION: (
+            "an explicit rebuild reset this source while the run was writing, so "
+            "nothing it wrote after the reset is served; automatic updates retry "
+            "on their own, and a rebuild another rebuild replaced needs a new "
+            "rebuild request"
         ),
     }
 )

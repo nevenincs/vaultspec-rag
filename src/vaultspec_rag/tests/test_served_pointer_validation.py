@@ -566,3 +566,85 @@ def test_migration_reports_failed_pointer_retirement(tmp_path: Path) -> None:
         assert outcomes[0].status == "failed"
         assert outcomes[0].reason is not None
         assert outcomes[0].reason.startswith("served_pointer_failed:")
+
+
+def _seed_code_collection(store: VaultStore, name: str, content: str) -> None:
+    """Create *name* beside the store's code collection and give it one point."""
+    from ._historical_code_layout import write_historical_code_points
+
+    store.ensure_code_table()
+    params = store.client.get_collection(store.DERIVED_CODE_TABLE_NAME).config.params
+    store.client.create_collection(
+        name,
+        vectors_config=params.vectors,
+        sparse_vectors_config=params.sparse_vectors,
+    )
+    chunk = CodeChunk(content, "a.py", "python", content, 1, 1, vector=[1.0] * 1024)
+    write_historical_code_points(store, name, [chunk])
+
+
+@pytest.mark.parametrize("reset_backend", ["server", "local"])
+def test_a_code_reset_retires_a_pointer_naming_the_other_backends_collection(
+    tmp_path: Path,
+    shared_qdrant_url: str,
+    reset_backend: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A migration-era pointer to the other backend never blocks a reset.
+
+    The root first served a historical code generation under one backend and
+    left the pointer naming it. Under the other backend that name is not this
+    backend's to judge, so an explicit code reset there retires the pointer,
+    logs it, and empties its own code collection. The named collection is
+    never touched: it survives in the backend that owns it, and a same-named
+    collection in the resetting backend survives too.
+
+    Mutation: making ``other_backend_code_pointer`` return ``None`` refused
+    the reset with ``verifiable served pointer`` in both directions; adding a
+    drop of the stale name to the reset dropped the same-named collection and
+    failed the ``same-named survivor`` assertion. Restoring each passed.
+    """
+    from ..registry import get_registry
+    from ._state_fixtures import reset_registry
+
+    reset_url = shared_qdrant_url if reset_backend == "server" else ""
+    other_url = "" if reset_backend == "server" else shared_qdrant_url
+    with managed_env(**{EnvVar.QDRANT_URL.value: other_url}):
+        reset_registry()
+        with VaultStore(tmp_path) as other_store:
+            stale = historical_generation(other_store.DERIVED_CODE_TABLE_NAME, "old")
+            write_historical_pointer(tmp_path, stale)
+            _seed_code_collection(other_store, stale, "other-backend")
+    try:
+        with managed_env(**{EnvVar.QDRANT_URL.value: reset_url}):
+            reset_registry()
+            assert read_served_pointer(tmp_path) == (None, False)
+            with VaultStore(tmp_path) as store:
+                _seed_code_collection(store, stale, "same-named")
+                old = CodeChunk(
+                    "old", "b.py", "python", "old", 1, 1, vector=[1.0] * 1024
+                )
+                store.upsert_code_chunks([old], write_policy=None)
+            with caplog.at_level("WARNING", logger="vaultspec_rag.indexer"):
+                assert clean(tmp_path, clean_type="code", registry=get_registry()) == [
+                    "code"
+                ]
+            assert not served_code_pointer_path(tmp_path).exists()
+            assert any(
+                stale in record.getMessage() and "other backend" in record.getMessage()
+                for record in caplog.records
+            ), caplog.text
+            with get_registry().lease_store(tmp_path) as cleaned:
+                assert cleaned.CODE_TABLE_NAME == cleaned.DERIVED_CODE_TABLE_NAME
+                assert cleaned.count_code() == 0
+                assert cleaned.client.collection_exists(stale), "same-named survivor"
+                assert cleaned.client.count(stale, exact=True).count == 1
+            reset_registry()
+        with (
+            managed_env(**{EnvVar.QDRANT_URL.value: other_url}),
+            VaultStore(tmp_path) as owner,
+        ):
+            assert owner.client.collection_exists(stale), "other-backend survivor"
+            assert owner.client.count(stale, exact=True).count == 1
+    finally:
+        reset_registry()

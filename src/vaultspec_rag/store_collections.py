@@ -7,7 +7,11 @@ from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from . import store_schema
 from ._qdrant_local_lifetime import close_local_collection
-from ._store_models import code_collection_matches_derived, read_served_pointer
+from ._store_models import (
+    code_collection_matches_derived,
+    other_backend_code_pointer,
+    read_served_pointer,
+)
 
 if TYPE_CHECKING:
     import pathlib
@@ -281,13 +285,20 @@ class _VaultCollectionMixin:
         membership, so a name that merely shares the derived prefix is never
         enumerated and a reset never touches it.
 
+        A pointer naming this root's code collection under the other backend
+        does not block enumeration: that collection lives in the other
+        backend's storage, so it is never enumerated here and never dropped.
+
         Raises:
             RuntimeError: the served pointer is unreadable, so what this root
                 serves is not established. The reset refuses on the same
                 reading rather than guessing.
         """
         derived = self.DERIVED_CODE_TABLE_NAME
-        if not read_served_pointer(self.root_dir, derived).verifiable:
+        if (
+            not read_served_pointer(self.root_dir, derived).verifiable
+            and other_backend_code_pointer(self.root_dir, derived) is None
+        ):
             raise RuntimeError(
                 "cannot enumerate code collections without a verifiable served pointer"
             )

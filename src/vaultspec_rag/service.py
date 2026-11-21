@@ -238,10 +238,17 @@ class ServiceRegistry(
             acquire_publication_snapshot,
         )
         from ._source_types import PublicSourceType
-        from .server._search_readiness import ReadinessRegistryClosedError
+        from .server._search_readiness import (
+            ReadinessRegistryClosedError,
+            current_reset_epoch,
+        )
 
         # An unchanged run can complete without replacing the served proof.
         del generation
+        concrete = cast("IndexSource", source.value)
+        # Read before the proof, so a reset landing after it cannot stamp the
+        # generation it discarded with the epoch that discarded it.
+        epoch = current_reset_epoch(root, concrete)
         try:
             publication = acquire_publication_snapshot(
                 root, PublicSourceType(source.value)
@@ -249,8 +256,9 @@ class ServiceRegistry(
             publication.validate()
             return readiness.publish_next(
                 root,
-                cast("IndexSource", source.value),
+                concrete,
                 generation=publication.proof.generation_id,
+                reset_epoch=epoch,
             )
         except (ReadinessRegistryClosedError, *UNREADABLE_PUBLICATION_ERRORS):
             return None

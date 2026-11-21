@@ -13,6 +13,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
+from .._job_errors import JobError, JobErrorKind
 from .._source_types import PublicSourceType
 from ._file_state import FileState, validate_rel_path
 from ._publication_proof import (
@@ -557,13 +558,26 @@ class SourceResetState:
         return self.phase is SourceResetPhase.COMPLETE
 
 
-class SourceResetEpochError(RunLedgerStateError):
+class SourceResetEpochError(RunLedgerStateError, JobError):
     """The source was reset after the caller captured its reset epoch.
 
     Carried by a writer or reader whose work began against storage a later
     reset has discarded. Nothing it observed or would write belongs to the
     current index.
+
+    It carries the ``index_transition`` job kind, so a job a reset fenced is
+    recorded as an expected transition rather than a failure of the index:
+    health does not count it, and the watcher defers its scope instead of
+    backing off or opening its circuit.
     """
+
+    def __init__(self, detail: str) -> None:
+        JobError.__init__(self, JobErrorKind.INDEX_TRANSITION, detail)
+
+    def __reduce__(self) -> tuple[type[SourceResetEpochError], tuple[str]]:
+        # The message carries the kind prefix; rebuilding from it would
+        # prefix it twice.
+        return type(self), (self.detail,)
 
 
 RESUMABLE_STATES: Final = (

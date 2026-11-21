@@ -21,7 +21,12 @@ from starlette.responses import JSONResponse
 
 import vaultspec_rag.server as _m
 
-from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
+from .._source_types import (
+    PublicSourceType,
+    SourceTypeParseError,
+    concrete_sources,
+    parse_source_type,
+)
 from .._store_locks import VaultStoreLockedError
 from ..indexer._run_ledger_models import RunAuthority
 from ._auth import require_token
@@ -96,17 +101,6 @@ def _preprocess_preflight(
     }
 
 
-def _reindex_sources(source_type: PublicSourceType) -> tuple[PublicSourceType, ...]:
-    """Expand the combined compatibility source into independent domains."""
-    if source_type is not PublicSourceType.COMBINED:
-        return (source_type,)
-    return (
-        PublicSourceType.VAULT,
-        PublicSourceType.CODE,
-        PublicSourceType.DOCUMENT,
-    )
-
-
 class _DomainResponse(TypedDict):
     """One index domain's outcome within a ``/reindex`` adapter response."""
 
@@ -158,7 +152,7 @@ async def _validate_reindex_domains(
 
     validated: list[tuple[PublicSourceType, _ValidatedIndexRequest]] = []
     failures: dict[str, _DomainResponse] = {}
-    for source in _reindex_sources(source_type):
+    for source in concrete_sources(source_type):
         canonical_payload = {
             **payload,
             "operation": "index",
@@ -436,17 +430,8 @@ async def clean_route(request: Request) -> JSONResponse:
 
     registry = get_request_runtime(request).registry
 
-    sources = (
-        (
-            PublicSourceType.VAULT,
-            PublicSourceType.CODE,
-            PublicSourceType.DOCUMENT,
-        )
-        if source_type is PublicSourceType.COMBINED
-        else (source_type,)
-    )
     domains: dict[str, dict[str, object]] = {}
-    for source in sources:
+    for source in concrete_sources(source_type):
         try:
             cleared = await _run_in_thread(
                 partial(

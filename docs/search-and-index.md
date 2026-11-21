@@ -147,14 +147,16 @@ reconciliation returns `full_reindex_required`, the response reports
 `rebuild_required` and an executable rebuild command for the affected root and
 source. Follow that command when ready; the service never starts a full rebuild
 automatically. A rebuild deletes the selected old index before constructing its
-replacement. A finished diagnosis clears once a newer publication is certified.
+replacement; see [search during a rebuild](#search-during-a-rebuild). A finished diagnosis
+clears once a newer publication is certified.
 
 ## Choose immediate or bounded freshness
 
-Search uses `immediate` freshness by default. It returns against the currently published
-generation without polling or waiting for an in-progress index job. A successful response can
-therefore contain results while its readiness facts say `freshness=updating`; those results come
-from the last usable publication.
+Search uses `immediate` freshness by default. It answers from what the source's index holds
+now, without polling or waiting for an in-progress index job. A successful response can
+therefore contain results while its readiness facts say `freshness=updating`. During an
+incremental update those results come from the last publication. During a rebuild they come
+from the rebuild itself, as described in [search during a rebuild](#search-during-a-rebuild).
 
 Use a bounded wait when automation needs the publication target that existed when the request was
 admitted:
@@ -172,8 +174,9 @@ before the bound.
 
 Read the response as two separate axes:
 
-- `availability=usable` means a published generation can answer; `unavailable` and
-  `capacity_limited` explain why it cannot.
+- `availability=usable` means the source's index can answer, whether it holds a finished
+  publication or a rebuild's partial contents; `unavailable` and `capacity_limited` explain why
+  it cannot.
 - `freshness=current`, `updating`, `unverifiable`, or `rebuild_required` describes that
   generation relative to the captured target.
 - An empty result is authoritative only when `absence_authority=authoritative` for every requested
@@ -183,6 +186,32 @@ Read the response as two separate axes:
   `freshness=updating`, `absence_authority=non_authoritative`, and `empty.reason=index_updating`,
   so it does not prove absence. A source that was never built, or whose collection is missing,
   still fails with `index_unavailable`.
+- `generation.served_generation` names the last finished publication of the source's current
+  index. A rebuild discards the previous index, so this field is absent from the moment the
+  rebuild resets the source until the rebuild finishes.
+
+### Search during a rebuild
+
+A rebuild discards the selected source's old index first, then builds the replacement in the
+same place. No old copy is kept beside the new one, and nothing old is retained once the
+rebuild finishes. Search keeps running throughout:
+
+1. For the brief reset itself, a search of that source answers the retryable
+   `index_transition` refusal: HTTP 503, `retryable=true`, no results, and a readiness fact
+   with `reason_code=index_transition`. Retry it. Other sources keep answering, and a combined
+   search reports the refusal for that domain only.
+2. Once the empty replacement exists, search answers from it as batches land. Results carry
+   `availability=usable`, `freshness=updating`, and `absence_authority=non_authoritative`.
+   They never include content from the discarded index.
+3. When the rebuild finishes and its contents are verified, `freshness` becomes `current` and
+   an empty result becomes authoritative.
+
+A paused, cancelled, or failed rebuild keeps the new points it already wrote and keeps serving
+them with `absence_authority=non_authoritative`. It never falls back to the discarded index.
+Resuming continues the same rebuild. A new explicit rebuild discards that partial index and
+starts again.
+
+A bounded freshness wait still waits for the rebuild to finish, up to its own bound.
 
 A bounded timeout is recoverable and carries canonical readiness facts and remediation. An HTTP
 `Retry-After` header appears only when the service has a future retry deadline; its absence means
@@ -441,7 +470,10 @@ uv run vaultspec-rag index --rebuild --type code
 ```
 
 `--rebuild` deletes the selected index data before rebuilding. Choose the domain
-carefully; an explicit `--type` is required. See the [index reference](cli.md#index)
+carefully; an explicit `--type` is required. `--type all` resets each domain on its own:
+one domain failing does not undo another. No backup is taken, so the old index cannot be
+restored. Search keeps answering from the new index as it grows; see
+[search during a rebuild](#search-during-a-rebuild). See the [index reference](cli.md#index)
 for other targets and options.
 
 ## Clean index data

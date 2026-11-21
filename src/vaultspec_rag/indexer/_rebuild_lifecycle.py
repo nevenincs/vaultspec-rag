@@ -35,8 +35,8 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
-from .._source_types import PublicSourceType
-from .._store_models import retire_served_code_pointer
+from .._source_types import PublicSourceType, concrete_sources
+from .._store_models import other_backend_code_pointer, retire_served_code_pointer
 from .._store_writes import workspace_volume_path
 from ..job_control import NO_RUN_CONTROL
 from ._run_ledger_models import (
@@ -57,7 +57,6 @@ if TYPE_CHECKING:
     from ._run_ledger_models import RunSignature, SourceResetState
 
 __all__ = [
-    "CONCRETE_SOURCES",
     "NEW_REBUILD",
     "RebuildClaim",
     "RebuildSupersededError",
@@ -70,19 +69,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-#: The sources a reset acts on, in the order a combined selection resets them.
-CONCRETE_SOURCES: tuple[PublicSourceType, ...] = (
-    PublicSourceType.VAULT,
-    PublicSourceType.CODE,
-    PublicSourceType.DOCUMENT,
-)
-
-
-def _selected(selection: PublicSourceType) -> tuple[PublicSourceType, ...]:
-    if selection is PublicSourceType.COMBINED:
-        return CONCRETE_SOURCES
-    return (selection,)
 
 
 def _ledger_path(root: pathlib.Path) -> pathlib.Path:
@@ -293,6 +279,11 @@ def _reset_one(
     if state.complete:
         return state
     with run_control.protected():
+        stale = (
+            other_backend_code_pointer(store.root_dir, store.DERIVED_CODE_TABLE_NAME)
+            if source is PublicSourceType.CODE
+            else None
+        )
         # Discarding again on a replay is idempotent and costs nothing on
         # absent storage; skipping it would trust that nothing recreated a
         # collection between the recorded deletion and this replay.
@@ -303,6 +294,14 @@ def _reset_one(
             # collection that no longer exists.
             retire_served_code_pointer(store.root_dir)
             store.CODE_TABLE_NAME = store.DERIVED_CODE_TABLE_NAME
+            if stale is not None:
+                logger.warning(
+                    "Retired %s's served code pointer naming %s, its code "
+                    "collection under the other backend; that collection "
+                    "was left untouched",
+                    root_identity,
+                    stale,
+                )
         state = ledger.advance_source_reset(state, SourceResetPhase.DISCARDED)
         store.recreate_empty_source(source)
         state = ledger.advance_source_reset(state, SourceResetPhase.COMPLETE)
@@ -343,7 +342,7 @@ def reset_selected_sources(
     Returns:
         Each selected source's completed reset, in reset order.
     """
-    sources = _selected(selection)
+    sources = concrete_sources(selection)
     for source in sources:
         store.owned_source_collections(source)
     run_control.checkpoint()

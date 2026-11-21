@@ -8,11 +8,13 @@ from types import MappingProxyType
 from typing import Final, Literal, get_args
 
 __all__ = [
+    "CONCRETE_SOURCES",
     "INDEX_SOURCES",
     "UNSUPPORTED_FEEDBACK_ERROR",
     "IndexSource",
     "PublicSourceType",
     "SourceTypeParseError",
+    "concrete_sources",
     "parse_source_type",
     "unsupported_feedback_envelope",
 ]
@@ -148,6 +150,27 @@ def parse_source_type(
                 if resolved is not None:
                     return resolved
     raise SourceTypeParseError(value, allow_aliases)
+
+
+#: The concrete sources in the order a combined selection visits them.
+CONCRETE_SOURCES: Final[tuple[PublicSourceType, ...]] = (
+    PublicSourceType.VAULT,
+    PublicSourceType.CODE,
+    PublicSourceType.DOCUMENT,
+)
+
+
+def concrete_sources(selection: PublicSourceType) -> tuple[PublicSourceType, ...]:
+    """Expand *selection* into the concrete sources it names.
+
+    Combined names every concrete source; any other selection names itself.
+    Every adapter that acts per source - reset, reindex, clean, audit - walks
+    this one expansion, so a combined request means the same sources in the
+    same order everywhere.
+    """
+    if selection is PublicSourceType.COMBINED:
+        return CONCRETE_SOURCES
+    return (selection,)
 
 
 #: Sources whose results carry no cross-collection point identity, so feedback

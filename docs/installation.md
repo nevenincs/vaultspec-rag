@@ -174,7 +174,7 @@ example, on a machine with no network access once the install is done.
 Windows x86-64, Linux x86-64 and Linux aarch64 (glibc 2.28 or newer):
 
 ```bash
-uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]" --index https://download.pytorch.org/whl/cu130 --index-strategy unsafe-first-match
+uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]" --index https://download.pytorch.org/whl/cu134 --index-strategy unsafe-first-match
 ```
 
 Apple silicon macOS, which uses Metal rather than CUDA:

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from .._publication_state import acquire_publication_snapshot
-from .._source_types import PublicSourceType
+from .._source_types import CONCRETE_SOURCES, PublicSourceType
 from ..config._settings import get_config
 from ..indexer._codebase_indexer import CodebaseIndexer
 from ..indexer._content_policy import (
@@ -27,7 +27,6 @@ from ..indexer._content_policy import (
     SourceProfileVersion,
 )
 from ..indexer._document_indexer import DocumentIndexer
-from ..indexer._rebuild_lifecycle import CONCRETE_SOURCES
 from ..indexer._run_ledger_models import RunAuthority, index_run_ledger_path
 from ..indexer._run_ledger_runtime import RunLedger
 from ..indexer._vault_indexer import VaultIndexer
