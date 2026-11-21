@@ -210,7 +210,7 @@ def run_store_operation_with_retry[T](
         if policy is not None:
             policy.admit_write()
         try:
-            return op(attempt_timeout)
+            result = op(attempt_timeout)
         except Exception as exc:
             if classify_write_error(exc) == "unrecoverable":
                 logger.error(
@@ -255,6 +255,15 @@ def run_store_operation_with_retry[T](
                 description=description,
             )
             delay = min(delay * 2.0, max_delay)
+        else:
+            if policy is not None:
+                # Server mode orders no write against another client's reset,
+                # so a reset can complete while this write is in flight and
+                # the write then lands in the replacement. Re-checking after
+                # the acknowledgement fails the run before it can record or
+                # finalize anything from the discarded epoch.
+                policy.admit_write()
+            return result
     msg = "unreachable: retry loop must return or raise"  # pragma: no cover
     raise AssertionError(msg)  # pragma: no cover
 

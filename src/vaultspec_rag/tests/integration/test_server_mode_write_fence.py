@@ -1,22 +1,19 @@
-"""Server mode: a write admitted before another client's reset still lands.
+"""Server mode: a write that crosses another client's reset fails its run.
 
 A real pinned Qdrant server holds the collection, and two real stores on the
 same root talk to it as two processes would. Server mode takes no
 point-operation locks, so nothing on the client side orders one store's write
 against the other store's reset. The writer's run policy fences its writes to
-the reset epoch it began under and checks that fence before every attempt.
+the reset epoch it began under and checks that fence before every attempt and
+again after every acknowledged attempt.
 
 The case drives the production retry helper with that policy. Inside the one
 admitted attempt the other store runs the production reset to completion,
-and only then does the writer's upsert reach the server. The fence check has
-already passed, so nothing refuses the write: the points written under the
-discarded epoch are counted in the replacement collection, and the helper
-returns success.
-
-This pins the current window exactly. Closing it means re-checking the fence
-after each acknowledged write, so the stale writer fails and its run is never
-finalized; that change flips the final assertions to expect
-``SourceResetEpochError`` from the helper.
+and only then does the writer's upsert reach the server. The check before the
+attempt has already passed, so the upsert lands in the replacement; the check
+after the acknowledgement then raises ``SourceResetEpochError``, so the stale
+run fails before it can record or finalize anything from the discarded epoch.
+The stale points stay in the replacement until its next rebuild discards them.
 """
 
 from __future__ import annotations
@@ -100,7 +97,7 @@ def _code_chunks(count: int) -> list[CodeChunk]:
 
 
 @pytest.mark.usefixtures("server_mode")
-def test_a_write_admitted_before_another_clients_reset_lands_in_the_replacement(
+def test_a_write_crossing_another_clients_reset_fails_its_run(
     tmp_path: Path,
 ) -> None:
     root = (tmp_path / "project").resolve()
@@ -123,11 +120,14 @@ def test_a_write_admitted_before_another_clients_reset_lands_in_the_replacement(
             )
             writer.upsert_code_chunks(chunks, write_policy=None)
 
-        run_store_operation_with_retry(
-            write_after_a_foreign_reset,
-            description="code upsert crossing a foreign reset",
-            policy=policy.store_write_policy,
-        )
+        # The acknowledged write is re-checked: the reset inside the attempt
+        # moved the epoch, so the helper refuses rather than reporting success.
+        with pytest.raises(SourceResetEpochError):
+            run_store_operation_with_retry(
+                write_after_a_foreign_reset,
+                description="code upsert crossing a foreign reset",
+                policy=policy.store_write_policy,
+            )
 
         after = capture_reset_epoch(
             root, PublicSourceType.CODE, writer.backend_identity
@@ -135,10 +135,8 @@ def test_a_write_admitted_before_another_clients_reset_lands_in_the_replacement(
         assert after.epoch == began.epoch + 1
         assert after.serving
         assert after.generation_id == "foreign-rebuild"
-        # The fence knows the writer's epoch is gone, yet the write it
-        # admitted is in the replacement: nothing re-checked it afterwards.
-        with pytest.raises(SourceResetEpochError):
-            policy.admit_write()
+        # Server mode has no cross-process writer exclusion, so the refusal
+        # comes after the stale points reached the replacement.
         assert resetter.count_code() == len(chunks)
     finally:
         resetter.close()

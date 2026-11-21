@@ -5,7 +5,7 @@ tags:
 date: '2026-10-12'
 modified: '2026-11-21'
 body_schema: 'body-v2'
-body_hash: 'sha256:e14127b3be9e3b15d66e85d41d12bca0102bfa16437244339f1cb16dd874960b'
+body_hash: 'sha256:00018e16f8d2793a7ef5e26653a2586f2c164a4b14f77a26d63998944c8c98df'
 related:
   - "[[2026-10-12-destructive-rebuild-lifecycle-plan]]"
 ---
@@ -305,6 +305,15 @@ related:
 - `S06` `verify:` `pytest -m unit test_search_reset_fence test_search_conformance_refusal test_service_search_reset_transition test_clean_pointer_refusal test_server_mode_write_fence test_job_rebuild_resume_dispatch test_rebuild_crash_recovery test_rebuild_lifecycle` -> `pass`
 - `S06` `verify:` `pytest test_substitution_discipline test_no_unconsumed_definitions test_process_probe_source_structure` -> `pass`
 - `S06` `by:` `implementation-engineer-high`
+- `S06` `M` `src/vaultspec_rag/tests/test_code_rebuild_stale_evidence.py`
+- `S06` `verify:` `ruff check src/vaultspec_rag` -> `pass`
+- `S06` `verify:` `pytest -m unit test_rebuild_lifecycle.py test_rebuild_replacement.py test_search_reset_fence.py test_service_registry.py` -> `pass`
+- `S06` `by:` `vaultspec-high-executor`
+- `S06` `M` `src/vaultspec_rag/_store_writes.py`
+- `S06` `M` `src/vaultspec_rag/tests/integration/test_server_mode_write_fence.py`
+- `S06` `M` `.vault/audit/2026-11-21-destructive-rebuild-lifecycle-audit.md`
+- `S06` `verify:` `pytest -m unit test_server_mode_write_fence.py` -> `pass`
+- `S06` `verify:` `pytest -m unit -n 8 src/vaultspec_rag` -> `pass`
 
 ## Notes
 
@@ -324,3 +333,4 @@ related:
 - `S06` Pointer and clean-refusal source landed in d693c6f65 by concurrent pickup; tests in f7938d978; `observed_generation` in b421c1945
 - `S06` server-mode write fence: the post-write epoch re-check in `_store_writes.run_store_operation_with_retry` is not applied; that file is owned by the lock-deadlock branch, and the committed test pins the current window until the change lands
 - `S06` carried test doubles in `test_donor_admission.py` and `test_code_rebuild_stale_evidence.py` were not rewritten in this run
+- `S06` merge of nevenincs/rag-backlog-gpu-fixes into the S06 branch
