@@ -4,10 +4,10 @@ Each test drives a real running service over HTTP and authenticates with the
 token that service generated for itself at startup, read back from its own
 ``/health``. Nothing about the request path is substituted.
 
-The refusals asserted here are ordered: an empty query is refused before the
-project root is resolved, and both refusals carry the same status and the same
-error code. Only the message distinguishes them, so that is what each test
-pins.
+The refusals asserted here are ordered: an empty query is refused as a bad
+request before the project root is resolved, and a root that does not exist is
+refused next as gone. Each test pins the branch that fired by its status, its
+error code and its message.
 """
 
 from __future__ import annotations
@@ -50,15 +50,8 @@ class TestEmptyQueryRejected:
         """An empty query is refused on emptiness, not on something later.
 
         The request also carries a nonexistent root, which the very next guard
-        refuses with the same status and the same ``bad_request`` code.
-        Asserting only those two passes whichever guard fired, so the branch is
-        pinned by its own message.
-
-        Proven able to fail against this real service: dropping the
-        empty-query guard lets the request reach root resolution, which
-        answers ``not a vaultspec project (no .vault/ directory)`` - the
-        message assertion fails while status and error code still read
-        400 / bad_request. Restored, it passes.
+        refuses as gone. Dropping the empty-query guard lets the request reach
+        that guard, and the status assertion then reads 410, not 400.
         """
         port, _status_dir = live_service
         resp = _post_search(port, "")
@@ -81,9 +74,14 @@ class TestEmptyQueryRejected:
         assert "query is empty" in resp.json()["message"]
 
     def test_filter_only_query_is_not_empty(self, live_service: tuple[int, Path]):
-        """A bare filter token is real query text and clears the guard."""
+        """A bare filter token is real query text and clears the guard.
+
+        Clearing it reaches root resolution, which refuses the nonexistent root
+        as gone. A guard that treated the token as empty would answer 400
+        ``bad_request`` instead.
+        """
         port, _status_dir = live_service
         resp = _post_search(port, "lang:python")
-        assert resp.status_code == 400
-        # It got past the empty-query guard to root resolution.
+        assert resp.status_code == 410, resp.text
+        assert resp.json()["error"] == "root_missing"
         assert "query is empty" not in resp.json()["message"]
