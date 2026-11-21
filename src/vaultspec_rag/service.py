@@ -240,7 +240,7 @@ class ServiceRegistry(
         from ._source_types import PublicSourceType
         from .server._search_readiness import (
             ReadinessRegistryClosedError,
-            current_reset_epoch,
+            current_reset_fence,
         )
 
         # An unchanged run can complete without replacing the served proof.
@@ -248,7 +248,8 @@ class ServiceRegistry(
         concrete = cast("IndexSource", source.value)
         # Read before the proof, so a reset landing after it cannot stamp the
         # generation it discarded with the epoch that discarded it.
-        epoch = current_reset_epoch(root, concrete)
+        fence = current_reset_fence(root, concrete)
+        epoch = None if fence is None else fence.epoch
         try:
             publication = acquire_publication_snapshot(
                 root, PublicSourceType(source.value)

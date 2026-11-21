@@ -155,6 +155,9 @@ class ResetEpochFence:
 
     ``epoch`` is ``0`` for a source that was never reset. ``phase`` is the
     phase that epoch had reached at capture, or ``None`` when never reset.
+    ``generation_id`` names the rebuild that owns that reset, or ``None`` when
+    never reset; once the reset completes, it is the generation the source's
+    storage holds until a later publication supersedes it.
     """
 
     ledger_path: pathlib.Path
@@ -163,6 +166,7 @@ class ResetEpochFence:
     backend_identity: str
     epoch: int
     phase: SourceResetPhase | None
+    generation_id: str | None = None
 
     @classmethod
     def capture(
@@ -181,6 +185,7 @@ class ResetEpochFence:
             backend_identity=backend_identity,
             epoch=0 if state is None else state.epoch,
             phase=None if state is None else state.phase,
+            generation_id=None if state is None else state.generation_id,
         )
 
     @classmethod
@@ -193,6 +198,7 @@ class ResetEpochFence:
             backend_identity=state.backend_identity,
             epoch=state.epoch,
             phase=state.phase,
+            generation_id=state.generation_id,
         )
 
     @property

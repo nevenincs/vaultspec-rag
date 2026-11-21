@@ -303,6 +303,9 @@ def _combined_source_fact(
         served_generation=(
             snapshot.published_generation if snapshot is not None else None
         ),
+        observed_generation=(
+            snapshot.observed_generation if snapshot is not None else None
+        ),
         desired_generation=(target.generation if target is not None else None),
         publication_revision=(
             snapshot.publication_revision if snapshot is not None else None

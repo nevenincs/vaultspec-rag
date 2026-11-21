@@ -872,6 +872,7 @@ def _freshness_wait_failure(
                 absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
                 generation=GenerationEvidence(
                     served_generation=snapshot.published_generation,
+                    observed_generation=snapshot.observed_generation,
                     desired_generation=target.generation,
                     served_revision=snapshot.publication_revision,
                     desired_revision=target.revision,

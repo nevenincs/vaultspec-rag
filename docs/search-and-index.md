@@ -189,6 +189,11 @@ Read the response as two separate axes:
 - `generation.served_generation` names the last finished publication of the source's current
   index. A rebuild discards the previous index, so this field is absent from the moment the
   rebuild resets the source until the rebuild finishes.
+- `generation.observed_generation` names the generation the source's storage holds and search
+  reads. It matches `served_generation` once a publication is current. While a rebuild builds
+  its replacement it names that rebuild, so the generation being searched is reported apart
+  from the last finished publication. It is absent during the reset itself, when storage holds
+  no generation.
 
 ### Search during a rebuild
 

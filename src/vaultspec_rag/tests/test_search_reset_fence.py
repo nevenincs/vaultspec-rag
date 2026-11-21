@@ -448,14 +448,16 @@ async def test_a_publication_proven_before_a_reset_is_never_served_after_it(
     """
     import asyncio
 
-    from ..server._search_readiness import current_reset_epoch
+    from ..server._search_readiness import current_reset_fence
     from ._hook_publication import publish_empty_document_proof
 
     registry = ServiceRegistry()
     registry.start_readiness(asyncio.get_running_loop())
     readiness = registry.readiness_registry
     publish_empty_document_proof(local_root)
-    before = current_reset_epoch(local_root, "document")
+    fence = current_reset_fence(local_root, "document")
+    assert fence is not None
+    before = fence.epoch
     proven = _published_document_generation(local_root)
     with _open(local_root) as store:
         reset_selected_sources(
@@ -468,3 +470,60 @@ async def test_a_publication_proven_before_a_reset_is_never_served_after_it(
 
     assert before == 0
     assert readiness.snapshot(local_root, "document").published_generation is None
+
+
+async def test_the_generation_a_rebuild_serves_is_reported_apart_from_publication(
+    local_root: Path,
+) -> None:
+    """Search names the generation storage holds while a rebuild ingests.
+
+    After the reset nothing is published, so ``served_generation`` is absent;
+    ``observed_generation`` names the rebuild whose replacement search
+    addresses. Mid-reset storage holds no generation, so neither is named.
+    Once the rebuild publishes, the two agree.
+
+    Mutation: returning ``current`` unchanged from ``_observed`` left
+    ``observed_generation`` absent and failed the ``serving rebuild``
+    assertion. Dropping the ``serving`` condition named the generation of a
+    reset still discarding and failed the mid-reset assertion. Restoring each
+    passed.
+    """
+    import asyncio
+
+    from ._hook_publication import publish_empty_document_proof
+
+    registry = ServiceRegistry()
+    registry.start_readiness(asyncio.get_running_loop())
+    readiness = registry.readiness_registry
+    publish_empty_document_proof(local_root)
+    discarded = _published_document_generation(local_root)
+    readiness.publish_next(local_root, "document", generation=discarded)
+    before = _document_fact(local_root, registry).generation
+    assert before.observed_generation == discarded
+    assert before.served_generation == discarded
+
+    with _open(local_root) as store:
+        reset_selected_sources(
+            store, PublicSourceType.DOCUMENT, generation_id="rebuild-2"
+        )
+
+    during = _document_fact(local_root, registry).generation
+    assert during.served_generation is None
+    assert during.observed_generation == "rebuild-2", "serving rebuild"
+    assert during.as_dict().get("observed_generation") == "rebuild-2"
+
+    record_reset_intent(local_root, PublicSourceType.DOCUMENT)
+    mid_reset = readiness.snapshot(local_root, "document")
+    assert mid_reset.published_generation is None
+    assert mid_reset.observed_generation is None
+
+    with _open(local_root) as store:
+        reset_selected_sources(
+            store, PublicSourceType.DOCUMENT, generation_id="rebuild-in-flight"
+        )
+    publish_empty_document_proof(local_root)
+    rebuilt = _published_document_generation(local_root)
+    readiness.publish_next(local_root, "document", generation=rebuilt)
+    after = _document_fact(local_root, registry).generation
+    assert after.served_generation == rebuilt
+    assert after.observed_generation == rebuilt

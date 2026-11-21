@@ -15,6 +15,8 @@ from .._source_types import INDEX_SOURCES, IndexSource, PublicSourceType
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
+    from ..indexer._rebuild_lifecycle import ResetEpochFence
+
 __all__ = [
     "MAX_READINESS_OBSERVERS",
     "PublicationTarget",
@@ -24,7 +26,7 @@ __all__ = [
     "ReadinessRevisionRegistry",
     "ReadinessRevisionSnapshot",
     "ReadinessSourceKey",
-    "current_reset_epoch",
+    "current_reset_fence",
 ]
 
 MAX_READINESS_OBSERVERS: Final = 1_024
@@ -121,6 +123,14 @@ class ReadinessRevisionSnapshot:
     was recorded, or ``None`` when it could not be read. A reset discards the
     published index, so a claim recorded under an earlier epoch names a
     generation nothing serves any more.
+
+    ``observed_generation`` is the generation the source's storage holds and
+    search addresses, filled by :meth:`ReadinessRevisionRegistry.snapshot`.
+    It equals ``published_generation`` once a publication is current. While
+    a rebuild ingests after its reset, nothing is published yet and it names
+    the rebuild's generation, so the generation being served is reported
+    apart from the last completed publication. ``None`` means no reading
+    supplies it.
     """
 
     key: ReadinessSourceKey
@@ -129,12 +139,14 @@ class ReadinessRevisionSnapshot:
     desired_generation: str | None = None
     controller_revision: int | None = None
     reset_epoch: int | None = None
+    observed_generation: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(cast("object", self.key), ReadinessSourceKey):
             raise ValueError("key must be a ReadinessSourceKey")
         _identity(self.published_generation, field="published_generation")
         _identity(self.desired_generation, field="desired_generation")
+        _identity(self.observed_generation, field="observed_generation")
         _revision(self.publication_revision, field="publication_revision")
         _revision(self.controller_revision, field="controller_revision")
         _revision(self.reset_epoch, field="reset_epoch")
@@ -231,12 +243,13 @@ class ReadinessRevisionRegistry:
         )
 
         key = ReadinessSourceKey.from_root(root, source)
-        epoch = current_reset_epoch(root, source)
+        fence = current_reset_fence(root, source)
+        epoch = None if fence is None else fence.epoch
         with self._lock:
             self._require_live_locked()
             current = self._current_locked(key, epoch)
             if current.publication_revision is not None:
-                return current
+                return _observed(current, fence)
         generation = None
         try:
             publication = acquire_publication_snapshot(
@@ -259,7 +272,7 @@ class ReadinessRevisionRegistry:
                     reset_epoch=epoch,
                 )
                 self._snapshots[key] = current
-            return current
+            return _observed(current, fence)
 
     def _current_locked(
         self, key: ReadinessSourceKey, epoch: int | None
@@ -297,9 +310,11 @@ class ReadinessRevisionRegistry:
         """
         _identity(generation, field="generation")
         key = ReadinessSourceKey.from_root(root, source)
-        epoch = (
-            current_reset_epoch(root, source) if reset_epoch is None else reset_epoch
-        )
+        if reset_epoch is None:
+            fence = current_reset_fence(root, source)
+            epoch = None if fence is None else fence.epoch
+        else:
+            epoch = reset_epoch
         with self._lock:
             loop = self._require_live_locked()
             current = self._snapshots.get(key, ReadinessRevisionSnapshot(key=key))
@@ -446,13 +461,30 @@ class ReadinessRevisionRegistry:
         return True
 
 
-def current_reset_epoch(root: str | Path, source: IndexSource) -> int | None:
-    """Read *source*'s current reset epoch, or ``None`` when it cannot be read.
+def _observed(
+    current: ReadinessRevisionSnapshot, fence: ResetEpochFence | None
+) -> ReadinessRevisionSnapshot:
+    """Return *current* with the generation its storage holds now.
+
+    A current publication is what storage holds. Without one, a completed
+    reset holds the replacement its rebuild is ingesting. A reset still
+    discarding holds no generation, and an unreadable epoch supplies none.
+    """
+    observed = current.published_generation
+    if observed is None and fence is not None and fence.serving:
+        observed = fence.generation_id
+    return replace(current, observed_generation=observed)
+
+
+def current_reset_fence(
+    root: str | Path, source: IndexSource
+) -> ResetEpochFence | None:
+    """Read *source*'s current reset state, or ``None`` when it cannot be read.
 
     Takes the caller's root rather than the registry key: the key is
     case-folded where the platform folds paths, and the ledger records the
     resolved spelling. Reading creates no ledger: a root that never ran an
-    index is at epoch 0.
+    index is at epoch 0 with no reset generation.
     """
     import sqlite3
 
@@ -464,7 +496,7 @@ def current_reset_epoch(root: str | Path, source: IndexSource) -> int | None:
     try:
         return capture_reset_epoch(
             resolved, PublicSourceType(source), configured_backend_identity(resolved)
-        ).epoch
+        )
     except (RunLedgerError, sqlite3.Error, OSError):
         return None
 

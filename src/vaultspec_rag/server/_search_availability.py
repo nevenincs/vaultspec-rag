@@ -77,6 +77,7 @@ class CanonicalSearchEvidence:
     """Explicit collection and publication evidence available at classification."""
 
     served_generation: str | None = None
+    observed_generation: str | None = None
     desired_generation: str | None = None
     publication_revision: int | None = None
     desired_revision: int | None = None
@@ -89,6 +90,7 @@ class CanonicalSearchEvidence:
     def __post_init__(self) -> None:
         GenerationEvidence(
             served_generation=self.served_generation,
+            observed_generation=self.observed_generation,
             desired_generation=self.desired_generation,
             served_revision=self.publication_revision,
             desired_revision=self.desired_revision,
@@ -402,6 +404,7 @@ def _project_source_fact(
         absence_authority=authority,
         generation=GenerationEvidence(
             served_generation=canonical.served_generation,
+            observed_generation=canonical.observed_generation,
             desired_generation=canonical.desired_generation,
             served_revision=canonical.publication_revision,
             desired_revision=canonical.desired_revision,
