@@ -18,7 +18,7 @@ import pytest
 from ..cli._status_labels import degradation_findings
 from ..operator_state._service import DegradationReason
 from ..qdrant_runtime._constants import QdrantRuntimeState
-from ..server._lifespan import _service_health_status
+from ..server._health import _service_health_status
 from ._quiesce_helpers import held_quiesce_snapshot, running_quiesce_snapshot
 
 if TYPE_CHECKING:

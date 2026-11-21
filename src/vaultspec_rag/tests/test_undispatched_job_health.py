@@ -61,7 +61,7 @@ from ..job_models import (
 )
 from ..jobs import get_job_manager, reset
 from ..operator_state._service import DegradationReason
-from ..server._lifespan import _jobs_health
+from ..server._health import _jobs_health
 from ..service_quiesce import ServiceQuiesceController
 from ._job_manager_transition_helpers import pending_attempt
 from ._job_roots import _TEST_PROJECT_ROOT

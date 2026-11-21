@@ -16,7 +16,7 @@ author's assumption about that instead of testing it. The assertions read the
 typed reason, not the detail text.
 
 MUTATION PROOF, each run in one uninterrupted sequence against
-``_lifespan._failing_project_indexes`` and ``_lifespan._decisive_outcome``:
+``_health._failing_project_indexes`` and ``_health._decisive_outcome``:
 
 - Treating ``cancelled`` as decisive fails
   ``test_a_later_cancelled_run_does_not_clear_the_failure`` on its
@@ -44,7 +44,7 @@ from .._job_errors import JobError, JobErrorKind
 from ..job_models import JobSource
 from ..jobs import record_finish, record_start, reset, snapshot
 from ..operator_state._service import DegradationReason
-from ..server._lifespan import (
+from ..server._health import (
     _FAILING_NAMED,
     _FAILURE_DEGRADES_FOR_SECONDS,
     _jobs_health,

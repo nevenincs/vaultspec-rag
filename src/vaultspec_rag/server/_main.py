@@ -29,7 +29,8 @@ from typing import TYPE_CHECKING
 
 import vaultspec_rag.server as _m
 
-from ._lifespan import health_handler, service_lifespan
+from ._health import health_handler
+from ._lifespan import service_lifespan
 from ._runtime import ServerRouteRuntime, install_route_runtime
 
 if TYPE_CHECKING:

@@ -912,7 +912,7 @@ class TestHealthHandler:
         from .. import server as server_module
         from ..operator_state._models import HealthReport
         from ..operator_state._service import DegradationReason, HealthVerdict
-        from ..server._lifespan import health_handler
+        from ..server._health import health_handler
         from .conftest import managed_env
 
         # Device inspection is an external CUDA boundary, unrelated to the

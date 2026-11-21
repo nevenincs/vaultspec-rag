@@ -160,7 +160,7 @@ async def test_the_waiting_filter_runs_before_the_page_is_cut(
 
 @pytest.mark.usefixtures("served")
 async def test_the_health_rollup_counts_waiters_from_the_summary() -> None:
-    from ...server._lifespan import _jobs_health
+    from ...server._health import _jobs_health
 
     rollup, _degradations = _jobs_health(now=time.time())
 

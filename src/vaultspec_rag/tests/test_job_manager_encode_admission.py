@@ -338,6 +338,7 @@ class TestEncodeAdmissionGate:
             "storage_manifest.py",
             "search/_searcher.py",
             "server/_lifespan.py",
+            "server/_health.py",
         ):
             source = (package_root / rel).read_text(encoding="utf-8")
             assert "get_encode_limiter" not in source, (

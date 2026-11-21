@@ -59,7 +59,7 @@ from ..indexer._publication_proof import ProofMissingError
 from ..operator_state._service import DegradationReason
 from ..server import WatcherStartOutcome
 from ..server import _watcher as watcher_lifecycle
-from ..server._lifespan import _stale_watcher_root_degradations
+from ..server._health import _stale_watcher_root_degradations
 from ..server._routes_search import _search_response_status
 from ..server._watcher import _WatcherScheduler
 from ..service import ServiceRegistry

@@ -25,7 +25,7 @@ Import order is load-bearing and mirrors the ``cli`` split:
    These names live in *this* package namespace because that is where
    every consumer reads them, so a runtime reassignment is observed.
 2. Leaf helper submodules (``_models``, ``_utils``, ``_lifecycle``,
-   ``_lifespan``, ``_watcher``) - pure logic.
+   ``_lifespan``, ``_health``, ``_watcher``) - pure logic.
 3. ``_main`` - the console-script ``main`` entry point.
 
 Reassigned globals (``_http_mode``, ``_start_time``, ``_registry``) are
@@ -35,6 +35,8 @@ namespace is observed - the same discipline the ``cli`` split uses.
 """
 
 from __future__ import annotations
+
+from ._health import health_handler
 
 # 2. Leaf helpers (no decorators).
 from ._lifecycle import (
@@ -50,7 +52,7 @@ from ._lifecycle import (
     _storage_survey_warm_sync,
     _survey_warmup_task,
 )
-from ._lifespan import health_handler, service_lifespan
+from ._lifespan import service_lifespan
 
 # 4. Entry point.
 from ._main import create_http_app, main

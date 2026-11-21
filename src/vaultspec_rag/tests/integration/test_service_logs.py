@@ -458,7 +458,7 @@ from vaultspec_rag.logging_config import (  # absolute-import-ok
     configure_logging,
     install_daemon_log_capture,
 )
-from vaultspec_rag.server._lifespan import health_handler  # absolute-import-ok
+from vaultspec_rag.server._health import health_handler  # absolute-import-ok
 # absolute-import-ok
 from vaultspec_rag.server import ServerRouteRuntime, create_http_app
 from vaultspec_rag.service import ServiceRegistry  # absolute-import-ok

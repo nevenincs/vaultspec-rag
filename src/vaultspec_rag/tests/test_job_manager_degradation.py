@@ -129,7 +129,7 @@ class TestInterruptedJobDegradationSplit:
         """
         del isolated_status_dir
         from ..jobs import restore_interrupted
-        from ..server._lifespan import _jobs_health
+        from ..server._health import _jobs_health
 
         reset()
         try:

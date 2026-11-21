@@ -26,7 +26,7 @@ import pytest
 
 from ..cli._service_start import _daemon_is_serving
 from ..qdrant_runtime._constants import QdrantRuntimeState
-from ..server._lifespan import _service_health_status
+from ..server._health import _service_health_status
 from ..service import ServiceHealth
 from ._quiesce_helpers import running_quiesce_snapshot
 

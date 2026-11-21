@@ -49,7 +49,7 @@ from ..qdrant_runtime._supervise import (
     _corrupt_collection_from_output,
     start_supervised_from_config,
 )
-from ..server._lifespan import (
+from ..server._health import (
     _service_health_status,
 )
 from ..store_schema import CONFORMING, NONCONFORMING, UNVERIFIABLE
