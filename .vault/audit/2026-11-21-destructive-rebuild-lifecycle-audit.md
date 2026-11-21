@@ -100,6 +100,8 @@ Resolution: `_reset_one` in `src/vaultspec_rag/indexer/_rebuild_lifecycle.py` no
 
 `src/vaultspec_rag/_store_writes.py:153-167` only probes each collection lock with a zero timeout. Local searches take the same non-fair reentrant lock (`src/vaultspec_rag/_store_search.py:218`, `:352`), so continuous searches can make every probe miss, and the reset fails with `NO_PROGRESS_TIMEOUT`. Fix: wait a bounded slice on the busy lock while holding nothing, then retry the ordered acquisition immediately.
 
+Resolution: `hold_within_budget` in `src/vaultspec_rag/_store_writes.py` now releases everything it holds when a later lock is busy, waits one bounded slice on that busy lock holding nothing, and retries the ordered acquisition at once. Pause, cancel and the no-progress budget are still delivered before every attempt, and server mode still takes no collection locks. `src/vaultspec_rag/tests/test_reset_lock_acquisition.py` covers it on a real local store: a reset finishes inside its budget beside sixteen threads searching back to back, and a parked reset leaves the other lock free to a third thread. With the old pause-and-reprobe the first failed with the run's no-progress timeout; with the wait moved inside the held locks the second failed on its free-sample count; restored, both pass.
+
 ### reset-lock-set-snapshot | low | The set of collections to lock is listed before any lock is held
 
 `src/vaultspec_rag/store_collections.py:361-369` lists the owned collections before taking locks, and `:390-392` acts on that list. Not reachable today, because only the canonical name is recreated. Fix: list again under the lifecycle lock and refuse on a mismatch.

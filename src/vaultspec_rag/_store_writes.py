@@ -453,12 +453,16 @@ def hold_within_budget(
 ) -> Generator[None]:
     """Hold every lock in *locks*, in order, never parking while holding one.
 
-    Only the first lock is awaited, in bounded slices. Each later lock is only
-    tried: when one is busy, every lock taken so far is released and the
-    attempt starts over after a pause with nothing held. A waiter therefore
-    never holds an earlier lock - the store lifecycle lock above all - while
-    another holder keeps a later one, so its wait cannot stall anyone who
-    needs only the earlier lock.
+    The first lock is awaited in bounded slices while nothing else is held.
+    Each later lock is only tried: when one is busy, every lock taken so far
+    is released and the waiter then waits a bounded slice on that busy lock
+    while holding nothing, and starts the ordered attempt over the moment
+    that lock is free. A waiter therefore never holds an earlier lock - the
+    store lifecycle lock above all - while another holder keeps a later one,
+    so its wait cannot stall anyone who needs only the earlier lock. Waiting
+    on the busy lock itself, rather than re-probing it on a timer, means a
+    holder that releases and retakes it continuously cannot keep every probe
+    landing inside its hold.
 
     With a run's *policy* each slice first delivers a pending pause or cancel
     and re-reads the durable no-progress budget, so a holder that never lets
@@ -480,10 +484,9 @@ def hold_within_budget(
                 yield
                 return
         if taken:
-            if policy is None:
-                time.sleep(wait)
-            else:
-                policy.wait(wait)
+            busy = locks[taken]
+            if busy.acquire(timeout=wait):
+                busy.release()
 
 
 def free_bytes(storage_path: pathlib.Path) -> int | None:

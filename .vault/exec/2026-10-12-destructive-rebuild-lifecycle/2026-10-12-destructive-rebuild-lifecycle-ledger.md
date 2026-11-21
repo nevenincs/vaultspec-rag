@@ -5,7 +5,7 @@ tags:
 date: '2026-10-12'
 modified: '2026-11-21'
 body_schema: 'body-v2'
-body_hash: 'sha256:b84241d9be2ac09cfdf228bc9f2de36212e3f504381a374d7b9e8d67f382f313'
+body_hash: 'sha256:a1abd15b0f66468f87af235f8e45510c121787c91c922f214da0335bbd01d966'
 related:
   - "[[2026-10-12-destructive-rebuild-lifecycle-plan]]"
 ---
@@ -320,6 +320,8 @@ related:
 - `S06` `verify:` `pytest -m unit -n 8 src/vaultspec_rag` -> `pass`
 - `S06` `verify:` `pytest rebuild-lifecycle replacement reset-fence stale-evidence store-writes service-registry -m unit` -> `pass`
 - `S06` `verify:` `ruff check, format, ty, basedpyright` -> `pass`
+- `S06` `A` `src/vaultspec_rag/tests/test_reset_lock_acquisition.py`
+- `S06` `verify:` `pytest test_reset_lock_acquisition.py test_store_writes.py test_rebuild_lifecycle.py -m unit` -> `pass`
 
 ## Notes
 
