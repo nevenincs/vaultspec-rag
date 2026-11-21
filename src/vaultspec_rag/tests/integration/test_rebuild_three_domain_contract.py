@@ -33,12 +33,9 @@ from typing import TYPE_CHECKING, cast
 import pytest
 from typer.testing import CliRunner
 
-from ..._source_types import PublicSourceType
 from ...cli import app
-from ...indexer._rebuild_lifecycle import capture_reset_epoch
 from ...job_models import DesiredJobState
 from ...serviceclient._transport import _do_http_call, _try_http_set_job_desired_state
-from ...store_runtime import configured_backend_identity
 from .._preprocess_approval import approve_preprocess_policy
 from .._scaffold import make_workspace
 from ._service_search_diagnostics_support import (
@@ -74,7 +71,11 @@ runner = CliRunner()
 
 
 def _write_document_hook(root: Path) -> None:
-    """Route ``docs/*.blob`` to the document domain through an approved hook."""
+    """Route ``docs/*.blob`` to the document domain through a hook.
+
+    The hook still needs approving in the service's own status directory, which
+    only exists once the service context is entered; see ``_approve_hook``.
+    """
     extractor = root / "extract.py"
     extractor.write_text(
         textwrap.dedent("""
@@ -99,7 +100,6 @@ def _write_document_hook(root: Path) -> None:
         'target = "document"\nextractor_version = "1"\non_error = "fail"\n',
         encoding="utf-8",
     )
-    approve_preprocess_policy(root)
 
 
 def _write_corpus(root: Path, source: str, marker: str, count: int) -> None:
@@ -133,11 +133,23 @@ def _write_corpus(root: Path, source: str, marker: str, count: int) -> None:
 
 
 def _project(tmp_path: Path) -> Path:
-    root = make_workspace(tmp_path / "project")
+    root = tmp_path / "project"
+    root.mkdir()
+    make_workspace(root)
     _write_document_hook(root)
     for source in _SOURCES:
         _write_corpus(root, source, _OLD, 3)
     return root
+
+
+def _approve_hook(root: Path) -> None:
+    """Approve the document hook in the status directory the service reads.
+
+    Approval is stored per status directory, so approving before the service
+    context exists would record it where the service never looks, and the first
+    document build would stop at an unapproved policy.
+    """
+    approve_preprocess_policy(root)
 
 
 def _rebuild(port: int, root: Path, source: str) -> dict[str, object]:
@@ -165,6 +177,12 @@ def _job_state(port: int, job_id: str) -> str:
     job = exact_job_snapshot(port, job_id)
     assert job is not None, job_id
     return str(job.get("state"))
+
+
+def _rebuild_generation(port: int, job_id: str) -> str:
+    job = exact_job_snapshot(port, job_id)
+    assert job is not None, job_id
+    return str(job["rebuild_generation_id"])
 
 
 def _wait_for_state(port: int, job_id: str, wanted: str) -> None:
@@ -215,13 +233,21 @@ def _fact(body: dict[str, object]) -> dict[str, object]:
 def _wait_for_partial(
     port: int, token: str, root: Path, source: str, job_id: str
 ) -> dict[str, object]:
-    """Search until the running rebuild serves fresh content, and return it."""
+    """Search until the running rebuild serves fresh content, and return it.
+
+    Until the admitted job reaches its reset the old index is still the live
+    one, so old content is expected at first. The reset discards it before any
+    new point is written, so a result carrying fresh content must carry no old
+    content.
+    """
     deadline = time.monotonic() + 300.0
     while time.monotonic() < deadline:
         status, body = _search(port, token, root, source)
         results = body.get("results")
-        assert _OLD not in json.dumps(results), body
-        if status == 200 and results and _job_state(port, job_id) not in _TERMINAL:
+        served_fresh = _FRESH in json.dumps(results)
+        if served_fresh:
+            assert _OLD not in json.dumps(results), body
+        if status == 200 and served_fresh and _job_state(port, job_id) not in _TERMINAL:
             return body
         assert _job_state(port, job_id) not in _TERMINAL, (
             "the rebuild finished before any partial result was observed"
@@ -246,7 +272,9 @@ def _cli_search(port: int, root: Path, source: str) -> dict[str, object]:
         ],
     )
     assert result.exit_code == 0, result.output
-    return cast("dict[str, object]", json.loads(result.output))
+    envelope = cast("dict[str, object]", json.loads(result.output))
+    assert envelope["ok"] is True, envelope
+    return cast("dict[str, object]", envelope["data"])
 
 
 def _mcp_search(
@@ -272,6 +300,7 @@ def test_a_paused_rebuild_serves_its_partial_index_the_same_on_every_surface(
 ) -> None:
     root = _project(tmp_path)
     with _live_service_context(tmp_path) as (port, status_dir, _env):
+        _approve_hook(root)
         token = live_service_token(port)
         wait_for_succeeded_job(port, token, _rebuild_job(port, root, source))
 
@@ -313,6 +342,7 @@ def test_a_cancelled_rebuild_keeps_its_points_and_a_new_rebuild_resets_again(
 ) -> None:
     root = _project(tmp_path)
     with _live_service_context(tmp_path) as (port, _status_dir, _env):
+        _approve_hook(root)
         token = live_service_token(port)
         wait_for_succeeded_job(port, token, _rebuild_job(port, root, source))
 
@@ -321,9 +351,6 @@ def test_a_cancelled_rebuild_keeps_its_points_and_a_new_rebuild_resets_again(
         _wait_for_partial(port, token, root, source, job_id)
         _control(port, job_id, DesiredJobState.CANCELLED)
         _wait_for_state(port, job_id, "cancelled")
-        cancelled_epoch = capture_reset_epoch(
-            root, PublicSourceType(source), configured_backend_identity(root)
-        ).epoch
 
         status, kept = _search(port, token, root, source)
         assert status == 200, kept
@@ -332,12 +359,10 @@ def test_a_cancelled_rebuild_keeps_its_points_and_a_new_rebuild_resets_again(
         assert _fact(kept)["absence_authority"] == "non_authoritative"
 
         _write_corpus(root, source, _NEXT, 3)
-        wait_for_succeeded_job(port, token, _rebuild_job(port, root, source))
-        assert (
-            capture_reset_epoch(
-                root, PublicSourceType(source), configured_backend_identity(root)
-            ).epoch
-            > cancelled_epoch
+        next_job_id = _rebuild_job(port, root, source)
+        wait_for_succeeded_job(port, token, next_job_id)
+        assert _rebuild_generation(port, next_job_id) != _rebuild_generation(
+            port, job_id
         ), "a new rebuild continued the cancelled one instead of resetting"
         status, rebuilt = _search(port, token, root, source, marker=_NEXT)
         assert status == 200, rebuilt
@@ -354,6 +379,7 @@ def _percentile(samples: list[float], fraction: float) -> float:
 def test_searches_keep_answering_while_every_domain_rebuilds(tmp_path: Path) -> None:
     root = _project(tmp_path)
     with _live_service_context(tmp_path) as (port, _status_dir, _env):
+        _approve_hook(root)
         token = live_service_token(port)
         seeded = _rebuild(port, root, "combined")
         for domain in cast("dict[str, dict[str, object]]", seeded["domains"]).values():
@@ -373,18 +399,27 @@ def test_searches_keep_answering_while_every_domain_rebuilds(tmp_path: Path) -> 
         latencies: dict[str, list[float]] = {source: [] for source in _SOURCES}
         outcomes: list[tuple[str, int, str | None]] = []
         leaks: list[dict[str, object]] = []
+        reset_seen: set[str] = set()
         lock = threading.Lock()
 
         def searcher(source: str) -> None:
             while not stop.is_set():
+                with lock:
+                    reset_before = source in reset_seen
                 began = time.perf_counter()
                 status, body = _search(port, token, root, source)
-                elapsed = time.perf_counter() - began
-                error = cast("str | None", body.get("error"))
+                found = json.dumps(body.get("results"))
                 with lock:
-                    latencies[source].append(elapsed)
-                    outcomes.append((source, status, error))
-                    if _OLD in json.dumps(body.get("results")):
+                    latencies[source].append(time.perf_counter() - began)
+                    outcomes.append(
+                        (source, status, cast("str | None", body.get("error")))
+                    )
+                    if _FRESH in found:
+                        reset_seen.add(source)
+                    # Old content is live until the reset runs; once a search
+                    # has served fresh content, no search that began afterwards
+                    # may return old content.
+                    if _OLD in found and (reset_before or _FRESH in found):
                         leaks.append(body)
 
         threads = [
