@@ -32,7 +32,7 @@ from .conftest import _live_service_context
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.subprocess_gpu]
 
 _OLD = "obsoletemarkerkappa"
 _FRESH = "freshmarkerzeta"
