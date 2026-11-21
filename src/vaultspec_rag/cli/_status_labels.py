@@ -445,11 +445,6 @@ def _job_age_label(finished_at: object, *, now: float) -> str:
     return f", {_format_status_duration(elapsed)} ago"
 
 
-def _error_kind(record: dict[str, object]) -> str:
-    kind = record.get("error_kind")
-    return kind if isinstance(kind, str) and kind else ""
-
-
 def _failed_job_identity(
     record: dict[str, object],
     *,
@@ -464,7 +459,7 @@ def _failed_job_identity(
     job_id = record.get("id")
     if not isinstance(job_id, str) or not job_id.strip():
         return ""
-    kind = _error_kind(record)
+    kind = text(record.get("error_kind"))
     kind_text = f" ({kind})" if with_kind and kind else ""
     age = _job_age_label(record.get("finished_at"), now=now)
     return f"job {_short_job_id(job_id.strip())}{kind_text}{age}"
@@ -507,7 +502,7 @@ def _failed_job_finding(
         return None
     record = degrading[0]
     job_id = text(record.get("id")).strip()
-    kind = _error_kind(record)
+    kind = text(record.get("error_kind"))
     # The service serves every project, so a rebuild is named only with the
     # project it belongs to; run anywhere else it would rebuild the wrong one.
     project_root = record.get("project_root")
@@ -761,7 +756,7 @@ def _domain_cause(record: dict[str, object]) -> str:
         else "an index job"
     )
     phrase, _ = _DOMAIN_REASONS.get(reason, (f"reported {reason}", ""))
-    kind = _error_kind(record)
+    kind = text(record.get("error_kind"))
     return f"{domain} {phrase}{f': {kind}' if kind else ''}"
 
 
@@ -784,7 +779,7 @@ def _rebuild_remedy(
     """
     source = record.get("source")
     if (
-        _error_kind(record) == JobErrorKind.FULL_REINDEX_REQUIRED.value
+        text(record.get("error_kind")) == JobErrorKind.FULL_REINDEX_REQUIRED.value
         and isinstance(source, str)
         and source in _REBUILDABLE_SOURCES
     ):

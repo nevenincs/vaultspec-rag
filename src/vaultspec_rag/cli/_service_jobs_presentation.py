@@ -12,7 +12,7 @@ import typer
 import vaultspec_rag.cli as _cli
 
 from .._job_errors import STALL_THRESHOLD_SECONDS, classify_error_text, remediation
-from .._job_values import count, measurement
+from .._job_values import count, measurement, text
 from .._operator_commands import server_status_command
 from ._cli_format import (
     _counted_unit,
@@ -137,8 +137,7 @@ def job_waiting_on(job: dict[str, object]) -> str | None:
     slot, ``writer`` for one queued behind the project writer. A payload
     without ``waiting_on`` is a job that is not waiting.
     """
-    value = job.get("waiting_on")
-    return value if isinstance(value, str) and value else None
+    return text(job.get("waiting_on")) or None
 
 
 def phase_label(job: dict[str, object]) -> str:
