@@ -325,6 +325,10 @@ async def _until(predicate: Callable[[], bool], what: str) -> None:
         await asyncio.sleep(0.01)
 
 
+class _AttemptCrashError(RuntimeError):
+    """The attempt stops without delivering any control, as a dying process does."""
+
+
 @dataclass
 class _RebuildHarness:
     """A real job manager running a vault rebuild over real local storage.
@@ -341,6 +345,7 @@ class _RebuildHarness:
     unit_recorded: threading.Event = field(default_factory=threading.Event)
     release: threading.Event = field(default_factory=threading.Event)
     attempts: list[tuple[str, int, bool]] = field(default_factory=list)
+    crash_next: bool = False
 
     def runner(self, context: JobAttemptContext) -> JobExecutionResult:
         return _run_claimed_rebuild(context, partial(self._attempt, context))
@@ -397,6 +402,9 @@ class _RebuildHarness:
                 )
                 self.unit_recorded.set()
                 assert self.release.wait(_WAIT_SECONDS), "control never arrived"
+                if self.crash_next:
+                    self.crash_next = False
+                    raise _AttemptCrashError("the attempt died at its unit checkpoint")
             checkpoint.run_policy.checkpoint("durable unit boundary")
         return JobExecutionResult(summary="rebuilt")
 
@@ -739,4 +747,48 @@ async def test_a_model_change_during_a_pause_never_mixes_epochs(
     assert finished.state is JobState.SUCCEEDED
     assert finished.rebuild_generation_id == fresh_generation
     assert (state.epoch, state.generation_id) == (2, fresh_generation)
+    assert harness.points() == 1
+
+
+async def test_a_crash_at_a_unit_checkpoint_keeps_the_confirmed_unit(
+    harness: _RebuildHarness,
+) -> None:
+    """A crash after a unit is confirmed loses nothing; the retry resumes it.
+
+    The attempt dies at the durable unit boundary, after its replacement unit
+    was stored and recorded. The failed job keeps the generation it recorded,
+    and its linked retry continues that generation over the same reset epoch:
+    the recorded unit is found committed and is not rewritten, and the
+    replacement point survives.
+
+    Mutation: making the retry claim nothing (starting a new rebuild) reset
+    the source again and failed the ``resumed`` assertion; restoring the
+    carried generation passed.
+    """
+    job_id = harness.create()
+    harness.crash_next = True
+    harness.start(job_id)
+    await _until(harness.unit_recorded.is_set, "the first durable unit")
+    harness.release.set()
+    crashed = await harness.finish(job_id, JobState.FAILED)
+
+    generation_id, epoch, resumed = harness.attempts[0]
+    assert (epoch, resumed) == (1, False)
+    assert crashed.rebuild_generation_id == generation_id
+    assert harness.points() == 1
+
+    retried = harness.manager.retry(job_id)
+    assert retried.job is not None
+    harness.start(retried.job.id)
+    # A resumed attempt finds its unit committed and never waits; an attempt
+    # that started over would wait here for the release.
+    harness.release.set()
+    finished = await harness.finish(retried.job.id, JobState.SUCCEEDED)
+
+    assert harness.attempts[1] == (generation_id, 1, True), "resumed"
+    assert finished.rebuild_generation_id == generation_id
+    state = capture_reset_epoch(
+        harness.root, PublicSourceType.VAULT, harness.store.backend_identity
+    )
+    assert (state.epoch, state.generation_id) == (1, generation_id)
     assert harness.points() == 1
