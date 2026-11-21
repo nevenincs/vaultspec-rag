@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import pytest
 
-from ..indexer import _run_ledger_models
 from ..indexer._content_policy import AdmissionDisposition, AdmissionReason, ContentKind
 from ..indexer._file_state import FileState, FileStateKind
 from ..indexer._run_ledger_models import (
@@ -18,6 +16,7 @@ from ..indexer._run_ledger_models import (
     ledger_connection,
 )
 from ..indexer._run_ledger_runtime import RunLedger
+from ._ledger_connection_watch import measure_ledger_connections
 from ._run_ledger_test_support import (
     ledger_test_digest,
     ledger_test_signature,
@@ -25,40 +24,9 @@ from ._run_ledger_test_support import (
 )
 
 if TYPE_CHECKING:
-    import sqlite3
-    from collections.abc import Generator
     from pathlib import Path
 
 pytestmark = pytest.mark.unit
-
-
-@dataclass(slots=True)
-class _WriteCost:
-    changed_rows: int = 0
-    connections: int = 0
-    statements: list[str] = field(default_factory=list)
-
-
-@contextmanager
-def _measured_writes(monkeypatch: pytest.MonkeyPatch) -> Generator[_WriteCost]:
-    """Count actual transaction changes through the canonical connection owner."""
-    cost = _WriteCost()
-    original = _run_ledger_models.ledger_connection
-
-    @contextmanager
-    def measured(path: Path) -> Generator[sqlite3.Connection]:
-        with original(path) as connection:
-            cost.connections += 1
-            before = connection.total_changes
-            connection.set_trace_callback(cost.statements.append)
-            try:
-                yield connection
-            finally:
-                cost.changed_rows += connection.total_changes - before
-
-    with monkeypatch.context() as probe:
-        probe.setattr(_run_ledger_models, "ledger_connection", measured)
-        yield cost
 
 
 def _seed_indexed_path(ledger: RunLedger, generation_id: str) -> FileState:
@@ -70,9 +38,7 @@ def _seed_indexed_path(ledger: RunLedger, generation_id: str) -> FileState:
     return state
 
 
-def test_unchanged_indexed_replay_changes_no_rows(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_unchanged_indexed_replay_changes_no_rows(tmp_path: Path) -> None:
     """Omitting the production upsert WHERE fails the zero-change assertion.
 
     A fresh process with the predicate restored passes; mutation changes only
@@ -91,7 +57,7 @@ def test_unchanged_indexed_replay_changes_no_rows(
         ledger.record_file_state(generation.generation_id, state)
         states.append(state)
 
-    with _measured_writes(monkeypatch) as cost:
+    with measure_ledger_connections(ledger.path) as cost:
         for state in states:
             ledger.record_file_state(generation.generation_id, state)
 
@@ -104,7 +70,7 @@ def test_unchanged_indexed_replay_changes_no_rows(
 
 
 def test_processing_outcomes_insert_and_update_nullable_evidence(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     ledger = RunLedger(tmp_path / "runs.sqlite3")
     generation = ledger.start_generation(ledger_test_signature(tmp_path))
@@ -120,20 +86,20 @@ def test_processing_outcomes_insert_and_update_nullable_evidence(
         failed.rel_path, FileStateKind.CHUNK_FAILED, ContentKind.CODE, "chunk failed"
     )
     for state in (failed, hashed, changed_detail, failed, chunk_failed):
-        with _measured_writes(monkeypatch) as cost:
+        with measure_ledger_connections(ledger.path) as cost:
             ledger.record_file_state(generation.generation_id, state)
         assert cost.changed_rows == 1
         assert ledger.file_states_for_paths(
             generation.generation_id, (state.rel_path,)
         ) == {state.rel_path: state}
 
-    with _measured_writes(monkeypatch) as cost:
+    with measure_ledger_connections(ledger.path) as cost:
         ledger.record_file_state(generation.generation_id, chunk_failed)
     assert cost.changed_rows == 0
 
 
 def test_reclassification_updates_rejection_reason_and_nullable_kind(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     ledger = RunLedger(tmp_path / "runs.sqlite3")
     generation = ledger.start_generation(ledger_test_signature(tmp_path))
@@ -144,7 +110,7 @@ def test_reclassification_updates_rejection_reason_and_nullable_kind(
     unrouted = replace(ignored, admission_reason=AdmissionReason.NOT_ROUTED)
     routed = replace(unrouted, kind=ContentKind.CODE)
     for state in (ignored, unrouted, routed, unrouted):
-        with _measured_writes(monkeypatch) as cost:
+        with measure_ledger_connections(ledger.path) as cost:
             ledger.record_file_state(generation.generation_id, state)
         assert cost.changed_rows == 1
         assert ledger.file_states_for_paths(
@@ -152,9 +118,7 @@ def test_reclassification_updates_rejection_reason_and_nullable_kind(
         ) == {state.rel_path: state}
 
 
-def test_confirmed_indexing_replaces_a_failure_outcome(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_confirmed_indexing_replaces_a_failure_outcome(tmp_path: Path) -> None:
     ledger = RunLedger(tmp_path / "runs.sqlite3")
     generation = ledger.start_generation(ledger_test_signature(tmp_path))
     indexed = _seed_indexed_path(ledger, generation.generation_id)
@@ -166,7 +130,7 @@ def test_confirmed_indexing_replaces_a_failure_outcome(
         content_hash=indexed.content_hash,
     )
     ledger.record_file_state(generation.generation_id, failed)
-    with _measured_writes(monkeypatch) as cost:
+    with measure_ledger_connections(ledger.path) as cost:
         ledger.record_file_state(generation.generation_id, indexed)
     assert cost.changed_rows == 1
     assert ledger.file_states_for_paths(
@@ -174,9 +138,7 @@ def test_confirmed_indexing_replaces_a_failure_outcome(
     ) == {indexed.rel_path: indexed}
 
 
-def test_identical_outcome_promotes_inherited_evidence_owner(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_identical_outcome_promotes_inherited_evidence_owner(tmp_path: Path) -> None:
     ledger = RunLedger(tmp_path / "runs.sqlite3")
     signature = ledger_test_signature(tmp_path)
     parent = ledger.start_generation(signature)
@@ -193,7 +155,7 @@ def test_identical_outcome_promotes_inherited_evidence_owner(
         )
         connection.commit()
 
-    with _measured_writes(monkeypatch) as cost:
+    with measure_ledger_connections(ledger.path) as cost:
         ledger.record_file_state(current.generation_id, state)
     assert cost.changed_rows == 1
     with ledger_connection(ledger.path) as connection:
@@ -207,9 +169,7 @@ def test_identical_outcome_promotes_inherited_evidence_owner(
         )
 
 
-def test_identical_state_still_clears_its_tombstone(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_identical_state_still_clears_its_tombstone(tmp_path: Path) -> None:
     ledger = RunLedger(tmp_path / "runs.sqlite3")
     generation = ledger.start_generation(ledger_test_signature(tmp_path))
     state = _seed_indexed_path(ledger, generation.generation_id)
@@ -220,7 +180,7 @@ def test_identical_state_still_clears_its_tombstone(
         )
         connection.commit()
 
-    with _measured_writes(monkeypatch) as cost:
+    with measure_ledger_connections(ledger.path) as cost:
         ledger.record_file_state(generation.generation_id, state)
     assert cost.changed_rows == 1  # Only the tombstone is deleted.
     with ledger_connection(ledger.path) as connection:
@@ -236,7 +196,7 @@ def test_identical_state_still_clears_its_tombstone(
 
 @pytest.mark.parametrize("invalid", ["completion", "hash", "finalizing", "terminal"])
 def test_identical_state_does_not_bypass_authority_validation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid: str
+    tmp_path: Path, invalid: str
 ) -> None:
     ledger = RunLedger(tmp_path / "runs.sqlite3")
     generation = ledger.start_generation(ledger_test_signature(tmp_path))
@@ -268,7 +228,7 @@ def test_identical_state_does_not_bypass_authority_validation(
         message = "terminal generations are immutable"
 
     with (
-        _measured_writes(monkeypatch) as cost,
+        measure_ledger_connections(ledger.path) as cost,
         pytest.raises(RunLedgerStateError, match=f"^{message}$"),
     ):
         ledger.record_file_state(generation.generation_id, state)

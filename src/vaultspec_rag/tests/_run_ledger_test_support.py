@@ -42,6 +42,7 @@ from ..indexer._run_ledger_schema import (
     REQUIRED_INDEXES,
 )
 from ._child_signal import PROCESS_TIMEOUT_SECONDS
+from ._ledger_connection_watch import watch_ledger_connections
 from ._sqlite_state import assert_sqlite_unchanged, sqlite_contents
 
 if TYPE_CHECKING:
@@ -357,35 +358,37 @@ def ledger_test_publish_generation_with_proof(
 
 def ledger_test_open_concurrent_fresh_ledgers(
     path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[list[RunLedger], list[BaseException], tuple[threading.Thread, ...]]:
-    create_base_tables = RunLedger._create_base_tables
-    require_schema = RunLedger._require_current_or_empty_schema
+    """Open one fresh ledger twice at once, the first held mid-creation.
+
+    The first opener is held on its connection, from inside SQLite's own
+    statement trace, at the first statement after its base tables exist: tables
+    created in its open write transaction, the version not yet set, nothing
+    committed. The second opener is released into that state, and the first
+    resumes once the second has begun reading the schema version. Every table
+    creation, lock and read is the production one.
+    """
     first_base_created = threading.Event()
     release_first_creator = threading.Event()
     second_preflight_entered = threading.Event()
-    first_call = True
-    call_lock = threading.Lock()
     ledgers: list[RunLedger] = []
     errors: list[BaseException] = []
 
-    def blocking_create_base_tables(connection: sqlite3.Connection) -> None:
-        nonlocal first_call
-        create_base_tables(connection)
-        with call_lock:
-            should_block = first_call
-            first_call = False
-        if should_block:
+    def hold_after_base_tables(statement: str) -> None:
+        if "CREATE TABLE IF NOT EXISTS publication_proofs" in statement:
             first_base_created.set()
-            assert release_first_creator.wait(PROCESS_TIMEOUT_SECONDS)
+            release_first_creator.wait(PROCESS_TIMEOUT_SECONDS)
 
-    def tracked_require_schema(
-        self: RunLedger,
-        connection: sqlite3.Connection,
-    ) -> None:
-        if threading.current_thread().name == "second-schema-opener":
+    def note_version_read(statement: str) -> None:
+        if "user_version" in statement:
             second_preflight_entered.set()
-        require_schema(self, connection)
+
+    def on_connection(connection: sqlite3.Connection, read_only: bool) -> None:
+        opener = threading.current_thread().name
+        if opener == "first-schema-opener" and not read_only:
+            connection.set_trace_callback(hold_after_base_tables)
+        elif opener == "second-schema-opener" and read_only:
+            connection.set_trace_callback(note_version_read)
 
     def open_ledger() -> None:
         try:
@@ -393,15 +396,7 @@ def ledger_test_open_concurrent_fresh_ledgers(
         except BaseException as exc:  # pragma: no cover - asserted below
             errors.append(exc)
 
-    with monkeypatch.context() as patch:
-        patch.setattr(
-            RunLedger,
-            "_create_base_tables",
-            staticmethod(blocking_create_base_tables),
-        )
-        patch.setattr(
-            RunLedger, "_require_current_or_empty_schema", tracked_require_schema
-        )
+    with watch_ledger_connections(path, on_connection):
         first = threading.Thread(target=open_ledger, name="first-schema-opener")
         second = threading.Thread(target=open_ledger, name="second-schema-opener")
         first.start()

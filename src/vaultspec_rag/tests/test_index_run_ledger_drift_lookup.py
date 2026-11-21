@@ -7,15 +7,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ..indexer import _run_ledger_files, _run_ledger_models
 from ..indexer._run_ledger_models import FETCH_BATCH, CommitUnit, CommitUnitKind
 from ..indexer._run_ledger_runtime import RunLedger
+from ._ledger_connection_watch import measure_ledger_connections
 from ._run_ledger_test_support import (
     ledger_test_digest,
     ledger_test_signature,
     ledger_test_unit,
 )
-from .test_publication_scaling import _measured
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -78,7 +77,7 @@ def test_superseded_points_preserve_generation_digest_kind_and_order(
 
 
 def test_superseded_point_lookup_work_is_independent_of_other_paths(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     """The production lookup must seek the path regardless of unrelated rows.
 
@@ -94,18 +93,12 @@ def test_superseded_point_lookup_work_is_independent_of_other_paths(
     ledger.record_storage_confirmed_units(generation.generation_id, units)
     _seed_unrelated_paths(ledger, generation.generation_id, start=0, count=8)
 
-    with monkeypatch.context() as probe, _measured(probe) as small_cost:
-        probe.setattr(
-            _run_ledger_files, "ledger_connection", _run_ledger_models.ledger_connection
-        )
+    with measure_ledger_connections(ledger.path) as small_cost:
         small = ledger.superseded_point_ids(
             generation.generation_id, path, source_digest=digest
         )
     _seed_unrelated_paths(ledger, generation.generation_id, start=8, count=2048)
-    with monkeypatch.context() as probe, _measured(probe) as large_cost:
-        probe.setattr(
-            _run_ledger_files, "ledger_connection", _run_ledger_models.ledger_connection
-        )
+    with measure_ledger_connections(ledger.path) as large_cost:
         large = ledger.superseded_point_ids(
             generation.generation_id, path, source_digest=digest
         )

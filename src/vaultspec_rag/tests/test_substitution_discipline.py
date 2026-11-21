@@ -297,18 +297,6 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "fetch the server runs the real provisioner against a stand-in "
         "release served from a loopback source",
     ),
-    "test_publication_scaling.py": (
-        1,
-        "observation, not substitution: the replacement opens the real ledger "
-        "connection and only attaches a trace callback and a progress handler "
-        "to it, so every statement counted is one production actually issued "
-        "and every instruction counted is one it actually retired. Those "
-        "counts are the assertions - they are what prove a scoped publication "
-        "examines the same number of rows whatever the parent's size - and "
-        "SQLite reports both to connection-level callbacks or not at all. One "
-        "site, not two: both seams are patched from a single helper, because "
-        "patching either alone leaves the other untraced",
-    ),
     "test_quiesce_abort_recovery.py": (
         4,
         "wraps the quiesce controller's abort_pause, and the atomic-write "
@@ -369,13 +357,8 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "them and no real device yields one on demand",
     ),
     "test_hardware_anchor.py": (
-        3,
-        "the second and third sites wrap the real native ACL write so each real "
-        "write is counted before it is applied, and supply the ACL API handles "
-        "the wrapper is bound to; the write itself still happens. The count is "
-        "the assertion, because Windows can coalesce duplicate entries and the "
-        "resulting ACL alone cannot show a repeat write. The first forces the "
-        "machine anchor directory to be unresolvable, to prove the "
+        1,
+        "forces the machine anchor directory to be unresolvable, to prove the "
         "load window then degrades rather than refusing every load. A host "
         "with no directory every account shares does exist, but it cannot be "
         "staged on a runner: the suite cannot remove /dev/shm, /Users/Shared "
@@ -507,44 +490,14 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "verb, including the whole render and envelope path the assertions "
         "read",
     ),
-    "test_cli_search.py": (
-        1,
-        "the search display renders through one console the CLI builds at import "
-        "from the real stdout, so the rendered text can only be read by handing "
-        "the unchanged display function a console that records into a buffer; "
-        "the substitute is the output sink and no behaviour",
-    ),
-    "test_index_run_ledger_drift_lookup.py": (
-        2,
-        "the instruction count of the superseded-point lookup is the assertion, "
-        "and SQLite reports it only to a progress handler on the connection, so "
-        "the ledger's connection opener is wrapped by the shared measuring "
-        "helper, which opens the real connection and only attaches the handler. "
-        "The two sites point the file-state module's own reference to the opener "
-        "at that measured one, because the module imported the name when it "
-        "loaded and would otherwise open unmeasured connections",
-    ),
-    "test_index_run_ledger_file_state_writes.py": (
-        1,
-        "the number of rows a replay changes is the assertion, and it is "
-        "observable only on the connection the ledger opens, so the opener is "
-        "wrapped to open the real connection and record its total changes and "
-        "statements; every write counted is one production issued",
-    ),
-    "test_index_run_ledger_schema.py": (
-        2,
-        "one site wraps the schema preflight to record the version it saw and "
-        "calls the real check, because the file must be seen at its old "
-        "version without being migrated; the other makes schema creation raise "
-        "after the real publication tables are created, because an interruption "
-        "at that exact statement cannot be scheduled against a real process",
-    ),
     "test_watcher_start_contract.py": (
         1,
         "makes path resolution raise an operating-system error inside the root "
-        "identity helper, because a root the filesystem refuses to resolve "
-        "cannot be staged portably; the HTTP route, its error mapping and the "
-        "unchanged watcher lifecycle state are real",
+        "identity helper. Resolution that is not strict swallows every "
+        "filesystem error on Windows, so no root string reaches that branch "
+        "there, and on POSIX only a removed working directory does, which a "
+        "suite sharing one process-wide directory cannot stage; the HTTP route, "
+        "its error mapping and the unchanged watcher lifecycle state are real",
     ),
     "test_install_torch_config.py": (
         1,
@@ -748,15 +701,8 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "the real HTTP route",
     ),
     "_run_ledger_test_support.py": (
-        3,
-        "two sites replace the ledger's base-table creation with a version that "
-        "calls the real creation and then holds the first opener there, and its "
-        "schema preflight with one that calls the real preflight and signals "
-        "when the second opener reaches it, so two openers racing a fresh file "
-        "can be held at the instant one has created tables and the other has "
-        "not yet read the schema version; a live race cannot be scheduled to "
-        "land there. The other: a peer's schema commit must land between two "
-        "particular reads of one "
+        1,
+        "a peer's schema commit must land between two particular reads of one "
         "opener to prove those reads share a snapshot; the read helper is wrapped "
         "only to run the real peer commit at that point, and it still returns the "
         "real row, so every read, lock and refusal stays real",

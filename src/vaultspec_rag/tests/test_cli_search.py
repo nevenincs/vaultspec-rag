@@ -892,14 +892,10 @@ class TestSearchResultRendering:
     ) -> str:
         from io import StringIO
 
-        from rich.console import Console
-
+        # The CLI console writes to whatever ``sys.stdout`` is at print time,
+        # so redirecting the real stream reads the real rendering.
         out = StringIO()
-        with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(
-                "vaultspec_rag.cli.console",
-                Console(file=out, force_terminal=False, width=400),
-            )
+        with contextlib.redirect_stdout(out):
             _display_search_results(
                 results,
                 "code",
