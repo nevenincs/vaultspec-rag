@@ -503,41 +503,12 @@ def search_vault(request: VaultSearchRequest) -> list[SearchResult]:
 
     Returns:
         Ranked list of SearchResult objects.
-    """
-    from .search import SearchFilterOptions, validate_search_filters
 
-    validate_search_filters(
-        "vault",
-        SearchFilterOptions(
-            doc_type=request.doc_type,
-            feature=request.feature,
-            date=request.date,
-            tag=request.tag,
-            intent=request.intent,
-        ),
-    )
-    root = _resolve(request.root_dir)
-    registry = get_registry()
-    # An empty or unbuilt vault index needs no query encoding: short-circuit
-    # to an empty result without loading the GPU model (so an empty search is
-    # cheap and works on a CPU-only host).
-    if registry.vault_doc_count(root) == 0:
-        return []
-    results: list[SearchResult] | None = None
-    with registry.search_lease(root) as lease:
-        results = lease.searcher.search_vault(
-            request.query,
-            top_k=request.top_k,
-            doc_type=request.doc_type,
-            feature=request.feature,
-            date=request.date,
-            tag=request.tag,
-            intent=request.intent,
-            like_ids=request.like_ids,
-            unlike_ids=request.unlike_ids,
-        )
-    if results is None:
-        raise RuntimeError("vault search lease ended without a result")
+    Raises:
+        IndexTransitionError: the vault index was being reset for a rebuild
+            while this search read it.
+    """
+    results, _timings = search_vault_timed(request)
     return results
 
 
@@ -559,8 +530,23 @@ def search_vault_timed(
             intent=request.intent,
         ),
     )
+    from ._publication_state import read_current_epoch
+
     root = _resolve(request.root_dir)
     active_registry = registry if registry is not None else get_registry()
+    return read_current_epoch(
+        root,
+        PublicSourceType.VAULT,
+        lambda: _search_vault_storage(request, root, active_registry),
+    )
+
+
+def _search_vault_storage(
+    request: VaultSearchRequest,
+    root: pathlib.Path,
+    active_registry: ServiceRegistry,
+) -> tuple[list[SearchResult], dict[str, float]]:
+    """Count and search the vault collection as it stands now."""
     # Empty/unbuilt index: return an empty result without loading the model.
     indexed_count = active_registry.vault_doc_count(root)
     if indexed_count == 0:
@@ -602,53 +588,12 @@ def search_codebase(request: CodebaseSearchRequest) -> list[SearchResult]:
 
     Returns:
         Ranked list of SearchResult objects.
-    """
-    from .search import SearchFilterOptions, validate_search_filters
 
-    validate_search_filters(
-        "code",
-        SearchFilterOptions(
-            language=request.language,
-            path=request.path,
-            node_type=request.node_type,
-            function_name=request.function_name,
-            class_name=request.class_name,
-            include_paths=request.include_paths,
-            exclude_paths=request.exclude_paths,
-            dedup_locales=request.dedup_locales,
-            prefer=request.prefer,
-            exclude_domains=request.exclude_domains,
-            only_domains=request.only_domains,
-            include_domains=request.include_domains,
-        ),
-    )
-    root = _resolve(request.root_dir)
-    registry = get_registry()
-    # Empty/unbuilt code index: return an empty result without loading the model.
-    if registry.code_chunk_count(root) == 0:
-        return []
-    results: list[SearchResult] | None = None
-    with registry.search_lease(root) as lease:
-        results = lease.searcher.search_codebase(
-            request.query,
-            top_k=request.top_k,
-            language=request.language,
-            path=request.path,
-            node_type=request.node_type,
-            function_name=request.function_name,
-            class_name=request.class_name,
-            include_paths=request.include_paths,
-            exclude_paths=request.exclude_paths,
-            dedup_locales=request.dedup_locales,
-            prefer=request.prefer,
-            exclude_domains=request.exclude_domains,
-            only_domains=request.only_domains,
-            include_domains=request.include_domains,
-            like_ids=request.like_ids,
-            unlike_ids=request.unlike_ids,
-        )
-    if results is None:
-        raise RuntimeError("code search lease ended without a result")
+    Raises:
+        IndexTransitionError: the code index was being reset for a rebuild
+            while this search read it.
+    """
+    results, _timings = search_codebase_timed(request)
     return results
 
 
@@ -703,8 +648,23 @@ def search_codebase_timed(
             include_domains=request.include_domains,
         ),
     )
+    from ._publication_state import read_current_epoch
+
     root = _resolve(request.root_dir)
     active_registry = registry if registry is not None else get_registry()
+    return read_current_epoch(
+        root,
+        PublicSourceType.CODE,
+        lambda: _search_code_storage(request, root, active_registry),
+    )
+
+
+def _search_code_storage(
+    request: CodebaseSearchRequest,
+    root: pathlib.Path,
+    active_registry: ServiceRegistry,
+) -> tuple[list[SearchResult], dict[str, float]]:
+    """Count and search the code collection as it stands now."""
     from ._index_breadth import acquire_code_breadth_snapshot_if_proven
 
     # A read, so an unreadable proof is an absence rather than a refusal: a

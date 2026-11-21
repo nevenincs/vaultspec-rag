@@ -34,7 +34,7 @@ __all__ = [
     "SearchStatusCode",
     "classify_qdrant_collection_disappearance",
     "classify_search_response",
-    "storage_conformance_refusal_fact",
+    "typed_search_refusal_fact",
 ]
 
 # One declaration of the convergence-mode vocabulary; the transport owns it.
@@ -134,31 +134,42 @@ class SearchAvailabilityContext:
     canonical_evidence: CanonicalSearchEvidence = CanonicalSearchEvidence()
 
 
-def storage_conformance_refusal_fact(
+def typed_search_refusal_fact(
     exc: Exception,
     source_fact: SearchSourceFact,
     *,
     root: Path,
     port: int | None = None,
 ) -> SearchSourceFact | None:
-    """Replace preflight readiness only for a typed compatibility refusal.
+    """Replace preflight readiness only for a typed storage refusal.
 
-    Storage compatibility refusals require an explicit rebuild. Other failures
-    remain under their existing error policy rather than gaining rebuild authority.
-    Captured publication identities and bounded evidence remain diagnostic facts.
+    A storage compatibility refusal requires an explicit rebuild and is not
+    retryable. A reset in progress, or one that crossed the read, makes the
+    source briefly unreadable while its rebuild runs and is retryable. Other
+    failures remain under their existing error policy rather than gaining
+    either meaning. Captured publication identities and bounded evidence
+    remain diagnostic facts.
     """
+    from .._publication_state import IndexTransitionError
     from ..store_runtime import StorageGeometryError
 
-    if not isinstance(exc, StorageGeometryError):
+    if isinstance(exc, StorageGeometryError):
+        reason = SearchReasonCode.REBUILD_REQUIRED
+        freshness = SearchFreshness.REBUILD_REQUIRED
+        retryable = False
+    elif isinstance(exc, IndexTransitionError):
+        reason = SearchReasonCode.INDEX_TRANSITION
+        freshness = SearchFreshness.UPDATING
+        retryable = True
+    else:
         return None
-    reason = SearchReasonCode.REBUILD_REQUIRED
     return replace(
         source_fact,
         availability=SearchAvailability.UNAVAILABLE,
-        freshness=SearchFreshness.REBUILD_REQUIRED,
+        freshness=freshness,
         absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
         reason_code=reason,
-        retryable=False,
+        retryable=retryable,
         remediation=reason.remediation(source_fact.source, port=port, target=str(root)),
     )
 

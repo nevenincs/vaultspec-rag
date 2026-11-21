@@ -369,6 +369,7 @@ def _activity_outcome(result: dict[str, object], status_code: int) -> str:
     error = result.get("error")
     if error in (
         SearchReasonCode.INDEX_UNAVAILABLE,
+        SearchReasonCode.INDEX_TRANSITION,
         SearchReasonCode.QUIESCE_ADMISSION_CLOSED,
     ):
         return "unavailable"

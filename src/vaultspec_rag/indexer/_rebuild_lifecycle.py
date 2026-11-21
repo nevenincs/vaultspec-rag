@@ -89,6 +89,17 @@ class ResetEpochFence:
     epoch: int
     phase: SourceResetPhase | None
 
+    @property
+    def serving(self) -> bool:
+        """Whether the source's storage held one epoch's content at capture.
+
+        A source never reset, or whose latest reset completed, holds content
+        written under that epoch only. Between intent and completion its
+        storage is being discarded, so a read there can observe old content
+        or a partial deletion of it.
+        """
+        return self.phase is None or self.phase is SourceResetPhase.COMPLETE
+
     def validate(self) -> None:
         """Raise when the source was reset after this fence was captured.
 

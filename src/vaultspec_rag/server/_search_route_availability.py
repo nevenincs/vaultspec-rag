@@ -15,10 +15,12 @@ from .._operator_commands import (
     server_jobs_command,
     server_status_command,
 )
+from .._publication_state import IndexTransitionError
 from .._search_state import (
     AbsenceAuthority,
     FreshnessWaitPolicy,
     SearchEmptyReason,
+    SearchIndexStatus,
     SearchReasonCode,
     SearchSourceFact,
     search_readiness_block,
@@ -36,7 +38,7 @@ from ._search_availability import (
     SearchResponseClassification,
     classify_qdrant_collection_disappearance,
     classify_search_response,
-    storage_conformance_refusal_fact,
+    typed_search_refusal_fact,
 )
 
 if TYPE_CHECKING:
@@ -450,37 +452,53 @@ async def run_search_with_availability(
         if classification is None:
             raise
         return classification.response, classification
-    except StorageGeometryError as exc:
-        from ._routes import canonical_job_snapshot
+    except (StorageGeometryError, IndexTransitionError) as exc:
+        return _typed_storage_refusal(exc, facts)
 
-        # Retrieval refused before a live count was established. Neither zero
-        # nor a missing collection follows from incompatible vector identity.
-        index_state: dict[str, object] = {
-            "source": facts.source,
-            "requested_target_root": str(facts.root),
-            "status": "unavailable",
-        }
-        classification = classify_search_response(
-            {},
-            facts.to_context(
-                after_snapshot=canonical_job_snapshot(), index_state=index_state
-            ),
-        )
-        refusal_fact = storage_conformance_refusal_fact(
-            exc, classification.source_fact, root=facts.root, port=facts.port
-        )
-        assert refusal_fact is not None
-        source_fact = replace(refusal_fact, wait_policy=facts.wait_policy)
-        response = source_fact.failure_response(
-            request_id=facts.request_id, index_state=index_state
-        )
-        response["message"] = f"{response['message']}: {exc.detail}"
-        return response, replace(
-            classification,
-            response=response,
-            status_code=409,
-            source_fact=source_fact,
-        )
+
+def _typed_storage_refusal(
+    exc: StorageGeometryError | IndexTransitionError,
+    facts: SearchAvailabilityRequestFacts,
+) -> tuple[dict[str, object], SearchResponseClassification]:
+    """Answer a retrieval the storage refused before it produced a count.
+
+    Neither an incompatible vector identity nor a reset in progress implies
+    zero items or a missing collection, so the index state names no count.
+    """
+    from ._routes import canonical_job_snapshot
+
+    transition = isinstance(exc, IndexTransitionError)
+    index_state: dict[str, object] = {
+        "source": facts.source,
+        "requested_target_root": str(facts.root),
+        "status": (
+            SearchIndexStatus.REBUILDING
+            if transition
+            else SearchIndexStatus.UNAVAILABLE
+        ).value,
+    }
+    classification = classify_search_response(
+        {},
+        facts.to_context(
+            after_snapshot=canonical_job_snapshot(), index_state=index_state
+        ),
+    )
+    refusal_fact = typed_search_refusal_fact(
+        exc, classification.source_fact, root=facts.root, port=facts.port
+    )
+    assert refusal_fact is not None
+    source_fact = replace(refusal_fact, wait_policy=facts.wait_policy)
+    response = source_fact.failure_response(
+        request_id=facts.request_id, index_state=index_state
+    )
+    detail = exc.detail if isinstance(exc, StorageGeometryError) else str(exc)
+    response["message"] = f"{response['message']}: {detail}"
+    return response, replace(
+        classification,
+        response=response,
+        status_code=503 if transition else 409,
+        source_fact=source_fact,
+    )
 
 
 def dominant_combined_failure(
@@ -492,6 +510,7 @@ def dominant_combined_failure(
         SearchReasonCode.REBUILD_REFUSED,
         SearchReasonCode.CAPACITY_LIMITED,
         SearchReasonCode.BACKEND_UNAVAILABLE,
+        SearchReasonCode.INDEX_TRANSITION,
         SearchReasonCode.FRESHNESS_WAIT_TIMEOUT,
         SearchReasonCode.INDEX_UNAVAILABLE,
         SearchReasonCode.INDEX_NOT_BUILT,

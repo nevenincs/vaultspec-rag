@@ -7,7 +7,12 @@ from dataclasses import asdict, dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from ._index_integrity import IntegrityVerdict
-from ._search_state import BreadthFindings, SearchReasonCode, search_index_state
+from ._publication_state import (
+    IndexTransitionError,
+    capture_source_read_fence,
+    read_current_epoch,
+)
+from ._search_state import BreadthFindings, search_index_state
 from ._source_types import PublicSourceType
 from .registry import get_registry
 from .search import InvalidFilterForSearchTypeError, validate_search_filters
@@ -16,13 +21,14 @@ from .server._search_availability import (
     CanonicalSearchEvidence,
     SearchAvailabilityContext,
     classify_search_response,
-    storage_conformance_refusal_fact,
+    typed_search_refusal_fact,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
     from ._index_integrity import IndexIntegrity
+    from ._publication_state import SourceReadFence
     from ._search_state import SearchSourceFact
     from .search import DocumentSearchResult, SearchFilterOptions
     from .search._outcomes import AnySearchResult
@@ -160,6 +166,19 @@ def search_documents_timed(
     root = pathlib.Path(request.root_dir).resolve()
     _refuse_document_filters(root, request.query, request)
     active_registry = registry if registry is not None else get_registry()
+    return read_current_epoch(
+        root,
+        PublicSourceType.DOCUMENT,
+        lambda: _search_document_storage(request, root, active_registry),
+    )
+
+
+def _search_document_storage(
+    request: DocumentSearchRequest,
+    root: pathlib.Path,
+    active_registry: ServiceRegistry,
+) -> tuple[list[DocumentSearchResult], dict[str, float]]:
+    """Count and search the document collection as it stands now."""
     indexed_count = active_registry.document_chunk_count(root)
     if indexed_count == 0:
         return [], {"indexed_count": 0.0}
@@ -225,12 +244,12 @@ def _domain_failure(
     exc: Exception,
     source_fact: SearchSourceFact,
 ) -> SearchDomainOutcome:
-    """Retain the exception and project typed compatibility refusals."""
-    refused_fact = storage_conformance_refusal_fact(exc, source_fact, root=root)
+    """Retain the exception and project typed compatibility or reset refusals."""
+    refused_fact = typed_search_refusal_fact(exc, source_fact, root=root)
     return SearchDomainOutcome.failure(
         source,
-        SearchReasonCode.REBUILD_REQUIRED.value
-        if refused_fact is not None
+        refused_fact.reason_code.value
+        if refused_fact is not None and refused_fact.reason_code is not None
         else type(exc).__name__,
         str(exc) or type(exc).__name__,
         source_fact=refused_fact or source_fact,
@@ -330,8 +349,13 @@ def _count_combined_domains(
     dict[PublicSourceType, SearchDomainOutcome],
     dict[PublicSourceType, SearchSourceFact],
     dict[str, float],
+    dict[PublicSourceType, SourceReadFence],
 ]:
-    """Count each domain independently and retain model-free failures."""
+    """Count each domain independently and retain model-free failures.
+
+    Each domain's reset epoch is captured before its count, so the count and
+    the later search of that domain are validated against one epoch.
+    """
     operations = {
         PublicSourceType.VAULT: lambda: registry.vault_doc_count(root),
         PublicSourceType.CODE: lambda: registry.code_chunk_count(root),
@@ -341,6 +365,7 @@ def _count_combined_domains(
     failures: dict[PublicSourceType, SearchDomainOutcome] = {}
     facts: dict[PublicSourceType, SearchSourceFact] = {}
     timings: dict[str, float] = {}
+    fences: dict[PublicSourceType, SourceReadFence] = {}
     from ._index_integrity import acquire_index_integrity_snapshot_if_proven
     from .server._routes import canonical_job_snapshot
 
@@ -349,6 +374,7 @@ def _count_combined_domains(
         if source is PublicSourceType.DOCUMENT and not include_documents:
             continue
         try:
+            fences[source] = capture_source_read_fence(root, source)
             integrity_snapshot = acquire_index_integrity_snapshot_if_proven(
                 root, source
             )
@@ -374,7 +400,28 @@ def _count_combined_domains(
                 job_snapshot=jobs,
             )
             timings[f"{source.value}_indexed_count"] = float(count)
-    return counts, failures, facts, timings
+    return counts, failures, facts, timings, fences
+
+
+def _validated_epoch(
+    outcome: SearchDomainOutcome,
+    fences: dict[PublicSourceType, SourceReadFence],
+    root: pathlib.Path,
+) -> SearchDomainOutcome:
+    """Refuse one domain's answer when a reset began after its count.
+
+    A domain that already failed keeps its own failure; a fenced domain loses
+    its results to a typed retryable transition instead of returning content
+    read across the reset.
+    """
+    fence = fences.get(outcome.source)
+    if fence is None or not outcome.ok:
+        return outcome
+    try:
+        fence.validate()
+    except IndexTransitionError as exc:
+        return _domain_failure(outcome.source, root, exc, outcome.source_fact)
+    return outcome
 
 
 def _empty_or_failed_combined_outcome(
@@ -543,16 +590,14 @@ def search_combined_timed(
     if request.include_documents:
         _refuse_document_filters(root, request.query, request.document_filters)
     active_registry = registry if registry is not None else get_registry()
-    counts, count_failures, source_facts, timings = _count_combined_domains(
+    counts, count_failures, source_facts, timings, fences = _count_combined_domains(
         root, active_registry, include_documents=request.include_documents
     )
     if not any(counts.values()):
-        return (
-            _empty_or_failed_combined_outcome(
-                count_failures, source_facts, request.top_k
-            ),
-            timings,
+        empty = _empty_or_failed_combined_outcome(
+            count_failures, source_facts, request.top_k
         )
+        return _fenced_combined_outcome(empty, fences, root), timings
 
     vault: SearchDomainOutcome | None = None
     code: SearchDomainOutcome | None = None
@@ -590,4 +635,21 @@ def search_combined_timed(
             timings.update(session.timings)
     if vault is None or code is None:
         raise RuntimeError("combined search lease ended without domain outcomes")
-    return CombinedSearchOutcome(vault, code, document, request.top_k), timings
+    outcome = CombinedSearchOutcome(vault, code, document, request.top_k)
+    return _fenced_combined_outcome(outcome, fences, root), timings
+
+
+def _fenced_combined_outcome(
+    outcome: CombinedSearchOutcome,
+    fences: dict[PublicSourceType, SourceReadFence],
+    root: pathlib.Path,
+) -> CombinedSearchOutcome:
+    """Validate every domain against the epoch its count was taken under."""
+    return CombinedSearchOutcome(
+        _validated_epoch(outcome.vault, fences, root),
+        _validated_epoch(outcome.code, fences, root),
+        _validated_epoch(outcome.document, fences, root)
+        if outcome.document is not None
+        else None,
+        outcome.top_k,
+    )

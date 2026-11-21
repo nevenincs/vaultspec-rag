@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import sqlite3
 from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, NamedTuple
 
 from . import store_schema
@@ -16,23 +18,34 @@ from .indexer._publication_proof import (
     ProofReadConflictError,
     ProofUnverifiableError,
 )
-from .indexer._run_ledger_models import RunLedgerError, index_run_ledger_path
+from .indexer._run_ledger_models import (
+    RunLedgerContentionError,
+    RunLedgerError,
+    SourceResetEpochError,
+    index_run_ledger_path,
+)
 from .indexer._run_ledger_runtime import RunLedger
 from .store_runtime import configured_backend_identity
 
 if TYPE_CHECKING:
     import pathlib
+    from collections.abc import Callable
 
     from .indexer._publication_proof import ProofEvidence, ProofReadToken
+    from .indexer._rebuild_lifecycle import ResetEpochFence
     from .indexer._run_ledger_models import PublicationProof, PublicationReceipt
 
 __all__ = [
     "UNREADABLE_PUBLICATION_ERRORS",
+    "IndexTransitionError",
     "PublicationSnapshot",
+    "SourceReadFence",
     "acquire_publication_snapshot",
+    "capture_source_read_fence",
     "clear_publication_state",
     "missing_ledger_error",
     "read_all_publication_evidence",
+    "read_current_epoch",
 ]
 
 #: Every way a root's committed proof can be unreadable right now: absent,
@@ -178,3 +191,111 @@ def clear_publication_state(
         str(resolved),
         backend_identity,
     )
+
+
+class IndexTransitionError(RuntimeError):
+    """A read of one source could not be answered from a single reset epoch.
+
+    Raised when the source's reset is between intent and completion at the
+    start of the read, and when a reset begins before the read is validated.
+    Either way the read may have observed storage that reset discards, so
+    nothing it found is returned. A reset is a short, bounded phase of an
+    explicit rebuild, so the condition is retryable.
+    """
+
+    def __init__(self, source: PublicSourceType, detail: str) -> None:
+        super().__init__(f"the {source.value} index is being reset: {detail}")
+        self.source = source
+
+
+@dataclass(frozen=True, slots=True)
+class SourceReadFence:
+    """The reset epoch one read of one source began under.
+
+    ``baseline_readable`` is false when this build could not read the root's
+    run ledger at capture. A reset records every phase in that ledger, so no
+    reset can be in progress while it stays unreadable; one that becomes
+    readable and names a reset fences the read like any other.
+    """
+
+    fence: ResetEpochFence
+    baseline_readable: bool
+
+    def validate(self) -> None:
+        """Raise unless the source is still at the epoch the read began under.
+
+        Raises:
+            IndexTransitionError: a reset began after capture, or the reset
+                state became unreadable after a readable capture.
+        """
+        source = self.fence.source_type
+        try:
+            self.fence.validate()
+        except SourceResetEpochError as exc:
+            raise IndexTransitionError(source, str(exc)) from exc
+        except (RunLedgerError, sqlite3.Error) as exc:
+            if self.baseline_readable:
+                raise IndexTransitionError(
+                    source, f"its reset state became unreadable: {exc}"
+                ) from exc
+
+
+def capture_source_read_fence(
+    root: pathlib.Path, source: PublicSourceType
+) -> SourceReadFence:
+    """Capture *source*'s reset epoch before any read of its storage.
+
+    Raises:
+        IndexTransitionError: the source's reset is in progress, or its reset
+            state is held by a writer and cannot be read yet.
+    """
+    from .indexer._rebuild_lifecycle import ResetEpochFence, capture_reset_epoch
+
+    resolved = root.resolve()
+    backend_identity = configured_backend_identity(resolved)
+    try:
+        fence = capture_reset_epoch(resolved, source, backend_identity)
+    except RunLedgerContentionError as exc:
+        raise IndexTransitionError(
+            source, f"its reset state is held by a writer: {exc}"
+        ) from exc
+    except RunLedgerError:
+        return SourceReadFence(
+            fence=ResetEpochFence(
+                ledger_path=index_run_ledger_path(workspace_volume_path(resolved)),
+                source_type=source,
+                root_identity=str(resolved),
+                backend_identity=backend_identity,
+                epoch=0,
+                phase=None,
+            ),
+            baseline_readable=False,
+        )
+    if not fence.serving:
+        raise IndexTransitionError(
+            source,
+            f"reset epoch {fence.epoch} is at {fence.phase} and its empty "
+            "replacement is not ready",
+        )
+    return SourceReadFence(fence=fence, baseline_readable=True)
+
+
+def read_current_epoch[T](
+    root: pathlib.Path, source: PublicSourceType, read: Callable[[], T]
+) -> T:
+    """Run *read* against *source*'s storage and return it only if no reset crossed it.
+
+    The fence is captured before *read* touches storage and validated after it
+    returns, so a result is either entirely from the epoch the read began
+    under or is refused. Partial content a rebuild has written so far is that
+    epoch's content and is returned; completeness is a separate claim the
+    publication proof makes.
+
+    Raises:
+        IndexTransitionError: the source was mid-reset at capture, or a reset
+            began before validation.
+    """
+    read_fence = capture_source_read_fence(root, source)
+    result = read()
+    read_fence.validate()
+    return result

@@ -5,7 +5,7 @@ tags:
 date: '2026-10-12'
 modified: '2026-11-21'
 body_schema: 'body-v2'
-body_hash: 'sha256:80416b0e55d2e03c226926db961057a2755afd9a6b45a989c8218ed3edbfdce8'
+body_hash: 'sha256:b32d2b05b1b438768056356146f3141135fd465dbea225a83756d5fa8cd6f0b7'
 related:
   - "[[2026-10-12-destructive-rebuild-lifecycle-plan]]"
 ---
@@ -128,6 +128,26 @@ related:
 - `S02` `verify:` `pytest -m unit src/vaultspec_rag/tests (8321 passed; failures only in another worker's in-flight test_cli_service_status files and one parallel-lane flake that passes alone)` -> `pass`
 - `S02` `verify:` `pytest test_rebuild_lifecycle test_substitution_discipline test_process_probe_source_structure test_rebuild_replacement test_no_unconsumed_definitions` -> `pass`
 - `S02` `by:` `vaultspec-high-executor`
+- `S03` `M` `src/vaultspec_rag/indexer/_rebuild_lifecycle.py`
+- `S03` `M` `src/vaultspec_rag/_publication_state.py`
+- `S03` `M` `src/vaultspec_rag/api.py`
+- `S03` `M` `src/vaultspec_rag/_public_search.py`
+- `S03` `M` `src/vaultspec_rag/_search_state.py`
+- `S03` `M` `src/vaultspec_rag/server/_search_availability.py`
+- `S03` `M` `src/vaultspec_rag/server/_search_route_availability.py`
+- `S03` `M` `src/vaultspec_rag/server/_routes_search.py`
+- `S03` `A` `src/vaultspec_rag/tests/test_search_reset_fence.py`
+- `S03` `A` `src/vaultspec_rag/tests/integration/test_service_search_reset_transition.py`
+- `S03` `A` `src/vaultspec_rag/tests/integration/test_rebuild_partial_search.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_search_conformance_refusal.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_typesafe_search.py`
+- `S03` `verify:` `ruff check (changed files)` -> `pass`
+- `S03` `verify:` `ruff format --check (changed files)` -> `pass`
+- `S03` `verify:` `ty check (changed files)` -> `pass`
+- `S03` `verify:` `basedpyright (changed files)` -> `pass`
+- `S03` `verify:` `pytest rebuild/search-readiness/service/guard modules incl. CPU search-readiness integration (330 passed)` -> `pass`
+- `S03` `verify:` `pytest CPU unit lane (8339 passed; 25 failures only in another worker's in-flight test_cli_service_status files)` -> `pass`
+- `S03` `by:` `vaultspec-high-executor`
 
 ## Notes
 
@@ -135,3 +155,5 @@ related:
 - `S01` Unrelated failures left: duplicate bodies in `cli/_service_jobs_presentation.py` vs `cli/_status_labels.py` (other worker's change set); substitution counts in untouched `test_indexer_unit.py,` `test_lazy_reranker.py,` `test_watcher_intent.py.`
 - `S02` GPU-lane tests not run: `test_rebuild_replacement_corpus` and the edited integration modules collect but need a GPU borrow from a compatible running service, which the resident service refused
 - `S02` Deleted store `drop_table,` `drop_code_table,` `drop_document_table` and `ResetEpochFence.in_transition:` their only production callers were the removed preservation branches; tests repointed to `discard_source_storage`
+- `S03` S03 GPU-lane `test_rebuild_partial_search` (vault/code partial results, bounded wait, empty-corpus authority) collected only: no compatible resident service to borrow the GPU from
+- `S03` S03 Document-domain partial-results search with a real model is left to the integrated three-domain proof; CPU coverage of document fencing and finalisation authority is in `test_search_reset_fence`

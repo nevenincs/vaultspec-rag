@@ -19,7 +19,7 @@ related:
   - '[[2026-07-25-storage-conformance-adr]]'
 modified: '2026-11-21'
 body_schema: body-v2
-body_hash: 'sha256:6be1dcab8225c7e56934aa44415ef323f4e016a8c213dfef03fe44f96f66c88b'
+body_hash: 'sha256:ec8c84dbe1d22591e4046fedf7241ba253c3a781c3c3c697d234c64ed5ea039d'
 ---
 
 # `destructive-rebuild-lifecycle` plan
@@ -38,7 +38,7 @@ Reader, producer, and reset changes are one release boundary. Intermediate commi
 
 - [x] `S01` - Implement one source-neutral durable reset owner with selected-source proof invalidation, verified hard deletion, canonical collection recreation, epoch fencing, and reset crash recovery; `src/vaultspec_rag/indexer/_rebuild_lifecycle.py (create), tests/test_rebuild_lifecycle.py (create), store_collections.py, _store_models.py, _publication_state.py, indexer/_run_ledger_*`.
 - [x] `S02` - Route code, vault, and document full-index entry points through the shared reset lifecycle and write fresh batches into one live target; remove preservation branches and certify that same target at completion; `src/vaultspec_rag/indexer/{_codebase_indexer.py,_vault_indexer.py,_document_indexer.py,_generation_lifecycle.py,_checkpoint_common.py,_index_lifecycle.py}, their streaming/checkpoint collaborators, and rebuild/publication tests`.
-- [ ] `S03` - Serve compatible partial current-epoch results during ingestion and fence reads crossing reset; keep completeness certification distinct from useful retrieval across immediate, bounded, and combined search; `src/vaultspec_rag/{_search_state.py,_index_integrity.py,_publication_state.py,_public_search.py,api.py,service.py}, server/{_search_readiness.py,_search_availability.py,_search_route_availability.py,_routes_search.py}, and search readiness/service tests`.
+- [x] `S03` - Serve compatible partial current-epoch results during ingestion and fence reads crossing reset; keep completeness certification distinct from useful retrieval across immediate, bounded, and combined search; `src/vaultspec_rag/{_search_state.py,_index_integrity.py,_publication_state.py,_public_search.py,api.py,service.py}, server/{_search_readiness.py,_search_availability.py,_search_route_availability.py,_routes_search.py}, and search readiness/service tests`.
 - [ ] `S04` - Distinguish new rebuilds from same-generation resume and linked retry, acknowledge controls at durable units, and prevent old attempts or watcher updates from corrupting a replacement; `src/vaultspec_rag/{job_dispatch.py,job_control.py,job_manager/}, indexer/{_run_policy.py,_run_checkpoint.py,_checkpoint_common.py}, watcher settlement, tests/test_job_rebuild_resume_dispatch.py and tests/integration/test_index_job_control_publication.py`.
 - [ ] `S05` - Complete explicit selected-source cutover of historical generation layouts; remove shadow publication and retention machinery while preserving unrelated maintenance and source partitions; `src/vaultspec_rag/{_store_models.py,store_collections.py,store_runtime.py,generation_survey.py,generation_stamps.py,storage_reclamation.py}, survey/status/donor consumers, and generation cleanup/isolation tests`.
 - [ ] `S06` - Align CLI/API job admission, partial search/status rendering, and rebuild documentation; prove the integrated three-domain reset/search/recovery contract and complete final review; `src/vaultspec_rag/{cli/_index.py,_operator_commands.py,server/_routes_reindex.py,server/_routes_jobs.py,mcp/_tools.py}, README.md, relevant docs/ command guides, and real service/storage integration and concurrency tests`.

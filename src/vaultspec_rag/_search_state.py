@@ -162,7 +162,11 @@ class SearchReasonCode(StrEnum):
             self.INDEX_UNVERIFIABLE: (
                 "The empty search result is not authoritative for this source."
             ),
-            self.INDEX_TRANSITION: "The index publication is changing.",
+            self.INDEX_TRANSITION: (
+                "The index is being reset for a rebuild, or a reset began while "
+                "this search read it, so nothing it read is returned. The reset "
+                "is brief; retry the search."
+            ),
             self.PUBLISHED_GENERATION_CURRENT: "The published generation is current.",
             self.REBUILD_REQUIRED: "An explicit index rebuild is required.",
             self.REBUILD_REFUSED: "The requested index rebuild was refused.",
@@ -211,7 +215,7 @@ class SearchReasonCode(StrEnum):
             )
         if self is self.INDEX_UNVERIFIABLE:
             return server_status_command(port, verbose=True)
-        if self in {self.INDEX_UPDATING, self.CAPACITY_LIMITED}:
+        if self in {self.INDEX_UPDATING, self.INDEX_TRANSITION, self.CAPACITY_LIMITED}:
             return server_jobs_command(port, index=source)
         if self is self.INDEX_UNAVAILABLE:
             return index_command(source, IndexCommandOptions(port=port, target=target))
