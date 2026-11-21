@@ -12,6 +12,7 @@ Covers:
 
 from __future__ import annotations
 
+import gc
 import logging
 import sys
 import threading
@@ -147,6 +148,10 @@ class TestClosingReleasesTheResidentBaseline:
         )
 
         torch = load_accelerator().torch
+        # Earlier tests in the same process can leave cycle-held device memory
+        # behind; collect it first so the starting figure is the session
+        # model's own residency, which is what the rebase must return to.
+        gc.collect()
         resident_mib = sample_resident_cuda_baseline()
         assert resident_mib > 0.0, (
             "premise: the session embedding model must be resident on the device"
