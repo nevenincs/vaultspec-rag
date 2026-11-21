@@ -27,10 +27,13 @@ MUTATION PROOF, each run in one uninterrupted sequence:
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import pytest
+import typer
 
+from .._operator_commands import server_jobs_command
 from .._public_search import (
     CombinedSearchRequest,
     DocumentSearchRequest,
@@ -52,9 +55,11 @@ from ..api import (
     search_codebase_timed,
     search_vault_timed,
 )
+from ..cli._search_in_process import InProcessSearchRequest, try_in_process_search
 from ..indexer._rebuild_lifecycle import CONCRETE_SOURCES, reset_selected_sources
 from ..indexer._run_ledger_models import SourceResetPhase, index_run_ledger_path
 from ..indexer._run_ledger_runtime import RunLedger
+from ..registry import get_registry
 from ..service import ServiceRegistry
 from ..store_runtime import configured_backend_identity
 from ._config_fixtures import reset_config
@@ -194,6 +199,73 @@ def test_each_public_search_refuses_a_source_mid_reset(
     for sibling in CONCRETE_SOURCES:
         if sibling is not source:
             assert search_source(local_root, sibling, registry) == []
+
+
+def local_search_request(
+    root: Path, source: PublicSourceType
+) -> InProcessSearchRequest:
+    """One JSON-mode local search of *source* with no filters."""
+    return InProcessSearchRequest(
+        target=root,
+        query="needle",
+        search_type=source,
+        max_results=5,
+        language=None,
+        path=None,
+        node_type=None,
+        function_name=None,
+        class_name=None,
+        include_paths=None,
+        exclude_paths=None,
+        dedup_locales=None,
+        prefer=None,
+        doc_type=None,
+        feature=None,
+        date=None,
+        tag=None,
+        source_path=None,
+        extractor_id=None,
+        extractor_version=None,
+        locator_kind=None,
+        json_mode=True,
+        envelope={},
+    )
+
+
+@pytest.mark.parametrize("source", CONCRETE_SOURCES)
+def test_the_local_cli_search_reports_a_source_mid_reset_as_retryable(
+    local_root: Path, source: PublicSourceType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A local search answers a reset the way the service's 503 envelope does.
+
+    The refusal is the service's own: the ``index_transition`` code, marked
+    retryable, with the jobs command that shows the rebuild, and exit status 1.
+    It must not be reported as a GPU or runtime fault.
+
+    Mutation: removing the ``IndexTransitionError`` branch of
+    ``try_in_process_search`` sent the refusal to the GPU error handler, which
+    writes prose rather than an envelope, and failed the ``stdout`` assertion
+    for every source; restoring it passed.
+    """
+    record_reset_intent(local_root, source)
+
+    try:
+        with pytest.raises(typer.Exit) as exited:
+            try_in_process_search(local_search_request(local_root, source))
+    finally:
+        get_registry().close_project(local_root)
+
+    assert exited.value.exit_code == 1
+    stdout = capsys.readouterr().out
+    assert stdout.startswith("{"), f"expected one JSON envelope, got {stdout!r}"
+    envelope = json.loads(stdout)
+    assert envelope["ok"] is False
+    assert envelope["command"] == "search"
+    assert envelope["error"] == SearchReasonCode.INDEX_TRANSITION.value
+    assert envelope["retryable"] is True
+    assert f"the {source.value} index is being reset" in envelope["message"]
+    assert envelope["index_state"]["source"] == source.value
+    assert envelope["remediation"] == server_jobs_command(index=source.value)
 
 
 def test_combined_search_refuses_only_the_domain_a_reset_crossed(

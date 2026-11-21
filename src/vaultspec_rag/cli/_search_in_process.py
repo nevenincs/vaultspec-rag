@@ -41,11 +41,15 @@ from ._search_results_render import (
 if TYPE_CHECKING:
     import pathlib
     from collections.abc import Iterator
+    from typing import NoReturn
 
     from .._index_breadth import CodeBreadthSnapshot
     from .._index_integrity import IndexIntegrity, IndexIntegritySnapshot
+    from .._publication_state import IndexTransitionError
+    from .._source_types import IndexSource
     from ..search import DocumentSearchResult, SearchResult
     from ..search._outcomes import CombinedSearchOutcome
+    from ..server._search_route_availability import SearchAvailabilityRequestFacts
 
 
 def _attach_result_collapse(
@@ -315,6 +319,7 @@ def try_in_process_search(
         IndexIntegritySnapshot,
         acquire_index_integrity_snapshot_if_proven,
     )
+    from .._publication_state import IndexTransitionError
     from ..search import InvalidFilterForSearchTypeError
 
     target = request.target
@@ -382,6 +387,11 @@ def try_in_process_search(
         # Refusals that need the root's index, such as an undeclared metadata
         # key, can only be raised by the search itself.
         fail_invalid_filter(exc, json_mode)
+    except IndexTransitionError as exc:
+        # A rebuild's reset touched the read. That is a retryable condition of
+        # the index, not a GPU or runtime fault, so it must not reach the
+        # handler below that treats a RuntimeError as one.
+        _fail_index_transition(exc, request)
     except (ImportError, RuntimeError) as e:
         _handle_gpu_error(e, command="search", json_mode=json_mode)
         return []
@@ -438,6 +448,81 @@ class InProcessRenderRequest:
     envelope: dict[str, object] | None = None
 
 
+def _availability_facts(
+    target: pathlib.Path, source: IndexSource, request_id: str
+) -> SearchAvailabilityRequestFacts:
+    """Describe a local search to the service's availability classifier.
+
+    A local search has no job snapshot to offer, so the classifier reads only
+    the index state the caller built.
+    """
+    from ..server._search_route_availability import SearchAvailabilityRequestFacts
+
+    return SearchAvailabilityRequestFacts(
+        job_snapshot_before=[],
+        root=target,
+        source=source,
+        request_id=request_id,
+        port=None,
+    )
+
+
+def _index_transition_failure(
+    exc: IndexTransitionError, target: pathlib.Path
+) -> dict[str, object]:
+    """Build the retryable refusal the service answers a reset-touched read with.
+
+    The service answers a read a rebuild's reset began under with a 503 whose
+    envelope carries ``index_transition`` and ``retryable``; the same reason
+    code, wording and remediation are produced here from the same classifier,
+    so a local search and a served one report one condition one way.
+    """
+    from uuid import uuid4
+
+    from .._search_state import SearchIndexStatus
+    from ..server._search_availability import (
+        classify_search_response,
+        typed_search_refusal_fact,
+    )
+
+    request_id = uuid4().hex
+    index_state: dict[str, object] = {
+        "source": exc.source.value,
+        "requested_target_root": str(target),
+        "status": SearchIndexStatus.REBUILDING.value,
+    }
+    facts = _availability_facts(
+        target, cast("IndexSource", exc.source.value), request_id
+    )
+    classification = classify_search_response(
+        {}, facts.to_context(after_snapshot=[], index_state=index_state)
+    )
+    refusal = typed_search_refusal_fact(
+        exc, classification.source_fact, root=target, port=None
+    )
+    assert refusal is not None
+    response = refusal.failure_response(request_id=request_id, index_state=index_state)
+    response["message"] = f"{response['message']}: {exc}"
+    return response
+
+
+def _fail_index_transition(
+    exc: IndexTransitionError, request: InProcessSearchRequest
+) -> NoReturn:
+    """Render the retryable transition refusal and exit with the service's code."""
+    handle_service_results(
+        _index_transition_failure(exc, request.target),
+        ServiceSearchRenderRequest(
+            request.query,
+            request.search_type.value,
+            request.json_mode,
+            False,
+            request.target,
+        ),
+    )
+    raise typer.Exit(code=1)
+
+
 def _empty_in_process_failure(
     request: InProcessRenderRequest, index_state: dict[str, object]
 ) -> dict[str, object] | None:
@@ -446,7 +531,6 @@ def _empty_in_process_failure(
 
     from .._search_state import SearchReasonCode
     from ..server._search_availability import classify_search_response
-    from ..server._search_route_availability import SearchAvailabilityRequestFacts
 
     request_id = uuid4().hex
     if request.search_type is PublicSourceType.COMBINED:
@@ -466,13 +550,7 @@ def _empty_in_process_failure(
             index_state=index_state,
             sources=outcome.source_facts,
         ) | {"domains": outcome.domain_status_payload()}
-    facts = SearchAvailabilityRequestFacts(
-        job_snapshot_before=[],
-        root=request.target,
-        source=request.search_type.value,
-        request_id=request_id,
-        port=None,
-    )
+    facts = _availability_facts(request.target, request.search_type.value, request_id)
     classified = classify_search_response(
         {"results": []},
         facts.to_context(after_snapshot=[], index_state=index_state),
