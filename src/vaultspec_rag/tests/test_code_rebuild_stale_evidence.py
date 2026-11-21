@@ -208,6 +208,8 @@ def _resumed_rebuild(
         removed.unlink()
         rebuild_only.unlink()
         lifecycle.forget_open_generation()
+        # Resuming is the next attempt of the failed request, so it claims that
+        # request's generation; an unclaimed open is a new rebuild.
         with continue_rebuild(generation_id):
             checkpoint = _open_rebuild(indexer, request)
         assert checkpoint.generation_id == generation_id
@@ -444,6 +446,8 @@ def test_full_owner_resumes_removed_own_sources_before_seeding(
     )
     failure: Exception | None = None
     result = None
+    # The full invocation is the next attempt of the failed rebuild, so it
+    # claims that generation; an unclaimed full index would reset again.
     with continue_rebuild(generation_id):
         try:
             result = case.indexer.full_index(

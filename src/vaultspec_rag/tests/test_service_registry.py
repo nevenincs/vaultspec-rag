@@ -12,10 +12,12 @@ Covers:
 
 from __future__ import annotations
 
+import gc
 import logging
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, wait
 from typing import TYPE_CHECKING, ClassVar
 
 import pytest
@@ -146,6 +148,10 @@ class TestClosingReleasesTheResidentBaseline:
         )
 
         torch = load_accelerator().torch
+        # Earlier tests in the same process can leave cycle-held device memory
+        # behind; collect it first so the starting figure is the session
+        # model's own residency, which is what the rebase must return to.
+        gc.collect()
         resident_mib = sample_resident_cuda_baseline()
         assert resident_mib > 0.0, (
             "premise: the session embedding model must be resident on the device"
@@ -453,6 +459,90 @@ class TestServedConformanceHealth:
                 f"{tmp_path.resolve()}:{collection}"
             ], "current hard refusal disappeared from health"
             assert not slot.store._ensured.get(collection, False)
+        finally:
+            registry.close_all()
+
+
+class TestHealthBesideABusyStore:
+    """A store's lifecycle work never stalls health or the registry behind it."""
+
+    pytestmark: ClassVar = [pytest.mark.unit]
+
+    def test_a_reset_parked_on_a_collection_lock_leaves_health_answering(
+        self, tmp_path: Path, clean_config: None
+    ) -> None:
+        """A reset queued behind a held collection lock does not hold the store.
+
+        Mutation check: letting ``hold_within_budget`` block on a later lock
+        while holding the earlier ones (``timeout=-1`` for every lock after
+        the first) parked the reset holding the lifecycle lock, and this test
+        failed on the "health did not answer" assertion; restoring the
+        non-blocking try passed.
+        """
+        del clean_config
+        from .._source_types import PublicSourceType
+        from ..indexer._rebuild_lifecycle import reset_selected_sources
+        from ..indexer._run_policy import RunPolicy
+        from ..job_control import CancelRequested, RunControlToken
+
+        registry = ServiceRegistry()
+        try:
+            store = registry.peek_project(tmp_path).store
+            store.ensure_document_table()
+            token = RunControlToken()
+            policy = RunPolicy(no_progress_timeout_seconds=30.0, run_control=token)
+            collection_lock = store._collection_locks[store.DOCUMENT_TABLE_NAME]
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                collection_lock.acquire()
+                try:
+                    resetting = executor.submit(
+                        reset_selected_sources,
+                        store,
+                        PublicSourceType.DOCUMENT,
+                        generation_id="parked",
+                        run_control=policy,
+                        write_policy=policy.store_write_policy,
+                    )
+                    time.sleep(0.5)
+                    assert not resetting.done(), "the reset did not wait on the lock"
+                    polling = executor.submit(registry.health)
+                    wait([polling], timeout=5.0)
+                    assert polling.done(), "health did not answer beside a parked reset"
+                    token.request_cancel()
+                    with pytest.raises(CancelRequested):
+                        resetting.result(timeout=10.0)
+                finally:
+                    collection_lock.release()
+        finally:
+            registry.close_all()
+
+    def test_health_reads_store_verdicts_outside_the_registry_lock(
+        self, tmp_path: Path, clean_config: None
+    ) -> None:
+        """A health poll waiting on one store leaves the registry free.
+
+        Mutation check: reading the verdicts back inside ``with self._lock``
+        in ``ServiceRegistry.health`` held the registry lock while the poll
+        waited on the busy store, and this test failed on the "registry
+        stalled" assertion; restoring the snapshot-then-read order passed.
+        """
+        del clean_config
+        registry = ServiceRegistry()
+        try:
+            busy, following = tmp_path / "busy", tmp_path / "following"
+            busy.mkdir()
+            following.mkdir()
+            store = registry.peek_project(busy).store
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                with store._lifecycle_lock:
+                    polling = executor.submit(registry.health)
+                    time.sleep(0.5)
+                    assert not polling.done(), "health did not wait on the busy store"
+                    opening = executor.submit(registry.peek_project, following)
+                    wait([opening], timeout=10.0)
+                    assert opening.done(), "the registry stalled behind a health poll"
+                # The poll took its snapshot before the second root opened.
+                assert polling.result(timeout=10.0)["project_count"] == 1
         finally:
             registry.close_all()
 

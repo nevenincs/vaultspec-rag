@@ -52,9 +52,11 @@ if TYPE_CHECKING:
     import pathlib
     from collections.abc import Callable
 
+    from .._store_writes import StoreWritePolicy
     from ..job_control import RunControl
     from ..store_runtime import VaultStore
     from ._run_ledger_models import RunSignature, SourceResetState
+    from ._run_policy import RunPolicy
 
 __all__ = [
     "NEW_REBUILD",
@@ -189,10 +191,14 @@ class ResetEpochFence:
         )
 
     @classmethod
-    def of(cls, ledger_path: pathlib.Path, state: SourceResetState) -> ResetEpochFence:
-        """Fence work to the reset *state* records, as read from *ledger_path*."""
+    def of(cls, root: pathlib.Path, state: SourceResetState) -> ResetEpochFence:
+        """Fence work to the reset *state* records, read where it was recorded.
+
+        A reset records into the ledger of the store's *root*, so the fence
+        reads that same ledger rather than the ledger of whoever runs the work.
+        """
         return cls(
-            ledger_path=ledger_path,
+            ledger_path=_ledger_path(root),
             source_type=state.source_type,
             root_identity=state.root_identity,
             backend_identity=state.backend_identity,
@@ -271,46 +277,60 @@ def capture_reset_epoch(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _ResetControl:
+    """The owning job's control over one reset, and its no-progress budget."""
+
+    run_control: RunControl
+    write_policy: StoreWritePolicy | None
+
+
 def _reset_one(
     store: VaultStore,
     ledger: RunLedger,
     source: PublicSourceType,
     generation_id: str,
-    run_control: RunControl,
+    control: _ResetControl,
 ) -> SourceResetState:
     root_identity = str(store.root_dir.resolve())
-    state = ledger.begin_source_reset(
-        source, root_identity, store.backend_identity, generation_id
-    )
-    if state.complete:
-        return state
-    with run_control.protected():
-        stale = (
-            other_backend_code_pointer(store.root_dir, store.DERIVED_CODE_TABLE_NAME)
-            if source is PublicSourceType.CODE
-            else None
+    # Every lock the reset takes is held before its intent is recorded, so a
+    # reset queued behind another holder answers pause, cancel and its
+    # deadline while nothing has been discarded yet.
+    with store.held_for_reset(source, control.write_policy):
+        state = ledger.begin_source_reset(
+            source, root_identity, store.backend_identity, generation_id
         )
-        # Discarding again on a replay is idempotent and costs nothing on
-        # absent storage; skipping it would trust that nothing recreated a
-        # collection between the recorded deletion and this replay.
-        store.discard_source_storage(source)
-        if source is PublicSourceType.CODE:
-            # The only code collection a reset recreates is the derived one,
-            # so a pointer or a binding naming anything else would address a
-            # collection that no longer exists.
-            retire_served_code_pointer(store.root_dir)
-            store.CODE_TABLE_NAME = store.DERIVED_CODE_TABLE_NAME
-            if stale is not None:
-                logger.warning(
-                    "Retired %s's served code pointer naming %s, its code "
-                    "collection under the other backend; that collection "
-                    "was left untouched",
-                    root_identity,
-                    stale,
+        if state.complete:
+            return state
+        with control.run_control.protected():
+            stale = (
+                other_backend_code_pointer(
+                    store.root_dir, store.DERIVED_CODE_TABLE_NAME
                 )
-        state = ledger.advance_source_reset(state, SourceResetPhase.DISCARDED)
-        store.recreate_empty_source(source)
-        state = ledger.advance_source_reset(state, SourceResetPhase.COMPLETE)
+                if source is PublicSourceType.CODE
+                else None
+            )
+            # Discarding again on a replay is idempotent and costs nothing on
+            # absent storage; skipping it would trust that nothing recreated a
+            # collection between the recorded deletion and this replay.
+            store.discard_source_storage(source)
+            if source is PublicSourceType.CODE:
+                # The only code collection a reset recreates is the derived
+                # one, so a pointer or a binding naming anything else would
+                # address a collection that no longer exists.
+                retire_served_code_pointer(store.root_dir)
+                store.CODE_TABLE_NAME = store.DERIVED_CODE_TABLE_NAME
+                if stale is not None:
+                    logger.warning(
+                        "Retired %s's served code pointer naming %s, its code "
+                        "collection under the other backend; that collection "
+                        "was left untouched",
+                        root_identity,
+                        stale,
+                    )
+            state = ledger.advance_source_reset(state, SourceResetPhase.DISCARDED)
+            store.recreate_empty_source(source)
+            state = ledger.advance_source_reset(state, SourceResetPhase.COMPLETE)
     logger.info(
         "Reset %s for %s at epoch %d",
         source.value,
@@ -326,6 +346,7 @@ def reset_selected_sources(
     *,
     generation_id: str,
     run_control: RunControl = NO_RUN_CONTROL,
+    write_policy: StoreWritePolicy | None = None,
 ) -> tuple[SourceResetState, ...]:
     """Discard and recreate empty every source *selection* names.
 
@@ -344,6 +365,9 @@ def reset_selected_sources(
         run_control: Control for the owning job. A pending pause or cancel is
             delivered before the reset begins; once it begins it is protected
             until the empty replacement is recorded.
+        write_policy: The owning run's no-progress budget. With it, waiting
+            for the locks the reset takes delivers *run_control* and expires
+            at the deadline; without it that wait is unbounded.
 
     Returns:
         Each selected source's completed reset, in reset order.
@@ -353,9 +377,9 @@ def reset_selected_sources(
         store.owned_source_collections(source)
     run_control.checkpoint()
     ledger = RunLedger(_ledger_path(store.root_dir))
+    control = _ResetControl(run_control, write_policy)
     return tuple(
-        _reset_one(store, ledger, source, generation_id, run_control)
-        for source in sources
+        _reset_one(store, ledger, source, generation_id, control) for source in sources
     )
 
 
@@ -365,7 +389,7 @@ def enter_rebuild_ingestion(
     *,
     began_under: ResetEpochFence,
     generation_id: str,
-    run_control: RunControl = NO_RUN_CONTROL,
+    run_policy: RunPolicy | None = None,
 ) -> SourceResetState:
     """Reset *source* for the rebuild *generation_id* before it writes anything.
 
@@ -387,6 +411,10 @@ def enter_rebuild_ingestion(
       reset intent, so the next attempt of the same request continues this
       generation instead of starting a new rebuild.
 
+    *run_policy* is the owning attempt's control and no-progress budget. The
+    reset delivers its pause and cancel, and expires at its deadline, while it
+    waits for the locks it takes.
+
     Raises:
         SourceResetEpochError: *source* was reset after *began_under*.
     """
@@ -395,6 +423,10 @@ def enter_rebuild_ingestion(
     if claim.bind is not None and claim.generation_id != generation_id:
         claim.bind(generation_id)
     (state,) = reset_selected_sources(
-        store, source, generation_id=generation_id, run_control=run_control
+        store,
+        source,
+        generation_id=generation_id,
+        run_control=NO_RUN_CONTROL if run_policy is None else run_policy,
+        write_policy=None if run_policy is None else run_policy.store_write_policy,
     )
     return state

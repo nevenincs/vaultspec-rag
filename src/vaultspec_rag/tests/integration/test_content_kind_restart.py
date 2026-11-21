@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, NamedTuple
 import pytest
 
 from ...progress import NullProgressReporter
-from .._ledger_fixtures import latest_generation
+from .._ledger_fixtures import continue_rebuild, latest_generation
 from ._helpers import _document_policy
 
 if TYPE_CHECKING:
@@ -132,10 +132,14 @@ def test_document_restart_reuses_confirmed_slices_and_publishes_once(
         indexer = DocumentIndexer(
             tmp_path, embedding_model, store, content_policy=policy
         )
-        result = indexer.full_index(
-            reporter=NullProgressReporter(),
-            preflight=indexer.preflight_content(),
-        )
+        # The restart is the next attempt of the interrupted request, so it
+        # claims that request's generation; an unclaimed run is a new rebuild
+        # that resets and starts over.
+        with continue_rebuild(interrupted.generation_id):
+            result = indexer.full_index(
+                reporter=NullProgressReporter(),
+                preflight=indexer.preflight_content(),
+            )
         ledger = RunLedger(interrupted.ledger_path)
         published = latest_generation(
             ledger,

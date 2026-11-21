@@ -117,7 +117,8 @@ def _search(
 def _sources(result: dict[str, object]) -> set[str]:
     assert result.get("ok") is not False, result
     rows = cast("list[dict[str, object]]", result["results"])
-    return {str(row["source_path"]) for row in rows}
+    # A document hit names its source file in ``path``.
+    return {str(row["path"]) for row in rows}
 
 
 def test_declared_metadata_and_extractor_family_narrow_a_served_search(

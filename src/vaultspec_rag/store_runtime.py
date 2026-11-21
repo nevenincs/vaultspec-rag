@@ -32,7 +32,7 @@ from ._store_models import (
 from ._store_search import _VaultSearchMixin
 from ._store_writes import (
     StoreWritePolicy,
-    remaining_write_seconds,
+    hold_within_budget,
     run_store_operation_with_retry,
 )
 
@@ -65,7 +65,6 @@ __all__ = [
 ]
 
 
-_WRITE_LOCK_POLL_SECONDS = 0.1
 # Donor reads page ids in bounded batches: large enough to amortize the
 # round-trip, small enough that one response stays cheap to parse and hold.
 DONOR_RETRIEVE_BATCH_SIZE = 256
@@ -704,25 +703,12 @@ class VaultStore(
                 yield
             return
 
-        lock = self._lock_for(collection)
-        acquired = False
-        try:
-            while not acquired:
-                policy.wait(0.0)
-                remaining = remaining_write_seconds(
-                    policy,
-                    description=f"{collection} write lock",
-                )
-                if remaining is None:
-                    raise RuntimeError("managed write policy lost its deadline")
-                acquired = lock.acquire(
-                    timeout=min(_WRITE_LOCK_POLL_SECONDS, remaining)
-                )
-            policy.wait(0.0)
+        with hold_within_budget(
+            (self._lock_for(collection),),
+            policy,
+            description=f"{collection} write lock",
+        ):
             yield
-        finally:
-            if acquired:
-                lock.release()
 
     def close(self, *, force_after_seconds: float | None = None) -> None:
         """Release the Qdrant client and set it to ``None``.
