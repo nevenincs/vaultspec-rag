@@ -8,15 +8,15 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ..indexer._run_ledger_models import (
+from ..indexer._run_ledger_models import RunAuthority
+from ..indexer._run_ledger_publication_identity import compatibility_for_signature
+from ..indexer._run_ledger_runtime import RunLedger
+from ..indexer._run_ledger_schema import (
     PUBLICATION_PROOF_SCHEMA,
     REQUIRED_INDEXES,
     REQUIRED_SCHEMA,
     SCHEMA_VERSION,
-    RunAuthority,
 )
-from ..indexer._run_ledger_publication_identity import compatibility_for_signature
-from ..indexer._run_ledger_runtime import RunLedger
 from ._child_signal import PROCESS_TIMEOUT_SECONDS
 from ._run_ledger_test_support import (
     ledger_test_assert_publication_foreign_keys,

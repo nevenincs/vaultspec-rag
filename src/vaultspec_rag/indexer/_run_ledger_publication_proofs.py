@@ -17,7 +17,6 @@ from ._publication_proof import (
 from ._run_ledger_models import (
     RESUMABLE_STATES,
     FinalizationPhase,
-    GenerationRow,
     PublicationProof,
     RunAuthority,
     RunLedgerCorruptionError,
@@ -53,6 +52,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ._run_ledger_models import RunGeneration
+    from ._run_ledger_schema import GenerationRow
 
 
 def retire_source_publication(

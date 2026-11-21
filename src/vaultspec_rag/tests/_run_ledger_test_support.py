@@ -24,9 +24,6 @@ from ..indexer._publication_proof import (
     ProofMissingError,
 )
 from ..indexer._run_ledger_models import (
-    PUBLICATION_PROOF_SCHEMA,
-    REQUIRED_INDEX_PREDICATES,
-    REQUIRED_INDEXES,
     CommitUnit,
     CommitUnitKind,
     FinalizationPhase,
@@ -39,6 +36,11 @@ from ..indexer._run_ledger_models import (
 )
 from ..indexer._run_ledger_publication_identity import compatibility_for_signature
 from ..indexer._run_ledger_runtime import RunLedger
+from ..indexer._run_ledger_schema import (
+    PUBLICATION_PROOF_SCHEMA,
+    REQUIRED_INDEX_PREDICATES,
+    REQUIRED_INDEXES,
+)
 from ._child_signal import PROCESS_TIMEOUT_SECONDS
 from ._sqlite_state import assert_sqlite_unchanged, sqlite_contents
 

@@ -11,12 +11,9 @@ import pytest
 from .._store_writes import workspace_volume_path
 from ..indexer._codebase_indexer import CodebaseIndexer
 from ..indexer._document_indexer import DocumentIndexer
-from ..indexer._run_ledger_models import (
-    SCHEMA_VERSION,
-    RunAuthority,
-    index_run_ledger_path,
-)
+from ..indexer._run_ledger_models import RunAuthority, index_run_ledger_path
 from ..indexer._run_ledger_runtime import RunLedger, set_aside_unsupported_ledger
+from ..indexer._run_ledger_schema import SCHEMA_VERSION
 from ..indexer._vault_indexer import VaultIndexer
 from ..progress import NullProgressReporter
 from ._sqlite_state import assert_sqlite_unchanged, sqlite_contents

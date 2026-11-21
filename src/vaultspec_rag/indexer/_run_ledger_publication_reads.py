@@ -21,7 +21,6 @@ from ._publication_proof import (
 from ._run_ledger_models import (
     FETCH_BATCH,
     FinalizationPhase,
-    GenerationRow,
     PublicationProof,
     PublicationReceipt,
     RunLedgerCorruptionError,
@@ -59,6 +58,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ._run_ledger_models import RunGeneration
+    from ._run_ledger_schema import GenerationRow
 
 
 class RunLedgerPublicationReadMethods:

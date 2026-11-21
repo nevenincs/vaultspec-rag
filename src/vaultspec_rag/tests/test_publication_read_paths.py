@@ -17,13 +17,10 @@ from .._index_integrity import (
 from .._source_types import PublicSourceType
 from .._store_writes import workspace_volume_path
 from ..indexer._publication_proof import ProofEvidence
-from ..indexer._run_ledger_models import (
-    SCHEMA_VERSION,
-    RunAuthority,
-    index_run_ledger_path,
-)
+from ..indexer._run_ledger_models import RunAuthority, index_run_ledger_path
 from ..indexer._run_ledger_publication_identity import compatibility_for_signature
 from ..indexer._run_ledger_runtime import RunLedger
+from ..indexer._run_ledger_schema import SCHEMA_VERSION
 from ..store_runtime import configured_backend_identity
 from ._run_ledger_test_support import (
     ledger_test_digest,

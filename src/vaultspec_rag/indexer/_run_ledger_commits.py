@@ -45,11 +45,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-    from ._run_ledger_models import (
-        GenerationRow,
-        PublicationProof,
-        RunGeneration,
-    )
+    from ._run_ledger_models import PublicationProof, RunGeneration
+    from ._run_ledger_schema import GenerationRow
 
 
 class _CommitUnitRow(TypedDict):

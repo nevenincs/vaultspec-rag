@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING
 
 from ..indexer._publication_proof import ProofMissingError, ProofReadToken
 from ..indexer._run_ledger_models import (
-    GenerationRow,
     SourceResetPhase,
     column_int,
     fetch_one,
@@ -28,6 +27,7 @@ if TYPE_CHECKING:
     from ..indexer._publication_proof import ProofCompatibilityKey
     from ..indexer._run_ledger_models import RunGeneration
     from ..indexer._run_ledger_runtime import RunLedger
+    from ..indexer._run_ledger_schema import GenerationRow
 
 
 def latest_generation(
