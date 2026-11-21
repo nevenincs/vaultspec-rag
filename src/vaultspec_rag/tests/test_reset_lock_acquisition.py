@@ -20,6 +20,7 @@ from ..indexer._run_ledger_models import SourceResetPhase
 from .test_rebuild_lifecycle import (
     _park_reset,
     _points,
+    _seed,
     _state,
     local_config,
     store,
@@ -169,3 +170,41 @@ def test_a_reset_completes_within_its_budget_beside_continuous_local_searches(
     assert state.phase is SourceResetPhase.COMPLETE
     assert during > 0, "no search ran beside the reset"
     assert _points(store, store.TABLE_NAME) == 0
+
+
+def test_a_reset_refuses_when_its_collections_change_while_it_takes_locks(
+    store: VaultStore,
+) -> None:
+    """A collection created after the lock set was listed is never discarded.
+
+    The reset lists the collections it will lock before it holds any lock. A
+    historical generation created while it waits is outside that set, so the
+    reset refuses rather than dropping a collection whose lock it never held.
+
+    Mutation: deleting the second listing under the held locks let the reset
+    drop the new generation and record its intent, and failed this test on the
+    ``pytest.raises``; restoring the comparison passed.
+    """
+    from ..job_control import NO_RUN_CONTROL
+    from ._historical_code_layout import create_historical_generation
+
+    lock = store._lock_for(store.DERIVED_CODE_TABLE_NAME)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        lock.acquire()
+        try:
+            resetting = _park_reset(
+                executor,
+                store,
+                PublicSourceType.CODE,
+                run_control=NO_RUN_CONTROL,
+            )
+            created = create_historical_generation(store, "c" * 16)
+            _seed(store, created)
+        finally:
+            lock.release()
+        with pytest.raises(RuntimeError, match="changed while the reset took"):
+            resetting.result(timeout=10.0)
+
+    assert store.client.collection_exists(created)
+    assert _points(store, created) == 1
+    assert _state(store, PublicSourceType.CODE) is None

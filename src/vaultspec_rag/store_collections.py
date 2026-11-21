@@ -357,20 +357,39 @@ class _VaultCollectionMixin:
         run's *policy* every attempt delivers its pause or cancel and expires
         at its no-progress deadline, so a reset queued behind a holder that
         never lets go stops before recording any intent.
+
+        The collections to lock are listed before any lock is held, so they
+        are listed again once the lifecycle lock is held; a set that changed
+        in between would be discarded without every collection's lock.
+
+        Raises:
+            RuntimeError: the collections *source* owns changed while the
+                locks were being taken. Nothing was recorded or discarded.
         """
-        collections = sorted(
-            {
-                *self.owned_source_collections(source),
-                self._canonical_source_collection(source),
-            }
-        )
+        collections = self._reset_collections(source)
         locks: list[ReentrantLock] = [self._lifecycle_lock]
         if not self._server_mode:
             locks.extend(self._lock_for(collection) for collection in collections)
         with hold_within_budget(
             locks, policy, description=f"{source.value} reset locks"
         ):
+            held_for = self._reset_collections(source)
+            if held_for != collections:
+                raise RuntimeError(
+                    f"{source.value} collections changed while the reset took "
+                    f"its locks: locked {', '.join(collections)}, now "
+                    f"{', '.join(held_for)}; no reset began"
+                )
             yield
+
+    def _reset_collections(self, source: PublicSourceType) -> list[str]:
+        """Name every collection a reset of *source* locks, in lock order."""
+        return sorted(
+            {
+                *self.owned_source_collections(source),
+                self._canonical_source_collection(source),
+            }
+        )
 
     def discard_source_storage(self, source: PublicSourceType) -> None:
         """Hard-delete every collection *source* owns and verify none survived.

@@ -106,4 +106,6 @@ Resolution: `hold_within_budget` in `src/vaultspec_rag/_store_writes.py` now rel
 
 `src/vaultspec_rag/store_collections.py:361-369` lists the owned collections before taking locks, and `:390-392` acts on that list. Not reachable today, because only the canonical name is recreated. Fix: list again under the lifecycle lock and refuse on a mismatch.
 
+Resolution: `held_for_reset` in `src/vaultspec_rag/store_collections.py` now lists the owned collections a second time once every lock is held and refuses with a `RuntimeError`, before any intent is recorded, when the set differs from the one it locked. The codebase has no dedicated error for a changed collection set, so it uses the `RuntimeError` that `discard_source_storage` raises for the same class of refusal. `test_a_reset_refuses_when_its_collections_change_while_it_takes_locks` in `src/vaultspec_rag/tests/test_reset_lock_acquisition.py` creates a historical code generation while the reset waits; with the second listing neutralised it failed with DID NOT RAISE, and restored it passes.
+
 Resolution: all three are assigned to the worker fixing the seven GPU-lane failures. Their verification runs on the next frozen sha.
