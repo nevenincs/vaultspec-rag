@@ -97,13 +97,16 @@ def admission(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Admission:
     pointer_calls: list[str] = []
     proof_calls: list[str] = []
 
-    def pointer(root: Path | str, derived: str | None = None) -> str | None:
+    def pointer(
+        root: Path | str, derived: str | None = None
+    ) -> _store_models.ServedPointer:
+        # ``None`` stands for a pointer that cannot be verified.
         del derived
         pointer_calls.append(str(root))
         value = pointers.get(str(root))
         if isinstance(value, Exception):
             raise value
-        return value
+        return _store_models.ServedPointer(value, verifiable=value is not None)
 
     def proof(
         root: Path | str, kind: candidates.CollectionKind
@@ -129,7 +132,7 @@ def admission(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Admission:
 
     monkeypatch.setattr(storage_manifest, "load_manifest", lambda: entries)
     monkeypatch.setattr(_store_models, "root_collection_prefix", own_prefix)
-    monkeypatch.setattr(_store_models, "read_served_code_collection", pointer)
+    monkeypatch.setattr(_store_models, "read_served_pointer", pointer)
     monkeypatch.setattr(candidates, "git_common_dir", family)
     monkeypatch.setattr(candidates, "read_donor_recorded_state", proof)
     monkeypatch.setattr(candidates, "expected_vector_schema", lambda: _SCHEMA)

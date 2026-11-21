@@ -1,4 +1,4 @@
-"""Canonical generation survey facts survive the real CLI JSON adapter."""
+"""Canonical storage survey facts survive the real CLI JSON and human adapters."""
 
 from __future__ import annotations
 
@@ -9,12 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 from typer.testing import CliRunner
 
-from .._store_models import (
-    generation_code_collection,
-    publish_served_code_collection,
-    root_collection_prefix,
-    served_code_pointer_path,
-)
+from .._store_models import root_collection_prefix
 from ..cli import app
 from ..config._types import EnvVar
 from ..server._routes_storage import _shape_survey_payload, _SurveyPayloadRequest
@@ -23,13 +18,30 @@ from ..storage_manifest import ManifestEntry
 from ..storage_survey import classify_namespaces, is_temp_rooted
 from ..store_schema import CODE_COLLECTION, DOCUMENT_COLLECTION, VAULT_COLLECTION
 from .conftest import managed_env
-from .test_generation_survey import _publish_code_proof
 from .test_storage_ops import _identity
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 pytestmark = pytest.mark.unit
+
+#: Every field one survey namespace carries, on the wire and through the CLI.
+_NAMESPACE_FIELDS = frozenset(
+    {
+        "prefix",
+        "root",
+        "status",
+        "collections",
+        "points",
+        "vault_points",
+        "code_points",
+        "document_points",
+        "footprint_bytes",
+        "points_verified",
+        "models",
+        "temp_rooted",
+    }
+)
 
 
 def _offline_transport(
@@ -46,101 +58,6 @@ def _offline_transport(
 
     monkeypatch.setattr(_transport, "_try_http_admin", fetch)
     return calls
-
-
-@pytest.mark.parametrize("condition", ["unattributed", "unreadable", "empty", "debt"])
-def test_service_generation_facts_survive_full_cli_json_round_trip(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, condition: str
-) -> None:
-    root = tmp_path / "project"
-    root.mkdir()
-    prefix = root_collection_prefix(root)
-    derived = f"{prefix}{CODE_COLLECTION}"
-    served = f"{derived}_gserved"
-    old = f"{derived}_gsuperseded"
-    names = [served]
-    manifest = {prefix: ManifestEntry(prefix=prefix, root=str(root), backend="server")}
-    expected: tuple[str | None, list[str] | None] = (None, None)
-    if condition == "unattributed":
-        manifest = {}
-    else:
-        names.append(generation_code_collection(derived, _publish_code_proof(root)))
-        publish_served_code_collection(root, served)
-        if condition == "unreadable":
-            served_code_pointer_path(root).write_text("{unreadable", encoding="utf-8")
-        else:
-            expected = (served, [])
-        if condition == "debt":
-            names.append(old)
-            expected = (served, [old])
-    surveys = classify_namespaces(names, manifest)
-    payload = _shape_survey_payload(
-        _SurveyPayloadRequest(
-            surveys=surveys,
-            status_filter=None,
-            limit=200,
-            root=None,
-            computed_at="2026-10-03T00:00:00+00:00",
-            source="cache",
-        )
-    )
-    assert len(payload["namespaces"]) == 1
-    wire_entry = payload["namespaces"][0]
-    assert (
-        wire_entry["served_code_collection"],
-        wire_entry["unreferenced_generations"],
-    ) == expected
-    calls = _offline_transport(monkeypatch, payload)
-    result = CliRunner().invoke(
-        app, ["server", "storage", "survey", "--fresh", "--json"]
-    )
-    assert result.exit_code == 0, result.output
-    envelope = json.loads(result.stdout)
-    assert envelope["ok"] is True
-    assert calls == [{"fresh": "true"}]
-    [entry] = envelope["data"]["namespaces"]
-    assert (
-        entry["served_code_collection"],
-        entry["unreferenced_generations"],
-    ) == expected
-    assert entry["prefix"] == wire_entry["prefix"]
-    assert entry["root"] == wire_entry["root"]
-    assert entry["status"] == wire_entry["status"]
-    assert entry["collections"] == wire_entry["collections"]
-
-
-@pytest.mark.parametrize(
-    "fields",
-    [
-        {},
-        {"served_code_collection": None, "unreferenced_generations": None},
-        {"served_code_collection": "served", "unreferenced_generations": None},
-        {"served_code_collection": None, "unreferenced_generations": []},
-        {"served_code_collection": "served", "unreferenced_generations": [1]},
-        {"served_code_collection": "", "unreferenced_generations": []},
-    ],
-)
-def test_missing_or_incomplete_generation_evidence_remains_unknown_in_cli(
-    monkeypatch: pytest.MonkeyPatch, fields: dict[str, object]
-) -> None:
-    payload: dict[str, object] = {
-        "ok": True,
-        "namespaces": [
-            {
-                "prefix": "r0123456789ab_",
-                "root": "/project",
-                "status": "live",
-                "collections": [],
-                **fields,
-            }
-        ],
-    }
-    _offline_transport(monkeypatch, payload)
-    result = CliRunner().invoke(app, ["server", "storage", "survey", "--json"])
-    assert result.exit_code == 0, result.output
-    [entry] = json.loads(result.stdout)["data"]["namespaces"]
-    assert entry["served_code_collection"] is None
-    assert entry["unreferenced_generations"] is None
 
 
 @pytest.mark.parametrize("mixed", [False, True])
@@ -181,10 +98,14 @@ def test_stamped_models_and_per_kind_counts_survive_json_and_human_adapters(
             source="cache",
         )
     )
+    # Adding or dropping a namespace field on either adapter fails one of
+    # these: the route and the CLI publish the same fields.
+    assert set(payload["namespaces"][0]) == _NAMESPACE_FIELDS
     _offline_transport(monkeypatch, payload)
     result = CliRunner().invoke(app, ["server", "storage", "survey", "--json"])
     assert result.exit_code == 0, result.output
     [entry] = json.loads(result.stdout)["data"]["namespaces"]
+    assert set(entry) == _NAMESPACE_FIELDS
     assert entry["models"] == {
         name: identity.dense_model for name, identity in identities.items()
     }

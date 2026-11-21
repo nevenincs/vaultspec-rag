@@ -118,7 +118,6 @@ def test_code_pipeline_control_unwinds_and_reconciliation_converges(
 ) -> None:
     """Pause/cancel unwind producers and consumer before a fresh attempt converges."""
     from ..._publication_state import acquire_publication_snapshot
-    from ..._store_models import generation_code_collection
     from ...indexer._publication_proof import ProofMissingError
 
     paths = _write_code_files(tmp_path, 192, "initial")
@@ -139,11 +138,8 @@ def test_code_pipeline_control_unwinds_and_reconciliation_converges(
         _assert_code_resources_released()
         checkpoint = indexer.last_checkpoint
         assert checkpoint is not None
-        collection = generation_code_collection(
-            store.DERIVED_CODE_TABLE_NAME, checkpoint.generation_id
-        )
-        published_count = store.count_code(collection)
-        published_ids = store.get_all_code_ids(collection)
+        published_count = store.count_code()
+        published_ids = store.get_all_code_ids()
         # Control is cooperative. The sole consumer may finish its
         # already-buffered slices before the producer observes the delivered
         # signal, so the durable prefix may equal the whole corpus.
@@ -155,8 +151,8 @@ def test_code_pipeline_control_unwinds_and_reconciliation_converges(
             acquire_publication_snapshot(tmp_path, PublicSourceType.CODE)
 
         time.sleep(0.25)
-        assert store.count_code(collection) == published_count
-        assert store.get_all_code_ids(collection) == published_ids
+        assert store.count_code() == published_count
+        assert store.get_all_code_ids() == published_ids
 
         reconciled = indexer.full_index(
             reporter=NullProgressReporter(),

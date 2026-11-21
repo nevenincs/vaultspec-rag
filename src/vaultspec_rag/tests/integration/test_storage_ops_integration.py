@@ -874,7 +874,6 @@ def test_reconcile_requires_exact_names_and_preserves_attributed_generations(
     candidate-list assertion. Restored attribution passed for both root states.
     """
 
-    from ..._store_models import generation_code_collection
     from ...storage_manifest import record_collection_identity
     from ...storage_reconciliation import read_geometry, reconcile_collections
     from ...store_schema import SERVER_SEGMENT_NUMBER, current_identity
@@ -883,13 +882,8 @@ def test_reconcile_requires_exact_names_and_preserves_attributed_generations(
     root.mkdir()
     prefix = record_root(root, backend="server").prefix
     base = f"{prefix}codebase_docs"
-    generation = generation_code_collection(
-        generation_code_collection(base, "first"), "second"
-    )
-    unknown_names = (
-        f"{prefix}foreign_app",
-        generation_code_collection(base, "foreign"),
-    )
+    generation = f"{base}_gfirst_gsecond"
+    unknown_names = (f"{prefix}foreign_app", f"{base}_gforeign")
     record_collection_identity(
         root, backend="server", collection=generation, identity=current_identity()
     )

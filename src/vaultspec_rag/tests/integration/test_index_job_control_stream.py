@@ -209,7 +209,6 @@ def test_clean_rebuild_interrupts_and_resumes_confirmed_units(
     Restoring whole-run vault protection failed the partial-unit assertion
     (32 < 32); removing that protection passed the same pause case.
     """
-    from ..._store_models import generation_code_collection
     from ._helpers import _document_policy
 
     markers = _rebuild_corpus(tmp_path, source)
@@ -235,9 +234,7 @@ def test_clean_rebuild_interrupts_and_resumes_confirmed_units(
         assert 0 < len(units) < len(markers)
         collection = {
             PublicSourceType.VAULT: store.TABLE_NAME,
-            PublicSourceType.CODE: generation_code_collection(
-                store.DERIVED_CODE_TABLE_NAME, trace.generation_id
-            ),
+            PublicSourceType.CODE: store.CODE_TABLE_NAME,
             PublicSourceType.DOCUMENT: store.DOCUMENT_TABLE_NAME,
         }[source]
         records, offset = store._scroll(
@@ -257,11 +254,6 @@ def test_clean_rebuild_interrupts_and_resumes_confirmed_units(
         assert resumed.texts
         encoded = "\n".join(resumed.texts)
         assert all(markers[unit.rel_path] not in encoded for unit in units)
-        collection = (
-            store._code_collection(None)
-            if source is PublicSourceType.CODE
-            else collection
-        )
         records, offset = store._scroll(
             collection_name=collection, limit=100, with_payload=True
         )

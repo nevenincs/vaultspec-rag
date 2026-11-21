@@ -77,11 +77,11 @@ class _VaultIngestMixin:
         @staticmethod
         def _stable_id(string_id: str) -> int: ...
 
-        def _code_collection(self, collection: str | None) -> str: ...
+        def _code_collection(self) -> str: ...
 
         def ensure_table(self) -> None: ...
 
-        def ensure_code_table(self, collection: str | None = None) -> None: ...
+        def ensure_code_table(self) -> None: ...
 
         def ensure_document_table(self) -> None: ...
 
@@ -263,7 +263,6 @@ class _VaultIngestMixin:
         *,
         write_policy: StoreWritePolicy | None,
         wait: bool = True,
-        collection: str | None = None,
     ) -> None:
         """Insert or update codebase chunks by ``id``.
 
@@ -277,7 +276,7 @@ class _VaultIngestMixin:
                 or terminal metadata publish. Ignored by the embedded
                 backend, which applies synchronously.
         """
-        _target = self._code_collection(collection)
+        _target = self._code_collection()
         if not chunks:
             return
 
@@ -295,7 +294,7 @@ class _VaultIngestMixin:
                 ),
             )
 
-        self.ensure_code_table(_target)
+        self.ensure_code_table()
         with self._point_write_lock(_target, write_policy):
             self._guarded_upsert(
                 _target,
@@ -551,30 +550,22 @@ class _VaultIngestMixin:
         self,
         source: PublicSourceType,
         ids: Sequence[str],
-        *,
-        collection: str | None = None,
     ) -> None:
         """Delete exact point ids from one source without touching sibling chunks.
 
         Args:
             source: The source whose collection holds the points.
             ids: Point identities to delete.
-            collection: Code only: the build-target collection to delete
-                from. Defaults to the served code collection.
 
         Raises:
-            ValueError: When *collection* is given for a non-code source, or
-                *source* is not one concrete source.
+            ValueError: *source* is not one concrete source.
         """
         from ._source_types import PublicSourceType
 
         if source is PublicSourceType.CODE:
-            target = self._code_collection(collection)
             self._delete_point_ids(
-                target, ids, ensure=lambda: self.ensure_code_table(target)
+                self._code_collection(), ids, ensure=self.ensure_code_table
             )
-        elif collection is not None:
-            raise ValueError("only code point deletion accepts an explicit collection")
         elif source is PublicSourceType.DOCUMENT:
             self._delete_point_ids(
                 self.DOCUMENT_TABLE_NAME, ids, ensure=self.ensure_document_table

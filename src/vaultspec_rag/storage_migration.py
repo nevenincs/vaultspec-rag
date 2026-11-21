@@ -176,16 +176,21 @@ def _migrate_collections(request: _MigrationRequest) -> list[MigrateResult]:
         reason = None if copied == expected else f"count_mismatch:{copied}!={expected}"
         results.append(MigrateResult(source, target, status, copied, reason))
     if request.root_dir is not None and not dry_run:
-        _publish_migrated_code(request.root_dir, results)
+        _retire_migrated_code_pointer(request.root_dir, results)
     return results
 
 
-def _publish_migrated_code(root: Path | str, results: list[MigrateResult]) -> None:
-    """Hand off served identity only after the complete copy has succeeded."""
-    from ._store_models import (
-        publish_served_code_collection,
-        root_code_collection_names,
-    )
+def _retire_migrated_code_pointer(
+    root: Path | str, results: list[MigrateResult]
+) -> None:
+    """Serve the copied code index under the derived name once the copy is whole.
+
+    The destination is always the derived name, which a root without a pointer
+    already reads. A pointer left naming the source's historical generation
+    would describe the other backend, so it is retired only after every copy
+    succeeded; a failed or partial migration keeps the source serving.
+    """
+    from ._store_models import retire_served_code_pointer, root_code_collection_names
 
     if any(result.status == "failed" for result in results):
         return
@@ -194,8 +199,8 @@ def _publish_migrated_code(root: Path | str, results: list[MigrateResult]) -> No
         if result.status != "migrated" or result.target not in owned:
             continue
         try:
-            publish_served_code_collection(root, result.target)
-        except (OSError, ValueError) as exc:
+            retire_served_code_pointer(root)
+        except OSError as exc:
             results[position] = replace(
                 result, status="failed", reason=f"served_pointer_failed:{exc}"
             )

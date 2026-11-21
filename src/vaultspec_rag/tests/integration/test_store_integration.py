@@ -198,13 +198,12 @@ class TestVaultStore:
 
 
 class TestServedCodeCollectionPointer:
-    """Code reads resolve through the per-root pointer, not the derived name."""
+    """Code reads resolve through a historical root's pointer until its reset."""
 
     def test_absent_pointer_resolves_to_the_derived_name(self, tmp_path: Path) -> None:
-        """A root that never published a replacement is unaffected.
+        """A root without a pointer reads its derived name.
 
-        This is every existing root, so the default is what makes the
-        indirection safe to introduce ahead of anything that moves it.
+        That is every root a build in the canonical layout wrote.
 
         Proven able to fail: returning a constant instead of ``derived_name``
         from ``resolve_served_code_collection`` fails the equality below.
@@ -215,26 +214,24 @@ class TestServedCodeCollectionPointer:
             resolve_served_code_collection(tmp_path, "codebase_docs") == "codebase_docs"
         )
 
-    def test_a_published_pointer_redirects_reads(self, tmp_path: Path) -> None:
-        """A published pointer is what the store opens, not the derived name.
+    def test_a_historical_pointer_redirects_reads(self, tmp_path: Path) -> None:
+        """A historical pointer is what the store opens, not the derived name.
 
         Proven able to fail: having ``resolve_served_code_collection`` ignore
         the pointer and return ``derived_name`` fails both assertions below.
         """
-        from ..._store_models import (
-            publish_served_code_collection,
-            resolve_served_code_collection,
-        )
+        from ..._store_models import resolve_served_code_collection
         from ...store_runtime import VaultStore
+        from .._historical_code_layout import write_historical_pointer
 
-        publish_served_code_collection(tmp_path, "codebase_docs_g2")
+        write_historical_pointer(tmp_path, "codebase_docs_g2")
         assert (
             resolve_served_code_collection(tmp_path, "codebase_docs")
             == "codebase_docs_g2"
         )
 
         # The store is the consumer that matters: it must open the pointed-to
-        # collection, which is what makes a swap visible to readers.
+        # collection, which is what keeps a historical index readable.
         store = VaultStore(tmp_path)
         try:
             assert store.CODE_TABLE_NAME == "codebase_docs_g2"
@@ -269,20 +266,19 @@ class TestServedCodeCollectionPointer:
     def test_reads_follow_the_pointer_not_the_derived_collection(
         self, tmp_path: Path
     ) -> None:
-        """Moving the pointer changes what a read sees, not just a name field.
+        """The pointer changes what a read sees, not just a name field.
 
         Asserting the resolved attribute proves the string; this proves the
-        consequence. Points live in the derived collection, the pointer names
-        another, and the count a reader takes must come from the pointed-to
-        one. A read path that bypassed the pointer would report the derived
-        collection's points and the swap would be invisible to callers.
+        consequence. The derived collection exists, the pointer names another,
+        and the reader must address the pointed-to one. A read path that
+        bypassed the pointer would answer from the derived collection.
 
         Proven able to fail: reverting the store to
         ``_prefix + CODE_TABLE_NAME`` reports the derived collection's points
         here and fails the second count; restoring returns it to green.
         """
-        from ..._store_models import publish_served_code_collection
         from ...store_runtime import VaultStore
+        from .._historical_code_layout import write_historical_pointer
 
         store = VaultStore(tmp_path)
         try:
@@ -292,7 +288,7 @@ class TestServedCodeCollectionPointer:
         finally:
             store.close()
 
-        publish_served_code_collection(tmp_path, derived_name + "_g2")
+        write_historical_pointer(tmp_path, derived_name + "_g2")
         swapped = VaultStore(tmp_path)
         try:
             assert derived_name + "_g2" == swapped.CODE_TABLE_NAME
@@ -303,158 +299,6 @@ class TestServedCodeCollectionPointer:
         finally:
             swapped.close()
 
-    def test_each_generation_gets_a_name_the_previous_one_never_used(self) -> None:
-        """Two generations of one root must never share a collection name.
-
-        Local mode pops a deleted collection's handle while its on-disk
-        directory survives, and a create under the same name re-reads that
-        directory. Reusing a name would therefore deliver a superseded
-        generation's points into its successor - the silent corruption this
-        naming exists to prevent.
-
-        Proven able to fail: dropping the generation token from
-        ``generation_code_collection`` so it returns ``derived_name`` makes
-        the two names equal and fails the inequality below.
-        """
-        from ..._store_models import generation_code_collection
-
-        first = generation_code_collection("codebase_docs", "a" * 32)
-        second = generation_code_collection("codebase_docs", "b" * 32)
-
-        assert first != second
-        assert first.startswith("codebase_docs")
-        assert second.startswith("codebase_docs")
-
-    def test_a_generation_name_is_stable_for_one_generation(self) -> None:
-        """The same generation must resolve to the same collection every time.
-
-        A resume re-derives the name it was already writing into; deriving a
-        fresh one would strand the points the interrupted attempt committed.
-
-        Proven able to fail: mixing any per-call varying value into the name
-        makes the two derivations differ and fails the equality below.
-        """
-        from ..._store_models import generation_code_collection
-
-        assert generation_code_collection(
-            "codebase_docs", "c" * 32
-        ) == generation_code_collection("codebase_docs", "c" * 32)
-
-    def test_a_generation_name_never_collides_with_the_served_one(
-        self, tmp_path: Path
-    ) -> None:
-        """The build target must differ from what is currently served.
-
-        If they matched, writing a generation would mutate the collection
-        answering reads - which is the destructive publication this whole
-        design removes.
-        """
-        from ..._store_models import (
-            generation_code_collection,
-            resolve_served_code_collection,
-        )
-
-        served = resolve_served_code_collection(tmp_path, "codebase_docs")
-        assert generation_code_collection("codebase_docs", "d" * 32) != served
-
-    def test_a_served_generation_is_never_reclaimed(self) -> None:
-        """Dropping what a pointer names is the destructive publication itself.
-
-        This is the assertion that matters most in the whole reclamation
-        path: a served collection surviving maintenance is the difference
-        between a swap and an outage.
-
-        Proven able to fail: removing the ``name not in served_names`` term
-        from ``reclaimable_generation_collections`` returns the served name
-        and fails the first assertion.
-        """
-        from ..._store_models import reclaimable_generation_collections
-
-        reclaimable = reclaimable_generation_collections(
-            existing=["codebase_docs_gaaa", "codebase_docs_gbbb"],
-            served=["codebase_docs_gaaa"],
-        )
-
-        assert "codebase_docs_gaaa" not in reclaimable
-        assert reclaimable == ("codebase_docs_gbbb",)
-
-    def test_a_derived_base_name_is_never_reclaimed(self) -> None:
-        """A root between publications is served by its derived name.
-
-        No pointer names it, so a reference-only rule would drop it and take
-        the index with it.
-
-        Proven able to fail: dropping the ``_is_generation_collection`` term
-        returns the derived name and fails the assertion below.
-        """
-        from ..._store_models import reclaimable_generation_collections
-
-        reclaimable = reclaimable_generation_collections(
-            existing=["codebase_docs", "vault_docs", "codebase_docs_gccc"],
-            served=[],
-        )
-
-        assert reclaimable == ("codebase_docs_gccc",)
-
-    def test_an_interrupted_build_leaves_a_reclaimable_collection(self) -> None:
-        """The fragment an interrupted build leaves is unreferenced, not serving.
-
-        That is the intended outcome of building beside the served collection
-        rather than into it, and reclamation is what eventually clears it.
-        """
-        from ..._store_models import (
-            generation_code_collection,
-            reclaimable_generation_collections,
-        )
-
-        abandoned = generation_code_collection("codebase_docs", "e" * 32)
-        reclaimable = reclaimable_generation_collections(
-            existing=["codebase_docs", abandoned],
-            served=["codebase_docs"],
-        )
-
-        assert reclaimable == (abandoned,)
-
-    def test_a_generation_target_leaves_the_served_collection_untouched(
-        self, tmp_path: Path
-    ) -> None:
-        """Writing to a generation must not disturb what is being served.
-
-        One store is shared between search and indexing, so the build target
-        is a per-call argument rather than instance state. This is the
-        assertion that binds that choice: after ensuring and counting a
-        generation collection, the served one must be unchanged.
-
-        Proven able to fail: having ``_code_collection`` ignore its argument
-        and always return ``self.CODE_TABLE_NAME`` makes the generation
-        operations land on the served collection and fails the served-count
-        assertion below.
-        """
-        from ..._store_models import generation_code_collection
-        from ...store_runtime import VaultStore
-
-        store = VaultStore(tmp_path)
-        try:
-            store.ensure_code_table()
-            served_before = store.count_code()
-
-            generation = generation_code_collection(store.CODE_TABLE_NAME, "f" * 32)
-            store.ensure_code_table(generation)
-
-            # The generation exists and is independently countable...
-            assert store.code_collection_exists(generation) is True
-            assert store.count_code(generation) == 0
-            # ...and the served collection is exactly as it was.
-            assert store.count_code() == served_before
-            assert generation != store.CODE_TABLE_NAME
-
-            # Dropping the generation must not touch the served collection.
-            store._drop_collection(generation)
-            assert store.code_collection_exists(generation) is False
-            assert store.code_collection_exists() is True
-        finally:
-            store.close()
-
     def test_an_unreadable_pointer_is_not_reported_as_absent(
         self, tmp_path: Path
     ) -> None:
@@ -463,9 +307,8 @@ class TestServedCodeCollectionPointer:
         A reader may conflate them - both fall back to the derived name, which
         is safe. A deletion decision may not: treating an unreadable pointer as
         "nothing points here" takes a live served collection for an
-        unreferenced one. The storage rules require the grace clock to reset on
-        an unverifiable observation, which is only possible if the observation
-        can be recognised as unverifiable.
+        unreferenced one. A reset refuses on an unverifiable pointer, which is
+        only possible if the observation can be recognised as unverifiable.
 
         Proven able to fail: returning ``verifiable=True`` from the OSError
         branch of ``read_served_pointer`` fails the unreadable case below;

@@ -412,16 +412,6 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "establish that on a variably loaded runner. Holder classification, "
         "exclusions and parent pairing remain production behaviour",
     ),
-    "test_generation_survey.py": (
-        1,
-        "root-scoped scheduling instrumentation: the wrapper calls through to "
-        "the real publication-snapshot acquisition and then, only on its "
-        "first hit for the root under test, reserves a real conflicting "
-        "receipt - and for one phase rolls it back - in the gap between "
-        "acquisition and validation. Live survey and publication traffic "
-        "cannot be scheduled to land a conflicting write in that exact gap on "
-        "demand; every proof, ledger and survey operation involved is real",
-    ),
     "test_job_progress_durability.py": (
         1,
         "pins the progress flush budget so the publish under test lands inside "
@@ -468,9 +458,9 @@ _ALLOWED: dict[str, tuple[int, str]] = {
     ),
     "test_cli_storage_generation_diagnostics.py": (
         3,
-        "a unit-level CLI JSON round-trip needs specific generation facts - "
-        "unattributed, unreadable, empty and debt namespaces, and malformed "
-        "model maps - behind the service transport, so the admin fetch is "
+        "a unit-level CLI JSON round-trip needs specific survey facts - "
+        "stamped and malformed model maps, per-kind counts and published "
+        "temp-root facts - behind the service transport, so the admin fetch is "
         "replaced with a canned survey payload; reaching the same conditions "
         "through a live server needs a populated GPU-backed backend the unit "
         "tier does not have, and the separate subprocess survey test drives "
@@ -514,7 +504,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "manifest, git, store-transport and settings boundaries it reads, "
         "because the bounded-inspection-window and family/newest/prefix "
         "ordering are proved against a hundred synthetic donor candidates "
-        "with controlled per-candidate failures - an absent or unreadable "
+        "with controlled per-candidate failures - an unverifiable or unreadable "
         "pointer, an absent or unreadable proof, a capability refusal, an "
         "unsupported collection. Building a hundred real donor projects and "
         "git repositories, and forcing each one's publication reads to fail "

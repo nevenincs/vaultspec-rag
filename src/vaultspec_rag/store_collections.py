@@ -260,19 +260,14 @@ class _VaultCollectionMixin:
                 logger.info("Dropped collection '%s'", collection)
             self._ensured[collection] = False
 
-    def _code_collection(self, collection: str | None) -> str:
-        """Return the code collection a call targets.
+    def _code_collection(self) -> str:
+        """Return the code collection this store reads and writes.
 
-        Defaults to the served name, so every existing caller keeps reading
-        and writing exactly where it did. A rebuild passes its generation
-        collection instead, which is what lets it populate a replacement while
-        the served one keeps answering searches.
-
-        The target is a per-call argument rather than instance state because
-        one store is shared between search and indexing: rebinding it on the
-        instance would drag concurrent readers onto the half-built generation.
+        The derived name, or the historical generation a root's pointer still
+        names until an explicit code reset discards it. Checked on every call
+        so a name outside this root's code namespace never reaches storage.
         """
-        target = self.CODE_TABLE_NAME if collection is None else collection
+        target = self.CODE_TABLE_NAME
         if not code_collection_matches_derived(target, self.DERIVED_CODE_TABLE_NAME):
             raise ValueError("collection must be a root-owned code collection")
         return target
@@ -280,12 +275,11 @@ class _VaultCollectionMixin:
     def owned_code_collections(self) -> tuple[str, ...]:
         """Return every existing code collection this root owns.
 
-        The derived base name, whatever the pointer serves, and any
-        generation-suffixed name the writer minted here - decided by the one
-        predicate the drop enforces, so this cannot name a collection a drop
-        would refuse or miss one it would accept. An interrupted rebuild
-        leaves such a generation behind, which is why reading only the served
-        name is not a reading of this root's code namespace.
+        The derived name and every historical generation name a build before
+        the canonical layout minted from it, whether a pointer still serves it
+        or an interrupted build left it behind. One exact predicate decides
+        membership, so a name that merely shares the derived prefix is never
+        enumerated and a reset never touches it.
 
         Raises:
             RuntimeError: the served pointer is unreadable, so what this root
@@ -309,7 +303,7 @@ class _VaultCollectionMixin:
         """Return every existing collection a reset of *source* discards.
 
         Vault and documents own one collection each. Code owns the derived
-        name and every generation-named collection minted for this root, as
+        name and every historical generation collection of this root, as
         :meth:`owned_code_collections` enumerates them.
 
         Raises:
@@ -377,7 +371,7 @@ class _VaultCollectionMixin:
 
         collection = self._canonical_source_collection(source)
         if source is _Source.CODE:
-            self.ensure_code_table(collection)
+            self.ensure_code_table()
         elif source is _Source.VAULT:
             self.ensure_table()
         else:
@@ -663,9 +657,9 @@ class _VaultCollectionMixin:
     def conformance_verdicts(self) -> dict[str, store_schema.ConformanceVerdict]:
         """Return cached verdicts for this store's currently served collections.
 
-        A private build or retained superseded code generation does not describe
-        current service conformance. Its cached verdict remains available to the
-        collection's ensure path. Health never re-probes the backend here.
+        A historical code generation a reset is discarding does not describe
+        current service conformance, so only the served names report. Health
+        never re-probes the backend here.
         """
         with self._lifecycle_lock:
             served = (self.TABLE_NAME, self.CODE_TABLE_NAME, self.DOCUMENT_TABLE_NAME)
@@ -688,7 +682,7 @@ class _VaultCollectionMixin:
             store_schema.VAULT_INTEGER_INDEXES,
         )
 
-    def code_collection_exists(self, collection: str | None = None) -> bool:
+    def code_collection_exists(self) -> bool:
         """Return whether the code collection currently exists in storage.
 
         Read-only existence probe for callers that must distinguish an
@@ -696,10 +690,9 @@ class _VaultCollectionMixin:
         namespace) from an empty one before trusting prior-run evidence
         that claims storage-confirmed writes.
         """
-        _target = self._code_collection(collection)
-        return self._collection_exists(_target)
+        return self._collection_exists(self._code_collection())
 
-    def ensure_code_table(self, collection: str | None = None) -> None:
+    def ensure_code_table(self) -> None:
         """Create the codebase_docs collection and its declared payload indexes.
 
         ``node_type`` is in the KEYWORD set so the MCP
@@ -708,9 +701,8 @@ class _VaultCollectionMixin:
         exclude/only pushdown - the index that first made reaching an existing
         collection matter.
         """
-        _target = self._code_collection(collection)
         self._ensure_table(
-            _target,
+            self._code_collection(),
             store_schema.CODE_KEYWORD_INDEXES,
             store_schema.CODE_INTEGER_INDEXES,
         )

@@ -213,11 +213,10 @@ def test_full_index_discards_the_old_index_and_certifies_its_own_collection(
     }
     legacy = None
     if source is PublicSourceType.CODE:
-        from .._store_models import generation_code_collection
+        from ._historical_code_layout import create_historical_generation
 
         # A build under the earlier layout left this generation collection.
-        legacy = generation_code_collection(built.store.DERIVED_CODE_TABLE_NAME, "old")
-        built.store.ensure_code_table(legacy)
+        legacy = create_historical_generation(built.store, "old")
         built.plant_old_content(legacy)
     before = built.reset_state(source)
     before_epoch = 0 if before is None else before.epoch

@@ -439,27 +439,17 @@ def test_metadata_administration_is_noncreating_and_projection_restricted(
         store.close()
 
 
-def test_publication_point_deletion_targets_only_code_collections(
+def test_publication_point_deletion_prepares_only_its_own_collection(
     clean_config: None,
     tmp_path: Path,
 ) -> None:
-    """Guard: only code deletion takes a target; the others ensure their table.
-
-    Mutation: dropping the explicit-collection check in
-    ``delete_publication_points`` lets the document delete run against the
-    named collection instead of raising, and the ``pytest.raises`` fails.
-    """
+    """A document deletion ensures the document table and leaves code absent."""
     del clean_config
     store = VaultStore(tmp_path, embedding_dim=4)
     try:
-        with pytest.raises(ValueError, match="only code point deletion"):
-            store.delete_publication_points(
-                PublicSourceType.DOCUMENT, ["x"], collection=store.CODE_TABLE_NAME
-            )
-        assert not store._collection_exists(store.CODE_TABLE_NAME)
-        assert not store._collection_exists(store.DOCUMENT_TABLE_NAME)
         store.delete_publication_points(PublicSourceType.DOCUMENT, ["x"])
         assert store._collection_exists(store.DOCUMENT_TABLE_NAME)
+        assert not store._collection_exists(store.CODE_TABLE_NAME)
     finally:
         store.close()
 

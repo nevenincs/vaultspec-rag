@@ -618,6 +618,54 @@ assert "vaultspec_rag.storage_restore" not in sys.modules
                 f"{hits}; storage maintenance is read/drop only"
             )
 
+    def test_maintenance_sources_never_name_the_explicit_reset(self):
+        """A source reset is operator-authorized; the scheduled tick may not reach it.
+
+        The reset discards a source's collections, historical code generations
+        included, without classification or a grace window, so maintenance
+        reaching it would delete what the orphan tiers protect. A fresh-import
+        guard cannot carry this one: any indexer import loads the reset owner
+        with the package, so only the names are scanned.
+
+        Mutation-proved by naming ``discard_source_storage`` in
+        ``storage_reclamation`` without calling it: the assertion fires naming
+        that module and that symbol; restoring the source passes.
+        """
+        import inspect
+
+        from .. import (
+            storage_archive,
+            storage_manifest,
+            storage_reclamation,
+            storage_reconciliation,
+            storage_survey_ops,
+        )
+        from ..server import _lifecycle
+
+        forbidden = (
+            "_rebuild_lifecycle",
+            "reset_selected_sources",
+            "enter_rebuild_ingestion",
+            "discard_source_storage",
+            "recreate_empty_source",
+            "retire_served_code_pointer",
+        )
+        for module in (
+            storage_reclamation,
+            storage_reconciliation,
+            storage_archive,
+            storage_survey_ops,
+            storage_manifest,
+            _lifecycle,
+        ):
+            src = inspect.getsource(module)
+            hits = [name for name in forbidden if name in src]
+            assert not hits, (
+                f"{module.__name__} references the explicit source reset {hits}; "
+                "the scheduled maintenance tick is read/drop only and a reset "
+                "is an operator-authorized rebuild"
+            )
+
     def test_maintenance_sources_never_name_the_restore_operation(self):
         """Restore is an operator verb; the scheduled tick may not reach it.
 

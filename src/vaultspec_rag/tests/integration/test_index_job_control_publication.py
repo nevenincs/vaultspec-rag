@@ -18,7 +18,7 @@ import pytest
 
 from ..._job_errors import JobError, JobErrorKind
 from ..._source_types import PublicSourceType
-from ..._store_models import read_served_code_collection
+from ..._store_models import read_served_pointer
 from ...embeddings import EmbeddingModel  # noqa: TC001
 from ...indexer import CodebaseIndexer
 from ...job_control import (
@@ -220,7 +220,7 @@ def test_an_interrupted_rebuild_leaves_no_old_publication_behind(
         assert rebuilt.total > 0
         assert store.CODE_TABLE_NAME == store.DERIVED_CODE_TABLE_NAME
         assert store.owned_code_collections() == (store.DERIVED_CODE_TABLE_NAME,)
-        assert read_served_code_collection(tmp_path) is None
+        assert read_served_pointer(tmp_path) == (None, True)
         assert_current_code_state(indexer, store, paths, "interrupted-rebuild")
     _assert_code_resources_released()
 
@@ -296,7 +296,7 @@ def _assert_replayed_store(
     source = PublicSourceType(source_name)
     collection = {
         PublicSourceType.VAULT: store.TABLE_NAME,
-        PublicSourceType.CODE: store._code_collection(None),
+        PublicSourceType.CODE: store.CODE_TABLE_NAME,
         PublicSourceType.DOCUMENT: store.DOCUMENT_TABLE_NAME,
     }[source]
     records, offset = store._scroll(

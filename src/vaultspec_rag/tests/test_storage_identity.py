@@ -649,7 +649,7 @@ def test_reset_replaces_the_code_verdict_and_publication_keeps_it(
     """The reset discards a nonconforming code collection; siblings keep theirs."""
     del clean_config
     from .._publication_state import acquire_publication_snapshot
-    from .._store_models import read_served_code_collection
+    from .._store_models import read_served_pointer
     from ..indexer._run_ledger_models import RunTerminalState
     from ..progress import NullProgressReporter
     from ..store_runtime import VaultStore
@@ -674,7 +674,7 @@ def test_reset_replaces_the_code_verdict_and_publication_keeps_it(
             )
             assert store.conformance_verdicts() == during
             assert store.client.count(collection_name=target).count == 1
-            assert read_served_code_collection(tmp_path) is None
+            assert read_served_pointer(tmp_path) == (None, True)
             assert (
                 checkpoint.ledger.generation(checkpoint.generation_id).terminal_state
                 is RunTerminalState.SUCCEEDED

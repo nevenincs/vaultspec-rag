@@ -5,7 +5,7 @@ tags:
 date: '2026-10-12'
 modified: '2026-11-21'
 body_schema: 'body-v2'
-body_hash: 'sha256:4e0c73336e71af0923b5759abeecae2e03e09396800781ca55e0206e23f8460e'
+body_hash: 'sha256:2be55e449b27f4ef7755e92c5243c9b7c6ba606aeb30b698a14ce6842f2fb0a9'
 related:
   - "[[2026-10-12-destructive-rebuild-lifecycle-plan]]"
 ---
@@ -181,6 +181,55 @@ related:
 - `S04` `verify:` `pytest test_rebuild_lifecycle.py test_job_rebuild_resume_dispatch.py` -> `pass`
 - `S04` `verify:` `mutation proofs, 8 guards break-fail-restore-pass` -> `pass`
 - `S04` `by:` `vaultspec-high-executor`
+- `S05` `M` `src/vaultspec_rag/_store_models.py`
+- `S05` `M` `src/vaultspec_rag/_store_search.py`
+- `S05` `M` `src/vaultspec_rag/cli/_service_storage.py`
+- `S05` `D` `src/vaultspec_rag/generation_stamps.py`
+- `S05` `D` `src/vaultspec_rag/generation_survey.py`
+- `S05` `M` `src/vaultspec_rag/indexer/_donor_candidates.py`
+- `S05` `M` `src/vaultspec_rag/server/_routes_storage.py`
+- `S05` `M` `src/vaultspec_rag/service.py`
+- `S05` `M` `src/vaultspec_rag/storage_migration.py`
+- `S05` `M` `src/vaultspec_rag/storage_reclamation.py`
+- `S05` `M` `src/vaultspec_rag/storage_survey.py`
+- `S05` `M` `src/vaultspec_rag/store_catalog.py`
+- `S05` `M` `src/vaultspec_rag/store_collections.py`
+- `S05` `M` `src/vaultspec_rag/store_ingest.py`
+- `S05` `M` `src/vaultspec_rag/store_runtime.py`
+- `S05` `A` `src/vaultspec_rag/tests/_historical_code_layout.py`
+- `S05` `M` `src/vaultspec_rag/tests/integration/test_first_build_lifecycle.py`
+- `S05` `D` `src/vaultspec_rag/tests/integration/test_generation_reclaim.py`
+- `S05` `M` `src/vaultspec_rag/tests/integration/test_index_job_control_managed.py`
+- `S05` `M` `src/vaultspec_rag/tests/integration/test_index_job_control_publication.py`
+- `S05` `M` `src/vaultspec_rag/tests/integration/test_index_job_control_stream.py`
+- `S05` `M` `src/vaultspec_rag/tests/integration/test_rebuild_replacement_corpus.py`
+- `S05` `M` `src/vaultspec_rag/tests/integration/test_storage_ops_integration.py`
+- `S05` `M` `src/vaultspec_rag/tests/integration/test_store_integration.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_adr_regression.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_cli_storage_generation_diagnostics.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_content_route_migration.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_donor_admission.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_first_build_admission.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_generation_autoprune_policy.py`
+- `S05` `D` `src/vaultspec_rag/tests/test_generation_survey.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_incremental_failure_classification.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_rebuild_lifecycle.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_rebuild_replacement.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_served_pointer_validation.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_storage_identity.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_storage_ops_reclaim.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_store_codebase.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S05` `verify:` `ruff check src/vaultspec_rag` -> `pass`
+- `S05` `verify:` `ruff format --check (changed files)` -> `pass`
+- `S05` `verify:` `ty check (changed files)` -> `pass`
+- `S05` `verify:` `basedpyright (changed files)` -> `pass`
+- `S05` `verify:` `python -m dev lint size` -> `pass`
+- `S05` `verify:` `python -m dev lint complexity` -> `pass`
+- `S05` `verify:` `pytest -m unit -n 8 src/vaultspec_rag/tests (8346 passed; 1 stale guard fixed, module rerun 25 passed)` -> `pass`
+- `S05` `verify:` `pytest store/generation/survey/reclamation/status/rebuild modules plus rebuild_lifecycle, rebuild_replacement, search_reset_fence, substitution_discipline, no_unconsumed_definitions, no_reexports, process_probe_source_structure` -> `pass`
+- `S05` `verify:` `mutation proofs, 9 guards break-fail-restore-pass` -> `pass`
+- `S05` `by:` `vaultspec-high-executor`
 
 ## Notes
 
@@ -192,3 +241,5 @@ related:
 - `S03` S03 Document-domain partial-results search with a real model is left to the integrated three-domain proof; CPU coverage of document fencing and finalisation authority is in `test_search_reset_fence`
 - `S04` GPU and service integration modules `(test_index_job_control_publication.py,` `test_index_job_control_managed.py,` `test_service_job_control_pause_restart.py,` `test_rebuild_replacement_corpus.py)` only collected: no resident service in this environment
 - `S04` `test_model_fetch.py::test_missing_repos_are_downloaded_reported_and_then_left_alone` failed once under -n 8 on a process count; passes alone; untouched by this Step
+- `S05` GPU and service integration modules `(test_first_build_lifecycle,` `test_index_job_control_managed/stream/publication,` `test_rebuild_replacement_corpus,` `test_store_integration,` `test_storage_ops_integration)` only collected: no resident service to borrow the GPU from
+- `S05` Deleted `service.ServiceRegistry.has_live_lease:` its only production caller was the removed generation reclaim pass

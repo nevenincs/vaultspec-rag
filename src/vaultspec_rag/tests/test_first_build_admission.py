@@ -21,7 +21,7 @@ from .._job_admission import (
     read_source_admission,
 )
 from .._source_types import PublicSourceType
-from .._store_models import CodeChunk, generation_code_collection
+from .._store_models import CodeChunk
 from .._store_writes import workspace_volume_path
 from ..config._types import EnvVar
 from ..indexer._run_ledger_models import RunAuthority, index_run_ledger_path
@@ -34,6 +34,10 @@ from ..job_models import (
     JobSpec,
 )
 from ..registry import get_registry
+from ._historical_code_layout import (
+    create_historical_generation,
+    write_historical_code_points,
+)
 from ._publication_assertions import publish_empty_vault_proof
 from ._state_fixtures import reset_registry
 from .conftest import managed_env
@@ -83,36 +87,31 @@ def _store_one_code_point(
 ) -> str:
     """Write one real code point and return the collection now holding it.
 
-    With *generation_id*, it lands in the collection a rebuild generation of
-    that id writes into, which is what an interrupted build leaves behind.
+    With *generation_id*, it lands in the historical generation collection of
+    that token which an interrupted build before the canonical layout left
+    behind, and which a reset of this source owns.
     """
     root.mkdir(parents=True, exist_ok=True)
     with registry.lease_store(root) as store:
-        collection = (
-            store.CODE_TABLE_NAME
-            if generation_id is None
-            else generation_code_collection(
-                store.DERIVED_CODE_TABLE_NAME, generation_id
+        chunks = [
+            CodeChunk(
+                id="src/stored.py#c0",
+                path="src/stored.py",
+                language="python",
+                content="def stored() -> None:\n    return None\n",
+                line_start=1,
+                line_end=2,
+                node_type="function_definition",
+                function_name="stored",
+                class_name=None,
+                vector=[0.1] * store._embedding_dim,
             )
-        )
-        store.upsert_code_chunks(
-            [
-                CodeChunk(
-                    id="src/stored.py#c0",
-                    path="src/stored.py",
-                    language="python",
-                    content="def stored() -> None:\n    return None\n",
-                    line_start=1,
-                    line_end=2,
-                    node_type="function_definition",
-                    function_name="stored",
-                    class_name=None,
-                    vector=[0.1] * store._embedding_dim,
-                )
-            ],
-            write_policy=None,
-            collection=collection,
-        )
+        ]
+        if generation_id is None:
+            store.upsert_code_chunks(chunks, write_policy=None)
+            return store.CODE_TABLE_NAME
+        collection = create_historical_generation(store, generation_id)
+        write_historical_code_points(store, collection, chunks)
         return collection
 
 
@@ -127,7 +126,7 @@ def _collection_points(
     has to cover cannot establish its own setup with it.
     """
     with registry.lease_store(root) as store:
-        return store.count_code(collection)
+        return store._count_collection(collection)
 
 
 def test_no_publication_and_no_points_is_the_only_new_reading() -> None:

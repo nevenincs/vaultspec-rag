@@ -186,19 +186,18 @@ def test_code_reset_discards_generation_collections_and_retires_the_pointer(
     Mutation: dropping only the served collection left the older generation
     in the owned set; restoring the full owned-set discard passed.
     """
-    from .._store_models import (
-        generation_code_collection,
-        publish_served_code_collection,
-        served_code_pointer_path,
+    from .._store_models import served_code_pointer_path
+    from ._historical_code_layout import (
+        create_historical_generation,
+        write_historical_pointer,
     )
 
     derived = store.DERIVED_CODE_TABLE_NAME
-    older = generation_code_collection(derived, "a" * 32)
-    served = generation_code_collection(derived, "b" * 32)
+    older = create_historical_generation(store, "a" * 16)
+    served = create_historical_generation(store, "b" * 16)
     for collection in (derived, older, served):
-        store.ensure_code_table(collection)
         _seed(store, collection)
-    publish_served_code_collection(store.root_dir, served)
+    write_historical_pointer(store.root_dir, served)
     store.CODE_TABLE_NAME = served
 
     reset_selected_sources(store, PublicSourceType.CODE, generation_id="rebuild-1")
@@ -210,15 +209,60 @@ def test_code_reset_discards_generation_collections_and_retires_the_pointer(
     assert _points(store, derived) == 0
 
 
+def test_only_a_code_reset_discards_historical_generations(
+    store: VaultStore,
+) -> None:
+    """Vault and document resets leave the historical code layout serving.
+
+    Mutation: discarding every source's owned collections on any reset
+    dropped both generations during the vault reset and failed the first
+    survivor assertion; restoring the per-source discard passed.
+    """
+    from .._store_models import read_served_pointer
+    from ._historical_code_layout import (
+        create_historical_generation,
+        write_historical_pointer,
+    )
+
+    older = create_historical_generation(store, "old")
+    served = create_historical_generation(store, "served")
+    for collection in (older, served):
+        _seed(store, collection)
+    write_historical_pointer(store.root_dir, served)
+
+    for sibling in (PublicSourceType.VAULT, PublicSourceType.DOCUMENT):
+        reset_selected_sources(store, sibling, generation_id=f"{sibling.value}-1")
+        for collection in (older, served):
+            assert store.client.collection_exists(collection), (sibling, collection)
+            assert _points(store, collection) == 1, (sibling, collection)
+        assert read_served_pointer(store.root_dir).collection == served, sibling
+        assert _state(store, PublicSourceType.CODE) is None, sibling
+
+    reset_selected_sources(store, PublicSourceType.CODE, generation_id="code-1")
+
+    for collection in (older, served):
+        assert not store.client.collection_exists(collection), collection
+    assert read_served_pointer(store.root_dir) == (None, True)
+
+
 def test_code_reset_refuses_to_touch_names_it_does_not_own(store: VaultStore) -> None:
     """Unknown and foreign code-shaped names survive a code reset untouched.
 
     Mutation: widening ownership to any name starting with the derived name
     dropped ``codebase_docs_old`` and failed the survivor assertion;
-    restoring the exact generation-suffix predicate passed.
+    restoring the exact generation-suffix predicate passed. Accepting any
+    ``_g`` token dropped ``codebase_docs_g-tmp`` and failed the same
+    assertion; restoring the bounded alphanumeric token passed.
     """
     derived = store.DERIVED_CODE_TABLE_NAME
-    foreign = (f"{derived}_old", f"{derived}_g-tmp", f"other_{derived}")
+    foreign = (
+        f"{derived}_old",
+        f"{derived}_g-tmp",
+        f"{derived}_g" + "a" * 17,
+        f"{derived}_gfirst_gsecond",
+        f"{derived}_extra_gabc",
+        f"other_{derived}",
+    )
     for name in foreign:
         store.client.create_collection(
             name,
@@ -231,10 +275,6 @@ def test_code_reset_refuses_to_touch_names_it_does_not_own(store: VaultStore) ->
     for name in foreign:
         assert store.client.collection_exists(name), name
         assert _points(store, name) == 1, name
-    with pytest.raises(ValueError, match="root-owned code collection"):
-        store.delete_publication_points(
-            PublicSourceType.CODE, ["x"], collection=foreign[0]
-        )
 
 
 def test_unverifiable_code_pointer_refuses_before_any_source_records_intent(

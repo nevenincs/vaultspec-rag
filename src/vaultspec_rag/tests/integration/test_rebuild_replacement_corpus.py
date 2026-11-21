@@ -268,11 +268,10 @@ def test_explicit_rebuild_discards_first_and_certifies_its_own_collection(
     sibling_contents = {kind: sorted(built.contents(kind)) for kind in siblings}
     legacy = None
     if source is PublicSourceType.CODE:
-        from ..._store_models import generation_code_collection
+        from .._historical_code_layout import create_historical_generation
 
         # An interrupted build under the earlier layout left this behind.
-        legacy = generation_code_collection(built.store.DERIVED_CODE_TABLE_NAME, "old")
-        built.store.ensure_code_table(legacy)
+        legacy = create_historical_generation(built.store, "old")
     epoch_before = capture_reset_epoch(
         built.root, source, built.store.backend_identity
     ).epoch

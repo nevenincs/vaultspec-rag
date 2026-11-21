@@ -301,16 +301,22 @@ def _served_donor_collection(
 ) -> str | None:
     """Return the collection a donor root serves for *kind*.
 
-    Code donors without a readable publication pointer are ineligible. Their
-    derived namespace is not evidence that any collection is published.
+    A code donor serves its derived name, or the historical generation its
+    pointer still names. A pointer that cannot be verified makes the donor
+    ineligible: which collection it serves is not established. Whether the
+    served collection holds published content is the proof gate's question,
+    not this one's.
     """
     if kind is not CollectionKind.CODE:
         return derived
     if not root:
         return None
-    from .._store_models import read_served_code_collection
+    from .._store_models import read_served_pointer
 
-    return read_served_code_collection(root, derived)
+    pointer = read_served_pointer(root, derived)
+    if not pointer.verifiable:
+        return None
+    return pointer.collection or derived
 
 
 def _rank_donor_candidates(

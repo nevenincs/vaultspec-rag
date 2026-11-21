@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass
-from functools import partial
 from typing import TYPE_CHECKING, Any, Unpack, cast
 
 from ._store_models import VAULT_CHUNK_ONLY_PAYLOAD_KEYS
@@ -74,13 +73,13 @@ class _VaultCatalogMixin:
 
         def ensure_table(self) -> None: ...
 
-        def ensure_code_table(self, collection: str | None = None) -> None: ...
+        def ensure_code_table(self) -> None: ...
 
         def ensure_document_table(self) -> None: ...
 
         def owned_code_collections(self) -> tuple[str, ...]: ...
 
-        def _code_collection(self, collection: str | None) -> str: ...
+        def _code_collection(self) -> str: ...
 
         def _collection_exists(self, name: str) -> bool: ...
 
@@ -276,15 +275,15 @@ class _VaultCatalogMixin:
             )
         logger.info("Deleted chunk tail of %s from ordinal %d", doc_id, from_ordinal)
 
-    def get_all_code_ids(self, collection: str | None = None) -> set[str]:
+    def get_all_code_ids(self) -> set[str]:
         """Return the set of all code chunk ``id`` values in the store.
 
         Returns:
-            Set of chunk IDs from the targeted code collection, empty when it
+            Set of chunk IDs from the code collection, empty when it
             does not exist. Creates nothing, for the same reason
             :meth:`count_code` does not.
         """
-        _target = self._code_collection(collection)
+        _target = self._code_collection()
         if not self._collection_exists(_target):
             return set()
         with self._point_lock(_target):
@@ -454,20 +453,19 @@ class _VaultCatalogMixin:
     def scroll_code_content(
         self,
         *,
-        collection: str | None = None,
         limit: int = 100,
         offset: PointId | None = None,
         source_paths: set[str] | None = None,
         with_vectors: bool = False,
     ) -> tuple[list[dict[str, Any]], PointId | None]:
-        """Return one bounded page from the selected code collection."""
-        _target = self._code_collection(collection)
+        """Return one bounded page from the code collection."""
+        _target = self._code_collection()
         return self._scroll_content(
             _ContentScrollRequest(
                 _target,
                 "path",
                 "code",
-                partial(self.ensure_code_table, _target),
+                self.ensure_code_table,
                 limit,
                 offset,
                 source_paths,
@@ -475,9 +473,7 @@ class _VaultCatalogMixin:
             )
         )
 
-    def code_content_ids_exist(
-        self, ids: Sequence[str], collection: str | None = None
-    ) -> bool:
+    def code_content_ids_exist(self, ids: Sequence[str]) -> bool:
         """Return whether every requested code identity is currently stored.
 
         A collection that does not exist stores nothing, so it answers
@@ -485,7 +481,7 @@ class _VaultCatalogMixin:
         a filter, so it needs no schema reconcile on the way - it only needs
         the collection to be there.
         """
-        _target = self._code_collection(collection)
+        _target = self._code_collection()
         if not ids:
             return False
         if not self._collection_exists(_target):
@@ -575,9 +571,7 @@ class _VaultCatalogMixin:
             offset = next_offset
         return ids
 
-    def get_code_ids_by_paths(
-        self, rel_paths: set[str], collection: str | None = None
-    ) -> list[str]:
+    def get_code_ids_by_paths(self, rel_paths: set[str]) -> list[str]:
         """Return chunk IDs for code chunks belonging to the given file paths.
 
         Uses a Qdrant MatchAny filter on the ``path`` payload field
@@ -589,7 +583,7 @@ class _VaultCatalogMixin:
         Returns:
             List of chunk ID strings for matching code chunks.
         """
-        _target = self._code_collection(collection)
+        _target = self._code_collection()
         from qdrant_client import models
 
         if not rel_paths:
@@ -673,14 +667,14 @@ class _VaultCatalogMixin:
         """
         return self._count_collection(self.TABLE_NAME)
 
-    def count_code(self, collection: str | None = None) -> int:
+    def count_code(self) -> int:
         """Return total number of indexed codebase chunks.
 
         Returns:
-            Point count in the targeted code collection, or ``0`` when it does
-            not exist.
+            Point count in the code collection, or ``0`` when it does not
+            exist.
         """
-        return self._count_collection(self._code_collection(collection))
+        return self._count_collection(self._code_collection())
 
     def count_document(self) -> int:
         """Return the point count in the document collection.
@@ -717,10 +711,10 @@ class _VaultCatalogMixin:
         """Return how many points a reset of *source* would destroy here.
 
         Vault and documents each have exactly one collection, so the
-        canonical count is the whole scope. Code can also hold
-        generation-scoped collections an interrupted build left behind, and
-        they are inside the ownership a reset acts on - so counting only the
-        served collection would call a root that still holds those points
+        canonical count is the whole scope. Code can also hold historical
+        generation collections, served or left behind by an interrupted build,
+        and they are inside the ownership a reset acts on - so counting only
+        the served collection would call a root that still holds those points
         empty, and anything deciding on emptiness would authorize destroying
         them.
 
@@ -732,7 +726,8 @@ class _VaultCatalogMixin:
         if source is not _Source.CODE:
             return self.count_source(source)
         return sum(
-            self.count_code(collection) for collection in self.owned_code_collections()
+            self._count_collection(collection)
+            for collection in self.owned_code_collections()
         )
 
     def get_by_id(self, doc_id: str) -> dict[str, object] | None:
