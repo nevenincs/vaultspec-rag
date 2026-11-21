@@ -5,7 +5,7 @@ tags:
 date: '2026-10-12'
 modified: '2026-11-21'
 body_schema: 'body-v2'
-body_hash: 'sha256:eedddba3b442e1b789264bf3cb8edb0086cf2ef55bbd47c19cb0f22a90a7e51f'
+body_hash: 'sha256:6d898dc2ce8cff74065c26559a922188b3d5ced6cd883e9265dc03883473280f'
 related:
   - "[[2026-10-12-destructive-rebuild-lifecycle-plan]]"
 ---
@@ -268,6 +268,23 @@ related:
 - `S06` `verify:` `pytest -m unit -n 8 (8253 passed; 101 parallel-load failures rerun serially: 96 pass, 5 test_service_runtime failures from another worker's in-flight torch_config edits)` -> `pass`
 - `S06` `verify:` `mutation proofs, 7 guards break-fail-restore-pass` -> `pass`
 - `S06` `by:` `vaultspec-high-executor`
+- `S06` `M` `src/vaultspec_rag/storage_archive.py`
+- `S06` `M` `src/vaultspec_rag/indexer/_donor_candidates.py`
+- `S06` `M` `src/vaultspec_rag/cli/_index.py`
+- `S06` `A` `src/vaultspec_rag/tests/integration/test_clean_pointer_refusal.py`
+- `S06` `M` `src/vaultspec_rag/server/_search_availability.py`
+- `S06` `M` `src/vaultspec_rag/server/_search_route_availability.py`
+- `S06` `M` `src/vaultspec_rag/_public_search.py`
+- `S06` `M` `src/vaultspec_rag/server/_routes_search.py`
+- `S06` `verify:` `ruff check src/vaultspec_rag` -> `pass`
+- `S06` `verify:` `ruff format --check` -> `pass`
+- `S06` `verify:` `ty check` -> `pass`
+- `S06` `verify:` `basedpyright` -> `pass`
+- `S06` `verify:` `python -m dev lint size` -> `pass`
+- `S06` `verify:` `python -m dev lint complexity` -> `pass`
+- `S06` `verify:` `python -m dev.generate_cli_reference --check` -> `pass`
+- `S06` `verify:` `pytest -m unit storage donor clean rebuild readiness served-pointer and structure guards` -> `pass`
+- `S06` `by:` `implementation-engineer`
 
 ## Notes
 
@@ -284,3 +301,4 @@ related:
 - `S06` S06 User decision 2026-11-21: an explicit code reset deletes a stale served pointer naming the root's other-backend code collection, logs it, and never deletes that collection; other unverifiable pointers still refuse
 - `S06` S06 GPU-lane `test_rebuild_three_domain_contract` (7 tests) collected only: no resident service; service restart mid-rebuild relies on `test_service_job_control_pause_restart,` also collected only
 - `S06` S06 Not fixed: `storage_archive` and the donor lookup still refuse a stale other-backend pointer; CLI clean emits no JSON envelope when a reset refuses on an unverifiable pointer
+- `S06` Pointer and clean-refusal source landed in d693c6f65 by concurrent pickup; tests in f7938d978; `observed_generation` in b421c1945
