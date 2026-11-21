@@ -40,6 +40,7 @@ __all__ = [
     "IndexTransitionError",
     "PublicationSnapshot",
     "SourceReadFence",
+    "UnfinishedResetError",
     "acquire_publication_snapshot",
     "capture_source_read_fence",
     "clear_publication_state",
@@ -199,13 +200,33 @@ class IndexTransitionError(RuntimeError):
     Raised when the source's reset is between intent and completion at the
     start of the read, and when a reset begins before the read is validated.
     Either way the read may have observed storage that reset discards, so
-    nothing it found is returned. A reset is a short, bounded phase of an
-    explicit rebuild, so the condition is retryable.
+    nothing it found is returned. A reset that crosses a read is running
+    now, so that condition is retryable; a reset found unfinished at the start
+    of the read raises :class:`UnfinishedResetError` instead.
     """
 
     def __init__(self, source: PublicSourceType, detail: str) -> None:
         super().__init__(f"the {source.value} index is being reset: {detail}")
         self.source = source
+
+
+class UnfinishedResetError(IndexTransitionError):
+    """The source's latest reset recorded intent and has not completed.
+
+    Unlike a reset that crosses a read, this state persists until a job
+    finishes that reset or a new rebuild replaces it. Whether a retry can
+    succeed depends on whether a live job still owns the reset, which only the
+    caller holding the job snapshot can tell; ``fence`` names the reset so it
+    can.
+    """
+
+    def __init__(self, fence: ResetEpochFence) -> None:
+        super().__init__(
+            fence.source_type,
+            f"rebuild generation {fence.generation_id} left reset epoch "
+            f"{fence.epoch} at {fence.phase} and its empty replacement is not ready",
+        )
+        self.fence = fence
 
 
 @dataclass(frozen=True, slots=True)
@@ -272,11 +293,7 @@ def capture_source_read_fence(
             baseline_readable=False,
         )
     if not fence.serving:
-        raise IndexTransitionError(
-            source,
-            f"reset epoch {fence.epoch} is at {fence.phase} and its empty "
-            "replacement is not ready",
-        )
+        raise UnfinishedResetError(fence)
     return SourceReadFence(fence=fence, baseline_readable=True)
 
 

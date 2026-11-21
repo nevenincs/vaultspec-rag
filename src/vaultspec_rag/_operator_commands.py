@@ -34,6 +34,7 @@ __all__ = [
     "preprocess_list_command",
     "preprocess_status_command",
     "server_doctor_command",
+    "server_job_resume_command",
     "server_jobs_command",
     "server_start_command",
     "server_status_command",
@@ -119,6 +120,11 @@ def server_jobs_command(
     if index is not None:
         command += f" --index {index}"
     return command + port_option(port)
+
+
+def server_job_resume_command(job_id: str, port: object | None = None) -> str:
+    """Return the ``server job resume`` invocation that resumes *job_id*."""
+    return f"vaultspec-rag server job resume {job_id}{port_option(port)}"
 
 
 def preprocess_status_command() -> str:

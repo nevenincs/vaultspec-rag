@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from qdrant_client.http.exceptions import UnexpectedResponse
 
+from .._operator_commands import server_job_resume_command
 from .._root_identity import canonical_root_key_or_none
 from .._search_state import (
     MAX_SEARCH_EVIDENCE_ITEMS,
@@ -26,7 +27,9 @@ from ..job_models import JobMode, JobOperation, JobState
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from .._publication_state import IndexTransitionError, UnfinishedResetError
     from .._source_types import IndexSource
+    from ..store_runtime import StorageGeometryError
 
 __all__ = [
     "CanonicalSearchEvidence",
@@ -34,7 +37,7 @@ __all__ = [
     "SearchStatusCode",
     "classify_qdrant_collection_disappearance",
     "classify_search_response",
-    "typed_search_refusal_fact",
+    "storage_refusal_fact",
 ]
 
 # One declaration of the convergence-mode vocabulary; the transport owns it.
@@ -136,35 +139,61 @@ class SearchAvailabilityContext:
     canonical_evidence: CanonicalSearchEvidence = CanonicalSearchEvidence()
 
 
-def typed_search_refusal_fact(
-    exc: Exception,
+def storage_refusal_fact(
+    exc: StorageGeometryError | IndexTransitionError,
     source_fact: SearchSourceFact,
     *,
     root: Path,
+    job_snapshot: Sequence[object],
     port: int | None = None,
-) -> SearchSourceFact | None:
-    """Replace preflight readiness only for a typed storage refusal.
+) -> SearchSourceFact:
+    """Replace preflight readiness with the fact a typed storage refusal states.
 
-    A storage compatibility refusal requires an explicit rebuild and is not
-    retryable. A reset in progress, or one that crossed the read, makes the
-    source briefly unreadable while its rebuild runs and is retryable. Other
-    failures remain under their existing error policy rather than gaining
-    either meaning. Captured publication identities and bounded evidence
-    remain diagnostic facts.
+    - A storage compatibility refusal requires an explicit rebuild and is not
+      retryable.
+    - A reset that crossed the read is running now, so it is retryable.
+    - A reset found unfinished is classified by the job that owns it in
+      *job_snapshot*: retryable while that job runs, a resume while it is
+      paused, and a rebuild when no live job owns it, because nothing will
+      ever finish it and a retry can never succeed.
+
+    Captured publication identities and bounded evidence remain diagnostic
+    facts.
     """
-    from .._publication_state import IndexTransitionError
+    from .._publication_state import UnfinishedResetError
     from ..store_runtime import StorageGeometryError
 
+    reason = SearchReasonCode.INDEX_TRANSITION
+    freshness = SearchFreshness.UPDATING
+    retryable = True
+    remediation = reason.remediation(source_fact.source, port=port, target=str(root))
     if isinstance(exc, StorageGeometryError):
+        retryable = False
         reason = SearchReasonCode.REBUILD_REQUIRED
         freshness = SearchFreshness.REBUILD_REQUIRED
-        retryable = False
-    elif isinstance(exc, IndexTransitionError):
-        reason = SearchReasonCode.INDEX_TRANSITION
-        freshness = SearchFreshness.UPDATING
-        retryable = True
-    else:
-        return None
+        remediation = reason.remediation(
+            source_fact.source, port=port, target=str(root)
+        )
+    elif isinstance(exc, UnfinishedResetError):
+        owner = _reset_owner(job_snapshot, exc, root=root)
+        if owner is None:
+            retryable = False
+            reason = SearchReasonCode.REBUILD_REQUIRED
+            freshness = SearchFreshness.REBUILD_REQUIRED
+            rebuild = reason.remediation(
+                source_fact.source, port=port, target=str(root)
+            )
+            remediation = (
+                f"No index job owns rebuild generation "
+                f"{exc.fence.generation_id}, so its unfinished reset will not "
+                f"complete. Start a new rebuild with `{rebuild}`."
+            )
+        elif owner.state is JobState.PAUSED:
+            retryable = False
+            remediation = (
+                f"Rebuild job {owner.id} is paused before its reset finished. "
+                f"Resume it with `{server_job_resume_command(owner.id, port)}`."
+            )
     return replace(
         source_fact,
         availability=SearchAvailability.UNAVAILABLE,
@@ -172,7 +201,55 @@ def typed_search_refusal_fact(
         absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
         reason_code=reason,
         retryable=retryable,
-        remediation=reason.remediation(source_fact.source, port=port, target=str(root)),
+        remediation=remediation,
+    )
+
+
+def _reset_owner(
+    job_snapshot: Sequence[object],
+    exc: UnfinishedResetError,
+    *,
+    root: Path,
+) -> _MatchingJob | None:
+    """Return the active job that will finish or replace *exc*'s reset.
+
+    The job that recorded the reset's generation owns it. Failing that, an
+    active rebuild of the same root and source will reset the source again,
+    so its reset replaces the unfinished one.
+    """
+    requested_root = canonical_root_key_or_none(root)
+    source = cast("IndexSource", exc.source.value)
+    for candidate in job_snapshot:
+        if not isinstance(candidate, Mapping):
+            continue
+        record = cast("Mapping[str, object]", candidate)
+        generation = record.get("rebuild_generation_id")
+        state = _normalized_active_state(record.get("state"))
+        job_id = record.get("id")
+        if (
+            generation is not None
+            and generation == exc.fence.generation_id
+            and state is not None
+            and isinstance(job_id, str)
+        ):
+            spec = record.get("spec")
+            mode = (
+                _normalized_mode(cast("Mapping[str, object]", spec).get("mode"))
+                if isinstance(spec, Mapping)
+                else None
+            )
+            return _MatchingJob(id=job_id, state=state, mode=mode or JobMode.REBUILD)
+    if requested_root is None:
+        return None
+    return next(
+        (
+            match
+            for match in _matching_jobs(
+                job_snapshot, requested_root=requested_root, source=source
+            )
+            if match.mode is JobMode.REBUILD
+        ),
+        None,
     )
 
 

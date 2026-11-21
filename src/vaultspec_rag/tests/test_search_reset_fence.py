@@ -20,9 +20,14 @@ MUTATION PROOF, each run in one uninterrupted sequence:
 - Returning the outcome unchanged from ``_fenced_combined_outcome`` failed
   ``test_a_reset_crossing_a_combined_search_fences_that_domain`` on its
   ``error_kind`` assertion; restoring it passed.
-- Dropping the reset-in-progress branch of ``typed_search_refusal_fact``
-  failed ``test_combined_search_refuses_only_the_domain_a_reset_crossed`` on
-  its ``error_kind`` assertion; restoring it passed.
+- Dropping the unfinished-reset branch of ``storage_refusal_fact`` failed
+  ``test_combined_search_refuses_only_the_domain_an_abandoned_reset_left``
+  on its ``error_kind`` assertion; restoring it passed.
+- Treating every unfinished reset as owned (``_reset_owner`` returning its
+  first record regardless of generation) failed
+  ``test_an_unfinished_reset_is_classified_by_the_job_that_owns_it`` on its
+  ``abandoned`` assertion; dropping the ``PAUSED`` branch failed it on its
+  ``paused`` assertion. Restoring each passed.
 """
 
 from __future__ import annotations
@@ -33,17 +38,28 @@ from typing import TYPE_CHECKING
 import pytest
 import typer
 
-from .._operator_commands import server_jobs_command
+from .._operator_commands import (
+    IndexCommandOptions,
+    index_command,
+    server_job_resume_command,
+    server_jobs_command,
+)
 from .._public_search import (
     CombinedSearchRequest,
     DocumentSearchRequest,
     search_combined_timed,
     search_documents_timed,
 )
-from .._publication_state import IndexTransitionError, read_current_epoch
+from .._publication_state import (
+    IndexTransitionError,
+    UnfinishedResetError,
+    capture_source_read_fence,
+    read_current_epoch,
+)
 from .._search_state import (
     AbsenceAuthority,
     SearchAvailability,
+    SearchFreshness,
     SearchReasonCode,
     SearchSourceFact,
 )
@@ -59,7 +75,9 @@ from ..cli._search_in_process import InProcessSearchRequest, try_in_process_sear
 from ..indexer._rebuild_lifecycle import reset_selected_sources
 from ..indexer._run_ledger_models import SourceResetPhase, index_run_ledger_path
 from ..indexer._run_ledger_runtime import RunLedger
+from ..job_models import JobMode, JobOperation, JobState
 from ..registry import get_registry
+from ..server._search_availability import storage_refusal_fact
 from ..service import ServiceRegistry
 from ..store_runtime import configured_backend_identity
 from ._config_fixtures import reset_config
@@ -233,14 +251,14 @@ def local_search_request(
 
 
 @pytest.mark.parametrize("source", CONCRETE_SOURCES)
-def test_the_local_cli_search_reports_a_source_mid_reset_as_retryable(
+def test_the_local_cli_search_reports_an_abandoned_reset_as_rebuild_required(
     local_root: Path, source: PublicSourceType, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A local search answers a reset the way the service's 503 envelope does.
+    """A local search answers an ownerless reset the way the service does.
 
-    The refusal is the service's own: the ``index_transition`` code, marked
-    retryable, with the jobs command that shows the rebuild, and exit status 1.
-    It must not be reported as a GPU or runtime fault.
+    No job anywhere owns the reset this root recorded, so nothing will finish
+    it: the refusal is ``rebuild_required``, not retryable, names the rebuild
+    command, and exits 1. It must not be reported as a GPU or runtime fault.
 
     Mutation: removing the ``IndexTransitionError`` branch of
     ``try_in_process_search`` sent the refusal to the GPU error handler, which
@@ -261,17 +279,20 @@ def test_the_local_cli_search_reports_a_source_mid_reset_as_retryable(
     envelope = json.loads(stdout)
     assert envelope["ok"] is False
     assert envelope["command"] == "search"
-    assert envelope["error"] == SearchReasonCode.INDEX_TRANSITION.value
-    assert envelope["retryable"] is True
-    assert f"the {source.value} index is being reset" in envelope["message"]
+    assert envelope["error"] == SearchReasonCode.REBUILD_REQUIRED.value
+    assert envelope["retryable"] is False
+    assert "rebuild generation rebuild-in-flight" in envelope["message"]
     assert envelope["index_state"]["source"] == source.value
-    assert envelope["remediation"] == server_jobs_command(index=source.value)
+    rebuild = index_command(
+        source, IndexCommandOptions(rebuild=True, target=str(local_root))
+    )
+    assert f"`{rebuild}`" in envelope["remediation"]
 
 
-def test_combined_search_refuses_only_the_domain_a_reset_crossed(
+def test_combined_search_refuses_only_the_domain_an_abandoned_reset_left(
     local_root: Path,
 ) -> None:
-    """A combined search keeps every other domain and types the fenced one."""
+    """A combined search keeps every other domain and types the refused one."""
     record_reset_intent(local_root, PublicSourceType.CODE)
 
     outcome, _timings = search_combined_timed(
@@ -279,16 +300,163 @@ def test_combined_search_refuses_only_the_domain_a_reset_crossed(
         registry=ServiceRegistry(),
     )
 
-    assert outcome.code.error_kind == SearchReasonCode.INDEX_TRANSITION.value
+    assert outcome.code.error_kind == SearchReasonCode.REBUILD_REQUIRED.value
     assert outcome.code.results == ()
     fact = outcome.code.source_fact
-    assert fact.reason_code is SearchReasonCode.INDEX_TRANSITION
+    assert fact.reason_code is SearchReasonCode.REBUILD_REQUIRED
     assert fact.availability is SearchAvailability.UNAVAILABLE
     assert fact.absence_authority is AbsenceAuthority.NON_AUTHORITATIVE
-    assert fact.retryable is True
+    assert fact.retryable is False
     assert outcome.vault.ok
     assert outcome.document is not None
     assert outcome.document.ok
+
+
+def _unfinished_reset(root: Path, source: PublicSourceType) -> UnfinishedResetError:
+    """Record an unfinished reset and return the refusal a read of it raises."""
+    record_reset_intent(root, source)
+    with pytest.raises(UnfinishedResetError) as refused:
+        capture_source_read_fence(root, source)
+    return refused.value
+
+
+def _index_job(
+    root: Path,
+    *,
+    state: JobState,
+    generation: str | None,
+    job_id: str = "job-1",
+) -> dict[str, object]:
+    """One canonical job record as the job manager's snapshot renders it."""
+    return {
+        "id": job_id,
+        "state": state.value,
+        "spec": {
+            "operation": JobOperation.INDEX.value,
+            "source": PublicSourceType.CODE.value,
+            "project_root": str(root),
+            "mode": JobMode.REBUILD.value,
+        },
+        "rebuild_generation_id": generation,
+    }
+
+
+def test_an_unfinished_reset_is_classified_by_the_job_that_owns_it(
+    local_root: Path,
+) -> None:
+    """Retryability and remediation follow the owning job's actual state.
+
+    A running owner will finish the reset, so a retry succeeds. A paused owner
+    will not until it is resumed. No live owner, including a job that ended,
+    means nothing will finish it, so only a new rebuild helps.
+    """
+    refusal = _unfinished_reset(local_root, PublicSourceType.CODE)
+    base = SearchSourceFact(
+        source="code",
+        availability=SearchAvailability.USABLE,
+        freshness=SearchFreshness.UPDATING,
+        absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
+    )
+
+    def classify(*jobs: dict[str, object]) -> SearchSourceFact:
+        return storage_refusal_fact(refusal, base, root=local_root, job_snapshot=jobs)
+
+    running = classify(
+        _index_job(local_root, state=JobState.RUNNING, generation="rebuild-in-flight")
+    )
+    assert running.reason_code is SearchReasonCode.INDEX_TRANSITION
+    assert running.retryable is True
+    assert running.remediation == server_jobs_command(index="code")
+
+    paused = classify(
+        _index_job(local_root, state=JobState.PAUSED, generation="rebuild-in-flight")
+    )
+    assert paused.reason_code is SearchReasonCode.INDEX_TRANSITION
+    assert paused.retryable is False, "paused"
+    assert f"`{server_job_resume_command('job-1')}`" in str(paused.remediation)
+
+    for ended in (
+        (),
+        (
+            _index_job(
+                local_root, state=JobState.FAILED, generation="rebuild-in-flight"
+            ),
+        ),
+        (
+            _index_job(
+                local_root, state=JobState.CANCELLED, generation="rebuild-in-flight"
+            ),
+        ),
+        (
+            _index_job(local_root, state=JobState.RUNNING, generation="other-rebuild")
+            | {
+                "spec": {
+                    "operation": "index",
+                    "source": "vault",
+                    "project_root": str(local_root),
+                    "mode": "rebuild",
+                }
+            },
+        ),
+    ):
+        abandoned = classify(*ended)
+        assert abandoned.reason_code is SearchReasonCode.REBUILD_REQUIRED, "abandoned"
+        assert abandoned.freshness is SearchFreshness.REBUILD_REQUIRED
+        assert abandoned.retryable is False
+        assert "rebuild-in-flight" in str(abandoned.remediation)
+        assert "--rebuild --type code" in str(abandoned.remediation)
+
+    replacing = classify(
+        _index_job(local_root, state=JobState.QUEUED, generation=None, job_id="job-2")
+    )
+    assert replacing.reason_code is SearchReasonCode.INDEX_TRANSITION
+    assert replacing.retryable is True
+
+
+def test_the_service_answers_an_abandoned_reset_with_409_and_a_live_one_with_503(
+    local_root: Path,
+) -> None:
+    """The route's status follows the classified retryability."""
+    from ..server._search_route_availability import (
+        SearchAvailabilityRequestFacts,
+        typed_storage_refusal,
+    )
+
+    refusal = _unfinished_reset(local_root, PublicSourceType.CODE)
+    facts = SearchAvailabilityRequestFacts(
+        job_snapshot_before=[],
+        root=local_root,
+        source="code",
+        request_id="request-1",
+        port=None,
+    )
+
+    abandoned, abandoned_class = typed_storage_refusal(refusal, facts, [])
+    live, live_class = typed_storage_refusal(
+        refusal,
+        facts,
+        [
+            _index_job(
+                local_root, state=JobState.RUNNING, generation="rebuild-in-flight"
+            )
+        ],
+    )
+
+    assert abandoned_class.status_code == 409
+    assert abandoned["error"] == SearchReasonCode.REBUILD_REQUIRED.value
+    assert abandoned_class.response["index_state"] == {
+        "source": "code",
+        "requested_target_root": str(local_root),
+        "status": "unavailable",
+    }
+    assert live_class.status_code == 503
+    assert live["error"] == SearchReasonCode.INDEX_TRANSITION.value
+    assert live["retryable"] is True
+    assert live_class.response["index_state"] == {
+        "source": "code",
+        "requested_target_root": str(local_root),
+        "status": "rebuilding",
+    }
 
 
 def test_a_reset_crossing_a_combined_search_fences_that_domain(

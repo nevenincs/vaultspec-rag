@@ -38,7 +38,7 @@ from ._search_availability import (
     SearchResponseClassification,
     classify_qdrant_collection_disappearance,
     classify_search_response,
-    typed_search_refusal_fact,
+    storage_refusal_fact,
 )
 
 if TYPE_CHECKING:
@@ -475,24 +475,25 @@ def typed_storage_refusal(
     passes its job manager's snapshot, and a local search, which has no job
     manager, passes an empty one.
     """
-    transition = isinstance(exc, IndexTransitionError)
     index_state: dict[str, object] = {
         "source": facts.source,
         "requested_target_root": str(facts.root),
-        "status": (
-            SearchIndexStatus.REBUILDING
-            if transition
-            else SearchIndexStatus.UNAVAILABLE
-        ).value,
     }
     classification = classify_search_response(
         {},
         facts.to_context(after_snapshot=after_snapshot, index_state=index_state),
     )
-    refusal_fact = typed_search_refusal_fact(
-        exc, classification.source_fact, root=facts.root, port=facts.port
+    refusal_fact = storage_refusal_fact(
+        exc,
+        classification.source_fact,
+        root=facts.root,
+        job_snapshot=[*after_snapshot, *facts.job_snapshot_before],
+        port=facts.port,
     )
-    assert refusal_fact is not None
+    transition = refusal_fact.reason_code is SearchReasonCode.INDEX_TRANSITION
+    index_state["status"] = (
+        SearchIndexStatus.REBUILDING if transition else SearchIndexStatus.UNAVAILABLE
+    ).value
     source_fact = replace(refusal_fact, wait_policy=facts.wait_policy)
     response = source_fact.failure_response(
         request_id=facts.request_id, index_state=index_state
@@ -502,7 +503,7 @@ def typed_storage_refusal(
     return response, replace(
         classification,
         response=response,
-        status_code=503 if transition else 409,
+        status_code=503 if source_fact.retryable else 409,
         source_fact=source_fact,
     )
 

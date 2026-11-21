@@ -21,8 +21,9 @@ from .server._search_availability import (
     CanonicalSearchEvidence,
     SearchAvailabilityContext,
     classify_search_response,
-    typed_search_refusal_fact,
+    storage_refusal_fact,
 )
+from .store_runtime import StorageGeometryError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -243,9 +244,18 @@ def _domain_failure(
     root: pathlib.Path,
     exc: Exception,
     source_fact: SearchSourceFact,
+    job_snapshot: Sequence[object],
 ) -> SearchDomainOutcome:
-    """Retain the exception and project typed compatibility or reset refusals."""
-    refused_fact = typed_search_refusal_fact(exc, source_fact, root=root)
+    """Retain the exception and project typed compatibility or reset refusals.
+
+    *job_snapshot* decides whether an unfinished reset still has a live owner;
+    other failures ignore it.
+    """
+    refused_fact = (
+        storage_refusal_fact(exc, source_fact, root=root, job_snapshot=job_snapshot)
+        if isinstance(exc, (StorageGeometryError, IndexTransitionError))
+        else None
+    )
     return SearchDomainOutcome.failure(
         source,
         refused_fact.reason_code.value
@@ -269,7 +279,9 @@ def _search_domain(
         # whole request is refused rather than answered without that domain.
         raise
     except Exception as exc:
-        return _domain_failure(request.source, request.root, exc, source_fact)
+        # Retrieval runs after the reset fence was captured and holds none of
+        # its own, so no failure here is an unfinished reset needing job state.
+        return _domain_failure(request.source, request.root, exc, source_fact, ())
 
 
 def _combined_source_fact(
@@ -391,7 +403,7 @@ def _count_combined_domains(
                 observation=None,
                 job_snapshot=jobs,
             )
-            failures[source] = _domain_failure(source, root, exc, source_fact)
+            failures[source] = _domain_failure(source, root, exc, source_fact, jobs)
             facts[source] = failures[source].source_fact
         else:
             counts[source] = count
@@ -423,7 +435,9 @@ def _validated_epoch(
     try:
         fence.validate()
     except IndexTransitionError as exc:
-        return _domain_failure(outcome.source, root, exc, outcome.source_fact)
+        # Validation only ever reports a reset that began after capture, which
+        # is running now; no job state changes that answer.
+        return _domain_failure(outcome.source, root, exc, outcome.source_fact, ())
     return outcome
 
 

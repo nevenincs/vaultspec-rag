@@ -164,8 +164,9 @@ class SearchReasonCode(StrEnum):
             ),
             self.INDEX_TRANSITION: (
                 "The index is being reset for a rebuild, or a reset began while "
-                "this search read it, so nothing it read is returned. The reset "
-                "is brief; retry the search."
+                "this search read it, so nothing it read is returned. A reset "
+                "its job is running is brief, and the search can be retried; "
+                "one whose job is paused waits until that job is resumed."
             ),
             self.PUBLISHED_GENERATION_CURRENT: "The published generation is current.",
             self.REBUILD_REQUIRED: "An explicit index rebuild is required.",
