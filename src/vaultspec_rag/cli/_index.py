@@ -25,13 +25,13 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
+from .._job_errors import JobError, remediation
 from .._operator_commands import (
     IndexCommandOptions,
     index_command,
     index_source_option,
     server_status_command,
 )
-from .._job_errors import JobError, remediation
 from .._source_types import (
     INDEX_SOURCES,
     PublicSourceType,

@@ -648,3 +648,78 @@ def test_a_code_reset_retires_a_pointer_naming_the_other_backends_collection(
             assert owner.client.count(stale, exact=True).count == 1
     finally:
         reset_registry()
+
+
+@pytest.mark.parametrize("token", [None, "old"])
+def test_archive_takes_the_derived_name_over_an_other_backend_pointer(
+    tmp_path: Path, token: str | None
+) -> None:
+    """A pointer to the root's local code never withholds its server archive.
+
+    The archive reads the pointer and never changes it: only an explicit
+    reset retires it.
+
+    Mutation: dropping the other-backend branch from
+    ``established_served_code_collection`` refused both cases with
+    ``ServedPointerUnverifiableError``; restoring it passed.
+    """
+    from ..storage_archive import _active_publication_collections
+
+    prefix = root_collection_prefix(tmp_path)
+    derived = prefix + "codebase_docs"
+    stale = (
+        "codebase_docs"
+        if token is None
+        else historical_generation("codebase_docs", token)
+    )
+    write_historical_pointer(tmp_path, stale)
+    before = served_code_pointer_path(tmp_path).read_bytes()
+
+    active = _active_publication_collections(tmp_path, prefix, [derived, stale])
+
+    assert active[PublicSourceType.CODE] == derived
+    assert served_code_pointer_path(tmp_path).read_bytes() == before
+
+
+@pytest.mark.parametrize("server_mode", [False, True])
+def test_a_donor_with_an_other_backend_pointer_donates_its_derived_name(
+    tmp_path: Path, server_mode: bool
+) -> None:
+    """A donor's stale other-backend pointer leaves it eligible, untouched.
+
+    Mutation: dropping the other-backend branch from
+    ``established_served_code_collection`` made the donor ineligible in both
+    backends and failed the donor assertion; restoring it passed.
+    """
+    prefixed = root_collection_prefix(tmp_path) + "codebase_docs"
+    derived, other = (
+        (prefixed, "codebase_docs") if server_mode else ("codebase_docs", prefixed)
+    )
+    write_historical_pointer(tmp_path, historical_generation(other, "old"))
+    before = served_code_pointer_path(tmp_path).read_bytes()
+
+    assert (
+        _served_donor_collection(str(tmp_path), CollectionKind.CODE, derived) == derived
+    )
+    assert served_code_pointer_path(tmp_path).read_bytes() == before
+
+
+def test_an_unverifiable_pointer_refuses_with_the_typed_kind(tmp_path: Path) -> None:
+    """The refusal carries a stable kind and names the pointer it read.
+
+    Mutation: raising a bare ``RuntimeError`` from
+    ``established_served_code_collection`` escaped the typed ``pytest.raises``;
+    restoring the typed error passed.
+    """
+    from .._job_errors import JobErrorKind
+    from .._store_models import (
+        ServedPointerUnverifiableError,
+        established_served_code_collection,
+    )
+
+    derived = root_collection_prefix(tmp_path) + "codebase_docs"
+    _poison(tmp_path, {"collection": "vault_docs"})
+    with pytest.raises(ServedPointerUnverifiableError) as raised:
+        established_served_code_collection(tmp_path, derived)
+    assert raised.value.error_kind is JobErrorKind.SERVED_POINTER_UNVERIFIABLE
+    assert str(served_code_pointer_path(tmp_path)) in raised.value.detail
