@@ -760,9 +760,14 @@ async def _clean_source(
     source: object,
     project_root: str | None,
 ) -> dict[str, Any]:
-    """Delegate one targeted clean and retain every domain outcome."""
+    """Delegate one targeted clean and return the service's outcome unchanged.
+
+    A clean that failed in every domain is still the service's structured
+    answer: each domain carries its typed refusal kind, detail and
+    remediation, and an exception string would keep none of them.
+    """
     port = _require_port()
-    result = await _delegate(
+    return await _delegate(
         partial(
             _try_http_clean,
             _canonical_tool_source(source),
@@ -770,11 +775,6 @@ async def _clean_source(
             _resolve_project_root(project_root),
         )
     )
-    if result.get("ok") is False and result.get("partial") is not True:
-        error = str(result.get("error") or "clean_failed")
-        message = str(result.get("message") or "The clean request failed.")
-        raise RuntimeError(f"{error}: {message}")
-    return result
 
 
 @mcp.tool(title="Clean document index", annotations=_CLEAN)
