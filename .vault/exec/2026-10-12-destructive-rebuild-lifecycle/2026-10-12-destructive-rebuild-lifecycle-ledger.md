@@ -5,7 +5,7 @@ tags:
 date: '2026-10-12'
 modified: '2026-11-21'
 body_schema: 'body-v2'
-body_hash: 'sha256:00018e16f8d2793a7ef5e26653a2586f2c164a4b14f77a26d63998944c8c98df'
+body_hash: 'sha256:c2af652d2be2c4cd69de4fa25257462cabec7dbbffd9f0cf17cbe5de2bea4ec3'
 related:
   - "[[2026-10-12-destructive-rebuild-lifecycle-plan]]"
 ---
@@ -314,6 +314,10 @@ related:
 - `S06` `M` `.vault/audit/2026-11-21-destructive-rebuild-lifecycle-audit.md`
 - `S06` `verify:` `pytest -m unit test_server_mode_write_fence.py` -> `pass`
 - `S06` `verify:` `pytest -m unit -n 8 src/vaultspec_rag` -> `pass`
+- `S06` `M` `src/vaultspec_rag/indexer/_checkpoint_common.py`
+- `S06` `M` `src/vaultspec_rag/indexer/_document_indexer.py`
+- `S06` `verify:` `pytest -m unit test_rebuild_replacement.py -k failed_reset` -> `pass`
+- `S06` `verify:` `pytest -m unit -n 8 src/vaultspec_rag` -> `pass`
 
 ## Notes
 
@@ -334,3 +338,4 @@ related:
 - `S06` server-mode write fence: the post-write epoch re-check in `_store_writes.run_store_operation_with_retry` is not applied; that file is owned by the lock-deadlock branch, and the committed test pins the current window until the change lands
 - `S06` carried test doubles in `test_donor_admission.py` and `test_code_rebuild_stale_evidence.py` were not rewritten in this run
 - `S06` merge of nevenincs/rag-backlog-gpu-fixes into the S06 branch
+- `S06` `test_code_rebuild_stale_evidence.py` not run: GPU borrower lease held by another process

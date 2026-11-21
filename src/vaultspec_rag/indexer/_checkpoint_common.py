@@ -270,15 +270,22 @@ class RunCheckpointBase:
         From here on each store write of the attempt validates the epoch the
         reset recorded, so a later reset stops this attempt at its next
         durable unit instead of letting it write into the replacement.
+
+        A reset that fails, or the pause or cancel delivered as its protected
+        span ends, classifies the generation as interrupted before it
+        propagates, so no rebuild is left running without an owner.
         """
-        state = enter_rebuild_ingestion(
-            store,
-            self.generation.signature.source_type,
-            began_under=began_under,
-            generation_id=self.generation_id,
-            run_policy=self.run_policy,
-        )
-        self.run_policy.fence_writes(ResetEpochFence.of(store.root_dir, state).validate)
+        with self.preserve_incomplete_generation():
+            state = enter_rebuild_ingestion(
+                store,
+                self.generation.signature.source_type,
+                began_under=began_under,
+                generation_id=self.generation_id,
+                run_policy=self.run_policy,
+            )
+            self.run_policy.fence_writes(
+                ResetEpochFence.of(store.root_dir, state).validate
+            )
 
     @staticmethod
     def recover_pending_publication(

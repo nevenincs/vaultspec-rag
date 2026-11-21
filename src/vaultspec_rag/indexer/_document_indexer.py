@@ -1177,18 +1177,22 @@ class DocumentIndexer:
             # ensure creates the index of each declared key.
             metadata_keys = load_filterable_metadata(self.root_dir)
             self.store.declare_document_metadata_keys(metadata_keys)
-            checkpoint = self._open_checkpoint(
-                policy=policy,
-                operation=RunOperation.FULL,
-                clean=True,
-                limits=limits,
-                execution=PublicationExecution(RunAuthority.REBUILD, run_control),
-            )
-            checkpoint.reset_for_rebuild(self.store, began_under=began_under)
-            with checkpoint.preserve_incomplete_generation():
-                budget = self._begin_resource_budget(limits)
-            return run_index_lifecycle(
-                lambda: self._full_index_locked(
+
+            def rebuild() -> IndexResult:
+                # Opening and resetting run inside the lifecycle, as for code
+                # and vault, so a refused open or a failed reset emits the
+                # same started and failed events.
+                checkpoint = self._open_checkpoint(
+                    policy=policy,
+                    operation=RunOperation.FULL,
+                    clean=True,
+                    limits=limits,
+                    execution=PublicationExecution(RunAuthority.REBUILD, run_control),
+                )
+                checkpoint.reset_for_rebuild(self.store, began_under=began_under)
+                with checkpoint.preserve_incomplete_generation():
+                    budget = self._begin_resource_budget(limits)
+                return self._full_index_locked(
                     paths,
                     started=started,
                     request=_DocumentPublishRequest(
@@ -1200,7 +1204,10 @@ class DocumentIndexer:
                         run_control=run_control,
                         metadata_keys=metadata_keys,
                     ),
-                ),
+                )
+
+            return run_index_lifecycle(
+                rebuild,
                 IndexLifecycleRequest(
                     event_logger=logger,
                     store=self.store,
