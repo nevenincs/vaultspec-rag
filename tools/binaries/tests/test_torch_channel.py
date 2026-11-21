@@ -45,7 +45,7 @@ def test_windows_is_pinned_because_pypi_ships_no_gpu_build_there() -> None:
     args = pip_extra_args("x86_64-pc-windows-msvc", PYTHON_VERSION)
 
     assert args is not None
-    assert args.startswith("torch @ https://download.pytorch.org/whl/cu130/")
+    assert args.startswith("torch @ https://download.pytorch.org/whl/cu134/")
     assert "win_amd64" in args
 
 

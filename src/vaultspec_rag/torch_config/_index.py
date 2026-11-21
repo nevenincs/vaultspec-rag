@@ -32,5 +32,5 @@ from typing import Final
 
 __all__ = ["CU130_INDEX_NAME", "CU130_INDEX_URL"]
 
-CU130_INDEX_NAME: Final[str] = "pytorch-cu130"
-CU130_INDEX_URL: Final[str] = "https://download.pytorch.org/whl/cu130"
+CU130_INDEX_NAME: Final[str] = "pytorch-cu134"
+CU130_INDEX_URL: Final[str] = "https://download.pytorch.org/whl/cu134"

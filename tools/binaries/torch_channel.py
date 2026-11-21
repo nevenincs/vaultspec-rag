@@ -61,7 +61,7 @@ TORCH_PLATFORM_TAGS = {
 }
 
 #: The uv index name the project routes torch through.
-INDEX_NAME = "pytorch-cu130"
+INDEX_NAME = "pytorch-cu134"
 
 
 class TorchChannelError(RuntimeError):

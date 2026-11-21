@@ -158,13 +158,13 @@ constraint-dependencies = ["python-multipart>=0.0.26"]
 
   [tool.uv.sources]
   torch = [
-    { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { index = "pytorch-cu134", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
   ]
 
   [[tool.uv.index]]
   explicit = true
-  name = "pytorch-cu130"
-  url = "https://download.pytorch.org/whl/cu130"
+  name = "pytorch-cu134"
+  url = "https://download.pytorch.org/whl/cu134"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/vaultspec_rag"]

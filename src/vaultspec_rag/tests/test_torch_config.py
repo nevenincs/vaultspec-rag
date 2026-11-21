@@ -43,13 +43,13 @@ PROJECT_WITH_COMMENTS = (
 CANONICAL_TAIL = (
     "\n"
     "[[tool.uv.index]]\n"
-    'name = "pytorch-cu130"\n'
-    'url = "https://download.pytorch.org/whl/cu130"\n'
+    'name = "pytorch-cu134"\n'
+    'url = "https://download.pytorch.org/whl/cu134"\n'
     "explicit = true\n"
     "\n"
     "[tool.uv.sources]\n"
     "torch = [\n"
-    '    {index = "pytorch-cu130", '
+    '    {index = "pytorch-cu134", '
     "marker = \"sys_platform == 'linux' or sys_platform == 'win32'\"},\n"
     "]\n"
 )
@@ -57,7 +57,7 @@ CANONICAL_TAIL = (
 CUSTOM_WRONG_URL_TAIL = (
     "\n"
     "[[tool.uv.index]]\n"
-    'name = "pytorch-cu130"\n'
+    'name = "pytorch-cu134"\n'
     'url = "https://download.pytorch.org/whl/cu121"\n'
     "explicit = true\n"
 )
@@ -65,13 +65,13 @@ CUSTOM_WRONG_URL_TAIL = (
 CUSTOM_EXTRA_KEY_TAIL = (
     "\n"
     "[[tool.uv.index]]\n"
-    'name = "pytorch-cu130"\n'
-    'url = "https://download.pytorch.org/whl/cu130"\n'
+    'name = "pytorch-cu134"\n'
+    'url = "https://download.pytorch.org/whl/cu134"\n'
     "explicit = true\n"
     "\n"
     "[tool.uv.sources]\n"
     "torch = [\n"
-    '    {index = "pytorch-cu130", '
+    '    {index = "pytorch-cu134", '
     "marker = \"sys_platform == 'linux' or sys_platform == 'win32'\", "
     "priority = 1},\n"
     "]\n"
@@ -280,14 +280,14 @@ def test_remove_preserves_user_trivia_on_sibling_index_entries(
         'url = "https://private.example.com/simple"\n'
         "\n"
         "[[tool.uv.index]]\n"
-        'name = "pytorch-cu130"\n'
-        'url = "https://download.pytorch.org/whl/cu130"\n'
+        'name = "pytorch-cu134"\n'
+        'url = "https://download.pytorch.org/whl/cu134"\n'
         "explicit = true\n"
         "\n"
         "[tool.uv.sources]\n"
         "# user comment above torch pin\n"
         "torch = [\n"
-        '    {index = "pytorch-cu130", '
+        '    {index = "pytorch-cu134", '
         "marker = \"sys_platform == 'linux' or sys_platform == 'win32'\"},\n"
         "]\n"
     )
@@ -299,7 +299,7 @@ def test_remove_preserves_user_trivia_on_sibling_index_entries(
     assert '"private"' in after
     assert "https://private.example.com/simple" in after
     # The cu130 entry is gone.
-    assert "pytorch-cu130" not in after
+    assert "pytorch-cu134" not in after
     # File still reparses as valid TOML.
     tomlkit.parse(after)
 
@@ -397,8 +397,8 @@ SCATTERED_PROJECT = (
 SCATTERED_CANONICAL_TAIL = (
     "\n"
     "[[tool.uv.index]]\n"
-    'name = "pytorch-cu130"\n'
-    'url = "https://download.pytorch.org/whl/cu130"\n'
+    'name = "pytorch-cu134"\n'
+    'url = "https://download.pytorch.org/whl/cu134"\n'
     "explicit = true\n"
     "\n"
     "[tool.ruff.lint]\n"
@@ -406,7 +406,7 @@ SCATTERED_CANONICAL_TAIL = (
     "\n"
     "[tool.uv.sources]\n"
     "torch = [\n"
-    '    {index = "pytorch-cu130", '
+    '    {index = "pytorch-cu134", '
     "marker = \"sys_platform == 'linux' or sys_platform == 'win32'\"},\n"
     "]\n"
 )
@@ -470,7 +470,7 @@ def test_scattered_tool_uv_remove_succeeds(tmp_path: Path) -> None:
     assert report.action == "removed"
     after = p.read_text(encoding="utf-8")
     # cu130 block gone.
-    assert "pytorch-cu130" not in after
+    assert "pytorch-cu134" not in after
     assert "[[tool.uv.index]]" not in after
     # User's other sections survive.
     assert "[tool.ruff]" in after
@@ -786,7 +786,7 @@ def test_has_direct_torch_dep_no_project_file(tmp_path: Path) -> None:
         ("torch[cuda]>=2.4", True),
         ("torch == 2.11.0+cu130", True),
         ("torch ; sys_platform == 'linux'", True),
-        ("torch @ https://download.pytorch.org/whl/cu130/torch-2.11.0.whl", True),
+        ("torch @ https://download.pytorch.org/whl/cu134/torch-2.11.0.whl", True),
         ("torch (>=2.4)", True),  # PEP 508 parenthesised version specifier
         ("Torch", True),  # PEP 503 case-insensitive normalisation
         ("TORCH>=2.4", True),
@@ -892,12 +892,12 @@ def test_remove_preserves_user_overrides_in_tool_uv(tmp_path: Path) -> None:
         PROJECT_ONLY + "\n[tool.uv]\n"
         'override-dependencies = ["urllib3<3"]\n'
         "\n[[tool.uv.index]]\n"
-        'name = "pytorch-cu130"\n'
-        'url = "https://download.pytorch.org/whl/cu130"\n'
+        'name = "pytorch-cu134"\n'
+        'url = "https://download.pytorch.org/whl/cu134"\n'
         "explicit = true\n"
         "\n[tool.uv.sources]\n"
         "torch = [\n"
-        '    {index = "pytorch-cu130", '
+        '    {index = "pytorch-cu134", '
         "marker = \"sys_platform == 'linux' or sys_platform == 'win32'\"},\n"
         "]\n"
     )
@@ -907,7 +907,7 @@ def test_remove_preserves_user_overrides_in_tool_uv(tmp_path: Path) -> None:
     assert "[tool.uv]" in after
     assert "override-dependencies" in after
     assert '"urllib3<3"' in after
-    assert "pytorch-cu130" not in after
+    assert "pytorch-cu134" not in after
     tomlkit.parse(after)
 
 
@@ -940,14 +940,14 @@ def test_apply_scattered_pyproject_reparses_canonical(tmp_path: Path) -> None:
     parsed = tomlkit.parse(after).unwrap()
     indices = parsed["tool"]["uv"]["index"]
     assert any(
-        e.get("name") == "pytorch-cu130"
-        and e.get("url") == "https://download.pytorch.org/whl/cu130"
+        e.get("name") == "pytorch-cu134"
+        and e.get("url") == "https://download.pytorch.org/whl/cu134"
         and e.get("explicit") is True
         for e in indices
     )
     sources = parsed["tool"]["uv"]["sources"]["torch"]
     assert any(
-        e.get("index") == "pytorch-cu130"
+        e.get("index") == "pytorch-cu134"
         and e.get("marker") == "sys_platform == 'linux' or sys_platform == 'win32'"
         for e in sources
     )
@@ -1011,14 +1011,14 @@ def test_remove_orphan_canonical_index_only(tmp_path: Path) -> None:
         p,
         '[project]\nname = "demo"\n'
         "\n[[tool.uv.index]]\n"
-        'name = "pytorch-cu130"\n'
-        'url = "https://download.pytorch.org/whl/cu130"\n'
+        'name = "pytorch-cu134"\n'
+        'url = "https://download.pytorch.org/whl/cu134"\n'
         "explicit = true\n",
     )
     rep = _mutate.remove_patch(p)
     assert rep.action == "removed"
     after = p.read_text(encoding="utf-8")
-    assert "pytorch-cu130" not in after
+    assert "pytorch-cu134" not in after
     tomlkit.parse(after)
 
 
@@ -1031,13 +1031,13 @@ def test_remove_orphan_canonical_source_only(tmp_path: Path) -> None:
         p,
         '[project]\nname = "demo"\n'
         "\n[tool.uv.sources]\n"
-        'torch = [{index = "pytorch-cu130", '
+        'torch = [{index = "pytorch-cu134", '
         "marker = \"sys_platform == 'linux' or sys_platform == 'win32'\"}]\n",
     )
     rep = _mutate.remove_patch(p)
     assert rep.action == "removed"
     after = p.read_text(encoding="utf-8")
-    assert "pytorch-cu130" not in after
+    assert "pytorch-cu134" not in after
 
 
 def test_apply_with_existing_user_index(tmp_path: Path) -> None:
@@ -1056,10 +1056,10 @@ def test_apply_with_existing_user_index(tmp_path: Path) -> None:
     assert _inspect.detect_state(p) == _constants.TorchConfigState.CANONICAL
     after = p.read_text(encoding="utf-8")
     # Both indices present.
-    assert "pytorch-cu130" in after
+    assert "pytorch-cu134" in after
     assert "private" in after
     # And we didn't accidentally add a second cu130 entry.
-    assert after.count("pytorch-cu130") == 2  # name + source.index reference
+    assert after.count("pytorch-cu134") == 2  # name + source.index reference
 
 
 # ---------------------------------------------------------------------------

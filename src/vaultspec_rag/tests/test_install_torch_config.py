@@ -131,7 +131,7 @@ class TestInstallTorchConfig:
         ws.mkdir()
         (ws / "pyproject.toml").write_text(
             PROJECT_ONLY + "\n[[tool.uv.index]]\n"
-            'name = "pytorch-cu130"\n'
+            'name = "pytorch-cu134"\n'
             'url = "https://download.pytorch.org/whl/cu121"\n'
             "explicit = true\n",
             encoding="utf-8",
@@ -309,7 +309,7 @@ class TestInstallTorchConfig:
         ws.mkdir()
         (ws / "pyproject.toml").write_text(
             PROJECT_ONLY + "\n[[tool.uv.index]]\n"
-            'name = "pytorch-cu130"\n'
+            'name = "pytorch-cu134"\n'
             'url = "https://download.pytorch.org/whl/cu121"\n'
             "explicit = true\n",
             encoding="utf-8",
@@ -404,7 +404,7 @@ class TestUninstallTorchConfig:
         ws.mkdir()
         (ws / "pyproject.toml").write_text(
             PROJECT_ONLY + "\n[[tool.uv.index]]\n"
-            'name = "pytorch-cu130"\n'
+            'name = "pytorch-cu134"\n'
             'url = "https://download.pytorch.org/whl/cu121"\n'
             "explicit = true\n",
             encoding="utf-8",
@@ -427,7 +427,7 @@ class TestUninstallTorchConfig:
         ws.mkdir()
         (ws / "pyproject.toml").write_text(
             PROJECT_ONLY + "\n[[tool.uv.index]]\n"
-            'name = "pytorch-cu130"\n'
+            'name = "pytorch-cu134"\n'
             'url = "https://download.pytorch.org/whl/cu121"\n'
             "explicit = true\n",
             encoding="utf-8",
@@ -468,13 +468,13 @@ class TestUninstallTorchConfig:
             'dependencies = ["vaultspec-rag", "torch>=2.4"]\n'
             "\n"
             "[[tool.uv.index]]\n"
-            'name = "pytorch-cu130"\n'
-            'url = "https://download.pytorch.org/whl/cu130"\n'
+            'name = "pytorch-cu134"\n'
+            'url = "https://download.pytorch.org/whl/cu134"\n'
             "explicit = true\n"
             "\n"
             "[tool.uv.sources]\n"
             "torch = [\n"
-            '    {index = "pytorch-cu130", '
+            '    {index = "pytorch-cu134", '
             "marker = \"sys_platform == 'linux' or sys_platform == 'win32'\"},\n"
             "]\n",
             encoding="utf-8",
@@ -974,7 +974,7 @@ class TestSyncSilentDrop:
         ws.mkdir()
         (ws / "pyproject.toml").write_text(
             PROJECT_ONLY + "\n[[tool.uv.index]]\n"
-            'name = "pytorch-cu130"\n'
+            'name = "pytorch-cu134"\n'
             'url = "https://download.pytorch.org/whl/cu121"\n'
             "explicit = true\n",
             encoding="utf-8",
@@ -1024,13 +1024,13 @@ class TestManualSnippetBytes:
         expected = (
             "\n"
             "[[tool.uv.index]]\n"
-            'name = "pytorch-cu130"\n'
-            'url = "https://download.pytorch.org/whl/cu130"\n'
+            'name = "pytorch-cu134"\n'
+            'url = "https://download.pytorch.org/whl/cu134"\n'
             "explicit = true\n"
             "\n"
             "[tool.uv.sources]\n"
             "torch = [\n"
-            '    {index = "pytorch-cu130", '
+            '    {index = "pytorch-cu134", '
             "marker = \"sys_platform == 'linux' or sys_platform == 'win32'\"},\n"
             "]\n"
             "\n"
@@ -1105,7 +1105,7 @@ class TestInstallTorchGroupPlacement:
         # The cu130 index + sources block still landed.
         assert _inspect.detect_state(pyproject) == TorchConfigState.CANONICAL
         raw = pyproject.read_text(encoding="utf-8")
-        assert "pytorch-cu130" in raw
+        assert "pytorch-cu134" in raw
         assert "[tool.uv.sources]" in raw
 
         # The inert-pin guidance fires for the operator.
@@ -1175,13 +1175,13 @@ class TestInstallTorchGroupPlacement:
             "managed-torch-direct-dependency = true\n"
             "\n"
             "[[tool.uv.index]]\n"
-            'name = "pytorch-cu130"\n'
-            'url = "https://download.pytorch.org/whl/cu130"\n'
+            'name = "pytorch-cu134"\n'
+            'url = "https://download.pytorch.org/whl/cu134"\n'
             "explicit = true\n"
             "\n"
             "[tool.uv.sources]\n"
             "torch = [\n"
-            '    {index = "pytorch-cu130", '
+            '    {index = "pytorch-cu134", '
             "marker = \"sys_platform == 'linux' or sys_platform == 'win32'\"},\n"
             "]\n",
             encoding="utf-8",
