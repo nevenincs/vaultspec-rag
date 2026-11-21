@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from . import store_schema
 from ._qdrant_local_lifetime import close_local_collection
 from ._store_models import code_collection_matches_derived, read_served_pointer
+from ._store_writes import hold_within_budget
 
 if TYPE_CHECKING:
     import pathlib
-    from collections.abc import Callable, Iterable, Sequence
+    from collections.abc import Callable, Generator, Iterable, Sequence
     from contextlib import AbstractContextManager
 
     from qdrant_client import QdrantClient
@@ -24,6 +26,7 @@ if TYPE_CHECKING:
 
     from ._source_types import PublicSourceType
     from ._store_locks import ReentrantLock
+    from ._store_writes import StoreWritePolicy
 
 
 logger = logging.getLogger(__name__)
@@ -83,6 +86,8 @@ class _VaultCollectionMixin:
         ) -> None: ...
 
         def _point_lock(self, collection: str) -> AbstractContextManager[object]: ...
+
+        def _lock_for(self, collection: str) -> ReentrantLock: ...
 
         def _retried[T](self, description: str, op: Callable[[int], T]) -> T: ...
 
@@ -327,6 +332,38 @@ class _VaultCollectionMixin:
         if source is _Source.DOCUMENT:
             return self.DOCUMENT_TABLE_NAME
         raise ValueError("a reset names one concrete source")
+
+    @contextmanager
+    def held_for_reset(
+        self,
+        source: PublicSourceType,
+        policy: StoreWritePolicy | None,
+    ) -> Generator[None]:
+        """Hold every lock a reset of *source* takes, before the reset begins.
+
+        The lifecycle lock comes first and then each collection the reset
+        drops or recreates, in name order, so the documented order holds and
+        the reset's own drop and recreate only re-enter locks already held:
+        nothing inside the reset waits on a lock. While a collection is busy
+        the lifecycle lock is released between attempts, so a queued reset
+        never stalls another store's lifecycle work or a health read. With a
+        run's *policy* every attempt delivers its pause or cancel and expires
+        at its no-progress deadline, so a reset queued behind a holder that
+        never lets go stops before recording any intent.
+        """
+        collections = sorted(
+            {
+                *self.owned_source_collections(source),
+                self._canonical_source_collection(source),
+            }
+        )
+        locks: list[ReentrantLock] = [self._lifecycle_lock]
+        if not self._server_mode:
+            locks.extend(self._lock_for(collection) for collection in collections)
+        with hold_within_budget(
+            locks, policy, description=f"{source.value} reset locks"
+        ):
+            yield
 
     def discard_source_storage(self, source: PublicSourceType) -> None:
         """Hard-delete every collection *source* owns and verify none survived.

@@ -1297,17 +1297,21 @@ class ServiceRegistry(
         from . import store_schema
 
         with self._lock:
-            project_list = [str(r) for r in self._projects]
-            count = len(self._projects)
-            # Read the verdicts the ensure path already recorded. No backend
-            # call happens here: a health poll must stay cheap, and a store
-            # nobody has opened has nothing to report either way.
-            nonconforming = sorted(
-                f"{root}:{collection}"
-                for root, slot in self._projects.items()
-                for collection, verdict in slot.store.conformance_verdicts().items()
-                if verdict.verdict == store_schema.NONCONFORMING
-            )
+            stores = [(root, slot.store) for root, slot in self._projects.items()]
+        # Read the verdicts the ensure path already recorded. No backend call
+        # happens here: a health poll must stay cheap, and a store nobody has
+        # opened has nothing to report either way. Each read takes that
+        # store's lifecycle lock, so it runs outside the registry lock: a
+        # store busy with an open, drop or reset delays only this poll, never
+        # every lease, search and admission behind it.
+        nonconforming = sorted(
+            f"{root}:{collection}"
+            for root, store in stores
+            for collection, verdict in store.conformance_verdicts().items()
+            if verdict.verdict == store_schema.NONCONFORMING
+        )
+        project_list = [str(root) for root, _store in stores]
+        count = len(stores)
         return {
             "model_loaded": self._model is not None,
             "reranker_loaded": self._reranker.loaded is not None,

@@ -276,7 +276,7 @@ class RunCheckpointBase:
             self.generation.signature.source_type,
             began_under=began_under,
             generation_id=self.generation_id,
-            run_control=self.run_policy,
+            run_policy=self.run_policy,
         )
         self.run_policy.fence_writes(
             ResetEpochFence.of(self.ledger.path, state).validate

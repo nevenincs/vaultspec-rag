@@ -30,13 +30,20 @@ import logging
 import math
 import pathlib
 import time
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Generator, Sequence
+
+    from ._store_locks import ReentrantLock
 
 logger = logging.getLogger(__name__)
+
+#: Longest single wait on a contended store lock before control and the
+#: no-progress budget are re-checked.
+_LOCK_POLL_SECONDS = 0.1
 
 __all__ = [
     "BYTES_PER_POINT_ESTIMATE",
@@ -46,6 +53,7 @@ __all__ = [
     "VolumeReading",
     "classify_write_error",
     "ensure_disk_headroom",
+    "hold_within_budget",
     "probe_store_volume",
     "probe_workspace_volume",
     "remaining_write_seconds",
@@ -411,6 +419,62 @@ def remaining_write_seconds(
         JobErrorKind.NO_PROGRESS_TIMEOUT,
         f"store write made no durable progress before its deadline: {description}",
     )
+
+
+def _lock_wait_slice(policy: StoreWritePolicy | None, description: str) -> float:
+    """Deliver control and return how long the next lock attempt may wait.
+
+    Raises the run's typed no-progress outcome once its budget is spent.
+    """
+    if policy is None:
+        return _LOCK_POLL_SECONDS
+    policy.wait(0.0)
+    remaining = remaining_write_seconds(policy, description=description)
+    if remaining is None:
+        raise RuntimeError("managed write policy lost its deadline")
+    return min(_LOCK_POLL_SECONDS, remaining)
+
+
+@contextmanager
+def hold_within_budget(
+    locks: Sequence[ReentrantLock],
+    policy: StoreWritePolicy | None,
+    *,
+    description: str,
+) -> Generator[None]:
+    """Hold every lock in *locks*, in order, never parking while holding one.
+
+    Only the first lock is awaited, in bounded slices. Each later lock is only
+    tried: when one is busy, every lock taken so far is released and the
+    attempt starts over after a pause with nothing held. A waiter therefore
+    never holds an earlier lock - the store lifecycle lock above all - while
+    another holder keeps a later one, so its wait cannot stall anyone who
+    needs only the earlier lock.
+
+    With a run's *policy* each slice first delivers a pending pause or cancel
+    and re-reads the durable no-progress budget, so a holder that never lets
+    go ends the wait with the run's typed outcome instead of wedging it.
+    Without one the wait is unbounded.
+    """
+    while True:
+        wait = _lock_wait_slice(policy, description)
+        taken = 0
+        with ExitStack() as held:
+            for lock in locks:
+                if not lock.acquire(timeout=wait if taken == 0 else 0.0):
+                    break
+                held.callback(lock.release)
+                taken += 1
+            if taken == len(locks):
+                if policy is not None:
+                    policy.wait(0.0)
+                yield
+                return
+        if taken:
+            if policy is None:
+                time.sleep(wait)
+            else:
+                policy.wait(wait)
 
 
 def free_bytes(storage_path: pathlib.Path) -> int | None:
