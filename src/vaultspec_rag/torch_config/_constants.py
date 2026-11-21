@@ -1,6 +1,6 @@
 """Shared types, constants, enums, and report dataclasses for torch-config.
 
-These are the single source of truth for the canonical cu130 block shape
+These are the single source of truth for the canonical CUDA block shape
 and the closed action / state / diagnosis vocabularies. The inspection,
 mutation, direct-dep, and diagnosis submodules all import from here, as
 does the MCP-extra reconciler, which reads the same pyproject surfaces.
@@ -56,7 +56,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-CU130_MARKER: Final[str] = "sys_platform == 'linux' or sys_platform == 'win32'"
+CUDA_MARKER: Final[str] = "sys_platform == 'linux' or sys_platform == 'win32'"
 # Minimum supported torch version. Surfaced through :data:`DIRECT_TORCH_REQUIREMENT`
 # in the educational comment :func:`manual_snippet` appends and in the
 # direct-dep warnings ``commands._torch_flow._ensure_torch_direct_dep`` /
@@ -68,7 +68,7 @@ _MANAGED_DIRECT_DEP_KEY: Final[str] = "managed-torch-direct-dependency"
 
 
 class TorchConfigState(StrEnum):
-    """Classification of a ``pyproject.toml`` relative to rag's cu130 block."""
+    """Classification of a ``pyproject.toml`` relative to rag's CUDA block."""
 
     MISSING = "missing"
     CANONICAL = "canonical"
@@ -88,15 +88,15 @@ class TorchConfigAction(StrEnum):
     so existing consumers that filter on ``"applied"`` keep working.
 
     Values:
-        APPLIED: cu130 block was just written.
+        APPLIED: CUDA block was just written.
         ALREADY: pyproject is already canonical; nothing to write.
-        CONFLICT: a non-canonical cu130 block exists; refused to mutate.
+        CONFLICT: a non-canonical CUDA block exists; refused to mutate.
         ABSENT: there is no project configuration of this installation's
             torch to speak of - no pyproject.toml at the target, or an
             installation uv resolves torch for (a tool or uvx environment),
             which no project declaration reaches. Nothing was inspected and
             nothing is reported for it: a normal state, not a missing file.
-        REMOVED: cu130 block was just removed (uninstall side only).
+        REMOVED: CUDA block was just removed (uninstall side only).
         DISABLED: ``configure_torch=False`` opted out.
         NOT_APPLICABLE: the installation is a client (no ``gpu`` extra),
             which never needs torch; nothing was inspected or written.

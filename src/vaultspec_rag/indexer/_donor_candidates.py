@@ -302,21 +302,25 @@ def _served_donor_collection(
     """Return the collection a donor root serves for *kind*.
 
     A code donor serves its derived name, or the historical generation its
-    pointer still names. A pointer that cannot be verified makes the donor
-    ineligible: which collection it serves is not established. Whether the
-    served collection holds published content is the proof gate's question,
-    not this one's.
+    pointer still names. A pointer naming the donor's code under the other
+    backend says nothing about this backend, so the derived name stands. Any
+    other pointer that cannot be verified makes the donor ineligible: which
+    collection it serves is not established. Whether the served collection
+    holds published content is the proof gate's question, not this one's.
     """
     if kind is not CollectionKind.CODE:
         return derived
     if not root:
         return None
-    from .._store_models import read_served_pointer
+    from .._store_models import (
+        ServedPointerUnverifiableError,
+        established_served_code_collection,
+    )
 
-    pointer = read_served_pointer(root, derived)
-    if not pointer.verifiable:
+    try:
+        return established_served_code_collection(root, derived)
+    except ServedPointerUnverifiableError:
         return None
-    return pointer.collection or derived
 
 
 def _rank_donor_candidates(

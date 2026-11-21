@@ -50,7 +50,9 @@ The [package table](#packages-and-what-they-can-run) lists what each package can
 
 ### What you need before you start
 
-- A supported GPU. On Linux and Windows, install an NVIDIA driver that supports CUDA 13.
+- A supported GPU. On Linux and Windows, install an NVIDIA driver
+  version 580 or newer. The wheels are built for CUDA 13.4, whose own driver branch is
+  R615; any CUDA 13 driver from 580 runs them through CUDA minor-version compatibility.
   On macOS, the system provides the driver. Without one, `vaultspec-rag install` and
   `server start` still run, but `server start` has no GPU to put the service on and
   refuses; see [when something goes wrong](#when-something-goes-wrong).

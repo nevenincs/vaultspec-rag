@@ -35,7 +35,7 @@ from ..operator_state._installation import (
     DRIVER_CHECK_COMMAND,
     ComputeCapability,
 )
-from ..operator_state._provisioning import CU130_INDEX_STRATEGY, HOST_PYTHON
+from ..operator_state._provisioning import CUDA_INDEX_STRATEGY, HOST_PYTHON
 from ..operator_state._service_environment import ServiceEnvironment
 from ..service_runtime import (
     ERROR_RUNTIME_FAILED,
@@ -59,7 +59,7 @@ from ..service_runtime import (
     uv_install_command,
     venv_arguments,
 )
-from ..torch_config._index import CU130_INDEX_URL
+from ..torch_config._index import CUDA_INDEX_URL
 from ._real_environments import (
     invoke_the_cli,
     publish_runtime,
@@ -622,9 +622,9 @@ class TestHowUvIsAsked:
 
         assert arguments[-4:] == (
             "--index",
-            CU130_INDEX_URL,
+            CUDA_INDEX_URL,
             "--index-strategy",
-            CU130_INDEX_STRATEGY,
+            CUDA_INDEX_STRATEGY,
         )
 
     def test_apple_silicon_takes_the_wheel_that_carries_metal(
@@ -638,7 +638,7 @@ class TestHowUvIsAsked:
             "darwin",
         )
 
-        assert CU130_INDEX_URL not in arguments
+        assert CUDA_INDEX_URL not in arguments
         assert "--index" not in arguments
 
 

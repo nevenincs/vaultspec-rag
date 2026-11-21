@@ -34,12 +34,12 @@ from ..operator_state._holders import HolderRole
 from ..operator_state._installation import ComputeCapability, InstallRole
 from ..operator_state._models import ComputeReport
 from ..operator_state._provisioning import (
-    CU130_INDEX_STRATEGY,
+    CUDA_INDEX_STRATEGY,
     ToolReceiptVerdict,
     classify_tool_receipt,
 )
 from ..operator_state._topology import TOOL_RECEIPT_NAME
-from ..torch_config._index import CU130_INDEX_URL
+from ..torch_config._index import CUDA_INDEX_URL
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -240,8 +240,8 @@ def test_doctor_says_nothing_about_a_receipt_a_durable_one_has(
         receipt=(
             '[tool]\nrequirements = [{ name = "vaultspec-rag" }]\n\n'
             "[tool.options]\n"
-            f'index = [{{ url = "{CU130_INDEX_URL}" }}]\n'
-            f'index-strategy = "{CU130_INDEX_STRATEGY}"\n'
+            f'index = [{{ url = "{CUDA_INDEX_URL}" }}]\n'
+            f'index-strategy = "{CUDA_INDEX_STRATEGY}"\n'
         ),
     )
     monkeypatch.setattr(

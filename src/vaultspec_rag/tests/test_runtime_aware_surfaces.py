@@ -38,7 +38,7 @@ from ..commands._provision import ProvisionOutcome
 from ..operator_state._hardware import read_hardware
 from ..operator_state._installation import ComputeCapability
 from ..operator_state._provisioning import (
-    CU130_INDEX_STRATEGY,
+    CUDA_INDEX_STRATEGY,
     cuda_remediation,
     durable_upgrade_commands,
     upgrade_commands_for_mode,
@@ -280,9 +280,9 @@ class TestWhatTheDoctorSaysAboutTheRuntime:
         not_serving = upgrade_commands_for_mode("tool", tool, serves=False)
 
         assert len(serving) == len(not_serving) + 1
-        assert any(CU130_INDEX_STRATEGY in command for command in serving)
+        assert any(CUDA_INDEX_STRATEGY in command for command in serving)
         assert not_serving == durable_upgrade_commands()
-        assert not any(CU130_INDEX_STRATEGY in command for command in not_serving)
+        assert not any(CUDA_INDEX_STRATEGY in command for command in not_serving)
 
 
 @pytest.mark.usefixtures("isolated_status_dir")

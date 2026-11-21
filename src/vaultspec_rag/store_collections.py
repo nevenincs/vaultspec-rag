@@ -9,8 +9,7 @@ from . import store_schema
 from ._qdrant_local_lifetime import close_local_collection
 from ._store_models import (
     code_collection_matches_derived,
-    other_backend_code_pointer,
-    read_served_pointer,
+    established_served_code_collection,
 )
 
 if TYPE_CHECKING:
@@ -290,18 +289,14 @@ class _VaultCollectionMixin:
         backend's storage, so it is never enumerated here and never dropped.
 
         Raises:
-            RuntimeError: the served pointer is unreadable, so what this root
-                serves is not established. The reset refuses on the same
-                reading rather than guessing.
+            ServedPointerUnverifiableError: the served pointer is unreadable,
+                so what this root serves is not established. The reset
+                refuses on the same reading rather than guessing.
         """
         derived = self.DERIVED_CODE_TABLE_NAME
-        if (
-            not read_served_pointer(self.root_dir, derived).verifiable
-            and other_backend_code_pointer(self.root_dir, derived) is None
-        ):
-            raise RuntimeError(
-                "cannot enumerate code collections without a verifiable served pointer"
-            )
+        # Called for its refusal: the served name, once established, is
+        # always among the names the predicate below enumerates.
+        established_served_code_collection(self.root_dir, derived)
         return tuple(
             sorted(
                 name
@@ -318,8 +313,9 @@ class _VaultCollectionMixin:
         :meth:`owned_code_collections` enumerates them.
 
         Raises:
-            RuntimeError: code's served pointer is unverifiable, so its
-                ownership is not established and nothing may be discarded.
+            ServedPointerUnverifiableError: code's served pointer is
+                unverifiable, so its ownership is not established and nothing
+                may be discarded.
         """
         from ._source_types import PublicSourceType as _Source
 

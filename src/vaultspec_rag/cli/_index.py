@@ -31,6 +31,7 @@ from .._operator_commands import (
     index_source_option,
     server_status_command,
 )
+from .._job_errors import JobError, remediation
 from .._source_types import (
     INDEX_SOURCES,
     PublicSourceType,
@@ -1342,6 +1343,19 @@ def handle_clean(
                 ],
             )
         _plain(_format_local_index_busy_message("clean the index"))
+        raise typer.Exit(code=1) from None
+    except JobError as exc:
+        remedy = remediation(exc.error_kind)
+        _display_service_error(
+            {
+                "error": exc.error_kind.value,
+                "message": exc.detail,
+                "clean_type": source.value,
+                "remediation": [remedy] if remedy else None,
+            },
+            json_mode=json_mode,
+            command="clean",
+        )
         raise typer.Exit(code=1) from None
 
     cleared = [s.lower() for s in cleared_raw]

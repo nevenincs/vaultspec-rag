@@ -33,7 +33,7 @@ import pytest
 from ..commands import _tool_torch
 from ..operator_state import _provisioning
 from ..operator_state._provisioning import (
-    CU130_INDEX_STRATEGY,
+    CUDA_INDEX_STRATEGY,
     ToolReceiptVerdict,
     classify_tool_receipt,
     environment_python_request,
@@ -72,7 +72,7 @@ _NEWER_TOOL_VERSION = "1.1.0"
 #: resolves the plain one is visible as a version rather than inferred.
 _TORCH = "torch"
 _CPU_TORCH = "1.0.0"
-_CUDA_TORCH = "1.0.0+cu130"
+_CUDA_TORCH = "1.0.0+cu134"
 
 
 @pytest.fixture
@@ -121,13 +121,13 @@ def cuda_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[str]
     build_wheel(wheels, name=_TORCH, version=_CUDA_TORCH)
     publish_index(wheels, packages)
     with serve_wheels(packages) as base_url:
-        monkeypatch.setattr(_provisioning, "CU130_INDEX_URL", base_url)
+        monkeypatch.setattr(_provisioning, "CUDA_INDEX_URL", base_url)
         yield base_url
 
 
 def _cuda_options(base_url: str) -> tuple[str, ...]:
     """The two options the product records, as uv arguments."""
-    return ("--index", base_url, "--index-strategy", CU130_INDEX_STRATEGY)
+    return ("--index", base_url, "--index-strategy", CUDA_INDEX_STRATEGY)
 
 
 def _interpreter(sandbox: UvSandbox) -> str:
@@ -168,7 +168,7 @@ def test_an_installation_made_with_the_options_is_durable(
     assert completed.returncode == 0, completed.stderr
 
     recorded = receipt_text(sandbox, _TOOL)
-    assert f'index-strategy = "{CU130_INDEX_STRATEGY}"' in recorded
+    assert f'index-strategy = "{CUDA_INDEX_STRATEGY}"' in recorded
     assert cuda_index in recorded
     assert classify_tool_receipt(_interpreter(sandbox)) is ToolReceiptVerdict.DURABLE
 

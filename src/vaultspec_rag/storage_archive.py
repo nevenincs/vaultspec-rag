@@ -26,7 +26,7 @@ from ._publication_state import (
 )
 from ._rmtree import remove_tree
 from ._source_types import PublicSourceType
-from ._store_models import read_served_pointer
+from ._store_models import established_served_code_collection
 from ._timestamps import parse_iso_timestamp
 from .indexer._publication_proof import ProofUnverifiableError
 from .storage_manifest import (
@@ -62,11 +62,8 @@ def _active_publication_collections(
         PublicSourceType.VAULT: prefix + store_schema.VAULT_COLLECTION,
         PublicSourceType.DOCUMENT: prefix + store_schema.DOCUMENT_COLLECTION,
     }
-    pointer = read_served_pointer(root, prefix + store_schema.CODE_COLLECTION)
-    if not pointer.verifiable:
-        raise RuntimeError("cannot archive code without a verifiable served pointer")
-    active[PublicSourceType.CODE] = (
-        pointer.collection or prefix + store_schema.CODE_COLLECTION
+    active[PublicSourceType.CODE] = established_served_code_collection(
+        root, prefix + store_schema.CODE_COLLECTION
     )
     return {source: name for source, name in active.items() if name in available}
 

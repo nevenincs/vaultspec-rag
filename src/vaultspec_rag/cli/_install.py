@@ -116,7 +116,7 @@ class _InstallOptions:
                 "group name to 'dev' when passed without a value. Omit the "
                 "flag entirely to keep the historic [project].dependencies "
                 "placement. The group must be enabled for the resolve "
-                "(`uv sync --group NAME`) for the cu130 pin to apply."
+                "(`uv sync --group NAME`) for the CUDA pin to apply."
             ),
         ),
     ] = None

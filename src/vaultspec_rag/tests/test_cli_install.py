@@ -225,7 +225,7 @@ class TestRenderInstallReport:
         warning = (
             "torch-config patched, but `torch` is not a direct dependency. "
             "uv ignores [tool.uv.sources] for purely transitive packages, "
-            "so the cu130 pin will not take effect. "
+            "so the CUDA pin will not take effect. "
             "Add `torch>=2.4` to [project].dependencies or "
             "[dependency-groups].dev."
         )
@@ -276,12 +276,12 @@ class TestRenderInstallReport:
             target=Path("."),
             torch_config_action=TorchConfigAction.CONFLICT,
             torch_config_conflicts=[
-                '[[tool.uv.index]] entry name="pytorch-cu130" url-mismatch'
+                '[[tool.uv.index]] entry name="pytorch-cu134" url-mismatch'
             ],
         )
         out = self._render(report)
         assert "[[tool.uv.index]]" in out
-        assert 'name="pytorch-cu130"' in out
+        assert 'name="pytorch-cu134"' in out
 
     def test_skipped_eof_action_renders_yellow(self) -> None:
         """TEST-12 regression: the new ``skipped-eof`` action label
@@ -593,7 +593,7 @@ class TestInstallExitCodes:
             '[project]\nname = "demo"\nversion = "0.1.0"\n'
             'dependencies = ["vaultspec-rag"]\n'
             "\n[[tool.uv.index]]\n"
-            'name = "pytorch-cu130"\n'
+            'name = "pytorch-cu134"\n'
             'url = "https://download.pytorch.org/whl/cu121"\n'  # wrong url
             "explicit = true\n",
         )

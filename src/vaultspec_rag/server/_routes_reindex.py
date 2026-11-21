@@ -21,6 +21,7 @@ from starlette.responses import JSONResponse
 
 import vaultspec_rag.server as _m
 
+from .._job_errors import JobError, remediation
 from .._source_types import (
     PublicSourceType,
     SourceTypeParseError,
@@ -441,6 +442,17 @@ async def clean_route(request: Request) -> JSONResponse:
                     registry=registry,
                 )
             )
+        except JobError as exc:
+            # A typed refusal carries its own stable kind and remedy; it is
+            # an expected outcome, not a crash worth a traceback.
+            logger.warning("Index clean refused for %s: %s", source.value, exc)
+            domains[source.value] = {
+                "ok": False,
+                "cleared": [],
+                "error_kind": exc.error_kind.value,
+                "detail": exc.detail,
+                "remediation": remediation(exc.error_kind),
+            }
         except Exception as exc:
             logger.exception("Index clean failed for %s", source.value)
             domains[source.value] = {
@@ -448,6 +460,7 @@ async def clean_route(request: Request) -> JSONResponse:
                 "cleared": [],
                 "error_kind": type(exc).__name__,
                 "detail": str(exc),
+                "remediation": None,
             }
         else:
             domains[source.value] = {
@@ -455,6 +468,7 @@ async def clean_route(request: Request) -> JSONResponse:
                 "cleared": cleared,
                 "error_kind": None,
                 "detail": None,
+                "remediation": None,
             }
     successes = sum(bool(item["ok"]) for item in domains.values())
     return JSONResponse(

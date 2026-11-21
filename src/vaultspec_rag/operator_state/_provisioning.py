@@ -28,14 +28,14 @@ from typing import TYPE_CHECKING, cast
 from packaging.requirements import Requirement
 
 from .._operator_commands import server_start_command, server_stop_command
-from ..torch_config._index import CU130_INDEX_URL
+from ..torch_config._index import CUDA_BACKEND, CUDA_INDEX_URL
 from ._topology import TOOL_RECEIPT_NAME, RuntimeEnvKind, environment_root
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 __all__ = [
-    "CU130_INDEX_STRATEGY",
+    "CUDA_INDEX_STRATEGY",
     "CudaRemediation",
     "CudaRepairKind",
     "ToolReceiptVerdict",
@@ -72,7 +72,7 @@ _HOST_TOOL_REQUEST = "vaultspec-rag[gpu,mcp]"
 #: unsatisfiable; the best-match strategy takes the highest version from any
 #: index, which silently selects PyPI's CPU torch whenever PyPI publishes a
 #: release first.
-CU130_INDEX_STRATEGY = "unsafe-first-match"
+CUDA_INDEX_STRATEGY = "unsafe-first-match"
 
 #: The machine architectures PyTorch publishes accelerated Linux wheels for.
 _CUDA_LINUX_MACHINES = frozenset({"x86_64", "aarch64"})
@@ -248,7 +248,7 @@ def _records_cuda_index(options: dict[str, object]) -> bool:
     uv writes each index as a table carrying its URL, so the URL is read out
     of the record rather than compared against a rendered option string.
     """
-    if options.get("index-strategy") != CU130_INDEX_STRATEGY:
+    if options.get("index-strategy") != CUDA_INDEX_STRATEGY:
         return False
     index = options.get("index")
     entries = cast("list[object]", index) if isinstance(index, list) else [index]
@@ -258,7 +258,7 @@ def _records_cuda_index(options: dict[str, object]) -> bool:
             if isinstance(entry, dict)
             else entry
         )
-        if isinstance(url, str) and url.rstrip("/") == CU130_INDEX_URL.rstrip("/"):
+        if isinstance(url, str) and url.rstrip("/") == CUDA_INDEX_URL.rstrip("/"):
             return True
     return False
 
@@ -417,7 +417,7 @@ def host_install_command(platform_name: str = sys.platform) -> str:
         _HOST_TOOL_REQUEST,
     )
     if platform_name != "darwin":
-        args += ("--index", CU130_INDEX_URL, "--index-strategy", CU130_INDEX_STRATEGY)
+        args += ("--index", CUDA_INDEX_URL, "--index-strategy", CUDA_INDEX_STRATEGY)
     return _render_command(args)
 
 
@@ -455,7 +455,7 @@ def environment_distribution_version(interpreter: str, distribution: str) -> str
 def _public_version(version: str | None) -> str | None:
     """A version without its local segment, which no index publishes under.
 
-    ``2.14.0+cpu`` and ``2.14.0+cu130`` are the same release built twice. The
+    ``2.14.0+cpu`` and ``2.15.0+cu134`` are the same release built twice. The
     request names the release; which build answers it is what the index and
     the strategy decide.
     """
@@ -498,9 +498,9 @@ def tool_swap_arguments(interpreter: str) -> tuple[str, ...]:
         "--python",
         interpreter,
         "--index",
-        CU130_INDEX_URL,
+        CUDA_INDEX_URL,
         "--index-strategy",
-        CU130_INDEX_STRATEGY,
+        CUDA_INDEX_STRATEGY,
         "--reinstall-package",
         "torch",
         package if installed is None else f"{package}=={installed}",
@@ -572,9 +572,9 @@ def tool_receipt_arguments(interpreter: str) -> tuple[str, ...]:
         *(() if python is None else ("--python", python)),
         tool_package_requirement(interpreter),
         "--index",
-        CU130_INDEX_URL,
+        CUDA_INDEX_URL,
         "--index-strategy",
-        CU130_INDEX_STRATEGY,
+        CUDA_INDEX_STRATEGY,
     )
 
 
@@ -664,10 +664,9 @@ def inplace_cuda_command(interpreter: str) -> str:
     environment is offered the receipt-carrying request instead, which
     survives the next upgrade.
     """
-    backend = CU130_INDEX_URL.rsplit("/", 1)[-1]
     return (
         f'uv pip install --python "{interpreter}" '
-        f"--reinstall --torch-backend={backend} torch"
+        f"--reinstall --torch-backend={CUDA_BACKEND} torch"
     )
 
 

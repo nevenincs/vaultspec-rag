@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#torch-dependency-group'
 date: '2026-06-24'
-modified: '2026-07-27'
-body_hash: 'sha256:f3ecf1586c052106841d54260471ae2c3b014b6b728a8506c68d2e9a4b58d032'
+modified: '2026-11-21'
+body_hash: 'sha256:31b8125835d9f9f4beb7ad814836e14a54d437b42b6970ece45b1573bc87c2fc'
 related:
   - "[[2026-06-24-torch-dependency-group-research]]"
 ---
@@ -129,3 +129,7 @@ no-mock tomlkit tests follow the existing install-test pattern.
 ## Considered options
 
 Evidence gap: the retained document body has no separately labelled Considered options section.
+
+## Amendment
+
+Amended 2026-11-21 under the user's direction to track the latest CUDA build. Wherever this record names the `cu130` index, the `pytorch-cu130` index name or the `cu130` backend, the project now pins the `cu134` build (`pytorch-cu134`, `https://download.pytorch.org/whl/cu134`, torch 2.15.0). The decision itself is unchanged: the index name, URL and backend derive from one constant, `CUDA_BACKEND` in `src/vaultspec_rag/torch_config/_index.py`, so a later move to a newer build edits one line.

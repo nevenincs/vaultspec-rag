@@ -1120,7 +1120,7 @@ def _install_run_unchecked(request: _InstallRunRequest) -> InstallReport:
 
     When ``configure_torch`` is True (the default) and this installation
     is an inference host (it carries the ``gpu`` extra), also patches the
-    consumer's ``pyproject.toml`` with the canonical cu130 torch index
+    consumer's ``pyproject.toml`` with the canonical CUDA torch index
     and source pin. A client installation is never prompted or patched.
     This step is gated by an interactive confirmation
     prompt (bypassed with ``assume_yes=True``). In non-TTY contexts
@@ -1136,7 +1136,7 @@ def _install_run_unchecked(request: _InstallRunRequest) -> InstallReport:
             reconciling sync resources.
         skip: Components to skip (passed through to ``sync_provider``).
         configure_torch: When True, patch ``pyproject.toml`` with the
-            cu130 torch config block.
+            CUDA torch config block.
         assume_yes: Skip the interactive confirmation prompt.
         sync_after: After a successful torch-config patch, shell out
             to ``uv sync --reinstall-package torch``. Off by default.

@@ -15,7 +15,7 @@ import pytest
 from ..cli._service_start import _tail_daemon_log
 from ..cli._status_labels import _status_env_label
 from ..operator_state._provisioning import (
-    CU130_INDEX_STRATEGY,
+    CUDA_INDEX_STRATEGY,
     CudaRepairKind,
     ToolReceiptVerdict,
     classify_tool_receipt,
@@ -35,7 +35,7 @@ from ..operator_state._topology import (
     classify_environment,
     environment_root,
 )
-from ..torch_config._index import CU130_INDEX_URL
+from ..torch_config._index import CUDA_BACKEND, CUDA_INDEX_URL
 
 pytestmark = [pytest.mark.unit]
 
@@ -149,13 +149,12 @@ class TestRuntimeEnvClassifier:
 
 
 class TestRemediationCommands:
-    """Every CUDA repair string derives from the one cu130 constant surface."""
+    """Every CUDA repair string derives from the one CUDA constant surface."""
 
-    def test_escape_hatch_targets_the_interpreter_and_cu130_backend(self) -> None:
+    def test_escape_hatch_targets_the_interpreter_and_cuda_backend(self) -> None:
         cmd = inplace_cuda_command(r"C:\envs\tool\Scripts\python.exe")
         assert '--python "C:\\envs\\tool\\Scripts\\python.exe"' in cmd
-        backend = CU130_INDEX_URL.rsplit("/", 1)[-1]
-        assert f"--torch-backend={backend}" in cmd
+        assert f"--torch-backend={CUDA_BACKEND}" in cmd
         assert "--reinstall" in cmd
         assert cmd.endswith("torch")
 
@@ -196,18 +195,18 @@ class TestRemediationCommands:
         assert not remediation.kind.repairable
         assert remediation.repair_commands == ()
         joined = "\n".join(remediation.steps)
-        assert CU130_INDEX_URL not in joined
+        assert CUDA_INDEX_URL not in joined
         assert "publishes no CUDA build" in joined
 
     def test_macos_is_pointed_at_metal_not_at_a_cuda_index(self) -> None:
-        """Guard assertion: a cu130 source on macOS is a repair that cannot work."""
+        """Guard assertion: a CUDA source on macOS is a repair that cannot work."""
         remediation = cuda_remediation(
             "/opt/env/bin/python", platform_name="darwin", machine="arm64"
         )
 
         assert remediation.kind is CudaRepairKind.APPLE_METAL
         joined = "\n".join(remediation.steps)
-        assert CU130_INDEX_URL not in joined
+        assert CUDA_INDEX_URL not in joined
         assert "Metal" in joined
 
 
@@ -231,8 +230,8 @@ _PLAIN_RECEIPT = '[tool]\nrequirements = [{ name = "vaultspec-rag" }]\n'
 _DURABLE_RECEIPT = (
     '[tool]\nrequirements = [{ name = "vaultspec-rag" }]\n\n'
     "[tool.options]\n"
-    f'index = [{{ url = "{CU130_INDEX_URL}", explicit = false }}]\n'
-    f'index-strategy = "{CU130_INDEX_STRATEGY}"\n'
+    f'index = [{{ url = "{CUDA_INDEX_URL}", explicit = false }}]\n'
+    f'index-strategy = "{CUDA_INDEX_STRATEGY}"\n'
 )
 
 
@@ -267,8 +266,8 @@ class TestTheReceiptCarriesTheCudaSource:
 
         assert swap.startswith("uv pip install ")
         assert f"--python {interpreter}" in swap or f'--python "{interpreter}"' in swap
-        assert f"--index {CU130_INDEX_URL}" in swap
-        assert f"--index-strategy {CU130_INDEX_STRATEGY}" in swap
+        assert f"--index {CUDA_INDEX_URL}" in swap
+        assert f"--index-strategy {CUDA_INDEX_STRATEGY}" in swap
         assert "--reinstall-package torch" in swap
         # The release already installed, so a damaged environment regains
         # what it lost without gaining a release nobody asked for.
@@ -279,8 +278,8 @@ class TestTheReceiptCarriesTheCudaSource:
         assert "+cpu" not in swap
 
         assert receipt.startswith("uv tool install ")
-        assert f"--index {CU130_INDEX_URL}" in receipt
-        assert f"--index-strategy {CU130_INDEX_STRATEGY}" in receipt
+        assert f"--index {CUDA_INDEX_URL}" in receipt
+        assert f"--index-strategy {CUDA_INDEX_STRATEGY}" in receipt
         assert '"vaultspec-rag[gpu]"' in receipt
         assert "==" not in receipt
 
@@ -397,8 +396,8 @@ class TestTheReceiptCarriesTheCudaSource:
             '[tool]\nrequirements = [{ name = "vaultspec-rag", '
             'specifier = "==0.4.35" }]\n\n'
             "[tool.options]\n"
-            f'index = [{{ url = "{CU130_INDEX_URL}" }}]\n'
-            f'index-strategy = "{CU130_INDEX_STRATEGY}"\n',
+            f'index = [{{ url = "{CUDA_INDEX_URL}" }}]\n'
+            f'index-strategy = "{CUDA_INDEX_STRATEGY}"\n',
         )
 
         verdict = classify_tool_receipt(interpreter)
@@ -432,7 +431,7 @@ class TestTheReceiptCarriesTheCudaSource:
         wheel_path = (tmp_path / "wheels" / "torch.whl").as_posix()
         for recorded in (
             f'{{ name = "torch", path = "{wheel_path}" }}',
-            '{ name = "torch", specifier = "==2.14.0+cu130" }',
+            '{ name = "torch", specifier = "==2.15.0+cu134" }',
         ):
             interpreter = _tool_env(
                 tmp_path,
@@ -468,7 +467,7 @@ class TestTheReceiptCarriesTheCudaSource:
             tmp_path,
             '[tool]\nrequirements = [{ name = "vaultspec-rag" }]\n\n'
             "[tool.options]\n"
-            f'index = [{{ url = "{CU130_INDEX_URL}" }}]\n',
+            f'index = [{{ url = "{CUDA_INDEX_URL}" }}]\n',
         )
 
         assert classify_tool_receipt(interpreter) is ToolReceiptVerdict.NO_CUDA_SOURCE
@@ -551,7 +550,7 @@ class TestUpgradeCommands:
         record, upgrade, restart = tool_upgrade_commands(interpreter)
 
         assert record.startswith("uv tool install ")
-        assert f"--index {CU130_INDEX_URL}" in record
+        assert f"--index {CUDA_INDEX_URL}" in record
         assert "--upgrade" not in record
         assert upgrade == "uv tool upgrade vaultspec-rag"
         assert "server stop" in restart
@@ -600,7 +599,7 @@ class TestAUvxCacheEnvironmentIsNotRepaired:
         assert "its own GPU runtime" in joined
         assert "uv pip install" not in joined
         assert "uv tool install" not in joined
-        assert CU130_INDEX_URL not in joined
+        assert CUDA_INDEX_URL not in joined
         assert remediation.repair_commands == ()
 
     def test_no_surface_offers_a_second_command_for_it(self, tmp_path: Path) -> None:

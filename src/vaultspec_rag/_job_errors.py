@@ -96,6 +96,7 @@ class JobErrorKind(StrEnum):
     INGEST_VERIFICATION_FAILED = "ingest_verification_failed"
     FULL_REINDEX_REQUIRED = "full_reindex_required"
     INDEX_TRANSITION = "index_transition"
+    SERVED_POINTER_UNVERIFIABLE = "served_pointer_unverifiable"
 
 
 _REMEDIATION: Final = MappingProxyType(
@@ -184,6 +185,13 @@ _REMEDIATION: Final = MappingProxyType(
             "nothing it wrote after the reset is served; automatic updates retry "
             "on their own, and a rebuild another rebuild replaced needs a new "
             "rebuild request"
+        ),
+        JobErrorKind.SERVED_POINTER_UNVERIFIABLE: (
+            "the project's served code pointer is unreadable or names a "
+            "collection this project does not own, so nothing was deleted; "
+            "inspect the pointer file named in the detail, delete it if it is "
+            "corrupt or names another project's collection, then retry and "
+            "rebuild the code index"
         ),
     }
 )

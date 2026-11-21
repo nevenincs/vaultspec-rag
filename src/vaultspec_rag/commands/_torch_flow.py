@@ -1,4 +1,4 @@
-"""The cu130 torch-config sub-flow shared by install and uninstall."""
+"""The CUDA torch-config sub-flow shared by install and uninstall."""
 
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ def _confirm_torch_patch(
         return False
     outcome = confirmation_outcome(
         confirm,
-        f"Patch {pyproject} with the cu130 torch index? "
+        f"Patch {pyproject} with the CUDA torch index? "
         "This lets uv resolve the CUDA torch wheel.",
     )
     if outcome == "approved":
@@ -114,7 +114,7 @@ def _handle_customised_state(pyproject: Path, report: InstallReport) -> None:
     report.torch_config_action = TorchConfigAction.CONFLICT
     report.torch_config_conflicts = list(report_patch.conflicts)
     report.warnings.append(
-        "pyproject.toml has a non-canonical cu130 block; "
+        "pyproject.toml has a non-canonical CUDA block; "
         "skipping patch - resolve manually or run with different flags"
     )
 
@@ -125,7 +125,7 @@ def _run_torch_config_install(
     report: InstallReport,
     options: TorchInstallOptions,
 ) -> None:
-    """Apply the cu130 torch-config patch to the consumer pyproject.
+    """Apply the CUDA torch-config patch to the consumer pyproject.
 
     Only an inference host running from an environment the target's project
     could own is configured. Neither of the other two is prompted or patched,
@@ -219,7 +219,7 @@ def _handle_dry_run_state(
     report.warnings.append(
         "(dry-run preview) torch-config would add "
         f"direct dependency `{DIRECT_TORCH_REQUIREMENT}` to "
-        f"{preview_location} so uv applies the cu130 source pin."
+        f"{preview_location} so uv applies the CUDA source pin."
     )
     if options.torch_group is not None:
         report.warnings.append(_inert_pin_warning(options.torch_group))
@@ -231,7 +231,7 @@ def _handle_confirmed_patch(
     report: InstallReport,
     options: TorchInstallOptions,
 ) -> None:
-    """Write the cu130 patch, then carry an applied patch through to uv."""
+    """Write the CUDA patch, then carry an applied patch through to uv."""
     try:
         patch_report = _mutate.apply_patch(pyproject)
     except Exception as exc:
@@ -262,14 +262,14 @@ def _inert_pin_warning(torch_group: str) -> str:
     return (
         f"torch was added to [dependency-groups].{torch_group}; enable that "
         f"group for the resolve (`uv sync --group {torch_group}` or a "
-        "configured default group) for the cu130 source pin to apply."
+        "configured default group) for the CUDA source pin to apply."
     )
 
 
 def _ensure_torch_direct_dep(
     pyproject: Path, report: InstallReport, torch_group: str | None = None
 ) -> None:
-    """Make the direct ``torch`` dependency match the cu130 source pin.
+    """Make the direct ``torch`` dependency match the CUDA source pin.
 
     With ``torch_group`` set, the managed dep is placed in the named PEP
     735 group instead of ``[project].dependencies`` so torch stays out
@@ -285,7 +285,7 @@ def _ensure_torch_direct_dep(
     if dep_report.action == "applied":
         report.warnings.append(
             f"added direct dependency `{DIRECT_TORCH_REQUIREMENT}` to "
-            f"{dep_report.location} so uv applies the cu130 torch source pin."
+            f"{dep_report.location} so uv applies the CUDA torch source pin."
         )
         if torch_group is not None:
             report.warnings.append(_inert_pin_warning(torch_group))
@@ -320,7 +320,7 @@ def _run_torch_config_uninstall(
     report: UninstallReport,
     dry_run: bool,
 ) -> None:
-    """Remove the cu130 torch-config block from the consumer pyproject.
+    """Remove the CUDA torch-config block from the consumer pyproject.
 
     Always attempts symmetric reversal - silent no-op when state is
     MISSING or NO_PROJECT_FILE. CUSTOMISED entries are left alone
@@ -369,7 +369,7 @@ def _apply_torch_uninstall_state(
             report.torch_config_action = TorchConfigAction.SKIPPED
             report.torch_config_conflicts = list(patch_report.conflicts)
             report.warnings.append(
-                "pyproject.toml has a non-canonical cu130 block; "
+                "pyproject.toml has a non-canonical CUDA block; "
                 "skipping removal - resolve manually"
             )
     elif dry_run:

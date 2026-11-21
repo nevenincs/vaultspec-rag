@@ -163,7 +163,7 @@ VAULTSPEC_RAG = Product(
     legal_copyright="Copyright (c) 2026 Vaultspec Project",
     notes=(
         # The binaries bootstrap the SAME accelerated torch build the project
-        # resolves: `tools.binaries.torch_channel` pins the cu130 wheel from
+        # resolves: `tools.binaries.torch_channel` pins the CUDA wheel from
         # uv.lock for every CUDA target. Without it the bootstrap resolves
         # plain PyPI torch, which on Windows carries no CUDA at all. Apple
         # silicon is deliberately unpinned: default PyPI is where the wheel

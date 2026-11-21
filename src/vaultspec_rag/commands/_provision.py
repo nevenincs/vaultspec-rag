@@ -1,7 +1,7 @@
 """Unified provisioning front door over the per-dependency backends.
 
 A single opt-out orchestrator that drives the three external
-dependencies vaultspec-rag needs - the cu130 torch configuration, the
+dependencies vaultspec-rag needs - the CUDA torch configuration, the
 Hugging Face embedding/reranker models, and the pinned Qdrant server
 binary - through their existing backends and reports each step through
 the shared sync vocabulary (``created`` / ``updated`` / ``unchanged`` /
@@ -618,7 +618,7 @@ def _provision_torch(request: _TorchProvisionRequest) -> ProvisionStepResult:
             action=ProvisionAction.SKIPPED,
             detail=(
                 "torch configuration skipped by request - pyproject.toml was not "
-                "patched with the cu130 index and source pin"
+                "patched with the CUDA index and source pin"
             ),
         )
 
@@ -646,7 +646,7 @@ def _provision_torch(request: _TorchProvisionRequest) -> ProvisionStepResult:
         return ProvisionStepResult(
             step=ProvisionStep.TORCH,
             action=ProvisionAction.DRY_RUN,
-            detail="would configure the cu130 torch index and source pin",
+            detail="would configure the CUDA torch index and source pin",
             sync_pending=True,
         )
     if action == TorchConfigAction.APPLIED:
@@ -657,9 +657,9 @@ def _provision_torch(request: _TorchProvisionRequest) -> ProvisionStepResult:
             step=ProvisionStep.TORCH,
             action=ProvisionAction.CREATED,
             detail=(
-                "configured cu130 torch index and source pin"
+                "configured CUDA torch index and source pin"
                 if synced
-                else "configured cu130 torch index and source pin; sync pending"
+                else "configured CUDA torch index and source pin; sync pending"
             ),
             sync_pending=not synced,
         )
@@ -693,10 +693,10 @@ def _provision_torch(request: _TorchProvisionRequest) -> ProvisionStepResult:
     if action == TorchConfigAction.CONFLICT:
         detail = (
             "torch configuration conflict - pyproject.toml has a non-canonical "
-            "(hand-edited) torch / cu130 index block the installer refused to "
+            "(hand-edited) torch / CUDA index block the installer refused to "
             "overwrite" + (f": {conflicts}" if conflicts else "") + ". Remove the "
             "manual edit from pyproject.toml and re-run so the installer can apply "
-            "the canonical cu130 configuration."
+            "the canonical CUDA configuration."
         )
     else:
         detail = f"torch configuration {action}" + (

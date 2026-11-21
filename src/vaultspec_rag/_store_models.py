@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, cast
 
 from ._domain import classify_domain
+from ._job_errors import JobError, JobErrorKind
 
 logger = logging.getLogger(__name__)
 
@@ -599,10 +600,12 @@ class ServedPointer(NamedTuple):
     Reading matters little: both fall back to the derived name, which is the
     safe direction. Deletion matters entirely. A consumer that treats an
     unreadable pointer as "nothing points here" would take a live served
-    collection for an unreferenced one, so a reset refuses on it and a donor
-    lookup skips it. The one exception is a pointer naming this root's code
-    collection under the other backend, which :func:`other_backend_code_pointer`
-    recognises and a reset retires.
+    collection for an unreferenced one, so a reset or an archive refuses on it
+    and a donor lookup skips it. The one exception is a pointer naming this
+    root's code collection under the other backend, which
+    :func:`other_backend_code_pointer` recognises: every such consumer takes the
+    derived name, and only a reset retires the pointer.
+    :func:`established_served_code_collection` applies both rules.
     """
 
     collection: str | None
@@ -672,6 +675,54 @@ def other_backend_code_pointer(
     if name is not None and code_collection_matches_derived(name, other):
         return name
     return None
+
+
+class ServedPointerUnverifiableError(JobError):
+    """Which code collection a root serves cannot be established.
+
+    The root's served-collection pointer is unreadable, malformed, or names a
+    collection this root does not own under either backend. Anything that
+    would delete, archive, or donate code on that reading refuses instead,
+    so nothing is touched.
+    """
+
+    pointer_path: str
+
+    def __init__(self, pointer_path: str) -> None:
+        self.pointer_path = pointer_path
+        super().__init__(
+            JobErrorKind.SERVED_POINTER_UNVERIFIABLE,
+            f"no verifiable served pointer at {pointer_path}: it is unreadable "
+            "or names a collection this project does not own",
+        )
+
+    def __reduce__(self) -> tuple[type[ServedPointerUnverifiableError], tuple[str]]:
+        # The message carries the kind prefix; rebuild from the path instead.
+        return type(self), (self.pointer_path,)
+
+
+def established_served_code_collection(
+    root_dir: pathlib.Path | str,
+    derived_name: str,
+) -> str:
+    """Return the code collection *root_dir* serves under *derived_name*'s backend.
+
+    For consumers that act on the answer: a reset, an archive, a donor
+    lookup. An absent pointer, or one naming this root's code collection
+    under the other backend, establishes the derived name; an owned
+    historical pointer establishes the generation it names. Reading never
+    changes the pointer.
+
+    Raises:
+        ServedPointerUnverifiableError: any other pointer, so what the root
+            serves is not established.
+    """
+    pointer = read_served_pointer(root_dir, derived_name)
+    if pointer.verifiable:
+        return pointer.collection or derived_name
+    if other_backend_code_pointer(root_dir, derived_name) is not None:
+        return derived_name
+    raise ServedPointerUnverifiableError(str(served_code_pointer_path(root_dir)))
 
 
 def resolve_served_code_collection(

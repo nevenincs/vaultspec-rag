@@ -143,7 +143,7 @@ def warn_if_active_torch_not_accelerator(
 
     vaultspec-rag is GPU-only. A configured ``pyproject.toml`` does not
     guarantee a usable accelerator in the active interpreter - a ``uv tool`` / ``pip``
-    install resolves torch from PyPI (CPU), since the cu130 source pin is
+    install resolves torch from PyPI (CPU), since the CUDA source pin is
     project-scoped and is not part of the published wheel metadata. This probes
     the actual wheel in a child interpreter, so the CLI never imports torch,
     and when it is CPU-only, absent, or GPU-less, says so once. A client
