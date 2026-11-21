@@ -96,12 +96,15 @@ def _open_generation(
 
 
 def _pipeline(
-    root: Path, store: VaultStore, lifecycle: CodeGenerationLifecycle
+    root: Path,
+    store: VaultStore,
+    lifecycle: CodeGenerationLifecycle,
+    encoder: _CPUEncoder | None = None,
 ) -> CodeConsumerPipeline:
     return CodeConsumerPipeline(
         CodePipelineBindings(
             root_dir=root,
-            model=cast("EmbeddingModel", _CPUEncoder()),
+            model=cast("EmbeddingModel", encoder or _CPUEncoder()),
             store=store,
             producer=CodeChunkProducer(
                 root,

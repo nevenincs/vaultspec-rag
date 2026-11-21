@@ -78,10 +78,8 @@ pytestmark = [pytest.mark.unit]
 _BURST_ATTEMPTS = 5
 
 
-@pytest.fixture
-def unloaded_model(clean_config: None) -> EmbeddingModel:
+def build_unloaded_model() -> EmbeddingModel:
     """Construct the real encoder state without loading or forwarding a model."""
-    del clean_config
     config = get_config(
         {"embedding_dimension": 2, "qdrant_url": None, "sparse_enabled": False}
     )
@@ -90,6 +88,13 @@ def unloaded_model(clean_config: None) -> EmbeddingModel:
     model._device = "unloaded"
     model._init_encode_state(config)
     return model
+
+
+@pytest.fixture
+def unloaded_model(clean_config: None) -> EmbeddingModel:
+    """The real encoder state of :func:`build_unloaded_model`, on clean config."""
+    del clean_config
+    return build_unloaded_model()
 
 
 @contextmanager

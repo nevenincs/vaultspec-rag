@@ -7,6 +7,7 @@ finds in the canonical collection is its own earlier work.
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
@@ -18,6 +19,7 @@ from .._publication_state import (
 )
 from .._source_types import PublicSourceType
 from ..config._settings import get_config
+from ..config._types import EnvVar
 from ..indexer import CodebaseIndexer
 from ..indexer._chunk_worker import chunk_and_hash_file
 from ..indexer._codebase_indexer import _FullStaleReconciliation
@@ -34,21 +36,32 @@ from ..indexer._resolved_policy import (
     IndexPolicyResolutionOptions,
     resolve_index_policy,
 )
-from ..indexer._run_checkpoint import CodeRunCheckpoint
-from ..indexer._run_ledger_models import RunAuthority, RunOperation, RunTerminalState
+from ..indexer._run_ledger_models import (
+    RunAuthority,
+    RunLedgerStateError,
+    RunOperation,
+    RunTerminalState,
+)
 from ..indexer._run_ledger_publication_identity import compatibility_for_signature
 from ..job_control import NO_RUN_CONTROL
 from ..progress import NullProgressReporter
-from ..store_runtime import VaultStore
+from ..store_runtime import IngestVerificationError, VaultStore
+from ._ledger_fixtures import continue_rebuild
+from .conftest import managed_env
+from .integration._helpers import provisioned_qdrant_binary, serve_qdrant
 from .test_code_pipeline_retained_ids import _limits, _pipeline, _segments
 from .test_live_checkpoint_resilience import unloaded_model
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Generator, Iterator
     from pathlib import Path
+
+    from pytest import TempPathFactory
 
     from ..embeddings import EmbeddingModel
     from ..indexer._consumer_pipeline import ChunkEmbedResult
+    from ..indexer._run_checkpoint import CodeRunCheckpoint
+    from ..qdrant_runtime._supervise import QdrantSupervisor
 
 __all__ = ["unloaded_model"]
 pytestmark = pytest.mark.integration
@@ -122,13 +135,13 @@ def _open_rebuild(
     return checkpoint
 
 
-def _configure(model: str) -> None:
+def _configure(model: str, qdrant_url: str | None, **overrides: object) -> None:
     get_config(
         {
             "embedding_model": model,
             "embedding_dimension": 2,
             "sparse_enabled": False,
-            "qdrant_url": None,
+            "qdrant_url": qdrant_url,
             "index_chunk_workers": 1,
             "index_segment_max_chunks": 8,
             "index_segment_max_bytes": 65536,
@@ -136,16 +149,21 @@ def _configure(model: str) -> None:
             "index_queue_max_bytes": 1048576,
             "embedding_code_encode_batch_size": 8,
             "index_cache_flush_slices": 64,
+            **overrides,
         }
     )
 
 
-@pytest.fixture
-def rebuild_resume(
-    tmp_path: Path, unloaded_model: EmbeddingModel
+@contextmanager
+def _resumed_rebuild(
+    tmp_path: Path, unloaded_model: EmbeddingModel, qdrant_url: str | None
 ) -> Generator[_RebuildResume]:
-    """Use real producers, ledgers and isolated local storage for both models."""
-    _configure("old/dense")
+    """Use real producers, ledgers and storage for both models.
+
+    The storage is isolated local storage, or a real Qdrant server when
+    *qdrant_url* names one.
+    """
+    _configure("old/dense", qdrant_url)
     removed = tmp_path / "served_removed.py"
     survivor = tmp_path / "survivor.py"
     rebuild_only = tmp_path / "shadow_only.py"
@@ -181,7 +199,7 @@ def rebuild_resume(
             prior.generation_id, RunTerminalState.INVALIDATED
         )
 
-        _configure("new/dense")
+        _configure("new/dense", qdrant_url)
         rebuild_only.write_text("def shadow_only():\n    return 2\n", encoding="utf-8")
         checkpoint = _open_rebuild(indexer, request)
         _run(indexer, checkpoint, [removed, survivor, rebuild_only])
@@ -190,7 +208,8 @@ def rebuild_resume(
         removed.unlink()
         rebuild_only.unlink()
         lifecycle.forget_open_generation()
-        checkpoint = _open_rebuild(indexer, request)
+        with continue_rebuild(generation_id):
+            checkpoint = _open_rebuild(indexer, request)
         assert checkpoint.generation_id == generation_id
         existing_ids = set(store.get_all_code_ids())
         result = _run(indexer, checkpoint, [survivor])
@@ -203,6 +222,50 @@ def rebuild_resume(
             write_policy=checkpoint.run_policy.store_write_policy,
         )
         yield _RebuildResume(indexer, checkpoint, prior, existing_ids, result)
+
+
+@pytest.fixture
+def rebuild_resume(
+    tmp_path: Path, unloaded_model: EmbeddingModel
+) -> Iterator[_RebuildResume]:
+    """A resumed rebuild over isolated local storage."""
+    with _resumed_rebuild(tmp_path, unloaded_model, None) as case:
+        yield case
+
+
+@pytest.fixture(scope="module")
+def real_qdrant_binary() -> Path:
+    """Provision (or reuse) the pinned real Qdrant binary."""
+    return provisioned_qdrant_binary()
+
+
+@pytest.fixture(scope="module")
+def qdrant_server(
+    real_qdrant_binary: Path, tmp_path_factory: TempPathFactory
+) -> Iterator[QdrantSupervisor]:
+    """One real qdrant server on ephemeral ports with temp storage."""
+    yield from serve_qdrant(
+        real_qdrant_binary, tmp_path_factory.mktemp("qdrant-rebuild-evidence")
+    )
+
+
+@pytest.fixture
+def served_rebuild_resume(
+    tmp_path: Path, unloaded_model: EmbeddingModel, qdrant_server: QdrantSupervisor
+) -> Iterator[_RebuildResume]:
+    """A resumed rebuild whose storage is a real server.
+
+    The server applies a deferred write after acknowledging it, so the exact
+    ingest barrier the full entry runs counts real stored points.
+    """
+    with (
+        managed_env(
+            **{EnvVar.QDRANT_STORAGE_DIR.value: str(tmp_path / "qdrant-state")}
+        ),
+        _resumed_rebuild(tmp_path, unloaded_model, qdrant_server.url) as case,
+    ):
+        assert case.indexer.store._server_mode is True
+        yield case
 
 
 def test_clean_rebuild_reconciles_own_manifest_across_model_change(
@@ -255,20 +318,23 @@ def test_clean_rebuild_reconciles_own_manifest_across_model_change(
 
 
 def test_unconfirmed_cleanup_cannot_retire_the_rebuild_manifest(
-    rebuild_resume: _RebuildResume, monkeypatch: pytest.MonkeyPatch
+    rebuild_resume: _RebuildResume,
 ) -> None:
+    """A cleanup the store never acknowledged leaves the ledger's evidence intact.
+
+    Mutation: retiring the retained ids in the ledger before the store delete
+    changed the retained ids and failed the retained-id assertion; restoring the
+    order passed.
+    """
     case = rebuild_resume
     confirmed = case.checkpoint.ledger.committed_unit_count(
         case.checkpoint.generation_id
     )
-
-    def fail_delete(*_args: object, **_kwargs: object) -> None:
-        raise OSError("injected deletion transport failure")
-
-    with monkeypatch.context() as patch:
-        patch.setattr(case.indexer.store, "delete_publication_points", fail_delete)
-        with pytest.raises(OSError, match="injected deletion transport failure"):
-            case.reconcile()
+    # A store closed under the cleanup is a real deletion fault: its client is
+    # gone, so the deletion raises before storage can acknowledge anything.
+    case.indexer.store.close()
+    with pytest.raises(RuntimeError, match="VaultStore has been closed"):
+        case.reconcile()
     # Moving retirement before the actual store acknowledgement fails here.
     assert (
         case.checkpoint.ledger.committed_unit_count(case.checkpoint.generation_id)
@@ -282,7 +348,8 @@ def test_unconfirmed_cleanup_cannot_retire_the_rebuild_manifest(
         )
         == case.existing_ids
     )
-    assert set(case.indexer.store.get_all_code_ids()) == case.existing_ids
+    with VaultStore(case.indexer.root_dir, embedding_dim=2) as reopened:
+        assert set(reopened.get_all_code_ids()) == case.existing_ids
 
 
 def test_clean_retained_lookup_excludes_confirmed_deletion_units(
@@ -323,12 +390,12 @@ def test_incremental_receipt_keeps_strict_parent_model_key(
 @pytest.mark.parametrize("partial", [False, True])
 @pytest.mark.parametrize("interrupted_deletion", [False, True])
 def test_full_owner_resumes_removed_own_sources_before_seeding(
-    rebuild_resume: _RebuildResume,
-    monkeypatch: pytest.MonkeyPatch,
+    served_rebuild_resume: _RebuildResume,
     partial: bool,
     interrupted_deletion: bool,
 ) -> None:
-    case = rebuild_resume
+    case = served_rebuild_resume
+    generation_id = case.checkpoint.generation_id
     if partial:
         source = case.indexer.root_dir / "partial.py"
         source.write_text(
@@ -351,41 +418,25 @@ def test_full_owner_resumes_removed_own_sources_before_seeding(
         )
         assert source.name not in {
             state.rel_path
-            for state in case.checkpoint.ledger.iter_file_states(
-                case.checkpoint.generation_id
-            )
+            for state in case.checkpoint.ledger.iter_file_states(generation_id)
         }
         source.unlink()
 
-    def fail_retirement(
-        _checkpoint: CodeRunCheckpoint,
-        _path: str,
-        _ids: tuple[str, ...],
-        *,
-        remove_path: bool,
-    ) -> bool:
-        del remove_path
-        raise OSError("injected retirement commit failure")
-
     if interrupted_deletion:
-        with monkeypatch.context() as patch:
-            patch.setattr(CodeRunCheckpoint, "retire_retained_upserts", fail_retirement)
-            with pytest.raises(OSError, match="injected retirement commit failure"):
-                case.reconcile()
+        # Once the generation is terminal the ledger refuses the retirement
+        # commit, but the storage deletion before it still lands: the state
+        # a process stopping between the two stages leaves.
+        case.checkpoint.ledger.finish_generation(generation_id, RunTerminalState.FAILED)
+        with pytest.raises(
+            RunLedgerStateError, match="terminal generations are immutable"
+        ):
+            case.reconcile()
         assert len(case.indexer.store.get_all_code_ids()) == 2 + partial
         assert (
-            len(
-                list(
-                    case.checkpoint.ledger.iter_retained_point_ids(
-                        case.checkpoint.generation_id
-                    )
-                )
-            )
+            len(list(case.checkpoint.ledger.iter_retained_point_ids(generation_id)))
             == 3
         )
-    case.checkpoint.ledger.finish_generation(
-        case.checkpoint.generation_id, RunTerminalState.FAILED
-    )
+    case.checkpoint.ledger.finish_generation(generation_id, RunTerminalState.FAILED)
     # The full invocation consumes the same real pipeline and deterministic
     # external encoder used above; it owns discovery, recovery and publication.
     case.indexer._consumer_pipeline = _pipeline(
@@ -393,8 +444,7 @@ def test_full_owner_resumes_removed_own_sources_before_seeding(
     )
     failure: Exception | None = None
     result = None
-    with monkeypatch.context() as patch:
-        patch.setattr(case.indexer.store, "_server_mode", True)
+    with continue_rebuild(generation_id):
         try:
             result = case.indexer.full_index(
                 reporter=NullProgressReporter(),
@@ -410,7 +460,7 @@ def test_full_owner_resumes_removed_own_sources_before_seeding(
     snapshot = acquire_publication_snapshot(
         case.indexer.root_dir, PublicSourceType.CODE
     )
-    assert snapshot.proof.generation_id == case.checkpoint.generation_id
+    assert snapshot.proof.generation_id == generation_id
     assert set(read_all_publication_evidence(snapshot)) == {"survivor.py"}
     assert snapshot.proof.provenance is ProofProvenance.VERIFIED
     snapshot.validate()
@@ -418,9 +468,9 @@ def test_full_owner_resumes_removed_own_sources_before_seeding(
 
 
 def test_full_owner_keeps_present_source_missing_points_fail_closed(
-    rebuild_resume: _RebuildResume, monkeypatch: pytest.MonkeyPatch
+    served_rebuild_resume: _RebuildResume,
 ) -> None:
-    case = rebuild_resume
+    case = served_rebuild_resume
     current = {"survivor.py"}
     ids = case.indexer._lifecycle.checkpoint_ids_by_path(
         case.checkpoint, current, retained=True
@@ -435,11 +485,8 @@ def test_full_owner_keeps_present_source_missing_points_fail_closed(
     case.indexer._consumer_pipeline = _pipeline(
         case.indexer.root_dir, case.indexer.store, case.indexer._lifecycle
     )
-    from ..store_runtime import IngestVerificationError
-
     failure: Exception | None = None
-    with monkeypatch.context() as patch:
-        patch.setattr(case.indexer.store, "_server_mode", True)
+    with continue_rebuild(case.checkpoint.generation_id):
         try:
             case.indexer.full_index(
                 reporter=NullProgressReporter(),

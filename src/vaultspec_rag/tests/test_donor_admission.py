@@ -1,69 +1,164 @@
-"""Admission exercises real ranking and gates with isolated evidence readers."""
+"""Donor admission ranks, bounds and gates real donor roots.
+
+Every donor is a real project root. A donor holds a real published code
+rebuild on a real Qdrant server, so its proof, ledger and collection come from
+the production path. The manifest is written through the production recorder,
+and a defective donor is made by damaging the real artefact admission reads.
+Admission itself is observed through its results and through the debug record
+the pointer reader leaves when it meets an unreadable pointer.
+"""
 
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass, field, replace
-from pathlib import Path
-from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast
+import logging
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import pytest
 
-from .. import _store_models, storage_manifest
-from ..config import _settings
+from .. import storage_manifest
+from .._store_models import (
+    CodeChunk,
+    root_collection_prefix,
+    served_code_pointer_path,
+)
+from .._store_writes import workspace_volume_path
+from ..config._types import EnvVar
+from ..indexer import CodebaseIndexer, _reuse
 from ..indexer import _donor_candidates as candidates
-from ..indexer import _reuse
-from ..storage_manifest import ManifestEntry
+from ..indexer._chunk_worker import chunk_and_hash_file
+from ..indexer._run_ledger_models import index_run_ledger_path
+from ..progress import NullProgressReporter
+from ..store_runtime import VaultStore
+from .conftest import managed_env
+from .integration._helpers import provisioned_qdrant_binary, serve_qdrant
+from .test_code_rebuild_stale_evidence import (
+    _configure,
+    _open_rebuild,
+    _request,
+    _run,
+)
+from .test_live_checkpoint_resilience import build_unloaded_model
 
 if TYPE_CHECKING:
-    from ..store_runtime import DonorPoint, VaultStore
+    from collections.abc import Iterator
+    from pathlib import Path
+
+    from pytest import TempPathFactory
+
+    from ..embeddings import EmbeddingModel
+    from ..qdrant_runtime._supervise import QdrantSupervisor
 
 pytestmark = pytest.mark.unit
 
-_MODEL = candidates.ModelIdentity("dense/current", "sparse/current", "2")
-_SCHEMA = candidates.VectorSchema("dense", 1024, "sparse")
-_EMBEDDING = (
-    json.dumps(
-        {"dense": _MODEL.dense_model, "sparse": _MODEL.sparse_model},
-        sort_keys=True,
-        separators=(",", ":"),
+_CURRENT_MODEL = "dense/current"
+_OTHER_MODEL = "dense/other"
+_SOURCE = "def shared():\n    return 1\n"
+_GOOD_DONORS = 4
+_OTHER_MODEL_DONORS = 6
+_POINTER_LOGGER = "vaultspec_rag._store_models"
+
+
+@dataclass(frozen=True)
+class _Pool:
+    """Real donors published under the current model, and under another one."""
+
+    current: tuple[Path, ...]
+    other: tuple[Path, ...]
+    epoch: str
+
+
+def _collection(root: Path) -> str:
+    suffix = candidates.CollectionKind.CODE.collection_suffix
+    return root_collection_prefix(root) + suffix
+
+
+def _publish_donor(root: Path, model: str, url: str, encoder: EmbeddingModel) -> None:
+    """Publish one real code rebuild of *root* under *model* to the server."""
+    root.mkdir(parents=True)
+    source = root / "shared.py"
+    source.write_text(_SOURCE, encoding="utf-8")
+    _configure(model, url)
+    with VaultStore(root, embedding_dim=2) as store:
+        indexer = CodebaseIndexer(root, encoder, store)
+        checkpoint = _open_rebuild(indexer, _request(root))
+        _run(indexer, checkpoint, [source])
+        indexer._lifecycle.publish(
+            checkpoint, reporter=NullProgressReporter(), phase_label="publish donor"
+        )
+
+
+@pytest.fixture(scope="module")
+def real_qdrant_binary() -> Path:
+    """Provision (or reuse) the pinned real Qdrant binary."""
+    return provisioned_qdrant_binary()
+
+
+@pytest.fixture(scope="module")
+def qdrant_server(
+    real_qdrant_binary: Path, tmp_path_factory: TempPathFactory
+) -> Iterator[QdrantSupervisor]:
+    """One real qdrant server on ephemeral ports with temp storage."""
+    yield from serve_qdrant(
+        real_qdrant_binary, tmp_path_factory.mktemp("qdrant-donor-admission")
     )
-    + ":1024:2"
-)
-_VALID = candidates.DonorRecordedState("epoch", _EMBEDDING)
 
 
-@dataclass
-class _Transport:
-    unsupported: set[str] = field(default_factory=set)
-    failures: set[str] = field(default_factory=set)
-    capability_calls: list[str] = field(default_factory=list)
-    vector_calls: list[str] = field(default_factory=list)
-
-    def supports_donor_reads(self, collection: str) -> bool:
-        self.capability_calls.append(collection)
-        if collection in self.failures:
-            raise OSError("isolated capability unavailable")
-        return collection not in self.unsupported
-
-    def retrieve_donor_points(
-        self, collection: str, point_ids: list[str]
-    ) -> dict[str, DonorPoint]:
-        del point_ids
-        self.vector_calls.append(collection)
-        raise OSError("isolated vector transport unavailable")
+@pytest.fixture(scope="module")
+def pool(qdrant_server: QdrantSupervisor, tmp_path_factory: TempPathFactory) -> _Pool:
+    """Publish the donors once; every case reads them without changing them."""
+    base = tmp_path_factory.mktemp("donor-pool")
+    overrides = {
+        EnvVar.QDRANT_STORAGE_DIR.value: str(base / "qdrant-state"),
+        EnvVar.STATUS_DIR.value: str(base / "managed"),
+    }
+    with managed_env(**overrides):
+        # Built first: it resets configuration to local storage.
+        encoder = build_unloaded_model()
+        current = tuple(base / f"current-{index}" for index in range(_GOOD_DONORS))
+        other = tuple(base / f"other-{index}" for index in range(_OTHER_MODEL_DONORS))
+        for root in current:
+            _publish_donor(root, _CURRENT_MODEL, qdrant_server.url, encoder)
+        for root in other:
+            _publish_donor(root, _OTHER_MODEL, qdrant_server.url, encoder)
+        # A proof belongs to the backend its donor was published to.
+        state = candidates.read_donor_recorded_state(
+            current[0], candidates.CollectionKind.CODE
+        )
+    assert state is not None, "a published donor must have a readable proof"
+    return _Pool(current, other, state.content_identity)
 
 
 @dataclass
 class _Admission:
     root: Path
-    entries: dict[str, ManifestEntry]
-    pointers: dict[str, str | Exception | None]
-    proofs: dict[str, candidates.DonorRecordedState | Exception | None]
-    transport: _Transport
-    pointer_calls: list[str]
-    proof_calls: list[str]
+    store: VaultStore
+    pool: _Pool
+    workdir: Path
+
+    def rank(self, *ordered: Path) -> None:
+        """Record *ordered* in the manifest, newest first, as real roots."""
+        for position, donor in enumerate(ordered):
+            stamp = f"2026-10-{99 - position:02}T00:00:00+00:00"
+            storage_manifest.record_root(donor, backend="server", last_indexed=stamp)
+
+    def defective(self, name: str, defect: str) -> Path:
+        """A donor root whose pointer or proof is damaged for real."""
+        donor = self.workdir / name
+        donor.mkdir()
+        pointer = served_code_pointer_path(donor)
+        if defect == "pointer-garbage":
+            pointer.parent.mkdir(parents=True, exist_ok=True)
+            pointer.write_text("not json", encoding="utf-8")
+        elif defect == "pointer-directory":
+            pointer.mkdir(parents=True)
+        elif defect == "ledger-garbage":
+            ledger = index_run_ledger_path(workspace_volume_path(donor.resolve()))
+            ledger.parent.mkdir(parents=True, exist_ok=True)
+            ledger.write_bytes(b"this is not a sqlite database" * 64)
+        else:
+            assert defect == "no-proof", defect
+        return donor
 
     def resolve(
         self,
@@ -71,240 +166,241 @@ class _Admission:
         return _reuse.resolve_donor_reuse(
             self.root,
             candidates.CollectionKind.CODE,
-            cast("VaultStore", self.transport),
-            expected_content_epoch="epoch",
+            self.store,
+            expected_content_epoch=self.pool.epoch,
         )
 
 
 @pytest.fixture
-def admission(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Admission:
-    entries = {
-        f"d{index:03}_": ManifestEntry(
-            prefix=f"d{index:03}_",
-            root=str(tmp_path / f"donor-{index:03}"),
-            backend="server",
-            last_indexed=f"2026-10-{100 - index:03}",
-            collections=(f"d{index:03}_codebase_docs",),
-        )
-        for index in range(100)
-    }
-    pointers: dict[str, str | Exception | None] = {
-        entry.root: f"{prefix}served" for prefix, entry in entries.items()
-    }
-    proofs: dict[str, candidates.DonorRecordedState | Exception | None] = {
-        entry.root: _VALID for entry in entries.values()
-    }
-    pointer_calls: list[str] = []
-    proof_calls: list[str] = []
+def admission(
+    tmp_path: Path,
+    pool: _Pool,
+    qdrant_server: QdrantSupervisor,
+    isolated_status_dir: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> Iterator[_Admission]:
+    del isolated_status_dir
+    state_dir = str(tmp_path / "qdrant-state")
+    with managed_env(**{EnvVar.QDRANT_STORAGE_DIR.value: state_dir}):
+        _configure(_CURRENT_MODEL, qdrant_server.url)
+        root = tmp_path / "target"
+        root.mkdir()
+        workdir = tmp_path / "donors"
+        workdir.mkdir()
+        caplog.set_level(logging.DEBUG, logger=_POINTER_LOGGER)
+        with VaultStore(root, embedding_dim=2) as store:
+            yield _Admission(root, store, pool, workdir)
 
-    def pointer(
-        root: Path | str, derived: str | None = None
-    ) -> _store_models.ServedPointer:
-        # ``None`` stands for a pointer that cannot be verified.
-        del derived
-        pointer_calls.append(str(root))
-        value = pointers.get(str(root))
-        if isinstance(value, Exception):
-            raise value
-        return _store_models.ServedPointer(value, verifiable=value is not None)
 
-    def proof(
-        root: Path | str, kind: candidates.CollectionKind
-    ) -> candidates.DonorRecordedState | None:
-        assert kind is candidates.CollectionKind.CODE
-        proof_calls.append(str(root))
-        value = proofs.get(str(root))
-        if isinstance(value, Exception):
-            raise value
-        return value
-
-    def own_prefix(root: Path | str) -> str:
-        del root
-        return "own_"
-
-    def family(root: Path) -> Path:
-        del root
-        return tmp_path / "family"
-
-    def model(kind: candidates.CollectionKind) -> candidates.ModelIdentity:
-        del kind
-        return _MODEL
-
-    monkeypatch.setattr(storage_manifest, "load_manifest", lambda: entries)
-    monkeypatch.setattr(_store_models, "root_collection_prefix", own_prefix)
-    monkeypatch.setattr(_store_models, "read_served_pointer", pointer)
-    monkeypatch.setattr(candidates, "git_common_dir", family)
-    monkeypatch.setattr(candidates, "read_donor_recorded_state", proof)
-    monkeypatch.setattr(candidates, "expected_vector_schema", lambda: _SCHEMA)
-    monkeypatch.setattr(candidates, "current_model_identity", model)
-    monkeypatch.setattr(
-        _settings,
-        "get_config",
-        lambda: SimpleNamespace(
-            index_reuse_enabled=True, effective_server_mode=lambda: True
-        ),
-    )
-    return _Admission(
-        tmp_path / "target",
-        entries,
-        pointers,
-        proofs,
-        _Transport(),
-        pointer_calls,
-        proof_calls,
-    )
+def _inspected(caplog: pytest.LogCaptureFixture, donor: Path) -> bool:
+    """Whether admission read *donor*'s pointer, as its unreadable pointer logs."""
+    pointer = str(served_code_pointer_path(donor))
+    return any(pointer in record.getMessage() for record in caplog.records)
 
 
 def test_incompatible_three_do_not_starve_fourth_donor(admission: _Admission) -> None:
-    for entry in list(admission.entries.values())[:3]:
-        admission.proofs[entry.root] = candidates.DonorRecordedState(
-            "epoch", "old-model"
-        )
+    """Incompatible donors ranked first use the window; a fourth still qualifies.
+
+    Mutation: sizing the inspection window to the three-donor selection cap
+    failed the starvation assertion; restoring six passed.
+    """
+    pool = admission.pool
+    admission.rank(*pool.other[:3], *pool.current[:4])
     stats, context = admission.resolve()
     assert context is not None, (
         "eligible fourth donor was starved by incompatible first three"
     )
-    assert context.donor_collections == ("d003_served", "d004_served", "d005_served"), (
-        "incompatible model passed canonical donor gate"
-    )
+    assert context.donor_collections == tuple(
+        _collection(root) for root in pool.current[:3]
+    ), "incompatible model passed canonical donor gate"
     assert stats is not None and not stats.donor_absent
-    assert len(admission.pointer_calls) == len(admission.proof_calls) == 6
-    assert admission.transport.capability_calls == list(context.donor_collections)
 
 
-def test_six_inspections_bound_hundred_incompatible_candidates(
-    admission: _Admission,
+def test_six_inspections_bound_incompatible_candidates(
+    admission: _Admission, caplog: pytest.LogCaptureFixture
 ) -> None:
-    for entry in admission.entries.values():
-        admission.proofs[entry.root] = candidates.DonorRecordedState(
-            "other-epoch", _EMBEDDING
-        )
+    """Six incompatible donors exhaust the window; later donors are not reached.
+
+    Mutation: growing the window to twelve inspections reached the compatible
+    donors past it and failed the bound assertion; restoring six passed.
+    """
+    pool = admission.pool
+    beyond = admission.defective("beyond-window", "pointer-garbage")
+    admission.rank(*pool.other, *pool.current[:2], beyond)
     stats, context = admission.resolve()
+    # Compatible donors sit just past the window, so an unbounded inspection
+    # would reach them and select one.
     assert context is None and stats is not None and stats.donor_absent, (
-        "incompatible epoch passed canonical donor gate"
+        "incompatible model passed canonical donor gate or the window grew"
     )
-    assert len(admission.pointer_calls) == 6, "donor pointer inspections exceeded six"
-    assert len(admission.proof_calls) == 6, "donor proof inspections exceeded six"
-    assert not admission.transport.capability_calls
+    assert not _inspected(caplog, beyond), "donor inspections exceeded six"
 
 
-def test_three_selected_donors_stop_io_and_remain_frozen(admission: _Admission) -> None:
+def test_three_selected_donors_stop_io_and_remain_frozen(
+    admission: _Admission,
+    caplog: pytest.LogCaptureFixture,
+    qdrant_server: QdrantSupervisor,
+) -> None:
+    """Selection stops at three donors, and the chosen set no longer reads admission.
+
+    Removing the manifest and changing the model after resolution leaves the
+    donors the context holds adopting real stored vectors.
+
+    Mutation: inspecting on after the third donor and trimming the result
+    afterwards read the fourth pointer and failed the stop-I/O assertion.
+    """
+    pool = admission.pool
+    unread = admission.defective("after-selection", "pointer-garbage")
+    admission.rank(*pool.current[:3], unread, pool.current[3])
     stats, context = admission.resolve()
     assert context is not None and stats is not None
-    assert len(context.donor_collections) == 3, "selected vector donors exceeded three"
-    assert len(admission.pointer_calls) == 3, (
+    assert context.donor_collections == tuple(
+        _collection(root) for root in pool.current[:3]
+    ), "selected vector donors exceeded three"
+    assert not _inspected(caplog, unread), (
         "selected three donors failed to stop admission I/O"
     )
-    assert len(admission.proof_calls) == 3, (
-        "canonical donor gate inspected proof more than once"
-    )
-    assert admission.transport.capability_calls == list(context.donor_collections), (
-        "donor capability was queried more than once"
-    )
-    admission.entries.clear()
-    admission.proofs.clear()
-    admission.pointers.clear()
-    for _ in range(2):
-        chunk = _store_models.CodeChunk("point", "file.py", "python", "body", 1, 1)
-        assert context.adopt_verified_vectors([chunk], sparse_required=True) == [False]
-        assert chunk.vector == [], "failed donor transport must remain an encode miss"
-    assert admission.transport.vector_calls == list(context.donor_collections) * 2
-    assert len(admission.pointer_calls) == len(admission.proof_calls) == 3
-    assert len(admission.transport.capability_calls) == 3
-    assert stats.reuse_hits == 0 and stats.reuse_misses == 2
+
+    # The context is frozen: removing the manifest it was resolved from, and
+    # switching the model its donors had to match, changes nothing it reads.
+    storage_manifest.manifest_path().unlink()
+    _configure(_OTHER_MODEL, qdrant_server.url)
+    source = admission.root / "shared.py"
+    source.write_text(_SOURCE, encoding="utf-8")
+    shared = chunk_and_hash_file(source, admission.root).chunks[0]
+    assert isinstance(shared, CodeChunk)
+    unheld = CodeChunk("held.py:0", "held.py", "python", "def held(): ...", 1, 1)
+    assert context.adopt_verified_vectors([shared, unheld], sparse_required=False) == [
+        True,
+        False,
+    ]
+    assert shared.vector == [0.0, 1.0], "donor vector was not adopted"
+    assert unheld.vector == [], "a chunk no donor holds must remain an encode miss"
+    assert stats.reuse_hits == 1 and stats.reuse_misses == 1
 
 
 def test_missing_and_failed_evidence_consume_inspection_window(
-    admission: _Admission,
+    admission: _Admission, caplog: pytest.LogCaptureFixture
 ) -> None:
-    roots = [entry.root for entry in admission.entries.values()]
-    admission.pointers[roots[0]] = None
-    admission.pointers[roots[1]] = OSError("isolated pointer unavailable")
-    admission.proofs[roots[2]] = None
-    admission.proofs[roots[3]] = OSError("isolated proof unavailable")
-    admission.transport.failures.add("d004_served")
-    admission.transport.unsupported.add("d005_served")
-    stats, context = admission.resolve()
-    assert len(admission.pointer_calls) == 6, (
-        "unreadable donors expanded inspection window"
+    """Unverifiable, unreadable and absent evidence each use an inspection.
+
+    Mutation: growing the window to twelve inspections failed the window
+    assertion; restoring six passed.
+    """
+    pool = admission.pool
+    unverifiable = admission.defective("pointer-garbage", "pointer-garbage")
+    unreadable = admission.defective("pointer-directory", "pointer-directory")
+    absent = admission.defective("no-proof", "no-proof")
+    corrupt = admission.defective("ledger-garbage", "ledger-garbage")
+    beyond = admission.defective("beyond-window", "pointer-garbage")
+    admission.rank(
+        unverifiable,
+        unreadable,
+        absent,
+        corrupt,
+        *pool.current[:2],
+        beyond,
+        pool.current[2],
     )
-    assert admission.proof_calls == roots[2:6]
-    assert admission.transport.capability_calls == ["d004_served", "d005_served"]
-    assert context is None and stats is not None and stats.donor_absent
+    stats, context = admission.resolve()
+    # The four unreadable donors used four of the six inspections, so only two
+    # sound donors fit; a window that did not count them would reach a third.
+    assert context is not None and stats is not None
+    assert context.donor_collections == tuple(
+        _collection(root) for root in pool.current[:2]
+    ), "unreadable donors expanded inspection window"
+    assert _inspected(caplog, unverifiable) and _inspected(caplog, unreadable)
+    assert not _inspected(caplog, beyond)
 
 
 def test_filtering_and_family_newest_prefix_order_precede_pointer_io(
-    admission: _Admission, monkeypatch: pytest.MonkeyPatch
+    admission: _Admission, caplog: pytest.LogCaptureFixture
 ) -> None:
-    template = admission.entries["d000_"]
-    admission.entries.clear()
+    """Own, wrong-backend and wrong-kind donors are dropped before any pointer read.
 
-    for prefix, root, stamp, backend, member in (
-        ("own_", "target", "9999", "server", True),
-        ("local_", "local", "9999", "local", True),
-        ("wrong_", "wrong", "9999", "server", False),
-        ("remote_", "far", "9999", "server", True),
-        ("z_", "near-z", "2000", "server", True),
-        ("a_", "near-a", "2000", "server", True),
-        ("new_", "near-new", "2001", "server", True),
+    Mutation: ranking oldest first failed the ranking assertion; restoring
+    newest first passed.
+    """
+    family = admission.workdir / "family.git"
+    family.mkdir()
+
+    def linked(name: str, common: Path) -> Path:
+        """A real linked-worktree layout resolving to *common*."""
+        root = admission.workdir / name
+        root.mkdir()
+        gitdir = common / "worktrees" / name
+        gitdir.mkdir(parents=True)
+        (gitdir / "commondir").write_text("../..", encoding="utf-8")
+        (root / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+        return root
+
+    near = [linked(name, family) for name in ("near-new", "near-a", "near-z")]
+    far = linked("far", admission.workdir / "other-family.git")
+    # The target belongs to the same repository as the near donors.
+    (admission.root / ".git").write_text(
+        (near[0] / ".git").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    wrong_kind = admission.defective("wrong-kind", "pointer-garbage")
+    local = admission.defective("local", "pointer-garbage")
+    excluded = [
+        admission.defective("own-pointer", "pointer-garbage"),
+        local,
+        wrong_kind,
+    ]
+    # Each excluded donor holds an unreadable pointer, so reading it would show.
+    served_code_pointer_path(admission.root).parent.mkdir(parents=True, exist_ok=True)
+    served_code_pointer_path(admission.root).write_text("not json", encoding="utf-8")
+    for donor, stamp in (
+        (admission.root, "9999"),
+        (far, "9999"),
+        (near[0], "2001"),
+        (near[1], "2000"),
+        (near[2], "2000"),
+        (wrong_kind, "9999"),
     ):
-        entry = replace(
-            template,
-            prefix=prefix,
-            root=str(admission.root.parent / root),
-            backend=backend,
-            last_indexed=stamp,
-            collections=(
-                ((prefix if backend == "server" else "") + "codebase_docs",)
-                if member
-                else ()
-            ),
-        )
-        admission.entries[prefix] = entry
-        admission.pointers[entry.root] = prefix + "served"
+        storage_manifest.record_root(donor, backend="server", last_indexed=stamp)
+    storage_manifest.record_root(local, backend="local", last_indexed="9999")
+    prefix = root_collection_prefix(wrong_kind)
+    assert storage_manifest.retain_collections(prefix, {_collection(wrong_kind)})
+    del excluded
 
-    def family(root: Path) -> Path | None:
-        return None if root.name == "far" else Path("family")
-
-    monkeypatch.setattr(candidates, "git_common_dir", family)
     found = list(
         candidates.iter_donor_candidates(admission.root, candidates.CollectionKind.CODE)
     )
-    assert admission.entries["own_"].root not in admission.pointer_calls, (
+    assert not _inspected(caplog, admission.root), (
         "own-root donor resolved a publication pointer"
     )
-    assert admission.entries["local_"].root not in admission.pointer_calls, (
+    assert not _inspected(caplog, local), (
         "wrong-backend donor resolved a publication pointer"
     )
-    assert admission.entries["wrong_"].root not in admission.pointer_calls, (
+    assert not _inspected(caplog, wrong_kind), (
         "wrong-kind donor resolved a publication pointer"
     )
-    assert [candidate.prefix for candidate in found] == ["new_", "a_", "z_"], (
-        "donor filtering or family/newest/prefix ranking changed"
-    )
-    assert admission.pointer_calls == [candidate.root for candidate in found]
+    tied = sorted(near[1:], key=root_collection_prefix)
+    assert [candidate.root for candidate in found] == [
+        str(donor.resolve()) for donor in (near[0], *tied)
+    ], "donor filtering or family/newest/prefix ranking changed"
+    assert str(far.resolve()) not in {candidate.root for candidate in found}
 
 
 def test_disabled_reuse_and_failed_manifest_do_not_read_pointers(
-    admission: _Admission, monkeypatch: pytest.MonkeyPatch
+    admission: _Admission,
+    caplog: pytest.LogCaptureFixture,
+    qdrant_server: QdrantSupervisor,
 ) -> None:
-    monkeypatch.setattr(
-        _settings, "get_config", lambda: SimpleNamespace(index_reuse_enabled=False)
-    )
+    """Neither a disabled switch nor an unreadable manifest reaches a donor pointer.
+
+    Mutation: ignoring the reuse switch resolved donors and failed the
+    disabled assertion; restoring it passed.
+    """
+    unread = admission.defective("unread", "pointer-garbage")
+    admission.rank(unread, *admission.pool.current[:3])
+    _configure(_CURRENT_MODEL, qdrant_server.url, index_reuse_enabled=False)
     assert admission.resolve() == (None, None)
-    assert not admission.pointer_calls and not admission.proof_calls
-    monkeypatch.setattr(
-        _settings,
-        "get_config",
-        lambda: SimpleNamespace(
-            index_reuse_enabled=True, effective_server_mode=lambda: True
-        ),
-    )
+    assert not _inspected(caplog, unread)
 
-    def unreadable_manifest() -> dict[str, ManifestEntry]:
-        raise OSError("isolated manifest unavailable")
-
-    monkeypatch.setattr(storage_manifest, "load_manifest", unreadable_manifest)
+    _configure(_CURRENT_MODEL, qdrant_server.url)
+    storage_manifest.manifest_path().write_text("{not json", encoding="utf-8")
     stats, context = admission.resolve()
     assert context is None and stats is not None and stats.donor_absent
-    assert not admission.pointer_calls and not admission.proof_calls
+    assert not _inspected(caplog, unread)
