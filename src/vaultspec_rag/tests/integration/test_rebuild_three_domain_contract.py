@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import shlex
+import shutil
 import statistics
 import sys
 import textwrap
@@ -104,7 +105,6 @@ def _write_document_hook(root: Path) -> None:
 
 def _write_corpus(root: Path, source: str, marker: str, count: int) -> None:
     """Replace *source*'s files under *root* with *count* files naming *marker*."""
-    import shutil
 
     if source == "vault":
         directory = root / ".vault" / "adr"
@@ -124,8 +124,16 @@ def _write_corpus(root: Path, source: str, marker: str, count: int) -> None:
     else:
         directory = root / "docs"
         name, body = "manual-{:04d}.blob", "{marker} rebuild contract manual {n}\n"
-    shutil.rmtree(directory, ignore_errors=True)
-    directory.mkdir(parents=True)
+    # The running service watches this directory, and on Windows a watched
+    # directory cannot be removed, so only its files are replaced. Each
+    # delete raises, because a stale file left behind would make the
+    # old-content assertions pass or fail for the wrong reason.
+    directory.mkdir(parents=True, exist_ok=True)
+    for stale in directory.iterdir():
+        if stale.is_dir():
+            shutil.rmtree(stale)
+        else:
+            stale.unlink()
     for ordinal in range(count):
         (directory / name.format(ordinal)).write_text(
             body.format(marker=marker, n=ordinal), encoding="utf-8"
