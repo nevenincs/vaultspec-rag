@@ -5,7 +5,7 @@ tags:
 date: '2026-10-12'
 modified: '2026-11-21'
 body_schema: 'body-v2'
-body_hash: 'sha256:6d898dc2ce8cff74065c26559a922188b3d5ced6cd883e9265dc03883473280f'
+body_hash: 'sha256:e14127b3be9e3b15d66e85d41d12bca0102bfa16437244339f1cb16dd874960b'
 related:
   - "[[2026-10-12-destructive-rebuild-lifecycle-plan]]"
 ---
@@ -285,6 +285,26 @@ related:
 - `S06` `verify:` `python -m dev.generate_cli_reference --check` -> `pass`
 - `S06` `verify:` `pytest -m unit storage donor clean rebuild readiness served-pointer and structure guards` -> `pass`
 - `S06` `by:` `implementation-engineer`
+- `S06` `M` `src/vaultspec_rag/_operator_commands.py`
+- `S06` `M` `src/vaultspec_rag/_search_state.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_search_conformance_refusal.py`
+- `S06` `M` `src/vaultspec_rag/tests/integration/test_service_search_reset_transition.py`
+- `S06` `M` `src/vaultspec_rag/mcp/_tools.py`
+- `S06` `M` `src/vaultspec_rag/tests/integration/test_clean_pointer_refusal.py`
+- `S06` `M` `src/vaultspec_rag/tests/integration/_service_jobs_support.py`
+- `S06` `A` `src/vaultspec_rag/tests/integration/test_server_mode_write_fence.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_job_rebuild_resume_dispatch.py`
+- `S06` `A` `src/vaultspec_rag/tests/test_rebuild_crash_recovery.py`
+- `S06` `verify:` `ruff check src/vaultspec_rag` -> `pass`
+- `S06` `verify:` `ruff format --check (changed files)` -> `pass`
+- `S06` `verify:` `ty check (changed files)` -> `pass`
+- `S06` `verify:` `basedpyright (changed files)` -> `pass`
+- `S06` `verify:` `python -m dev lint size` -> `pass`
+- `S06` `verify:` `python -m dev lint complexity` -> `pass`
+- `S06` `verify:` `python -m dev.generate_cli_reference --check` -> `pass`
+- `S06` `verify:` `pytest -m unit test_search_reset_fence test_search_conformance_refusal test_service_search_reset_transition test_clean_pointer_refusal test_server_mode_write_fence test_job_rebuild_resume_dispatch test_rebuild_crash_recovery test_rebuild_lifecycle` -> `pass`
+- `S06` `verify:` `pytest test_substitution_discipline test_no_unconsumed_definitions test_process_probe_source_structure` -> `pass`
+- `S06` `by:` `implementation-engineer-high`
 
 ## Notes
 
@@ -302,3 +322,5 @@ related:
 - `S06` S06 GPU-lane `test_rebuild_three_domain_contract` (7 tests) collected only: no resident service; service restart mid-rebuild relies on `test_service_job_control_pause_restart,` also collected only
 - `S06` S06 Not fixed: `storage_archive` and the donor lookup still refuse a stale other-backend pointer; CLI clean emits no JSON envelope when a reset refuses on an unverifiable pointer
 - `S06` Pointer and clean-refusal source landed in d693c6f65 by concurrent pickup; tests in f7938d978; `observed_generation` in b421c1945
+- `S06` server-mode write fence: the post-write epoch re-check in `_store_writes.run_store_operation_with_retry` is not applied; that file is owned by the lock-deadlock branch, and the committed test pins the current window until the change lands
+- `S06` carried test doubles in `test_donor_admission.py` and `test_code_rebuild_stale_evidence.py` were not rewritten in this run
