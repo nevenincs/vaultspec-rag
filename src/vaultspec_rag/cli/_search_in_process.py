@@ -467,51 +467,25 @@ def _availability_facts(
     )
 
 
-def _index_transition_failure(
-    exc: IndexTransitionError, target: pathlib.Path
-) -> dict[str, object]:
-    """Build the retryable refusal the service answers a reset-touched read with.
-
-    The service answers a read a rebuild's reset began under with a 503 whose
-    envelope carries ``index_transition`` and ``retryable``; the same reason
-    code, wording and remediation are produced here from the same classifier,
-    so a local search and a served one report one condition one way.
-    """
-    from uuid import uuid4
-
-    from .._search_state import SearchIndexStatus
-    from ..server._search_availability import (
-        classify_search_response,
-        typed_search_refusal_fact,
-    )
-
-    request_id = uuid4().hex
-    index_state: dict[str, object] = {
-        "source": exc.source.value,
-        "requested_target_root": str(target),
-        "status": SearchIndexStatus.REBUILDING.value,
-    }
-    facts = _availability_facts(
-        target, cast("IndexSource", exc.source.value), request_id
-    )
-    classification = classify_search_response(
-        {}, facts.to_context(after_snapshot=[], index_state=index_state)
-    )
-    refusal = typed_search_refusal_fact(
-        exc, classification.source_fact, root=target, port=None
-    )
-    assert refusal is not None
-    response = refusal.failure_response(request_id=request_id, index_state=index_state)
-    response["message"] = f"{response['message']}: {exc}"
-    return response
-
-
 def _fail_index_transition(
     exc: IndexTransitionError, request: InProcessSearchRequest
 ) -> NoReturn:
-    """Render the retryable transition refusal and exit with the service's code."""
+    """Render the retryable transition refusal and exit with the service's code.
+
+    The refusal is the one the service answers a reset-touched read with, built
+    by the same function, so a local search and a served one report one
+    condition one way. A local search has no job snapshot to offer.
+    """
+    from uuid import uuid4
+
+    from ..server._search_route_availability import typed_storage_refusal
+
+    facts = _availability_facts(
+        request.target, cast("IndexSource", exc.source.value), uuid4().hex
+    )
+    refusal, _ = typed_storage_refusal(exc, facts, [])
     handle_service_results(
-        _index_transition_failure(exc, request.target),
+        refusal,
         ServiceSearchRenderRequest(
             request.query,
             request.search_type.value,

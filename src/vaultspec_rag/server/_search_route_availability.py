@@ -453,20 +453,25 @@ async def run_search_with_availability(
             raise
         return classification.response, classification
     except (StorageGeometryError, IndexTransitionError) as exc:
-        return _typed_storage_refusal(exc, facts)
+        from ._routes import canonical_job_snapshot
+
+        return typed_storage_refusal(exc, facts, canonical_job_snapshot())
 
 
-def _typed_storage_refusal(
+def typed_storage_refusal(
     exc: StorageGeometryError | IndexTransitionError,
     facts: SearchAvailabilityRequestFacts,
+    after_snapshot: list[dict[str, object]],
 ) -> tuple[dict[str, object], SearchResponseClassification]:
     """Answer a retrieval the storage refused before it produced a count.
 
     Neither an incompatible vector identity nor a reset in progress implies
     zero items or a missing collection, so the index state names no count.
-    """
-    from ._routes import canonical_job_snapshot
 
+    ``after_snapshot`` is the job evidence the caller can see: the service
+    passes its job manager's snapshot, and a local search, which has no job
+    manager, passes an empty one.
+    """
     transition = isinstance(exc, IndexTransitionError)
     index_state: dict[str, object] = {
         "source": facts.source,
@@ -479,9 +484,7 @@ def _typed_storage_refusal(
     }
     classification = classify_search_response(
         {},
-        facts.to_context(
-            after_snapshot=canonical_job_snapshot(), index_state=index_state
-        ),
+        facts.to_context(after_snapshot=after_snapshot, index_state=index_state),
     )
     refusal_fact = typed_search_refusal_fact(
         exc, classification.source_fact, root=facts.root, port=facts.port
