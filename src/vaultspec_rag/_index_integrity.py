@@ -326,8 +326,18 @@ class IndexIntegritySnapshot(NamedTuple):
         self,
         live_count: int | None,
     ) -> IndexIntegrity:
-        """Validate the proof token and classify the fenced backend result."""
-        self.publication.validate()
+        """Validate the proof token and classify the fenced backend result.
+
+        A publication that moved the proof while the backend was read leaves
+        the count answering to no claim, so the verdict is unverifiable rather
+        than a refusal of the read that produced it.
+        """
+        from ._publication_state import UNREADABLE_PUBLICATION_ERRORS
+
+        try:
+            self.publication.validate()
+        except UNREADABLE_PUBLICATION_ERRORS:
+            return unverifiable_integrity(self.source)
         return _evaluate_claim(
             self.root,
             self.source,

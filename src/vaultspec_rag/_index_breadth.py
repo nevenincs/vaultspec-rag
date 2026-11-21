@@ -76,8 +76,17 @@ class CodeBreadthSnapshot(NamedTuple):
     publication: PublicationSnapshot
 
     def finish(self, live_count: int) -> BreadthShortfall | None:
-        """Fence the completed count and return its demonstrated deficit."""
-        self.publication.validate()
+        """Fence the completed count and return its demonstrated deficit.
+
+        A publication that moved the proof while the backend was counted
+        leaves no claim the count can fall short of, so nothing is demonstrated.
+        """
+        from ._publication_state import UNREADABLE_PUBLICATION_ERRORS
+
+        try:
+            self.publication.validate()
+        except UNREADABLE_PUBLICATION_ERRORS:
+            return None
         if live_count >= self.published:
             return None
         return BreadthShortfall(published=self.published, live=live_count)
