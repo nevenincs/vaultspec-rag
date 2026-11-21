@@ -169,7 +169,7 @@ class IndexRunTelemetry:
 
     preprocess_ok: int = 0
     preprocess_failures: Sequence[str] = ()
-    metadata_non_string: Mapping[str, int] = field(default_factory=dict)
+    metadata_non_string: Mapping[str, int] = field(default_factory=dict[str, int])
     reuse: dict[str, object] | None = None
     drift: dict[str, object] | None = None
 

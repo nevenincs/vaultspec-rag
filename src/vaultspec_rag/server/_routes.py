@@ -237,7 +237,7 @@ def job_string(
     return value.strip()
 
 
-def _validated_initiator(
+def validated_initiator(
     payload: dict[str, object],
     *,
     root: Path,
@@ -336,7 +336,7 @@ async def validated_index_request(
         raise InvalidJobRequestError("root_missing", str(exc)) from exc
     except (ProjectRootRequiredError, ValueError) as exc:
         raise InvalidJobRequestError("invalid_job_spec", str(exc)) from exc
-    initiator = _validated_initiator(
+    initiator = validated_initiator(
         payload,
         root=root,
         default_command="http_jobs_create",
@@ -896,7 +896,7 @@ async def retry_job_route(request: Request) -> JSONResponse:
     if parent is not None and ("initiator" in payload or "initiator_kind" in payload):
         try:
             root = Path(str(parent.spec.project_root))
-            initiator = _validated_initiator(
+            initiator = validated_initiator(
                 payload,
                 root=root,
                 default_command="http_job_retry",

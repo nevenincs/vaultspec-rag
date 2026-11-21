@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#job-admission-visibility'
 date: '2026-11-20'
-modified: '2026-11-20'
+modified: '2026-11-21'
 body_schema: 'body-v2'
-body_hash: 'sha256:53c49d1802cfc6b2988169d69572eabe47ce667511cd199b4de7bb7689d269aa'
+body_hash: 'sha256:5230ae4c930fb08b46709a4d3b4c169a2d67315c460b34e8c58e1d25af4cb0cb'
 related:
   - "[[2026-07-24-index-throughput-adr]]"
   - "[[2026-07-21-service-job-control-adr]]"
@@ -196,8 +196,7 @@ of `2026-07-22-service-health-client-hardening-adr` holds.
   its position. Its runtime is labelled as wait time.
 - `src/vaultspec_rag/cli/_status_labels.py`: render the active and waiting counts from
   the summary's `working` and `waiting` fields.
-- `src/vaultspec_rag/cli/_service_jobs_control.py`: add `server job wait JOB_ID
-  [--until admitted|finished] [--timeout SECONDS]`. It resolves the id the way
+- `src/vaultspec_rag/cli/_service_jobs_control.py`: add `server job wait JOB_ID [--until admitted|finished] [--timeout SECONDS]`. It resolves the id the way
   `server job show` does and emits one JSON envelope on every exit path. Exit 0 when the
   condition is reached, including an already-satisfied one. Exit 1 on expiry with code
   `wait_timeout`. Exit 2 on invalid input. Exit 3 when the service is not running.

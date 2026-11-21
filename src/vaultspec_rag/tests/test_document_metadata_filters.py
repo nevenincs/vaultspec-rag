@@ -81,6 +81,16 @@ class TestDeclaredMetadataKeySchema:
         with pytest.raises(ValueError):
             store_schema.DeclaredMetadataKey(key, "unit")
 
+    @pytest.mark.parametrize("scope", ["unit", "document"])
+    def test_a_declared_scope_resolves_to_itself(self, scope: str) -> None:
+        assert store_schema.metadata_scope(scope) == scope
+
+    @pytest.mark.parametrize("value", ["", "Unit", "global", None, 1, ["unit"]])
+    def test_anything_else_is_not_a_scope(self, value: object) -> None:
+        # Fails if the match is loosened to a truthiness or prefix test:
+        # "Unit" and ["unit"] would then resolve.
+        assert store_schema.metadata_scope(value) is None
+
     def test_only_unmatchable_values_of_declared_keys_are_reported(self) -> None:
         reported = store_schema.non_string_metadata_keys(
             [

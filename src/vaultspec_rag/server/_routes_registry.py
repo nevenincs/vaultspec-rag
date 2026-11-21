@@ -327,11 +327,11 @@ async def stop_watcher_route(request: Request) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
         return denied
-    from ._routes import _validated_initiator
+    from ._routes import validated_initiator
 
     try:
         payload, target = await _root_payload(request)
-        initiator = _validated_initiator(
+        initiator = validated_initiator(
             payload, root=target, default_command="server updates stop"
         )
     except (OSError, ValueError) as exc:

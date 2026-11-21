@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, get_args
+from typing import TYPE_CHECKING, cast, get_args
 
 from .. import store_schema
 from .._domain import DOMAINS
@@ -353,7 +353,7 @@ def _metadata_values(key: str, values: object) -> tuple[str, ...]:
     # A bare string is refused rather than read as one value: a caller sending
     # "a,b" would otherwise match only the literal "a,b" and see no error.
     if isinstance(values, (list, tuple)):
-        members: list[object] = list(values)
+        members = cast("Sequence[object]", values)
         if all(isinstance(member, str) for member in members):
             return tuple(str(member) for member in members)
     raise InvalidFilterValueError(

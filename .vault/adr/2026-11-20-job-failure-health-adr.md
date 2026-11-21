@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#job-failure-health'
 date: '2026-11-20'
-modified: '2026-11-20'
+modified: '2026-11-21'
 body_schema: 'body-v2'
-body_hash: 'sha256:486b0b4f652392a88c5f2fee167fea18efead61952a528e99ca413adb3b2bf56'
+body_hash: 'sha256:4a261987489da34c99aaadbfb078de15fbde49b37f4b718e758587a842880a4b'
 related:
   - "[[2026-09-23-status-messages-adr]]"
   - "[[2026-06-11-service-status-convergence-adr]]"
@@ -134,8 +134,7 @@ the window. The fold is linear in the record count.
 `jobs.failing`, shaped `{"total": int, "degrading": int, "entries": [...]}` and bounded
 as the Constraints state. It appends one `JOB_FAILED` degradation when `degrading` is
 non-zero. The detail names the count and the first degrading entry's project root,
-source and error kind, for example `2 project index runs failed: /w/demo (code:
-cuda_oom) and 1 more`. The bound and naming follow the stale-roots precedent at
+source and error kind, for example `2 project index runs failed: /w/demo (code: cuda_oom) and 1 more`. The bound and naming follow the stale-roots precedent at
 `:1363`.
 
 **Vocabulary.** In `src/vaultspec_rag/operator_state/_service.py:171`, the

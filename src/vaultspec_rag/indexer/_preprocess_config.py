@@ -473,14 +473,15 @@ def _resolve_filterable_metadata(
         if problem is not None or not isinstance(key, str):
             reject(f"{where}: {problem}")
             continue
-        scope = table.get("scope")
-        if scope not in store_schema.METADATA_SCOPES:
+        raw_scope = table.get("scope")
+        scope = store_schema.metadata_scope(raw_scope)
+        if scope is None:
             reject(
                 f"{where}: 'scope' must be one of "
-                f"{list(store_schema.METADATA_SCOPES)}; got {scope!r}"
+                f"{list(store_schema.METADATA_SCOPES)}; got {raw_scope!r}"
             )
             continue
-        scopes.setdefault(key, set()).add(cast("store_schema.MetadataScope", scope))
+        scopes.setdefault(key, set()).add(scope)
     declared: list[store_schema.DeclaredMetadataKey] = []
     for key, key_scopes in sorted(scopes.items()):
         if len(key_scopes) > 1:

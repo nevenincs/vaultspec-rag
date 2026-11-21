@@ -469,7 +469,7 @@ class TestFilterValidation:
         assert "vault-search filters" in str(excinfo.value)
 
     @pytest.mark.parametrize("search_type", ["code", "document"])
-    def test_intent_is_refused_outside_vault_search(self, search_type):
+    def test_intent_is_refused_outside_vault_search(self, search_type: str) -> None:
         # Guard. Proven to fail: dropping the intent branch from
         # _supplied_filters lets the call return, so pytest.raises fails.
         from ..search import (
@@ -486,7 +486,9 @@ class TestFilterValidation:
         assert excinfo.value.offending_filters == ["--intent"]
 
     @pytest.mark.parametrize("search_type", ["vault", "combined"])
-    def test_intent_is_accepted_where_vault_ranking_runs(self, search_type):
+    def test_intent_is_accepted_where_vault_ranking_runs(
+        self, search_type: str
+    ) -> None:
         from ..search import SearchFilterOptions, validate_search_filters
 
         validate_search_filters(search_type, SearchFilterOptions(intent="debugging"))

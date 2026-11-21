@@ -69,6 +69,7 @@ __all__ = [
     "effective_dense_dim",
     "evaluate_conformance",
     "metadata_key_problem",
+    "metadata_scope",
     "non_string_metadata_keys",
 ]
 
@@ -361,6 +362,14 @@ _METADATA_KEY_RESERVED = frozenset(".[]")
 #: know the answer may be partial, and a partial answer must be refused rather
 #: than applied as a narrower filter than the caller asked for.
 EXTRACTOR_ID_FACET_BOUND = 1024
+
+
+def metadata_scope(value: object) -> MetadataScope | None:
+    """Return the declared scope *value* names, or ``None`` for anything else."""
+    for scope in METADATA_SCOPES:
+        if value == scope:
+            return scope
+    return None
 
 
 def metadata_key_problem(key: object) -> str | None:

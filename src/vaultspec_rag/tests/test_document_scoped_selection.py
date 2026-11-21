@@ -32,7 +32,11 @@ def _committed(root: Path, *paths: Path) -> dict[str, DocumentFileMetadata]:
     return committed
 
 
-def _select(root: Path, paths: tuple[Path, ...], previous) -> set[str]:
+def _select(
+    root: Path,
+    paths: tuple[Path, ...],
+    previous: dict[str, DocumentFileMetadata],
+) -> set[str]:
     indexer = DocumentIndexer.for_preflight(
         root, content_policy=_document_policy("*.txt")
     )
