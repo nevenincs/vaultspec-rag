@@ -75,6 +75,7 @@ from ._render import (
 )
 from ._service_jobs_presentation import (
     human_progress,
+    job_waiting_on,
     operation_label,
     project_label,
     stale_progress_label,
@@ -434,13 +435,7 @@ def _active_job_records(
 ) -> list[dict[str, object]]:
     active: list[dict[str, object]] = []
     for entry in job_records:
-        if entry.get("phase") != "running":
-            continue
-        progress = entry.get("progress")
-        if (
-            isinstance(progress, dict)
-            and cast("dict[str, object]", progress).get("step") == "queued"
-        ):
+        if entry.get("phase") != "running" or job_waiting_on(entry) is not None:
             continue
         active.append(entry)
     return sorted(active, key=_job_started_timestamp)
@@ -621,15 +616,6 @@ def _job_records_from_result(result: dict[str, object]) -> list[dict[str, object
     ]
 
 
-def _queued_job_count(job_records: list[dict[str, object]]) -> int:
-    queued = 0
-    for entry in job_records:
-        progress = entry.get("progress")
-        if entry.get("phase") == "running" and isinstance(progress, dict):
-            queued += int(cast("dict[str, object]", progress).get("step") == "queued")
-    return queued
-
-
 def _summary_count(
     value: object,
     *,
@@ -668,7 +654,8 @@ def _jobs_summary_from_result(result: dict[str, object] | None) -> dict[str, obj
         "running": _running_job_count(summary_dict, job_records),
         "total": total_count,
         "returned": returned_count,
-        "queued": _queued_job_count(job_records),
+        "working": count(summary_dict.get("working")),
+        "waiting": count(summary_dict.get("waiting")),
         "current_job": next(iter(active_job_records), None),
         "current_jobs": active_job_records,
         "phases": summary_dict.get("phases", {}),

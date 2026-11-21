@@ -524,6 +524,8 @@ def _status_contract_jobs_payload(
         "returned": len(jobs),
         "summary": {
             "running": running_count,
+            "working": running_count,
+            "waiting": 0,
             "phases": phases,
         },
     }

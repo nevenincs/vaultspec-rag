@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from .._operator_commands import _shell_argument
+from ..cli._cli_format import NOT_REPORTED
 from ..operator_state._service import DegradationReason, ServiceLifecycle
 from ..serviceclient._transport import _try_http_health
 from ._cli_helpers import (
@@ -1174,14 +1175,102 @@ class TestServiceDaemonHelpers:
             _status_queue_label,
         )
 
-        jobs: dict[str, object] = {"available": True, "running": 1, "queued": 1}
+        jobs: dict[str, object] = {
+            "available": True,
+            "running": 3,
+            "working": 1,
+            "waiting": 2,
+        }
 
-        assert _status_busy_label(jobs) == "1 job waiting to write"
-        assert _status_queue_label(jobs) == "1 waiting job; 0 active jobs"
+        assert _status_busy_label(jobs) == "processing 1 job; 2 waiting"
+        assert _status_queue_label(jobs) == "2 waiting jobs; 1 active job"
         assert (
-            _status_jobs_label({**jobs, "total": 3, "phases": {"done": 2}})
-            == "2 finished, 0 active, 1 waiting, 0 failed"
+            _status_jobs_label({**jobs, "total": 5, "phases": {"done": 2}})
+            == "2 finished, 1 active, 2 waiting, 0 failed"
         )
+
+    def test_service_status_only_waiting_jobs_are_not_processing(self):
+        from ..cli._status_labels import _status_busy_label, _status_queue_label
+
+        jobs: dict[str, object] = {
+            "available": True,
+            "running": 2,
+            "working": 0,
+            "waiting": 2,
+        }
+
+        assert _status_busy_label(jobs) == "2 jobs waiting"
+        assert _status_queue_label(jobs) == "2 waiting jobs; 0 active jobs"
+
+    def test_service_status_does_not_derive_the_split_from_running(self):
+        """Running jobs with no working or waiting count are not reported.
+
+        Subtracting a waiting count from ``running`` here would render a split
+        the service never stated. Mutation caught: computing ``working`` as
+        ``running - waiting`` makes the busy label "processing 2 jobs" instead
+        of the not-reported marker.
+        """
+        from ..cli._status_labels import (
+            _status_busy_label,
+            _status_jobs_label,
+            _status_queue_label,
+        )
+
+        jobs: dict[str, object] = {"available": True, "running": 2}
+
+        assert _status_busy_label(jobs) == NOT_REPORTED
+        assert _status_queue_label(jobs) == NOT_REPORTED
+        assert _status_jobs_label(jobs) == NOT_REPORTED
+
+    def test_service_status_jobs_summary_carries_the_service_split(self):
+        """The counts come from the summary, not from the bounded page.
+
+        The probe asks for a handful of jobs, so a page can hold no waiter
+        while the service reports several. Mutation caught: counting waiters
+        among the returned records reports 0 waiting here.
+        """
+        from ..cli._status_render import _jobs_summary_from_result
+
+        working_job: dict[str, object] = {
+            "id": "a",
+            "phase": "running",
+            "waiting_on": None,
+            "started_at": 1.0,
+        }
+        writer_waiter: dict[str, object] = {
+            "id": "b",
+            "phase": "running",
+            "waiting_on": "writer",
+            "started_at": 2.0,
+        }
+        admission_waiter: dict[str, object] = {
+            "id": "c",
+            "phase": "awaiting_admission",
+            "waiting_on": "admission",
+            "started_at": 3.0,
+        }
+        summary = _jobs_summary_from_result(
+            {
+                "jobs": [working_job],
+                "total": 4,
+                "returned": 1,
+                "summary": {"running": 4, "working": 1, "waiting": 3},
+            }
+        )
+
+        assert summary["working"] == 1
+        assert summary["waiting"] == 3
+        assert "queued" not in summary
+
+        shown = _jobs_summary_from_result(
+            {
+                "jobs": [working_job, writer_waiter, admission_waiter],
+                "summary": {"running": 3, "working": 1, "waiting": 2},
+            }
+        )
+
+        current = cast("list[dict[str, object]]", shown["current_jobs"])
+        assert [job["id"] for job in current] == ["a"]
 
     def test_service_status_port_only_json(self, tmp_path: Path):
         """server status --port can inspect a reachable service without service.json."""

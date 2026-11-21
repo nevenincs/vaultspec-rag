@@ -49,11 +49,12 @@ class TestHeldConditionRows:
         assert "borrower" in label
 
     def test_held_work_is_reported_held_rather_than_idle(self) -> None:
-        """Held jobs report neither running nor queued, which read as idle."""
+        """Held jobs report neither working nor waiting, which read as idle."""
         jobs: dict[str, object] = {
             "available": True,
             "running": 0,
-            "queued": 0,
+            "working": 0,
+            "waiting": 0,
             "phases": {"paused": 4, "done": 257},
         }
 
@@ -67,7 +68,8 @@ class TestHeldConditionRows:
         jobs: dict[str, object] = {
             "available": True,
             "running": 0,
-            "queued": 0,
+            "working": 0,
+            "waiting": 0,
             "phases": {"done": 257},
         }
 

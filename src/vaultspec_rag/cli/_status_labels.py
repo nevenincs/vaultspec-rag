@@ -233,30 +233,37 @@ def _status_is_held(health: dict[str, object] | None) -> bool:
 
 
 class _JobCounts(NamedTuple):
-    """The three counts every busy, queue, and processed row is derived from."""
+    """The counts every busy, queue, and processed row is read from.
+
+    ``working`` and ``waiting`` are the service's own split of ``running``;
+    nothing here subtracts one count from another.
+    """
 
     running: int
-    queued: int
-    active: int
+    working: int
+    waiting: int
 
 
 def _job_counts(jobs: dict[str, object] | None) -> _JobCounts | None:
     """Read the job counts once for every row that reports on them.
 
-    ``None`` means the service reported no jobs at all, which each caller
-    renders as an absence rather than as an idle service - the distinction the
-    availability flag exists to carry.
+    ``None`` means the service reported no jobs at all, or reported running
+    jobs without saying which of them work and which wait. Each caller renders
+    that as an absence rather than as an idle service - the distinction the
+    availability flag exists to carry - because the split is the service's to
+    state and is never worked out from the other counts.
     """
     if not isinstance(jobs, dict) or jobs.get("available") is not True:
         return None
-    running = jobs.get("running")
-    queued = jobs.get("queued")
-    running_count = running if isinstance(running, int) else 0
-    queued_count = queued if isinstance(queued, int) else 0
+    running = count(jobs.get("running")) or 0
+    working = count(jobs.get("working"))
+    waiting = count(jobs.get("waiting"))
+    if running > 0 and working is None and waiting is None:
+        return None
     return _JobCounts(
-        running=running_count,
-        queued=queued_count,
-        active=max(0, running_count - queued_count),
+        running=running,
+        working=working or 0,
+        waiting=waiting or 0,
     )
 
 
@@ -272,19 +279,19 @@ def _status_busy_label(jobs: dict[str, object] | None) -> str:
         return NOT_REPORTED
     if counts.running <= 0:
         # Work stopped by a pause is not work the service does not have. Held
-        # jobs report neither running nor queued, so reading only those two
-        # counts rendered a service holding real work as "idle".
+        # jobs are neither working nor waiting, so reading only those counts
+        # rendered a service holding real work as "idle".
         held = _held_job_total(jobs)
         if held > 0:
             return f"{_counted_unit(held, 'job')} held by the pause"
         return "idle"
-    # Nothing active while jobs are running means every one of them is queued
-    # behind the writer, which is a wait rather than work in progress.
-    if counts.active <= 0:
-        return f"{_counted_unit(counts.queued, 'job')} waiting to write"
-    processing = f"processing {_counted_unit(counts.active, 'job')}"
-    if counts.queued > 0:
-        return f"{processing}; {counts.queued} waiting"
+    # Nothing working while jobs are running means every one of them waits, which
+    # is not work in progress.
+    if counts.working <= 0:
+        return f"{_counted_unit(counts.waiting, 'job')} waiting"
+    processing = f"processing {_counted_unit(counts.working, 'job')}"
+    if counts.waiting > 0:
+        return f"{processing}; {counts.waiting} waiting"
     return processing
 
 
@@ -294,12 +301,12 @@ def _status_queue_label(jobs: dict[str, object] | None) -> str:
         return NOT_REPORTED
     if counts.running <= 0:
         return "nothing waiting"
-    if counts.queued > 0:
+    if counts.waiting > 0:
         return (
-            f"{_counted_unit(counts.queued, 'waiting job')}; "
-            f"{_counted_unit(counts.active, 'active job')}"
+            f"{_counted_unit(counts.waiting, 'waiting job')}; "
+            f"{_counted_unit(counts.working, 'active job')}"
         )
-    return f"nothing waiting; {_counted_unit(counts.running, 'active job')}"
+    return f"nothing waiting; {_counted_unit(counts.working, 'active job')}"
 
 
 def _job_phase_counts(jobs: dict[str, object] | None) -> dict[str, object]:
@@ -327,8 +334,8 @@ def _status_jobs_label(jobs: dict[str, object] | None) -> str:
     done = _job_phase_counts(jobs).get("done")
     finished_count = done if isinstance(done, int) else 0
     return (
-        f"{finished_count} finished, {counts.active} active, "
-        f"{counts.queued} waiting, {_failed_job_total(jobs)} failed"
+        f"{finished_count} finished, {counts.working} active, "
+        f"{counts.waiting} waiting, {_failed_job_total(jobs)} failed"
     )
 
 
