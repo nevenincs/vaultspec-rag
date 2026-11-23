@@ -9,6 +9,7 @@ from typing import Any, cast
 
 import pytest
 
+from dev.gate_scope import MEASURING_JOBS
 from dev.guards import _workflows as workflows
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
@@ -288,7 +289,7 @@ def test_readiness_requires_the_dev_server_on_the_exact_commit() -> None:
     assert "github.event_name == 'pull_request'" in str(steps[DEV_PROOF_STEP]["if"])
     verdict = str(steps["Every full check passed on this commit"]["run"])
     assert 'if ($4 != "success") failed=1' in verdict
-    assert "exit(failed || count != 8)" in verdict
+    assert f"exit(failed || count != {len(MEASURING_JOBS)})" in verdict
 
 
 def test_release_result_refuses_a_skipped_selected_path() -> None:

@@ -774,21 +774,37 @@ def _atexit_reclaim_singleton_root() -> None:
         )
 
 
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
     """Refuse any collected test that declares no tier, or two lanes.
 
     Every collected test is checked, not only the selected ones: a run narrowed
     by a marker expression deselects exactly the tests that declare nothing, so
     checking the selection would let an untiered test through every run that
-    could have caught it.
+    could have caught it. A shard is narrowed only after that check, for the
+    same reason.
 
     Raises:
-        pytest.UsageError: When a collected test declares no tier, or declares
-            the fast tier alongside a slow one.
+        pytest.UsageError: When a collected test declares no tier, declares
+            the fast tier alongside a slow one, or the requested shard is
+            malformed.
     """
+    from vaultspec_rag.tests._shards import selected_shard, shard_of
     from vaultspec_rag.tests._tier_gate import enforce_tiers
 
     enforce_tiers(items)
+    try:
+        shard = selected_shard(os.environ)
+    except ValueError as error:
+        raise pytest.UsageError(str(error)) from error
+    if shard is None:
+        return
+    index, count = shard
+    dropped = [item for item in items if shard_of(item.nodeid, count) != index]
+    if dropped:
+        config.hook.pytest_deselected(items=dropped)
+        items[:] = [item for item in items if shard_of(item.nodeid, count) == index]
 
 
 def pytest_collection_finish(session: pytest.Session) -> None:

@@ -43,9 +43,12 @@ SCOPE_JOB = "Check: Proof scope (Linux)"
 MEASURING_JOBS = frozenset(
     {
         "Check: Full lint (Linux)",
-        "Test: Correctness suite (Linux, 3.13)",
-        "Test: Correctness suite (Linux, 3.14)",
-        "Test: Full suite (Windows)",
+        *(
+            f"Test: Correctness suite (Linux, {python}, {shard}/3)"
+            for python in ("3.13", "3.14")
+            for shard in (1, 2, 3)
+        ),
+        *(f"Test: Full suite (Windows, {shard}/5)" for shard in range(1, 6)),
         "Check: Dependency advisories (Linux)",
         "Check: Code scanning (Linux, actions)",
         "Check: Code scanning (Linux, javascript-typescript)",

@@ -12,6 +12,7 @@ from typing import Any, cast
 
 import pytest
 
+from dev.gate_scope import MEASURING_JOBS
 from dev.guards import _workflows as workflows
 from dev.guards._ci_names import (
     GATE_JOB,
@@ -431,7 +432,7 @@ def test_pr_verdict_requires_full_proof() -> None:
     assert "if (count && !measured) exit 2" in script
     assert "sort -t $'\\t' -k1,1nr" in script
     assert 'if ($4 != "success") failed=1' in script
-    assert "exit(failed || count != 8)" in script
+    assert f"exit(failed || count != {len(MEASURING_JOBS)})" in script
     assert "jobs?filter=all&per_page=100" in script
     assert "jobs=$(gh api --paginate " in script
     assert "sort -t $'\\t' -k1,1 -k2,2nr -k3,3nr" in script
