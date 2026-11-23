@@ -2636,7 +2636,7 @@ wheels = [
 
 [[package]]
 name = "vaultspec-rag"
-version = "0.6.7"
+version = "0.6.8"
 source = { editable = "." }
 default-groups = ["dev", "gpu"]
 dependencies = [

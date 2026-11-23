@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.8](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.6.7...vaultspec-rag-v0.6.8) (2026-11-23)
+
+
+### Bug Fixes
+
+* **ci:** hosted sharded merge gate, release and suite fixes, Dev server removed ([#659](https://github.com/nevenincs/vaultspec-rag/issues/659)) ([b7fbd95](https://github.com/nevenincs/vaultspec-rag/commit/b7fbd9580eff2663c3563c530d36481dc8670a77))
+* **ci:** run every accelerator-free release job on a hosted runner ([#661](https://github.com/nevenincs/vaultspec-rag/issues/661)) ([b17ca94](https://github.com/nevenincs/vaultspec-rag/commit/b17ca9418a2ed6534e07e21f8482c6e592821149))
+
 ## [0.6.7](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.6.6...vaultspec-rag-v0.6.7) (2026-11-23)
 
 
