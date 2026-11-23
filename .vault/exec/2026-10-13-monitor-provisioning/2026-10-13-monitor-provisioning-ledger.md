@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#monitor-provisioning'
 date: '2026-10-13'
-modified: '2026-10-14'
+modified: '2026-11-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:b3caa7600cd3793d393591641227c19695e4932d48697d629425d43601a55a8a'
+body_hash: 'sha256:abbc4fdb4a0f68125d2422a7667e2c3b854381fda399cca1b8cdce827dd6bc3f'
 related:
   - "[[2026-10-13-monitor-provisioning-plan]]"
 ---
@@ -223,7 +223,7 @@ related:
 - `S03` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
 - `S03` `M` `src/vaultspec_rag/tests/test_qdrant_download.py`
 - `S03` `M` `src/vaultspec_rag/tests/_stand_in_release.py`
-- `S03` `verify:` `uv run --no-sync python -m dev lint all, every dimension run on its own (python, type, type-strict, devserver, monitor, links, toml, markdown, workflow, complexity, nesting, size, docs-version, citations, docs-conventions, absolute-imports, vault, docs-cli)` -> `pass`
+- `S03` `verify:` `uv run --no-sync python -m dev lint all, every dimension run on its own (python, type, type-strict, monitor, links, toml, markdown, workflow, complexity, nesting, size, docs-version, citations, docs-conventions, absolute-imports, vault, docs-cli)` -> `pass`
 - `S03` `verify:` `uv run --no-sync pytest with the CI correctness marker expression over the whole accelerator-free suite, in chunks that fit a foreground run (8270 passed, 16 skipped, 0 failed)` -> `pass`
 - `S03` `verify:` `uv run --no-sync basedpyright (0 errors, from 10 before)` -> `pass`
 
@@ -238,7 +238,7 @@ related:
 - `S03` Three more orientation documents under .vaultspec/skills/start-vaultspec-rag/references/ now link to tools/binaries/native.py, which this Step deleted, so the documentation link check fails on 17 such links in all. Those files are user-owned policy sources and were left untouched.
 - `S03` Adding the three new monitor environment variables required documenting them in .env.example and docs/configuration.md, which the repository's own coverage, parity and reference gates demand of any declared variable. The monitor rows of docs/configuration.md are therefore already written; S06 owns the removal of manual monitor setup elsewhere in the docs.
 - `S04` Guard proofs run as break, run alone, fail on the named assertion, restore, pass: asking the provisioner before the installation role; judging a client installation after resolving in the readiness row; and removing the monitor's label from the provisioning summary.
-- `S04` Eight tests in two modules fail on this machine with or without this change, because the machine has neither a compiled monitor nor a running Vite dev server: `test_monitor_access.py's` four Vite cases, and `test_monitor_process_integration.py's` four compiled-lifecycle cases, whose own precondition already required a monitor this checkout does not build. S06 makes the development recipes build one.
+- `S04` Eight tests in two modules fail on this machine with or without this change, because the machine has neither a compiled monitor nor a running Vite instance: `test_monitor_access.py's` four Vite cases, and `test_monitor_process_integration.py's` four compiled-lifecycle cases, whose own precondition already required a monitor this checkout does not build. S06 makes the development recipes build one.
 - `S04` The monitor step exposed a defect in the S03 provisioner: it asked for the release pins before asking whether an operator had already named a monitor, so an operator-supplied monitor could not satisfy provisioning at all. The entry point now asks about the operator's own executable first, verifies it, and consults no pin in that case.
 - `S04` The suite needed a monitor the way it needs a server binary. A session fixture names one through the operator settings, which is a production route and not a substitution; the monitor's own tests clear both settings for their own blocks, so the release's resolution is still exercised.
 - `S05` S05 Guard proofs run as break, run alone, fail on the named assertion, restore, pass: removing the bundle's monitor-pin comparison (five refusal cases, DID NOT RAISE); removing the monitor archive's single-member check; dropping the generator-shape validation from the wheel pin reader; returning partial digests instead of refusing an unfinalized target; dropping the executable digest comparison in the staging step; hashing the archive in place of the wheel's pinned archive digest before extraction; moving the pin generation after the package build; removing the monitor archive download from the attestation job; removing the per-target monitor archive requirement from the draft gate; and removing the checksum verification from the monitor archive fetch.

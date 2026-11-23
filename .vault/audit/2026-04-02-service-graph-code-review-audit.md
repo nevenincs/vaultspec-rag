@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#service-graph'
 date: '2026-04-02'
-modified: '2026-10-13'
-body_hash: 'sha256:aa91f404bfe769236889e188788aab8bf848af5510af7339d06fa5c28725b111'
+modified: '2026-11-23'
+body_hash: 'sha256:95d846089f370d72559124bbeceb5ed4b0957b73f6faddc457d6324a6385dc8d'
 related:
   - '[[2026-04-02-service-graph-adr]]'
   - '[[2026-04-02-service-graph-phase1-plan]]'
@@ -927,8 +927,8 @@ Linux Python 3.13 passed 8,100 tests with 47 platform skips; Linux Python
 platform skips. Package lint and dependency advisories passed. The Windows
 rerun retained the passing Linux jobs; its original isolated HTTP inventory
 timeout is preserved in attempt 1, and the complete Windows rerun passed
-without modifying the test, timeout, or guard. Dev Server run 38303455322
-and CodeQL on the same head also passed.
+without modifying the test, timeout, or guard. CodeQL on the same head
+also passed.
 
 Verdict PASS for S04. No unresolved critical or high finding remains. This
 checkpoint changes development records only; its own Markdown checks and

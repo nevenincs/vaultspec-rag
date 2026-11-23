@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#monitor-browser'
 date: '2026-09-30'
-modified: '2026-10-04'
+modified: '2026-11-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:13ed1eee5e6f1777cb541dee09d7b5118bb4aa517f114635c4b291692085395b'
+body_hash: 'sha256:f61af8cd6e900a78bbef11f1b1c1b10a0e9fdd51c855ec16c8ecbdcdfa4512b7'
 related:
   - "[[2026-09-30-monitor-tooling-adr]]"
   - "[[2026-09-30-monitor-refinement-audit]]"
@@ -39,9 +39,9 @@ The daemon already publishes its current port/token in the managed service.json 
 
 Authorization: the user's wave-2 request and explicit local/no-credentials/no-admin-gates direction authorize this ruling and implementation. The TUI remains the canonical terminal owner; the browser is a presentation adapter, not a second service-domain implementation.
 
-2026-10-01 authorized correction: the user explicitly requires dev/preview binding to 0.0.0.0, access for Tailscale nodes, canonical strict-port start/reattach/recreate behavior, and the devservers CI workflow. That historical network commitment is reversed by the user's 2026-10-04 security-fix request and `2026-10-04-monitor-access-adr`; the current monitor and RAG service are loopback-only.
+2026-10-01 authorized correction: the user explicitly requires dev/preview binding to 0.0.0.0, access for Tailscale nodes, and canonical strict-port start/reattach/recreate behavior. That historical network commitment is reversed by the user's 2026-10-04 security-fix request and `2026-10-04-monitor-access-adr`; the current monitor and RAG service are loopback-only.
 
-The frontend and API bridge bind to 127.0.0.1 and require an admitted loopback socket peer, a loopback or .localhost authority and matching Origin when present, for every request. Tailnet peers, Tailnet authorities and identity headers confer no authority. The shared devservers repository continues to own local reverse-proxy aliases. Direct remote mode and Tailscale Serve exposure are unsupported; authenticated tunnels may terminate at loopback. The bridge only targets the port in managed service discovery or an explicit local port override, never an arbitrary upstream URL. It reads the daemon credential internally, refreshes it through existing health recovery when necessary, and never returns it to browser code. The UI has no login, credential prompt, persisted token, or admin role. Restrict forwarding to declared monitor reads and exact service/job controls; forward service capability/revision semantics rather than inventing control authority. The authorized operations expansion below adds canonical service lifecycle and repository enrollment; inference and index-recovery remain separate explicit actions.
+The frontend and API bridge bind to 127.0.0.1 and require an admitted loopback socket peer, a loopback or .localhost authority and matching Origin when present, for every request. Tailnet peers, Tailnet authorities and identity headers confer no authority. Direct remote mode and Tailscale Serve exposure are unsupported; authenticated tunnels may terminate at loopback. The bridge only targets the port in managed service discovery or an explicit local port override, never an arbitrary upstream URL. It reads the daemon credential internally, refreshes it through existing health recovery when necessary, and never returns it to browser code. The UI has no login, credential prompt, persisted token, or admin role. Restrict forwarding to declared monitor reads and exact service/job controls; forward service capability/revision semantics rather than inventing control authority. The authorized operations expansion below adds canonical service lifecycle and repository enrollment; inference and index-recovery remain separate explicit actions.
 
 Preserve service-owned bounded jobs, queued/active/recent requests, correct diagnostic units, scoped job/request logs, and distinct raw service/Qdrant groups with visible freshness, failures and truncation. Poll independently with cancellation and stale-response protection; retain prior evidence on transport failures. Missing measurements are unreported. No all-time archive or persistent query/result storage is introduced.
 

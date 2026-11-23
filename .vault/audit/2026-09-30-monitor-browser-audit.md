@@ -3,9 +3,9 @@ tags:
   - '#audit'
   - '#monitor-browser'
 date: '2026-09-30'
-modified: '2026-10-01'
+modified: '2026-11-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:5ddbbac4b6f671a1103f0bff1e2f5c9b86539fec79fa59a06dd3fc634ff96522'
+body_hash: 'sha256:f35d019cb8ed2577fd89d9504072d68f5e8e0c491c8e27eea9d1f3f3b3bcb954'
 related:
   - "[[2026-09-30-monitor-browser-plan]]"
   - "[[2026-09-30-monitor-browser-adr]]"
@@ -27,7 +27,7 @@ Trace automatic local discovery through the server-only bridge, production HTTP 
 
 Verification owner is the solo executor/reviewer. Windows, Python 3.13.14, Node 26.10.0/npm 12.1.0, pinned Carbon React 1.117.0 and Sass 1.105.1; real production routes, ledgers, managed files and installed headless Chrome. No resident daemon lifespan, inference, provider call, GPU workload or index recovery was run.
 
-2026-10-01 corrective review: 811c5923 plus the S03 working tree. The user explicitly requires 0.0.0.0 binding, Tailscale-node access, strict-port attach/recreate semantics, and canonical devservers CI. Browser/tooling decisions were reconciled with this authorization. Shared lifecycle and workflow remain byte-identical; changes are limited to the manifest binding, request network/host policy, tests, guide and records.
+2026-10-01 corrective review: 811c5923 plus the S03 working tree. The user explicitly requires 0.0.0.0 binding, Tailscale-node access, and strict-port attach/recreate semantics. Browser/tooling decisions were reconciled with this authorization. Shared lifecycle and workflow remain byte-identical; changes are limited to the manifest binding, request network/host policy, tests, guide and records.
 
 ## Findings
 
@@ -39,7 +39,7 @@ Health and TypeSafe remain separate from indexing state. Indexing and serving vi
 
 Final production-route/model/rendered/log covering command: `uv run --no-sync pytest -m unit src/vaultspec_rag/tests/test_monitor_browser.py src/vaultspec_rag/tests/test_monitor_browser_render.py src/vaultspec_rag/tests/test_monitor_logs.py`: 12 passed in 179.76s, exit 0; evidence `.pytest-tmp/monitor-browser-covering-final.log`. Rendered coverage includes 1440x1000, 800x900 and 390x844, live logs without reselection, exact scope changes, retained evidence/reconnection, polling pause/resume, inert HTML, units, and deletion of the current terminal job. Visual artifacts at `.pytest-tmp/carbon-monitor-{1440,800,390}.png` were reviewed.
 
-`just check-monitor` passed lint, formatting, strict TypeScript and production build; `npm run build` also passed. Package Ruff, changed-test format, ty and basedpyright passed. Explicit helper Prettier, workflow, canonical devserver, Markdown and focused guide formatting checks passed. Log paths are recorded in the execution ledger. No critical or high finding remains.
+`just check-monitor` passed lint, formatting, strict TypeScript and production build; `npm run build` also passed. Package Ruff, changed-test format, ty and basedpyright passed. Explicit helper Prettier, workflow, Markdown and focused guide formatting checks passed. Log paths are recorded in the execution ledger. No critical or high finding remains.
 
 ### guards | low | Regression assertions were proven against deliberate failures
 
@@ -63,10 +63,10 @@ The earlier interpretation of local machine service as loopback-only browser acc
 
 Software verification PASS: frontend lint/format/TypeScript/build; Python lint/format/ty/basedpyright; 22 adapter and shared-harness contract tests; four real rendered Carbon cases; six native canonical lifecycle checks; actual degraded-health process replacement; and the repo's just dev ci. New origin, host and source-address guards failed their intended assertions under deliberate mutations and passed after restoration. Evidence is in the S03 ledger and local .pytest-tmp logs. The user-requested command and CI workflow are the existing canonical copies; no second lifecycle or workflow implementation was added.
 
-HTTPS verification PENDING: the devservers-owned port-offset command cannot install the tailnet HTTPS mapping while Tailscale reports Serve is not enabled. It returned an account setup link supplied to the user. The external account enablement is the next action; S03 remains open. No critical or high code finding was found.
+HTTPS verification PENDING: the port-offset command cannot install the tailnet HTTPS mapping while Tailscale reports Serve is not enabled. It returned an account setup link supplied to the user. The external account enablement is the next action; S03 remains open. No critical or high code finding was found.
 
 ## Recommendations
 
 Final verdict: PASS. The two-wave implementation and final corrections are reviewable on the feature branch. Use the source-checkout instructions in `docs/service-mode.md`; the normal local service must already be started through its existing lifecycle. Development and built preview both include the automatic local adapter. Standalone static assets do not provide it. Continue to show bounded retained work rather than implying an all-time archive; remote deployment or new service authority requires the decision assessment stated in monitor-browser.
 
-2026-10-01 rollout verdict: PENDING only for external Tailscale Serve enablement and HTTPS mapping verification. Leave the corrected direct Tailscale dev server running and preserve this reviewed source checkpoint. After enablement, finish the devservers-derived mapping, verify live HTTPS page/API access, and close S03. No login, credential entry or admin role was added to the operator application.
+2026-10-01 rollout verdict: PENDING only for external Tailscale Serve enablement and HTTPS mapping verification. Leave the corrected direct Tailscale listener running and preserve this reviewed source checkpoint. After enablement, finish the mapping, verify live HTTPS page/API access, and close S03. No login, credential entry or admin role was added to the operator application.

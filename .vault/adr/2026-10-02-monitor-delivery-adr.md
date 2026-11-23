@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#monitor-delivery'
 date: '2026-10-02'
-modified: '2026-10-13'
+modified: '2026-11-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:bb862d05b93d1a3996bc5c4f7667c058067502e146c4ff760666cf2cf5d6f486'
+body_hash: 'sha256:e987b140763ef99340211bb956cd3d475f2fa79a6b829a8f87f77f55653345fb'
 related:
   - "[[2026-10-02-monitor-delivery-reference]]"
   - "[[2026-10-02-monitor-delivery-research]]"
@@ -26,7 +26,7 @@ The React build does not deliver the local server bridge, and that bridge curren
 ## Considerations
 
 - Approved 2026-10-02: the user replied "sounds lovely" to the presented delivery ADR and six-Step implementation plan. This authorizes the recorded distribution/pin contract and implementation scope.
-- React/Vite/npm and the shared devserver contract are accepted in `2026-09-30-monitor-tooling-adr`; credentials and service ownership are accepted in `2026-09-30-monitor-browser-adr`; the current loopback-only boundary is the scoped security exception in `2026-10-04-monitor-access-adr`.
+- React/Vite/npm are accepted in `2026-09-30-monitor-tooling-adr`; credentials and service ownership are accepted in `2026-09-30-monitor-browser-adr`; the current loopback-only boundary is the scoped security exception in `2026-10-04-monitor-access-adr`.
 - Concurrent `2026-10-02-monitor-lifecycle-adr` records explicit user authorization for backend-coupled monitor start/stop, backend-plus-one upward allocation and user-scratch discovery. Packaging integrates with that same owner; its current compiled-executable contract is fulfilled by this delivery producer without introducing another lifecycle owner.
 - Archive ownership and draft-first publication are accepted in `2026-09-11-binary-release-bundles-adr` and `2026-09-30-release-standard-adr`. Four targets are present in current code, as the new reference establishes.
 - Toolchain provisioning and public binary launch must honor independently reviewed committed pins; a release's live checksum is insufficient as the only trust source.

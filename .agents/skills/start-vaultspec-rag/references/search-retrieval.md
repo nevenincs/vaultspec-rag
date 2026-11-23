@@ -115,7 +115,7 @@ Read when: query/filter changes; hybrid/rerank; TypeSafe fallback; freshness/emp
 Choose the part for the files or behavior you need; do not load every part.
 
 - [s1-0001](installation-provisioning-part-01.md): .env.example, .gitattributes, .gitignore, .mdformat.toml, .nvmrc, .pymarkdown.json, .python-version, .release-please-manifest.json, .vaultragignore, LICENSE, README.md, RELEASING.md.
-- [s1-0006](developer-toolchain-part-02.md): devserver.py, exit_codes.py, gates.py, generate_cli_reference.py, \_ci_names.py, \_workflows.py, test_advisory_aggregate_holds_no_gate.py, test_child_output_decoding.py, test_ci_canonical_names.py, test_ci_deployed_copies_stand_alone.py, test_ci_fork_containment.py.
+- [s1-0006](developer-toolchain-part-02.md): exit_codes.py, gates.py, generate_cli_reference.py, \_ci_names.py, \_workflows.py, test_advisory_aggregate_holds_no_gate.py, test_child_output_decoding.py, test_ci_canonical_names.py, test_ci_deployed_copies_stand_alone.py, test_ci_fork_containment.py.
 - [s1-0009](developer-toolchain-part-05.md): toolchain.py, typesafe_evaluation.py, typesafe_search_spike.py, warm_models.py.
 - [s1-0010](search-retrieval-part-01.md): architecture.md, automatic-convergence.md, automation.md, backends.md, cli.md.
 - [s1-0011](configuration-part-02.md): configuration.md, examples.md, getting-started.md, glossary.md, indexing.md.

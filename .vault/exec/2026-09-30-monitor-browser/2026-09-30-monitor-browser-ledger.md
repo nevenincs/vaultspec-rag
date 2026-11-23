@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#monitor-browser'
 date: '2026-09-30'
-modified: '2026-10-30'
+modified: '2026-11-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:5b0cca559f11b7f2f44e24fee58c60ecaf29041784b8497ac92cc41819f81545'
+body_hash: 'sha256:70c9d4038085e33741bd10e82b367b8c9cbf9c21d309dd1f683623e7c09baa11'
 related:
   - "[[2026-09-30-monitor-browser-plan]]"
 ---
@@ -69,7 +69,7 @@ related:
 - `S02` `verify:` `Carbon MCP code_audit seven files: no errors; two warnings and one informational finding manually reviewed against official components, SCSS and rendered layouts` -> `pass`
 - `S02` `verify:` `visual review 1440x1000, 800x900 and 390x844; .pytest-tmp/carbon-monitor-{1440,800,390}.png` -> `pass`
 - `S02` `verify:` `just check-workflow; .pytest-tmp/monitor-browser-workflow-final.log` -> `pass`
-- `S02` `verify:` `just check-devserver; .pytest-tmp/monitor-browser-harness-final.log` -> `pass`
+- `S02` `verify:` `.pytest-tmp/monitor-browser-harness-final.log` -> `pass`
 - `S02` `verify:` `just check-markdown; .pytest-tmp/monitor-browser-markdown-final.log` -> `pass`
 - `S02` `verify:` `mdformat --check docs/service-mode.md` -> `pass`
 - `S02` `verify:` `git diff --check` -> `pass`
@@ -87,7 +87,7 @@ related:
 - `S03` `M` `.vault/plan/2026-09-30-monitor-browser-plan.md`
 - `S03` `verify:` `just check-monitor (lint, format, strict TypeScript, production build); .pytest-tmp/monitor-tailnet-frontend-final.log` -> `pass`
 - `S03` `verify:` `package Ruff and changed browser-test format, ty and basedpyright` -> `pass`
-- `S03` `verify:` `pytest unit browser adapter and shared devserver guards: 22 passed in 5.48s; .pytest-tmp/monitor-tailnet-contract-final.log` -> `pass`
+- `S03` `verify:` `pytest unit browser adapter and guards: 22 passed in 5.48s; .pytest-tmp/monitor-tailnet-contract-final.log` -> `pass`
 - `S03` `verify:` `pytest rendered Carbon monitor: 4 passed in 65.78s; .pytest-tmp/monitor-tailnet-render-final.log` -> `pass`
 - `S03` `verify:` `canonical owner lifecycle and contract tests: 6 passed in 10.59s; .pytest-tmp/monitor-tailnet-owner-lifecycle.log` -> `pass`
 - `S03` `verify:` `real degraded HTTP health on owned process caused replacement and recovered health; .pytest-tmp/monitor-tailnet-degraded-proof.log` -> `pass`
@@ -108,5 +108,5 @@ related:
 
 ## Notes
 
-- `S03` HTTPS rollout remains pending. The devservers-derived tailscale serve command reports Serve is not enabled on the tailnet and waits for account enablement. Setup link was given through the user-input tool; direct Tailscale HTTP and the local reverse proxy already work. Keep S03 open until HTTPS mapping and reachability can be verified.
+- `S03` HTTPS rollout remains pending. The tailscale serve command reports Serve is not enabled on the tailnet and waits for account enablement. Setup link was given through the user-input tool; direct Tailscale HTTP and the local reverse proxy already work. Keep S03 open until HTTPS mapping and reachability can be verified.
 - `S03` Remote peer HTTP probing over SSH could not run because the existing client credential was refused; live interface-address probes, private-interface firewall allowances and real peer ping are applicable local network evidence.

@@ -3,9 +3,9 @@ tags:
   - '#reference'
   - '#monitor-delivery'
 date: '2026-10-02'
-modified: '2026-10-02'
+modified: '2026-11-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:ef45b9763f378b2c2656856b48dbeb6ec47de2deeccfefa6f1db3c0b8cb5cd5b'
+body_hash: 'sha256:7e4d656a0bced10292fca9960fd60dd934538d2814539c5ec58bdf66234fec3d'
 related:
   - "[[2026-09-30-monitor-browser-adr]]"
   - "[[2026-09-30-monitor-tooling-adr]]"
@@ -25,7 +25,7 @@ Reviewed `feature/monitor` at commit `1cb008754d9ecd05e04d255646647a5d3907a6ba` 
 
 ### Vite owns the only current server adapter
 
-`src/monitor/server/local-service.ts:497` registers the same middleware in Vite dev and preview. `:52` checks the socket peer, Host and matching Origin; `:175` restricts operations; `:207` recursively removes credentials. `:389` bounds requests with cancellation and path-specific deadlines. `:440` targets the discovered local service and retries authentication through health recovery. A production adapter must preserve these behaviors through one shared implementation. The binding and tailnet policy are settled by `2026-09-30-monitor-browser-adr`; the shared devserver harness is settled by `2026-09-30-monitor-tooling-adr`.
+`src/monitor/server/local-service.ts:497` registers the same middleware in Vite dev and preview. `:52` checks the socket peer, Host and matching Origin; `:175` restricts operations; `:207` recursively removes credentials. `:389` bounds requests with cancellation and path-specific deadlines. `:440` targets the discovered local service and retries authentication through health recovery. A production adapter must preserve these behaviors through one shared implementation. The binding and tailnet policy are settled by `2026-09-30-monitor-browser-adr`; the frontend home is settled by `2026-09-30-monitor-tooling-adr`.
 
 ### Service controls depend on the checkout rather than a portable installation
 

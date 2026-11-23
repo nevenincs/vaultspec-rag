@@ -3,9 +3,9 @@ tags:
   - '#reference'
   - '#automatic-merge-gate'
 date: '2026-10-09'
-modified: '2026-10-30'
+modified: '2026-11-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:3e114c2b0c663497dc109bff9400d9e5bc22c96fb079a316b61146c66dbaa82b'
+body_hash: 'sha256:29adc1ab7dfaf4ea4628406e8d928b6b56dffd41601300318a7703f37d0cef3a'
 related: []
 ---
 
@@ -21,4 +21,4 @@ Core isolates the attestation grant in a job with no checkout or repository writ
 
 RAG PR #596 at head `792d6694fde8a9787c16bb684d3c66f9e9a578c3` had a successful light dispatch and a later PR run with all measuring jobs skipped. The aggregate accepted the light success. The live protect-main ruleset requires the aggregate but has an administrator bypass. RAG also generated private pin proposals and required a separate reviewed catalog commit and verifier rerun, preventing unattended publication. Locators: `.github/workflows/release-please.yml:128`, `.github/workflows/merge-gate.yml:551`, `.github/workflows/binaries.yml:450`, `tools/monitor/pins.py:120`, `RELEASING.md:338`.
 
-RAG must retain CUDA/MPS proof, four-target native proof, one wheel build, draft-first publication, and separate PyPI and channel credentials. Core's full-dispatch, exact-head readiness, push candidate selection and isolated provenance job fit those constraints. The canonical generated Dev server workflow can be dispatched on the proposal branch without editing its shared template. Its actual exact-SHA verdict must participate in release readiness.
+RAG must retain CUDA/MPS proof, four-target native proof, one wheel build, draft-first publication, and separate PyPI and channel credentials. Core's full-dispatch, exact-head readiness, push candidate selection and isolated provenance job fit those constraints. Its actual exact-SHA verdict must participate in release readiness.

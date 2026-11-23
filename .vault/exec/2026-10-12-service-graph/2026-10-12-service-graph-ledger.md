@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#service-graph'
 date: '2026-10-12'
-modified: '2026-10-30'
+modified: '2026-11-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:8adfb1d74e6da272d0ef205d13d5fdb08cdfe681e55393ac980e0aa94d082db2'
+body_hash: 'sha256:b733f72cf4a4df4faac8ad2c21705eddfdc9c78c32dd4254b79434cd554122b2'
 related:
   - "[[2026-10-12-service-graph-plan]]"
 ---
@@ -120,7 +120,7 @@ related:
 - `S04` `verify:` `confirmation guard mutation fails then three restored states pass` -> `pass`
 - `S04` `verify:` `recovery changed-file format ty basedpyright each exit 0` -> `pass`
 - `S04` `verify:` `RAG Merge Gate 38303455264 attempt 2, runtime 7e3ccf33: Linux 3.13 8100 passed, Linux 3.14 8099 passed, Windows 8158 passed, package lint and dependency audit` -> `pass`
-- `S04` `verify:` `Dev Server 38303455322 and CodeQL on recovery head 7e3ccf33` -> `pass`
+- `S04` `verify:` `CodeQL on recovery head 7e3ccf33` -> `pass`
 
 ## Notes
 

@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#release-pr-identity'
 date: '2026-09-29'
-modified: '2026-10-18'
+modified: '2026-11-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:225f22c0654a8094b822a6f5b89cd721b7f2ae3a02a4ede9b6f5188cea4dbfa3'
+body_hash: 'sha256:94f71d93d291bce24f1ed504f9dd07adec5f6508da96d56abda5208742ac83bd'
 related:
   - "[[2026-09-29-release-pr-identity-research]]"
   - "[[2026-09-21-automatic-merge-gate-adr]]"
@@ -71,7 +71,7 @@ opposite premise, that default-token changes start no runs. Evidence:
   cut and in a job separate from the proposal, so a broken App never blocks a
   merged release.
 - Nothing but release-please writes the release branch, and nothing dispatches
-  a merge gate or Dev Server run for it. The `uv.lock` project version is bumped
+  a merge gate run for it. The `uv.lock` project version is bumped
   inside release-please's commit.
 - Amends `2026-10-09-automatic-merge-gate-autonomous-release-adr`: its
   release-branch dispatches are withdrawn; its proven cut and its reusable-call
@@ -86,9 +86,8 @@ release-please with that token and `skip-github-release`. The cut job keeps
 creating the tag and draft release with the default token after its own proof.
 `release-please-config.json` carries a TOML extra file for `uv.lock`. The
 lock-refresh steps and both release-branch dispatches are deleted. The merge
-gate keeps its reusable-call entry point, which the cut's proof uses, and its
-Dev Server proof reads the newest run on the exact commit from any event. The
-merge gate and the shared Dev Server workflow admit the App by the fleet's
+gate keeps its reusable-call entry point, which the cut's proof uses. The
+merge gate admits the App by the
 trusted-author clause, which names the owner, collaborators and
 `nevenincs-release[bot]`. The guards in
 `dev/guards/test_ci_release_please_prs.py`,
