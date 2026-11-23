@@ -459,32 +459,43 @@ def hold_within_budget(
     while holding nothing, and starts the ordered attempt over the moment
     that lock is free. A waiter therefore never holds an earlier lock - the
     store lifecycle lock above all - while another holder keeps a later one,
-    so its wait cannot stall anyone who needs only the earlier lock. Waiting
-    on the busy lock itself, rather than re-probing it on a timer, means a
-    holder that releases and retakes it continuously cannot keep every probe
-    landing inside its hold.
+    so its wait cannot stall anyone who needs only the earlier lock.
+
+    The busy lock is reserved before it is waited on, and stays reserved into
+    the next ordered attempt. Waiting on it alone is not enough: the waiter
+    has to let it go to take the earlier locks first, and holders that release
+    and retake it back to back take it again in that gap every time, so the
+    ordered attempt never finds it free. Under the reservation the present
+    holder finishes and nobody new takes the lock before the waiter returns.
+    Reservations are dropped the moment the first lock cannot be had, since
+    whoever holds it may be waiting behind one of them.
 
     With a run's *policy* each slice first delivers a pending pause or cancel
     and re-reads the durable no-progress budget, so a holder that never lets
     go ends the wait with the run's typed outcome instead of wedging it.
     Without one the wait is unbounded.
     """
-    while True:
-        wait = _lock_wait_slice(policy, description)
-        taken = 0
-        with ExitStack() as held:
-            for lock in locks:
-                if not lock.acquire(timeout=wait if taken == 0 else 0.0):
-                    break
-                held.callback(lock.release)
-                taken += 1
-            if taken == len(locks):
-                if policy is not None:
-                    policy.wait(0.0)
-                yield
-                return
-        if taken:
+    with ExitStack() as reservations:
+        while True:
+            wait = _lock_wait_slice(policy, description)
+            taken = 0
+            with ExitStack() as held:
+                for lock in locks:
+                    if not lock.acquire(timeout=wait if taken == 0 else 0.0):
+                        break
+                    held.callback(lock.release)
+                    taken += 1
+                if taken == len(locks):
+                    reservations.close()
+                    if policy is not None:
+                        policy.wait(0.0)
+                    yield
+                    return
+            if not taken:
+                reservations.close()
+                continue
             busy = locks[taken]
+            reservations.enter_context(busy.reserved())
             if busy.acquire(timeout=wait):
                 busy.release()
 

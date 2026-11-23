@@ -208,3 +208,47 @@ def test_a_reset_refuses_when_its_collections_change_while_it_takes_locks(
     assert store.client.collection_exists(created)
     assert _points(store, created) == 1
     assert _state(store, PublicSourceType.CODE) is None
+
+
+def test_a_reserved_lock_is_free_only_to_its_reserver_and_its_holder() -> None:
+    """A reservation keeps a free lock from everyone but the thread that made it.
+
+    This is what the load case above depends on, stated without load: on a
+    host whose scheduler never hands a released lock to the waiter, that case
+    is the only other evidence, and it fails by timing out.
+
+    Mutation: letting ``acquire`` skip the wait on another thread's
+    reservation failed this test on the first assertion, the free lock being
+    taken by the other thread; restoring the wait passed.
+    """
+    from .._store_locks import StoreLock
+
+    lock = StoreLock()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with lock.reserved():
+            assert not _free_in_another_thread(executor, lock), (
+                "a thread without the reservation took the reserved lock"
+            )
+            assert lock.acquire(timeout=0.0), "the reserver was kept from its lock"
+            lock.release()
+        assert _free_in_another_thread(executor, lock), (
+            "the lock stayed closed after its reservation ended"
+        )
+
+        def hold_and_reenter(reserved: threading.Event, go: threading.Event) -> bool:
+            with lock:
+                reserved.set()
+                go.wait(timeout=5.0)
+                reentered = lock.acquire(timeout=0.0)
+                if reentered:
+                    lock.release()
+                return reentered
+
+        holding, reserve_stands = threading.Event(), threading.Event()
+        holder = executor.submit(hold_and_reenter, holding, reserve_stands)
+        assert holding.wait(timeout=5.0)
+        with lock.reserved():
+            reserve_stands.set()
+            assert holder.result(timeout=5.0), (
+                "the holder was kept from re-entering its own lock"
+            )
