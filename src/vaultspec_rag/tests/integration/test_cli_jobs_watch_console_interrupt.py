@@ -31,7 +31,7 @@ from ._console_interrupt import (
     _interrupt_console_of,
 )
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.unit]
 
 # Leaving the live view is how an operator finishes with it, by Ctrl+C exactly
 # as by `q`. Nothing was asked for that was not delivered, so there is no

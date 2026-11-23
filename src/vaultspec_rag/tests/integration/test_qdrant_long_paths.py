@@ -28,7 +28,7 @@ from ._helpers import _get_ephemeral_qdrant_port, _resolve_host_provisioned_qdra
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.unit]
 
 
 def test_collection_create_succeeds_on_a_long_storage_path(tmp_path: Path) -> None:

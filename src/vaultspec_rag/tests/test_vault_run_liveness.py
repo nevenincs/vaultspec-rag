@@ -350,7 +350,7 @@ def test_completion_preserves_a_previously_latched_failure(
         assert checkpoint.run_policy.snapshot().expired
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 def test_actual_stream_and_payload_writes_receive_exact_checkpoint_policy(
     tmp_path: Path, unloaded_model: EmbeddingModel
 ) -> None:

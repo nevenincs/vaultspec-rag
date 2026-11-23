@@ -7,7 +7,7 @@ from typer.testing import CliRunner
 
 from ..cli import app
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.unit]
 
 runner = CliRunner()
 

@@ -289,7 +289,7 @@ class TestBoundedRetry:
         assert cause in str(failure.value)
         assert not sup.is_alive()
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     def test_readiness_timeout_with_a_live_child_quarantines_nothing(
         self,
         tmp_path: Path,

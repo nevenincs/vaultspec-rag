@@ -324,7 +324,7 @@ def _assert_resilience_cli_human(
 # server competing with a dozen parallel workers misses httpx's default
 # five-second read deadline often enough to fail a release gate, and the
 # deadline then measures the machine rather than the parity this asserts.
-@pytest.mark.integration
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("outcome_name", "error_kind", "expected_state", "expected_error_kind"),
     [

@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from ...job_models import JobSnapshot
     from ...service import ServiceRegistry
 
-pytestmark = [pytest.mark.integration, pytest.mark.timeout(600)]
+pytestmark = [pytest.mark.unit, pytest.mark.timeout(600)]
 
 
 def _succeeded(snapshot: JobSnapshot) -> bool:

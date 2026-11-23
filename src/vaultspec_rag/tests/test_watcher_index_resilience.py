@@ -49,7 +49,7 @@ if TYPE_CHECKING:
     from .._service_types import ProjectComputeRuntime
     from ..job_manager.state import AttemptExit
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.unit]
 
 
 @dataclass(frozen=True)

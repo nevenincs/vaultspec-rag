@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
 pytestmark = [
-    pytest.mark.integration,
+    pytest.mark.unit,
     pytest.mark.usefixtures("isolated_mcp_trust_home"),
 ]
 

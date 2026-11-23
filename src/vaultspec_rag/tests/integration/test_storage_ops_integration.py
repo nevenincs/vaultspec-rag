@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 
     from ...qdrant_runtime._supervise import QdrantSupervisor
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.unit]
 
 # Valid namespacing prefixes are r + 12 hex + _ (blake2b digest_size=6).
 _UNKNOWN_PREFIX = "rdeadbeefcafe_"

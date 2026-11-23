@@ -50,7 +50,7 @@ from .._watcher_fixtures import dirty_paths
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.unit]
 
 
 def _policy(root: Path):

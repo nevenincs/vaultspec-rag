@@ -45,7 +45,7 @@ from ...serviceclient._discovery import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.unit]
 
 _DEAD_PID = 2_000_000_000
 

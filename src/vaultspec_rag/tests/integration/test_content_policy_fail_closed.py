@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from ...indexer import CodebaseIndexer
     from ...store_runtime import VaultStore
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.unit]
 
 
 class PolicyBoundaryProject(TypedDict):

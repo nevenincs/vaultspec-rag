@@ -21,7 +21,7 @@ from ...service import ServiceRegistry
 from ...service_quiesce import ServiceQuiesceController
 from .._preprocess_approval import approve_preprocess_policy
 
-pytestmark = [pytest.mark.integration, pytest.mark.timeout(120)]
+pytestmark = [pytest.mark.unit, pytest.mark.timeout(120)]
 
 
 def _write_document_route(root: Path, extractor: Path) -> None:

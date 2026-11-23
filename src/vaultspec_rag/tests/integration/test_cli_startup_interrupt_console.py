@@ -36,7 +36,7 @@ from ._console_interrupt import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.unit]
 
 # Conventional interrupted status, 128 + SIGINT. Written out rather than read
 # from the entry point: the contract under test is this number, and the defect
