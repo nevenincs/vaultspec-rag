@@ -168,7 +168,7 @@ class DegradationReason(StrEnum):
                 "queued indexing jobs have nothing to start them"
             ),
             DegradationReason.JOBS_DEGRADED: "indexing jobs are degraded",
-            DegradationReason.JOB_FAILED: "the latest indexing job failed",
+            DegradationReason.JOB_FAILED: "a project's latest index run failed",
             DegradationReason.STALE_WATCHER_ROOTS: (
                 "watched project roots no longer exist"
             ),

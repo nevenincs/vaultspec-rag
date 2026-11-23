@@ -78,10 +78,8 @@ pytestmark = [pytest.mark.unit]
 _BURST_ATTEMPTS = 5
 
 
-@pytest.fixture
-def unloaded_model(clean_config: None) -> EmbeddingModel:
+def build_unloaded_model() -> EmbeddingModel:
     """Construct the real encoder state without loading or forwarding a model."""
-    del clean_config
     config = get_config(
         {"embedding_dimension": 2, "qdrant_url": None, "sparse_enabled": False}
     )
@@ -90,6 +88,13 @@ def unloaded_model(clean_config: None) -> EmbeddingModel:
     model._device = "unloaded"
     model._init_encode_state(config)
     return model
+
+
+@pytest.fixture
+def unloaded_model(clean_config: None) -> EmbeddingModel:
+    """The real encoder state of :func:`build_unloaded_model`, on clean config."""
+    del clean_config
+    return build_unloaded_model()
 
 
 @contextmanager
@@ -130,7 +135,11 @@ def _running(
 def _open_code(
     indexer: CodebaseIndexer, context: JobAttemptContext
 ) -> CodeRunCheckpoint:
-    return indexer._lifecycle.open_checkpoint(
+    """Open a code rebuild and reset its source, as the full entry does."""
+    from .._source_types import PublicSourceType
+    from ..indexer._rebuild_lifecycle import reset_selected_sources
+
+    checkpoint = indexer._lifecycle.open_checkpoint(
         CodeGenerationOpenRequest(
             policy=resolve_index_policy(
                 indexer.root_dir,
@@ -151,6 +160,13 @@ def _open_code(
             authority=context.authority,
         )
     )
+    reset_selected_sources(
+        indexer.store,
+        PublicSourceType.CODE,
+        generation_id=checkpoint.generation_id,
+        run_control=context.control,
+    )
+    return checkpoint
 
 
 def _commit(
@@ -182,7 +198,6 @@ def _commit(
         partial(
             indexer.store.upsert_code_chunks,
             [chunk],
-            collection=indexer._lifecycle.active_build_target,
             write_policy=checkpoint.run_policy.store_write_policy,
         ),
         checkpoint.mutation_lifecycle_for_units((unit,)),
@@ -393,10 +408,6 @@ async def test_reconciliation_and_finalization_publish_actual_boundaries(
             checkpoint = _open_code(indexer, context)
             _commit(indexer, checkpoint, 0, end=True)
             before = _live(context)
-            # Reconciliation looks up the concrete destination collection.
-            target = indexer._lifecycle.active_build_target
-            assert target is not None
-            store.CODE_TABLE_NAME = target
             await asyncio.sleep(1.05)
             assert (
                 reconcile_origin_after_destination(
@@ -415,7 +426,6 @@ async def test_reconciliation_and_finalization_publish_actual_boundaries(
             )
             indexer._lifecycle.publish(
                 checkpoint,
-                build_target=target,
                 reporter=NullProgressReporter(),
                 phase_label="CPU publication",
             )
@@ -630,7 +640,6 @@ async def test_late_control_cannot_claim_a_previous_publication(
         _commit(indexer, previous, 0, end=True)
         indexer._lifecycle.publish(
             previous,
-            build_target=indexer._lifecycle.active_build_target,
             reporter=NullProgressReporter(),
             phase_label="previous publication",
         )

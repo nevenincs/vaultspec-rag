@@ -25,7 +25,11 @@ import pytest
 pytestmark = [pytest.mark.unit]
 
 # Assembled rather than written literally, so this guard does not match itself.
-_NEEDLES = ("monkeypatch." + "setattr", "monkeypatch." + "delattr")
+# The receiver is deliberately not named: a ``monkeypatch.context()`` block, a
+# ``pytest.MonkeyPatch`` instance and a bare ``MonkeyPatch()`` all substitute
+# through the same two methods, and naming only the fixture lets any other
+# receiver hide a site from the count.
+_NEEDLES = ("." + "setattr(", "." + "delattr(")
 
 # Path relative to the tests package -> (count, why it could not be driven for
 # real). The reason belongs at the call site too; it is repeated here so a
@@ -293,18 +297,6 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "fetch the server runs the real provisioner against a stand-in "
         "release served from a loopback source",
     ),
-    "test_publication_scaling.py": (
-        1,
-        "observation, not substitution: the replacement opens the real ledger "
-        "connection and only attaches a trace callback and a progress handler "
-        "to it, so every statement counted is one production actually issued "
-        "and every instruction counted is one it actually retired. Those "
-        "counts are the assertions - they are what prove a scoped publication "
-        "examines the same number of rows whatever the parent's size - and "
-        "SQLite reports both to connection-level callbacks or not at all. One "
-        "site, not two: both seams are patched from a single helper, because "
-        "patching either alone leaves the other untraced",
-    ),
     "test_quiesce_abort_recovery.py": (
         4,
         "wraps the quiesce controller's abort_pause, and the atomic-write "
@@ -412,16 +404,6 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "establish that on a variably loaded runner. Holder classification, "
         "exclusions and parent pairing remain production behaviour",
     ),
-    "test_generation_survey.py": (
-        1,
-        "root-scoped scheduling instrumentation: the wrapper calls through to "
-        "the real publication-snapshot acquisition and then, only on its "
-        "first hit for the root under test, reserves a real conflicting "
-        "receipt - and for one phase rolls it back - in the gap between "
-        "acquisition and validation. Live survey and publication traffic "
-        "cannot be scheduled to land a conflicting write in that exact gap on "
-        "demand; every proof, ledger and survey operation involved is real",
-    ),
     "test_job_progress_durability.py": (
         1,
         "pins the progress flush budget so the publish under test lands inside "
@@ -468,9 +450,9 @@ _ALLOWED: dict[str, tuple[int, str]] = {
     ),
     "test_cli_storage_generation_diagnostics.py": (
         3,
-        "a unit-level CLI JSON round-trip needs specific generation facts - "
-        "unattributed, unreadable, empty and debt namespaces, and malformed "
-        "model maps - behind the service transport, so the admin fetch is "
+        "a unit-level CLI JSON round-trip needs specific survey facts - "
+        "stamped and malformed model maps, per-kind counts and published "
+        "temp-root facts - behind the service transport, so the admin fetch is "
         "replaced with a canned survey payload; reaching the same conditions "
         "through a live server needs a populated GPU-backed backend the unit "
         "tier does not have, and the separate subprocess survey test drives "
@@ -508,21 +490,14 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "verb, including the whole render and envelope path the assertions "
         "read",
     ),
-    "test_donor_admission.py": (
-        12,
-        "isolates the real admission ranking and gate logic from the "
-        "manifest, git, store-transport and settings boundaries it reads, "
-        "because the bounded-inspection-window and family/newest/prefix "
-        "ordering are proved against a hundred synthetic donor candidates "
-        "with controlled per-candidate failures - an absent or unreadable "
-        "pointer, an absent or unreadable proof, a capability refusal, an "
-        "unsupported collection. Building a hundred real donor projects and "
-        "git repositories, and forcing each one's publication reads to fail "
-        "on demand, is not something a unit test can construct. Only the "
-        "manifest load, prefix derivation, pointer and proof readers, git "
-        "lookup, model identity, vector schema and config accessors are "
-        "replaced; the ranking, gating, inspection-bounding and vector "
-        "adoption logic under test run unchanged",
+    "test_watcher_start_contract.py": (
+        1,
+        "makes path resolution raise an operating-system error inside the root "
+        "identity helper. Resolution that is not strict swallows every "
+        "filesystem error on Windows, so no root string reaches that branch "
+        "there, and on POSIX only a removed working directory does, which a "
+        "suite sharing one process-wide directory cannot stage; the HTTP route, "
+        "its error mapping and the unchanged watcher lifecycle state are real",
     ),
     "test_install_torch_config.py": (
         1,
@@ -811,8 +786,11 @@ def test_no_test_substitutes_production_behaviour_undeclared() -> None:
 
     Proven able to fail: adding a ``monkeypatch.setattr`` anywhere under the
     tests package fails on the unexpected-site assertion naming that file;
-    removing it restores the pass. Raising a declared count has the same
-    effect through the count comparison.
+    removing it restores the pass. The same holds for the form that names no
+    fixture, ``with monkeypatch.context() as patch: patch.setattr(...)``: a
+    site written that way in a file with no declaration fails on the same
+    assertion. Raising a declared count has the same effect through the count
+    comparison.
     """
     found = _substitution_counts()
     expected = {name: count for name, (count, _reason) in _ALLOWED.items()}

@@ -264,7 +264,7 @@ def test_offline_verification_omits_disabled_reranker_marker(
         detail = _verify_offline_service_startup(log_path, [])
 
     assert "EmbeddingModel loaded" in detail
-    assert "Shared CrossEncoder loaded on" not in detail
+    assert "CrossEncoder reranker loaded on" not in detail
 
 
 @pytest.mark.parametrize(

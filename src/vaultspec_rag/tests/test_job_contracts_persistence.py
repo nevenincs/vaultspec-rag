@@ -650,6 +650,7 @@ class TestPersistedJobStateSchemaContract:
             "reuse",
             "drift",
             "gpu_lock_wait_seconds",
+            "rebuild_generation_id",
             "progress",
             "parent_job_id",
             "admission_acquired_at",
@@ -661,6 +662,7 @@ class TestPersistedJobStateSchemaContract:
         assert loaded.reuse is None
         assert loaded.drift is None
         assert loaded.gpu_lock_wait_seconds is None
+        assert loaded.rebuild_generation_id is None
         assert loaded.progress is None
         assert loaded.attempt.parent_job_id is None
         assert loaded.timestamps.admission_acquired_at is None

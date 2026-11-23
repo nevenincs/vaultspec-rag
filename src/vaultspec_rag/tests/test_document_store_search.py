@@ -38,5 +38,8 @@ def test_document_filter_targets_only_declared_indexed_fields() -> None:
     ]
 
 
-def test_unknown_document_filter_does_not_become_store_predicate() -> None:
-    assert _VaultSearchMixin._build_document_filter({"unknown": "value"}) is None
+def test_unknown_document_filter_is_refused_not_dropped() -> None:
+    from ..search._validation import UnknownFilterKeyError
+
+    with pytest.raises(UnknownFilterKeyError):
+        _VaultSearchMixin._build_document_filter({"unknown": "value"})

@@ -26,6 +26,36 @@ the same values without recalculating state, age, deadlines, or pressure.
 `256`. The response includes `controllers_total`, `controllers_returned`,
 `controllers_truncated`, and the applied `filters`.
 
+## Stopping updates for one project
+
+`vaultspec-rag server updates stop PATH` stops one project's updates and records the stop.
+The record lives in `auto-update.json` in the managed service directory, never in the
+project. While it stands:
+
+- searches, index requests and repository enrolment do not start the project's watcher;
+- `server updates timing PATH` refuses with status `disabled_by_operator` and names the
+  start command;
+- a confirmed stale search hit is still reported, but the service requests no repair job.
+  The response's `drift_audit` entry for that source reads `deferred` with reason
+  `auto_update_disabled`;
+- explicit `index` requests run as usual.
+
+The stop survives service restarts, `server updates prune`, and deletion of the project
+directory. Only `vaultspec-rag server updates start PATH` clears it. Stopping a project
+with no running watcher still records the stop and reports `already_stopped`.
+`watch_enabled = false` still turns off every project, whether or not it was stopped.
+
+`GET /watcher` lists stopped projects in `auto_update_disabled`, with
+`auto_update_disabled_total`, bounded by `limit` and filtered by `root`. With
+`project_root`, it also reports that project's `auto_update` as `enabled`, `disabled`,
+or `unverifiable`. Service state carries the same value in `root_features.auto_update`.
+
+If `auto-update.json` cannot be read, the service starts no new watcher for any project.
+Watchers that are already running keep running. `auto_update_store` reports `unverifiable`
+with the file path and reason, and `server updates stop` and `start` refuse with
+`auto_update_store_unverifiable` rather than overwrite it. Repair or remove the file. The
+service reads it again within 30 seconds.
+
 ## Controller identity and fields
 
 Each controller owns one canonical project root and one source: `code`, `vault`, or `document`.
@@ -170,6 +200,12 @@ prevents path loss and duplicate consumption.
 
 Persisted scope and retry state survive service restart. Generation fencing prevents a
 stale job or callback from publishing over a newer attempt.
+
+An explicit rebuild that resets a source stops any automatic update writing to it at that
+update's next write. The update ends with `error_kind=index_transition`. That is not counted as
+a failure: the retry state keeps its exact changed paths, adds no failure, leaves the circuit
+closed, and holds the next attempt off for the base retry delay so it does not spin against the
+running rebuild. Service health does not degrade for it.
 
 ## Refusals and remediation
 

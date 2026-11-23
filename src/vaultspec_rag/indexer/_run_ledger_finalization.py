@@ -22,7 +22,8 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import TypedDict
 
-    from ._run_ledger_models import GenerationRow, RunGeneration
+    from ._run_ledger_models import RunGeneration
+    from ._run_ledger_schema import GenerationRow
 
     class _RelPathRow(TypedDict):
         """A single ``rel_path`` column, read across finalization guards."""

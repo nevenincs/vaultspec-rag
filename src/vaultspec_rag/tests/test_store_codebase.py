@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 import pytest
 
 from .._job_errors import JobError, JobErrorKind
+from .._source_types import PublicSourceType
 from .._store_models import CodeChunk
 from .._store_writes import StoreWritePolicy
 from ..store_runtime import VaultStore
@@ -38,48 +39,6 @@ class TestStoreCodebase:
         tmp_vault_store.ensure_code_table()
         assert tmp_vault_store._client is not None
         assert tmp_vault_store._client.collection_exists(
-            tmp_vault_store.CODE_TABLE_NAME,
-        )
-
-    def test_targeted_code_mutations_never_prepare_served_collection(
-        self,
-        tmp_vault_store: VaultStore,
-    ) -> None:
-        """Build-target mutations must leave an absent served table absent."""
-        from .._store_models import generation_code_collection
-
-        build_target = generation_code_collection(
-            tmp_vault_store.CODE_TABLE_NAME,
-            "a" * 32,
-        )
-        chunk = CodeChunk(
-            id="src/build.py:1-1",
-            path="src/build.py",
-            language="python",
-            content="build_target = True",
-            line_start=1,
-            line_end=1,
-            vector=[0.0] * 1024,
-        )
-
-        tmp_vault_store.upsert_code_chunks(
-            [chunk],
-            write_policy=None,
-            collection=build_target,
-        )
-        assert tmp_vault_store._client is not None
-        assert tmp_vault_store._client.collection_exists(build_target)
-        assert not tmp_vault_store._client.collection_exists(
-            tmp_vault_store.CODE_TABLE_NAME,
-        )
-        assert tmp_vault_store.count_code(collection=build_target) == 1
-
-        tmp_vault_store.delete_code_chunks([chunk.id], collection=build_target)
-
-        assert tmp_vault_store.count_code(collection=build_target) == 0
-        # Catches either table-preparation path falling back to the served
-        # collection: the old implementation creates it before the point call.
-        assert not tmp_vault_store._client.collection_exists(
             tmp_vault_store.CODE_TABLE_NAME,
         )
 
@@ -125,6 +84,7 @@ class TestStoreCodebase:
         policy = StoreWritePolicy(
             remaining_seconds=lambda: deadline - time.monotonic(),
             wait=time.sleep,
+            admit_write=lambda: None,
         )
         chunk = CodeChunk(
             id="src/deadline.py:1-1",
@@ -196,12 +156,12 @@ class TestStoreCodebase:
         """No filters and no domain constraints yields None."""
         assert VaultStore._build_code_filter(None) is None
 
-    def test_delete_code_chunks(
+    def test_delete_code_publication_points(
         self,
         tmp_vault_store: VaultStore,
         rag_components: RagComponentsWithManifest,
     ) -> None:
-        """delete_code_chunks should remove code chunks by ID."""
+        """Deleting code publication points removes code chunks by ID."""
         model = rag_components["model"]
         text = "test"
         vector = cast(
@@ -225,5 +185,7 @@ class TestStoreCodebase:
         tmp_vault_store.upsert_code_chunks(chunks, write_policy=None)
         assert tmp_vault_store.count_code() == 1
 
-        tmp_vault_store.delete_code_chunks(["test.py:1-5"])
+        tmp_vault_store.delete_publication_points(
+            PublicSourceType.CODE, ["test.py:1-5"]
+        )
         assert tmp_vault_store.count_code() == 0

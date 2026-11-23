@@ -29,7 +29,6 @@ from ._auth import require_token
 if TYPE_CHECKING:
     from starlette.requests import Request
 
-    from ..generation_survey import RootGenerations
     from ..storage_survey import NamespaceSurvey
 
 __all__ = [
@@ -110,16 +109,6 @@ def _shape_survey_payload(request: _SurveyPayloadRequest) -> dict[str, Any]:
     list. ``total`` always counts the post-filter namespaces, so under a
     root (or status) filter it is not the server-wide count.
 
-    Each namespace also reports ``served_code_collection`` and
-    ``unreferenced_generations``. Both are ``null`` - never ``[]`` - for a
-    namespace with no attributed root, and for a root whose served pointer
-    could not be read. That distinction is part of the contract and an adapter
-    must carry it through rather than default it: ``null`` means nothing is
-    known about this root, ``[]`` means the root is known to be carrying
-    nothing. Coercing the first into the second reports an offline share or a
-    permissions blip as a clean bill of health, which is precisely the evidence
-    a later reclamation pass must never be handed.
-
     ``totals`` also carries ``collections`` - the total Qdrant collection
     count across every surveyed namespace, distinct from ``namespaces`` (one
     namespace can hold several collections) - ``ephemeral_backlog_bytes``,
@@ -140,8 +129,7 @@ def _shape_survey_payload(request: _SurveyPayloadRequest) -> dict[str, Any]:
         request.surveys, request.status_filter, request.root
     )
     bounded = surveys[: request.limit]
-    generations = _generation_reports(bounded)
-    namespaces = [_namespace_entry(s, generations.get(s.root or "")) for s in bounded]
+    namespaces = [_namespace_entry(s) for s in bounded]
     totals = _backend_rollup(request.surveys)
     if request.source == "disk":
         count_fields = ("points", "vault_points", "code_points", "document_points")
@@ -213,32 +201,8 @@ def _filtered_surveys(
     return [s for s in surveys if s.prefix == prefix], queried_root
 
 
-def _generation_reports(
-    bounded: list[NamespaceSurvey],
-) -> dict[str, RootGenerations]:
-    """Report which code collection each root serves, and what nothing points at.
-
-    Reported only: dropping one needs a granularity the prefix-scoped delete
-    does not have, and a definition of when no reader still holds it. A root
-    whose pointer could not be read contributes no entry at all, so it
-    surfaces as "nothing known" rather than as debt something might later act
-    on.
-    """
-    from .. import store_schema
-    from ..generation_survey import survey_generations
-
-    served = {
-        s.root: f"{s.prefix}{store_schema.CODE_COLLECTION}" for s in bounded if s.root
-    }
-    known = [name for s in bounded for name in s.collections]
-    return {report.root: report for report in survey_generations(served, known)}
-
-
-def _namespace_entry(
-    survey: NamespaceSurvey, generations: RootGenerations | None
-) -> dict[str, Any]:
+def _namespace_entry(survey: NamespaceSurvey) -> dict[str, Any]:
     """Shape one namespace as the route reports it."""
-    from ..generation_survey import generation_fields
     from ..storage_survey import namespace_temp_rooted
 
     return {
@@ -258,7 +222,6 @@ def _namespace_entry(
         # thing it can say about what made it.
         "models": survey.models,
         "temp_rooted": namespace_temp_rooted(survey),
-        **generation_fields(generations),
     }
 
 

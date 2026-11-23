@@ -26,7 +26,9 @@ from .models import MAX_RECORDS, QuiescedDispatchClaim
 from .state import (
     CONFIGURED_STATE_PATH,
     MANAGED_STATE_FILENAME,
+    AdmissionSlot,
     ConfiguredStatePath,
+    JobChangeNotifier,
     JobDispatchBinding,
     ManagedJob,
 )
@@ -92,6 +94,11 @@ class JobManager(
         self._flushed_generation = 0
         self._last_flush_monotonic = float("-inf")
         self._active: dict[str, ManagedJob] = {}
+        # Attempts waiting for their admission slot, in arrival order. Live
+        # process state only: it is never persisted, and a restart recovers
+        # its former members through the ordinary interrupted path.
+        self._admission_waiters: dict[str, AdmissionSlot] = {}
+        self._job_changes = JobChangeNotifier()
         self._terminal: deque[ManagedJob] = deque()
         self._dispatchers: dict[str, JobDispatchBinding] = {}
         self._next_dispatch_binding_nonce = 0

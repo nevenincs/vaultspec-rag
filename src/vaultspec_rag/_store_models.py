@@ -18,14 +18,12 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, cast
 
-from ._atomic_write import write_json_atomically
 from ._domain import classify_domain
+from ._job_errors import JobError, JobErrorKind
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
-
     from . import store_schema
     from ._markdown_passages import Passage
 
@@ -538,15 +536,21 @@ def _code_chunk_payload(chunk: CodeChunk) -> store_schema.CodeChunkPayload:
     }
 
 
-#: File holding the per-root pointer to the collection currently serving code
-#: reads. Its absence is the normal state for a root that has never published a
-#: replacement generation, and resolves to the derived name.
+#: File holding the per-root pointer a build before the canonical-collection
+#: layout wrote to name the code collection it served. Nothing writes it any
+#: more; its absence resolves to the derived name, which is the only code
+#: collection a reset recreates.
 SERVED_CODE_POINTER_FILE = "code_served_collection.json"
 _GENERATION_TOKEN_MAX_LENGTH = 16
 
 
 def code_collection_matches_derived(collection: str, derived_name: str) -> bool:
-    """Accept only the base collection or one suffix minted by the writer."""
+    """Accept the derived name or one historical generation name minted from it.
+
+    A historical generation is the derived name, ``_g``, and one alphanumeric
+    token of at most sixteen characters. Anything else that merely starts with
+    the derived name is not this root's code collection.
+    """
     if collection == derived_name:
         return True
     prefix = derived_name + "_g"
@@ -569,14 +573,11 @@ def root_code_collection_names(root_dir: pathlib.Path | str) -> tuple[str, str]:
 def _root_owned_code_collection(
     root_dir: pathlib.Path | str,
     collection: str,
-    derived_name: str | None = None,
+    derived_name: str,
 ) -> bool:
-    owned = root_code_collection_names(root_dir)
-    candidates = owned if derived_name is None else (derived_name,)
-    return any(
-        base in owned and code_collection_matches_derived(collection, base)
-        for base in candidates
-    )
+    return derived_name in root_code_collection_names(
+        root_dir
+    ) and code_collection_matches_derived(collection, derived_name)
 
 
 def served_code_pointer_path(root_dir: pathlib.Path | str) -> pathlib.Path:
@@ -591,21 +592,43 @@ class ServedPointer(NamedTuple):
     """What a root's served-collection pointer says, and whether it was verified.
 
     The two ``None`` cases are not the same fact and must never be collapsed.
-    ``collection is None`` with ``verifiable`` true means no replacement was
-    ever published, so the derived name is authoritative. ``verifiable`` false
-    means the pointer is unreadable, malformed, or names an unowned collection,
-    so absence of a published generation is not proven.
+    ``collection is None`` with ``verifiable`` true means no pointer exists, so
+    the derived name is authoritative. ``verifiable`` false means the pointer
+    is unreadable, malformed, or names an unowned collection, so which
+    collection the root serves is not established.
 
     Reading matters little: both fall back to the derived name, which is the
     safe direction. Deletion matters entirely. A consumer that treats an
     unreadable pointer as "nothing points here" would take a live served
-    collection for an unreferenced one, which is the reason the storage rules
-    require the grace clock to reset on any unverifiable observation rather
-    than treat it as evidence.
+    collection for an unreferenced one, so a reset or an archive refuses on it
+    and a donor lookup skips it. The one exception is a pointer naming this
+    root's code collection under the other backend, which
+    :func:`other_backend_code_pointer` recognises: every such consumer takes the
+    derived name, and only a reset retires the pointer.
+    :func:`established_served_code_collection` applies both rules.
     """
 
     collection: str | None
     verifiable: bool
+
+
+def _pointer_name(path: pathlib.Path) -> tuple[bool, str | None]:
+    """Return whether the pointer file exists and the name it holds.
+
+    The name is ``None`` when the file is unreadable, malformed, or holds no
+    string ``collection``; only the first element proves absence.
+    """
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return False, None
+    except (OSError, ValueError) as exc:
+        logger.debug("served-collection pointer %s unreadable: %s", path, exc)
+        return True, None
+    if not isinstance(raw, dict):
+        return True, None
+    name = cast("dict[str, object]", raw).get("collection")
+    return True, name if isinstance(name, str) else None
 
 
 def read_served_pointer(
@@ -614,43 +637,92 @@ def read_served_pointer(
 ) -> ServedPointer:
     """Read a root-owned pointer for the configured or explicitly named backend."""
     path = served_code_pointer_path(root_dir)
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
+    present, name = _pointer_name(path)
+    if not present:
         return ServedPointer(collection=None, verifiable=True)
-    except (OSError, ValueError) as exc:
-        logger.debug("served-collection pointer %s unreadable: %s", path, exc)
-        return ServedPointer(collection=None, verifiable=False)
-    if not isinstance(raw, dict):
-        return ServedPointer(collection=None, verifiable=False)
-    name = cast("dict[str, object]", raw).get("collection")
     if derived_name is None:
         from .config._settings import get_config
 
         derived_name = root_code_collection_names(root_dir)[
             bool(get_config().qdrant_url)
         ]
-    if isinstance(name, str) and _root_owned_code_collection(
-        root_dir, name, derived_name
-    ):
+    if name is not None and _root_owned_code_collection(root_dir, name, derived_name):
         return ServedPointer(collection=name, verifiable=True)
     logger.debug("served-collection pointer %s has an unowned or invalid name", path)
     return ServedPointer(collection=None, verifiable=False)
 
 
-def read_served_code_collection(
+def other_backend_code_pointer(
     root_dir: pathlib.Path | str,
-    derived_name: str | None = None,
+    derived_name: str,
 ) -> str | None:
-    """Return the collection *root_dir* publishes code reads against.
+    """Return the pointer's name when it names this root's other-backend code.
 
-    ``None`` covers both "never published" and "could not be read", because a
-    reader treats them identically: fall back to the derived name rather than
-    resolve to nothing and read an absent collection. A caller deciding
-    anything destructive must use :func:`read_served_pointer` instead, which
-    keeps the two apart.
+    A backend migration before the canonical layout could leave the pointer
+    naming the code collection this root owned under the backend it migrated
+    away from. That name lives in the other backend's storage, so for the
+    backend *derived_name* belongs to the pointer says nothing about which
+    collection is served: reads already fall back to the derived name, and
+    a reset of this backend may retire the pointer without touching the
+    named collection. Any other unverifiable pointer returns ``None`` and
+    keeps refusing deletion.
     """
-    return read_served_pointer(root_dir, derived_name).collection
+    names = root_code_collection_names(root_dir)
+    if derived_name not in names:
+        return None
+    other = names[1] if derived_name == names[0] else names[0]
+    _present, name = _pointer_name(served_code_pointer_path(root_dir))
+    if name is not None and code_collection_matches_derived(name, other):
+        return name
+    return None
+
+
+class ServedPointerUnverifiableError(JobError):
+    """Which code collection a root serves cannot be established.
+
+    The root's served-collection pointer is unreadable, malformed, or names a
+    collection this root does not own under either backend. Anything that
+    would delete, archive, or donate code on that reading refuses instead,
+    so nothing is touched.
+    """
+
+    pointer_path: str
+
+    def __init__(self, pointer_path: str) -> None:
+        self.pointer_path = pointer_path
+        super().__init__(
+            JobErrorKind.SERVED_POINTER_UNVERIFIABLE,
+            f"no verifiable served pointer at {pointer_path}: it is unreadable "
+            "or names a collection this project does not own",
+        )
+
+    def __reduce__(self) -> tuple[type[ServedPointerUnverifiableError], tuple[str]]:
+        # The message carries the kind prefix; rebuild from the path instead.
+        return type(self), (self.pointer_path,)
+
+
+def established_served_code_collection(
+    root_dir: pathlib.Path | str,
+    derived_name: str,
+) -> str:
+    """Return the code collection *root_dir* serves under *derived_name*'s backend.
+
+    For consumers that act on the answer: a reset, an archive, a donor
+    lookup. An absent pointer, or one naming this root's code collection
+    under the other backend, establishes the derived name; an owned
+    historical pointer establishes the generation it names. Reading never
+    changes the pointer.
+
+    Raises:
+        ServedPointerUnverifiableError: any other pointer, so what the root
+            serves is not established.
+    """
+    pointer = read_served_pointer(root_dir, derived_name)
+    if pointer.verifiable:
+        return pointer.collection or derived_name
+    if other_backend_code_pointer(root_dir, derived_name) is not None:
+        return derived_name
+    raise ServedPointerUnverifiableError(str(served_code_pointer_path(root_dir)))
 
 
 def resolve_served_code_collection(
@@ -659,112 +731,21 @@ def resolve_served_code_collection(
 ) -> str:
     """Return the collection code reads resolve to for *root_dir*.
 
-    Every read path goes through this rather than deriving the name, so a
-    published replacement takes effect for readers at the moment the pointer
-    moves and not before. Absent a pointer the derived name is returned
-    unchanged. This is the bootstrap collection for a root that has not yet
-    published its first generation; publication proof, not this resolver,
-    decides whether its contents are readable.
+    A root a build before the canonical layout left serving a generation keeps
+    reading it until an explicit code reset of that root discards it; every
+    other root, and any pointer that cannot be verified, reads the derived
+    name. Publication proof, not this resolver, decides whether the contents
+    are readable.
     """
-    return read_served_code_collection(root_dir, derived_name) or derived_name
+    return read_served_pointer(root_dir, derived_name).collection or derived_name
 
 
-def publish_served_code_collection(
-    root_dir: pathlib.Path | str,
-    collection: str,
-) -> None:
-    """Point *root_dir*'s code reads at *collection*.
+def retire_served_code_pointer(root_dir: pathlib.Path | str) -> None:
+    """Return *root_dir*'s code reads to the derived name.
 
-    Written to a temporary file and moved into place, so a reader never
-    observes a partially written pointer and a crash mid-write leaves the
-    previous one intact.
+    A reset discards every code collection the root owns and recreates only the
+    derived one, so a pointer naming anything else would address a collection
+    that no longer exists. Removing it is idempotent: an absent pointer already
+    resolves to the derived name.
     """
-    if not _root_owned_code_collection(root_dir, collection):
-        raise ValueError("collection must be a root-owned code collection")
-    write_json_atomically(
-        served_code_pointer_path(root_dir), {"collection": collection}
-    )
-
-
-def generation_code_collection(derived_name: str, generation_id: str) -> str:
-    """Return the collection a rebuild generation writes into.
-
-    A generation writes to its own name so the collection currently serving
-    reads is untouched for the duration of the build, and so an interrupted
-    build leaves an unreferenced collection rather than a truncated served
-    one.
-
-    The generation identifier is part of the name because names must never be
-    reused. Local mode pops a deleted collection's in-memory handle while its
-    on-disk directory survives, and a create under the same name re-reads that
-    directory - so reusing a name would deliver a superseded generation's
-    points into its successor. A fresh name cannot collide with a directory
-    that outlived its collection.
-    """
-    if not derived_name:
-        raise ValueError("derived_name must be a non-empty name")
-    token = "".join(ch for ch in generation_id if ch.isalnum())
-    if not token:
-        raise ValueError("generation_id must contain alphanumeric characters")
-    return f"{derived_name}_g{token[:_GENERATION_TOKEN_MAX_LENGTH]}"
-
-
-def publish_generation_as_served(
-    root_dir: pathlib.Path | str,
-    *,
-    collection: str,
-    record_breadth: Callable[[], None],
-) -> None:
-    """Make *collection* the served one, but only once its breadth is recorded.
-
-    The ordering is the whole point and it is one-way: breadth first, pointer
-    second. A pointer moved ahead of the record names a collection whose
-    published figure is missing or stale, and the completeness predicate reads
-    that as a shortfall - so a correct, complete generation would be treated as
-    truncated and drive a reconcile on every later run.
-
-    ``record_breadth`` raising leaves the pointer where it was, which keeps the
-    previous generation serving. That is the safe direction: a build whose
-    breadth could not be recorded has not proven what it holds, and serving the
-    older complete collection is better than serving an unverified one.
-    """
-    if not _root_owned_code_collection(root_dir, collection):
-        raise ValueError("collection must be a root-owned code collection")
-    record_breadth()
-    publish_served_code_collection(root_dir, collection)
-
-
-def reclaimable_generation_collections(
-    *,
-    existing: Iterable[str],
-    served: Iterable[str],
-) -> tuple[str, ...]:
-    """Return generation collections no root's pointer names any more.
-
-    Reclamation is decided by reference, not by age: a collection is safe to
-    drop precisely when nothing points at it. An interrupted build leaves one
-    of these behind, which is the intended outcome - the fragment is
-    unreferenced rather than serving.
-
-    Two exclusions carry the safety. A served name is never returned, however
-    old it looks, because dropping what a pointer names is the destructive
-    publication this design removes. A name without a generation suffix is
-    never returned either: those are the derived base names, and a root
-    between publications is served by one.
-
-    The caller supplies both sets, so this decides nothing about what exists -
-    it only says which of the names it was given have lost their last
-    reference.
-    """
-    served_names = set(served)
-    return tuple(
-        name
-        for name in existing
-        if name not in served_names and _is_generation_collection(name)
-    )
-
-
-def _is_generation_collection(name: str) -> bool:
-    """Return whether *name* was minted for one generation rather than derived."""
-    base, separator, token = name.rpartition("_g")
-    return bool(base) and bool(separator) and bool(token) and token.isalnum()
+    served_code_pointer_path(root_dir).unlink(missing_ok=True)

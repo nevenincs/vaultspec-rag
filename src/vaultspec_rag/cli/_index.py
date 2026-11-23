@@ -25,6 +25,7 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
+from .._job_errors import JobError, remediation
 from .._operator_commands import (
     IndexCommandOptions,
     index_command,
@@ -1125,6 +1126,8 @@ def _collect_index_rows(
                 preprocess_skipped=result.preprocess_skipped,
                 preprocess_failures=result.preprocess_failures,
             )
+        if source == "document":
+            row["metadata_non_string"] = dict(result.metadata_non_string)
         if result.reuse is not None:
             row["reuse"] = result.reuse
         rows.append(row)
@@ -1340,6 +1343,19 @@ def handle_clean(
                 ],
             )
         _plain(_format_local_index_busy_message("clean the index"))
+        raise typer.Exit(code=1) from None
+    except JobError as exc:
+        remedy = remediation(exc.error_kind)
+        _display_service_error(
+            {
+                "error": exc.error_kind.value,
+                "message": exc.detail,
+                "clean_type": source.value,
+                "remediation": [remedy] if remedy else None,
+            },
+            json_mode=json_mode,
+            command="clean",
+        )
         raise typer.Exit(code=1) from None
 
     cleared = [s.lower() for s in cleared_raw]

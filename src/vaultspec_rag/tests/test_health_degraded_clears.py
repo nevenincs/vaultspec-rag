@@ -1,31 +1,36 @@
 """A degraded verdict must describe now, not the worst thing that ever happened.
 
-The jobs rollup degrades health when the latest failed job belongs to the
-running generation. That guard rules out failures from a previous daemon, but
-it never asked whether a *later* run had since succeeded. One transient
-failure - a momentary memory ceiling, a file that vanished mid-scan - therefore
-degraded the service for the whole remaining life of the process, while newer
-runs of the same source were visibly finishing clean. Observed on a live
-service: fourteen hours of uptime reporting "the latest indexing job failed"
-with twelve successful runs of that source after the named failure.
+The jobs rollup folds job history per project root and source. A key is
+failing when the newest record that proves anything about it - a success or a
+real failure - is a failure. A failing key degrades health only while its
+failure is inside the running generation and inside the degradation window;
+past either bound it stays listed without degrading. Observed on a live
+service before this fold: sixteen hours of ``degraded`` over one failure while
+other jobs ran clean, because only the single newest failure was ever examined
+and nothing aged it out.
 
 These bind the verdict to current state. They use real job records through the
 production recording API rather than hand-built dicts, because the defect was
-in which records the selector consults - a hand-built list would encode the
-author's assumption about that instead of testing it.
+in which records the fold consults - a hand-built list would encode the
+author's assumption about that instead of testing it. The assertions read the
+typed reason, not the detail text.
 
-MUTATION PROOF, run in one uninterrupted sequence: removing the supersession
-check from the degradation condition in ``_lifespan._jobs_health`` fails
-``test_a_later_success_on_the_same_source_clears_the_verdict`` and
-``test_the_failure_stays_visible_in_the_rollup_after_clearing`` on their
-no-``JOB_FAILED`` assertions, and fails nothing else here. Restoring it returns
-the file to green. The assertions read the typed reason, not the detail text:
-a substring test against the model itself iterates its fields and can never
-match, so it passes whether or not the verdict fired.
+MUTATION PROOF, each run in one uninterrupted sequence against
+``_health._failing_project_indexes`` and ``_health._decisive_outcome``:
 
-Removing the full-reindex exclusion from the failure selector fails all four
-rebuild-refusal cases: three on the empty degradation assertion and one on the
-reported failure ID. Restoring it passes all eleven tests in this module.
+- Treating ``cancelled`` as decisive fails
+  ``test_a_later_cancelled_run_does_not_clear_the_failure`` on its
+  ``_job_failed`` assertion.
+- Reducing the fold to the single newest failure fails
+  ``test_an_older_failure_stays_degrading_when_a_newer_one_is_resolved`` on its
+  ``_job_failed`` assertion.
+- Dropping the window from ``degrading`` fails
+  ``test_a_failure_older_than_the_window_is_listed_without_degrading`` on its
+  ``degrading is False`` assertion.
+- Removing the full-reindex exclusion fails the rebuild-refusal cases on the
+  empty degradation and empty ``failing`` assertions.
+
+Restoring each mutation returns the module to green.
 """
 
 from __future__ import annotations
@@ -39,7 +44,11 @@ from .._job_errors import JobError, JobErrorKind
 from ..job_models import JobSource
 from ..jobs import record_finish, record_start, reset, snapshot
 from ..operator_state._service import DegradationReason
-from ..server._lifespan import _jobs_health
+from ..server._health import (
+    _FAILING_NAMED,
+    _FAILURE_DEGRADES_FOR_SECONDS,
+    _jobs_health,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -57,6 +66,14 @@ def _degrade_reasons() -> list[Degradation]:
 def _job_failed(reasons: list[Degradation]) -> bool:
     """Whether the failed-job branch, and no other, degraded the verdict."""
     return any(reason.reason is DegradationReason.JOB_FAILED for reason in reasons)
+
+
+def _failing(jobs_health: dict[str, object]) -> dict[str, object]:
+    return cast("dict[str, object]", jobs_health["failing"])
+
+
+def _entries(jobs_health: dict[str, object]) -> list[dict[str, object]]:
+    return cast("list[dict[str, object]]", _failing(jobs_health)["entries"])
 
 
 def _failed(source: JobSource) -> str:
@@ -100,12 +117,48 @@ class TestDegradedVerdictTracksCurrentState:
         assert records[job_id]["error_kind"] == JobErrorKind.FULL_REINDEX_REQUIRED
         assert records[job_id]["phase"] == "error"
         assert reasons == []
-        assert jobs_health["last_failed"] is None
+        assert _failing(jobs_health) == {"total": 0, "degrading": 0, "entries": []}
+
+    def test_a_run_a_reset_fenced_neither_fails_nor_clears_the_project(
+        self, isolated_status_dir: Path
+    ) -> None:
+        """A writer an explicit rebuild's reset stopped is an expected outcome.
+
+        It stays listed in job history with its own kind, does not degrade
+        health, and does not clear an earlier real failure either.
+
+        Mutation: dropping ``INDEX_TRANSITION`` from the non-decisive kinds
+        made the fenced code run the newest decisive failure and failed the
+        ``failing`` entry assertion; restoring it passed.
+        """
+        from ..indexer._run_ledger_models import SourceResetEpochError
+
+        del isolated_status_dir
+        reset()
+        try:
+            failed_id = _failed(JobSource.VAULT)
+            fenced_id = record_start(JobSource.CODE, "watcher")
+            record_finish(
+                fenced_id,
+                error=str(SourceResetEpochError("code was reset after this began")),
+            )
+            fenced_vault = record_start(JobSource.VAULT, "watcher")
+            record_finish(
+                fenced_vault,
+                error=str(SourceResetEpochError("vault was reset after this began")),
+            )
+            jobs_health, reasons = _jobs_health(now=time.time())
+            records = {str(record["id"]): record for record in snapshot()}
+        finally:
+            reset()
+        assert records[fenced_id]["error_kind"] == JobErrorKind.INDEX_TRANSITION
+        assert _job_failed(reasons)
+        assert [entry["id"] for entry in _entries(jobs_health)] == [failed_id]
 
     def test_rebuild_refusal_does_not_hide_a_real_failure(
         self, isolated_status_dir: Path
     ) -> None:
-        """Filtering must precede selection of the latest service failure."""
+        """A newer refusal must not hide a real failure on another source."""
         del isolated_status_dir
         reset()
         try:
@@ -121,8 +174,7 @@ class TestDegradedVerdictTracksCurrentState:
         finally:
             reset()
         assert _job_failed(reasons)
-        last_failed = cast("dict[str, object]", jobs_health["last_failed"])
-        assert last_failed["id"] == failed_id
+        assert [entry["id"] for entry in _entries(jobs_health)] == [failed_id]
 
     def test_a_failure_with_nothing_after_it_still_degrades(
         self,
@@ -247,15 +299,15 @@ class TestDegradedVerdictTracksCurrentState:
             reset()
         assert _job_failed(reasons), f"the newest outcome is a failure, got {reasons}"
 
-    def test_the_failure_stays_visible_in_the_rollup_after_clearing(
+    def test_a_resolved_failure_leaves_the_failing_list(
         self,
         isolated_status_dir: Path,
         tmp_path: Path,
     ) -> None:
-        """Clearing the verdict must not hide the history behind it.
+        """A success answers the failure; the history stays in the state counts.
 
-        An operator still needs to see that a run failed; what changes is
-        whether the service calls itself degraded over it.
+        An operator still sees that a run failed through the job states; the
+        failing list names only keys whose newest decisive outcome failed.
         """
         del isolated_status_dir
         project = tmp_path / "project"
@@ -269,10 +321,123 @@ class TestDegradedVerdictTracksCurrentState:
         finally:
             reset()
         assert not _job_failed(reasons)
-        last_failed = cast("dict[str, object] | None", jobs_health["last_failed"])
-        assert last_failed is not None, (
-            "the failure must remain reported in the rollup, only not degrading"
+        assert _failing(jobs_health)["total"] == 0
+        states = cast("dict[str, int]", jobs_health["states"])
+        assert states.get("failed") == 1, "the failure must stay in job history"
+
+    def test_a_later_cancelled_run_does_not_clear_the_failure(
+        self,
+        isolated_status_dir: Path,
+        tmp_path: Path,
+    ) -> None:
+        """A cancellation is a decision, not evidence the index can be built.
+
+        Mutation: counting ``cancelled`` as a decisive outcome. The cancelled
+        run then becomes the key's newest outcome and the verdict clears.
+        """
+        del isolated_status_dir
+        project = tmp_path / "project"
+        reset()
+        try:
+            failed = record_start(JobSource.CODE, "watcher", project_root=project)
+            record_finish(failed, error="cuda_memory_ceiling: ceiling exceeded")
+            cancelled = record_start(JobSource.CODE, "watcher", project_root=project)
+            record_finish(cancelled, phase="cancelled")
+            jobs_health, reasons = _jobs_health(now=time.time())
+        finally:
+            reset()
+        assert _job_failed(reasons), (
+            f"a cancelled run proves nothing about the failure, got {reasons}"
         )
-        # Source and project together name the rebuild when it is a refusal.
-        assert last_failed["source"] == JobSource.CODE
-        assert last_failed["project_root"] == str(project)
+        assert [entry["id"] for entry in _entries(jobs_health)] == [failed]
+
+    def test_an_older_failure_stays_degrading_when_a_newer_one_is_resolved(
+        self,
+        isolated_status_dir: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Every project is folded, so a resolved newest failure hides nothing.
+
+        Mutation: examining only the newest failure across all projects. That
+        is project B's, which a success resolved, so project A's unresolved
+        failure never degrades.
+        """
+        del isolated_status_dir
+        first = tmp_path / "first"
+        second = tmp_path / "second"
+        reset()
+        try:
+            older = record_start(JobSource.CODE, "watcher", project_root=first)
+            record_finish(older, error="cuda_memory_ceiling: ceiling exceeded")
+            newer = record_start(JobSource.CODE, "watcher", project_root=second)
+            record_finish(newer, error="cuda_memory_ceiling: ceiling exceeded")
+            resolved = record_start(JobSource.CODE, "watcher", project_root=second)
+            record_finish(resolved, result="+1 /0 -0 (100ms)")
+            jobs_health, reasons = _jobs_health(now=time.time())
+        finally:
+            reset()
+        assert _job_failed(reasons), (
+            f"project A's failure is unresolved and recent, got {reasons}"
+        )
+        entries = _entries(jobs_health)
+        assert [entry["id"] for entry in entries] == [older]
+        assert entries[0]["project_root"] == str(first)
+        assert entries[0]["degrading"] is True
+
+    def test_a_failure_older_than_the_window_is_listed_without_degrading(
+        self,
+        isolated_status_dir: Path,
+        tmp_path: Path,
+    ) -> None:
+        """The window bounds how long one failure holds the verdict.
+
+        Mutation: dropping the age bound from ``degrading``. The stale failure
+        then degrades for as long as the generation lives, which is the
+        sixteen-hour symptom.
+        """
+        del isolated_status_dir
+        project = tmp_path / "project"
+        reset()
+        try:
+            failed = record_start(JobSource.CODE, "watcher", project_root=project)
+            record_finish(failed, error="cuda_memory_ceiling: ceiling exceeded")
+            later = time.time() + _FAILURE_DEGRADES_FOR_SECONDS + 60.0
+            jobs_health, reasons = _jobs_health(now=later)
+        finally:
+            reset()
+        entries = _entries(jobs_health)
+        assert [entry["id"] for entry in entries] == [failed]
+        assert entries[0]["degrading"] is False
+        assert not _job_failed(reasons)
+        assert _failing(jobs_health)["degrading"] == 0
+
+    def test_the_failing_list_is_bounded_and_newest_first(
+        self,
+        isolated_status_dir: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Five entries are named, newest first, and every failure is counted."""
+        del isolated_status_dir
+        reset()
+        try:
+            for index in range(_FAILING_NAMED + 2):
+                job = record_start(
+                    JobSource.CODE, "watcher", project_root=tmp_path / f"p{index}"
+                )
+                record_finish(job, error="cuda_memory_ceiling: ceiling exceeded")
+            jobs_health, reasons = _jobs_health(now=time.time())
+        finally:
+            reset()
+        failing = _failing(jobs_health)
+        assert failing["total"] == _FAILING_NAMED + 2
+        assert failing["degrading"] == _FAILING_NAMED + 2
+        entries = _entries(jobs_health)
+        assert len(entries) == _FAILING_NAMED
+        assert entries[0]["project_root"] == str(tmp_path / f"p{_FAILING_NAMED + 1}")
+        detail = next(
+            reason.detail
+            for reason in reasons
+            if reason.reason is DegradationReason.JOB_FAILED
+        )
+        assert detail.startswith(f"{_FAILING_NAMED + 2} project index runs failed: ")
+        assert detail.endswith(f" and {_FAILING_NAMED + 1} more")

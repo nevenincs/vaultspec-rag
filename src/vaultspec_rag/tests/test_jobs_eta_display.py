@@ -132,6 +132,10 @@ class TestFeedRemainingTime:
             [
                 _running_job(
                     "aaaaaaaa",
+                    phase="awaiting_admission",
+                    waiting_on="admission",
+                    admission_slot="encode",
+                    queue_position=1,
                     admission_acquired_at=None,
                     estimated_remaining_seconds=None,
                     progress_rate_per_second=None,

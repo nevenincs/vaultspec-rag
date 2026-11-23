@@ -1,4 +1,4 @@
-"""Maintenance disable policy against real CPU-local Qdrant and run ledgers."""
+"""Maintenance disable policy and reset isolation against real CPU-local Qdrant."""
 
 from __future__ import annotations
 
@@ -11,24 +11,18 @@ import pytest
 from qdrant_client import models
 
 from .._qdrant_local_client import open_local_client
-from .._store_models import (
-    generation_code_collection,
-    publish_served_code_collection,
-    root_collection_prefix,
-)
+from .._source_types import PublicSourceType
+from .._store_models import read_served_pointer
 from ..config._types import EnvVar
-from ..generation_stamps import load_generation_stamps, record_generation_stamps
+from ..indexer._rebuild_lifecycle import capture_reset_epoch
 from ..server._lifecycle import _build_reclaim_policy
-from ..storage_reclamation import (
-    MaintenanceCycleRequest,
-    _reclaim_generations_for_cycle,
-    run_maintenance_cycle,
-)
-from ..storage_survey import NamespaceSurvey
-from ..store_schema import CODE_COLLECTION
+from ..storage_manifest import record_root
+from ..storage_reclamation import MaintenanceCycleRequest, run_maintenance_cycle
+from ..store_runtime import configured_backend_identity
+from ..store_schema import CODE_COLLECTION, DENSE_VECTOR_NAME
+from ._historical_code_layout import historical_generation, write_historical_pointer
 from ._storage_archive import write_archive
 from .conftest import managed_env
-from .test_generation_survey import _publish_code_proof
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -37,96 +31,77 @@ pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("isolated_singleton_dirs
 
 
 @pytest.mark.parametrize("autoprune", [False, True])
-@pytest.mark.parametrize("dry_run", [False, True])
-def test_generation_deletion_obeys_configured_autoprune_and_explicit_dry_run(
-    tmp_path: Path, autoprune: bool, dry_run: bool
+def test_maintenance_leaves_a_live_roots_historical_code_layout_intact(
+    tmp_path: Path, autoprune: bool
 ) -> None:
+    """Only an explicit code reset of its root discards a historical layout.
+
+    The root is live and attributed, serves a historical generation through
+    its pointer, and still holds a superseded one. A full maintenance cycle,
+    with autoprune on or off, deletes none of it, leaves the pointer naming the
+    served generation, and records no reset of the root's code.
+
+    Mutation: dropping a live root's generation collections inside
+    ``run_maintenance_cycle`` failed the survivor assertion with autoprune on
+    and off; restoring the cycle passed.
+    """
     root = tmp_path / "project"
     root.mkdir()
-    prefix = root_collection_prefix(root)
+    prefix = record_root(root, backend="server").prefix
     derived = f"{prefix}{CODE_COLLECTION}"
-    served = f"{derived}_gserved"
-    old = f"{derived}_gsuperseded"
-    now = datetime.now(UTC)
-    with managed_env(
-        **{
-            EnvVar.STORAGE_AUTOPRUNE.value: "1" if autoprune else "0",
-            EnvVar.STORAGE_RECONCILE.value: "1",
-        }
+    served = historical_generation(derived, "served")
+    superseded = historical_generation(derived, "superseded")
+    names = (derived, served, superseded)
+    write_historical_pointer(root, served)
+    with (
+        managed_env(
+            **{
+                EnvVar.STORAGE_AUTOPRUNE.value: "1" if autoprune else "0",
+                EnvVar.STORAGE_RECONCILE.value: "1",
+            }
+        ),
+        closing(open_local_client(tmp_path / "qdrant")) as client,
     ):
-        proof_collection = generation_code_collection(
-            derived, _publish_code_proof(root)
-        )
-        publish_served_code_collection(root, served)
-        names = [derived, served, proof_collection, old]
         policy = _build_reclaim_policy()
-        assert policy.reconcile is True
         assert (policy.max_per_cycle > 0) is autoprune
-        record_generation_stamps({old: (now - timedelta(hours=200)).isoformat()})
-        before = load_generation_stamps()
-        with closing(open_local_client(tmp_path / "qdrant")) as client:
-            for name in names:
-                client.create_collection(
-                    collection_name=name,
-                    vectors_config=models.VectorParams(
-                        size=8, distance=models.Distance.COSINE
-                    ),
-                )
-            results = _reclaim_generations_for_cycle(
-                client,
-                surveys=[
-                    NamespaceSurvey(
-                        prefix=prefix,
-                        root=str(root.resolve()),
-                        status="live",
-                        collections=names,
-                    )
-                ],
-                now=now,
-                policy=policy,
-                dry_run=dry_run,
-            )
-            live = {entry.name for entry in client.get_collections().collections}
-        assert {derived, served, proof_collection} <= live
-        expected_removal = autoprune and not dry_run
-        assert (old not in live) is expected_removal
-        assert [(result.prefix, result.status) for result in results] == [
-            (old, "removed" if expected_removal else "would_remove")
-        ]
-        assert load_generation_stamps() == ({} if expected_removal else before)
-
-
-def test_disabled_autoprune_still_persists_new_generation_grace_observation(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path / "project"
-    root.mkdir()
-    prefix = root_collection_prefix(root)
-    derived = f"{prefix}{CODE_COLLECTION}"
-    old = f"{derived}_gsuperseded"
-    now = datetime.now(UTC)
-    with managed_env(**{EnvVar.STORAGE_AUTOPRUNE.value: "0"}):
-        _publish_code_proof(root)
-        record_generation_stamps({})
-        with closing(open_local_client(tmp_path / "qdrant")) as client:
+        for name in names:
             client.create_collection(
-                collection_name=old,
-                vectors_config=models.VectorParams(
-                    size=8, distance=models.Distance.COSINE
-                ),
+                collection_name=name,
+                vectors_config={
+                    DENSE_VECTOR_NAME: models.VectorParams(
+                        size=8, distance=models.Distance.COSINE
+                    )
+                },
             )
-            results = _reclaim_generations_for_cycle(
-                client,
-                surveys=[NamespaceSurvey(prefix=prefix, root=str(root), status="live")],
-                now=now,
-                policy=_build_reclaim_policy(),
-                dry_run=False,
+            client.upsert(
+                collection_name=name,
+                points=[
+                    models.PointStruct(id=1, vector={DENSE_VECTOR_NAME: [1.0] * 8})
+                ],
+                wait=True,
             )
-            assert client.collection_exists(old)
-        assert load_generation_stamps() == {old: now.isoformat()}
-        assert [(result.prefix, result.status) for result in results] == [
-            (old, "skipped")
-        ]
+        result = run_maintenance_cycle(
+            MaintenanceCycleRequest(
+                client=client,
+                now=datetime.now(UTC),
+                policy=policy,
+                storage_dir=None,
+                snapshots_dir=tmp_path / "snapshots",
+                archive_dir=tmp_path / "archives",
+            )
+        )
+        survivors = {
+            name: client.count(collection_name=name, exact=True).count
+            for name in names
+            if client.collection_exists(name)
+        }
+    assert survivors == dict.fromkeys(names, 1)
+    assert [survey.status for survey in result.surveys] == ["live"]
+    assert read_served_pointer(root, derived) == (served, True)
+    fence = capture_reset_epoch(
+        root, PublicSourceType.CODE, configured_backend_identity(root)
+    )
+    assert (fence.epoch, fence.phase) == (0, None)
 
 
 @pytest.mark.parametrize("reason", ["retention", "capacity"])

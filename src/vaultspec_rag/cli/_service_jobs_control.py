@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Annotated, NoReturn, cast
 
@@ -17,6 +18,7 @@ from ..serviceclient._transport import (
     _try_http_get_job,
     _try_http_retry_job,
     _try_http_set_job_desired_state,
+    _try_http_wait_job,
 )
 from ._app import JobIdArgument, JsonEnvelopeMode, PortOption, server_job_app
 from ._render import _emit_json, _emit_json_error_and_exit, _plain
@@ -337,6 +339,109 @@ def service_job_show(
         _emit_json(True, command, data={"status": "ok", "job": job})
         return
     render_job_detail(job, port=resolved_port)
+
+
+#: The conditions ``server job wait`` can wait for.
+_WAIT_CONDITIONS = ("admitted", "finished")
+
+
+def _exit_invalid_wait(command: str, message: str, *, json_mode: bool) -> NoReturn:
+    _job_control_failure(
+        _JobControlFailureRequest(
+            command=command,
+            error="invalid_wait",
+            message=message,
+            json_mode=json_mode,
+            exit_code=2,
+        )
+    )
+
+
+@server_job_app.command("wait")
+def service_job_wait(
+    job_id: JobIdArgument,
+    until: Annotated[
+        str,
+        typer.Option(
+            "--until",
+            help="Wait until the job is admitted to its slot, or has finished.",
+        ),
+    ] = "finished",
+    timeout: Annotated[
+        float,
+        typer.Option(
+            "--timeout",
+            help="Seconds to wait; the service caps one wait at 120 seconds.",
+        ),
+    ] = 30.0,
+    port: PortOption = None,
+    json_mode: JsonEnvelopeMode = False,
+) -> None:
+    """Wait for one job to be admitted or finish; exit 1 if the wait expires."""
+    command = _job_control_command("wait")
+    condition = until.strip().lower()
+    if condition not in _WAIT_CONDITIONS:
+        _exit_invalid_wait(
+            command, "--until must be admitted or finished.", json_mode=json_mode
+        )
+    if not math.isfinite(timeout) or timeout < 0:
+        _exit_invalid_wait(
+            command,
+            "--timeout must be a non-negative number of seconds.",
+            json_mode=json_mode,
+        )
+    resolved_port = _job_control_port(port, command=command, json_mode=json_mode)
+    exact_id = (
+        job_id
+        if json_mode
+        else _human_exact_job_id(job_id, resolved_port, command=command)
+    )
+    result = _try_http_wait_job(
+        exact_id, resolved_port, until=condition, wait_seconds=timeout
+    )
+    if result is None:
+        _job_control_failure(
+            _JobControlFailureRequest(
+                command=command,
+                error="service_not_running",
+                message=SERVICE_NOT_RUNNING_MESSAGE,
+                json_mode=json_mode,
+                exit_code=3,
+            )
+        )
+    if result.get("ok") is not True:
+        invalid = str(result.get("error") or "").startswith("invalid_")
+        _job_control_result_failure(
+            command, result, json_mode=json_mode, exit_code=2 if invalid else 1
+        )
+    raw_job = result.get("job")
+    job = cast("dict[str, object]", raw_job) if isinstance(raw_job, dict) else {}
+    data: dict[str, object] = {
+        "until": result.get("until", condition),
+        "reached": result.get("reached") is True,
+        "waited_seconds": result.get("waited_seconds"),
+        "job": job,
+    }
+    if data["reached"] is not True:
+        _job_control_failure(
+            _JobControlFailureRequest(
+                command=command,
+                error="wait_timeout",
+                message=(
+                    f"Job {exact_id} was not {condition} within the wait; "
+                    f"it is {job.get('phase', 'in an unreported phase')}."
+                ),
+                json_mode=json_mode,
+                exit_code=1,
+                data=data,
+            )
+        )
+    if json_mode:
+        _emit_json(True, command, data={"status": "ok", **data})
+        return
+    _plain(f"Job {exact_id} is {condition}.")
+    _plain(f"State: {job.get('state', 'not reported')}")
+    _plain(f"Phase: {job.get('phase', 'not reported')}")
 
 
 @server_job_app.command("pause")

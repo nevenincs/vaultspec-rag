@@ -101,12 +101,30 @@ Vault results:
 
 Extracted-document results:
 
-| Filter                | Narrows to                                     |
-| --------------------- | ---------------------------------------------- |
-| `--source-path`       | one originating file                           |
-| `--extractor-id`      | documents emitted by one extractor             |
-| `--extractor-version` | documents from one extractor version           |
-| `--locator-kind`      | one kind of locator, such as `page` or `sheet` |
+| Filter                | Narrows to                                          |
+| --------------------- | --------------------------------------------------- |
+| `--source-path`       | one originating file                                |
+| `--extractor-id`      | documents emitted by these extractors               |
+| `--extractor-prefix`  | documents from extractors in these dotted families  |
+| `--extractor-version` | documents from one extractor version                |
+| `--locator-kind`      | these kinds of locator, such as `page` or `sheet`   |
+| `--meta KEY=VALUE`    | documents whose declared metadata key holds a value |
+
+`--extractor-id`, `--extractor-prefix`, and `--locator-kind` take a
+comma-separated list and match any member. A prefix matches whole dotted
+segments: `--extractor-prefix pdf` matches `pdf` and `pdf.text`, not `pdfx`.
+A collection holding more than 1024 distinct extractor ids refuses a prefix
+filter with `extractor_prefix_unbounded`; filter by `--extractor-id` there.
+These filters apply to `--type document` and `--type combined` only; on a vault
+or code search they are refused with `invalid_filter_for_search_type`.
+
+`--meta` filters on metadata a preprocessing hook emits, for keys the project
+declares filterable (see
+[Filterable metadata](preprocessing-hooks.md#filterable-metadata)). Write
+`--meta lang=en,de` to match either value. Repeat the flag for more keys; every
+key must match. A value containing a comma needs the MCP or HTTP mapping form.
+An undeclared key is refused with `unknown_filter_key`, which names the
+declared keys.
 
 ### Query markers
 
@@ -118,6 +136,7 @@ this way.
 | ---------------- | -------------------------------------------- |
 | Documents        | `type:` `feature:` `date:` `tag:`            |
 | Code             | `lang:` `path:` `func:` `class:` `nodetype:` |
+| Extracted docs   | `meta.KEY=VALUE`                             |
 | Noise, no flag   | `only:` `exclude:` `include:`                |
 | Ranking, no flag | `status:` `intent:`                          |
 

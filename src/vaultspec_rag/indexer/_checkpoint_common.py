@@ -47,6 +47,12 @@ from ._publication_proof import (
     ProofReceiptState,
     ProofUnverifiableError,
 )
+from ._rebuild_lifecycle import (
+    ResetEpochFence,
+    enter_rebuild_ingestion,
+    rebuild_claim,
+    refuse_superseded_claim,
+)
 from ._run_ledger_models import (
     FETCH_BATCH,
     CommitUnit,
@@ -78,6 +84,7 @@ if TYPE_CHECKING:
     from ..job_control import RunControl
     from ..store_runtime import VaultStore
     from ._content_policy import ContentKind
+    from ._rebuild_lifecycle import RebuildClaim
     from ._resolved_policy import ResolvedIndexPolicy
     from ._run_ledger_models import PublicationReceipt, RunGeneration
     from ._run_policy import RunPolicy, RunPolicySnapshot
@@ -235,10 +242,50 @@ class RunCheckpointBase:
     _embedding_schema: ClassVar[int]
 
     def __post_init__(self) -> None:
+        if self.authority is not RunAuthority.REBUILD:
+            # A rebuild fences its writes once its own reset has completed;
+            # any other run writes into the epoch it opened under.
+            signature = self.generation.signature
+            self.run_policy.fence_writes(
+                ResetEpochFence.capture(
+                    self.ledger,
+                    signature.source_type,
+                    signature.root_identity,
+                    signature.backend_identity,
+                ).validate
+            )
         observer = checkpoint_progress_observer.get()
         if observer is not None:
             self.run_policy.set_durable_progress_observer(partial(observer, self))
             observer(self, None)
+
+    def reset_for_rebuild(
+        self,
+        store: VaultStore,
+        *,
+        began_under: ResetEpochFence,
+    ) -> None:
+        """Reset this rebuild's source, then fence every write to that reset.
+
+        From here on each store write of the attempt validates the epoch the
+        reset recorded, so a later reset stops this attempt at its next
+        durable unit instead of letting it write into the replacement.
+
+        A reset that fails, or the pause or cancel delivered as its protected
+        span ends, classifies the generation as interrupted before it
+        propagates, so no rebuild is left running without an owner.
+        """
+        with self.preserve_incomplete_generation():
+            state = enter_rebuild_ingestion(
+                store,
+                self.generation.signature.source_type,
+                began_under=began_under,
+                generation_id=self.generation_id,
+                run_policy=self.run_policy,
+            )
+            self.run_policy.fence_writes(
+                ResetEpochFence.of(store.root_dir, state).validate
+            )
 
     @staticmethod
     def recover_pending_publication(
@@ -682,7 +729,7 @@ class RunCheckpointBase:
         )
         ledger = RunLedger(index_run_ledger_path(request.data_root))
         generation = cls.start_compatible_generation(
-            ledger, signature, request.authority, request.run_policy
+            ledger, signature, request.authority
         )
         receipt = cls.open_publication_receipt(ledger, generation, request.authority)
         return cls(
@@ -700,7 +747,6 @@ class RunCheckpointBase:
         ledger: RunLedger,
         signature: RunSignature,
         authority: RunAuthority,
-        run_policy: RunPolicy,
     ) -> RunGeneration:
         """Start one attempt's generation, refusing a parentless incremental.
 
@@ -721,9 +767,18 @@ class RunCheckpointBase:
         about to be trusted to *skip* storage work on that evidence's word.
         Verifying exactly there costs a fresh run nothing and still refuses to
         resume onto damaged durable state.
+
+        A rebuild continues only the generation the context's rebuild claim
+        names. A claim on a generation another rebuild replaced is refused
+        before anything is reopened.
         """
-        if authority is RunAuthority.REBUILD:
-            cls._recover_publication_for_rebuild(ledger, signature, run_policy)
+        rebuild = rebuild_claim.get()
+        full_rebuild = (
+            authority is RunAuthority.REBUILD
+            and signature.operation is RunOperation.FULL
+        )
+        if full_rebuild:
+            refuse_superseded_claim(ledger, signature, rebuild)
         replay = _PUBLICATION_REPLAY.get()
         if replay is not None and authority is RunAuthority.PUBLICATION:
             from ._run_ledger_publication_identity import compatibility_for_signature
@@ -737,6 +792,8 @@ class RunCheckpointBase:
                 )
             signature = ledger.generation(replay.receipt.generation_id).signature
         generation = ledger.start_generation(signature)
+        if full_rebuild:
+            generation = cls._rebuild_after_its_own_reset(ledger, generation, rebuild)
         if (
             signature.operation
             in (RunOperation.INCREMENTAL, RunOperation.SCOPED_INCREMENTAL)
@@ -750,50 +807,47 @@ class RunCheckpointBase:
             ledger.verify_integrity()
         return generation
 
-    @classmethod
-    def _recover_publication_for_rebuild(
-        cls,
+    @staticmethod
+    def _rebuild_after_its_own_reset(
         ledger: RunLedger,
-        signature: RunSignature,
-        run_policy: RunPolicy,
-    ) -> None:
-        """Finish only exact recorded work before admitting a replacement build."""
-        receipt = ledger.rebuild_recovery_receipt(signature, RunAuthority.REBUILD)
-        if receipt is None:
-            return
-        run_policy.checkpoint("recover unfinished publication")
-        if (
-            not receipt.mutations
-            and not receipt.deltas
-            and ledger.committed_unit_count(receipt.generation_id) == 0
-        ):
-            ledger.begin_publication_rollback(receipt.receipt_id)
-            ledger.roll_back_publication_receipt(
-                receipt.receipt_id, compensated_units=()
-            )
-            run_policy.record_durable_progress(
-                kind=DurableProgressKind.FINALIZATION_PHASE_COMMITTED,
-                label="publication receipt rollback recovery",
-            )
-            return
-        if receipt.state is not ProofReceiptState.SEALED or any(
-            mutation.state is not ProofMutationState.CONFIRMED
-            for mutation in receipt.mutations
-        ):
-            raise RunLedgerStateError(
-                "unfinished publication requires exact recorded-unit recovery "
-                "before rebuild"
-            )
-        ledger.verify_integrity()
-        ledger.commit_publication_receipt(
-            receipt.receipt_id,
-            authority=RunAuthority.REBUILD,
-            rebuild_signature=signature,
+        generation: RunGeneration,
+        rebuild: RebuildClaim,
+    ) -> RunGeneration:
+        """Continue only the claimed rebuild, over work it wrote after its reset.
+
+        A generation the claim does not name belongs to an earlier rebuild. A
+        new rebuild must not continue it: that would keep work the request
+        asked to discard and skip the reset. It is retired unless nothing was
+        ever recorded under it, which makes it indistinguishable from fresh.
+
+        The claimed generation resumes only over work it wrote after its own
+        completed reset. A rebuild writes nothing before its reset completes,
+        so units under any other reset describe storage the reset discarded
+        or is about to; resuming would skip them and certify an index missing
+        their points.
+        """
+        signature = generation.signature
+        reset = ledger.source_reset_state(
+            signature.source_type,
+            signature.root_identity,
+            signature.backend_identity,
         )
-        run_policy.record_durable_progress(
-            kind=DurableProgressKind.FINALIZATION_PHASE_COMMITTED,
-            label="publication proof recovery",
+        owns_reset = (
+            reset is not None and reset.generation_id == generation.generation_id
         )
+        units = ledger.committed_unit_count(generation.generation_id)
+        if rebuild.generation_id == generation.generation_id:
+            if units == 0 or (owns_reset and reset is not None and reset.complete):
+                return generation
+            detail = "rebuild work predates the generation's own reset"
+        elif units == 0 and not owns_reset:
+            return generation
+        else:
+            detail = "superseded by a new rebuild request"
+        ledger.finish_generation(
+            generation.generation_id, RunTerminalState.INVALIDATED, detail=detail
+        )
+        return ledger.start_generation(signature)
 
     @classmethod
     def open_publication_receipt(

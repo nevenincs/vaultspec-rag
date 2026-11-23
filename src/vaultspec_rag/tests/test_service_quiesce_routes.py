@@ -236,6 +236,28 @@ def test_pause_resume_routes_return_the_complete_controller_envelope(
     )
 
 
+@pytest.mark.parametrize("body", [b"[]", b'"x"', b"5", b"null"])
+@pytest.mark.parametrize("route", ["/pause", "/resume"])
+def test_a_non_object_borrower_body_is_refused_not_read_as_no_capability(
+    quiesce_routes: QuiesceRoutes, route: str, body: bytes
+) -> None:
+    """A body that decodes to anything but an object is malformed, never empty.
+
+    An empty object is the operator's "no capability" request and proceeds. A
+    list, string, number or null must refuse with the invalid-capability status
+    and leave the service state untouched. Reading a non-object as an empty one
+    (the way ``mapping`` narrows) would accept it as an operator request and
+    change state.
+    """
+    refused = quiesce_routes.client.post(route, headers=_HEADERS, content=body)
+
+    payload = refused.json()
+    assert payload["ok"] is False
+    assert payload["status"] == "invalid_borrower_capability"
+    quiesce = cast("dict[str, object]", payload["quiesce"])
+    assert quiesce["state"] == "running"
+
+
 def test_resume_releases_a_daemon_a_failed_pause_left_held(
     quiesce_routes: QuiesceRoutes,
 ) -> None:

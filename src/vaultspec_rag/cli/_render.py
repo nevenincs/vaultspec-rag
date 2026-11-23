@@ -19,6 +19,7 @@ from rich.text import Text
 
 import vaultspec_rag.cli as _cli
 
+from .._job_values import mapping
 from .._operator_commands import (
     SERVICE_NOT_RUNNING_MESSAGE,
     server_start_command,
@@ -177,9 +178,14 @@ def _emit_json_error_and_exit(
     error: str,
     message: str,
     code: int,
+    /,
     **extra: object,
 ) -> None:
     """Emit an `{"ok": false, ...}` envelope, then raise `typer.Exit`.
+
+    The named parameters are positional-only so a forwarded service field
+    that shares a name with one of them, such as a job outcome's ``code``,
+    travels in ``extra`` instead of colliding with the exit code.
 
     Centralises the JSON error path so every command's failure
     branches converge on one shape. Used by the new `--json` wiring
@@ -738,9 +744,7 @@ def _render_provider_sync(report: object) -> None:
     """Render the same per-provider MCP outcomes exposed by report JSON."""
     to_dict = getattr(report, "to_dict", None)
     raw_data: object = to_dict() if callable(to_dict) else {}
-    data: dict[str, object] = (
-        cast("dict[str, object]", raw_data) if isinstance(raw_data, dict) else {}
-    )
+    data = mapping(raw_data)
     providers = data.get("sync_providers")
     if isinstance(providers, dict):
         for provider, raw_outcome in cast("dict[object, object]", providers).items():

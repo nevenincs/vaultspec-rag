@@ -48,7 +48,7 @@ from typing import (
 )
 
 from . import store_schema
-from ._source_types import PublicSourceType
+from ._source_types import PublicSourceType, concrete_sources
 from ._store_writes import workspace_volume_path
 from .indexer._file_state import validate_rel_path
 from .indexer._publication_proof import (
@@ -326,8 +326,18 @@ class IndexIntegritySnapshot(NamedTuple):
         self,
         live_count: int | None,
     ) -> IndexIntegrity:
-        """Validate the proof token and classify the fenced backend result."""
-        self.publication.validate()
+        """Validate the proof token and classify the fenced backend result.
+
+        A publication that moved the proof while the backend was read leaves
+        the count answering to no claim, so the verdict is unverifiable rather
+        than a refusal of the read that produced it.
+        """
+        from ._publication_state import UNREADABLE_PUBLICATION_ERRORS
+
+        try:
+            self.publication.validate()
+        except UNREADABLE_PUBLICATION_ERRORS:
+            return unverifiable_integrity(self.source)
         return _evaluate_claim(
             self.root,
             self.source,
@@ -374,8 +384,8 @@ def _evaluate_claim(
 
     The comparison is exact and one-sided, no tolerance. Every publication
     counts the store immediately after storage reconciliation and writes the
-    figure atomically with the generation it describes - for a rebuilt
-    generation the proof lands before the served pointer moves, and an
+    figure atomically with the generation it describes - a rebuild certifies
+    the collection it wrote only after its last write applied, and an
     in-place incremental republishes the figure at the same protected commit
     edge that performs its deletions - so a complete served collection always
     reads back at least its claim. A count above the claim is the legitimate
@@ -876,17 +886,8 @@ def audit_index_sources(
     """Audit one or all source projections without acquiring publication rights."""
     if authority is not RunAuthority.AUDIT_VERIFICATION:
         raise PermissionError("exact audit requires audit-verification authority")
-    sources = (
-        (
-            PublicSourceType.VAULT,
-            PublicSourceType.CODE,
-            PublicSourceType.DOCUMENT,
-        )
-        if source is PublicSourceType.COMBINED
-        else (source,)
-    )
     domains: dict[str, dict[str, object]] = {}
-    for current in sources:
+    for current in concrete_sources(source):
         try:
             result = audit_index_integrity(
                 root,

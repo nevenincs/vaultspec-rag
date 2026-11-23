@@ -445,7 +445,9 @@ def test_payload_retry_consumes_caller_deadline_and_timeout(
     calls = _Calls(case.store)
     clock = _BudgetClock()
     policy = StoreWritePolicy(
-        remaining_seconds=lambda: clock.remaining, wait=clock.wait
+        remaining_seconds=lambda: clock.remaining,
+        wait=clock.wait,
+        admit_write=lambda: None,
     )
 
     def refuse(_request: _Request) -> None:

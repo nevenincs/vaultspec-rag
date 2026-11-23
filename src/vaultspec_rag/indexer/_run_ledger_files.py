@@ -35,7 +35,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ._publication_proof import ProofCompatibilityKey, ProofEvidence
-    from ._run_ledger_models import GenerationRow, RunGeneration
+    from ._run_ledger_models import RunGeneration
+    from ._run_ledger_schema import GenerationRow
 
 
 class FileStateRow(TypedDict):

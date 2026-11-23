@@ -9,7 +9,6 @@ loaded reranker, and the TTL-cached VaultGraph.
 from __future__ import annotations
 
 import logging
-import threading
 import time
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, fields, replace
@@ -91,12 +90,12 @@ from ._result_shaping import (
 from ._result_shaping import select_combined_results as _select_combined_results
 from ._typesafe_context import classification_scope
 from ._typesafe_transport import TypesafeUnavailableError
+from ._validation import DocumentFilterRequest, resolve_document_filters
 
 if TYPE_CHECKING:
     import pathlib
     from collections.abc import Callable, Mapping
 
-    from sentence_transformers import CrossEncoder
     from sentence_transformers.base.modality_types import PairInput
     from vaultspec_core.graph import (
         VaultGraph,
@@ -220,10 +219,10 @@ class VaultSearcher:
         self._graph_cache = GraphCache(ttl_seconds=resolved_ttl)
         self._gpu_lock = settings.gpu_lock
         self._reranker_enabled: bool = cfg.reranker_enabled
-        self._reranker_model_name: str = cfg.reranker_model
         self._sparse_enabled: bool = cfg.sparse_enabled
-        self._reranker = settings.reranker
-        self._reranker_lock = threading.Lock()
+        from ..embeddings import LazyReranker
+
+        self._reranker = LazyReranker(settings.gpu_lock, settings.reranker)
 
     def _vault_docs_prefix(self) -> str:
         """The docs directory (e.g. ``.vault``) vault paths are stored under."""
@@ -247,43 +246,6 @@ class VaultSearcher:
             yield
         finally:
             self._gpu_lock.release()
-
-    def _get_reranker(self) -> CrossEncoder:
-        """Lazily load the CrossEncoder reranker model onto GPU.
-
-        Returns the cached CrossEncoder instance on subsequent calls. A
-        searcher the service builds is handed the shared reranker; only a
-        standalone searcher reaches the load here.
-
-        Returns:
-            Cached or newly loaded CrossEncoder instance.
-
-        Raises:
-            RuntimeError: If no CUDA GPU is available.
-            ModelSnapshotError: If the model cache holds no snapshot of the
-                reranker that passes its check.
-        """
-        if self._reranker is not None:
-            return self._reranker
-        with self._reranker_lock:
-            if self._reranker is not None:
-                return self._reranker
-            from ..embeddings import load_reranker
-
-            # Hold the shared GPU lock across the model load. Constructing the
-            # CrossEncoder materialises weights on the device, and that CUDA work
-            # must not run concurrently with another root's forward pass (or a
-            # second searcher's own lazy load) on the one shared GPU - an
-            # unserialised load races and crashes the process. The lock is
-            # released before the forward pass in ``_rerank`` re-acquires it.
-            with self._gpu_section():
-                self._reranker = load_reranker()
-            logger.info(
-                "CrossEncoder reranker loaded on %s: %s",
-                self._reranker.device,
-                self._reranker_model_name,
-            )
-            return self._reranker
 
     def _rerank[T: _Rerankable](
         self,
@@ -349,7 +311,7 @@ class VaultSearcher:
         from ..config._settings import get_config
 
         accelerator = load_accelerator()
-        reranker = self._get_reranker()
+        reranker = self._reranker.get()
         # Declared, not inferred: `list` is invariant, so a `list[tuple[str,
         # str]]` is not assignable to the `list[PairInput]` the overloads accept.
         model_pairs: list[PairInput] = list(pairs)  # pyright: ignore[reportUnknownVariableType]  # sentence_transformers stubs incomplete
@@ -1092,22 +1054,37 @@ class VaultSearcher:
         encoded: _EncodedSearchQuery,
         options: DocumentSearchOptions,
     ) -> list[DocumentSearchResult]:
-        """Search documents from one already encoded query."""
-        filters = {
-            key: value
-            for key, value in encoded.parsed.filters.items()
-            if key in store_schema.DOCUMENT_QUERY_FILTER_KEYS
-        }
-        for key, value in (
-            ("source_path", options.source_path),
-            ("extractor_id", options.extractor_id),
-            ("extractor_version", options.extractor_version),
-            ("locator_kind", options.locator_kind),
-        ):
-            if value is not None:
-                filters[key] = value
+        """Search documents from one already encoded query.
 
+        Raises:
+            InvalidFilterForSearchTypeError: A filter the root cannot apply
+                exactly; its subclass names the refusal.
+        """
+        from ..indexer._preprocess_config import load_filterable_metadata
+
+        declared = load_filterable_metadata(self.root_dir)
+        # Handing the declaration to the store before the read is what lets
+        # that read's ensure create or drop the metadata indexes it names.
+        self.store.declare_document_metadata_keys(declared)
         phase_started = time.perf_counter()
+        filters = resolve_document_filters(
+            DocumentFilterRequest(
+                source_path=options.source_path,
+                extractor_id=options.extractor_id,
+                extractor_version=options.extractor_version,
+                locator_kind=options.locator_kind,
+                extractor_prefix=options.extractor_prefix,
+                metadata_filters=options.metadata_filters,
+                inline=encoded.parsed.filters,
+            ),
+            declared,
+            self.store.document_extractor_ids,
+        )
+        if any(not values for values in filters.values()):
+            # A condition with no admissible value matches nothing, so there
+            # is no candidate to fetch.
+            _record_seconds(encoded.timings, PHASE_QDRANT, phase_started)
+            return []
         fetch_limit = (
             max(encoded.top_k * 4, 20) if self._reranker_enabled else encoded.top_k * 2
         )
@@ -1117,7 +1094,7 @@ class VaultSearcher:
             HybridSearchRequest(
                 query_vector=encoded.dense_vector,
                 query_text=encoded.text,
-                filters=filters or None,
+                document_filters=filters or None,
                 limit=fetch_limit,
                 sparse_vector=encoded.sparse_vector,
             )

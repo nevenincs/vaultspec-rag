@@ -33,6 +33,7 @@ from __future__ import annotations
 import contextlib
 import io
 import logging
+import math
 import os
 import time
 from functools import partial
@@ -64,6 +65,7 @@ from ..service import RegistryFullError
 from ._auth import require_token
 from ._routes_jobs import (
     JOB_SORT_FIELDS,
+    TERMINAL_STATES,
     JobFilter,
     _job_matches,
     _job_summary,
@@ -72,7 +74,10 @@ from ._routes_jobs import (
     _normalise_filter_value,
     _normalise_job_source_filter,
     _parse_since_seconds,
+    job_state,
+    job_wait_reason,
     sort_job_records,
+    with_admission,
 )
 from ._routes_monitor import monitor_ownership_route
 from ._routes_operator import enroll_repository_route, repositories_route
@@ -103,6 +108,7 @@ from ._utils import (
 if TYPE_CHECKING:
     from starlette.requests import Request
 
+    from .._job_admission import IncompatibleIncrementalError
     from ..indexer._codebase_indexer import CodeIndexPreflight
     from ..indexer._document_indexer import DocumentIndexPreflight
     from ..job_models import JobInitiator, JobSpec
@@ -151,7 +157,11 @@ def canonical_job_snapshot() -> list[dict[str, object]]:
 
 
 def _service_job_snapshot() -> list[dict[str, object]]:
-    """Return canonical jobs plus legacy-only service activity records."""
+    """Return canonical jobs plus legacy-only service activity records.
+
+    The admission queue is read once here, so every filter, count and row in
+    one response sees the same queue.
+    """
     canonical = canonical_job_snapshot()
     canonical_ids = {str(record.get("id", "")) for record in canonical}
     legacy_only = [
@@ -159,15 +169,35 @@ def _service_job_snapshot() -> list[dict[str, object]]:
         for record in _jobs.snapshot()
         if str(record.get("id", "")) not in canonical_ids
     ]
-    return [*canonical, *legacy_only]
+    return with_admission(
+        [*canonical, *legacy_only], _jobs.get_job_manager().admission_queue()
+    )
 
 
 class InvalidJobRequestError(ValueError):
-    """Stable client-input failure for the canonical jobs resource."""
+    """Stable client-input failure for the canonical jobs resource.
+
+    ``extra`` carries the typed fields a refusal adds to its one error
+    envelope; a plain input failure adds none.
+    """
+
+    extra: dict[str, object] | None = None
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+class AdmissionRefusedError(InvalidJobRequestError):
+    """Admission refused an index request before any job record existed.
+
+    The refusal's own fields, such as its rebuild command, travel on the
+    error envelope unchanged.
+    """
+
+    def __init__(self, refusal: IncompatibleIncrementalError) -> None:
+        super().__init__(refusal.error_kind.value, refusal.detail)
+        self.extra = refusal.as_payload()
 
 
 async def job_payload(
@@ -207,7 +237,7 @@ def job_string(
     return value.strip()
 
 
-def _validated_initiator(
+def validated_initiator(
     payload: dict[str, object],
     *,
     root: Path,
@@ -252,7 +282,7 @@ async def validated_index_request(
     JobInitiator,
     CodeIndexPreflight | DocumentIndexPreflight | None,
 ]:
-    from .._job_admission import index_job_spec
+    from .._job_admission import IncompatibleIncrementalError, index_job_spec
     from ..job_models import JobMode, JobOperation, JobSource
 
     operation = job_string(payload, "operation", default="index")
@@ -306,7 +336,7 @@ async def validated_index_request(
         raise InvalidJobRequestError("root_missing", str(exc)) from exc
     except (ProjectRootRequiredError, ValueError) as exc:
         raise InvalidJobRequestError("invalid_job_spec", str(exc)) from exc
-    initiator = _validated_initiator(
+    initiator = validated_initiator(
         payload,
         root=root,
         default_command="http_jobs_create",
@@ -315,16 +345,19 @@ async def validated_index_request(
     # source gets, so the route reads the request and creates whatever
     # admission says it is. Both of its readings reach SQLite and storage, so
     # they run off the event loop like every other admission check here.
-    spec = await _run_in_thread(
-        partial(
-            index_job_spec,
-            root,
-            source=JobSource(source),
-            clean=JobMode(mode) is JobMode.REBUILD,
-            authority=authority,
-            initiator_kind=initiator.kind,
+    try:
+        spec = await _run_in_thread(
+            partial(
+                index_job_spec,
+                root,
+                source=JobSource(source),
+                clean=JobMode(mode) is JobMode.REBUILD,
+                authority=authority,
+                initiator_kind=initiator.kind,
+            )
         )
-    )
+    except IncompatibleIncrementalError as exc:
+        raise AdmissionRefusedError(exc) from exc
     admission = await _validate_index_job_spec(spec)
     return spec, initiator, admission
 
@@ -429,6 +462,7 @@ def job_outcome_status(code: str) -> int:
         "revision_conflict": 409,
         "force_not_supported": 409,
         "force_termination_unavailable": 409,
+        "full_reindex_required": 409,
     }
     return status_codes.get(code, 500)
 
@@ -554,6 +588,7 @@ async def jobs_route(request: Request) -> JSONResponse:
         controllable = _job_query_flag(
             request.query_params.get("controllable"), "controllable"
         )
+        waiting = _job_query_flag(request.query_params.get("waiting"), "waiting")
     except InvalidJobRequestError as exc:
         return job_error("list", exc.code, str(exc))
     now = time.time()
@@ -574,6 +609,7 @@ async def jobs_route(request: Request) -> JSONResponse:
                 state=state,
                 desired_state=desired_state,
                 controllable=controllable,
+                waiting=waiting,
             ),
         )
     ]
@@ -625,6 +661,7 @@ async def jobs_route(request: Request) -> JSONResponse:
                 "state": state,
                 "desired_state": desired_state,
                 "controllable": controllable,
+                "waiting": waiting,
                 "source": source,
                 "trigger": trigger,
                 "query": query,
@@ -689,10 +726,98 @@ async def job_detail_route(request: Request) -> JSONResponse:
     record = find_job(job_id)
     if record is None:
         return job_error("get", "job_not_found", "The job was not found.")
+    return JSONResponse({"ok": True, "job": _job_resource(record)})
+
+
+def _job_resource(record: dict[str, object]) -> dict[str, object]:
+    """Project one job record with the live admission queue stamped on it."""
+    (stamped,) = with_admission([record], _jobs.get_job_manager().admission_queue())
+    return _job_with_liveness(stamped, now=time.time())
+
+
+#: The wait a ``/jobs/{id}/wait`` request gets when it names none.
+JOB_WAIT_DEFAULT_SECONDS = 30.0
+#: The longest one wait request holds its connection, whatever it asks for.
+JOB_WAIT_MAX_SECONDS = 120.0
+_JOB_WAIT_CONDITIONS: dict[str, Literal["admitted", "finished"]] = {
+    "admitted": "admitted",
+    "finished": "finished",
+}
+
+
+def _job_wait_request(
+    raw_until: str | None,
+    raw_timeout: str | None,
+) -> tuple[Literal["admitted", "finished"], float]:
+    """Return the validated wait condition and its capped timeout in seconds."""
+    until = _JOB_WAIT_CONDITIONS.get((raw_until or "finished").strip().lower())
+    if until is None:
+        raise InvalidJobRequestError(
+            "invalid_wait", "until must be 'admitted' or 'finished'."
+        )
+    if raw_timeout is None or not raw_timeout.strip():
+        return until, JOB_WAIT_DEFAULT_SECONDS
+    try:
+        timeout = float(raw_timeout)
+    except ValueError:
+        timeout = math.nan
+    if not math.isfinite(timeout) or timeout < 0:
+        raise InvalidJobRequestError(
+            "invalid_wait",
+            "timeout must be a non-negative number of seconds.",
+        )
+    return until, min(timeout, JOB_WAIT_MAX_SECONDS)
+
+
+def _unowned_wait_reached(
+    record: dict[str, object], until: Literal["admitted", "finished"]
+) -> bool:
+    """Judge a wait on a record no manager owns from its current snapshot."""
+    if job_state(record) in TERMINAL_STATES:
+        return True
+    return until == "admitted" and job_wait_reason(record) != "admission"
+
+
+async def job_wait_route(request: Request) -> JSONResponse:
+    """Hold until one job is admitted or finished, or the bounded timeout ends.
+
+    Read-only. The job manager wakes the wait on every job change, so nothing
+    here polls. Expiry is an answer, not an error: ``reached`` says which. A
+    record the manager does not own is answered at once from its snapshot.
+    """
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    try:
+        until, timeout = _job_wait_request(
+            request.query_params.get("until"), request.query_params.get("timeout")
+        )
+    except InvalidJobRequestError as exc:
+        return job_error("wait", exc.code, str(exc))
+    from ..jobs import find_job
+
+    job_id = str(request.path_params["job_id"])
+    outcome = await _jobs.get_job_manager().wait_for_job(
+        job_id, until=until, timeout_seconds=timeout
+    )
+    if outcome is not None:
+        record = outcome.job.to_dict()
+        reached = outcome.reached
+        waited = outcome.waited_seconds
+    else:
+        found = find_job(job_id)
+        if found is None:
+            return job_error("wait", "job_not_found", "The job was not found.")
+        record = found
+        reached = _unowned_wait_reached(found, until)
+        waited = 0.0
     return JSONResponse(
         {
             "ok": True,
-            "job": _job_with_liveness(record, now=time.time()),
+            "job": _job_resource(record),
+            "until": until,
+            "reached": reached,
+            "waited_seconds": round(waited, 3),
         }
     )
 
@@ -771,7 +896,7 @@ async def retry_job_route(request: Request) -> JSONResponse:
     if parent is not None and ("initiator" in payload or "initiator_kind" in payload):
         try:
             root = Path(str(parent.spec.project_root))
-            initiator = _validated_initiator(
+            initiator = validated_initiator(
                 payload,
                 root=root,
                 default_command="http_job_retry",
@@ -1123,6 +1248,7 @@ ROUTES: list[Route] = [
     Route("/logs/json", logs_json_route, methods=["GET"]),
     Route("/jobs", jobs_route, methods=["GET"]),
     Route("/jobs/{job_id}", job_detail_route, methods=["GET"]),
+    Route("/jobs/{job_id}/wait", job_wait_route, methods=["GET"]),
     Route(
         "/jobs/{job_id}/desired-state",
         set_job_desired_state_route,

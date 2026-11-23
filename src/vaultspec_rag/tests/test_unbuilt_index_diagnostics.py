@@ -291,10 +291,13 @@ def test_in_process_cli_reports_initial_indexing(
 ) -> None:
     import typer
 
-    from ..cli._search import _InProcessRenderRequest, _render_in_process_results
+    from ..cli._search_in_process import (
+        InProcessRenderRequest,
+        render_in_process_results,
+    )
 
     context = _unbuilt_context(tmp_path, source)
-    request = _InProcessRenderRequest(
+    request = InProcessRenderRequest(
         results=[],
         query="readiness",
         search_type=PublicSourceType(source),
@@ -304,7 +307,7 @@ def test_in_process_cli_reports_initial_indexing(
         envelope={"index_state": dict(context.index_state)},
     )
     with pytest.raises(typer.Exit) as raised:
-        _render_in_process_results(request)
+        render_in_process_results(request)
     assert raised.value.exit_code == 1
     output = capsys.readouterr().out
     if json_mode:
@@ -321,7 +324,10 @@ def test_in_process_combined_cli_preserves_all_unbuilt_sources(
 ) -> None:
     import typer
 
-    from ..cli._search import _InProcessRenderRequest, _render_in_process_results
+    from ..cli._search_in_process import (
+        InProcessRenderRequest,
+        render_in_process_results,
+    )
     from ..search._outcomes import CombinedSearchOutcome, SearchDomainOutcome
 
     contexts = {source: _unbuilt_context(tmp_path, source) for source in INDEX_SOURCES}
@@ -337,7 +343,7 @@ def test_in_process_combined_cli_preserves_all_unbuilt_sources(
         document=domains["document"],
         top_k=10,
     )
-    request = _InProcessRenderRequest(
+    request = InProcessRenderRequest(
         results=outcome,
         query="readiness",
         search_type=PublicSourceType.COMBINED,
@@ -347,7 +353,7 @@ def test_in_process_combined_cli_preserves_all_unbuilt_sources(
         envelope={"index_state": dict(contexts["code"].index_state)},
     )
     with pytest.raises(typer.Exit) as raised:
-        _render_in_process_results(request)
+        render_in_process_results(request)
     assert raised.value.exit_code == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["error"] == "index_unavailable"

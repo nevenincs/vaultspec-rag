@@ -36,7 +36,7 @@ import importlib.util
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, NamedTuple, Protocol, cast
 
 import pytest
 
@@ -119,6 +119,61 @@ def _load_gate() -> _GateModule:
 @pytest.fixture(scope="module")
 def gate() -> _GateModule:
     return _load_gate()
+
+
+#: An ordinary word the gate's own source carries, walked beside the host's own
+#: identity so that one pass over the checkout answers both live-tree cases.
+_PROBE_IDENTITY = "tokenize"
+
+
+class _LiveWalk(NamedTuple):
+    """One walk of the checkout, split by whose identity each leak names.
+
+    Attributes:
+        active: Active citations. Identity does not enter into them.
+        host_leaks: Path leaks as a walk carrying only this host's own identity
+            reports them.
+        probe_leaks: Path leaks as a walk carrying only the probe identity
+            reports them.
+    """
+
+    active: list[tuple[str, int, str, str]]
+    host_leaks: list[tuple[str, int, str, str]]
+    probe_leaks: list[tuple[str, int, str, str]]
+
+
+@pytest.fixture(scope="module")
+def live_walk(gate: _GateModule) -> _LiveWalk:
+    """Walk the checkout once, with the host's identity and the probe together.
+
+    Reading, parsing and tokenizing every tracked file is the whole cost of a
+    walk, and the identity patterns only change which leaks it reports. Each
+    pattern is matched on its own, so a leak whose matched text is the probe
+    belongs to the probe and every other identity-shaped leak belongs to the
+    host; the two views are exactly what two separate walks would report.
+    """
+    host = gate.discover_machine_identity(_REPO_ROOT)
+    assert _PROBE_IDENTITY not in {candidate.casefold() for candidate in host}, (
+        "premise: the host's identity is the probe word, so the two views of "
+        "one walk cannot be told apart"
+    )
+    active, _deferred, leaks, _smells = gate.collect_findings(
+        _REPO_ROOT, machine_identity=(*host, _PROBE_IDENTITY)
+    )
+
+    def names_probe(finding: tuple[str, int, str, str]) -> bool:
+        return finding[2] == "machine-identity" and (
+            finding[3].casefold() == _PROBE_IDENTITY
+        )
+
+    def names_host(finding: tuple[str, int, str, str]) -> bool:
+        return finding[2] == "machine-identity" and not names_probe(finding)
+
+    return _LiveWalk(
+        active=active,
+        host_leaks=[leak for leak in leaks if not names_probe(leak)],
+        probe_leaks=[leak for leak in leaks if not names_host(leak)],
+    )
 
 
 def _slugs(findings: list[tuple[str, int, str, str]]) -> list[str]:
@@ -1012,8 +1067,32 @@ def test_discovery_reads_the_account_and_the_git_identity_never_the_domain(
     assert {"mailhost", "example"}.isdisjoint(candidates), "the domain was split too"
 
 
+def test_a_collection_given_no_identity_reads_the_hosts_own(
+    gate: _GateModule, tmp_path: Path
+) -> None:
+    """Leaving the identity out is what a real run does, and it must find one.
+
+    The live-tree cases hand the host's identity in, so this is the only case
+    that reaches the discovery wired into the collector itself.
+
+    Mutation proving this can fail: make the collector treat ``None`` as no
+    identity at all, which empties the leak bucket and reds the assertion.
+    """
+    _git_tree(tmp_path)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "user.name", "Qzrblex"], check=True
+    )
+    _write(tmp_path, "module.py", 'WHO = "qzrblex"\n')
+
+    _active, _deferred, leaks, _smells = gate.collect_findings(tmp_path)
+
+    assert [(rel, text.casefold()) for rel, _line, _slug, text in leaks] == [
+        ("module.py", "qzrblex")
+    ]
+
+
 def test_the_gates_own_file_is_exempt_from_path_literals_not_from_identity(
-    gate: _GateModule,
+    live_walk: _LiveWalk,
 ) -> None:
     """The file whose job is keeping names out must not be where nothing looks.
 
@@ -1035,11 +1114,7 @@ def test_the_gates_own_file_is_exempt_from_path_literals_not_from_identity(
     """
     gate_rel = "tools/citation_gate.py"
 
-    _active, _deferred, leaks, _smells = gate.collect_findings(
-        _REPO_ROOT, machine_identity=("tokenize",)
-    )
-
-    reported = {(rel, slug) for rel, _line, slug, _text in leaks}
+    reported = {(rel, slug) for rel, _line, slug, _text in live_walk.probe_leaks}
     own_definitions = sorted(
         slug for rel, slug in reported if rel == gate_rel and slug != "machine-identity"
     )
@@ -1051,7 +1126,7 @@ def test_the_gates_own_file_is_exempt_from_path_literals_not_from_identity(
 
 
 def test_the_checkout_carries_no_active_citation_or_identity_leak(
-    gate: _GateModule,
+    live_walk: _LiveWalk,
 ) -> None:
     """Regression guard on the tree, not evidence about the gate.
 
@@ -1061,16 +1136,23 @@ def test_the_checkout_carries_no_active_citation_or_identity_leak(
     issue behind this file.
 
     This one case also runs the machine-identity detector against the real host,
-    because it is the only case that does not inject an identity. That makes its
-    verdict machine-dependent by construction: it is a tripwire on the machine
-    introducing a leak, and it says nothing about anybody else's name. A green
-    run on a service account is not evidence the tree is clean.
+    because it is the only case that is handed the host's own identity rather
+    than an injected one. That makes its verdict machine-dependent by
+    construction: it is a tripwire on the machine introducing a leak, and it
+    says nothing about anybody else's name. A green run on a service account is
+    not evidence the tree is clean.
+
+    Mutation proving this can fail: run it with ``USERNAME`` set to a word the
+    tree carries, such as ``subprocess``; the host leaks list every occurrence
+    and the leak assertion reds.
     """
     if sys.platform != "win32":
         # `just check-all` scans this same tree on Linux; only the Windows lane
         # runs no lint, and only there does the identity detector see a new host.
         pytest.skip("the Linux lint job runs this scan over the same checkout")
-    active, _deferred, leaks, _smells = gate.collect_findings(_REPO_ROOT)
-
-    assert active == [], f"active development-record citation(s): {active}"
-    assert leaks == [], f"workstation-identity path leak(s): {leaks}"
+    assert live_walk.active == [], (
+        f"active development-record citation(s): {live_walk.active}"
+    )
+    assert live_walk.host_leaks == [], (
+        f"workstation-identity path leak(s): {live_walk.host_leaks}"
+    )

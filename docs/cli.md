@@ -43,6 +43,7 @@ Generated from the live command surface. Each entry lists the command's argument
   - [restart](#server-restart)
   - **job**
     - [show](#server-job-show)
+    - [wait](#server-job-wait)
     - [pause](#server-job-pause)
     - [resume](#server-job-resume)
     - [stop](#server-job-stop)
@@ -111,9 +112,11 @@ vaultspec-rag search
 | `--date` | str | no | - | Only show document results from this date (yyyy-mm-dd). |
 | `--tag` | str | no | - | Only show document results with this tag, without '#'. |
 | `--source-path` | str | no | - | Only show extracted-document results from this source path. |
-| `--extractor-id` | str | no | - | Only show document results emitted by this extractor. |
+| `--extractor-id` | str | no | - | Only show document results emitted by this extractor. A comma-separated list matches any of them. |
+| `--extractor-prefix` | str | no | - | Only show document results from extractors in this dotted family: a.b matches a.b and a.b.c, not a.bc. A comma-separated list matches any of them. |
+| `--meta` | str | no | - | Only show document results whose declared metadata key holds any of these values. Repeatable; different keys must all match. |
 | `--extractor-version` | str | no | - | Only show document results from this extractor version. |
-| `--locator-kind` | str | no | - | Only show document results with this locator kind. |
+| `--locator-kind` | str | no | - | Only show document results with this locator kind. A comma-separated list matches any of them. |
 | `--scores` | boolean | no | off | Show numeric relevance scores in human search output. |
 | `--port` | int | no | - | Service port (defaults to running service). |
 | `--allow-fallback` | boolean | no | off | If the selected service is not reachable, run the search locally instead of stopping with an error. |
@@ -578,6 +581,29 @@ vaultspec-rag server job show
 | `--port` | int | no | - | Service port (defaults to running service). |
 | `--json` | boolean | no | off | Emit one structured JSON outcome. |
 
+## server job wait
+
+Wait for one job to be admitted or finish; exit 1 if the wait expires.
+
+```bash
+vaultspec-rag server job wait
+```
+
+### Arguments
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `job_id` | str | yes | required | Exact job id or human-mode prefix. |
+
+### Options
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `--until` | str | no | finished | Wait until the job is admitted to its slot, or has finished. |
+| `--timeout` | float | no | 30.0 | Seconds to wait; the service caps one wait at 120 seconds. |
+| `--port` | int | no | - | Service port (defaults to running service). |
+| `--json` | boolean | no | off | Emit one structured JSON outcome. |
+
 ## server job pause
 
 Request a cooperative pause for one job.
@@ -749,7 +775,7 @@ None.
 
 ## server updates start
 
-Start automatic index updates for a project.
+Start automatic index updates for a project. This clears an earlier `server updates stop` for the project, and is the only command that does.
 
 ```bash
 vaultspec-rag server updates start
@@ -770,7 +796,7 @@ vaultspec-rag server updates start
 
 ## server updates stop
 
-Stop automatic index updates for a project.
+Stop automatic index updates for a project. The stop is recorded and survives searches, index requests, enrolment and service restarts until `server updates start` resumes it. Explicit `index` requests still run.
 
 ```bash
 vaultspec-rag server updates stop

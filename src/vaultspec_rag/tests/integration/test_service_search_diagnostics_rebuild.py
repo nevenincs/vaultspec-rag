@@ -1,15 +1,16 @@
 """Search availability while a matching index rebuild is in flight.
 
-A clean rebuild destroys the index the search would have answered from,
-so an empty result during that window cannot be trusted to mean "no
-matches exist". The service has to say so, and it has to say so
-identically to every caller that asks at the same moment - the raw route,
-the shared client, and an MCP process - while a search against an
-unrelated root or an unrelated source stays unaffected.
+An empty result while a matching rebuild runs cannot be trusted to mean "no
+matches exist". A source the first build has not written yet cannot answer
+and refuses; a source holding points answers successfully and marks its
+absence non-authoritative. Every caller that asks at the same moment - the
+raw route, the shared client, and an MCP process - gets the outcome its
+observed collection calls for, while a search against an unrelated root or
+an unrelated source stays unaffected.
 
-The second half asserts the inverse: a rebuild that is merely paused
-holds no authority over the index, so a matching search still answers
-from real content and leaves the paused job untouched.
+The second half covers a rebuild that is merely paused over a published
+index: a matching search still answers from real content, an empty one
+succeeds with the updating marker, and neither touches the paused job.
 """
 
 from __future__ import annotations
@@ -528,6 +529,72 @@ def _assert_unavailable_search_response(
     assert job_id in cast("list[str]", facts[0]["evidence"]), evidence
 
 
+def _indexed_count(body: dict[str, object], *, evidence: str) -> int:
+    raw_index_state = body["index_state"]
+    assert isinstance(raw_index_state, dict), evidence
+    count = cast("dict[str, object]", raw_index_state)["indexed_count"]
+    assert isinstance(count, int) and not isinstance(count, bool), evidence
+    return count
+
+
+def _assert_updating_empty_search_response(
+    response: RawSearchResponse,
+    *,
+    root: Path,
+    port: int,
+    job_id: str,
+    evidence: str,
+) -> None:
+    """Assert an empty answer from a usable source while its rebuild runs."""
+    status, headers, body = response
+    assert status == 200, evidence
+    assert "retry-after" not in headers, evidence
+    assert "error" not in body, evidence
+    assert body["results"] == [], evidence
+    remediation = SearchReasonCode.INDEX_UPDATING.remediation(
+        source="vault", port=port, target=str(root)
+    )
+    empty = cast("dict[str, object]", body["empty"])
+    assert empty["reason"] == "index_updating", evidence
+    assert empty["remediation"] == [remediation], evidence
+    index_state = cast("dict[str, object]", body["index_state"])
+    assert index_state["source"] == "vault", evidence
+    assert index_state["requested_target_root"] == str(root), evidence
+    assert index_state["target_matches"] is True, evidence
+    _assert_matching_job_diagnostics(index_state, job_id=job_id, evidence=evidence)
+    assert index_state["status"] == "rebuilding", evidence
+    readiness = cast("dict[str, object]", body["readiness"])
+    facts = cast("list[dict[str, object]]", readiness["sources"])
+    assert len(facts) == 1, evidence
+    assert facts[0]["source"] == "vault", evidence
+    assert facts[0]["availability"] == "usable", evidence
+    assert facts[0]["reason_code"] == SearchReasonCode.INDEX_UPDATING.value, evidence
+    assert facts[0]["freshness"] == "updating", evidence
+    assert facts[0]["absence_authority"] == "non_authoritative", evidence
+    assert facts[0]["retryable"] is True, evidence
+    assert job_id in cast("list[str]", facts[0]["evidence"]), evidence
+
+
+def _assert_search_during_matching_rebuild(
+    response: RawSearchResponse,
+    *,
+    root: Path,
+    port: int,
+    job_id: str,
+    evidence: str,
+) -> None:
+    """Refuse only while the first build has written nothing yet."""
+    body = response[2]
+    if _indexed_count(body, evidence=evidence) == 0:
+        _assert_unavailable_search_response(
+            response, root=root, port=port, job_id=job_id, evidence=evidence
+        )
+    else:
+        _assert_updating_empty_search_response(
+            response, root=root, port=port, job_id=job_id, evidence=evidence
+        )
+
+
 def _assert_stable_missing_index_response(
     response: RawSearchResponse,
     *,
@@ -603,15 +670,21 @@ def _assert_matching_nonempty_response(
     ), evidence
 
 
-def _assert_shared_unavailable_response(
+def _assert_shared_client_response(
     body: dict[str, object],
     *,
     job_id: str,
     evidence: str,
 ) -> None:
-    assert body["ok"] is False, evidence
-    assert body["error"] == "index_unavailable", evidence
-    assert "results" not in body, evidence
+    if _indexed_count(body, evidence=evidence) == 0:
+        assert body["ok"] is False, evidence
+        assert body["error"] == "index_unavailable", evidence
+        assert "results" not in body, evidence
+    else:
+        assert "error" not in body, evidence
+        assert body["results"] == [], evidence
+        empty = cast("dict[str, object]", body["empty"])
+        assert empty["reason"] == "index_updating", evidence
     raw_index_state = body["index_state"]
     assert isinstance(raw_index_state, dict), evidence
     index_state = cast("dict[str, object]", raw_index_state)
@@ -676,24 +749,27 @@ def _run_clean_rebuild_availability_phase(
         last_job=running_job,
         last_response=search_response,
     )
-    _assert_unavailable_search_response(
+    _assert_search_during_matching_rebuild(
         search_response,
         root=root,
         port=port,
         job_id=job_id,
         evidence=evidence,
     )
-    unavailable_request_id = assert_request_id(search_response[2])
-    unavailable_log = wait_for_search_log_line(port, unavailable_request_id)
-    assert (
+    probe_request_id = assert_request_id(search_response[2])
+    probe_log = wait_for_search_log_line(port, probe_request_id)
+    expected_event = (
         "service.search event=unavailable status_code=503 error=index_unavailable"
-    ) in unavailable_log, evidence
-    assert f"request_id={unavailable_request_id}" in unavailable_log, evidence
-    assert "source=vault" in unavailable_log, evidence
-    assert "search_type=vault" in unavailable_log, evidence
-    assert f"root={root}" in unavailable_log, evidence
-    assert "results=0" in unavailable_log, evidence
-    assert re.search(r"\btotal_seconds=\d+\.\d{3}\b", unavailable_log), evidence
+        if _indexed_count(search_response[2], evidence=evidence) == 0
+        else "service.search event=completed status_code=200"
+    )
+    assert expected_event in probe_log, evidence
+    assert f"request_id={probe_request_id}" in probe_log, evidence
+    assert "source=vault" in probe_log, evidence
+    assert "search_type=vault" in probe_log, evidence
+    assert f"root={root}" in probe_log, evidence
+    assert "results=0" in probe_log, evidence
+    assert re.search(r"\btotal_seconds=\d+\.\d{3}\b", probe_log), evidence
     unrelated_evidence = bounded_failure_evidence(
         port,
         token,
@@ -730,7 +806,7 @@ def _run_clean_rebuild_availability_phase(
         + "\nshared_client_response="
         + json.dumps(shared_client_response, default=str)[:12000]
     )
-    _assert_shared_unavailable_response(
+    _assert_shared_client_response(
         shared_client_response,
         job_id=job_id,
         evidence=shared_client_evidence,
@@ -745,7 +821,7 @@ def _run_clean_rebuild_availability_phase(
         + "\nmcp_response="
         + repr(mcp_response)[:12000]
     )
-    assert_mcp_unavailable_response(mcp_response, evidence=mcp_evidence)
+    _assert_mcp_response(mcp_response, evidence=mcp_evidence)
     terminal_job = wait_for_succeeded_job(
         port,
         token,
@@ -785,6 +861,19 @@ def _run_clean_rebuild_availability_phase(
         post_evidence
     )
     assert post_integrity["generation_id"], post_evidence
+
+
+def _assert_mcp_response(response: CallToolResult, *, evidence: str) -> None:
+    """Apply the same observed-collection rule to the MCP envelope."""
+    structured = cast("dict[str, object]", response.structured_content)
+    if _indexed_count(structured, evidence=evidence) == 0:
+        assert_mcp_unavailable_response(response, evidence=evidence)
+        return
+    assert response.is_error is False, evidence
+    assert "error" not in structured, evidence
+    assert structured["results"] == [], evidence
+    empty = cast("dict[str, object]", structured["empty"])
+    assert empty["reason"] == "index_updating", evidence
 
 
 def _assert_authoritative_empty_answer(
@@ -946,8 +1035,59 @@ def _assert_nonempty_search_with_paused_rebuild(
     assert paused_after["revision"] == paused_before["revision"], evidence
 
 
+def _assert_empty_search_with_paused_rebuild(
+    port: int,
+    token: str,
+    root: Path,
+    *,
+    job_id: str,
+) -> None:
+    """An empty answer over a published index succeeds with the job marker."""
+    paused_before = _wait_for_paused_rebuild_job(port, token, job_id, root)
+    payload: dict[str, object] = {
+        "query": "type:nonexistent availability authority probe",
+        "type": "vault",
+        "top_k": 5,
+        "project_root": str(root),
+    }
+    response = search_with_failure_evidence(
+        SearchProbeContext(port, token, job_id, paused_before),
+        payload,
+        label="matching empty search with paused rebuild",
+    )
+    evidence = bounded_failure_evidence(
+        port,
+        token,
+        job_id,
+        last_job=paused_before,
+        last_response=response,
+    )
+    status, _headers, body = response
+    assert status == 200, evidence
+    assert "error" not in body, evidence
+    assert body["results"] == [], evidence
+    empty = cast("dict[str, object]", body["empty"])
+    assert empty["reason"] == "index_updating", evidence
+    index_state = cast("dict[str, object]", body["index_state"])
+    assert index_state["status"] == "rebuilding", evidence
+    assert index_state["matching_jobs"] == [
+        {"id": job_id, "state": "paused", "mode": "rebuild"}
+    ], evidence
+    readiness = cast("dict[str, object]", body["readiness"])
+    aggregate = cast("dict[str, object]", readiness["aggregate"])
+    assert aggregate["availability"] == "usable", evidence
+    assert aggregate["freshness"] == "updating", evidence
+    assert aggregate["absence_authority"] == "non_authoritative", evidence
+    request_id = assert_request_id(body)
+    completed_log = wait_for_search_log_line(port, request_id)
+    assert "service.search event=completed status_code=200" in completed_log, evidence
+    assert "results=0" in completed_log, evidence
+    paused_after = _wait_for_paused_rebuild_job(port, token, job_id, root)
+    assert paused_after["revision"] == paused_before["revision"], evidence
+
+
 @pytest.mark.subprocess_gpu
-def test_search_index_unavailable_during_matching_rebuild(tmp_path: Path) -> None:
+def test_search_stays_available_during_matching_rebuild(tmp_path: Path) -> None:
     manifest = build_synthetic_vault(
         tmp_path / "availability-authority-project",
         n_docs=256,
@@ -982,4 +1122,7 @@ def test_search_index_unavailable_during_matching_rebuild(tmp_path: Path) -> Non
             root,
             job_id=paused_job_id,
             expected=_KnownDocumentSearch(known_doc.doc_id, known_doc.needle),
+        )
+        _assert_empty_search_with_paused_rebuild(
+            port, token, root, job_id=paused_job_id
         )

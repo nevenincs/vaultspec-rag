@@ -44,6 +44,7 @@ from ..indexer._streaming_types import CodeFileSegment, CodeFileSegmentRequest
 from ..job_control import NO_RUN_CONTROL
 from ..progress import NullProgressReporter
 from ..store_runtime import VaultStore
+from ._ledger_fixtures import continue_rebuild, record_reset_over_empty_storage
 from ._run_ledger_test_support import ledger_test_digest
 
 if TYPE_CHECKING:
@@ -94,7 +95,6 @@ class _ResumeRun:
             self.store.upsert_code_chunks(
                 list(segment.chunks),
                 write_policy=None,
-                collection=self.lifecycle.active_build_target,
             )
             assert (
                 self.checkpoint.record_confirmed_segments((segment,), self.digests) == 1
@@ -107,7 +107,8 @@ class _ResumeRun:
         )
         # A new checkpoint and SQLite open discard the prior attempt's state.
         self.lifecycle.forget_open_generation()
-        self.checkpoint = self.lifecycle.open_checkpoint(self.open_request)
+        with continue_rebuild(generation_id):
+            self.checkpoint = self.lifecycle.open_checkpoint(self.open_request)
         assert self.checkpoint.generation_id == generation_id
 
     def consume(self) -> _WeightedConsumerRun:
@@ -121,7 +122,6 @@ class _ResumeRun:
             checkpoint=self.checkpoint,
             ingest_wait=True,
             run_control=NO_RUN_CONTROL,
-            code_build_target=self.lifecycle.active_build_target,
             donor_reuse=None,
             reporter=NullProgressReporter(),
         )
@@ -231,6 +231,7 @@ def resume_run(tmp_path: Path, clean_config: None) -> Generator[_ResumeRun]:
             authority=RunAuthority.REBUILD,
         )
         checkpoint = lifecycle.open_checkpoint(open_request)
+        record_reset_over_empty_storage(checkpoint.ledger, checkpoint.generation)
         pipeline = CodeConsumerPipeline(
             CodePipelineBindings(
                 root_dir=tmp_path,
@@ -304,9 +305,9 @@ def test_weighted_resume_preserves_durable_units(
         )
         for segment in resume_run.segments
     ), "resume must retain original ordinals, digests, end markers, and point IDs"
-    assert resume_run.store.get_all_code_ids(
-        resume_run.lifecycle.active_build_target
-    ) == {chunk.id for segment in resume_run.segments for chunk in segment.chunks}
+    assert resume_run.store.get_all_code_ids() == {
+        chunk.id for segment in resume_run.segments for chunk in segment.chunks
+    }
     assert (
         checkpoint.ledger.indexed_digests_for_paths(
             checkpoint.generation_id, tuple(resume_run.digests)

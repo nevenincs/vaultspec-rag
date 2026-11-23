@@ -16,7 +16,7 @@ from __future__ import annotations
 import tomllib
 from typing import TYPE_CHECKING
 
-from ._index import CU130_INDEX_URL
+from ._index import CUDA_INDEX_URL
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -28,7 +28,7 @@ class LockedTorchVersionError(RuntimeError):
     """The accelerated torch version cannot be resolved from the lockfile."""
 
 
-def locked_torch_version(root: Path, index_url: str = CU130_INDEX_URL) -> str:
+def locked_torch_version(root: Path, index_url: str = CUDA_INDEX_URL) -> str:
     """Return the torch version *root*'s lockfile pins against *index_url*.
 
     Refuses anything but exactly one match: no entry means the accelerated

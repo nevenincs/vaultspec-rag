@@ -6,29 +6,22 @@ import contextlib
 import json
 import math
 import os
-from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Annotated, cast
+from dataclasses import replace
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 
-import vaultspec_rag.cli as _cli
-
 from .._operator_commands import (
-    index_command,
     server_start_command,
     server_status_command,
 )
-from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
-from .._store_locks import VaultStoreLockedError
-from ..api import CodebaseSearchRequest, VaultSearchRequest
 from ..config._types import EnvVar
 from ..serviceclient._compat import resolve_data_plane_service
 from ..serviceclient._search_transport import (
-    document_search_filters,
     get_search_timeout,
     try_http_search,
 )
-from . import _render as search_render
+from ..serviceclient._transport import DocumentSearchFilters
 from ._app import (
     CLIState,
     JsonMode,
@@ -36,62 +29,40 @@ from ._app import (
     app,
 )
 from ._gpu_errors import (
-    _handle_gpu_error,
     refuse_beside_a_service_of_another_release,
     refuse_if_gpu_owned,
 )
 from ._render import (
-    MUTED,
-    WARN,
     _display_port_unreachable_error,
-    _display_search_results,
-    _display_service_error,
     _display_service_version_error,
-    _emit_json,
     _emit_json_error_and_exit,
     _plain,
-    _styled,
     exit_with_error,
 )
-from ._search_readiness_render import (
-    render_drift_audits as _render_drift_audits_payload,
+from ._search_filters import (
+    metadata_filters_option,
+    search_prefer_filter,
+    validate_search_type,
 )
-from ._search_readiness_render import (
-    render_readiness as _render_readiness_payload,
+from ._search_in_process import (
+    InProcessRenderRequest,
+    InProcessSearchRequest,
+    render_in_process_results,
+    try_in_process_search,
+    validate_and_handle_filters,
 )
-from ._search_readiness_render import (
-    render_string_remediation as _render_string_remediation_payload,
+from ._search_results_render import (
+    FILTER_ADVISORY,
+    ServiceSearchRenderRequest,
+    handle_service_results,
+    muted_line,
 )
 
 if TYPE_CHECKING:
-    import pathlib
-    from collections.abc import Generator, Iterator
+    from collections.abc import Generator
     from typing import NoReturn
 
-    from ..search import (
-        DocumentSearchResult,
-        InvalidPreferValueError,
-        SearchResult,
-    )
-    from ..search._outcomes import CombinedSearchOutcome
-
 __all__ = ["_suppress_hf_progress", "handle_search"]
-
-_FILTER_ADVISORY = (
-    "Filter with --type code --language python, --type vault --doc-type adr, "
-    "or --type document; verify source/doc_type in --json (all: --type combined)."
-)
-
-
-@dataclass(frozen=True, slots=True)
-class _ServiceSearchRenderRequest:
-    """Presentation inputs shared by every service-search outcome shape."""
-
-    query: str
-    search_type: str
-    json_mode: bool
-    show_scores: bool
-    target: pathlib.Path | None = None
 
 
 def _suppress_hf_progress() -> None:
@@ -105,790 +76,6 @@ def _suppress_hf_progress() -> None:
     os.environ.setdefault(EnvVar.HF_HUB_DISABLE_PROGRESS_BARS.value, "1")
     os.environ.setdefault(EnvVar.TRANSFORMERS_NO_ADVISORY_WARNINGS.value, "1")
     os.environ.setdefault(EnvVar.TRANSFORMERS_VERBOSITY.value, "error")
-
-
-def _attach_result_collapse(
-    envelope: dict[str, object] | None, results: object
-) -> None:
-    """Record on *envelope* that this page resolved to a single file.
-
-    A result carries its path under ``path``; a combined outcome nests its
-    per-domain lists. Anything without a readable path contributes nothing
-    rather than a placeholder, so a shape this does not understand makes the
-    signal stay silent instead of inventing a collapse.
-
-    Takes an optional envelope because the non-JSON path has none to carry the
-    block: there the warning is rendered from the service payload instead, and
-    silently doing nothing here is the correct behaviour rather than a guard
-    worth raising over.
-    """
-    from .._search_state import result_collapse
-
-    if envelope is None:
-        return
-    state = envelope.get("index_state")
-    if not isinstance(state, dict):
-        return
-    paths = tuple(
-        str(path)
-        for item in _iter_result_rows(results)
-        if isinstance(path := getattr(item, "path", None), str)
-    )
-    collapse = result_collapse(paths)
-    if collapse is not None:
-        cast("dict[str, object]", state)["result_collapse"] = collapse
-
-
-def _iter_result_rows(results: object) -> Iterator[object]:
-    """Yield every result row, flattening a combined outcome's domain lists."""
-    if isinstance(results, list):
-        yield from cast("list[object]", results)
-        return
-    for attribute in ("vault_results", "code_results", "document_results"):
-        nested = getattr(results, attribute, None)
-        if isinstance(nested, list):
-            yield from cast("list[object]", nested)
-
-
-def _handle_service_results(
-    service_results: dict[str, object],
-    request: _ServiceSearchRenderRequest,
-) -> None:
-    if not request.json_mode:
-        _render_drift_audits_payload(service_results, _plain)
-    if service_results.get("ok") is False:
-        _display_service_error(
-            service_results,
-            json_mode=request.json_mode,
-            command="search",
-        )
-        if not request.json_mode:
-            rendered_remediation = _render_readiness(service_results)
-            _render_string_remediation(service_results, rendered_remediation)
-        raise typer.Exit(code=1)
-    if "results" in service_results:
-        _handle_service_success(
-            service_results,
-            request,
-        )
-        return
-    # The transport rejects non-dicts and empty/malformed dictionaries. Keep a
-    # final dictionary-shape defense for direct callers of this private seam.
-    _display_service_error(
-        service_results,
-        json_mode=request.json_mode,
-        command="search",
-    )
-    raise typer.Exit(code=1)
-
-
-def _handle_service_success(
-    payload: dict[str, object],
-    request: _ServiceSearchRenderRequest,
-) -> None:
-    raw_results = payload.get("results")
-    results = (
-        list(cast("list[dict[str, object]]", raw_results))
-        if isinstance(raw_results, list)
-        else []
-    )
-    if request.json_mode:
-        data = dict(payload)
-        data["query"] = request.query
-        data["search_type"] = request.search_type
-        data["via"] = "service"
-        data["advisory"] = _FILTER_ADVISORY
-        _emit_json(True, "search", data=data)
-        return
-    if not results:
-        _render_empty_service_results(payload, request.query, request.search_type)
-        _render_readiness(payload)
-        _render_shortfall_warnings(payload)
-        _render_partial_domain_failures(payload)
-        return
-    _display_search_results(
-        results,
-        request.search_type,
-        via="service",
-        show_scores=request.show_scores,
-        root=request.target,
-    )
-    _render_readiness(payload, muted=True)
-    _render_shortfall_warnings(payload)
-    _render_partial_domain_failures(payload)
-
-
-def _muted_line(text: str) -> None:
-    _styled((text, MUTED), soft_wrap=True)
-
-
-def _render_readiness(payload: dict[str, object], *, muted: bool = False) -> set[str]:
-    """Render the readiness block; muted when it trails results it qualifies."""
-    return _render_readiness_payload(payload, _muted_line if muted else _plain)
-
-
-def _render_string_remediation(payload: dict[str, object], rendered: set[str]) -> None:
-    _render_string_remediation_payload(payload, rendered, _plain)
-
-
-def _render_shortfall_warnings(payload: dict[str, object]) -> None:
-    """Warn that the index answering this search is demonstrably incomplete.
-
-    Walks whatever the shared reader found, so the point-count and file-count
-    deficits cannot diverge on this surface: adding a third kind reaches the
-    operator here without touching this function.
-    """
-    from .._index_breadth import (
-        SHORTFALL_CONSEQUENCE,
-        SHORTFALL_REMEDIATION,
-        shortfall_warnings,
-    )
-
-    index_state = payload.get("index_state")
-    if not isinstance(index_state, dict):
-        return
-    for warning in shortfall_warnings(cast("dict[str, object]", index_state)):
-        _styled(
-            ("Warning:", WARN),
-            f" {warning.deficit}; {warning.missing}.",
-            soft_wrap=True,
-        )
-        _plain(f"  {warning.why}, so {SHORTFALL_CONSEQUENCE}.", soft_wrap=True)
-        _plain(f"  Next action: {SHORTFALL_REMEDIATION}")
-
-
-def _render_partial_domain_failures(payload: dict[str, object]) -> None:
-    """Render visible failures from a canonical combined-search envelope."""
-    if payload.get("partial") is not True and payload.get("ok") is not False:
-        return
-    raw_domains = payload.get("domains")
-    if not isinstance(raw_domains, dict):
-        return
-    domains = cast("dict[object, object]", raw_domains)
-    for source in PublicSourceType:
-        if source is PublicSourceType.COMBINED:
-            continue
-        raw = domains.get(source.value)
-        if not isinstance(raw, dict):
-            continue
-        outcome = cast("dict[str, object]", raw)
-        if outcome.get("ok") is False:
-            _plain(
-                f"{_search_type_result_label(source.value).capitalize()} search "
-                f"failed ({outcome.get('error_kind')}): {outcome.get('detail')}"
-            )
-
-
-def _render_empty_service_results(
-    payload: dict[str, object],
-    query: str,
-    search_type: str,
-) -> None:
-    _plain(f"No {_search_type_result_label(search_type)} results found for: {query}")
-    remediation: object = None
-    empty = payload.get("empty")
-    if isinstance(empty, dict):
-        empty_map = cast("dict[str, object]", empty)
-        message = str(empty_map.get("message", "No matching indexed items found."))
-        _plain(f"Why: {message}")
-        remediation = empty_map.get("remediation")
-    index_state = payload.get("index_state")
-    if isinstance(index_state, dict):
-        _render_empty_index_state(cast("dict[str, object]", index_state), search_type)
-    if isinstance(remediation, list) and remediation:
-        remediation_items = cast("list[object]", remediation)
-        _cli.console.print("Next actions:")
-        for item in remediation_items:
-            _cli.console.print(f"  - {item}")
-
-
-def _search_type_result_label(search_type: str) -> str:
-    if search_type == "code":
-        return "source code"
-    if search_type == "vault":
-        return "vault document"
-    if search_type == "document":
-        return "document"
-    if search_type == "combined":
-        return "combined"
-    return search_type.replace("_", " ")
-
-
-def _search_type_count_label(search_type: str) -> str:
-    if search_type == "code":
-        return "source code sections"
-    if search_type == "vault":
-        return "vault documents"
-    if search_type == "document":
-        return "document sections"
-    if search_type == "combined":
-        return "combined results"
-    return f"{search_type.replace('_', ' ')} items"
-
-
-def _render_empty_index_state(
-    index_state: dict[str, object],
-    search_type: str,
-) -> None:
-    source = str(index_state.get("source") or search_type)
-    indexed = index_state.get("indexed_count", "?")
-    _plain(f"Indexed {_search_type_count_label(source)}: {indexed}.")
-    requested = str(index_state.get("requested_target_root", "")).strip()
-    indexed_target = str(index_state.get("indexed_target_root", "")).strip()
-    if not requested or not indexed_target:
-        return
-    if index_state.get("target_matches") is False and requested != indexed_target:
-        _plain("Project mismatch: requested project differs from indexed project.")
-        _plain(f"Requested project: {requested}", soft_wrap=True)
-        _plain(f"Indexed project: {indexed_target}", soft_wrap=True)
-        return
-    _plain(f"Project: {requested}", soft_wrap=True)
-
-
-@dataclass(frozen=True, slots=True)
-class _InProcessSearchRequest:
-    target: pathlib.Path
-    query: str
-    search_type: PublicSourceType
-    max_results: int
-    language: str | None
-    path: str | None
-    node_type: str | None
-    function_name: str | None
-    class_name: str | None
-    include_paths: list[str] | None
-    exclude_paths: list[str] | None
-    dedup_locales: bool | None
-    prefer: str | None
-    doc_type: str | None
-    feature: str | None
-    date: str | None
-    tag: str | None
-    source_path: str | None
-    extractor_id: str | None
-    extractor_version: str | None
-    locator_kind: str | None
-    json_mode: bool
-    envelope: dict[str, object] | None = None
-    include_documents: bool = True
-
-
-def _try_in_process_search(
-    request: _InProcessSearchRequest,
-) -> list[SearchResult | DocumentSearchResult] | CombinedSearchOutcome:
-    """Run one search in this process.
-
-    ``envelope`` collects the same ``index_state`` block the service puts on its
-    response, so the local path and the service path hand the renderer one
-    shape. It is filled from the counts this function already takes, never from
-    a fresh count, so the local path pays no store round trip the service does
-    not.
-    """
-    (
-        target,
-        query,
-        search_type,
-        max_results,
-        language,
-        path,
-        node_type,
-        function_name,
-        class_name,
-        include_paths,
-        exclude_paths,
-        dedup_locales,
-        prefer,
-        doc_type,
-        feature,
-        date,
-        tag,
-        source_path,
-        extractor_id,
-        extractor_version,
-        locator_kind,
-        json_mode,
-        envelope,
-    ) = (
-        request.target,
-        request.query,
-        request.search_type,
-        request.max_results,
-        request.language,
-        request.path,
-        request.node_type,
-        request.function_name,
-        request.class_name,
-        request.include_paths,
-        request.exclude_paths,
-        request.dedup_locales,
-        request.prefer,
-        request.doc_type,
-        request.feature,
-        request.date,
-        request.tag,
-        request.source_path,
-        request.extractor_id,
-        request.extractor_version,
-        request.locator_kind,
-        request.json_mode,
-        request.envelope,
-    )
-    import vaultspec_rag
-
-    from .._public_search import (
-        CodeCombinedSearchFilters,
-        CombinedSearchRequest,
-        DocumentCombinedSearchFilters,
-        DocumentSearchRequest,
-        VaultCombinedSearchFilters,
-    )
-    from ..registry import get_registry
-
-    # An empty or unbuilt index has nothing to search, so skip the
-    # "Searching..." status spinner: the search returns an empty, actionable
-    # result either way, and the spinner's control codes otherwise leak into
-    # non-interactive (captured / piped) output as a spurious first line.
-    # Counting opens the local store, so it can raise the locked-store error
-    # just as the search itself can. It sits inside the same guard for that
-    # reason: outside it the error escaped uncaught and the command exited
-    # non-zero with no output at all, so the routing-mode message this path
-    # exists to print never reached an operator whose store was actually busy.
-    breadth_snapshot = None
-    if search_type in (PublicSourceType.CODE, PublicSourceType.COMBINED):
-        from .._index_breadth import acquire_code_breadth_snapshot_if_proven
-
-        breadth_snapshot = acquire_code_breadth_snapshot_if_proven(target)
-    integrity_source = (
-        PublicSourceType.CODE
-        if search_type is PublicSourceType.COMBINED
-        else search_type
-    )
-    from .._index_integrity import (
-        IndexIntegritySnapshot,
-        acquire_index_integrity_snapshot_if_proven,
-    )
-
-    integrity_snapshot = acquire_index_integrity_snapshot_if_proven(
-        target, integrity_source
-    )
-    try:
-        counts = {
-            PublicSourceType.VAULT: get_registry().vault_doc_count(target),
-            PublicSourceType.CODE: get_registry().code_chunk_count(target),
-            PublicSourceType.DOCUMENT: (
-                get_registry().document_chunk_count(target)
-                if search_type is not PublicSourceType.COMBINED
-                or request.include_documents
-                else 0
-            ),
-        }
-    except VaultStoreLockedError as exc:
-        search_render.handle_vaultstore_locked_error(exc, json_mode)
-        return []
-    has_index = (
-        any(counts.values())
-        if search_type is PublicSourceType.COMBINED
-        else counts[search_type] > 0
-    )
-    if envelope is not None:
-        from .._search_state import BreadthFindings, search_index_state
-
-        # Breadth is published for the code index alone, so a vault- or
-        # document-only search has no claim to fall short of.
-        shortfall = (
-            breadth_snapshot.finish(counts[PublicSourceType.CODE])
-            if breadth_snapshot is not None
-            else None
-        )
-        # A combined search reconciles the code domain, mirroring the combined
-        # shortfall above; single-domain searches reconcile their own.
-        integrity = integrity_snapshot.finish(counts[integrity_source])
-        envelope["index_state"] = search_index_state(
-            indexed_count=(
-                sum(counts.values())
-                if search_type is PublicSourceType.COMBINED
-                else counts[search_type]
-            ),
-            requested_root=target,
-            search_type=search_type,
-            findings=BreadthFindings(
-                shortfall=shortfall,
-                integrity=integrity,
-            ),
-        )
-    try:
-        status_ctx = (
-            _cli.console.status(f"Searching {search_type.value}...")
-            if has_index and not json_mode
-            else contextlib.nullcontext()
-        )
-        with status_ctx:
-            if search_type is PublicSourceType.CODE:
-                results = vaultspec_rag.search_codebase(
-                    CodebaseSearchRequest(
-                        root_dir=target,
-                        query=query,
-                        top_k=max_results,
-                        language=language,
-                        path=path,
-                        node_type=node_type,
-                        function_name=function_name,
-                        class_name=class_name,
-                        include_paths=include_paths,
-                        exclude_paths=exclude_paths,
-                        dedup_locales=dedup_locales,
-                        prefer=prefer,
-                    )
-                )
-            elif search_type is PublicSourceType.VAULT:
-                results = vaultspec_rag.search_vault(
-                    VaultSearchRequest(
-                        root_dir=target,
-                        query=query,
-                        top_k=max_results,
-                        doc_type=doc_type,
-                        feature=feature,
-                        date=date,
-                        tag=tag,
-                    )
-                )
-            elif search_type is PublicSourceType.DOCUMENT:
-                results = vaultspec_rag.search_documents(
-                    DocumentSearchRequest(
-                        root_dir=target,
-                        query=query,
-                        top_k=max_results,
-                        source_path=source_path,
-                        extractor_id=extractor_id,
-                        extractor_version=extractor_version,
-                        locator_kind=locator_kind,
-                    )
-                )
-            else:
-                results = vaultspec_rag.search_combined(
-                    CombinedSearchRequest(
-                        include_documents=request.include_documents,
-                        root_dir=target,
-                        query=query,
-                        top_k=max_results,
-                        vault_filters=VaultCombinedSearchFilters(
-                            doc_type=doc_type,
-                            feature=feature,
-                            date=date,
-                            tag=tag,
-                        ),
-                        code_filters=CodeCombinedSearchFilters(
-                            language=language,
-                            path=path,
-                            node_type=node_type,
-                            function_name=function_name,
-                            class_name=class_name,
-                            include_paths=tuple(include_paths or ()),
-                            exclude_paths=tuple(exclude_paths or ()),
-                            dedup_locales=dedup_locales,
-                            prefer=prefer,
-                        ),
-                        document_filters=DocumentCombinedSearchFilters(
-                            source_path=source_path,
-                            extractor_id=extractor_id,
-                            extractor_version=extractor_version,
-                            locator_kind=locator_kind,
-                        ),
-                    )
-                )
-        if isinstance(integrity_snapshot, IndexIntegritySnapshot):
-            integrity_snapshot.publication.validate()
-        # The block above is built before the search runs, because its counts
-        # come from the store rather than from the answer. The collapse signal
-        # is the one finding that cannot be known until there IS an answer, so
-        # it is attached here rather than restated as a second builder - the
-        # daemon route reaches the same conclusion through the same function.
-        _attach_result_collapse(envelope, results)
-        return cast(
-            "list[SearchResult | DocumentSearchResult] | CombinedSearchOutcome",
-            results,
-        )
-    except VaultStoreLockedError as exc:
-        search_render.handle_vaultstore_locked_error(exc, json_mode)
-        return []
-    except (ImportError, RuntimeError) as e:
-        _handle_gpu_error(e, command="search", json_mode=request.json_mode)
-        return []
-
-
-def _validate_and_handle_filters(request: _InProcessSearchRequest) -> None:
-    from ..search import (
-        InvalidFilterForSearchTypeError,
-        InvalidPreferValueError,
-        SearchFilterOptions,
-        validate_search_filters,
-    )
-
-    try:
-        validate_search_filters(
-            request.search_type,
-            SearchFilterOptions(
-                language=request.language,
-                path=request.path,
-                node_type=request.node_type,
-                function_name=request.function_name,
-                class_name=request.class_name,
-                doc_type=request.doc_type,
-                feature=request.feature,
-                date=request.date,
-                tag=request.tag,
-                include_paths=request.include_paths,
-                exclude_paths=request.exclude_paths,
-                dedup_locales=request.dedup_locales,
-                prefer=request.prefer,
-                source_path=request.source_path,
-                extractor_id=request.extractor_id,
-                extractor_version=request.extractor_version,
-                locator_kind=request.locator_kind,
-            ),
-            include_documents=request.include_documents,
-        )
-    except InvalidPreferValueError as exc:
-        _fail_invalid_prefer(exc, request.json_mode)
-    except InvalidFilterForSearchTypeError as exc:
-        msg = str(exc)
-        if request.json_mode:
-            _emit_json_error_and_exit(
-                "search",
-                "invalid_filter_for_search_type",
-                msg,
-                2,
-                filter_kind=exc.filter_kind,
-                offending=exc.offending_filters,
-            )
-        _plain(f"Error: {msg}")
-        raise typer.Exit(code=2) from None
-
-
-def _fail_invalid_prefer(exc: InvalidPreferValueError, json_mode: bool) -> NoReturn:
-    """Render one refusal for an unsupported ``--prefer`` value and exit 2.
-
-    Both refusal points - the long-name normaliser below and the search
-    validator's exception - converge here, so the operator sees one wording,
-    one error code and one exit status whichever of the two fired.
-    """
-    msg = str(exc)
-    if json_mode:
-        _emit_json_error_and_exit(
-            "search",
-            "invalid_prefer_value",
-            msg,
-            2,
-            value=exc.prefer_value,
-        )
-    _plain(f"Error: {msg}")
-    raise typer.Exit(code=2) from None
-
-
-def _search_prefer_filter(prefer: str | None, *, json_mode: bool = False) -> str | None:
-    from ..search import InvalidPreferValueError
-
-    if prefer is None:
-        return None
-    values = {
-        "production": "prod",
-        "tests": "tests",
-        "documentation": "docs",
-    }
-    normalized = prefer.strip().lower()
-    if normalized in values:
-        return values[normalized]
-    _fail_invalid_prefer(InvalidPreferValueError(prefer), json_mode)
-
-
-def _validate_search_type(search_type: str, *, json_mode: bool) -> PublicSourceType:
-    try:
-        return parse_source_type(search_type, allow_aliases=True)
-    except SourceTypeParseError as exc:
-        if json_mode:
-            _emit_json_error_and_exit(
-                "search",
-                exc.error_kind,
-                str(exc),
-                2,
-                **exc.as_payload(),
-            )
-        _plain(f"Error: {exc}")
-        raise typer.Exit(code=2) from None
-
-
-@dataclass(frozen=True, slots=True)
-class _InProcessRenderRequest:
-    results: list[SearchResult | DocumentSearchResult] | CombinedSearchOutcome
-    query: str
-    search_type: PublicSourceType
-    json_mode: bool
-    show_scores: bool
-    target: pathlib.Path
-    envelope: dict[str, object] | None = None
-
-
-def _empty_in_process_failure(
-    request: _InProcessRenderRequest, index_state: dict[str, object]
-) -> dict[str, object] | None:
-    """Supply local observations to the shared readiness and failure model."""
-    from uuid import uuid4
-
-    from .._search_state import SearchReasonCode
-    from ..server._search_availability import classify_search_response
-    from ..server._search_route_availability import SearchAvailabilityRequestFacts
-
-    request_id = uuid4().hex
-    if request.search_type is PublicSourceType.COMBINED:
-        outcome = cast("CombinedSearchOutcome", request.results)
-        unbuilt = next(
-            (
-                fact
-                for fact in outcome.source_facts
-                if fact.reason_code is SearchReasonCode.INDEX_NOT_BUILT
-            ),
-            None,
-        )
-        if unbuilt is None:
-            return None
-        return unbuilt.failure_response(
-            request_id=request_id,
-            index_state=index_state,
-            sources=outcome.source_facts,
-        ) | {"domains": outcome.domain_status_payload()}
-    facts = SearchAvailabilityRequestFacts(
-        job_snapshot_before=[],
-        root=request.target,
-        source=request.search_type.value,
-        request_id=request_id,
-        port=None,
-    )
-    classified = classify_search_response(
-        {"results": []},
-        facts.to_context(after_snapshot=[], index_state=index_state),
-    )
-    return classified.response if classified.status_code != 200 else None
-
-
-def _render_in_process_results(request: _InProcessRenderRequest) -> None:
-    from ..search._outcomes import (
-        COMBINED_SEARCH_FAILED,
-        COMBINED_SEARCH_FAILED_MESSAGE,
-    )
-
-    results = request.results
-    query = request.query
-    search_type = request.search_type
-    json_mode = request.json_mode
-    show_scores = request.show_scores
-    target = request.target
-    breadth = request.envelope or {}
-
-    if search_type is PublicSourceType.COMBINED:
-        # _run_in_process_search only returns a CombinedSearchOutcome when it
-        # dispatched on PublicSourceType.COMBINED, the same discriminant
-        # checked above, so `results` is that type here.
-        outcome = cast("CombinedSearchOutcome", results)
-        result_items = outcome.results
-        domains = outcome.domain_status_payload()
-        if not outcome.ok:
-            failure_payload: dict[str, object] = {
-                "ok": False,
-                "error": COMBINED_SEARCH_FAILED,
-                "message": COMBINED_SEARCH_FAILED_MESSAGE,
-                "partial": False,
-                "domains": domains,
-            }
-            if json_mode:
-                _emit_json_error_and_exit(
-                    "search",
-                    COMBINED_SEARCH_FAILED,
-                    COMBINED_SEARCH_FAILED_MESSAGE,
-                    1,
-                    domains=domains,
-                )
-            _render_partial_domain_failures(failure_payload)
-            raise typer.Exit(code=1)
-    else:
-        result_items = cast("list[SearchResult | DocumentSearchResult]", results)
-        domains = None
-    # The service's own wire form, so an in-process search shows the same
-    # fields - and withholds the same ones - as a search the service answers.
-    from ..server._models import SearchResultItem
-
-    items = [SearchResultItem.serialize(r) for r in result_items]
-    if not items and isinstance(raw_state := breadth.get("index_state"), dict):
-        failure = _empty_in_process_failure(
-            request, cast("dict[str, object]", raw_state)
-        )
-        if failure is not None:
-            _handle_service_results(
-                failure,
-                _ServiceSearchRenderRequest(
-                    query, search_type.value, json_mode, show_scores, target
-                ),
-            )
-    if json_mode:
-        data: dict[str, object] = {
-            "query": query,
-            "search_type": search_type.value,
-            "via": "in-process",
-            "advisory": _FILTER_ADVISORY,
-            "results": items,
-        }
-        if domains is not None:
-            data["partial"] = cast("CombinedSearchOutcome", results).partial
-            data["domains"] = domains
-        data.update(breadth)
-        _emit_json(
-            True,
-            "search",
-            data=data,
-        )
-        return
-
-    if not result_items:
-        _render_empty_in_process_results(query, search_type.value, target)
-        _render_shortfall_warnings(breadth)
-        if domains is not None:
-            _render_partial_domain_failures(
-                {
-                    "partial": cast("CombinedSearchOutcome", results).partial,
-                    "domains": domains,
-                }
-            )
-        return
-
-    _display_search_results(
-        items,
-        search_type.value,
-        via="in-process",
-        show_scores=show_scores,
-        root=target,
-    )
-    _render_shortfall_warnings(breadth)
-    if domains is not None:
-        _render_partial_domain_failures(
-            {
-                "partial": cast("CombinedSearchOutcome", results).partial,
-                "domains": domains,
-            }
-        )
-
-
-def _render_empty_in_process_results(
-    query: str,
-    search_type: str,
-    target: pathlib.Path,
-) -> None:
-    result_label = _search_type_result_label(search_type)
-    count_label = _search_type_count_label(search_type)
-    _plain(f"No {result_label} results found for: {query}")
-    _plain(f"Why: No matching {count_label} were found in the local index.")
-    _plain(f"Project: {target}", soft_wrap=True)
-    _plain("Next actions:")
-    _plain(f"  - {index_command(search_type)}")
-    _plain("  - vaultspec-rag status")
 
 
 def _local_only_configured() -> bool:
@@ -1246,7 +433,33 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
         str | None,
         typer.Option(
             "--extractor-id",
-            help="Only show document results emitted by this extractor.",
+            help=(
+                "Only show document results emitted by this extractor. A "
+                "comma-separated list matches any of them."
+            ),
+        ),
+    ] = None,
+    extractor_prefix: Annotated[
+        str | None,
+        typer.Option(
+            "--extractor-prefix",
+            help=(
+                "Only show document results from extractors in this dotted "
+                "family: a.b matches a.b and a.b.c, not a.bc. A "
+                "comma-separated list matches any of them."
+            ),
+        ),
+    ] = None,
+    meta: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--meta",
+            metavar="KEY=VALUE[,VALUE]",
+            help=(
+                "Only show document results whose declared metadata key holds "
+                "any of these values. Repeatable; different keys must all "
+                "match."
+            ),
         ),
     ] = None,
     extractor_version: Annotated[
@@ -1260,7 +473,10 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
         str | None,
         typer.Option(
             "--locator-kind",
-            help="Only show document results with this locator kind.",
+            help=(
+                "Only show document results with this locator kind. A "
+                "comma-separated list matches any of them."
+            ),
         ),
     ] = None,
     show_scores: Annotated[
@@ -1331,11 +547,12 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
         freshness_wait_seconds,
         json_mode=json_mode,
     )
-    prefer = _search_prefer_filter(prefer, json_mode=json_mode)
+    prefer = search_prefer_filter(prefer, json_mode=json_mode)
     parameter_source = ctx.get_parameter_source("search_type")
     include_documents = parameter_source is None or parameter_source.name != "DEFAULT"
-    search_type = _validate_search_type(search_type, json_mode=json_mode)
-    local_request = _InProcessSearchRequest(
+    search_type = validate_search_type(search_type, json_mode=json_mode)
+    metadata_filters = metadata_filters_option(meta, json_mode=json_mode)
+    local_request = InProcessSearchRequest(
         target,
         query,
         search_type,
@@ -1359,10 +576,12 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
         locator_kind,
         json_mode,
         include_documents=include_documents,
+        extractor_prefix=extractor_prefix,
+        metadata_filters=metadata_filters,
     )
-    _validate_and_handle_filters(local_request)
+    validate_and_handle_filters(local_request)
     if not json_mode:
-        _muted_line(_FILTER_ADVISORY)
+        muted_line(FILTER_ADVISORY)
 
     # Search is service-first: local execution requires an explicit mandate
     # (--allow-fallback or configured local-only mode). Discovering a service
@@ -1415,17 +634,19 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
             exclude_paths=exclude_paths,
             dedup_locales=dedup_locales,
             prefer=prefer,
-            document_filters=document_search_filters(
+            document_filters=DocumentSearchFilters(
                 source_path=source_path,
                 extractor_id=extractor_id,
                 extractor_version=extractor_version,
                 locator_kind=locator_kind,
+                extractor_prefix=extractor_prefix,
+                metadata_filters=metadata_filters,
             ),
         )
         if service_results is not None:
-            _handle_service_results(
+            handle_service_results(
                 service_results,
-                _ServiceSearchRenderRequest(
+                ServiceSearchRenderRequest(
                     query,
                     search_type.value,
                     json_mode,
@@ -1464,10 +685,10 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
     with _local_search_deadline(deadline, json_mode=json_mode):
         envelope: dict[str, object] = {}
         try:
-            results = _try_in_process_search(replace(local_request, envelope=envelope))
+            results = try_in_process_search(replace(local_request, envelope=envelope))
 
-            _render_in_process_results(
-                _InProcessRenderRequest(
+            render_in_process_results(
+                InProcessRenderRequest(
                     results,
                     query,
                     search_type,

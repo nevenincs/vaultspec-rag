@@ -145,9 +145,12 @@ class ServiceRegistry(
         # waits for tickets, or takes GPU/registry locks.
         self._resource_transition_condition = threading.Condition(threading.Lock())
         self._resource_transition: ResourceTransitionOperation | None = None
-        self._reranker: CrossEncoder | None = None
+        from .embeddings import LazyReranker
+
         self._gpu_residency_recipe: GPUResidencyRecipe | None = None
-        self._reranker_lock = threading.Lock()
+        self._reranker = LazyReranker(
+            self._gpu_lock, on_load=self._record_reranker_residency
+        )
         self._on_close_project: Callable[[Path], object] | None = None
         self._shutting_down = False
         self._shutdown_complete = False
@@ -193,7 +196,7 @@ class ServiceRegistry(
                 or self._transient_store_constructions
                 or self._root_locks
                 or self._model is not None
-                or self._reranker is not None
+                or self._reranker.loaded is not None
             ):
                 raise RuntimeError(
                     "ServiceRegistry cannot reopen while owned state remains"
@@ -235,10 +238,18 @@ class ServiceRegistry(
             acquire_publication_snapshot,
         )
         from ._source_types import PublicSourceType
-        from .server._search_readiness import ReadinessRegistryClosedError
+        from .server._search_readiness import (
+            ReadinessRegistryClosedError,
+            current_reset_fence,
+        )
 
         # An unchanged run can complete without replacing the served proof.
         del generation
+        concrete = cast("IndexSource", source.value)
+        # Read before the proof, so a reset landing after it cannot stamp the
+        # generation it discarded with the epoch that discarded it.
+        fence = current_reset_fence(root, concrete)
+        epoch = None if fence is None else fence.epoch
         try:
             publication = acquire_publication_snapshot(
                 root, PublicSourceType(source.value)
@@ -246,8 +257,9 @@ class ServiceRegistry(
             publication.validate()
             return readiness.publish_next(
                 root,
-                cast("IndexSource", source.value),
+                concrete,
                 generation=publication.proof.generation_id,
+                reset_epoch=epoch,
             )
         except (ReadinessRegistryClosedError, *UNREADABLE_PUBLICATION_ERRORS):
             return None
@@ -301,7 +313,7 @@ class ServiceRegistry(
             reranker_loaded = (
                 self._gpu_residency_recipe.restore_reranker
                 if self._gpu_residency_recipe is not None
-                else self._reranker is not None
+                else self._reranker.loaded is not None
             )
             self._gpu_residency_recipe = GPUResidencyRecipe(
                 model_name=model_name,
@@ -343,9 +355,9 @@ class ServiceRegistry(
     def get_reranker(self) -> CrossEncoder:
         """Return the shared CrossEncoder, loading it lazily.
 
-        Thread-safe via double-check lock pattern.  The reranker
-        is project-independent (scores text pairs regardless of
-        which vault they came from).
+        The load runs under the shared GPU lock, so it never overlaps a
+        forward pass.  The reranker is project-independent (scores text
+        pairs regardless of which vault they came from).
 
         Returns:
             Shared ``CrossEncoder`` instance.
@@ -355,46 +367,29 @@ class ServiceRegistry(
         """
         ticket = self._quiesce_controller.acquire_ticket()
         try:
-            return self._get_reranker()
+            return self._reranker.get()
         finally:
             ticket.release()
 
-    def _get_reranker(self) -> CrossEncoder:
-        """Load the shared reranker after compute admission is already held."""
-        if self._reranker is not None:
-            return self._reranker
-        with self._reranker_lock:
-            if self._reranker is not None:
-                return self._reranker
-            from .config._settings import get_config
-            from .embeddings import load_reranker
-
-            cfg = get_config()
-            self._reranker = load_reranker()
-            with self._lock:
-                model_name = (
-                    self._gpu_residency_recipe.model_name
-                    if self._gpu_residency_recipe is not None
-                    else None
-                )
-                self._gpu_residency_recipe = GPUResidencyRecipe(
-                    model_name=model_name,
-                    restore_model=True,
-                    restore_reranker=True,
-                )
-            logger.info(
-                "Shared CrossEncoder loaded on %s: %s",
-                str(getattr(self._reranker, "device", "unknown")),
-                cfg.reranker_model,
+    def _record_reranker_residency(self, _reranker: CrossEncoder) -> None:
+        """Record a freshly loaded reranker in the residency recipe and baseline."""
+        with self._lock:
+            model_name = (
+                self._gpu_residency_recipe.model_name
+                if self._gpu_residency_recipe is not None
+                else None
             )
-            # The reranker loads lazily and outside the GPU lock; re-sample
-            # the resident baseline so a late load raises it rather than
-            # leaving indexing budgets constructed against an understated
-            # figure.
-            from .memory_probe import sample_resident_accelerator_baseline
+            self._gpu_residency_recipe = GPUResidencyRecipe(
+                model_name=model_name,
+                restore_model=True,
+                restore_reranker=True,
+            )
+        # The reranker loads lazily, after the resident baseline was first
+        # sampled; re-sample it so a late load raises it rather than leaving
+        # indexing budgets constructed against an understated figure.
+        from .memory_probe import sample_resident_accelerator_baseline
 
-            sample_resident_accelerator_baseline()
-            return self._reranker
+        sample_resident_accelerator_baseline()
 
     @contextlib.contextmanager
     def _root_store_guard(self, resolved: Path) -> Generator[None]:
@@ -1083,7 +1078,7 @@ class ServiceRegistry(
         self._load_model(model_name)
         model = self.model
         cfg = get_config()
-        reranker = self._get_reranker() if cfg.reranker_enabled else None
+        reranker = self._reranker.get() if cfg.reranker_enabled else None
         with self._lock:
             readiness = self._readiness_registry
         publish_code_readiness = (
@@ -1139,25 +1134,6 @@ class ServiceRegistry(
             code_indexer=code_indexer,
             document_indexer=document_indexer,
         )
-
-    def has_live_lease(self, root: Path) -> bool:
-        """Return whether any worker currently holds *root*'s project slot.
-
-        A store binds its collection name once at construction and keeps it for
-        its whole life, so a lease taken before a publication swap is still
-        resolving the collection that swap superseded. Maintenance asks this
-        before dropping one: a live lease means a reader in this process may
-        still be reading it, and no amount of waiting makes that observation
-        safe to ignore.
-
-        Answers only for this process. Readers elsewhere are unobservable,
-        which is why the caller pairs this with a persisted grace window rather
-        than treating a false here as proof that nothing holds the collection.
-        """
-        resolved = root.resolve()
-        with self._lock:
-            slot = self._projects.get(resolved)
-            return slot is not None and slot.ref_count > 0
 
     def close_project(self, root: Path) -> None:
         """Close and remove the project slot for *root*.
@@ -1263,7 +1239,7 @@ class ServiceRegistry(
                 )
             self._projects.clear()
             self._model = None
-            self._reranker = None
+            self._reranker.clear()
             self._complete_shutdown_if_drained_locked()
 
         # Dropping the references is not enough: both stacks are reachable only
@@ -1330,20 +1306,24 @@ class ServiceRegistry(
         from . import store_schema
 
         with self._lock:
-            project_list = [str(r) for r in self._projects]
-            count = len(self._projects)
-            # Read the verdicts the ensure path already recorded. No backend
-            # call happens here: a health poll must stay cheap, and a store
-            # nobody has opened has nothing to report either way.
-            nonconforming = sorted(
-                f"{root}:{collection}"
-                for root, slot in self._projects.items()
-                for collection, verdict in slot.store.conformance_verdicts().items()
-                if verdict.verdict == store_schema.NONCONFORMING
-            )
+            stores = [(root, slot.store) for root, slot in self._projects.items()]
+        # Read the verdicts the ensure path already recorded. No backend call
+        # happens here: a health poll must stay cheap, and a store nobody has
+        # opened has nothing to report either way. Each read takes that
+        # store's lifecycle lock, so it runs outside the registry lock: a
+        # store busy with an open, drop or reset delays only this poll, never
+        # every lease, search and admission behind it.
+        nonconforming = sorted(
+            f"{root}:{collection}"
+            for root, store in stores
+            for collection, verdict in store.conformance_verdicts().items()
+            if verdict.verdict == store_schema.NONCONFORMING
+        )
+        project_list = [str(root) for root, _store in stores]
+        count = len(stores)
         return {
             "model_loaded": self._model is not None,
-            "reranker_loaded": self._reranker is not None,
+            "reranker_loaded": self._reranker.loaded is not None,
             "project_count": count,
             "projects": project_list,
             "nonconforming": nonconforming,

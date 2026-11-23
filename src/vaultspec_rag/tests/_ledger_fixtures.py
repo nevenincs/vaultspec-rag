@@ -9,9 +9,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .._context_scope import bind_context
 from ..indexer._publication_proof import ProofMissingError, ProofReadToken
+from ..indexer._rebuild_lifecycle import RebuildClaim, rebuild_claim
 from ..indexer._run_ledger_models import (
-    GenerationRow,
+    SourceResetPhase,
     column_int,
     fetch_one,
     ledger_connection,
@@ -23,10 +25,13 @@ from ..indexer._run_ledger_publication_storage import (
 )
 
 if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
+
     from ..indexer._content_policy import ContentKind
     from ..indexer._publication_proof import ProofCompatibilityKey
     from ..indexer._run_ledger_models import RunGeneration
     from ..indexer._run_ledger_runtime import RunLedger
+    from ..indexer._run_ledger_schema import GenerationRow
 
 
 def latest_generation(
@@ -55,6 +60,16 @@ def latest_generation(
     return ledger._generation_from_row(row) if row is not None else None
 
 
+def continue_rebuild(generation_id: str) -> AbstractContextManager[None]:
+    """Run as the attempt of a request that owns rebuild *generation_id*.
+
+    A job binds this claim around every attempt after its first; a test
+    reopening an interrupted rebuild does the same, since an unclaimed open is
+    a new rebuild that starts over.
+    """
+    return bind_context(rebuild_claim, RebuildClaim(generation_id=generation_id))
+
+
 def acquire_publication_read_token(
     ledger: RunLedger,
     key: ProofCompatibilityKey,
@@ -71,3 +86,24 @@ def acquire_publication_read_token(
         reservation_sequence=column_int(row, "reservation_sequence"),
         has_open_receipt=has_open_receipt(row),
     )
+
+
+def record_reset_over_empty_storage(
+    ledger: RunLedger, generation: RunGeneration
+) -> None:
+    """Record *generation*'s own completed reset before any storage exists.
+
+    A full rebuild resumes only work written after its own reset. A test
+    whose source holds no points yet, or that drives checkpoints without a
+    store, has nothing to discard, so the reset is recorded in the ledger
+    alone.
+    """
+    signature = generation.signature
+    state = ledger.begin_source_reset(
+        signature.source_type,
+        signature.root_identity,
+        signature.backend_identity,
+        generation.generation_id,
+    )
+    for phase in (SourceResetPhase.DISCARDED, SourceResetPhase.COMPLETE):
+        state = ledger.advance_source_reset(state, phase)

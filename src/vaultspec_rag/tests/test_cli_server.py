@@ -435,7 +435,7 @@ class TestServiceJobsCli:
             thread.join(timeout=1)
 
         assert result.exit_code == 0, result.output
-        assert requests == ["/jobs?limit=5&phase=running"]
+        assert requests == ["/jobs?limit=5&state=running&waiting=False"]
         lines = _plain_lines(result.output)
         expected_present = [
             "Jobs",

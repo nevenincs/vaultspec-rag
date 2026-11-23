@@ -1,7 +1,7 @@
 """A client installation is never torch-configured or provisioned.
 
 Without the ``gpu`` extra every search runs in the vaultspec-rag service, so
-install must neither prompt for the cu130 torch index nor add a torch
+install must neither prompt for the CUDA torch index nor add a torch
 dependency to the consumer's ``pyproject.toml``, and it downloads nothing the
 host installation already provides. Real filesystem, real ``tomlkit``, real
 install orchestration; the installation role is the one pinned input, so the
@@ -52,7 +52,7 @@ def test_upgrade_never_asks_to_patch_the_torch_index(client_workspace: Path) -> 
     """The reported defect: ``install --upgrade`` on a client prompted for torch.
 
     Mutation check: removing the client gate from the torch-config step asks
-    the cu130 question here, failing the ``prompts`` assertion; restoring the
+    the CUDA question here, failing the ``prompts`` assertion; restoring the
     gate passes.
     """
     pyproject = client_workspace / "pyproject.toml"
@@ -75,7 +75,7 @@ def test_upgrade_never_asks_to_patch_the_torch_index(client_workspace: Path) -> 
 def test_already_patched_client_gains_no_torch_dependency(
     client_workspace: Path,
 ) -> None:
-    """A cu130 block left by an earlier install must not pull torch in.
+    """A CUDA block left by an earlier install must not pull torch in.
 
     Mutation check: without the client gate the canonical-state branch adds
     ``torch>=2.4`` to ``[project].dependencies``, failing the direct-dep
@@ -162,4 +162,4 @@ def test_cli_upgrade_reports_torch_as_not_needed(client_workspace: Path) -> None
         "PyTorch configuration: not needed (this installation is a client)"
         in result.output
     )
-    assert "cu130" not in result.output
+    assert "cu134" not in result.output

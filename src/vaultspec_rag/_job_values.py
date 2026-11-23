@@ -14,9 +14,9 @@ them and they read nothing.
 from __future__ import annotations
 
 import math
-from typing import cast
+from typing import TypeGuard
 
-__all__ = ["count", "flag", "mapping", "measurement", "text"]
+__all__ = ["count", "flag", "is_object", "mapping", "measurement", "text"]
 
 
 def count(value: object, *, minimum: int = 0) -> int | None:
@@ -79,6 +79,16 @@ def measurement(value: object) -> float | None:
     return numeric
 
 
+def is_object(value: object) -> TypeGuard[dict[str, object]]:
+    """Narrow one decoded JSON value to its object form, or refuse it.
+
+    The presence-preserving reader beside :func:`mapping`: a caller that must
+    treat a non-object as malformed, rather than as an empty object, narrows
+    with this. ``{}`` passes and a list, string, number or ``None`` does not.
+    """
+    return isinstance(value, dict)
+
+
 def mapping(value: object) -> dict[str, object]:
     """Read one published value as a sub-mapping, or an empty one.
 
@@ -93,7 +103,7 @@ def mapping(value: object) -> dict[str, object]:
     caller that has to tell "absent" from "present but empty" needs its own
     reader; this one deliberately cannot express that difference.
     """
-    return cast("dict[str, object]", value) if isinstance(value, dict) else {}
+    return value if is_object(value) else {}
 
 
 def flag(value: object) -> bool | None:

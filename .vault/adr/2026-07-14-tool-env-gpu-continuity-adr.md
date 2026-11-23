@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#tool-env-gpu-continuity'
 date: '2026-07-14'
-modified: '2026-10-13'
-body_hash: 'sha256:48304e5b2abf63db7ddd6d7e2a4afa6fefe9e78c784825924121e74aad657f16'
+modified: '2026-11-21'
+body_hash: 'sha256:c6dd20ff2f48f87c5c3d81e1f4c7d699fd3e5a09cd7c4b65c9068d03b920439e'
 related:
   - '[[2026-07-14-tool-env-gpu-continuity-research]]'
   - '[[2026-09-01-tool-mode-cuda-research]]'
@@ -205,3 +205,7 @@ premise was partially wrong (F5) - so the fix is discoverability only.
 
   *(Candidate only - promoted after the constraint has held across at least one full
   execution cycle, per the codify discipline.)*
+
+## Amendment
+
+Amended 2026-11-21 under the user's direction to track the latest CUDA build. Wherever this record names the `cu130` index, the `pytorch-cu130` index name or the `cu130` backend, the project now pins the `cu134` build (`pytorch-cu134`, `https://download.pytorch.org/whl/cu134`, torch 2.15.0). The decision itself is unchanged: the index name, URL and backend derive from one constant, `CUDA_BACKEND` in `src/vaultspec_rag/torch_config/_index.py`, so a later move to a newer build edits one line.

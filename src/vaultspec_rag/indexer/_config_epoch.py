@@ -10,9 +10,9 @@ because the two drift classes need different escalations:
   patterns and preprocess rule patterns); a mismatch is reconciled by the
   unscoped incremental's set arithmetic;
 * the *content* epoch tracks how bytes become chunks (preprocess invocation
-  fields, ``html_strip``, and ``vault_chunk_chars`` on the vault side); a
-  mismatch invalidates stored vectors for unchanged bytes and needs a clean
-  rebuild.
+  fields, declared extractor inputs, ``html_strip``, and ``vault_chunk_chars``
+  on the vault side); a mismatch invalidates stored vectors for unchanged
+  bytes and needs a clean rebuild.
 
 This module is stdlib-only (``hashlib`` / ``json``) so it stays importable from
 the CPU-only spawn chunk-worker chain without loading torch.
@@ -257,6 +257,7 @@ def _resolved_policy_fingerprints(
                 "batch": rule.batch,
                 "path_independent": rule.path_independent,
                 "max_source_bytes": rule.max_source_bytes,
+                **_inputs_identity(rule),
             }
             for rule in preprocess_rules
         ],
@@ -363,6 +364,7 @@ def _per_kind_fingerprints(
                     "batch": rule.batch,
                     "path_independent": rule.path_independent,
                     "max_source_bytes": rule.max_source_bytes,
+                    **_inputs_identity(rule),
                 }
                 for rule in rules
             ],
@@ -381,6 +383,17 @@ def _per_kind_fingerprints(
         code=by_kind[ContentKind.CODE],
         document=by_kind[ContentKind.DOCUMENT],
     )
+
+
+def _inputs_identity(rule: ResolvedPreprocessRule) -> dict[str, str]:
+    """Return the declared-input identity entry for one rule.
+
+    Empty when the rule declares no inputs, so an undeclared rule keeps a
+    byte-identical fingerprint.
+    """
+    if rule.inputs_digest is None:
+        return {}
+    return {"inputs_digest": rule.inputs_digest}
 
 
 def vault_content_epoch(*, vault_chunk_chars: int) -> str:

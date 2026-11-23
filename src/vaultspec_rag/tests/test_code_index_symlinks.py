@@ -58,7 +58,7 @@ def test_discovery_rejects_ignored_target_alias(
     ordinary = tmp_path / "main.py"
     ordinary.write_text("ordinary = 1\n", encoding="utf-8")
 
-    scan = CodeContentDiscovery(tmp_path).scan_admission()
+    scan = CodeContentDiscovery(tmp_path).preflight_content().scan
 
     assert scan.files == (ordinary,), "symlink aliases must not enter code membership"
     sample = next(sample for sample in scan.samples if sample.path == source.name)
@@ -250,7 +250,7 @@ def test_discovery_rejects_other_file_link_targets(
         target.write_text("ordinary = 1\n", encoding="utf-8")
     source.symlink_to(target)
 
-    scan = CodeContentDiscovery(tmp_path).scan_admission()
+    scan = CodeContentDiscovery(tmp_path).preflight_content().scan
 
     expected = (target,) if target_kind == "safe" else ()
     assert scan.files == expected

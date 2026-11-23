@@ -34,6 +34,8 @@ Creating a namespace preallocates a large block of storage immediately, before a
 
 That preallocation is why disk usage tracks the *number* of roots you have indexed far more closely than the amount of code and documents in them. It also means there are two different ways to get space back: [removing namespaces you no longer need](#reclaim-space-manually), and [shrinking the ones you are keeping](#shrinking-collections-you-keep). The service does both on its own.
 
+A rebuild does not add to it. A rebuild deletes the old index before it writes the new one into the same collection, so a project never holds an old and a new copy of the same index side by side, and no old copy is kept after the rebuild finishes. The space a deleted collection held returns once the storage engine releases it, which can trail the deletion.
+
 The store lives at `~/.vaultspec-rag/qdrant-server/storage` by default; `VAULTSPEC_RAG_QDRANT_STORAGE_DIR` relocates it. Any location works, including deeply nested ones - on Windows the service hands the storage engine extended-length paths, so the classic 260-character path limit does not constrain where the store lives.
 
 ## Inspect what is stored
@@ -233,6 +235,16 @@ in the human table, so leaked harness indexes are visible before they become a
 disk incident.
 
 Flags and exit codes are in the [CLI reference](cli.md#server-storage-prune).
+
+## Older code index layouts
+
+Versions before the single-collection rebuild built each code rebuild into a new collection named after the root's code collection with a `_g<token>` suffix, and recorded which one served in a pointer file under the project's data directory. A project indexed that way keeps serving its recorded collection until its code index is rebuilt.
+
+An explicit code rebuild of that project, or `clean code`, deletes every one of those generation collections together with the base collection, removes the pointer file, and recreates the base collection empty. It touches only collections whose names match that project's code collection exactly; another project's collections, and names that merely share the prefix, are never deleted. A vault or document rebuild leaves the old code layout alone. Automatic maintenance never deletes these collections on a timer.
+
+A pointer file a past backend migration left naming the project's code collection under the *other* backend does not block the rebuild. The rebuild removes the pointer file, logs a warning naming the collection, and leaves that collection where it is. Any other pointer file that cannot be verified makes the code rebuild refuse before it deletes anything; remove or repair the file, then rebuild.
+
+The storage survey no longer reports code generation fields: `served_code_collection` and `unreferenced_generations` are gone from its output.
 
 ## Migrate a root between backends
 

@@ -155,7 +155,7 @@ def test_parallel_chunking_beats_serial(
     _build_code_tree(root, n_files)
 
     indexer = _chunk_only_indexer(root)
-    paths = indexer.scan_files()
+    paths = indexer._scan_codebase()
     assert len(paths) == n_files
 
     cores = os.cpu_count() or 1

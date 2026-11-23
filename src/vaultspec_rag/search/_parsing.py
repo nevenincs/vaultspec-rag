@@ -44,6 +44,11 @@ _FILTER_KEY_MAP = {
     "include": "include_domain",
 }
 
+# Document metadata tokens: meta.<key>=v1,v2. Kept under their ``meta.`` name
+# so the document search can tell them from payload keys and refuse a key the
+# root does not declare. The key stops at ``=`` and the value at whitespace.
+_METADATA_PATTERN = re.compile(r"(?<!\S)meta\.([^\s=]+)=(\S*)")
+
 # Filter keys whose value is a comma-separated set; repeats accumulate.
 _MULTI_VALUE_KEYS = frozenset({"exclude_domain", "only_domain", "include_domain"})
 
@@ -78,7 +83,11 @@ def parse_query(raw_query: str) -> ParsedQuery:
             else:
                 filters[mapped] = value
 
-    text = _FILTER_PATTERN.sub("", raw_query).strip()
+    for match in _METADATA_PATTERN.finditer(raw_query):
+        filters[f"meta.{match.group(1)}"] = match.group(2)
+
+    text = _METADATA_PATTERN.sub("", raw_query)
+    text = _FILTER_PATTERN.sub("", text).strip()
     text = re.sub(r"\s+", " ", text)
 
     return ParsedQuery(text=text, filters=filters)

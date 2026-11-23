@@ -30,13 +30,20 @@ import logging
 import math
 import pathlib
 import time
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Generator, Sequence
+
+    from ._store_locks import ReentrantLock
 
 logger = logging.getLogger(__name__)
+
+#: Longest single wait on a contended store lock before control and the
+#: no-progress budget are re-checked.
+_LOCK_POLL_SECONDS = 0.1
 
 __all__ = [
     "BYTES_PER_POINT_ESTIMATE",
@@ -46,6 +53,7 @@ __all__ = [
     "VolumeReading",
     "classify_write_error",
     "ensure_disk_headroom",
+    "hold_within_budget",
     "probe_store_volume",
     "probe_workspace_volume",
     "remaining_write_seconds",
@@ -82,13 +90,19 @@ class StoreWritePolicy:
     """Limited capabilities supplied by the indexing run policy.
 
     The caller-owned indexing run policy owns the clock, durable-progress
-    resets, and interruptible waiting. This value binds only the two
-    capabilities the store may consume, keeping retry code independent of
-    indexer lifecycle state and preventing it from advancing the clock.
+    resets, interruptible waiting, and the reset epoch its writes belong to.
+    This value binds only the three capabilities the store may consume,
+    keeping retry code independent of indexer lifecycle state and preventing
+    it from advancing the clock.
+
+    ``admit_write`` runs before every write attempt and raises when the run
+    may no longer write - its source was reset after the run's epoch - so a
+    stale writer stops before its next write lands instead of after.
     """
 
     remaining_seconds: Callable[[], float]
     wait: Callable[[float], None]
+    admit_write: Callable[[], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,8 +207,10 @@ def run_store_operation_with_retry[T](
             ),
             description=description,
         )
+        if policy is not None:
+            policy.admit_write()
         try:
-            return op(attempt_timeout)
+            result = op(attempt_timeout)
         except Exception as exc:
             if classify_write_error(exc) == "unrecoverable":
                 logger.error(
@@ -239,6 +255,15 @@ def run_store_operation_with_retry[T](
                 description=description,
             )
             delay = min(delay * 2.0, max_delay)
+        else:
+            if policy is not None:
+                # Server mode orders no write against another client's reset,
+                # so a reset can complete while this write is in flight and
+                # the write then lands in the replacement. Re-checking after
+                # the acknowledgement fails the run before it can record or
+                # finalize anything from the discarded epoch.
+                policy.admit_write()
+            return result
     msg = "unreachable: retry loop must return or raise"  # pragma: no cover
     raise AssertionError(msg)  # pragma: no cover
 
@@ -403,6 +428,65 @@ def remaining_write_seconds(
         JobErrorKind.NO_PROGRESS_TIMEOUT,
         f"store write made no durable progress before its deadline: {description}",
     )
+
+
+def _lock_wait_slice(policy: StoreWritePolicy | None, description: str) -> float:
+    """Deliver control and return how long the next lock attempt may wait.
+
+    Raises the run's typed no-progress outcome once its budget is spent.
+    """
+    if policy is None:
+        return _LOCK_POLL_SECONDS
+    policy.wait(0.0)
+    remaining = remaining_write_seconds(policy, description=description)
+    if remaining is None:
+        raise RuntimeError("managed write policy lost its deadline")
+    return min(_LOCK_POLL_SECONDS, remaining)
+
+
+@contextmanager
+def hold_within_budget(
+    locks: Sequence[ReentrantLock],
+    policy: StoreWritePolicy | None,
+    *,
+    description: str,
+) -> Generator[None]:
+    """Hold every lock in *locks*, in order, never parking while holding one.
+
+    The first lock is awaited in bounded slices while nothing else is held.
+    Each later lock is only tried: when one is busy, every lock taken so far
+    is released and the waiter then waits a bounded slice on that busy lock
+    while holding nothing, and starts the ordered attempt over the moment
+    that lock is free. A waiter therefore never holds an earlier lock - the
+    store lifecycle lock above all - while another holder keeps a later one,
+    so its wait cannot stall anyone who needs only the earlier lock. Waiting
+    on the busy lock itself, rather than re-probing it on a timer, means a
+    holder that releases and retakes it continuously cannot keep every probe
+    landing inside its hold.
+
+    With a run's *policy* each slice first delivers a pending pause or cancel
+    and re-reads the durable no-progress budget, so a holder that never lets
+    go ends the wait with the run's typed outcome instead of wedging it.
+    Without one the wait is unbounded.
+    """
+    while True:
+        wait = _lock_wait_slice(policy, description)
+        taken = 0
+        with ExitStack() as held:
+            for lock in locks:
+                if not lock.acquire(timeout=wait if taken == 0 else 0.0):
+                    break
+                held.callback(lock.release)
+                taken += 1
+            if taken == len(locks):
+                if policy is not None:
+                    policy.wait(0.0)
+                yield
+                return
+        if taken:
+            busy = locks[taken]
+            if busy.acquire(timeout=wait):
+                busy.release()
 
 
 def free_bytes(storage_path: pathlib.Path) -> int | None:

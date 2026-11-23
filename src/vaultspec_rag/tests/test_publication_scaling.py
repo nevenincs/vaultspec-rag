@@ -2,20 +2,14 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from time import perf_counter_ns
 from typing import TYPE_CHECKING
 
 import pytest
 
 from .._source_types import PublicSourceType
-from ..indexer import (
-    _run_ledger_files,
-    _run_ledger_models,
-    _run_ledger_publication_proofs,
-    _run_ledger_publication_reads,
-)
+from ..indexer import _run_ledger_models
 from ..indexer._checkpoint_common import RunCheckpointBase
 from ..indexer._publication_proof import (
     PathDelta,
@@ -35,11 +29,11 @@ from ..indexer._run_ledger_models import (
 )
 from ..indexer._run_ledger_runtime import RunLedger
 from ..indexer._run_policy import RunPolicy
+from ._ledger_connection_watch import measure_ledger_connections
 from ._run_ledger_test_support import ledger_test_digest
 
 if TYPE_CHECKING:
-    import sqlite3
-    from collections.abc import Generator, Iterator
+    from collections.abc import Iterator
     from pathlib import Path
 
 pytestmark = pytest.mark.unit
@@ -108,78 +102,6 @@ def _unbounded_evidence_reads(statements: list[str]) -> list[str]:
         and "publication_evidence" in statement
         and not any(marker in statement for marker in _BOUNDED_BY)
     ]
-
-
-def _install_traced_connection(
-    monkeypatch: pytest.MonkeyPatch,
-    traced: object,
-) -> None:
-    """Route every proof read and transaction connection through *traced*.
-
-    ``ledger_connection`` is defined in the models module and imported by name
-    into the proof/read owners, so each holds a binding to one function.
-    Reads open through those owners; writes open through
-    ``ledger_transaction``, which resolves the models module's. Patching only
-    one leaves the other untraced, and a statement counter that observes
-    nothing reports every budget as met.
-    """
-    for module in (
-        _run_ledger_publication_reads,
-        _run_ledger_files,
-        _run_ledger_publication_proofs,
-        _run_ledger_models,
-    ):
-        monkeypatch.setattr(module, "ledger_connection", traced)
-
-
-@dataclass(slots=True)
-class _ReadCost:
-    """What one exact-path read actually made SQLite do."""
-
-    vm_steps: int
-    """Virtual-machine instructions retired. Grows with rows examined."""
-
-    selects: list[str]
-    """The SELECT statements production issued, as SQLite expanded them."""
-
-
-@contextmanager
-def _measured(
-    monkeypatch: pytest.MonkeyPatch,
-) -> Generator[_ReadCost]:
-    """Meter the ledger connection production opens for the block's duration.
-
-    The progress handler is the measurement that matters. A statement counter
-    cannot see a scan - reading one row and reading a million are both one
-    SELECT - so counting statements gates an N+1 pattern and nothing else.
-    Instruction count is a direct proxy for rows examined, and it is what
-    separates a seek from a scan.
-    """
-    cost = _ReadCost(vm_steps=0, selects=[])
-    statements: list[str] = []
-    original = _run_ledger_models.ledger_connection
-
-    def count() -> None:
-        cost.vm_steps += 1
-
-    @contextmanager
-    def traced(path: Path) -> Generator[sqlite3.Connection]:
-        with original(path) as connection:
-            connection.set_trace_callback(statements.append)
-            connection.set_progress_handler(count, 1)
-            try:
-                yield connection
-            finally:
-                connection.set_progress_handler(None, 0)
-                connection.set_trace_callback(None)
-
-    _install_traced_connection(monkeypatch, traced)
-    yield cost
-    cost.selects.extend(
-        " ".join(statement.split())
-        for statement in statements
-        if statement.lstrip().upper().startswith("SELECT")
-    )
 
 
 def _seed_local_receipt(
@@ -282,7 +204,7 @@ def _seed_local_receipt(
 
 @pytest.mark.parametrize("local", [True, False], ids=["receipt", "canonical"])
 def test_retained_candidate_work_is_bounded_by_the_page_not_the_receipt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, local: bool
+    tmp_path: Path, local: bool
 ) -> None:
     """A full cleanup page must seek instead of scanning its receipt or parent.
 
@@ -309,14 +231,14 @@ def test_retained_candidate_work_is_bounded_by_the_page_not_the_receipt(
             for index in range(255)
         ),
     )
-    with _measured(monkeypatch) as small_cost:
+    with measure_ledger_connections(small.path) as small_cost:
         small_page = small.effective_file_state_page(
             small_receipt,
             small_generation,
             rel_paths=(candidate.rel_path,),
             candidates=candidates,
         )
-    with _measured(monkeypatch) as large_cost:
+    with measure_ledger_connections(large.path) as large_cost:
         large_page = large.effective_file_state_page(
             large_receipt,
             large_generation,
@@ -382,7 +304,6 @@ def test_publication_delta_derivation_traverses_mutations_once(
 
 def test_an_exact_path_read_examines_the_same_work_at_any_parent_size(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The steady-state read cost must not follow the size of the collection.
 
@@ -404,11 +325,11 @@ def test_an_exact_path_read_examines_the_same_work_at_any_parent_size(
     small_ledger, small_key = _seed(tmp_path / "small", 10)
     large_ledger, large_key = _seed(tmp_path / "large", 10_000)
 
-    with _measured(monkeypatch) as small_cost:
+    with measure_ledger_connections(small_ledger.path) as small_cost:
         small = small_ledger.publication_evidence_for_paths(
             small_key, ("src/file-000009.py",)
         )
-    with _measured(monkeypatch) as large_cost:
+    with measure_ledger_connections(large_ledger.path) as large_cost:
         large = large_ledger.publication_evidence_for_paths(
             large_key, ("src/file-009999.py",)
         )
@@ -483,7 +404,6 @@ def test_large_parent_single_path_read_meets_elapsed_budget(tmp_path: Path) -> N
 
 def test_the_read_production_issues_seeks_every_table_it_touches(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The plan is taken from the statement production ran, not a copy of it.
 
@@ -506,7 +426,7 @@ def test_the_read_production_issues_seeks_every_table_it_touches(
     ledger, key = _seed(tmp_path, 25_000)
     target = "src/file-024999.py"
 
-    with _measured(monkeypatch) as cost:
+    with measure_ledger_connections(ledger.path) as cost:
         ledger.publication_evidence_for_paths(key, (target,))
 
     assert cost.selects, "production issued no SELECT to plan"
@@ -526,7 +446,6 @@ def test_the_read_production_issues_seeks_every_table_it_touches(
 @pytest.mark.parametrize("parent_size", [10, 10_000])
 def test_single_identity_commit_has_bounded_statement_count(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     parent_size: int,
 ) -> None:
     """Committing one path costs the same whatever the parent already holds.
@@ -535,12 +454,9 @@ def test_single_identity_commit_has_bounded_statement_count(
     path one, four of them touching the evidence table and every one of those
     bounded to the rows it names.
 
-    This traced nothing at all until the seam was corrected. The write path
-    opens through ``ledger_transaction``, which resolves ``ledger_connection``
-    in the models module, while the test patched the publication module's own
-    binding of the same function - so the callback attached to a connection
-    the commit never used, zero statements were recorded, and a budget of
-    forty was met by counting nothing. Both bindings are patched now.
+    The statements are read from whichever connection the commit opens, so no
+    import binding can leave the commit untraced; a budget met by counting
+    nothing is excluded by the lower bound.
 
     Proven able to fail on each assertion it carries. Adding an unkeyed
     ``SELECT rel_path FROM publication_evidence`` to the commit body fails the
@@ -599,19 +515,12 @@ def test_single_identity_commit_has_bounded_statement_count(
         successor.generation_id,
         FinalizationPhase.STALE_RECONCILED,
     )
-    statements: list[str] = []
-    original = _run_ledger_models.ledger_connection
-
-    @contextmanager
-    def traced(path: Path) -> Generator[sqlite3.Connection]:
-        with original(path) as connection:
-            connection.set_trace_callback(statements.append)
-            yield connection
-
-    _install_traced_connection(monkeypatch, traced)
-    committed = ledger.commit_publication_receipt(receipt.receipt_id)
+    with measure_ledger_connections(ledger.path) as cost:
+        committed = ledger.commit_publication_receipt(receipt.receipt_id)
+    statements = cost.statements
 
     assert committed.aggregate.indexed_identities == parent_size
+    assert statements, "the commit's statements were not observed"
     assert len(statements) <= 40
     assert not _unbounded_evidence_reads(statements), (
         "committing a single-path delta read publication_evidence without "

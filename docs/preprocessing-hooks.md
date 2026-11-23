@@ -102,6 +102,9 @@ Rule fields:
   `embedded-local`. Those are whole-corpus figures applied per file, so unless you
   are extracting something extraordinary this rule's own value is the one that
   binds.
+- **`inputs`** (optional) - root-relative gitignore-style patterns naming the files that
+  define your extractor, such as its script and helper modules. See
+  [declared inputs](#declared-inputs).
 - **`[rule.options]`** (optional) - an opaque table forwarded to your extractor for
   its own use.
 
@@ -318,14 +321,57 @@ Failure handling is per file:
   per file.
 
 `on_error = "fail"` has the same meaning for batch and single-file rules: the first
-affected file raises a preprocessing abort that propagates through the worker pool and
-stops the index run. `skip` and `passthrough` remain per-file outcomes, so unaffected
-members of a valid batch can still succeed.
+affected file raises a preprocessing abort that stops the index run. `skip` and
+`passthrough` remain per-file outcomes, so unaffected members of a valid batch can still
+succeed.
 
 Batch results are cached per file under the same [cache](#cache-and-incremental-indexing)
 key, so cache hits keep bypassing the hook entirely and a mixed hit/miss set shrinks the
 manifest to just the misses. vaultspec-rag groups matched files into manifests of at most 64 paths,
-each group a single spawn.
+each group a single spawn. Grouping applies to code and document targets alike, on full
+rebuilds and on incremental runs, including runs scoped to the changed paths; one changed
+file still costs one spawn. Code groups run in parallel across the chunk worker pool.
+Document groups run one at a time, each when indexing reaches its first document.
+
+## Filterable metadata
+
+A hook's per-unit and per-document `metadata` is returned with every result.
+To filter searches on a key, declare it in `.vaultragpreprocess.toml`:
+
+```toml
+[[filterable_metadata]]
+key = "lang"
+scope = "unit"        # unit | document
+
+[[filterable_metadata]]
+key = "team"
+scope = "document"
+```
+
+- `scope = "unit"` reads the unit's own `metadata`; `scope = "document"` reads
+  the document-level `metadata` every unit of the file shares. A key is declared
+  in one scope only.
+- A key name is non-empty, at most 128 characters, and contains no `.`, `[`,
+  or `]`.
+- Each declared key gets a keyword index on the metadata the index already
+  holds. Declaring or removing a key needs no rebuild: the next index run or
+  search adds or drops the index, and the stored metadata is never changed.
+- A filterable value is a string or a list of strings; a list matches when any
+  member matches, and a unit without the key matches no filter on it. Any other
+  value, such as a number, `true`, or `null`, is stored unchanged and never
+  matches. The index run logs a warning and counts those units per key in
+  `metadata_non_string` on the `vaultspec-rag index --json` document row and the
+  `service.index completed` event. The file still indexes.
+- Undeclared keys are never indexed and cannot be filtered on; a filter naming
+  one is refused with `unknown_filter_key`.
+- The declaration is part of the file, so editing it withdraws the project's
+  approval like any other edit. Run `preprocess approve` again afterwards.
+- `preprocess check` reports an invalid declaration. Indexing and search drop
+  an invalid entry with a warning instead.
+
+Filter with `--meta key=v1,v2` on the CLI, `meta.key=v1,v2` in the query text,
+or a `metadata_filters` mapping over MCP and HTTP. See
+[the filter surface](query-craft.md#the-filter-surface).
 
 ## Cache and incremental indexing
 
@@ -338,8 +384,9 @@ is never made sticky. Cross-path reuse requires the rule's explicit
 `path_independent = true` declaration.
 
 To force re-extraction of unchanged files after upgrading your extractor, bump
-`extractor_version`. Collection cleanup is intentionally separate from cache lifecycle:
-cleaning or rebuilding `code`, `document`, or `combined` does not erase extraction-cache
+`extractor_version`, or declare the extractor's files as [inputs](#declared-inputs) so
+an edit to them changes the key on its own. Collection cleanup is intentionally separate
+from cache lifecycle: cleaning or rebuilding `code`, `document`, or `combined` does not erase extraction-cache
 entries. Their complete execution fingerprints make obsolete entries unreachable without
 coupling one domain's cleanup to another domain's extractor work.
 
@@ -354,6 +401,52 @@ through your extractor under the same watcher timing as code changes: an adaptiv
 coalescing window, a freshness deadline, and a cooling delay after a successful run. See
 [automatic convergence](automatic-convergence.md#policy-settings) for the timing
 settings.
+
+### Declared inputs
+
+By default the index sees only the rule table. An edit to the script a `command` runs
+leaves every identity unchanged, so old extractions stay indexed until you bump
+`extractor_version`. Declare the files that define the extractor and their content
+becomes part of the rule's identity:
+
+```toml
+[[rule]]
+pattern = "*.pdf"
+command = "python tools/pdf_extract.py {path}"
+target = "document"
+extractor_version = "1.0.0"
+inputs = ["tools/pdf_extract.py", "tools/pdf_helpers/**"]
+```
+
+- Each entry is a gitignore-style pattern anchored at the project root. `tools/*.py`
+  matches only directly under `tools/`; write `**/` to match at any depth.
+- Patterns must stay inside the root: absolute paths, `..` and `.` components,
+  backslashes, and `!` negations are refused.
+- Every pattern must match at least one regular file. A rule may declare at most 256
+  files and 32 MiB in total.
+- A link is refused: a matched file that is a link, a pattern whose directory part
+  passes through a link, and any linked directory under the part of the tree a
+  pattern walks.
+
+Each indexing operation hashes the matched files once, into one `inputs_digest` per
+rule. The digest joins the content fingerprint of the rule's target kind and the
+extraction cache key. A defect in a declaration is an `admission_config_invalid`
+configuration error for the whole project: the rule is not dropped, and indexing stops
+until you fix it. `vaultspec-rag preprocess check` reports the error and exits
+non-zero; on a valid file it lists each rule's declared inputs and digest, as does
+`preprocess list`.
+
+What a change costs:
+
+- Rules without `inputs` keep exactly their previous identity. Upgrading forces no
+  rebuild, and `extractor_version` stays their only invalidation lever.
+- Adding `inputs` edits the rules file, so the root needs approval again and one
+  explicit rebuild of the target kind.
+- After that, an edit to a declared file makes incremental runs of that kind refuse
+  with `full_reindex_required` until you run the rebuild the refusal names. The rebuild
+  re-extracts every matching file, because the cache key changed too.
+- Approval covers the rules file only. Editing a declared input changes extraction
+  identity, but does not withdraw approval to run the hook.
 
 ## Failure visibility
 

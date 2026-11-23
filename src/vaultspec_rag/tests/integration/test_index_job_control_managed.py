@@ -68,6 +68,7 @@ from ._index_job_control_support import (
     assert_cancelled_job_is_absorbing,
     assert_cancelled_vault_stops_writes,
     assert_current_code_state,
+    assert_incomplete_code_rebuild,
     cancel_managed_attempt,
     code_pipeline_published,
     pause_managed_attempt,
@@ -118,7 +119,6 @@ def test_code_pipeline_control_unwinds_and_reconciliation_converges(
 ) -> None:
     """Pause/cancel unwind producers and consumer before a fresh attempt converges."""
     from ..._publication_state import acquire_publication_snapshot
-    from ..._store_models import generation_code_collection
     from ...indexer._publication_proof import ProofMissingError
 
     paths = _write_code_files(tmp_path, 192, "initial")
@@ -139,11 +139,8 @@ def test_code_pipeline_control_unwinds_and_reconciliation_converges(
         _assert_code_resources_released()
         checkpoint = indexer.last_checkpoint
         assert checkpoint is not None
-        collection = generation_code_collection(
-            store.DERIVED_CODE_TABLE_NAME, checkpoint.generation_id
-        )
-        published_count = store.count_code(collection)
-        published_ids = store.get_all_code_ids(collection)
+        published_count = store.count_code()
+        published_ids = store.get_all_code_ids()
         # Control is cooperative. The sole consumer may finish its
         # already-buffered slices before the producer observes the delivered
         # signal, so the durable prefix may equal the whole corpus.
@@ -155,8 +152,8 @@ def test_code_pipeline_control_unwinds_and_reconciliation_converges(
             acquire_publication_snapshot(tmp_path, PublicSourceType.CODE)
 
         time.sleep(0.25)
-        assert store.count_code(collection) == published_count
-        assert store.get_all_code_ids(collection) == published_ids
+        assert store.count_code() == published_count
+        assert store.get_all_code_ids() == published_ids
 
         reconciled = indexer.full_index(
             reporter=NullProgressReporter(),
@@ -346,7 +343,7 @@ async def test_managed_code_pause_releases_pipeline_and_resume_reconciles(
     first_task, paused = paused_attempt
     _assert_manager_resources_released(paused, managed_facade_registry, root, code=True)
     with managed_facade_registry.compute_lease(root) as lease:
-        assert_current_code_state(
+        assert_incomplete_code_rebuild(
             lease.runtime.code_indexer, slot.store, paths, "initial"
         )
 

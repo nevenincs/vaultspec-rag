@@ -107,11 +107,14 @@ class SearchAvailabilityCause(StrEnum):
 
 
 class SearchEmptyReason(StrEnum):
-    """Why an authoritative search returned no matches."""
+    """Why a successful search returned no matches."""
 
     PUBLISHED_EMPTY = "published_empty"
     NO_MATCH = "no_match"
     NO_MATCH_PATH_FILTER = "no_match_path_filter"
+    #: Nothing matched yet while an index job changes the source. The answer
+    #: is successful but cannot establish that no match exists.
+    INDEX_UPDATING = "index_updating"
 
 
 class SearchReasonCode(StrEnum):
@@ -159,7 +162,12 @@ class SearchReasonCode(StrEnum):
             self.INDEX_UNVERIFIABLE: (
                 "The empty search result is not authoritative for this source."
             ),
-            self.INDEX_TRANSITION: "The index publication is changing.",
+            self.INDEX_TRANSITION: (
+                "The index is being reset for a rebuild, or a reset began while "
+                "this search read it, so nothing it read is returned. A reset "
+                "its job is running is brief, and the search can be retried; "
+                "one whose job is paused waits until that job is resumed."
+            ),
             self.PUBLISHED_GENERATION_CURRENT: "The published generation is current.",
             self.REBUILD_REQUIRED: "An explicit index rebuild is required.",
             self.REBUILD_REFUSED: "The requested index rebuild was refused.",
@@ -208,7 +216,7 @@ class SearchReasonCode(StrEnum):
             )
         if self is self.INDEX_UNVERIFIABLE:
             return server_status_command(port, verbose=True)
-        if self in {self.INDEX_UPDATING, self.CAPACITY_LIMITED}:
+        if self in {self.INDEX_UPDATING, self.INDEX_TRANSITION, self.CAPACITY_LIMITED}:
             return server_jobs_command(port, index=source)
         if self is self.INDEX_UNAVAILABLE:
             return index_command(source, IndexCommandOptions(port=port, target=target))
@@ -421,6 +429,20 @@ class SearchSourceFact:
             and served_generation != desired_generation
         ):
             raise ValueError("current freshness cannot name different generations")
+
+    @property
+    def serves_updating_empty(self) -> bool:
+        """Whether an empty answer is non-authoritative success during a job.
+
+        A usable source with an active matching index job has answered the
+        query; only the claim that nothing exists is unproven. A source that
+        cannot answer at all - never built, collection missing, rebuild
+        required, capacity refused - keeps its typed failure instead.
+        """
+        return (
+            self.availability is SearchAvailability.USABLE
+            and self.reason_code is SearchReasonCode.INDEX_UPDATING
+        )
 
     def as_dict(self) -> dict[str, object]:
         block: dict[str, object] = {

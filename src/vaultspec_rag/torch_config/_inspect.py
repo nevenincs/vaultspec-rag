@@ -2,7 +2,7 @@
 
 Pure reads: load and parse the document, then classify the
 ``[[tool.uv.index]]`` and ``[tool.uv.sources]`` sections against rag's
-canonical cu130 block. Never writes.
+canonical CUDA block. Never writes.
 """
 
 from __future__ import annotations
@@ -15,13 +15,13 @@ from tomlkit.items import AoT, InlineTable, Table
 
 from ._constants import (
     _TABLE_LIKE_TYPES,  # pyright: ignore[reportPrivateUsage]  # intra-package constant
-    CU130_MARKER,
+    CUDA_MARKER,
     TableLike,
     TorchConfigState,
     logger,
     tget,
 )
-from ._index import CU130_INDEX_NAME, CU130_INDEX_URL
+from ._index import CUDA_INDEX_NAME, CUDA_INDEX_URL
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -136,7 +136,7 @@ def _torch_sources(doc: TOMLDocument) -> object:
 
 
 def match_index_entry(entry: TableLike) -> str:
-    """Classify one ``[[tool.uv.index]]`` entry against the canonical cu130.
+    """Classify one ``[[tool.uv.index]]`` entry against the canonical CUDA.
 
     Returns ``"canonical"`` if the entry has our name, our url, and
     ``explicit = true``; ``"conflict"`` if the entry has our name but
@@ -144,19 +144,19 @@ def match_index_entry(entry: TableLike) -> str:
     does not match).
     """
     name = tget(entry, "name")
-    if name != CU130_INDEX_NAME:
+    if name != CUDA_INDEX_NAME:
         return ""
     url = tget(entry, "url")
     explicit = tget(entry, "explicit")
     if explicit is None:
         explicit = False
-    if url == CU130_INDEX_URL and bool(explicit):
+    if url == CUDA_INDEX_URL and bool(explicit):
         return "canonical"
     return "conflict"
 
 
 def match_source_entry(entry: TableLike) -> str:
-    """Classify one ``torch`` source entry against the canonical cu130.
+    """Classify one ``torch`` source entry against the canonical CUDA.
 
     Returns ``"canonical"`` if the entry matches our ``index`` and
     ``marker`` (and nothing else beyond the two keys); ``"conflict"``
@@ -164,11 +164,11 @@ def match_source_entry(entry: TableLike) -> str:
     the entry is unrelated (different index).
     """
     idx = tget(entry, "index")
-    if idx != CU130_INDEX_NAME:
+    if idx != CUDA_INDEX_NAME:
         return ""
     marker = tget(entry, "marker")
     extras = set(cast("dict[str, object]", entry).keys()) - {"index", "marker"}
-    if marker == CU130_MARKER and not extras:
+    if marker == CUDA_MARKER and not extras:
         return "canonical"
     return "conflict"
 
@@ -202,7 +202,7 @@ def _eval_index_entries(indices: AoT, conflicts: list[str]) -> tuple[bool, bool]
         elif m == "conflict":
             conflict_seen = True
             conflicts.append(
-                f"[[tool.uv.index]] '{CU130_INDEX_NAME}' "
+                f"[[tool.uv.index]] '{CUDA_INDEX_NAME}' "
                 f"exists with non-canonical url/explicit"
             )
     return canonical_seen, conflict_seen
@@ -291,7 +291,7 @@ def _classify_sources(
             conflict_seen = True
             conflicts.append(
                 f"[tool.uv.sources] torch references "
-                f"'{CU130_INDEX_NAME}' with non-canonical marker/extras"
+                f"'{CUDA_INDEX_NAME}' with non-canonical marker/extras"
             )
     return canonical_seen, conflict_seen, conflicts
 
@@ -322,7 +322,7 @@ def classify_doc(doc: TOMLDocument) -> tuple[TorchConfigState, list[str]]:
         # complete it without risking user intent.
         missing = "source" if index_canonical else "index"
         conflicts.append(
-            f"cu130 {missing} entry missing while the other half is present"
+            f"CUDA {missing} entry missing while the other half is present"
         )
         return TorchConfigState.CUSTOMISED, conflicts
     return TorchConfigState.MISSING, []

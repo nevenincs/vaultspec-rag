@@ -1,0 +1,182 @@
+"""The service search route refuses document filters as the caller's error.
+
+CPU-only: the refusal is decided before any count, model, or GPU work, so an
+unindexed root answers it exactly as an indexed one would.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import pytest
+from starlette.testclient import TestClient
+
+from ..server import ServerRouteRuntime, create_http_app
+from ..service import ServiceRegistry
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from httpx2 import Response
+
+pytestmark = [pytest.mark.unit]
+
+_TOKEN = "metadata-filter-token"
+
+
+def _search(root: Path, body: dict[str, object]) -> Response:
+    registry = ServiceRegistry()
+    app = create_http_app(
+        ServerRouteRuntime(token=_TOKEN, registry=registry, port=8765),
+        lifespan=None,
+    )
+    with TestClient(
+        app, raise_server_exceptions=False, base_url="http://127.0.0.1"
+    ) as client:
+        return client.post(
+            "/search",
+            headers={"Authorization": f"Bearer {_TOKEN}"},
+            json={"query": "manual", "project_root": str(root), **body},
+        )
+
+
+@pytest.fixture
+def declared_root(tmp_path: Path) -> Path:
+    root = tmp_path / "project"
+    (root / ".vault").mkdir(parents=True)
+    (root / ".vaultragpreprocess.toml").write_text(
+        'version = 2\n[[filterable_metadata]]\nkey = "lang"\nscope = "unit"\n',
+        encoding="utf-8",
+    )
+    return root
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"type": "document", "metadata_filters": {"owner": ["me"]}},
+        {
+            "type": "combined",
+            "include_documents": True,
+            "metadata_filters": {"owner": ["me"]},
+        },
+        {"type": "document", "query": "manual meta.owner=me"},
+    ],
+)
+def test_undeclared_metadata_key_is_a_400_naming_the_declared_keys(
+    declared_root: Path, body: dict[str, object]
+) -> None:
+    # Guard. Proven to fail: removing the InvalidFilterForSearchTypeError
+    # branch from _execute_search_route turns the refusal into a 500, failing
+    # the status assertion below.
+    response = _search(declared_root, body)
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["error"] == "unknown_filter_key"
+    assert payload["offending"] == ["meta.owner"]
+    assert "meta.lang" in payload["message"]
+
+
+def test_locator_kind_outside_the_closed_set_is_a_400(declared_root: Path) -> None:
+    response = _search(declared_root, {"type": "document", "locator_kind": "folio"})
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_filter_for_search_type"
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        ({"extractor_prefix": 3}, "extractor_prefix must be a string"),
+        ({"metadata_filters": ["lang"]}, "metadata_filters must map"),
+    ],
+)
+def test_wrong_json_shape_is_a_400_before_the_search_runs(
+    declared_root: Path, body: dict[str, object], message: str
+) -> None:
+    response = _search(declared_root, {"type": "document", **body})
+    assert response.status_code == 400
+    assert message in str(response.json())
+
+
+@pytest.mark.parametrize("search_type", ["vault", "code"])
+@pytest.mark.parametrize(
+    ("body", "flag"),
+    [
+        ({"source_path": "docs/manual.pdf"}, "--source-path"),
+        ({"extractor_id": "pdf.text"}, "--extractor-id"),
+        ({"extractor_version": "1"}, "--extractor-version"),
+        ({"locator_kind": "page"}, "--locator-kind"),
+        ({"extractor_prefix": "pdf"}, "--extractor-prefix"),
+        ({"metadata_filters": {"lang": ["en"]}}, "--meta"),
+    ],
+)
+def test_document_filter_on_a_vault_or_code_search_is_a_400(
+    declared_root: Path, search_type: str, body: dict[str, object], flag: str
+) -> None:
+    # Guard. Proven to fail: removing the _refuse_inapplicable_filters call
+    # from _execute_search_request lets the vault and code branches drop
+    # the filter and run the search, which this unindexed root answers 503,
+    # failing the status assertion below.
+    response = _search(declared_root, {"type": search_type, **body})
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["error"] == "invalid_filter_for_search_type"
+    assert payload["filter_kind"] == "document"
+    assert payload["offending"] == [flag]
+
+
+@pytest.mark.parametrize(
+    ("search_type", "body", "kind", "flag"),
+    [
+        ("vault", {"language": "python"}, "code", "--language"),
+        ("vault", {"path": "src/foo.py"}, "code", "--path"),
+        ("vault", {"include_paths": ["src/**"]}, "code", "--include-path"),
+        ("vault", {"dedup_locales": True}, "code", "--dedup-locales"),
+        ("vault", {"prefer": "prod"}, "code", "--prefer"),
+        ("code", {"doc_type": "adr"}, "vault", "--doc-type"),
+        ("code", {"feature": "auth"}, "vault", "--feature"),
+        ("code", {"tag": "auth"}, "vault", "--tag"),
+        ("code", {"intent": "debugging"}, "vault", "--intent"),
+        ("document", {"date": "2026-05-28"}, "vault", "--date"),
+        ("document", {"class_name": "Engine"}, "code", "--class-name"),
+    ],
+)
+def test_filter_of_another_search_type_is_a_400(
+    declared_root: Path,
+    search_type: str,
+    body: dict[str, object],
+    kind: str,
+    flag: str,
+) -> None:
+    # Guard. Proven to fail: leaving language out of the options
+    # _refuse_inapplicable_filters hands validate_search_filters lets the vault
+    # branch drop it and run the search, which this unindexed root answers 503,
+    # failing the status assertion below.
+    response = _search(declared_root, {"type": search_type, **body})
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["error"] == "invalid_filter_for_search_type"
+    assert payload["filter_kind"] == kind
+    assert payload["offending"] == [flag]
+
+
+def test_unsupported_prefer_is_a_400_the_mcp_tool_raises_verbatim(
+    declared_root: Path,
+) -> None:
+    # Guard. Proven to fail: removing the InvalidPreferValueError branch from
+    # _execute_search_route turns the refusal into a 500, failing the status
+    # assertion below.
+    from ..mcp._tools import _validated_search_result
+
+    response = _search(declared_root, {"type": "code", "prefer": "production"})
+    assert response.status_code == 400
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"^invalid_prefer_value: --prefer must be one of production, tests, "
+            r"or documentation; got 'production'\.$"
+        ),
+    ):
+        _validated_search_result(response.json())

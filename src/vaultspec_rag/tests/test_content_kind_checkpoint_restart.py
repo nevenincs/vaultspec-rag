@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ._ledger_fixtures import continue_rebuild, record_reset_over_empty_storage
 from .integration._helpers import _document_policy
 
 if TYPE_CHECKING:
@@ -129,7 +130,9 @@ def test_each_kind_replays_only_its_final_unconfirmed_unit(
     document_digest = hashlib.blake2b(b"document restart input").hexdigest()
 
     code = _open_code()
+    record_reset_over_empty_storage(code.ledger, code.generation)
     document = _open_document()
+    record_reset_over_empty_storage(document.ledger, document.generation)
     for segment in code_segments[:2]:
         assert (
             code.record_confirmed_segments((segment,), {segment.path: code_digest}) == 1
@@ -157,8 +160,10 @@ def test_each_kind_replays_only_its_final_unconfirmed_unit(
         detail="interrupted before final document slice",
     )
 
-    resumed_code = _open_code()
-    resumed_document = _open_document()
+    with continue_rebuild(code.generation_id):
+        resumed_code = _open_code()
+    with continue_rebuild(document.generation_id):
+        resumed_document = _open_document()
     assert resumed_code.generation_id == code.generation_id
     assert resumed_document.generation_id == document.generation_id
     assert tuple(
@@ -209,6 +214,7 @@ def test_vault_rebuild_keeps_its_confirmed_generation_after_interruption(
         )
 
     checkpoint = _open()
+    record_reset_over_empty_storage(checkpoint.ledger, checkpoint.generation)
     confirmed = CommitUnit(
         rel_path="notes",
         kind=CommitUnitKind.UPSERT,
@@ -223,7 +229,8 @@ def test_vault_rebuild_keeps_its_confirmed_generation_after_interruption(
         RunTerminalState.CANCELLED,
         detail="paused after the first durable vault unit",
     )
-    resumed = _open()
+    with continue_rebuild(checkpoint.generation_id):
+        resumed = _open()
     assert resumed.generation_id == checkpoint.generation_id
     assert resumed.generation.signature.clean
     assert resumed.ledger.committed_unit_count(resumed.generation_id) == 1

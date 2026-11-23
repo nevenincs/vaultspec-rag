@@ -3,15 +3,16 @@ tags:
   - '#adr'
   - '#stale-search-hits'
 date: '2026-10-26'
-modified: '2026-10-26'
+modified: '2026-11-20'
 body_schema: 'body-v2'
-body_hash: 'sha256:f778a923ba467fb4b034c5f8a05425bf772881c80796d15061e8230fc135a440'
+body_hash: 'sha256:ef7363fd16b5f4c4e31269e7b6501f9a63dfeff2bacff8ad14c26beca00c7fa4'
 related:
   - "[[2026-10-26-stale-search-hits-reference]]"
   - "[[2026-09-07-explicit-reindex-authority-adr]]"
   - "[[2026-09-08-search-readiness-contract-adr]]"
   - "[[2026-10-12-destructive-rebuild-lifecycle-adr]]"
   - '[[2026-09-08-incremental-publication-cost-adr]]'
+  - '[[2026-11-20-auto-update-opt-out-adr]]'
 ---
 
 # `stale-search-hits` adr: `verify delivered hits and reconcile confirmed stale content` | (**status:** `accepted`)
@@ -58,3 +59,9 @@ Checking the small delivered page gives the user evidence about what they will i
 ## Consequences
 
 Search performs bounded filesystem I/O and can return mixed per-hit freshness states. Unverifiable hits remain useful but carry no assertion of currency. Background convergence may take later queries to become visible; a current response cannot promise the filesystem will remain unchanged after verification. Full rebuild remains an explicit operator action, including after confirmed drift. Implementation completion is established by the linked plan and review, not this acceptance.
+
+## 2026-11-20 amendment: per-root automatic update opt-out
+
+Amended 2026-11-20 by `2026-11-20-auto-update-opt-out-adr`, under the user's authorization recorded there. This amendment is authoritative over the incremental-request sentence in Constraints.
+
+- Confirmed stale hits on a root whose operator has opted out of automatic updates are verified and reported as before, but the drift auditor requests no incremental job. It records the audit as `deferred` with reason `auto_update_disabled`. An unverifiable opt-out store defers the same way.

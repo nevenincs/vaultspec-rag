@@ -89,7 +89,7 @@ def test_the_metadata_depth_never_imports_torch() -> None:
 
 
 def test_an_environment_without_the_inference_stack_is_a_client() -> None:
-    verdict = metadata_verdict(None, "2.14.0+cu130", "linux")
+    verdict = metadata_verdict(None, "2.15.0+cu134", "linux")
 
     assert role_for(None) is InstallRole.CLIENT
     assert verdict is ComputeCapability.NOT_APPLICABLE
@@ -108,7 +108,7 @@ def test_a_host_that_lost_torch_is_a_defect_not_a_client() -> None:
     ("torch_version", "platform", "expected"),
     [
         ("2.14.0+cpu", "linux", ComputeCapability.CPU_ONLY_BUILD),
-        ("2.14.0+cu130", "win32", ComputeCapability.BUILD_PRESENT),
+        ("2.15.0+cu134", "win32", ComputeCapability.BUILD_PRESENT),
         ("2.14.0", "win32", ComputeCapability.CPU_ONLY_BUILD),
         ("2.14.0", "linux", ComputeCapability.BUILD_PRESENT),
         ("2.14.0", "darwin", ComputeCapability.BUILD_PRESENT),

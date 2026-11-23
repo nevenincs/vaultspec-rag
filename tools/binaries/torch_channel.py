@@ -10,8 +10,8 @@ project ships against:
   is not a caveat to document - it is the capability being absent.
 - On **Linux**, the PyPI wheel does carry the CUDA stack, but it is not the
   build this project resolves. ``pyproject.toml`` routes torch to the
-  ``pytorch-cu130`` index for ``sys_platform == 'linux' or 'win32'``, and
-  ``uv.lock`` pins ``2.14.0+cu130`` there.
+  ``pytorch-cu134`` index for ``sys_platform == 'linux' or 'win32'``, and
+  ``uv.lock`` pins ``2.15.0+cu134`` there.
 - On **macOS**, the default PyPI wheel is already the right one: it carries
   the MPS backend, which is the accelerator Apple silicon uses. There is no
   CUDA build for macOS at any version and none is wanted, so the mapping below
@@ -21,7 +21,7 @@ project ships against:
 survives into a ``uv pip install vaultspec-rag`` from PyPI. This module
 reconstructs the same intent for the bootstrap.
 
-Why a direct wheel reference rather than ``--extra-index-url``: the cu130
+Why a direct wheel reference rather than ``--extra-index-url``: the CUDA
 index mirrors 118 distributions, including ``numpy``, ``jinja2``, ``certifi``,
 ``filelock`` and other dependencies of this project. uv gives an extra index
 priority over the default one, so passing the index as a flag would silently
@@ -49,6 +49,7 @@ from urllib.parse import quote
 # reimplementing the derivation for the build.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
+from vaultspec_rag.torch_config._index import CUDA_INDEX_NAME
 from vaultspec_rag.torch_config._lockfile import locked_torch_version
 
 #: Rust target triple -> the wheel platform tag torch publishes for it.
@@ -59,9 +60,6 @@ TORCH_PLATFORM_TAGS = {
     "x86_64-unknown-linux-gnu": "manylinux_2_28_x86_64",
     "aarch64-unknown-linux-gnu": "manylinux_2_28_aarch64",
 }
-
-#: The uv index name the project routes torch through.
-INDEX_NAME = "pytorch-cu130"
 
 
 class TorchChannelError(RuntimeError):
@@ -79,13 +77,15 @@ def index_url(root: Path | None = None) -> str:
     config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
     indexes = config.get("tool", {}).get("uv", {}).get("index", [])
     for index in indexes:
-        if index.get("name") == INDEX_NAME:
+        if index.get("name") == CUDA_INDEX_NAME:
             url = str(index["url"]).rstrip("/")
             if not url.startswith("https://"):
-                raise TorchChannelError(f"{INDEX_NAME} index must be https: {url!r}")
+                raise TorchChannelError(
+                    f"{CUDA_INDEX_NAME} index must be https: {url!r}"
+                )
             return url
     raise TorchChannelError(
-        f"pyproject.toml declares no [[tool.uv.index]] named {INDEX_NAME!r}",
+        f"pyproject.toml declares no [[tool.uv.index]] named {CUDA_INDEX_NAME!r}",
     )
 
 

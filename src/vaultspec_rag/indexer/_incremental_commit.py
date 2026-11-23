@@ -15,6 +15,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple
 
+from .._source_types import PublicSourceType
 from ..job_control import NO_RUN_CONTROL
 from ._consumer_pipeline import UnsettledCodeConsumerError
 from ._run_ledger_models import CommitUnitKind, RunOperation
@@ -190,7 +191,9 @@ class CodeIncrementalCommit:
                 current_ids - existing_ids - (protected_ids or set())
             )
             if introduced_ids:
-                self._store.delete_code_chunks(introduced_ids)
+                self._store.delete_publication_points(
+                    PublicSourceType.CODE, introduced_ids
+                )
         except Exception:
             logger.error(
                 "Failed to clean partial incremental code publication",
@@ -225,7 +228,9 @@ class CodeIncrementalCommit:
         if checkpoint is None or prior_ids_by_path is None:
             obsolete_ids = sorted(existing_ids - published_ids)
             if obsolete_ids:
-                self._store.delete_code_chunks(obsolete_ids)
+                self._store.delete_publication_points(
+                    PublicSourceType.CODE, obsolete_ids
+                )
             return
         current_ids_by_path = self._lifecycle.checkpoint_ids_by_path(
             checkpoint,
@@ -253,7 +258,9 @@ class CodeIncrementalCommit:
             from ._streaming import execute_store_mutation
 
             execute_store_mutation(
-                lambda ids=obsolete_ids: self._store.delete_code_chunks(list(ids)),
+                lambda ids=obsolete_ids: self._store.delete_publication_points(
+                    PublicSourceType.CODE, list(ids)
+                ),
                 checkpoint.deletion_lifecycle(rel, deletion_kind, obsolete_ids),
             )
             if deletion_kind is CommitUnitKind.DELETE_PATH:
@@ -287,7 +294,6 @@ class CodeIncrementalCommit:
                 request.reporter.phase_end()
             self._lifecycle.publish(
                 request.checkpoint,
-                build_target=None,
                 reporter=request.reporter,
                 phase_label="write metadata",
                 affected_paths=(

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 import shlex
+from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -79,8 +80,14 @@ def test_cli_reference_is_generated_from_live_surface() -> None:
     assert OUTPUT.read_text(encoding="utf-8") == render()
 
 
+@cache
 def _command_tree() -> Command:
-    """Return the root Click command for the Typer application."""
+    """Return the root Click command for the Typer application.
+
+    Built once: every parse of a documented invocation reads the root options,
+    and rebuilding the whole tree for each of them is the cost of this module.
+    The tree is only read.
+    """
     return typer.main.get_command(app)
 
 
@@ -248,6 +255,7 @@ def _doc_files() -> list[Path]:
     return files
 
 
+@cache
 def _pairs() -> list[tuple[Path, list[str], list[str]]]:
     out: list[tuple[Path, list[str], list[str]]] = []
     for path in _doc_files():

@@ -30,6 +30,7 @@ from ._chunk_producer import (
     SingleProductionOptions,
     WeightedCodeSegmentQueue,
     drain_code_chunks,
+    partition_batch_work,
 )
 from ._content_policy import AdmissionReason
 from ._file_state import FileStateKind
@@ -158,7 +159,6 @@ class CodePipelineRun:
     checkpoint: CodeRunCheckpoint
     limits: CodePipelineLimits
     content_epoch: str | None
-    code_build_target: str | None
     ingest_wait: bool = True
     run_control: RunControl = NO_RUN_CONTROL
 
@@ -176,7 +176,6 @@ class _WeightedConsumerRun:
     checkpoint: CodeRunCheckpoint | None
     ingest_wait: bool
     run_control: RunControl
-    code_build_target: str | None
     donor_reuse: DonorReuseContext | None
     reporter: ProgressReporter
     pending_file_end_paths: set[str] = field(default_factory=set)
@@ -280,17 +279,7 @@ class CodeConsumerPipeline:
         metadata: dict[str, str] = {}
         total = [len(new_ids)]
         self._begin_support_measurement(paths)
-        # A generation build holds both collections at once, so the served
-        # points are part of what has to fit. Charged through the one existing
-        # estimator rather than a second sizing rule: a root that cannot afford
-        # the duplicate is refused here and keeps serving what it has, which is
-        # the whole reason the build never touches the served collection.
-        duplicate_points = (
-            self._store.count_code() if run.code_build_target is not None else 0
-        )
-        self._store.disk_headroom_preflight(
-            len(paths) * _CHUNKS_PER_FILE_ESTIMATE + duplicate_points
-        )
+        self._store.disk_headroom_preflight(len(paths) * _CHUNKS_PER_FILE_ESTIMATE)
         run_control.checkpoint()
         # Count confirmed consumer output and durably resolved source outcomes
         # that produce no chunks, against the admitted file total.
@@ -314,7 +303,6 @@ class CodeConsumerPipeline:
                 checkpoint=checkpoint,
                 ingest_wait=run.ingest_wait,
                 run_control=run_control,
-                code_build_target=run.code_build_target,
                 donor_reuse=donor_reuse,
                 reporter=reporter,
             )
@@ -329,8 +317,11 @@ class CodeConsumerPipeline:
 
             producer_exception: BaseException | None = None
             try:
-                batch_groups, singles = self._producer.partition_batch_work(
-                    paths, run_control=run_control
+                batch_groups, singles = partition_batch_work(
+                    paths,
+                    self._root_dir,
+                    self._producer.prep_context(),
+                    run_control=run_control,
                 )
                 if batch_groups:
                     self._producer.produce_batch_groups(
@@ -722,7 +713,6 @@ class CodeConsumerPipeline:
                             else None
                         ),
                         ingest_wait=consumer_run.ingest_wait,
-                        collection=consumer_run.code_build_target,
                         on_storage_confirmed=on_storage_confirmed,
                         before_forward=before_forward,
                         after_forward=_after_forward,

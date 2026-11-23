@@ -454,7 +454,7 @@ def prepare_empty_code_collection(
 ) -> ProjectSlot:
     registry.close_project(root)
     with VaultStore(root, embedding_dim=registry.model.dimension) as empty_store:
-        empty_store.drop_code_table()
+        empty_store.discard_source_storage(PublicSourceType.CODE)
         empty_store.ensure_code_table()
     _write_code_files(root, file_count, "empty-collection")
     return registry.peek_project(root)
@@ -662,6 +662,34 @@ def assert_current_code_state(
     for ordinal, path in enumerate(paths):
         rel_path = str(path.relative_to(indexer.root_dir)).replace("\\", "/")
         assert f"{revision}-{ordinal:03d}" in stored[rel_path]
+
+
+def assert_incomplete_code_rebuild(
+    indexer: CodebaseIndexer,
+    store: VaultStore,
+    paths: list[Path],
+    revision: str,
+) -> None:
+    """Verify a stopped code rebuild serves its own partial index, uncertified.
+
+    The rebuild discarded the old index at its reset, so storage holds only
+    points the rebuild confirmed from current source text, and no completed
+    publication vouches for that partial index.
+    """
+    from ..._publication_state import acquire_publication_snapshot
+    from ...indexer._publication_proof import ProofMissingError
+
+    with pytest.raises(ProofMissingError):
+        acquire_publication_snapshot(indexer.root_dir, PublicSourceType.CODE)
+    ordinals = {
+        str(path.relative_to(indexer.root_dir)).replace("\\", "/"): ordinal
+        for ordinal, path in enumerate(paths)
+    }
+    stored = _stored_code_content(store)
+    assert stored
+    assert set(stored) <= set(ordinals)
+    for rel_path, content in stored.items():
+        assert f"{revision}-{ordinals[rel_path]:03d}" in content
 
 
 class AbortAfterFirstCommitReporter(NullProgressReporter):

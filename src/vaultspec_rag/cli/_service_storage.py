@@ -165,7 +165,6 @@ def _require_yes_for_json(command: str, json_mode: bool, yes: bool) -> None:
 def _emit_survey_json(
     surveys: list[NamespaceSurvey], queried_root: dict[str, str] | None = None
 ) -> None:
-    from ..generation_survey import generation_fields
     from ..storage_survey import namespace_temp_rooted
 
     data: dict[str, object] = {
@@ -183,7 +182,6 @@ def _emit_survey_json(
                 "footprint_bytes": s.footprint_bytes,
                 "models": s.models,
                 "temp_rooted": namespace_temp_rooted(s),
-                **generation_fields(s.generations),
             }
             for s in surveys
         ],
@@ -330,7 +328,6 @@ def _survey_from_service(
     With ``root``, the route narrows to that root's namespace and its
     ``queried_root`` (the service-computed prefix) is returned alongside.
     """
-    from ..generation_survey import decode_generation_fields
     from ..serviceclient._discovery import _default_service_port
     from ..serviceclient._transport import _try_http_admin
     from ..storage_survey import NamespaceSurvey
@@ -380,7 +377,6 @@ def _survey_from_service(
                 points_verified=(
                     True if published_verified is None else published_verified
                 ),
-                generations=decode_generation_fields(namespace_root, entry),
                 models=_published_model_map(entry.get("models")),
                 temp_rooted=flag(entry.get("temp_rooted")),
             )
@@ -921,14 +917,14 @@ def _migrate_name_map(root: str, *, to_server: bool) -> dict[str, str]:
     """Map source collection names to target names for the given direction.
 
     The code entry resolves its SOURCE name through the root's served pointer
-    rather than deriving it. A root that has published a rebuild serves
-    ``<derived>_g<generation>``, so keying on the derived name alone copies
-    either a superseded generation or nothing at all - migrating stale code
-    data, or silently migrating none of it.
+    rather than deriving it. A root a build before the canonical layout left
+    serving ``<derived>_g<generation>`` keeps that index there, so keying on
+    the derived name alone copies either a superseded generation or nothing at
+    all - migrating stale code data, or silently migrating none of it.
 
-    The TARGET stays the derived base name in both directions. The target
-    migration publishes that destination name after the copy succeeds, so a
-    backend switch serves the copied index without carrying the source's
+    The TARGET stays the derived base name in both directions. The migration
+    retires the pointer after the copy succeeds, so a backend switch serves
+    the copied index under the derived name without carrying the source's
     generation history across.
     """
     from .. import store_schema

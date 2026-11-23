@@ -17,7 +17,9 @@ process boundary.
 Error policy: a missing or malformed config degrades to zero rules (warn,
 never raise - a broken file must not wedge the resident watcher service); an
 individual malformed rule is dropped with a warning while valid rules survive.
-Hard-fail is reserved for the explicit ``preprocess check`` CLI verb, which
+A missing target or extractor version, or a defective declared input, is a
+typed policy error for the whole root instead, so routing never changes
+silently. Hard-fail is reserved for the explicit ``preprocess check`` CLI verb, which
 calls :func:`load_preprocess_rules` with ``strict=True``.
 """
 
@@ -26,20 +28,24 @@ from __future__ import annotations
 import dataclasses
 import datetime
 import hashlib
+import json
 import logging
 import math
+import os
+import pathlib
 import tomllib
 from typing import TYPE_CHECKING, Literal, cast
 
 import pathspec
 
+from .. import store_schema
 from .._job_errors import JobErrorKind
 from ..operator_state._features import PreprocessHookState
 from ._content_policy import ContentKind
 from ._preprocess_approval import policy_is_approved
+from ._source_file import open_source_file
 
 if TYPE_CHECKING:
-    import pathlib
     from collections.abc import Callable, Mapping
 
 logger = logging.getLogger(__name__)
@@ -60,6 +66,7 @@ __all__ = [
     "PreprocessRule",
     "config_hook_state",
     "hook_state",
+    "load_filterable_metadata",
     "load_preprocess_rules",
     "root_hook_state",
 ]
@@ -140,6 +147,10 @@ class PreprocessRule:
         max_source_bytes: Optional per-rule source-size ceiling. The worker
             combines it with the active support-profile ceiling and enforces
             the smaller value before launching an extractor.
+        inputs: Root-relative gitignore-style patterns naming the files that
+            define the extractor, such as its script and helper modules.
+        inputs_digest: Digest over the matched input files' root-relative
+            paths and contents, or ``None`` when the rule declares no inputs.
     """
 
     pattern: str
@@ -155,6 +166,8 @@ class PreprocessRule:
     batch: bool = False
     path_independent: bool = False
     max_source_bytes: int | None = None
+    inputs: tuple[str, ...] = ()
+    inputs_digest: str | None = None
 
 
 class PreprocessConfig:
@@ -319,23 +332,10 @@ def load_preprocess_rules(
         PreprocessConfigError: Only when ``strict`` is ``True`` and the config
             is malformed or contains an invalid rule.
     """
-    config_file = root_dir / PREPROCESS_CONFIG_FILENAME
-    if not config_file.is_file():
+    document = _read_config(root_dir, strict=strict)
+    if document is None:
         return PreprocessConfig([])
-
-    data: dict[str, object]
-    try:
-        raw = config_file.read_bytes()
-        data = tomllib.loads(raw.decode("utf-8"))
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
-        message = (
-            f"{PREPROCESS_CONFIG_FILENAME} at {config_file} "
-            f"is unreadable or malformed: {exc}"
-        )
-        if strict:
-            raise PreprocessConfigError(message) from exc
-        logger.warning("%s; ignoring preprocess rules", message)
-        return PreprocessConfig([])
+    raw, data = document
 
     version = data.get("version", 1)
     if not isinstance(version, int) or isinstance(version, bool):
@@ -371,12 +371,124 @@ def load_preprocess_rules(
     for order, raw_rule in enumerate(cast("list[object]", raw_rules)):
         rule = _resolve_rule(raw_rule, order, strict=strict)
         if rule is not None:
-            rules.append(rule)
+            rules.append(_with_inputs_digest(root_dir, rule))
+    if strict:
+        # Validated here too so the check verb reports a bad declaration;
+        # the declaration itself is read by load_filterable_metadata.
+        _resolve_filterable_metadata(data, strict=True)
     return PreprocessConfig(
         rules,
         schema_version=version,
         policy_digest=f"sha256:{hashlib.sha256(raw).hexdigest()}",
     )
+
+
+def _read_config(
+    root_dir: pathlib.Path, *, strict: bool
+) -> tuple[bytes, dict[str, object]] | None:
+    """Read and parse the root's config file, or ``None`` when there is none.
+
+    A missing file is ``None``. An unreadable or malformed one is ``None``
+    after a warning, or raises in strict mode.
+    """
+    config_file = root_dir / PREPROCESS_CONFIG_FILENAME
+    if not config_file.is_file():
+        return None
+    try:
+        raw = config_file.read_bytes()
+        return raw, tomllib.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        message = (
+            f"{PREPROCESS_CONFIG_FILENAME} at {config_file} "
+            f"is unreadable or malformed: {exc}"
+        )
+        if strict:
+            raise PreprocessConfigError(message) from exc
+        logger.warning("%s; ignoring it", message)
+        return None
+
+
+#: The array of tables declaring filterable document metadata keys.
+FILTERABLE_METADATA_TABLE = "filterable_metadata"
+
+
+def load_filterable_metadata(
+    root_dir: pathlib.Path,
+) -> tuple[store_schema.DeclaredMetadataKey, ...]:
+    """Return the document metadata keys a root declares filterable.
+
+    Each ``[[filterable_metadata]]`` entry names a ``key`` and one ``scope``,
+    ``unit`` or ``document``. The declaration is neither a rule nor part of
+    any policy fingerprint, so changing it never requires a rebuild.
+
+    Never raises: a missing, unreadable, or unsupported file declares nothing,
+    and an invalid entry is dropped with a warning. The ``preprocess check``
+    verb reports the same defects as errors.
+    """
+    document = _read_config(root_dir, strict=False)
+    if document is None:
+        return ()
+    _raw, data = document
+    if data.get("version", 1) != SUPPORTED_CONFIG_VERSION:
+        logger.warning(
+            "%s: unsupported config version; no metadata key is filterable",
+            PREPROCESS_CONFIG_FILENAME,
+        )
+        return ()
+    return _resolve_filterable_metadata(data, strict=False)
+
+
+def _resolve_filterable_metadata(
+    data: dict[str, object], *, strict: bool
+) -> tuple[store_schema.DeclaredMetadataKey, ...]:
+    """Validate the declaration table into declared keys.
+
+    A key declared in both scopes is a configuration error; outside strict
+    mode it is dropped entirely, because either scope would be a guess.
+    """
+
+    def reject(message: str) -> None:
+        full = f"{PREPROCESS_CONFIG_FILENAME}: {message}"
+        if strict:
+            raise PreprocessConfigError(full)
+        logger.warning("%s", full)
+
+    entries = data.get(FILTERABLE_METADATA_TABLE, [])
+    if not isinstance(entries, list):
+        reject(f"'{FILTERABLE_METADATA_TABLE}' must be an array of tables")
+        return ()
+    scopes: dict[str, set[store_schema.MetadataScope]] = {}
+    for index, entry in enumerate(cast("list[object]", entries)):
+        where = f"{FILTERABLE_METADATA_TABLE} #{index}"
+        if not isinstance(entry, dict):
+            reject(f"{where} must be a table")
+            continue
+        table = cast("dict[str, object]", entry)
+        unknown = sorted(set(table) - {"key", "scope"})
+        if unknown:
+            reject(f"{where} has unknown field(s) {unknown}")
+            continue
+        key = table.get("key")
+        problem = store_schema.metadata_key_problem(key)
+        if problem is not None or not isinstance(key, str):
+            reject(f"{where}: {problem}")
+            continue
+        raw_scope = table.get("scope")
+        scope = store_schema.metadata_scope(raw_scope)
+        if scope is None:
+            reject(
+                f"{where}: 'scope' must be one of "
+                f"{list(store_schema.METADATA_SCOPES)}; got {raw_scope!r}"
+            )
+            continue
+        scopes.setdefault(key, set()).add(scope)
+    declared: list[store_schema.DeclaredMetadataKey] = []
+    for key, key_scopes in sorted(scopes.items()):
+        if len(key_scopes) > 1:
+            reject(f"metadata key {key!r} is declared in more than one scope")
+            continue
+        declared.append(store_schema.DeclaredMetadataKey(key, key_scopes.pop()))
+    return tuple(declared)
 
 
 class _RuleRejectedError(Exception):
@@ -434,6 +546,7 @@ def _build_rule(
     batch = _resolve_batch(rule_map, command, entry_point, reject)
     path_independent = _resolve_path_independent(rule_map, reject)
     max_source_bytes = _resolve_max_source_bytes(rule_map, reject)
+    inputs = _resolve_inputs(rule_map, order)
 
     options_raw = rule_map.get("options", {})
     if not isinstance(options_raw, dict):
@@ -465,6 +578,7 @@ def _build_rule(
         batch=batch,
         path_independent=path_independent,
         max_source_bytes=max_source_bytes,
+        inputs=inputs,
     )
 
 
@@ -521,6 +635,160 @@ def _resolve_max_source_bytes(
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise reject("'max_source_bytes' must be a positive integer")
     return value
+
+
+#: Per-rule bounds on declared inputs. Policy load hashes every matched file
+#: on each operation, so these cap that cost.
+_MAX_INPUT_FILES = 256
+_MAX_INPUT_BYTES = 32 * 1024 * 1024
+_INPUT_READ_CHUNK = 1024 * 1024
+_GLOB_CHARS = frozenset("*?[")
+
+
+def _inputs_error(order: int, detail: str) -> PreprocessPolicyError:
+    """Return the typed refusal for a declared-input defect.
+
+    A defect fails the whole root closed rather than dropping the rule, so
+    routing never changes because an extractor file went missing.
+    """
+    return PreprocessPolicyError(
+        JobErrorKind.ADMISSION_CONFIG_INVALID,
+        f"{PREPROCESS_CONFIG_FILENAME}: rule #{order} {detail}",
+    )
+
+
+def _resolve_inputs(rule_map: dict[str, object], order: int) -> tuple[str, ...]:
+    """Validate the optional declared-input patterns of one rule.
+
+    Each pattern is a root-relative gitignore-style pattern. Absolute
+    patterns, negations, backslashes and ``.``/``..`` components are refused
+    so a declaration can only ever name files beneath the root.
+    """
+    raw = rule_map.get("inputs")
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or not raw:
+        raise _inputs_error(order, "has 'inputs' that is not a non-empty array")
+    patterns: list[str] = []
+    for item in cast("list[object]", raw):
+        if not isinstance(item, str) or not item.strip():
+            raise _inputs_error(order, "has an 'inputs' entry that is not a string")
+        parts = item.split("/")
+        if (
+            item.startswith(("/", "!"))
+            or "\\" in item
+            or ":" in parts[0]
+            or any(part in {".", ".."} for part in parts)
+        ):
+            raise _inputs_error(
+                order,
+                f"has 'inputs' pattern {item!r}; patterns must be relative to "
+                "the project root and stay inside it",
+            )
+        patterns.append(item)
+    return tuple(patterns)
+
+
+def _with_inputs_digest(root_dir: pathlib.Path, rule: PreprocessRule) -> PreprocessRule:
+    """Return *rule* carrying the digest of its declared inputs, if any."""
+    if not rule.inputs:
+        return rule
+    return dataclasses.replace(
+        rule,
+        inputs_digest=_inputs_digest(root_dir.resolve(), rule.inputs, rule.order),
+    )
+
+
+def _inputs_digest(root: pathlib.Path, patterns: tuple[str, ...], order: int) -> str:
+    """Hash the files a rule's input patterns match beneath canonical *root*.
+
+    One digest over the sorted root-relative paths and each file's content
+    digest. Every pattern must match at least one regular file, matches are
+    bounded in count and total size, and each file is read through the
+    canonical source admission so a link can never carry in a file from
+    outside the root.
+    """
+    matched: dict[str, pathlib.Path] = {}
+    for pattern in patterns:
+        found = _match_inputs(root, pattern, order)
+        if not found:
+            raise _inputs_error(
+                order, f"has 'inputs' pattern {pattern!r} that matches no file"
+            )
+        matched.update(found)
+        if len(matched) > _MAX_INPUT_FILES:
+            raise _inputs_error(
+                order, f"declares more than {_MAX_INPUT_FILES} input files"
+            )
+    total = 0
+    entries: list[tuple[str, str]] = []
+    for rel in sorted(matched):
+        file_hash = hashlib.blake2b()
+        try:
+            with open_source_file(matched[rel], root) as stream:
+                while chunk := stream.read(_INPUT_READ_CHUNK):
+                    total += len(chunk)
+                    if total > _MAX_INPUT_BYTES:
+                        raise _inputs_error(
+                            order,
+                            f"declares input files larger than {_MAX_INPUT_BYTES} "
+                            "bytes in total",
+                        )
+                    file_hash.update(chunk)
+        except OSError as exc:
+            raise _inputs_error(
+                order,
+                f"has input file {rel!r} that is unreadable or not a regular "
+                f"file inside the project root: {exc}",
+            ) from exc
+        entries.append((rel, file_hash.hexdigest()))
+    encoded = json.dumps(entries, separators=(",", ":")).encode("utf-8")
+    return f"blake2b:{hashlib.blake2b(encoded).hexdigest()}"
+
+
+def _match_inputs(
+    root: pathlib.Path, pattern: str, order: int
+) -> dict[str, pathlib.Path]:
+    """Return the in-root files one root-anchored input pattern matches.
+
+    The walk starts at the pattern's literal directory prefix and never
+    follows a link. A linked directory on the way is refused rather than
+    skipped, because a skipped link would hide the files it points at from
+    the digest.
+    """
+    spec = pathspec.GitIgnoreSpec.from_lines([f"/{pattern}"])
+    prefix: list[str] = []
+    for part in pattern.split("/")[:-1]:
+        if not part or _GLOB_CHARS.intersection(part):
+            break
+        prefix.append(part)
+    start = root.joinpath(*prefix)
+    if not start.is_dir():
+        return {}
+    if start.resolve() != start:
+        raise _inputs_error(
+            order,
+            f"has 'inputs' pattern {pattern!r} reaching outside the project "
+            "root through a link",
+        )
+    found: dict[str, pathlib.Path] = {}
+    for dirpath, dirnames, filenames in os.walk(start, followlinks=False):
+        directory = pathlib.Path(dirpath)
+        for name in dirnames:
+            child = directory / name
+            if child.is_symlink() or os.path.isjunction(child):
+                raise _inputs_error(
+                    order,
+                    f"has 'inputs' pattern {pattern!r} reaching the link "
+                    f"{child.relative_to(root).as_posix()!r}; declare paths "
+                    "that do not pass through links",
+                )
+        for name in filenames:
+            path = directory / name
+            rel = path.relative_to(root).as_posix()
+            if spec.match_file(rel):
+                found[rel] = path
+    return found
 
 
 def _resolve_target(

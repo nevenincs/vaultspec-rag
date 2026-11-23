@@ -14,9 +14,11 @@ import vaultspec_rag.server as _server
 
 from .._error_payload import error_payload
 from .._git_repository import git_common_dir
+from .._operator_commands import server_updates_start_command
 from .._store_models import root_collection_prefix
 from ..concurrency import limiter_stats
 from ..storage_manifest import ManifestEntry, classify_root, load_manifest, record_root
+from ..watcher_intent import AutoUpdateState, auto_update_state
 from ._auth import require_token
 from ._runtime import get_request_runtime
 
@@ -208,6 +210,21 @@ async def repositories_route(request: Request) -> JSONResponse:
     return JSONResponse(result)
 
 
+def _enrolment_watcher_status(
+    *, watching: bool, requested: bool, intent: AutoUpdateState
+) -> str:
+    """Name the watcher state an enrolment achieved, and why when it did not."""
+    if watching:
+        return "running"
+    if not requested:
+        return "disabled"
+    if intent is AutoUpdateState.DISABLED:
+        return "disabled_by_operator"
+    if intent is AutoUpdateState.UNVERIFIABLE:
+        return "auto_update_unverifiable"
+    return "pending"
+
+
 async def enroll_repository_route(request: Request) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
@@ -257,25 +274,26 @@ async def enroll_repository_route(request: Request) -> JSONResponse:
         return existing is not None
 
     already = await run_sync(persist)
+    # Enrolment never sets or clears the operator's stop; it only honours it.
+    intent = await run_sync(auto_update_state, root)
     if watch:
         _ensure_watcher_soon(root, registry)
     watching = root in _watching_roots()
-    watcher_status = (
-        "running"
-        if watching
-        else "pending"
-        if watch and cfg.watch_enabled
-        else "disabled"
+    watcher_status = _enrolment_watcher_status(
+        watching=watching, requested=watch and bool(cfg.watch_enabled), intent=intent
     )
-    return JSONResponse(
-        {
-            "ok": True,
-            "root": str(root),
-            "prefix": prefix,
-            "status": "already_enrolled" if already else "enrolled",
-            "watch_requested": watch,
-            "watching": watching,
-            "watcher_status": watcher_status,
-        },
-        status_code=202 if watcher_status == "pending" else 200,
-    )
+    body: dict[str, object] = {
+        "ok": True,
+        "root": str(root),
+        "prefix": prefix,
+        "status": "already_enrolled" if already else "enrolled",
+        "watch_requested": watch,
+        "watching": watching,
+        "watcher_status": watcher_status,
+        "auto_update": intent.value,
+    }
+    if watcher_status in {"disabled_by_operator", "auto_update_unverifiable"}:
+        body["start_command"] = server_updates_start_command(
+            str(root), get_request_runtime(request).port
+        )
+    return JSONResponse(body, status_code=202 if watcher_status == "pending" else 200)

@@ -34,13 +34,13 @@ from .._source_types import PublicSourceType
 from .._store_writes import workspace_volume_path
 from ..indexer._index_schema import DOCUMENT_EMBED_SCHEMA
 from ..indexer._run_ledger_models import (
-    SCHEMA_VERSION,
     RunAuthority,
     RunOperation,
     RunSignature,
     index_run_ledger_path,
 )
 from ..indexer._run_ledger_runtime import RunLedger
+from ..indexer._run_ledger_schema import SCHEMA_VERSION
 from ..store_runtime import configured_backend_identity
 from ._sqlite_state import assert_sqlite_unchanged, sqlite_contents
 

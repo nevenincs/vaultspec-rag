@@ -3,12 +3,14 @@ tags:
   - '#adr'
   - '#preprocess-hooks'
 date: '2026-06-10'
-modified: '2026-09-23'
-body_hash: 'sha256:83935d35ea5dcc0c6238b589dcd8208088e63d46513362c20eefb6145b3eddf3'
+modified: '2026-11-20'
+body_hash: 'sha256:df43c4d09c77b698391441a7c32ef12f09914d8e1c67cd425a3826dea652fd2d'
 related:
   - "[[2026-06-10-preprocess-hooks-research]]"
   - '[[2026-09-23-status-messages-research]]'
   - '[[2026-09-23-status-messages-adr]]'
+  - '[[2026-11-20-document-metadata-filters-adr]]'
+  - '[[2026-11-20-preprocess-input-fingerprint-adr]]'
 ---
 
 # `preprocess-hooks` adr: `document preprocessing hook infrastructure` | (**status:** `accepted`)
@@ -254,6 +256,19 @@ above:
   rather than incrementing a separate `preprocess_failed` counter, so that field and the
   `!failed` summary token are intentionally absent. Skip counts are surfaced on **all**
   index paths (full, incremental, scoped/watcher) and in the jobs summary and CLI `--json`.
+
+### 2026-11-20 amendment: filterable metadata
+
+Amended 2026-11-20 by `2026-11-20-document-metadata-filters-adr`, under the user's authorization recorded there. This amendment is authoritative over the D12 sentence on metadata promotion.
+
+- **D12 (metadata indexing), amended.** Only metadata keys the project declares in `.vaultragpreprocess.toml` are filterable. Each declared key names one scope, unit or document, and gets a keyword index on its existing nested field, `unit_metadata.<key>` or `document_metadata.<key>`, in the document collection. No key is promoted to a top-level payload field, and there is no per-rule allowlist. Declaring or undeclaring a key creates or drops only the index and needs no rebuild. Arbitrary keys are never indexed.
+
+### 2026-11-20 amendment: declared hook inputs
+
+Amended 2026-11-20 by `2026-11-20-preprocess-input-fingerprint-adr`, under the user's authorization recorded there. This amendment is authoritative over the D1 rule-key list and the amended D7 cache key.
+
+- **D1 (rule keys), amended.** A `command` or `entry_point` rule may declare `inputs`: root-relative gitignore-style patterns naming the files that define the extractor. Policy load hashes the matched files into one `inputs_digest` per rule. A pattern matching nothing, a path escaping the root, an unreadable file, or more than 256 files or 32 MiB per rule is a typed configuration error for the root; the rule is never dropped.
+- **D7 (cache key), amended.** The cache key also carries the rule's `inputs_digest` when the rule declares inputs. An undeclared rule keeps a byte-identical key, so `extractor_version` and the command remain its invalidation levers. A declared-input edit changes the key, so an explicit rebuild re-extracts.
 
 ## Codification candidates
 

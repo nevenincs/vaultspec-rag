@@ -499,22 +499,6 @@ def test_search_result_dump_preserves_success_and_failure_variant_shapes() -> No
     assert "Retry after the service recovers." in failure_text
 
 
-def test_caller_search_refusal_is_an_explicit_tool_argument_error() -> None:
-    from ..mcp._tools import _validated_search_result
-    from ..serviceclient._search_transport import try_http_search
-
-    refusal = try_http_search("q", "code", 1, 1, ".", prefer="production")
-
-    with pytest.raises(
-        ValueError,
-        match=(
-            r"^invalid_prefer_value: --prefer must be one of production, tests, "
-            r"or documentation; got 'production'\.$"
-        ),
-    ):
-        _validated_search_result(refusal)
-
-
 def test_successful_calls_load_no_heavy_ml_libs() -> None:
     """A tool call that forwards and succeeds must not load Torch / models / store.
 

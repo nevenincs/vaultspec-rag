@@ -75,6 +75,7 @@ from ._render import (
 )
 from ._service_jobs_presentation import (
     human_progress,
+    job_waiting_on,
     operation_label,
     project_label,
     stale_progress_label,
@@ -87,11 +88,11 @@ from ._service_status import _service_phase
 from ._status_labels import (
     DegradedFinding,
     _failed_job_total,
+    _failing_project_label,
     _format_started_label,
     _format_status_duration,
     _get_token_label,
     _held_by_borrower,
-    _last_failure_label,
     _model_ready_label,
     _network_label,
     _plain_status_label,
@@ -434,13 +435,7 @@ def _active_job_records(
 ) -> list[dict[str, object]]:
     active: list[dict[str, object]] = []
     for entry in job_records:
-        if entry.get("phase") != "running":
-            continue
-        progress = entry.get("progress")
-        if (
-            isinstance(progress, dict)
-            and cast("dict[str, object]", progress).get("step") == "queued"
-        ):
+        if entry.get("phase") != "running" or job_waiting_on(entry) is not None:
             continue
         active.append(entry)
     return sorted(active, key=_job_started_timestamp)
@@ -621,15 +616,6 @@ def _job_records_from_result(result: dict[str, object]) -> list[dict[str, object
     ]
 
 
-def _queued_job_count(job_records: list[dict[str, object]]) -> int:
-    queued = 0
-    for entry in job_records:
-        progress = entry.get("progress")
-        if entry.get("phase") == "running" and isinstance(progress, dict):
-            queued += int(cast("dict[str, object]", progress).get("step") == "queued")
-    return queued
-
-
 def _summary_count(
     value: object,
     *,
@@ -668,7 +654,8 @@ def _jobs_summary_from_result(result: dict[str, object] | None) -> dict[str, obj
         "running": _running_job_count(summary_dict, job_records),
         "total": total_count,
         "returned": returned_count,
-        "queued": _queued_job_count(job_records),
+        "working": count(summary_dict.get("working")),
+        "waiting": count(summary_dict.get("waiting")),
         "current_job": next(iter(active_job_records), None),
         "current_jobs": active_job_records,
         "phases": summary_dict.get("phases", {}),
@@ -820,14 +807,16 @@ def _failure_followup(
 ) -> dict[str, str] | None:
     """Turn a non-zero failed-job count into something the operator can run.
 
-    The latest failure is named here only when the degraded block did not
-    already name it, so the same job is never reported twice.
+    The first failing project index the service listed is named here only
+    when the degraded block did not already name one, so the same job is
+    never reported twice. A failure past the degradation window is named
+    here even though it no longer degrades health.
     """
     failed_total = _failed_job_total(jobs)
     already_reported = any(
         finding.family == DegradationReason.JOB_FAILED for finding in findings
     )
-    summary = "" if already_reported else _last_failure_label(health)
+    summary = "" if already_reported else _failing_project_label(health)
     if failed_total <= 0 and not summary:
         return None
     followup = {"command": server_jobs_command(port, failed=True)}

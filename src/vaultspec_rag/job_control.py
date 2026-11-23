@@ -17,7 +17,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, ClassVar, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Callable, Generator
 
 __all__ = [
     "NO_RUN_CONTROL",
@@ -195,6 +195,35 @@ class RunControlToken:
         self._delivered: ControlRequest | None = None
         self._protected_depth = 0
         self._quiesce_requested = False
+        self._wake: Callable[[], None] | None = None
+
+    @contextmanager
+    def wake_on_request(self, wake: Callable[[], None]) -> Generator[None]:
+        """Call *wake* whenever a request that unwinds the attempt lands.
+
+        An attempt blocked somewhere no checkpoint runs - waiting for its
+        admission slot - cannot see a request until something interrupts the
+        wait. *wake* is that interruption. It runs on the requesting thread
+        with no lock held, so it must only schedule work, never block. A
+        withdrawn pause does not wake: the waiter has nothing to deliver and
+        would only lose its place.
+        """
+        with self._lock:
+            self._wake = wake
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._wake = None
+
+    def _woken(self, changed: bool) -> bool:
+        """Run the registered wake after a request that changed state."""
+        if changed:
+            with self._lock:
+                wake = self._wake
+            if wake is not None:
+                wake()
+        return changed
 
     def request_pause(self) -> bool:
         """Request pause, returning whether the desired request changed."""
@@ -203,7 +232,7 @@ class RunControlToken:
                 return False
             changed = self._desired is not ControlRequest.PAUSE
             self._desired = ControlRequest.PAUSE
-            return changed
+        return self._woken(changed)
 
     def request_resume(self) -> bool:
         """Withdraw an undelivered pause request.
@@ -229,21 +258,21 @@ class RunControlToken:
                 return False
             changed = self._desired is not ControlRequest.CANCEL
             self._desired = ControlRequest.CANCEL
-            return changed
+        return self._woken(changed)
 
     def request_shutdown(self) -> bool:
         """Request a distinct absorbing daemon-shutdown interruption."""
         with self._lock:
             changed = self._desired is not ControlRequest.SHUTDOWN
             self._desired = ControlRequest.SHUTDOWN
-            return changed
+        return self._woken(changed)
 
     def request_quiesce(self) -> bool:
         """Request cooperative service quiesce without changing job intent."""
         with self._lock:
             changed = not self._quiesce_requested
             self._quiesce_requested = True
-            return changed
+        return self._woken(changed)
 
     def snapshot(self) -> RunControlSnapshot:
         """Return one consistent view for orchestration and diagnostics."""

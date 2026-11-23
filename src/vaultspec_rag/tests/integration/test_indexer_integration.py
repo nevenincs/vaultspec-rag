@@ -7,6 +7,7 @@ import multiprocessing
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import asdict
 from typing import TYPE_CHECKING
 
@@ -24,11 +25,14 @@ from ..benchmarks.bench_large_index_resilience import (
 from ._helpers import _document_policy
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
     from pathlib import Path
 
     from pytest import TempPathFactory
 
+    from ..._store_locks import ReentrantLock
     from ...embeddings import EmbeddingModel
+    from ...store_runtime import VaultStore
     from ..conftest import RagComponentsWithManifest
 
 
@@ -103,18 +107,57 @@ def _assert_code_pipeline_released(indexer: object) -> None:
     indexer._writer_lock.release()
 
 
-def _wait_for_document_write_lock(indexer: object, *, timeout: float = 10.0) -> None:
-    """Wait until a real document run has encoded and reached its store write."""
+def _wait_for_document_stage(
+    indexer: object, marker: str, *, timeout: float = 10.0
+) -> None:
+    """Wait until a real document run's budget has sampled the *marker* stage."""
     from ...indexer import DocumentIndexer
 
     assert isinstance(indexer, DocumentIndexer)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         snapshot = indexer.memory_budget_snapshot
-        if snapshot is not None and "after-dense-forward" in snapshot.label:
+        if snapshot is not None and marker in snapshot.label:
             return
         time.sleep(0.01)
-    raise AssertionError("document run did not reach the contended write lock")
+    raise AssertionError(f"document run did not reach its {marker!r} stage")
+
+
+@contextmanager
+def _contend_document_write(
+    indexer: object,
+    point_lock: ReentrantLock,
+    gpu_gate: threading.Lock,
+) -> Generator[None]:
+    """Hold the document collection lock across a real run's write, not its reset.
+
+    Every rebuild resets its collection first and that reset takes this same
+    lock, so it is taken only once the run has passed its reset and stands at
+    its first encode. *gpu_gate* is the run's GPU lock, held by the caller on
+    entry, which keeps the run there until the collection lock is held; it is
+    released exactly once whatever happens. The context opens once the run has
+    finished its forward pass, so its next step is the contended write.
+    """
+    try:
+        _wait_for_document_stage(indexer, "before encode")
+        point_lock.acquire()
+    finally:
+        gpu_gate.release()
+    try:
+        _wait_for_document_stage(indexer, "after-dense-forward")
+        yield
+    finally:
+        point_lock.release()
+
+
+def _document_reset_epoch(root: Path, store: VaultStore) -> int:
+    """Return the document source's recorded reset epoch; zero when never reset."""
+    from ..._source_types import PublicSourceType
+    from ...indexer._rebuild_lifecycle import capture_reset_epoch
+
+    return capture_reset_epoch(
+        root, PublicSourceType.DOCUMENT, store.backend_identity
+    ).epoch
 
 
 # ---- Indexer Tests ----
@@ -493,23 +536,27 @@ class TestCodeIndexBlockedStoreDeadline:
                     reporter=NullProgressReporter(),
                     preflight=indexer.preflight_content(),
                 )
+                from ..._source_types import PublicSourceType
+                from ...indexer._rebuild_lifecycle import capture_reset_epoch
+                from ...indexer._run_ledger_models import SourceResetPhase
+
                 wait_deadline = time.monotonic() + 5.0
                 while time.monotonic() < wait_deadline:
-                    build_target = indexer._lifecycle.active_build_target
-                    if build_target is not None and store._ensured.get(
-                        build_target, False
-                    ):
-                        point_lock = store._lock_for(build_target)
+                    fence = capture_reset_epoch(
+                        tmp_path, PublicSourceType.CODE, store.backend_identity
+                    )
+                    if fence.phase is SourceResetPhase.COMPLETE:
+                        point_lock = store._lock_for(store.CODE_TABLE_NAME)
                         point_lock.acquire()
                         point_lock_held = True
                         break
                     time.sleep(0.01)
                 else:
                     raise AssertionError(
-                        "generation collection was not prepared before deadline"
+                        "code collection was not reset before deadline"
                     )
 
-                # The generation lock is now held before the consumer can
+                # The collection lock is now held before the consumer can
                 # enter its first write. Releasing the encode gate lets the
                 # consumer reach that lock while the producer fills the
                 # one-item queue behind it; the deadline, not a sampling
@@ -670,6 +717,7 @@ class TestDocumentIndexMemoryAndWriteDeadline:
         source.write_text("alpha beta blocked document write", encoding="utf-8")
         policy = _document_policy("cancelled.txt")
         control = RunControlToken()
+        gpu_gate = threading.Lock()
 
         with VaultStore(
             tmp_path,
@@ -681,27 +729,24 @@ class TestDocumentIndexMemoryAndWriteDeadline:
                 code_index_model,
                 store,
                 content_policy=policy,
+                gpu_lock=gpu_gate,
             )
             point_lock = store._collection_locks[store.DOCUMENT_TABLE_NAME]
-            point_lock.acquire()
-            try:
-                with ThreadPoolExecutor(max_workers=1) as executor:
-                    indexing = executor.submit(
-                        indexer.full_index,
-                        reporter=NullProgressReporter(),
-                        preflight=indexer.preflight_content(),
-                        run_control=control,
-                    )
-                    _wait_for_document_write_lock(indexer)
-
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                gpu_gate.acquire()
+                indexing = executor.submit(
+                    indexer.full_index,
+                    reporter=NullProgressReporter(),
+                    preflight=indexer.preflight_content(),
+                    run_control=control,
+                )
+                with _contend_document_write(indexer, point_lock, gpu_gate):
                     control.request_cancel()
                     # CancelRequested (not the 10s no-progress JobError) is
                     # the invariant that cancellation won the race; the
                     # result timeout is only a hang-guard.
                     with pytest.raises(CancelRequested):
                         indexing.result(timeout=20.0)
-            finally:
-                point_lock.release()
 
             assert store.count_document() == 0
             assert indexer._writer_lock.acquire(blocking=False)
@@ -725,6 +770,7 @@ class TestDocumentIndexMemoryAndWriteDeadline:
         source = tmp_path / "timed-out.txt"
         source.write_text("alpha beta blocked document deadline", encoding="utf-8")
         policy = _document_policy("timed-out.txt")
+        gpu_gate = threading.Lock()
 
         with VaultStore(
             tmp_path,
@@ -736,26 +782,142 @@ class TestDocumentIndexMemoryAndWriteDeadline:
                 code_index_model,
                 store,
                 content_policy=policy,
+                gpu_lock=gpu_gate,
             )
             point_lock = store._collection_locks[store.DOCUMENT_TABLE_NAME]
-            point_lock.acquire()
-            try:
-                with ThreadPoolExecutor(max_workers=1) as executor:
-                    indexing = executor.submit(
-                        indexer.full_index,
-                        reporter=NullProgressReporter(),
-                        preflight=indexer.preflight_content(),
-                    )
-                    _wait_for_document_write_lock(indexer)
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                gpu_gate.acquire()
+                indexing = executor.submit(
+                    indexer.full_index,
+                    reporter=NullProgressReporter(),
+                    preflight=indexer.preflight_content(),
+                )
+                with _contend_document_write(indexer, point_lock, gpu_gate):
                     # The typed no-progress outcome is the invariant; the
                     # generous result timeout is only a hang-guard.
                     with pytest.raises(JobError) as stopped:
                         indexing.result(timeout=20.0)
                     assert stopped.value.error_kind is JobErrorKind.NO_PROGRESS_TIMEOUT
-            finally:
-                point_lock.release()
 
             assert store.count_document() == 0
+            assert indexer._writer_lock.acquire(blocking=False)
+            indexer._writer_lock.release()
+
+    @pytest.mark.integration
+    @pytest.mark.timeout(30)
+    def test_reset_behind_held_collection_lock_polls_cancel(
+        self,
+        code_index_model: EmbeddingModel,
+        tmp_path: Path,
+    ) -> None:
+        """A rebuild whose reset waits on a held collection lock still cancels.
+
+        Mutation check: taking the reset's locks without the run's budget
+        (passing no policy to ``held_for_reset``) left the reset parked on the
+        lock, and ``indexing.result`` raised ``TimeoutError`` inside the
+        ``pytest.raises(CancelRequested)`` block; restoring the budget passed.
+        """
+        from ... import DocumentIndexer
+        from ...job_control import CancelRequested, RunControlToken
+        from ...store_runtime import VaultStore
+
+        _configure_code_index(
+            code_index_model.dimension,
+            index_no_progress_timeout_seconds=10.0,
+        )
+        (tmp_path / "parked.txt").write_text(
+            "alpha beta reset behind a held lock", encoding="utf-8"
+        )
+        control = RunControlToken()
+
+        with VaultStore(
+            tmp_path,
+            embedding_dim=code_index_model.dimension,
+        ) as store:
+            store.ensure_document_table()
+            indexer = DocumentIndexer(
+                tmp_path,
+                code_index_model,
+                store,
+                content_policy=_document_policy("parked.txt"),
+            )
+            point_lock = store._collection_locks[store.DOCUMENT_TABLE_NAME]
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                point_lock.acquire()
+                try:
+                    indexing = executor.submit(
+                        indexer.full_index,
+                        reporter=NullProgressReporter(),
+                        preflight=indexer.preflight_content(),
+                        run_control=control,
+                    )
+                    time.sleep(1.0)
+                    # Still running a second in: parked on the held lock.
+                    assert not indexing.done()
+                    control.request_cancel()
+                    with pytest.raises(CancelRequested):
+                        indexing.result(timeout=20.0)
+                finally:
+                    point_lock.release()
+
+            # The cancel landed before the reset recorded any intent.
+            assert _document_reset_epoch(tmp_path, store) == 0
+            assert indexer._writer_lock.acquire(blocking=False)
+            indexer._writer_lock.release()
+
+    @pytest.mark.integration
+    @pytest.mark.timeout(30)
+    def test_reset_behind_held_collection_lock_expires_at_no_progress_deadline(
+        self,
+        code_index_model: EmbeddingModel,
+        tmp_path: Path,
+    ) -> None:
+        """A rebuild whose reset never gets its lock stops at its deadline.
+
+        Mutation check: taking the reset's locks without the run's budget
+        (passing no policy to ``held_for_reset``) left the reset parked on the
+        lock, and ``indexing.result`` raised ``TimeoutError`` inside the
+        ``pytest.raises(JobError)`` block; restoring the budget passed.
+        """
+        from ... import DocumentIndexer
+        from ..._job_errors import JobError, JobErrorKind
+        from ...store_runtime import VaultStore
+
+        _configure_code_index(
+            code_index_model.dimension,
+            index_no_progress_timeout_seconds=2.0,
+        )
+        (tmp_path / "parked.txt").write_text(
+            "alpha beta reset deadline behind a held lock", encoding="utf-8"
+        )
+
+        with VaultStore(
+            tmp_path,
+            embedding_dim=code_index_model.dimension,
+        ) as store:
+            store.ensure_document_table()
+            indexer = DocumentIndexer(
+                tmp_path,
+                code_index_model,
+                store,
+                content_policy=_document_policy("parked.txt"),
+            )
+            point_lock = store._collection_locks[store.DOCUMENT_TABLE_NAME]
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                point_lock.acquire()
+                try:
+                    indexing = executor.submit(
+                        indexer.full_index,
+                        reporter=NullProgressReporter(),
+                        preflight=indexer.preflight_content(),
+                    )
+                    with pytest.raises(JobError) as stopped:
+                        indexing.result(timeout=20.0)
+                    assert stopped.value.error_kind is JobErrorKind.NO_PROGRESS_TIMEOUT
+                finally:
+                    point_lock.release()
+
+            assert _document_reset_epoch(tmp_path, store) == 0
             assert indexer._writer_lock.acquire(blocking=False)
             indexer._writer_lock.release()
 

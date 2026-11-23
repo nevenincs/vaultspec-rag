@@ -37,7 +37,6 @@ from .storage_manifest import ManifestEntry, classify_root
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from .generation_survey import RootGenerations
 __all__ = [
     "NamespaceSurvey",
     "_prefix_of",
@@ -130,9 +129,6 @@ class NamespaceSurvey:
     # without a manifest read, keeps working and simply reports nothing about
     # provenance rather than reporting a value it never looked up.
     models: dict[str, str] = field(default_factory=dict)
-    # Published generation facts are optional; an ungathered/unreadable fact
-    # remains unknown rather than claiming an empty generation-debt list.
-    generations: RootGenerations | None = None
     temp_rooted: bool | None = None
 
 
@@ -148,11 +144,12 @@ def _kind_points(
 ) -> int:
     """Return the bounded integer count for one declared collection kind.
 
-    A kind's collection is either the declared name or a generation of it,
-    named ``<declared>_g<token>`` while a rebuild publishes without destroying
-    what it serves. Matching on the declared suffix alone reported zero for
-    every root currently served by a generation - a healthy index reading as
-    empty on the one surface an operator checks.
+    A kind's collection is either the declared name or a historical
+    generation of it, named ``<declared>_g<token>`` by a build before the
+    canonical layout. A root keeps serving such a generation until an explicit
+    reset of that source discards it, so matching on the declared suffix alone
+    would report zero for it - a healthy index reading as empty on the one
+    surface an operator checks.
 
     A collection that could not be counted (``None``) contributes nothing
     here, so a kind breakdown is a floor whenever the namespace reports

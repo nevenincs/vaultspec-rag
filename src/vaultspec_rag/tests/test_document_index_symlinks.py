@@ -144,7 +144,11 @@ def test_scan_reports_document_alias_as_a_failed_probe(tmp_path: Path) -> None:
     alias.symlink_to(target)
     (docs / "guide.md").write_text("ordinary guide\n", encoding="utf-8")
 
-    scan = CodeContentDiscovery(tmp_path, content_policy=_policy()).scan_admission()
+    scan = (
+        CodeContentDiscovery(tmp_path, content_policy=_policy())
+        .preflight_content()
+        .scan
+    )
 
     samples = {sample.path: sample for sample in scan.samples}
     rejected = samples["docs/environment.md"]

@@ -21,7 +21,13 @@ from starlette.responses import JSONResponse
 
 import vaultspec_rag.server as _m
 
-from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
+from .._job_errors import JobError, remediation
+from .._source_types import (
+    PublicSourceType,
+    SourceTypeParseError,
+    concrete_sources,
+    parse_source_type,
+)
 from .._store_locks import VaultStoreLockedError
 from ..indexer._run_ledger_models import RunAuthority
 from ._auth import require_token
@@ -96,17 +102,6 @@ def _preprocess_preflight(
     }
 
 
-def _reindex_sources(source_type: PublicSourceType) -> tuple[PublicSourceType, ...]:
-    """Expand the combined compatibility source into independent domains."""
-    if source_type is not PublicSourceType.COMBINED:
-        return (source_type,)
-    return (
-        PublicSourceType.VAULT,
-        PublicSourceType.CODE,
-        PublicSourceType.DOCUMENT,
-    )
-
-
 class _DomainResponse(TypedDict):
     """One index domain's outcome within a ``/reindex`` adapter response."""
 
@@ -118,8 +113,17 @@ class _DomainResponse(TypedDict):
     admission: NotRequired[dict[str, object]]
 
 
-def _reindex_failure(*, error_kind: str, detail: str) -> _DomainResponse:
-    """Return one stable failed-domain response."""
+def _reindex_failure(
+    *,
+    error_kind: str,
+    detail: str,
+    extra: dict[str, object] | None = None,
+) -> _DomainResponse:
+    """Return one stable failed-domain response.
+
+    ``extra`` carries a typed refusal's own fields, such as its rebuild
+    command, onto the domain's outcome.
+    """
     return {
         "ok": False,
         "job_id": None,
@@ -129,6 +133,7 @@ def _reindex_failure(*, error_kind: str, detail: str) -> _DomainResponse:
             "status": "error",
             "code": error_kind,
             "message": detail,
+            **(extra or {}),
         },
     }
 
@@ -148,7 +153,7 @@ async def _validate_reindex_domains(
 
     validated: list[tuple[PublicSourceType, _ValidatedIndexRequest]] = []
     failures: dict[str, _DomainResponse] = {}
-    for source in _reindex_sources(source_type):
+    for source in concrete_sources(source_type):
         canonical_payload = {
             **payload,
             "operation": "index",
@@ -164,6 +169,7 @@ async def _validate_reindex_domains(
             failures[source.value] = _reindex_failure(
                 error_kind=exc.code,
                 detail=str(exc),
+                extra=exc.extra,
             )
         else:
             validated.append((source, request_parts))
@@ -295,7 +301,7 @@ async def reindex_route(request: Request) -> JSONResponse:
             authority=authority,
         )
     except InvalidJobRequestError as exc:
-        return job_error("create", exc.code, str(exc))
+        return job_error("create", exc.code, str(exc), extra=exc.extra)
 
     first_root, first_admission = await _create_reindex_domains(
         validated,
@@ -425,17 +431,8 @@ async def clean_route(request: Request) -> JSONResponse:
 
     registry = get_request_runtime(request).registry
 
-    sources = (
-        (
-            PublicSourceType.VAULT,
-            PublicSourceType.CODE,
-            PublicSourceType.DOCUMENT,
-        )
-        if source_type is PublicSourceType.COMBINED
-        else (source_type,)
-    )
     domains: dict[str, dict[str, object]] = {}
-    for source in sources:
+    for source in concrete_sources(source_type):
         try:
             cleared = await _run_in_thread(
                 partial(
@@ -445,6 +442,17 @@ async def clean_route(request: Request) -> JSONResponse:
                     registry=registry,
                 )
             )
+        except JobError as exc:
+            # A typed refusal carries its own stable kind and remedy; it is
+            # an expected outcome, not a crash worth a traceback.
+            logger.warning("Index clean refused for %s: %s", source.value, exc)
+            domains[source.value] = {
+                "ok": False,
+                "cleared": [],
+                "error_kind": exc.error_kind.value,
+                "detail": exc.detail,
+                "remediation": remediation(exc.error_kind),
+            }
         except Exception as exc:
             logger.exception("Index clean failed for %s", source.value)
             domains[source.value] = {
@@ -452,6 +460,7 @@ async def clean_route(request: Request) -> JSONResponse:
                 "cleared": [],
                 "error_kind": type(exc).__name__,
                 "detail": str(exc),
+                "remediation": None,
             }
         else:
             domains[source.value] = {
@@ -459,6 +468,7 @@ async def clean_route(request: Request) -> JSONResponse:
                 "cleared": cleared,
                 "error_kind": None,
                 "detail": None,
+                "remediation": None,
             }
     successes = sum(bool(item["ok"]) for item in domains.values())
     return JSONResponse(

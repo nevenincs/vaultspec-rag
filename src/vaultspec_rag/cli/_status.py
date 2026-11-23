@@ -13,6 +13,7 @@ from .._operator_commands import (
     index_command,
     server_start_command,
     server_status_command,
+    server_updates_start_command,
 )
 from .._source_types import PublicSourceType
 from ..operator_state._installation import ComputeCapability
@@ -24,6 +25,7 @@ from ..operator_state._models import (
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
 from ..serviceclient._typed_state import parse_report
+from ..watcher_intent import AutoUpdateState
 from ._app import CLIState, JsonMode, app
 from ._cli_format import _counted_unit, _format_mib
 from ._render import (
@@ -238,8 +240,16 @@ def _watcher_label(service: _ServiceView) -> str:
     features = service.health.features if service.health is not None else None
     if features is not None and not features.watcher_enabled:
         return "off (disabled when the service started)"
-    if service.state.root_features.watcher_running:
+    root_features = service.state.root_features
+    if root_features.watcher_running:
         return "following this project"
+    if root_features.auto_update is AutoUpdateState.DISABLED:
+        return (
+            "stopped for this project by the operator; resume with "
+            f"`{server_updates_start_command(root_features.root, service.port)}`"
+        )
+    if root_features.auto_update is AutoUpdateState.UNVERIFIABLE:
+        return "not starting: the automatic update record could not be read"
     return "not following this project"
 
 
@@ -434,6 +444,9 @@ def _emit_status_json(view: _StatusView) -> None:
                 service.state.root_features.watcher_running
                 if service is not None
                 else None
+            ),
+            "auto_update": (
+                service.state.root_features.auto_update if service is not None else None
             ),
         },
         "storage_path": str(view.index.get("storage_path", "")),

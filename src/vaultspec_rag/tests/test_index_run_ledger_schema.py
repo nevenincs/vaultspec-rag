@@ -8,16 +8,17 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ..indexer._run_ledger_models import (
+from ..indexer._run_ledger_models import RunAuthority, RunLedgerCorruptionError
+from ..indexer._run_ledger_publication_identity import compatibility_for_signature
+from ..indexer._run_ledger_runtime import RunLedger
+from ..indexer._run_ledger_schema import (
     PUBLICATION_PROOF_SCHEMA,
     REQUIRED_INDEXES,
     REQUIRED_SCHEMA,
     SCHEMA_VERSION,
-    RunAuthority,
 )
-from ..indexer._run_ledger_publication_identity import compatibility_for_signature
-from ..indexer._run_ledger_runtime import RunLedger
 from ._child_signal import PROCESS_TIMEOUT_SECONDS
+from ._ledger_connection_watch import watch_ledger_connections
 from ._run_ledger_test_support import (
     ledger_test_assert_publication_foreign_keys,
     ledger_test_assert_publication_indexes,
@@ -65,7 +66,7 @@ def test_publication_schema_separates_receipts_from_streaming_mutations() -> Non
 
 def test_publication_ledger_schema_has_a_distinct_current_version() -> None:
     """Mutation: restoring the prior version would admit the old receipt format."""
-    assert SCHEMA_VERSION == 9
+    assert SCHEMA_VERSION == 10
     assert REQUIRED_INDEXES["publication_receipt_deltas_target"] == (
         "publication_receipt_deltas",
         ("receipt_id", "target_rel_path"),
@@ -236,23 +237,77 @@ def test_old_ledger_format_requires_rebuild_without_mutation(
     ledger_test_assert_rebuild_required_without_mutation(path, match="not supported")
 
 
+def _downgrade_to_prior_format(path: Path) -> None:
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute("DROP TABLE source_resets")
+        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION - 1}")
+
+
+def test_prior_format_gains_the_reset_table_and_keeps_its_publication(
+    tmp_path: Path,
+) -> None:
+    """The prior format upgrades in place; its proof stays the current one.
+
+    Mutation: removing the additive-upgrade branch of the schema writer made
+    the open raise rebuild-required; restoring it passed.
+    """
+    path = tmp_path / "runs.sqlite3"
+    ledger = RunLedger(path)
+    signature = ledger_test_signature(tmp_path)
+    generation = ledger.start_generation(signature)
+    proof = ledger.establish_verified_publication(
+        generation.generation_id, RunAuthority.REBUILD, ()
+    )
+    _downgrade_to_prior_format(path)
+
+    upgraded = RunLedger(path)
+
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == (
+            SCHEMA_VERSION
+        )
+    key = compatibility_for_signature(signature)
+    assert upgraded.publication_proof(key).revision == proof.revision
+    assert (
+        upgraded.source_reset_state(
+            signature.source_type,
+            signature.root_identity,
+            signature.backend_identity,
+        )
+        is None
+    )
+
+
+def test_prior_format_holding_the_new_table_requires_rebuild(tmp_path: Path) -> None:
+    """A prior-format ledger with drift is refused, never blessed by upgrade.
+
+    The prior format is verified both on the read-side version check and
+    again under the write lock before the upgrade, so each covers a ledger
+    changing between the two.
+
+    Mutation: removing both verifications accepted the drifted ledger and
+    failed the ``pytest.raises``; restoring them passed.
+    """
+    path = tmp_path / "runs.sqlite3"
+    RunLedger(path)
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION - 1}")
+
+    ledger_test_assert_rebuild_required_without_mutation(
+        path, match="unexpected tables: source_resets"
+    )
+
+
 def test_live_wal_old_ledger_requires_rebuild_without_durable_mutation(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A coherent WAL reader refuses obsolete schema without changing contents."""
-    path = tmp_path / "runs.sqlite3"
-    require_schema = RunLedger._require_current_or_empty_schema
-    observed_versions: list[int] = []
+    """A coherent WAL reader refuses obsolete schema without changing contents.
 
-    def track_preflight_schema(
-        self: RunLedger,
-        connection: sqlite3.Connection,
-    ) -> None:
-        observed_versions.append(
-            int(connection.execute("PRAGMA user_version").fetchone()[0])
-        )
-        require_schema(self, connection)
+    The refusal names the version the read-only preflight saw, so it comes from
+    the preflight and not from the writable initializer, whose refusal of the
+    same file carries a different message.
+    """
+    path = tmp_path / "runs.sqlite3"
 
     peer = sqlite3.connect(path)
     try:
@@ -262,14 +317,9 @@ def test_live_wal_old_ledger_requires_rebuild_without_durable_mutation(
         peer.execute("PRAGMA user_version = 6")
         peer.commit()
 
-        with monkeypatch.context() as patch:
-            patch.setattr(
-                RunLedger,
-                "_require_current_or_empty_schema",
-                track_preflight_schema,
-            )
-            ledger_test_assert_rebuild_required_without_mutation(path, match="rebuild")
-        assert observed_versions == [6]
+        ledger_test_assert_rebuild_required_without_mutation(
+            path, match=r"^run ledger schema 6 is not supported; expected \d+;"
+        )
         assert peer.execute("PRAGMA user_version").fetchone() == (6,)
         assert peer.execute("SELECT value FROM old_runs").fetchall() == [
             ("preserve-me",)
@@ -291,26 +341,31 @@ def test_nonempty_schema_zero_requires_rebuild_without_mutation(tmp_path: Path) 
     )
 
 
-def test_fresh_schema_creation_is_atomic_and_retryable(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Mutation: autocommitted schema scripts leave a partial version-zero file."""
+def test_fresh_schema_creation_is_atomic_and_retryable(tmp_path: Path) -> None:
+    """Mutation: autocommitted schema scripts leave a partial version-zero file.
+
+    SQLite itself refuses the creation of the last table group, through an
+    authorizer on the connection production opens, after the base and
+    publication tables already exist in the open transaction.
+    """
     path = tmp_path / "runs.sqlite3"
-    create_publication_tables = RunLedger._create_publication_tables
 
-    def fail_after_publication_tables(connection: sqlite3.Connection) -> None:
-        create_publication_tables(connection)
-        raise RuntimeError("injected schema-creation interruption")
+    def refuse_source_reset_tables(
+        action: int, name: str | None, *_unused: object
+    ) -> int:
+        if action == sqlite3.SQLITE_CREATE_TABLE and name == "source_resets":
+            return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK
 
-    with monkeypatch.context() as patch:
-        patch.setattr(
-            RunLedger,
-            "_create_publication_tables",
-            staticmethod(fail_after_publication_tables),
-        )
-        with pytest.raises(RuntimeError, match="injected schema-creation interruption"):
-            RunLedger(path)
+    def on_connection(connection: sqlite3.Connection, read_only: bool) -> None:
+        if not read_only:
+            connection.set_authorizer(refuse_source_reset_tables)
+
+    with (
+        watch_ledger_connections(path, on_connection),
+        pytest.raises(RunLedgerCorruptionError, match="not authorized"),
+    ):
+        RunLedger(path)
 
     with closing(sqlite3.connect(path)) as connection, connection:
         assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 0
@@ -325,14 +380,10 @@ def test_fresh_schema_creation_is_atomic_and_retryable(
 
 def test_concurrent_fresh_schema_openers_observe_only_empty_or_current(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Mutation: removing the creation transaction exposes a partial schema."""
     path = tmp_path / "runs.sqlite3"
-    ledgers, errors, (first, second) = ledger_test_open_concurrent_fresh_ledgers(
-        path,
-        monkeypatch,
-    )
+    ledgers, errors, (first, second) = ledger_test_open_concurrent_fresh_ledgers(path)
 
     assert not first.is_alive()
     assert not second.is_alive()

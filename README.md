@@ -111,6 +111,13 @@ starts, once for every indexed repository, because the sparse vocabulary changed
 vaultspec-rag --target <repository> index --rebuild --type all
 ```
 
+A rebuild deletes each selected index before it builds the new one, and keeps no copy
+of the old index. Searches keep answering from the new index as it grows. Until the
+rebuild finishes, a missing match is not proof of absence. During the brief reset a
+search of that domain can return the retryable `index_transition` error. The
+[search and index guide](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/search-and-index.md#search-during-a-rebuild)
+covers the details.
+
 ### Add a client to a Python project
 
 A project can list vaultspec-rag as a dependency, so collaborators get it with
@@ -213,8 +220,8 @@ in the repository's assistant configuration. Your assistant can then call these 
   meaning.
 - `get_code_file` reads an indexable source file, and `get_index_status` reports index
   health.
-- Four `reindex_*` tools rebuild indexes, and `clean_documents` and `clean_all` delete
-  them.
+- Four `reindex_*` tools update indexes incrementally, and `clean_documents` and
+  `clean_all` delete them. No MCP tool rebuilds an index.
 
 To give the assistant search without the tools that change or delete indexes, see
 [withholding the mutating tools](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/mcp.md#withholding-the-mutating-tools).

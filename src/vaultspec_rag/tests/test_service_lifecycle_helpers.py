@@ -219,7 +219,7 @@ class TestDaemonIsServing:
             degradations=[
                 {
                     "reason": "job_failed",
-                    "detail": "the latest indexing job failed: other",
+                    "detail": "1 project index run failed: /w/demo (code: other)",
                 }
             ],
         )
@@ -255,14 +255,14 @@ class TestServingWarningLines:
                 "degradations": [
                     {
                         "reason": "job_failed",
-                        "detail": "the latest indexing job failed: other",
+                        "detail": "1 project index run failed: /w/demo (code: other)",
                     }
                 ]
             }
         )
         assert lines == (
             "Serving, with warnings:",
-            "  - the latest indexing job failed: other",
+            "  - 1 project index run failed: /w/demo (code: other)",
         )
 
     def test_unrecognised_reason_is_never_swallowed(self) -> None:

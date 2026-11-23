@@ -10,7 +10,6 @@ from __future__ import annotations
 import contextlib
 import functools
 import logging
-import time
 from typing import TYPE_CHECKING
 
 from vaultspec_core.vaultcore import (
@@ -20,7 +19,6 @@ from vaultspec_core.vaultcore import (
 from .._source_types import PublicSourceType
 from .._store_writes import workspace_volume_path
 from ..job_control import NO_RUN_CONTROL
-from ..store_runtime import StorageGeometryError
 from . import _config_epoch, _stat_gate, _vault_fingerprint
 from ._checkpoint_common import publish_checkpoint
 from ._index_lifecycle import (
@@ -38,7 +36,13 @@ from ._vault_incremental import (
     classify_documents,
     controlled_phase,
 )
-from ._vault_prep import IndexResult
+from ._vault_prep import (
+    IndexResult,
+    IndexRunCounts,
+    IndexRunTelemetry,
+    finished_index_result,
+    index_run_started,
+)
 
 if TYPE_CHECKING:
     import pathlib
@@ -50,6 +54,7 @@ if TYPE_CHECKING:
     from ..memory_probe import MemoryBudget, MemoryBudgetSnapshot
     from ..progress import ProgressReporter
     from ..store_runtime import VaultStore
+    from ._rebuild_lifecycle import ResetEpochFence
     from ._reuse import DonorReuseContext, ReuseStats
 
 logger = logging.getLogger(__name__)
@@ -190,36 +195,34 @@ class VaultIndexer(VaultIncrementalMixin):
         authority: RunAuthority = RunAuthority.REBUILD,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
-        """Full re-index serialized through the indexer writer lock.
+        """Rebuild the vault index from empty, serialized through the writer lock.
 
-        Thin wrapper that acquires ``self._writer_lock`` and delegates
-        to :meth:`_full_index_locked`. The lock guarantees that two
-        concurrent ``full_index`` (or ``incremental_index``) calls on
-        the same indexer instance run sequentially, eliminating the
-        ``existing_ids_before`` snapshot race documented in #68.
+        Every full run is an explicit rebuild: the old vault index is
+        discarded before the first replacement write and the rebuild writes
+        the one canonical vault collection. The writer lock runs concurrent
+        ``full_index`` and ``incremental_index`` calls on the same instance
+        sequentially. ``clean`` only labels the run's events.
 
         ``run_control`` defaults to the inert implementation for direct calls.
         """
+        if authority is not RunAuthority.REBUILD:
+            raise PermissionError("a full vault index requires rebuild authority")
         run_control.checkpoint()
-        if authority is RunAuthority.REBUILD:
-            from ._run_ledger_models import index_run_ledger_path
-            from ._run_ledger_runtime import set_aside_unsupported_ledger
+        from ._rebuild_lifecycle import capture_reset_epoch
+        from ._run_ledger_models import index_run_ledger_path
+        from ._run_ledger_runtime import set_aside_unsupported_ledger
 
-            set_aside_unsupported_ledger(
-                index_run_ledger_path(workspace_volume_path(self.root_dir.resolve()))
-            )
+        set_aside_unsupported_ledger(
+            index_run_ledger_path(workspace_volume_path(self.root_dir.resolve()))
+        )
+        began_under = capture_reset_epoch(
+            self.store.root_dir, PublicSourceType.VAULT, self.store.backend_identity
+        )
         with self._writer_lock, self._memory_telemetry():
-            if authority is RunAuthority.REBUILD:
-                from .._publication_state import reset_pending_publication_for_rebuild
-
-                reset_pending_publication_for_rebuild(
-                    self.store, PublicSourceType.VAULT, run_control
-                )
             return run_index_lifecycle(
                 lambda: self._full_index_locked(
-                    clean=clean,
                     reporter=reporter,
-                    authority=authority,
+                    began_under=began_under,
                     run_control=run_control,
                 ),
                 IndexLifecycleRequest(
@@ -235,54 +238,38 @@ class VaultIndexer(VaultIncrementalMixin):
 
     def _full_index_locked(
         self,
-        clean: bool = False,
         *,
         reporter: ProgressReporter,
-        authority: RunAuthority = RunAuthority.REBUILD,
-        run_control: RunControl = NO_RUN_CONTROL,
+        began_under: ResetEpochFence,
+        run_control: RunControl,
     ) -> IndexResult:
         """Locked implementation of :meth:`full_index`.
 
-        Scans all documents, embeds them, and replaces the entire store.
-        Emits phase events through ``reporter`` at every pipeline step.
+        Scans and hashes every document, opens the rebuild's generation, and
+        resets the vault source before the first write, then streams the
+        corpus into the empty canonical collection. Emits phase events
+        through ``reporter`` at every pipeline step.
 
         Args:
-            clean: When ``True``, additionally purge points that only a
-                superseded point layout can leave behind, so the rebuild
-                delivers a fully replaced collection. Both modes replace in
-                place: they stream upserts over the live points and purge
-                what the new corpus no longer contains only after the stream
-                succeeds, so an interruption at any instant leaves the old
-                complete collection still answering searches. The one
-                destructive branch left is a stored geometry the new
-                configuration cannot write into (e.g. a changed embedding
-                dimension), where recreation is the only possible path and
-                the old points were unservable for this configuration
-                anyway. Both modes deliver the "no stale documents persist"
-                contract on successful completion.
             reporter: Required progress reporter. Callers without a UI
                 should pass ``NullProgressReporter``.
+            began_under: Reset epoch captured before the rebuild was planned.
             run_control: Cooperative attempt control checked between phases
-                and batches. Clean rebuild control is deferred across the
-                destructive publication span.
+                and batches. The reset is protected; after it, control is
+                delivered between durable units.
 
         Returns:
             An ``IndexResult`` where ``added`` equals the total number
             of documents written, ``updated`` is ``0``, and ``removed``
-            reports the post-stream stale-document purge count
-            (#68). If the vault is empty the returned
-            counts are ``added=0`` and ``removed`` reflects every
-            previously-indexed row that was purged.
+            reports documents this rebuild had itself written in an
+            interrupted attempt and that no longer exist.
 
         Raises:
-            OSError: If the post-stream stale-document purge fails
-                against a Qdrant collection that was successfully
-                rebuilt (the collection still contains valid new
-                data plus the stale rows).
+            OSError: If the stale-document purge fails.
         """
         from ..config._settings import get_config
 
-        start = time.time()
+        start = index_run_started()
         slice_size = max(1, get_config().embedding_batch_size)
 
         with controlled_phase(reporter, run_control, "scan vault", None):
@@ -313,23 +300,20 @@ class VaultIndexer(VaultIncrementalMixin):
         checkpoint = VaultRunCheckpoint.open(
             self.root_dir,
             backend_identity=self.store.backend_identity,
-            authority=authority,
+            authority=RunAuthority.REBUILD,
             operation=RunOperation.FULL,
             run_control=run_control,
         )
         run_control = checkpoint.run_policy
-        # Note: we intentionally do NOT short-circuit when docs is
-        # empty. The streaming helper handles a zero-length list
-        # correctly, and falling through the main path means
-        # ``full_index(clean=True)`` on a now-empty vault still
-        # purges every previously-indexed row.
+        checkpoint.reset_for_rebuild(self.store, began_under=began_under)
+        # An empty vault is not short-circuited: it still publishes an empty
+        # certified index over the empty collection the reset left.
 
         # Each published slice owns its durable mutation span. Preserve the
         # generation on cooperative interruption so the next attempt resumes
         # confirmed units without shielding the entire rebuild from control.
         with checkpoint.preserve_incomplete_generation():
             existing_counts = self._prepare_collection(
-                clean=clean,
                 reporter=reporter,
                 run_control=run_control,
             )
@@ -364,29 +348,9 @@ class VaultIndexer(VaultIncrementalMixin):
             )
 
             stale_counts: dict[str, int] = existing_counts
-            if clean:
-                # Points from a superseded layout carry no ordinal, so the
-                # upserts wrote beside them and neither replacement purge can
-                # see them; only the clean rebuild promises their removal.
-                # Like the tail purge above, this runs only after the stream
-                # proved the replacement whole - an interruption before this
-                # point leaves the old collection fully intact. Removing
-                # them changes what the barrier below must expect for the
-                # stale documents, so the counts are re-taken when any went.
-                with controlled_phase(
-                    reporter,
-                    run_control,
-                    "purge superseded-layout points",
-                    1,
-                ):
-                    run_control.checkpoint()
-                    if self.store.delete_prechunk_vault_points():
-                        stale_counts = self.store.get_chunk_counts()
-                    reporter.advance(1)
 
-            # Streaming completed successfully - now it is safe to delete
-            # the rows that were in the collection before but are absent
-            # from the freshly-indexed corpus.
+            # Streaming completed: remove this rebuild's own earlier writes
+            # for documents the corpus no longer contains.
             new_ids = {doc.id for doc in docs}
             stale_ids = sorted(existing_ids_before - new_ids)
 
@@ -416,9 +380,8 @@ class VaultIndexer(VaultIncrementalMixin):
                         self.store.delete_documents(stale_ids)
                     except OSError:
                         logger.error(
-                            "Failed to purge stale vault documents after "
-                            "successful rebuild - collection still "
-                            "contains valid new data plus %d stale rows",
+                            "Failed to purge %d stale vault documents after "
+                            "the rebuild streamed its corpus",
                             len(stale_ids),
                         )
                         raise
@@ -430,18 +393,17 @@ class VaultIndexer(VaultIncrementalMixin):
                 reporter.advance(1)
         run_control.checkpoint()
 
-        duration_ms = int((time.time() - start) * 1000)
-        return IndexResult(
+        return finished_index_result(
+            start,
+            IndexRunCounts(
+                added=len(docs),
+                removed=len(stale_ids),
+            ),
+            IndexRunTelemetry(
+                reuse=reuse_stats.snapshot() if reuse_stats is not None else None,
+            ),
+            model=self.model,
             total=len(docs),
-            added=len(docs),
-            updated=0,
-            # Report the post-stream stale-purge count so MCP / CLI /
-            # watcher observability reflects the rows actually deleted
-            # by the failure-safe rebuild (#68).
-            removed=len(stale_ids),
-            duration_ms=duration_ms,
-            device=self.model.device,
-            reuse=reuse_stats.snapshot() if reuse_stats is not None else None,
         )
 
     def incremental_index(
@@ -541,7 +503,7 @@ class VaultIndexer(VaultIncrementalMixin):
 
         from ..config._settings import get_config
 
-        start = time.time()
+        start = index_run_started()
         slice_size = max(1, get_config().embedding_batch_size)
 
         from .._publication_state import (
@@ -653,67 +615,38 @@ class VaultIndexer(VaultIncrementalMixin):
             reporter.advance(1)
 
         run_control.checkpoint()
-        duration_ms = int((time.time() - start) * 1000)
-        return IndexResult(
+        return finished_index_result(
+            start,
+            IndexRunCounts(
+                added=len(new_ids),
+                updated=outcome.re_embedded,
+                payload_updated=outcome.payload_updated,
+                removed=len(deleted_ids),
+                files=len(current_docs),
+            ),
+            IndexRunTelemetry(
+                reuse=outcome.reuse.snapshot() if outcome.reuse is not None else None,
+            ),
+            model=self.model,
             total=total,
-            added=len(new_ids),
-            updated=outcome.re_embedded,
-            payload_updated=outcome.payload_updated,
-            removed=len(deleted_ids),
-            duration_ms=duration_ms,
-            device=self.model.device,
-            files=len(current_docs),
-            reuse=outcome.reuse.snapshot() if outcome.reuse is not None else None,
         )
 
     def _prepare_collection(
         self,
         *,
-        clean: bool,
         reporter: ProgressReporter,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> dict[str, int]:
-        """Ensure the collection and snapshot stored chunk counts.
+        """Ensure the collection and snapshot this rebuild's stored chunk counts.
 
-        The snapshot drives both the stale-document purge and the
-        shrunk-tail purge after streaming. Failure aborts the rebuild before
-        it can certify stale storage.
-
-        The collection is never dropped here for an ordinary clean rebuild -
-        the served points must outlive the build that replaces them. The one
-        exception is a stored geometry the current configuration cannot
-        write into, where recreation is the only path and nothing servable
-        is lost.
+        The reset left the collection empty, so the snapshot holds only
+        chunks an interrupted attempt of the same generation confirmed. It
+        drives both the stale-document purge and the shrunk-tail purge after
+        streaming.
         """
         with controlled_phase(reporter, run_control, "prepare collection", 1):
             run_control.checkpoint()
-            try:
-                self.store.ensure_table()
-            except StorageGeometryError:
-                if not clean:
-                    raise
-                # The stored vectors cannot hold this configuration's
-                # geometry, so replacing points in place is impossible and
-                # recreation is the only path forward. This is the single
-                # remaining destructive branch of a clean rebuild: the old
-                # points were unusable for this configuration anyway, so
-                # nothing servable is being destroyed. Every other clean
-                # rebuild replaces in place - upsert over the live points,
-                # purge what the new corpus no longer contains after the
-                # stream succeeds - so an interrupted run leaves the old
-                # complete collection still answering searches.
-                logger.warning(
-                    "vault collection geometry cannot hold this "
-                    "configuration; recreating it for the clean rebuild",
-                )
-                run_control.checkpoint()
-                self.store.drop_table()
-                self.store.ensure_table()
-                run_control.checkpoint()
-                # The collection was just recreated: the snapshot is empty
-                # by construction, and scanning would only burn CPU.
-                reporter.advance(1)
-                return {}
+            self.store.ensure_table()
             run_control.checkpoint()
             existing_counts: dict[str, int] = self.store.get_chunk_counts()
             run_control.checkpoint()

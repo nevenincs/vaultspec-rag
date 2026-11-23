@@ -17,7 +17,6 @@ from ._publication_proof import (
 from ._run_ledger_models import (
     RESUMABLE_STATES,
     FinalizationPhase,
-    GenerationRow,
     PublicationProof,
     RunAuthority,
     RunLedgerCorruptionError,
@@ -53,6 +52,90 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ._run_ledger_models import RunGeneration
+    from ._run_ledger_schema import GenerationRow
+
+
+def retire_source_publication(
+    connection: sqlite3.Connection,
+    source_type: PublicSourceType,
+    root_identity: str,
+    backend_identity: str,
+    *,
+    keep_generation_id: str | None,
+) -> None:
+    """Remove one source's publication authority inside the caller's transaction.
+
+    Deletes the source's receipts and proof and invalidates every resumable
+    generation of the same root and backend, so nothing recorded before the
+    storage is destroyed can seed or certify what is written after. Sibling
+    sources, other roots, and other backends keep their rows.
+
+    Args:
+        keep_generation_id: A generation that survives the retirement because
+            it is the one about to rebuild the source; ``None`` keeps none.
+    """
+    if source_type is PublicSourceType.COMBINED:
+        raise ValueError("combined is not a stored publication source")
+    if not root_identity.strip() or not backend_identity.strip():
+        raise ValueError("publication identity fields must be non-empty")
+    now = time.time()
+    parameters = (source_type.value, root_identity, backend_identity)
+    connection.execute(
+        """
+        DELETE FROM publication_receipts
+        WHERE source_type = ? AND root_identity = ?
+          AND backend_identity = ?
+        """,
+        parameters,
+    )
+    connection.execute(
+        """
+        DELETE FROM publication_proofs
+        WHERE source_type = ? AND root_identity = ?
+          AND backend_identity = ?
+        """,
+        parameters,
+    )
+    rows: list[sqlite3.Row] = fetch_all(
+        connection,
+        """
+        SELECT generation_id, signature_json, terminal_state
+        FROM generations
+        WHERE source_type = ?
+        """,
+        (source_type.value,),
+    )
+    for row in rows:
+        generation_id = column_text(row, "generation_id")
+        if (
+            generation_id == keep_generation_id
+            or column_text(row, "terminal_state") not in RESUMABLE_STATES
+        ):
+            continue
+        raw_payload = json.loads(column_text(row, "signature_json"))
+        if not isinstance(raw_payload, dict):
+            raise RunLedgerCorruptionError("generation signature is not an object")
+        payload = cast("dict[str, object]", raw_payload)
+        if (
+            payload.get("root_identity") != root_identity
+            or payload.get("backend_identity") != backend_identity
+        ):
+            continue
+        connection.execute(
+            """
+            UPDATE generations
+            SET terminal_state = ?, finalization_phase = ?,
+                terminal_detail = ?, updated_at = ?
+            WHERE generation_id = ?
+            """,
+            (
+                RunTerminalState.INVALIDATED.value,
+                FinalizationPhase.INGESTING.value,
+                "backing storage explicitly cleared",
+                now,
+                generation_id,
+            ),
+        )
 
 
 class RunLedgerPublicationProofMethods:
@@ -143,67 +226,14 @@ class RunLedgerPublicationProofMethods:
         backend_identity: str,
     ) -> None:
         """Invalidate one source before its backing storage is destroyed."""
-        if source_type is PublicSourceType.COMBINED:
-            raise ValueError("combined is not a stored publication source")
-        if not root_identity.strip() or not backend_identity.strip():
-            raise ValueError("publication identity fields must be non-empty")
-        now = time.time()
         with ledger_transaction(self.path) as connection:
-            parameters = (source_type.value, root_identity, backend_identity)
-            connection.execute(
-                """
-                DELETE FROM publication_receipts
-                WHERE source_type = ? AND root_identity = ?
-                  AND backend_identity = ?
-                """,
-                parameters,
-            )
-            connection.execute(
-                """
-                DELETE FROM publication_proofs
-                WHERE source_type = ? AND root_identity = ?
-                  AND backend_identity = ?
-                """,
-                parameters,
-            )
-            rows: list[sqlite3.Row] = fetch_all(
+            retire_source_publication(
                 connection,
-                """
-                SELECT generation_id, signature_json, terminal_state
-                FROM generations
-                WHERE source_type = ?
-                """,
-                (source_type.value,),
+                source_type,
+                root_identity,
+                backend_identity,
+                keep_generation_id=None,
             )
-            for row in rows:
-                if column_text(row, "terminal_state") not in RESUMABLE_STATES:
-                    continue
-                raw_payload = json.loads(column_text(row, "signature_json"))
-                if not isinstance(raw_payload, dict):
-                    raise RunLedgerCorruptionError(
-                        "generation signature is not an object"
-                    )
-                payload = cast("dict[str, object]", raw_payload)
-                if (
-                    payload.get("root_identity") != root_identity
-                    or payload.get("backend_identity") != backend_identity
-                ):
-                    continue
-                connection.execute(
-                    """
-                    UPDATE generations
-                    SET terminal_state = ?, finalization_phase = ?,
-                        terminal_detail = ?, updated_at = ?
-                    WHERE generation_id = ?
-                    """,
-                    (
-                        RunTerminalState.INVALIDATED.value,
-                        FinalizationPhase.INGESTING.value,
-                        "backing storage explicitly cleared",
-                        now,
-                        column_text(row, "generation_id"),
-                    ),
-                )
 
     def establish_verified_publication(
         self,

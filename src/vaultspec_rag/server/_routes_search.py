@@ -68,6 +68,12 @@ from ..search._result_shaping import (
     PHASE_QDRANT,
     PHASE_RERANK,
 )
+from ..search._validation import (
+    InvalidFilterForSearchTypeError,
+    InvalidPreferValueError,
+    SearchFilterOptions,
+    validate_search_filters,
+)
 from ..service import RegistryFullError, ServiceRegistry
 from ..service_quiesce import QuiesceAdmissionClosedError
 from . import _search_route_availability as route_availability
@@ -363,6 +369,7 @@ def _activity_outcome(result: dict[str, object], status_code: int) -> str:
     error = result.get("error")
     if error in (
         SearchReasonCode.INDEX_UNAVAILABLE,
+        SearchReasonCode.INDEX_TRANSITION,
         SearchReasonCode.QUIESCE_ADMISSION_CLOSED,
     ):
         return "unavailable"
@@ -484,6 +491,8 @@ def _dispatch_public_search(
                 extractor_id=request.payload.get("extractor_id"),
                 extractor_version=request.payload.get("extractor_version"),
                 locator_kind=request.payload.get("locator_kind"),
+                extractor_prefix=request.payload.get("extractor_prefix"),
+                metadata_filters=request.payload.get("metadata_filters"),
             ),
             registry=registry,
         )
@@ -517,6 +526,8 @@ def _dispatch_public_search(
                 extractor_id=request.payload.get("extractor_id"),
                 extractor_version=request.payload.get("extractor_version"),
                 locator_kind=request.payload.get("locator_kind"),
+                extractor_prefix=request.payload.get("extractor_prefix"),
+                metadata_filters=request.payload.get("metadata_filters"),
             ),
         ),
         registry=registry,
@@ -524,10 +535,47 @@ def _dispatch_public_search(
     return combined.results, timings, combined
 
 
+def _refuse_inapplicable_filters(request: SearchRequest) -> None:
+    """Hand every filter the body carries to the search domain to judge.
+
+    Each search type takes only its own filters, so without this a filter
+    sent on a search that cannot apply it would be dropped and the caller
+    would get a wider answer than asked for, with nothing to say so.
+    """
+    payload = request.payload
+    validate_search_filters(
+        request.search_type,
+        SearchFilterOptions(
+            language=payload.get("language"),
+            path=payload.get("path"),
+            node_type=payload.get("node_type"),
+            function_name=payload.get("function_name"),
+            class_name=payload.get("class_name"),
+            include_paths=payload.get("include_paths"),
+            exclude_paths=payload.get("exclude_paths"),
+            dedup_locales=payload.get("dedup_locales"),
+            prefer=payload.get("prefer"),
+            doc_type=payload.get("doc_type"),
+            feature=payload.get("feature"),
+            date=payload.get("date"),
+            tag=payload.get("tag"),
+            intent=payload.get("intent"),
+            source_path=payload.get("source_path"),
+            extractor_id=payload.get("extractor_id"),
+            extractor_version=payload.get("extractor_version"),
+            locator_kind=payload.get("locator_kind"),
+            extractor_prefix=payload.get("extractor_prefix"),
+            metadata_filters=payload.get("metadata_filters"),
+        ),
+        include_documents=payload.get("include_documents", True),
+    )
+
+
 def _execute_search_request(
     request: SearchRequest, registry: ServiceRegistry
 ) -> dict[str, object]:
     """Execute and serialize one search off the event loop."""
+    _refuse_inapplicable_filters(request)
     compute_wait_started = time.perf_counter()
     ticket = registry.acquire_compute_ticket()
     compute_ticket_wait_seconds = time.perf_counter() - compute_wait_started
@@ -824,6 +872,7 @@ def _freshness_wait_failure(
                 absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
                 generation=GenerationEvidence(
                     served_generation=snapshot.published_generation,
+                    observed_generation=snapshot.observed_generation,
                     desired_generation=target.generation,
                     served_revision=snapshot.publication_revision,
                     desired_revision=target.revision,
@@ -978,6 +1027,24 @@ async def _execute_search_route(
             total_seconds=total_seconds,
             availability_cause=None,
         )
+    except InvalidFilterForSearchTypeError as exc:
+        return _refused_filter_result(
+            exc.error_code,
+            str(exc),
+            search_request,
+            total_seconds=time.perf_counter() - started,
+            details={
+                "filter_kind": exc.filter_kind,
+                "offending": list(exc.offending_filters),
+            },
+        )
+    except InvalidPreferValueError as exc:
+        return _refused_filter_result(
+            "invalid_prefer_value",
+            str(exc),
+            search_request,
+            total_seconds=time.perf_counter() - started,
+        )
     except (ApiException, ResponseHandlingException) as exc:
         total_seconds = time.perf_counter() - started
         return _complete_backend_unavailable(
@@ -1018,6 +1085,36 @@ async def _execute_search_route(
         availability_cause=(
             classification.availability_cause if classification is not None else None
         ),
+    )
+
+
+def _refused_filter_result(
+    error: str,
+    message: str,
+    search_request: SearchRequest,
+    *,
+    total_seconds: float,
+    details: dict[str, object] | None = None,
+) -> SearchRouteResult:
+    """Answer a filter the search domain refused as the caller's error, 400.
+
+    Raised from the search itself because some refusals need the root's own
+    index, such as a metadata key the root does not declare.
+    """
+    _m.incr("search_total")
+    _m.observe("search_last_duration_seconds", total_seconds)
+    return SearchRouteResult(
+        result={
+            "ok": False,
+            "error": error,
+            "message": message,
+            "retryable": False,
+            "request_id": search_request.request_id,
+            **(details or {}),
+        },
+        status_code=400,
+        total_seconds=total_seconds,
+        availability_cause=None,
     )
 
 

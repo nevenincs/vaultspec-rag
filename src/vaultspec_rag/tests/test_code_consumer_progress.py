@@ -286,7 +286,6 @@ class TestConsumerAdvancesProgress:
             checkpoint=None,
             ingest_wait=False,
             run_control=NO_RUN_CONTROL,
-            code_build_target=None,
             donor_reuse=None,
             reporter=reporter,
         )
@@ -353,7 +352,6 @@ class TestConsumerAdvancesProgress:
             checkpoint=None,
             ingest_wait=False,
             run_control=NO_RUN_CONTROL,
-            code_build_target=None,
             donor_reuse=None,
             reporter=reporter,
         )
@@ -443,7 +441,6 @@ class TestConsumerAdvancesProgress:
             checkpoint=None,
             ingest_wait=False,
             run_control=NO_RUN_CONTROL,
-            code_build_target=None,
             donor_reuse=None,
             reporter=reporter,
         )
@@ -607,7 +604,6 @@ def _chunk_work_run(
         checkpoint=None,
         ingest_wait=False,
         run_control=NO_RUN_CONTROL,
-        code_build_target=None,
         donor_reuse=reuse,
         reporter=reporter,
     )
@@ -766,7 +762,6 @@ def _consume_replay_progress(
         checkpoint=replay.checkpoint,
         ingest_wait=True,
         run_control=NO_RUN_CONTROL,
-        code_build_target=replay.lifecycle.active_build_target,
         donor_reuse=None,
         reporter=reporter,
     )
@@ -999,10 +994,7 @@ def test_resolved_zero_chunk_files_count_after_durable_outcome(
                 else state is not None and state.state is FileStateKind.POLICY_REJECTED
             )
             and not any(
-                chunk.id
-                in resume_run.store.get_all_code_ids(
-                    resume_run.lifecycle.active_build_target
-                )
+                chunk.id in resume_run.store.get_all_code_ids()
                 for segment in resume_run.segments[:4]
                 for chunk in segment.chunks
             )

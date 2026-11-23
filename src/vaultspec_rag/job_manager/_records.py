@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -11,6 +12,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import threading
     from collections import deque
+
+    from .state import AdmissionSlot, JobChangeNotifier
 
 from .._runtime_identity import process_identity_fields
 from ..job_models import (
@@ -38,8 +41,11 @@ from ..job_models import (
 )
 from .state import (
     UNOWNED_RUNTIME,
+    AdmissionWaiter,
     JobDispatchBinding,
     JobManagerState,
+    JobWaitResult,
+    JobWaitUntil,
     ManagedJob,
     assign_runtime_owner,
 )
@@ -58,6 +64,8 @@ class JobManagerRecords(JobManagerState):
     _terminal: deque[ManagedJob]
     _dispatchers: dict[str, JobDispatchBinding]
     _max_nonterminal: int
+    _admission_waiters: dict[str, AdmissionSlot]
+    _job_changes: JobChangeNotifier
     _max_terminal_history: int
 
     def create(
@@ -180,6 +188,54 @@ class JobManagerRecords(JobManagerState):
             )
             terminal = [self._snapshot_locked(job) for job in reversed(self._terminal)]
             return [*active, *terminal]
+
+    def admission_queue(self) -> tuple[AdmissionWaiter, ...]:
+        """Return every attempt waiting for admission with its slot rank."""
+        ranks: dict[AdmissionSlot, int] = {}
+        waiters: list[AdmissionWaiter] = []
+        with self._lock:
+            for job_id, slot in self._admission_waiters.items():
+                ranks[slot] = ranks.get(slot, 0) + 1
+                waiters.append(AdmissionWaiter(job_id, slot, ranks[slot]))
+        return tuple(waiters)
+
+    async def wait_for_job(
+        self,
+        job_id: str,
+        *,
+        until: JobWaitUntil,
+        timeout_seconds: float,
+    ) -> JobWaitResult | None:
+        """Wait, at most *timeout_seconds*, for one job to reach *until*.
+
+        ``admitted`` is reached once the current attempt holds its slot,
+        which the admission stamp records, or once the job is terminal;
+        ``finished`` at any terminal state. The wait sleeps on the change
+        notifier rather than polling, and a condition already true returns
+        at once. ``None`` means no such job exists.
+        """
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        with self._job_changes.subscription() as changed:
+            while True:
+                # Cleared before the read, so a change landing between the
+                # read and the wait still wakes it.
+                changed.clear()
+                snapshot = self.get(job_id)
+                if snapshot is None:
+                    return None
+                waited = loop.time() - started
+                reached = snapshot.state.is_terminal or (
+                    until == "admitted"
+                    and snapshot.timestamps.admission_acquired_at is not None
+                )
+                remaining = timeout_seconds - waited
+                if reached or remaining <= 0:
+                    return JobWaitResult(snapshot, reached, waited)
+                try:
+                    await asyncio.wait_for(changed.wait(), remaining)
+                except TimeoutError:
+                    continue
 
     def active(self) -> list[JobSnapshot]:
         """Return every nonterminal job without eviction or prefix matching."""

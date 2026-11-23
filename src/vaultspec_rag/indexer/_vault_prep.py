@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -28,17 +29,22 @@ from ._vault_identity import vault_document_id, vault_relative_path
 
 if TYPE_CHECKING:
     import pathlib
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
+    from ..embeddings import EmbeddingModel
     from ..job_control import RunControl
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "IndexResult",
+    "IndexRunCounts",
+    "IndexRunTelemetry",
     "_extract_feature",
     "_extract_status",
     "_extract_title",
+    "finished_index_result",
+    "index_run_started",
     "prepare_document",
     "split_document",
     "split_documents",
@@ -81,7 +87,8 @@ class IndexResult:
             reached the GPU and one that did not, which is the whole
             distinction the split fingerprint exists to draw.
         removed: Number of items removed from the index.
-        duration_ms: Wall-clock time for the operation in milliseconds.
+        duration_ms: Elapsed time for the operation in milliseconds, measured
+            on the monotonic clock so a system clock step cannot skew it.
         device: Compute device used for embeddings (e.g. ``"cuda"``).
         files: Number of files processed (for codebase indexing).
         preprocess_ok: Number of files a document-preprocessing rule fed into
@@ -93,6 +100,10 @@ class IndexResult:
             skipped this run (``on_error=skip``), surfaced so coverage gaps are
             never silent (#185).
         preprocess_failures: ``"rel_path: reason"`` for each skipped file.
+        metadata_non_string: Per declared filterable metadata key, the
+            document units this run indexed whose value of that key is not a
+            string or a list of strings. They stay indexed but never match a
+            filter on that key.
         reuse: Donor vector-reuse telemetry for this run (hit/miss counts,
             hit rate, estimated GPU seconds saved, donor availability), or
             ``None`` when reuse is disabled or the run never reached the
@@ -121,9 +132,87 @@ class IndexResult:
     preprocess_ok: int = 0
     preprocess_skipped: int = 0
     preprocess_failures: list[str] = field(default_factory=list)
+    metadata_non_string: dict[str, int] = field(default_factory=dict)
     reuse: dict[str, object] | None = None
     drift: dict[str, object] | None = None
     first_build: bool = False
+
+
+def index_run_started() -> float:
+    """Return the start mark :func:`finished_index_result` measures from.
+
+    Monotonic, because ``duration_ms`` is an elapsed time: a wall-clock step
+    between start and finish would report a negative or inflated duration.
+    """
+    return time.monotonic()
+
+
+@dataclass(frozen=True, slots=True)
+class IndexRunCounts:
+    """What one indexing run changed, in the units :class:`IndexResult` reports."""
+
+    added: int = 0
+    updated: int = 0
+    removed: int = 0
+    payload_updated: int = 0
+    files: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class IndexRunTelemetry:
+    """Observability one indexing run reports beside its change counts.
+
+    ``drift`` stays ``None`` outside the code source: only code runs open a
+    drift-tracking generation, so vault and document runs have no source
+    drift supersession to report.
+    """
+
+    preprocess_ok: int = 0
+    preprocess_failures: Sequence[str] = ()
+    metadata_non_string: Mapping[str, int] = field(default_factory=dict[str, int])
+    reuse: dict[str, object] | None = None
+    drift: dict[str, object] | None = None
+
+
+def finished_index_result(
+    started: float,
+    counts: IndexRunCounts,
+    telemetry: IndexRunTelemetry,
+    *,
+    model: EmbeddingModel,
+    total: int,
+) -> IndexResult:
+    """Build the result of an indexing run that started at *started*.
+
+    Every indexer finishes through here so the duration, the device and the
+    preprocess skip count are derived one way for every source.
+
+    Args:
+        started: The run's :func:`index_run_started` mark.
+        counts: What the run changed.
+        telemetry: What the run reports beside its counts.
+        model: The embedding model the run encoded with.
+        total: Items in the index after the run.
+
+    Returns:
+        The finished :class:`IndexResult`.
+    """
+    return IndexResult(
+        total=total,
+        added=counts.added,
+        updated=counts.updated,
+        removed=counts.removed,
+        duration_ms=int((time.monotonic() - started) * 1000),
+        device=model.device,
+        payload_updated=counts.payload_updated,
+        files=counts.files,
+        preprocess_ok=telemetry.preprocess_ok,
+        preprocess_skipped=len(telemetry.preprocess_failures),
+        preprocess_failures=list(telemetry.preprocess_failures),
+        metadata_non_string=dict(telemetry.metadata_non_string),
+        reuse=telemetry.reuse,
+        drift=telemetry.drift,
+    )
 
 
 def _first_h1(body: str) -> str:

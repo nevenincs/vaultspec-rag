@@ -169,3 +169,18 @@ class JobAttemptContext:
         return self.manager.update_resilience(
             self.job_id, task=self.task, resilience=resilience
         )
+
+    def bind_rebuild_generation(self, generation_id: str) -> None:
+        """Durably record the rebuild generation this attempt is resetting.
+
+        Raises:
+            RuntimeError: The attempt no longer owns its job, or the record
+                could not be persisted. The reset must not begin then.
+        """
+        if not self.manager.bind_rebuild_generation(
+            self.job_id, task=self.task, generation_id=generation_id
+        ):
+            raise RuntimeError(
+                f"job {self.job_id} could not record rebuild generation "
+                f"{generation_id}; the rebuild did not reset"
+            )

@@ -1,4 +1,4 @@
-"""Detect, write, and remove the canonical cu130 torch block in a user's
+"""Detect, write, and remove the canonical CUDA torch block in a user's
 ``pyproject.toml``.
 
 This package is the pure-logic layer for rag's ``install`` /

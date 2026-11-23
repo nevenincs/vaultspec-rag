@@ -34,6 +34,7 @@ from ...job_control import (
 )
 from ...progress import NullProgressReporter
 from ...store_runtime import VaultStore
+from .._ledger_fixtures import continue_rebuild
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -209,7 +210,6 @@ def test_clean_rebuild_interrupts_and_resumes_confirmed_units(
     Restoring whole-run vault protection failed the partial-unit assertion
     (32 < 32); removing that protection passed the same pause case.
     """
-    from ..._store_models import generation_code_collection
     from ._helpers import _document_policy
 
     markers = _rebuild_corpus(tmp_path, source)
@@ -235,9 +235,7 @@ def test_clean_rebuild_interrupts_and_resumes_confirmed_units(
         assert 0 < len(units) < len(markers)
         collection = {
             PublicSourceType.VAULT: store.TABLE_NAME,
-            PublicSourceType.CODE: generation_code_collection(
-                store.DERIVED_CODE_TABLE_NAME, trace.generation_id
-            ),
+            PublicSourceType.CODE: store.CODE_TABLE_NAME,
             PublicSourceType.DOCUMENT: store.DOCUMENT_TABLE_NAME,
         }[source]
         records, offset = store._scroll(
@@ -249,7 +247,9 @@ def test_clean_rebuild_interrupts_and_resumes_confirmed_units(
         }
         assert confirmed <= {str(record.id) for record in records}
         resumed = _RebuildTrace()
-        with resumed.installed():
+        # The retry is the next attempt of the interrupted request, so it
+        # claims that request's generation; an unclaimed run resets again.
+        with resumed.installed(), continue_rebuild(trace.generation_id):
             _full_rebuild(indexer, RunControlToken())
         proof = acquire_publication_snapshot(tmp_path, source).proof
         assert proof.generation_id == trace.generation_id
@@ -257,11 +257,6 @@ def test_clean_rebuild_interrupts_and_resumes_confirmed_units(
         assert resumed.texts
         encoded = "\n".join(resumed.texts)
         assert all(markers[unit.rel_path] not in encoded for unit in units)
-        collection = (
-            store._code_collection(None)
-            if source is PublicSourceType.CODE
-            else collection
-        )
         records, offset = store._scroll(
             collection_name=collection, limit=100, with_payload=True
         )
@@ -301,7 +296,8 @@ def test_vault_full_resume_reconciles_changed_partial_source(
                 "---\ntype: adr\ntitle: Changed\n---\n# Changed\n\n" + text,
                 encoding="utf-8",
             )
-        _full_rebuild(indexer, RunControlToken())
+        with continue_rebuild(trace.generation_id):
+            _full_rebuild(indexer, RunControlToken())
         snapshot = acquire_publication_snapshot(tmp_path, PublicSourceType.VAULT)
         assert snapshot.proof.generation_id == trace.generation_id
         evidence = read_all_publication_evidence(snapshot)

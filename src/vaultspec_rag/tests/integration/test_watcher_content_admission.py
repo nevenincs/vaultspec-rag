@@ -132,7 +132,7 @@ async def test_added_and_modified_events_match_discovery_admission(
         stop_event.set()
         await stream.aclose()
 
-    full_scan = indexer.scan_content(sample_limit=len(paths))
+    full_scan = indexer.preflight_content(sample_limit=len(paths)).scan
     full_admitted = {path.relative_to(tmp_path).as_posix() for path in full_scan.files}
     scoped, rejected = indexer._scan_changed_paths(
         paths.values(),

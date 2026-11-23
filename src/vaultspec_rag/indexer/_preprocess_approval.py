@@ -23,14 +23,17 @@ programs its commands launch.
 
 from __future__ import annotations
 
-import json
 import logging
 import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
-from .._atomic_write import JsonWriteOptions, write_json_atomically
 from .._root_identity import canonical_root_key, canonical_root_path
+from .._root_record_store import (
+    RootRecordStoreError,
+    read_root_records,
+    write_root_records,
+)
 
 if TYPE_CHECKING:
     import pathlib
@@ -93,40 +96,18 @@ def _read_root_records(*, for_update: bool) -> dict[object, object]:
         OSError: Only with ``for_update``, when the store exists but could
             not be read.
     """
-    path = approval_store_path()
     try:
-        raw = path.read_bytes()
-    except FileNotFoundError:
-        return {}
-    except OSError as exc:
-        if for_update:
+        return read_root_records(approval_store_path(), version=_STORE_VERSION)
+    except RootRecordStoreError as exc:
+        if for_update and exc.kind == "unreadable":
             raise
         logger.warning(
-            "preprocess approval store %s is unreadable (%s); no root is approved",
-            path,
-            exc,
+            "preprocess approval store %s is %s (%s); no root is approved",
+            exc.path,
+            exc.kind,
+            exc.detail,
         )
         return {}
-    try:
-        parsed: object = json.loads(raw.decode("utf-8"))
-    except ValueError as exc:
-        logger.warning(
-            "preprocess approval store %s is malformed (%s); no root is approved",
-            path,
-            exc,
-        )
-        return {}
-    document = cast("dict[str, object]", parsed) if isinstance(parsed, dict) else {}
-    roots = document.get("roots")
-    if document.get("version") != _STORE_VERSION or not isinstance(roots, dict):
-        logger.warning(
-            "preprocess approval store %s is not a version %d store; "
-            "no root is approved",
-            path,
-            _STORE_VERSION,
-        )
-        return {}
-    return cast("dict[object, object]", roots)
 
 
 def _load_store(*, for_update: bool = False) -> dict[str, PolicyApproval]:
@@ -159,20 +140,17 @@ def _load_store(*, for_update: bool = False) -> dict[str, PolicyApproval]:
 
 def _write_store(approvals: dict[str, PolicyApproval]) -> None:
     """Publish the whole store, owner-only and durable."""
-    write_json_atomically(
+    write_root_records(
         approval_store_path(),
         {
-            "version": _STORE_VERSION,
-            "roots": {
-                key: {
-                    "root": approval.root,
-                    "policy_digest": approval.policy_digest,
-                    "approved_at": approval.approved_at,
-                }
-                for key, approval in approvals.items()
-            },
+            key: {
+                "root": approval.root,
+                "policy_digest": approval.policy_digest,
+                "approved_at": approval.approved_at,
+            }
+            for key, approval in approvals.items()
         },
-        JsonWriteOptions(indent=2, sort_keys=True, durable=True, private=True),
+        version=_STORE_VERSION,
     )
 
 

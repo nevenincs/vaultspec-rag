@@ -21,7 +21,10 @@ model or touching the GPU.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, NotRequired, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
 
 __all__ = [
     "CODE_COLLECTION",
@@ -36,6 +39,10 @@ __all__ = [
     "DOCUMENT_INTEGER_INDEXES",
     "DOCUMENT_KEYWORD_INDEXES",
     "DOCUMENT_QUERY_FILTER_KEYS",
+    "EXTRACTOR_ID_FACET_BOUND",
+    "METADATA_INDEX_PREFIXES",
+    "METADATA_KEY_MAX_CHARS",
+    "METADATA_SCOPES",
     "SERVER_SEGMENT_NUMBER",
     "SERVER_WAL_CAPACITY_MB",
     "SPARSE_VECTOR_NAME",
@@ -47,7 +54,9 @@ __all__ = [
     "CodeChunkPayload",
     "CollectionIdentity",
     "ConformanceVerdict",
+    "DeclaredMetadataKey",
     "DocumentChunkPayload",
+    "MetadataScope",
     "SchemaCompatibility",
     "VaultChunkPayload",
     "VaultDocPayload",
@@ -56,8 +65,12 @@ __all__ = [
     "collection_names",
     "current_identity",
     "describe_storage_schema",
+    "document_keyword_indexes",
     "effective_dense_dim",
     "evaluate_conformance",
+    "metadata_key_problem",
+    "metadata_scope",
+    "non_string_metadata_keys",
 ]
 
 # Version of the on-disk Qdrant shape. Bump ONLY on a breaking change: a vector
@@ -320,6 +333,127 @@ DOCUMENT_QUERY_FILTER_KEYS: tuple[str, ...] = (
     *DOCUMENT_FILTER_KEYS,
     "locator_value_str",
 )
+
+#: Where a declared metadata key lives in the document payload. A unit-scoped
+#: key is read from the unit's own metadata, a document-scoped key from the
+#: metadata its whole source file shares.
+MetadataScope = Literal["unit", "document"]
+METADATA_SCOPES: tuple[MetadataScope, ...] = ("unit", "document")
+
+#: The payload prefixes a declared metadata key's keyword index sits under.
+#: Only indexes under these prefixes follow the declaration: the ensure pass
+#: creates one per declared key and drops one whose key is no longer declared,
+#: and never touches an index outside them.
+METADATA_INDEX_PREFIXES: tuple[str, ...] = tuple(
+    f"{scope}_metadata." for scope in METADATA_SCOPES
+)
+
+#: Upper bound on a declared metadata key name, in characters.
+METADATA_KEY_MAX_CHARS = 128
+
+# A key containing one of these would make its nested payload path ambiguous:
+# Qdrant reads ``.`` as a nesting step and ``[]`` as an array selector.
+_METADATA_KEY_RESERVED = frozenset(".[]")
+
+#: Distinct ``extractor_id`` values a prefix filter may resolve against. The
+#: prefix is resolved by a facet over the indexed ``extractor_id`` field, and
+#: a facet answer carries no truncation flag, so the facet asks for one more
+#: value than this bound: receiving more than the bound is the only way to
+#: know the answer may be partial, and a partial answer must be refused rather
+#: than applied as a narrower filter than the caller asked for.
+EXTRACTOR_ID_FACET_BOUND = 1024
+
+
+def metadata_scope(value: object) -> MetadataScope | None:
+    """Return the declared scope *value* names, or ``None`` for anything else."""
+    for scope in METADATA_SCOPES:
+        if value == scope:
+            return scope
+    return None
+
+
+def metadata_key_problem(key: object) -> str | None:
+    """Return why *key* cannot be a declared metadata key, or ``None``."""
+    if not isinstance(key, str) or not key:
+        return "a metadata key must be a non-empty string"
+    if len(key) > METADATA_KEY_MAX_CHARS:
+        return (
+            f"metadata key {key[:32]!r}... exceeds {METADATA_KEY_MAX_CHARS} characters"
+        )
+    reserved = sorted(_METADATA_KEY_RESERVED.intersection(key))
+    if reserved:
+        return (
+            f"metadata key {key!r} contains {', '.join(map(repr, reserved))}, "
+            "which would make its payload path ambiguous"
+        )
+    return None
+
+
+@dataclass(frozen=True, slots=True, order=True)
+class DeclaredMetadataKey:
+    """One metadata key a root declares filterable, and the scope it reads.
+
+    The key is indexed where the payload already holds it, so declaring a key
+    adds an index and never a payload field.
+    """
+
+    key: str
+    scope: MetadataScope
+
+    def __post_init__(self) -> None:
+        problem = metadata_key_problem(self.key)
+        if problem is not None:
+            raise ValueError(problem)
+        if self.scope not in METADATA_SCOPES:
+            raise ValueError(f"unknown metadata scope {self.scope!r}")
+
+    @property
+    def field(self) -> str:
+        """Return the nested payload path this key is indexed and matched on."""
+        return f"{self.scope}_metadata.{self.key}"
+
+
+def document_keyword_indexes(
+    declared: Iterable[DeclaredMetadataKey],
+) -> tuple[str, ...]:
+    """Return the document collection's keyword index set for one root.
+
+    The fixed set plus one nested index per declared metadata key. A root's
+    declaration extends this set; it is not a second registry.
+    """
+    return (
+        *DOCUMENT_KEYWORD_INDEXES,
+        *sorted({item.field for item in declared}),
+    )
+
+
+def non_string_metadata_keys(
+    declared: Iterable[DeclaredMetadataKey],
+    *,
+    unit_metadata: Mapping[str, object],
+    document_metadata: Mapping[str, object],
+) -> tuple[str, ...]:
+    """Return the declared keys whose stored value a keyword index cannot match.
+
+    A declared key matches when its value is a string or a list of strings.
+    Any other present value is stored unchanged and simply never matches, so
+    it is reported rather than rejected or coerced. An absent key is not a
+    defect: it matches no filter on that key by design.
+    """
+    offending: list[str] = []
+    for item in declared:
+        source = unit_metadata if item.scope == "unit" else document_metadata
+        if item.key not in source:
+            continue
+        value = source[item.key]
+        if isinstance(value, str):
+            continue
+        if isinstance(value, list) and all(
+            isinstance(element, str) for element in cast("list[object]", value)
+        ):
+            continue
+        offending.append(item.key)
+    return tuple(offending)
 
 
 # Payload field names per collection, derived once from the TypedDicts so the

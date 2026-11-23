@@ -14,6 +14,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from .._source_types import PublicSourceType
 from .._store_models import (
     CodeChunk,
     DocumentChunk,
@@ -59,6 +60,7 @@ from ..indexer._streaming_types import CodeFileSegment
 from ..job_control import CancelRequested, RunControlToken
 from ..storage_identity import sidecar_path
 from ..store_runtime import StorageModelError, VaultStore
+from ._ledger_fixtures import continue_rebuild, record_reset_over_empty_storage
 from ._store_fixtures import get_all_document_content_ids
 
 if TYPE_CHECKING:
@@ -319,7 +321,6 @@ def test_old_sparse_origin_cleanup_is_payload_only_and_destination_first(
             checkpoint,
             _resolved_policy(store.root_dir),
             case.destination_kind,
-            include_same_kind=False,
         ) == (0, 0, 1)
     rows, _offset = store.scroll_index_audit_content(
         case.origin_collection, limit=10, offset=None
@@ -340,9 +341,11 @@ def test_old_sparse_origin_cleanup_is_payload_only_and_destination_first(
             store.scroll_code_content(with_vectors=True)
     with pytest.raises(StorageModelError):
         if case.destination_kind is ContentKind.CODE:
-            store.delete_document_content_chunks([case.unrelated_id])
+            store.delete_publication_points(
+                PublicSourceType.DOCUMENT, [case.unrelated_id]
+            )
         else:
-            store.delete_code_chunks([case.unrelated_id])
+            store.delete_publication_points(PublicSourceType.CODE, [case.unrelated_id])
     with pytest.raises(StorageModelError):
         purge_unpublished_rows(
             store,
@@ -387,13 +390,15 @@ def test_incompatible_selected_destination_retains_old_origin(
             == 0
         )
     else:
-        assert reconcile_generation_storage(
-            store,
-            checkpoint,
-            _resolved_policy(store.root_dir),
-            case.destination_kind,
-            include_same_kind=False,
-        ) == (0, 0, 0)
+        # The generation's own same-kind reconciliation reads the incompatible
+        # destination strictly, so it refuses before any origin is touched.
+        with pytest.raises(StorageModelError, match="incompatible sparse vectors"):
+            reconcile_generation_storage(
+                store,
+                checkpoint,
+                _resolved_policy(store.root_dir),
+                case.destination_kind,
+            )
     rows, _offset = store.scroll_index_audit_content(
         case.origin_collection, limit=10, offset=None
     )
@@ -434,6 +439,21 @@ def test_metadata_administration_is_noncreating_and_projection_restricted(
         store.close()
 
 
+def test_publication_point_deletion_prepares_only_its_own_collection(
+    clean_config: None,
+    tmp_path: Path,
+) -> None:
+    """A document deletion ensures the document table and leaves code absent."""
+    del clean_config
+    store = VaultStore(tmp_path, embedding_dim=4)
+    try:
+        store.delete_publication_points(PublicSourceType.DOCUMENT, ["x"])
+        assert store._collection_exists(store.DOCUMENT_TABLE_NAME)
+        assert not store._collection_exists(store.CODE_TABLE_NAME)
+    finally:
+        store.close()
+
+
 def test_origin_payload_scan_never_requests_vectors(
     migration_case: _MigrationCase,
     monkeypatch: pytest.MonkeyPatch,
@@ -466,9 +486,9 @@ def test_absent_selected_destination_stays_absent_and_retains_origin(
     """Guard: ensure before presence evidence creates a nonexistent replacement."""
     case = migration_case
     if case.destination_kind is ContentKind.CODE:
-        case.store.drop_code_table()
+        case.store.discard_source_storage(PublicSourceType.CODE)
     else:
-        case.store.drop_document_table()
+        case.store.discard_source_storage(PublicSourceType.DOCUMENT)
     assert (
         reconcile_origin_after_destination(
             case.store, case.checkpoint, case.destination_kind, case.rel_path
@@ -576,7 +596,7 @@ def test_interrupted_destination_first_flip_resumes_idempotently(
             destination_generation_id=checkpoint.generation_id,
             point_ids=(deleted_origin.id,),
         )
-        store.delete_code_chunks([deleted_origin.id])
+        store.delete_publication_points(PublicSourceType.CODE, [deleted_origin.id])
         assert first == second
         assert store.count_code() == 1
         assert store.count_document() == 1
@@ -614,7 +634,7 @@ def test_stale_destination_confirmation_retains_the_last_origin(
             point_ids=(origin.id,),
         )
 
-        store.drop_document_table()
+        store.discard_source_storage(PublicSourceType.DOCUMENT)
         store.ensure_document_table()
 
         assert (
@@ -682,6 +702,8 @@ def test_same_kind_cleanup_resumes_after_a_real_page_boundary_interruption(
             run_control=token,
         ),
     )
+    # Storage is still empty here, so the reset is recorded in the ledger alone.
+    record_reset_over_empty_storage(interrupted.ledger, interrupted.generation)
     store = VaultStore(tmp_path, embedding_dim=4)
     caught: list[BaseException] = []
 
@@ -721,7 +743,8 @@ def test_same_kind_cleanup_resumes_after_a_real_page_boundary_interruption(
         assert len(caught) == 1 and isinstance(caught[0], CancelRequested)
         assert 1 < store.count_document() < initial_count
 
-        resumed = _document_checkpoint(tmp_path, "guide.txt", retained.id)
+        with continue_rebuild(interrupted.generation_id):
+            resumed = _document_checkpoint(tmp_path, "guide.txt", retained.id)
         assert resumed.generation_id == interrupted.generation_id
         assert (
             purge_unpublished_rows(

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..indexer._chunk_producer import SingleProductionOptions
+from ..indexer._chunk_producer import SingleProductionOptions, partition_batch_work
 
 if TYPE_CHECKING:
     import pathlib
@@ -64,7 +64,9 @@ def produce_file_results(
         return True
 
     producer = indexer._producer
-    batch_groups, singles = producer.partition_batch_work(paths)
+    batch_groups, singles = partition_batch_work(
+        paths, indexer.root_dir, producer.prep_context()
+    )
     if batch_groups:
         producer.produce_batch_groups(batch_groups, _publish)
     if singles:

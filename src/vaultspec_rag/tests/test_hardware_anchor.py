@@ -15,6 +15,7 @@ import re
 import stat
 import subprocess
 import sys
+import time
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
@@ -273,6 +274,53 @@ def _dacl_sddl(path: Path) -> str:
         kernel32.LocalFree(descriptor)
 
 
+def _change_time(path: Path) -> int:
+    """Return *path*'s NTFS change time, which any permission write advances."""
+    import ctypes
+    from ctypes import wintypes
+
+    class BasicInformation(ctypes.Structure):
+        _fields_ = (
+            ("creation_time", ctypes.c_longlong),
+            ("last_access_time", ctypes.c_longlong),
+            ("last_write_time", ctypes.c_longlong),
+            ("change_time", ctypes.c_longlong),
+            ("file_attributes", wintypes.DWORD),
+        )
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.argtypes = (
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    )
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.GetFileInformationByHandleEx.argtypes = (
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    )
+    kernel32.GetFileInformationByHandleEx.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    # FILE_READ_ATTRIBUTES, every share mode, OPEN_EXISTING,
+    # FILE_FLAG_BACKUP_SEMANTICS so a directory opens.
+    handle = kernel32.CreateFileW(str(path), 0x80, 0x7, None, 3, 0x02000000, None)
+    assert handle not in (None, -1), ctypes.get_last_error()
+    try:
+        information = BasicInformation()
+        assert kernel32.GetFileInformationByHandleEx(
+            handle, 0, ctypes.byref(information), ctypes.sizeof(information)
+        ), ctypes.get_last_error()
+        return int(information.change_time)
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _authenticated_users_may_write(path: Path) -> bool:
     """Whether *path*'s access list lets any authenticated account write it."""
     for ace in re.findall(r"\(([^)]*)\)", _dacl_sddl(path)):
@@ -338,7 +386,6 @@ def _temporary_dacl(
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows access lists")
 def test_a_created_shared_anchor_admits_every_account_on_windows(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Windows has no mode bits, so the widening is an access list.
 
@@ -374,26 +421,21 @@ def test_a_created_shared_anchor_admits_every_account_on_windows(
     assert original_entries <= shared_entries, "sharing must preserve creator access"
     assert _authenticated_users_may_write(anchor)
 
-    from .. import _win32
     from .._win32 import grant_every_account_access
 
-    # Windows can coalesce duplicate entries, so compare the actual native
-    # write count as well as the resulting ACL. Mutation: bypassing the
-    # deduplication fails the no-rewrite assertion; restoring it passes.
+    # Windows can coalesce duplicate entries, so the resulting ACL alone cannot
+    # show a repeat write. The directory's change time moves on every real
+    # permission write, so it does. Mutation: bypassing the deduplication moves
+    # the change time and fails the no-rewrite assertion; restoring it passes.
     shared = _dacl_sddl(tmp_path)
-    api, kernel32 = _win32._anchor_acl_api()
-    set_named = api.SetNamedSecurityInfoW
-    repeat_writes: list[str] = []
-
-    def record_write(*args: object) -> int:
-        repeat_writes.append("applied")
-        return int(set_named(*args))
-
-    with monkeypatch.context() as tracking:
-        tracking.setattr(api, "SetNamedSecurityInfoW", record_write)
-        tracking.setattr(_win32, "_anchor_acl_api", lambda: (api, kernel32))
-        assert grant_every_account_access(str(tmp_path), directory=True)
-    assert not repeat_writes, "repeating a shared ACL must not rewrite permissions"
+    changed_before = _change_time(tmp_path)
+    # Longer than the coarsest filesystem timestamp tick, so a real write
+    # cannot land on the same stamp.
+    time.sleep(0.1)
+    assert grant_every_account_access(str(tmp_path), directory=True)
+    assert _change_time(tmp_path) == changed_before, (
+        "repeating a shared ACL must not rewrite permissions"
+    )
     assert _dacl_sddl(tmp_path) == shared
 
     denied = tmp_path / "private" / "denied-anchor.lock"

@@ -443,7 +443,7 @@ def _public_registry(
     monkeypatch.setattr(
         _public_search,
         "_count_combined_domains",
-        Mock(return_value=(dict.fromkeys(facts, 6), {}, facts, {})),
+        Mock(return_value=(dict.fromkeys(facts, 6), {}, facts, {}, {})),
     )
     return cast("ServiceRegistry", registry)
 

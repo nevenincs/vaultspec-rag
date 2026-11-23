@@ -178,7 +178,7 @@ def normalise_search_request(
     # has the type each cast below asserts.
     field_error = _search_field_error(
         query, top_k, project_root, payload.get("include_documents", True)
-    )
+    ) or _document_filter_shape_error(payload)
     if field_error is not None:
         return field_error
     query = _validate_query(cast("str", query))
@@ -264,6 +264,26 @@ def _search_field_error(
     if project_root is not None and not isinstance(project_root, str):
         return _bad_search_field(
             "invalid_project_root", "project_root must be a string"
+        )
+    return None
+
+
+def _document_filter_shape_error(payload: dict[str, object]) -> SearchRouteError | None:
+    """Refuse a prefix or metadata mapping of the wrong JSON type.
+
+    Only the wire shape is checked here. Which keys a root declares, and what
+    a value may hold, is the search domain's decision.
+    """
+    prefix = payload.get("extractor_prefix")
+    if prefix is not None and not isinstance(prefix, str):
+        return _bad_search_field(
+            "invalid_extractor_prefix", "extractor_prefix must be a string"
+        )
+    metadata = payload.get("metadata_filters")
+    if metadata is not None and not isinstance(metadata, dict):
+        return _bad_search_field(
+            "invalid_metadata_filters",
+            "metadata_filters must map each metadata key to a list of strings",
         )
     return None
 

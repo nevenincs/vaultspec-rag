@@ -35,7 +35,6 @@ from ._content_discovery import (
     CodeExecutionPreflight,
     CodeIndexPreflight,
     CodeScopedPreflight,
-    ContentScanResult,
 )
 from ._content_policy import (
     ClassifiedContent,
@@ -68,7 +67,13 @@ from ._run_ledger_models import (
 )
 from ._source_file import source_file_stat
 from ._support_budget import CodeSupportBudget
-from ._vault_prep import IndexResult
+from ._vault_prep import (
+    IndexResult,
+    IndexRunCounts,
+    IndexRunTelemetry,
+    finished_index_result,
+    index_run_started,
+)
 
 if TYPE_CHECKING:
     import threading
@@ -82,6 +87,7 @@ if TYPE_CHECKING:
     from ._preprocess_config import (
         PreprocessContext,
     )
+    from ._rebuild_lifecycle import ResetEpochFence
     from ._resolved_policy import ResolvedIndexPolicy
     from ._reuse import ReuseStats
     from ._run_checkpoint import CodeRunCheckpoint
@@ -94,11 +100,9 @@ class _FullStaleReconciliation:
     """Inputs used to remove stale code identities after a full rebuild."""
 
     checkpoint: CodeRunCheckpoint
-    previous_metadata: dict[str, str]
     metadata: dict[str, str]
     existing_ids: set[str]
     retained_ids: set[str]
-    collection: str | None
     reporter: ProgressReporter
 
 
@@ -329,25 +333,6 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         """Apply ownership first, then raw-code size and binary capability."""
         return self._discovery.inspect_file(path, rel_path, policy).classified
 
-    def scan_content(
-        self,
-        *,
-        sample_limit: int = _DEFAULT_SCAN_SAMPLE_LIMIT,
-    ) -> ContentScanResult:
-        """Return structured admission from one freshly resolved snapshot."""
-        return self._discovery.scan_admission(sample_limit=sample_limit)
-
-    def scan_files(self) -> list[pathlib.Path]:
-        """Return the list of files that would be indexed.
-
-        Does not require GPU or vector store - safe to call with
-        ``model=None`` and ``store=None`` for dry-run usage.
-
-        Returns:
-            List of absolute paths to indexable source files.
-        """
-        return self._discovery.scan_files()
-
     def _resume_pending_finalization(
         self,
         checkpoint: CodeRunCheckpoint,
@@ -360,36 +345,25 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             checkpoint, reporter=reporter
         ):
             return None
-        return IndexResult(
-            total=self.store.count_code(),
-            added=0,
-            updated=0,
-            removed=0,
-            duration_ms=int((time.time() - started_at) * 1000),
-            device=self.model.device,
-            files=0,
-            preprocess_ok=self._prep_ok,
-            preprocess_skipped=len(self._prep_skips),
-            preprocess_failures=list(self._prep_skips),
-            reuse=self._reuse_snapshot(),
-            drift=self._lifecycle.drift_snapshot(),
-        )
+        return self._run_result(started_at, IndexRunCounts())
 
-    def _unchanged_incremental_result(self, *, started_at: float) -> IndexResult:
-        """Return a mutation-free incremental result without publishing metadata."""
-        return IndexResult(
+    def _run_result(
+        self,
+        started_at: float,
+        counts: IndexRunCounts,
+    ) -> IndexResult:
+        """Return this run's result with the run's preprocess, reuse and drift."""
+        return finished_index_result(
+            started_at,
+            counts,
+            IndexRunTelemetry(
+                preprocess_ok=self._prep_ok,
+                preprocess_failures=self._prep_skips,
+                reuse=self._reuse_snapshot(),
+                drift=self._lifecycle.drift_snapshot(),
+            ),
+            model=self.model,
             total=self.store.count_code(),
-            added=0,
-            updated=0,
-            removed=0,
-            duration_ms=int((time.time() - started_at) * 1000),
-            device=self.model.device,
-            files=0,
-            preprocess_ok=self._prep_ok,
-            preprocess_skipped=len(self._prep_skips),
-            preprocess_failures=list(self._prep_skips),
-            reuse=self._reuse_snapshot(),
-            drift=self._lifecycle.drift_snapshot(),
         )
 
     def _pipeline_chunk_and_embed(
@@ -400,10 +374,9 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         """Chunk, embed, and upsert *paths* through the consumer pipeline.
 
         The pipeline itself is stateless across runs; this adapts it to the
-        indexer's per-run state, supplying the content epoch and generation
-        build target it needs and republishing the donor-reuse telemetry it
-        resolved so later result construction can read it back through
-        ``_reuse_snapshot``.
+        indexer's per-run state, supplying the content epoch it needs and
+        republishing the donor-reuse telemetry it resolved so later result
+        construction can read it back through ``_reuse_snapshot``.
         """
         result = self._consumer_pipeline.run(
             paths,
@@ -474,67 +447,58 @@ class CodebaseIndexer(CodebasePreprocessMixin):
 
     @staticmethod
     def _full_removed_paths(request: _FullStaleReconciliation) -> set[str]:
-        """Select absent sources from the manifest this full run owns."""
-        previous_paths = (
-            {
-                state.rel_path
-                for state in request.checkpoint.ledger.iter_file_states(
-                    request.checkpoint.generation_id
-                )
-                if state.state is FileStateKind.INDEXED
-            }
-            if request.checkpoint.generation.signature.clean
-            else set(request.previous_metadata)
-        )
-        return previous_paths - set(request.metadata)
+        """Select absent sources from the manifest this rebuild owns."""
+        indexed = {
+            state.rel_path
+            for state in request.checkpoint.ledger.iter_file_states(
+                request.checkpoint.generation_id
+            )
+            if state.state is FileStateKind.INDEXED
+        }
+        return indexed - set(request.metadata)
 
     def _reconcile_full_stale_ids(
         self,
         request: _FullStaleReconciliation,
     ) -> list[str]:
-        """Delete stale full-run identities and checkpoint removed paths."""
-        clean = request.checkpoint.generation.signature.clean
-        stale_ids = sorted(request.existing_ids - request.retained_ids)
+        """Delete stale rebuild identities and checkpoint removed paths.
+
+        The rebuild began from an empty collection, so everything stale here
+        is its own earlier work: confirmed by an interrupted attempt of this
+        generation for a source that has since changed or disappeared.
+        """
         removed_paths = self._full_removed_paths(request)
-        if not stale_ids and not (clean and removed_paths):
-            return stale_ids
         removed_ids_by_path = self._lifecycle.checkpoint_ids_by_path(
             request.checkpoint,
             removed_paths,
             retained=True,
         )
-        if clean:
-            removed_ids = {
-                point_id for ids in removed_ids_by_path.values() for point_id in ids
-            }
-            # Resumed upserts seeded the pipeline accumulator before this scan.
-            # A source removed from the shadow corpus cannot remain retained
-            # merely because that earlier attempt confirmed its points.
-            stale_ids = sorted(
-                request.existing_ids - (request.retained_ids - removed_ids)
-            )
+        removed_ids = {
+            point_id for ids in removed_ids_by_path.values() for point_id in ids
+        }
+        # Resumed upserts seeded the pipeline accumulator before this scan.
+        # A source removed since cannot remain retained merely because an
+        # earlier attempt of this rebuild confirmed its points.
+        stale_ids = sorted(request.existing_ids - (request.retained_ids - removed_ids))
+        if not stale_ids and not removed_paths:
+            return stale_ids
         request.reporter.phase_start("purge stale chunks", len(stale_ids))
         try:
             try:
                 path_removed_ids: set[str] = set()
                 for rel in sorted(removed_paths):
-                    point_ids = tuple(sorted(removed_ids_by_path[rel]))
+                    point_ids = removed_ids_by_path[rel]
                     if not point_ids:
                         continue
-                    if clean:
-                        self._lifecycle.drift_owner.retire_retained_outcome(
-                            rel, remove_path=True
-                        )
-                    else:
-                        self.store.delete_code_chunks(
-                            list(point_ids), collection=request.collection
-                        )
-                        request.checkpoint.record_confirmed_deletion(rel, point_ids)
+                    self._lifecycle.drift_owner.retire_retained_outcome(
+                        rel, remove_path=True
+                    )
                     path_removed_ids.update(point_ids)
                 remaining_stale_ids = sorted(set(stale_ids) - path_removed_ids)
                 if remaining_stale_ids:
-                    self.store.delete_code_chunks(
-                        remaining_stale_ids, collection=request.collection
+                    self.store.delete_publication_points(
+                        PublicSourceType.CODE,
+                        remaining_stale_ids,
                     )
             except OSError:
                 logger.error(
@@ -557,30 +521,30 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         authority: RunAuthority = RunAuthority.REBUILD,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
-        """Full codebase re-index serialized through the writer lock.
+        """Rebuild the code index from empty, serialized through the writer lock.
 
-        Thin wrapper that acquires ``self._writer_lock`` and delegates
-        to :meth:`_full_index_locked`. Mirrors the VaultIndexer wrapper
-        and serializes against concurrent reindex callers (#68).
+        Every full run is an explicit rebuild: the source's old index is
+        discarded before the first replacement write and the rebuild writes
+        the one canonical code collection. ``clean`` only labels the run's
+        events.
         """
+        if authority is not RunAuthority.REBUILD:
+            raise PermissionError("a full code index requires rebuild authority")
         run_control.checkpoint()
-        if authority is RunAuthority.REBUILD:
-            from ._run_ledger_models import index_run_ledger_path
-            from ._run_ledger_runtime import set_aside_unsupported_ledger
+        from ._rebuild_lifecycle import capture_reset_epoch
+        from ._run_ledger_models import index_run_ledger_path
+        from ._run_ledger_runtime import set_aside_unsupported_ledger
 
-            set_aside_unsupported_ledger(index_run_ledger_path(self._data_root))
+        set_aside_unsupported_ledger(index_run_ledger_path(self._data_root))
+        began_under = capture_reset_epoch(
+            self.store.root_dir, PublicSourceType.CODE, self.store.backend_identity
+        )
         resolved_policy, discovered_paths = self._accept_preflight(
             preflight,
             changed_paths=None,
         )
         run_control.checkpoint()
         with self._writer_lock:
-            if authority is RunAuthority.REBUILD:
-                from .._publication_state import reset_pending_publication_for_rebuild
-
-                reset_pending_publication_for_rebuild(
-                    self.store, PublicSourceType.CODE, run_control
-                )
             self._resolved_policy = resolved_policy
             self._reset_reuse_state()
             return run_index_lifecycle(
@@ -588,7 +552,8 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                     policy=resolved_policy,
                     discovered_paths=discovered_paths,
                     reporter=reporter,
-                    execution=PublicationExecution(authority, run_control),
+                    began_under=began_under,
+                    run_control=run_control,
                 ),
                 IndexLifecycleRequest(
                     event_logger=logger,
@@ -610,29 +575,27 @@ class CodebaseIndexer(CodebasePreprocessMixin):
 
     def _prepare_full_collection(
         self,
-        _checkpoint: CodeRunCheckpoint,
+        checkpoint: CodeRunCheckpoint,
         *,
-        effective_clean: bool,
-        clean_has_confirmed_units: bool,
         reporter: ProgressReporter,
     ) -> set[str]:
-        """Create or snapshot the build collection before streaming a full run."""
+        """Snapshot what this rebuild already wrote before streaming more.
+
+        The reset left the canonical collection empty, so it can only hold
+        this generation's own confirmed work from an interrupted attempt. A
+        generation with no confirmed units skips the scan: a full id scan of
+        a large local collection costs minutes of GIL-holding CPU.
+        """
         reporter.phase_start("prepare collection", 1)
         try:
-            if effective_clean and not clean_has_confirmed_units:
-                # A fresh generation name cannot collide with a surviving
-                # directory, so this creates rather than recreates and the
-                # served collection is left alone.
-                self.store.ensure_code_table(self._lifecycle.active_build_target)
-                # The generation is new: the snapshot is empty by
-                # construction, and a full id scan of a large local
-                # collection costs minutes of GIL-holding CPU.
-                existing_ids_before: set[str] = set()
-            else:
-                self.store.ensure_code_table(self._lifecycle.active_build_target)
-                existing_ids_before = set(
-                    self.store.get_all_code_ids(self._lifecycle.active_build_target)
-                )
+            self.store.ensure_code_table()
+            resumed = (
+                next(checkpoint.ledger.iter_units(checkpoint.generation_id), None)
+                is not None
+            )
+            existing_ids_before = (
+                set(self.store.get_all_code_ids()) if resumed else set[str]()
+            )
             reporter.advance(1)
             return existing_ids_before
         finally:
@@ -644,79 +607,48 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         policy: ResolvedIndexPolicy,
         discovered_paths: tuple[pathlib.Path, ...] | None = None,
         reporter: ProgressReporter,
-        execution: PublicationExecution,
+        began_under: ResetEpochFence,
+        run_control: RunControl,
     ) -> IndexResult:
         """Locked implementation of :meth:`full_index`.
 
         Args:
-            clean: When ``True``, drop and recreate the codebase
-                collection up front so schema-level changes (e.g.
-                a new embedding dimension) take effect (#68). The default
-                ``clean=False`` path is failure-safe: it streams upserts in place and
-                purges only the stale chunk IDs after a successful
-                rebuild, so an interrupted run never leaves the
-                collection empty.
+            policy: The resolved policy the preflight admitted.
+            discovered_paths: The preflight's discovered paths, if any.
             reporter: Required progress reporter.
-            run_control: Cooperative attempt control checked before the clean
-                destructive span and delivered after valid collection and
-                metadata publication.
+            began_under: Reset epoch captured before the rebuild was planned.
+            run_control: Cooperative attempt control. The reset is protected;
+                after it, control is delivered between durable units.
 
         Returns:
             An ``IndexResult`` where ``added`` equals the total chunk
-            count and ``removed`` reports the post-stream stale-chunk
-            purge count.
+            count and ``removed`` reports stale chunks this rebuild had
+            itself written in an interrupted attempt.
 
         Raises:
             OSError: If source files cannot be read or hashed.
         """
-        run_control = execution.run_control
-        authority = execution.authority
-        start = time.time()
+        start = index_run_started()
         paths = self._prepare_full_paths(
             policy,
             reporter,
             discovered_paths=discovered_paths,
             run_control=run_control,
         )
-        effective_clean = authority is RunAuthority.REBUILD
         limits = self._consumer_pipeline.resolve_limits()
         checkpoint = self._lifecycle.open_checkpoint(
             CodeGenerationOpenRequest(
                 policy=policy,
                 operation=RunOperation.FULL,
-                clean=authority is RunAuthority.REBUILD,
+                clean=True,
                 configuration=limits.run_configuration,
                 dense_dimensions=limits.dense_dimension,
                 sparse_enabled=limits.sparse_enabled,
                 run_control=run_control,
-                authority=authority,
+                authority=RunAuthority.REBUILD,
             )
         )
-        from .._publication_state import (
-            acquire_publication_snapshot,
-            read_all_publication_evidence,
-        )
-        from ._publication_proof import (
-            ProofIncompatibleError,
-            ProofMissingError,
-            ProofReadConflictError,
-        )
-
-        try:
-            previous_snapshot = acquire_publication_snapshot(
-                self.root_dir,
-                PublicSourceType.CODE,
-            )
-        except (ProofIncompatibleError, ProofMissingError, ProofReadConflictError):
-            previous_metadata = {}
-        else:
-            previous_metadata = {
-                rel: evidence.content_identity
-                for rel, evidence in read_all_publication_evidence(
-                    previous_snapshot
-                ).items()
-            }
-            previous_snapshot.validate()
+        checkpoint.reset_for_rebuild(self.store, began_under=began_under)
         resumed_publication = self._resume_pending_finalization(
             checkpoint,
             reporter=reporter,
@@ -724,34 +656,16 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         )
         if resumed_publication is not None:
             return resumed_publication
-        clean_has_confirmed_units = (
-            effective_clean
-            and next(
-                checkpoint.ledger.iter_units(checkpoint.generation_id),
-                None,
-            )
-            is not None
-        )
 
-        # Failure-safe rebuild (mirrors VaultIndexer.full_index): snapshot the
-        # existing chunk ids BEFORE streaming, keep the old chunks live, and
-        # purge only the ids absent from the new corpus afterwards. When
-        # ``clean=True`` is passed, ALSO drop the collection up front so
-        # schema-level changes (e.g. a new embedding dimension) take effect
-        # (#68). The snapshot must precede the pipeline because the
-        # pipeline upserts as it goes; an empty tree still falls through to the
-        # purge below so a rebuild after deleting every source file clears the
-        # old collection.
-        # Per-unit mutation spans defer control only through durable writes.
-        # A clean rebuild remains interruptible between those units.
+        # Per-unit mutation spans defer control only through durable writes,
+        # so the rebuild stays interruptible between those units and a later
+        # attempt of the same generation resumes its confirmed work.
         with checkpoint.preserve_incomplete_generation():
             existing_ids_before = self._prepare_full_collection(
                 checkpoint,
-                effective_clean=effective_clean,
-                clean_has_confirmed_units=clean_has_confirmed_units,
                 reporter=reporter,
             )
-            self._lifecycle.recover_removed_shadow_paths(
+            self._lifecycle.recover_removed_rebuild_paths(
                 checkpoint,
                 current_paths={
                     path.relative_to(self.root_dir).as_posix() for path in paths
@@ -772,7 +686,6 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                     checkpoint=checkpoint,
                     limits=limits,
                     content_epoch=self._content_epoch,
-                    code_build_target=self._lifecycle.active_build_target,
                     ingest_wait=False,
                     run_control=run_control,
                 ),
@@ -807,7 +720,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             # purge the collection must hold exactly the pre-existing snapshot,
             # less what this run retired, plus everything it published.
             self.store.apply_ingest_barrier(
-                self._lifecycle.active_build_target or self.store.CODE_TABLE_NAME,
+                self.store.CODE_TABLE_NAME,
                 expected_points=len((new_ids | existing_ids_before) - retired_ids),
                 write_policy=checkpoint.run_policy.store_write_policy,
             )
@@ -815,40 +728,27 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             stale_ids = self._reconcile_full_stale_ids(
                 _FullStaleReconciliation(
                     checkpoint=checkpoint,
-                    previous_metadata=previous_metadata,
                     metadata=meta,
                     existing_ids=existing_ids_before,
                     retained_ids=new_ids,
-                    collection=self._lifecycle.active_build_target,
                     reporter=reporter,
                 )
             )
 
             self._lifecycle.publish(
                 checkpoint,
-                build_target=self._lifecycle.active_build_target,
                 reporter=reporter,
                 phase_label="write metadata",
             )
         run_control.checkpoint()
 
-        duration_ms = int((time.time() - start) * 1000)
-        return IndexResult(
-            total=self.store.count_code(),
-            added=total_chunks,
-            updated=0,
-            # Mirror VaultIndexer.full_index - surface the post-stream
-            # purge count so MCP / CLI clients can observe how many
-            # stale chunks were swept (#68).
-            removed=len(stale_ids),
-            duration_ms=duration_ms,
-            device=self.model.device,
-            files=len(paths),
-            preprocess_ok=self._prep_ok,
-            preprocess_skipped=len(self._prep_skips),
-            preprocess_failures=list(self._prep_skips),
-            reuse=self._reuse_snapshot(),
-            drift=self._lifecycle.drift_snapshot(),
+        return self._run_result(
+            start,
+            IndexRunCounts(
+                added=total_chunks,
+                removed=len(stale_ids),
+                files=len(paths),
+            ),
         )
 
     def incremental_index(
@@ -966,7 +866,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                 execution=execution,
             )
 
-        start = time.time()
+        start = index_run_started()
         self._begin_preprocess_run(policy, run_control=run_control)
         run_control.checkpoint()
         from .._publication_state import (
@@ -1006,7 +906,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             )
         )
         if not attempted_paths:
-            return self._unchanged_incremental_result(started_at=start)
+            return self._run_result(start, IndexRunCounts())
         limits = self._consumer_pipeline.resolve_limits()
         checkpoint = self._open_incremental_checkpoint(
             policy=policy,
@@ -1034,7 +934,6 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                             checkpoint=checkpoint,
                             limits=limits,
                             content_epoch=self._content_epoch,
-                            code_build_target=self._lifecycle.active_build_target,
                             run_control=run_control,
                         ),
                     )
@@ -1053,19 +952,14 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                         run_control=run_control,
                     )
                 )
-                result = IndexResult(
-                    total=self.store.count_code(),
-                    added=len(new_files),
-                    updated=len(modified_files),
-                    removed=len(deleted_files),
-                    duration_ms=int((time.time() - start) * 1000),
-                    device=self.model.device,
-                    files=len(to_index),
-                    preprocess_ok=self._prep_ok,
-                    preprocess_skipped=len(self._prep_skips),
-                    preprocess_failures=list(self._prep_skips),
-                    reuse=self._reuse_snapshot(),
-                    drift=self._lifecycle.drift_snapshot(),
+                result = self._run_result(
+                    start,
+                    IndexRunCounts(
+                        added=len(new_files),
+                        updated=len(modified_files),
+                        removed=len(deleted_files),
+                        files=len(to_index),
+                    ),
                 )
             return result
 
@@ -1244,7 +1138,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
     ) -> IndexResult:
         """Reconcile only changed paths through the weighted pipeline."""
         run_control = execution.run_control
-        start = time.time()
+        start = index_run_started()
         self._begin_preprocess_run(policy, run_control=run_control)
         run_control.checkpoint()
         from .._publication_state import acquire_publication_snapshot
@@ -1291,7 +1185,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             )
         )
         if not attempted_paths:
-            return self._unchanged_incremental_result(started_at=start)
+            return self._run_result(start, IndexRunCounts())
         limits = self._consumer_pipeline.resolve_limits()
         checkpoint = self._open_incremental_checkpoint(
             policy=policy,
@@ -1319,7 +1213,6 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                         checkpoint=checkpoint,
                         limits=limits,
                         content_epoch=self._content_epoch,
-                        code_build_target=self._lifecycle.active_build_target,
                         run_control=run_control,
                     ),
                 )
@@ -1337,19 +1230,12 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                     run_control=run_control,
                 )
             )
-            total = self.store.count_code()
-            duration_ms = int((time.time() - start) * 1000)
-            return IndexResult(
-                total=total,
-                added=len(new_files),
-                updated=len(modified_files),
-                removed=len(delete_files.intersection(previous_metadata)),
-                duration_ms=duration_ms,
-                device=self.model.device,
-                files=len(to_index),
-                preprocess_ok=self._prep_ok,
-                preprocess_skipped=len(self._prep_skips),
-                preprocess_failures=list(self._prep_skips),
-                reuse=self._reuse_snapshot(),
-                drift=self._lifecycle.drift_snapshot(),
+            return self._run_result(
+                start,
+                IndexRunCounts(
+                    added=len(new_files),
+                    updated=len(modified_files),
+                    removed=len(delete_files.intersection(previous_metadata)),
+                    files=len(to_index),
+                ),
             )

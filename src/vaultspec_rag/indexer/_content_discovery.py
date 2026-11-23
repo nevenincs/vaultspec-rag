@@ -643,22 +643,3 @@ class CodeContentDiscovery:
                 admitted_bytes += source_size
             run_control.checkpoint()
         return admitted_files, admitted_bytes
-
-    def scan_admission(
-        self,
-        *,
-        sample_limit: int = DEFAULT_SCAN_SAMPLE_LIMIT,
-    ) -> ContentScanResult:
-        """Return structured admission from one freshly resolved snapshot."""
-        return self.preflight_content(sample_limit=sample_limit).scan
-
-    def scan_files(self) -> list[pathlib.Path]:
-        """Return the list of files that would be indexed.
-
-        Requires neither GPU nor vector store - discovery reads configuration,
-        ignore files, and path metadata only.
-
-        Returns:
-            List of absolute paths to indexable source files.
-        """
-        return list(self.scan_admission(sample_limit=0).files)

@@ -43,13 +43,13 @@ PROJECT_WITH_COMMENTS = (
 CANONICAL_TAIL = (
     "\n"
     "[[tool.uv.index]]\n"
-    'name = "pytorch-cu130"\n'
-    'url = "https://download.pytorch.org/whl/cu130"\n'
+    'name = "pytorch-cu134"\n'
+    'url = "https://download.pytorch.org/whl/cu134"\n'
     "explicit = true\n"
     "\n"
     "[tool.uv.sources]\n"
     "torch = [\n"
-    '    {index = "pytorch-cu130", '
+    '    {index = "pytorch-cu134", '
     "marker = \"sys_platform == 'linux' or sys_platform == 'win32'\"},\n"
     "]\n"
 )
@@ -57,7 +57,7 @@ CANONICAL_TAIL = (
 CUSTOM_WRONG_URL_TAIL = (
     "\n"
     "[[tool.uv.index]]\n"
-    'name = "pytorch-cu130"\n'
+    'name = "pytorch-cu134"\n'
     'url = "https://download.pytorch.org/whl/cu121"\n'
     "explicit = true\n"
 )
@@ -65,13 +65,13 @@ CUSTOM_WRONG_URL_TAIL = (
 CUSTOM_EXTRA_KEY_TAIL = (
     "\n"
     "[[tool.uv.index]]\n"
-    'name = "pytorch-cu130"\n'
-    'url = "https://download.pytorch.org/whl/cu130"\n'
+    'name = "pytorch-cu134"\n'
+    'url = "https://download.pytorch.org/whl/cu134"\n'
     "explicit = true\n"
     "\n"
     "[tool.uv.sources]\n"
     "torch = [\n"
-    '    {index = "pytorch-cu130", '
+    '    {index = "pytorch-cu134", '
     "marker = \"sys_platform == 'linux' or sys_platform == 'win32'\", "
     "priority = 1},\n"
     "]\n"
@@ -269,25 +269,25 @@ def test_remove_preserves_user_trivia_on_sibling_index_entries(
     tmp_path: Path,
 ) -> None:
     """When the consumer has *other* [[tool.uv.index]] entries alongside
-    our cu130 block, removal must keep their comments and formatting.
+    our CUDA block, removal must keep their comments and formatting.
     Regression guard for the remove_patch in-place pop() approach.
     """
     p = tmp_path / "pyproject.toml"
     content = (
-        PROJECT_ONLY + "\n" + "# user index before cu130\n"
+        PROJECT_ONLY + "\n" + "# user index before CUDA\n"
         "[[tool.uv.index]]\n"
         'name = "private"\n'
         'url = "https://private.example.com/simple"\n'
         "\n"
         "[[tool.uv.index]]\n"
-        'name = "pytorch-cu130"\n'
-        'url = "https://download.pytorch.org/whl/cu130"\n'
+        'name = "pytorch-cu134"\n'
+        'url = "https://download.pytorch.org/whl/cu134"\n'
         "explicit = true\n"
         "\n"
         "[tool.uv.sources]\n"
         "# user comment above torch pin\n"
         "torch = [\n"
-        '    {index = "pytorch-cu130", '
+        '    {index = "pytorch-cu134", '
         "marker = \"sys_platform == 'linux' or sys_platform == 'win32'\"},\n"
         "]\n"
     )
@@ -295,11 +295,11 @@ def test_remove_preserves_user_trivia_on_sibling_index_entries(
     _mutate.remove_patch(p)
     after = p.read_text(encoding="utf-8")
     # The user's sibling index entry and its preceding comment survive.
-    assert "# user index before cu130" in after
+    assert "# user index before CUDA" in after
     assert '"private"' in after
     assert "https://private.example.com/simple" in after
-    # The cu130 entry is gone.
-    assert "pytorch-cu130" not in after
+    # The CUDA entry is gone.
+    assert "pytorch-cu134" not in after
     # File still reparses as valid TOML.
     tomlkit.parse(after)
 
@@ -336,10 +336,10 @@ def test_manual_snippet_is_valid_toml() -> None:
     # Parses without error and yields our canonical shape. unwrap() drops
     # the tomlkit Item wrappers so nested subscription type-checks cleanly.
     doc = tomlkit.parse(snippet).unwrap()
-    assert doc["tool"]["uv"]["index"][0]["name"] == _index.CU130_INDEX_NAME
-    assert doc["tool"]["uv"]["index"][0]["url"] == _index.CU130_INDEX_URL
+    assert doc["tool"]["uv"]["index"][0]["name"] == _index.CUDA_INDEX_NAME
+    assert doc["tool"]["uv"]["index"][0]["url"] == _index.CUDA_INDEX_URL
     torch_source = doc["tool"]["uv"]["sources"]["torch"][0]
-    assert torch_source["index"] == _index.CU130_INDEX_NAME
+    assert torch_source["index"] == _index.CUDA_INDEX_NAME
 
 
 # ---------------------------------------------------------------------------
@@ -397,8 +397,8 @@ SCATTERED_PROJECT = (
 SCATTERED_CANONICAL_TAIL = (
     "\n"
     "[[tool.uv.index]]\n"
-    'name = "pytorch-cu130"\n'
-    'url = "https://download.pytorch.org/whl/cu130"\n'
+    'name = "pytorch-cu134"\n'
+    'url = "https://download.pytorch.org/whl/cu134"\n'
     "explicit = true\n"
     "\n"
     "[tool.ruff.lint]\n"
@@ -406,7 +406,7 @@ SCATTERED_CANONICAL_TAIL = (
     "\n"
     "[tool.uv.sources]\n"
     "torch = [\n"
-    '    {index = "pytorch-cu130", '
+    '    {index = "pytorch-cu134", '
     "marker = \"sys_platform == 'linux' or sys_platform == 'win32'\"},\n"
     "]\n"
 )
@@ -423,7 +423,7 @@ def test_scattered_tool_uv_detect_canonical(tmp_path: Path) -> None:
 
 
 def test_scattered_tool_uv_detect_missing(tmp_path: Path) -> None:
-    """Same scattered layout, but no cu130 block. Must classify as
+    """Same scattered layout, but no CUDA block. Must classify as
     MISSING (not crash, not CUSTOMISED, not NO_PROJECT_FILE).
     """
     p = tmp_path / "pyproject.toml"
@@ -469,8 +469,8 @@ def test_scattered_tool_uv_remove_succeeds(tmp_path: Path) -> None:
     report = _mutate.remove_patch(p)
     assert report.action == "removed"
     after = p.read_text(encoding="utf-8")
-    # cu130 block gone.
-    assert "pytorch-cu130" not in after
+    # CUDA block gone.
+    assert "pytorch-cu134" not in after
     assert "[[tool.uv.index]]" not in after
     # User's other sections survive.
     assert "[tool.ruff]" in after
@@ -482,7 +482,7 @@ def test_scattered_tool_uv_remove_succeeds(tmp_path: Path) -> None:
 
 def test_scattered_tool_uv_apply_then_remove_round_trip(tmp_path: Path) -> None:
     """Apply → remove on a scattered MISSING pyproject leaves a
-    semantically-equivalent project (modulo the cu130 block).
+    semantically-equivalent project (modulo the CUDA block).
     """
     p = tmp_path / "pyproject.toml"
     _write(p, SCATTERED_PROJECT)
@@ -784,9 +784,9 @@ def test_has_direct_torch_dep_no_project_file(tmp_path: Path) -> None:
         ("torch>=2.4", True),
         ("torch >= 2.4", True),
         ("torch[cuda]>=2.4", True),
-        ("torch == 2.11.0+cu130", True),
+        ("torch == 2.11.0+cu134", True),
         ("torch ; sys_platform == 'linux'", True),
-        ("torch @ https://download.pytorch.org/whl/cu130/torch-2.11.0.whl", True),
+        ("torch @ https://download.pytorch.org/whl/cu134/torch-2.11.0.whl", True),
         ("torch (>=2.4)", True),  # PEP 508 parenthesised version specifier
         ("Torch", True),  # PEP 503 case-insensitive normalisation
         ("TORCH>=2.4", True),
@@ -892,12 +892,12 @@ def test_remove_preserves_user_overrides_in_tool_uv(tmp_path: Path) -> None:
         PROJECT_ONLY + "\n[tool.uv]\n"
         'override-dependencies = ["urllib3<3"]\n'
         "\n[[tool.uv.index]]\n"
-        'name = "pytorch-cu130"\n'
-        'url = "https://download.pytorch.org/whl/cu130"\n'
+        'name = "pytorch-cu134"\n'
+        'url = "https://download.pytorch.org/whl/cu134"\n'
         "explicit = true\n"
         "\n[tool.uv.sources]\n"
         "torch = [\n"
-        '    {index = "pytorch-cu130", '
+        '    {index = "pytorch-cu134", '
         "marker = \"sys_platform == 'linux' or sys_platform == 'win32'\"},\n"
         "]\n"
     )
@@ -907,14 +907,14 @@ def test_remove_preserves_user_overrides_in_tool_uv(tmp_path: Path) -> None:
     assert "[tool.uv]" in after
     assert "override-dependencies" in after
     assert '"urllib3<3"' in after
-    assert "pytorch-cu130" not in after
+    assert "pytorch-cu134" not in after
     tomlkit.parse(after)
 
 
 def test_apply_scattered_pyproject_reparses_canonical(tmp_path: Path) -> None:
     """TEST-06 regression: ``apply_patch`` against a scattered
     ``[tool.uv.*]`` shape must produce TOML that re-parses cleanly
-    AND lands canonical cu130 keys at the documented dotted paths.
+    AND lands canonical CUDA keys at the documented dotted paths.
     The existing scattered test relies on ``detect_state`` returning
     CANONICAL - which transitively re-parses, but a future refactor
     that moved the reparse-guard out of ``apply_patch`` could pass
@@ -935,19 +935,19 @@ def test_apply_scattered_pyproject_reparses_canonical(tmp_path: Path) -> None:
     rep = _mutate.apply_patch(p)
     assert rep.action == "applied"
     after = p.read_text(encoding="utf-8")
-    # Re-parse the post-apply bytes directly, then assert cu130 keys
+    # Re-parse the post-apply bytes directly, then assert CUDA keys
     # land at the documented dotted paths.
     parsed = tomlkit.parse(after).unwrap()
     indices = parsed["tool"]["uv"]["index"]
     assert any(
-        e.get("name") == "pytorch-cu130"
-        and e.get("url") == "https://download.pytorch.org/whl/cu130"
+        e.get("name") == "pytorch-cu134"
+        and e.get("url") == "https://download.pytorch.org/whl/cu134"
         and e.get("explicit") is True
         for e in indices
     )
     sources = parsed["tool"]["uv"]["sources"]["torch"]
     assert any(
-        e.get("index") == "pytorch-cu130"
+        e.get("index") == "pytorch-cu134"
         and e.get("marker") == "sys_platform == 'linux' or sys_platform == 'win32'"
         for e in sources
     )
@@ -995,7 +995,7 @@ def test_apply_appended_index_block_has_trailing_blank_line(tmp_path: Path) -> N
     )
     _mutate.apply_patch(p)
     out = p.read_text(encoding="utf-8")
-    # The appended cu130 block must NOT collapse into the following
+    # The appended CUDA block must NOT collapse into the following
     # ``[tool.something]`` header.
     assert "explicit = true\n[tool.something]" not in out, out
 
@@ -1011,14 +1011,14 @@ def test_remove_orphan_canonical_index_only(tmp_path: Path) -> None:
         p,
         '[project]\nname = "demo"\n'
         "\n[[tool.uv.index]]\n"
-        'name = "pytorch-cu130"\n'
-        'url = "https://download.pytorch.org/whl/cu130"\n'
+        'name = "pytorch-cu134"\n'
+        'url = "https://download.pytorch.org/whl/cu134"\n'
         "explicit = true\n",
     )
     rep = _mutate.remove_patch(p)
     assert rep.action == "removed"
     after = p.read_text(encoding="utf-8")
-    assert "pytorch-cu130" not in after
+    assert "pytorch-cu134" not in after
     tomlkit.parse(after)
 
 
@@ -1031,13 +1031,13 @@ def test_remove_orphan_canonical_source_only(tmp_path: Path) -> None:
         p,
         '[project]\nname = "demo"\n'
         "\n[tool.uv.sources]\n"
-        'torch = [{index = "pytorch-cu130", '
+        'torch = [{index = "pytorch-cu134", '
         "marker = \"sys_platform == 'linux' or sys_platform == 'win32'\"}]\n",
     )
     rep = _mutate.remove_patch(p)
     assert rep.action == "removed"
     after = p.read_text(encoding="utf-8")
-    assert "pytorch-cu130" not in after
+    assert "pytorch-cu134" not in after
 
 
 def test_apply_with_existing_user_index(tmp_path: Path) -> None:
@@ -1056,10 +1056,10 @@ def test_apply_with_existing_user_index(tmp_path: Path) -> None:
     assert _inspect.detect_state(p) == _constants.TorchConfigState.CANONICAL
     after = p.read_text(encoding="utf-8")
     # Both indices present.
-    assert "pytorch-cu130" in after
+    assert "pytorch-cu134" in after
     assert "private" in after
-    # And we didn't accidentally add a second cu130 entry.
-    assert after.count("pytorch-cu130") == 2  # name + source.index reference
+    # And we didn't accidentally add a second CUDA entry.
+    assert after.count("pytorch-cu134") == 2  # name + source.index reference
 
 
 # ---------------------------------------------------------------------------
@@ -1212,7 +1212,7 @@ def test_apply_on_inline_sources_form(tmp_path: Path) -> None:
         "[tool.uv]\n"
         "sources = { numpy = { workspace = true } }\n",
     )
-    # Detect: MISSING (cu130 not present).
+    # Detect: MISSING (CUDA not present).
     assert _inspect.detect_state(p) == _constants.TorchConfigState.MISSING
     # Apply must NOT raise TypeError.
     rep = _mutate.apply_patch(p)

@@ -289,7 +289,9 @@ ones, embeds new and modified content, and purges chunks for deleted files. This
 is the right mode for everyday work - it touches only what moved and keeps the
 accelerator idle the rest of the time.
 
-A rebuild replaces the named target collection. Reach for it
+A rebuild deletes the named index and builds it again in the same collection. No copy of
+the old index is kept while it runs or after it finishes, and searches answer from the new
+index as it grows. Reach for it
 when incremental updates can't reconcile the index with reality: after a schema
 change such as a new embedding dimension, or after a large-scale restructure
 where content-hash bookkeeping no longer reflects the tree. A rebuild requires
@@ -315,6 +317,10 @@ to interpret the report.
 run carries a stable `error_kind`; a run whose progress has not moved for five
 minutes is flagged `stalled`; a run cut short by a dying process is restored as
 `interrupted` on the next startup. Those three are the signals worth acting on.
+One `error_kind` needs no action: `index_transition` means an explicit rebuild reset
+the source while the run was writing, so the run stopped before writing into the new
+index. Automatic updates retry on their own; resubmit a manual incremental run once the
+rebuild finishes.
 
 `stalled` is a report, not a verdict: it says nothing has moved for five minutes
 and the run is still going. A second, longer clock ends it - the run fails once

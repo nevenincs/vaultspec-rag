@@ -44,7 +44,13 @@ logger = logging.getLogger(__name__)
 if sys.platform == "win32":
     os.environ.setdefault(EnvVar.HF_DEACTIVATE_ASYNC_LOAD.value, "1")
 
-__all__ = ["EmbeddingModel", "QueryEmbeddingCache", "SparseResult", "load_reranker"]
+__all__ = [
+    "EmbeddingModel",
+    "LazyReranker",
+    "QueryEmbeddingCache",
+    "SparseResult",
+    "load_reranker",
+]
 
 
 @dataclass
@@ -464,6 +470,89 @@ def load_reranker() -> CrossEncoder:
             model_kwargs={"torch_dtype": torch.float16, "use_safetensors": True},
         )
     return reranker
+
+
+class LazyReranker:
+    """The one lazily loaded, cached reranker, loaded only under the GPU lock.
+
+    Constructing the CrossEncoder materialises its weights on the device. That
+    CUDA work must not overlap another root's forward pass or a second load on
+    the one shared GPU, so the load runs under the process's GPU lock: the lock
+    serialises the load against every forward pass and doubles as the
+    once-only guard of the cache. Without a GPU lock (a standalone,
+    single-tenant searcher) a private lock guards the cache instead.
+    """
+
+    def __init__(
+        self,
+        gpu_lock: threading.Lock | None,
+        reranker: CrossEncoder | None = None,
+        *,
+        on_load: Callable[[CrossEncoder], None] | None = None,
+    ) -> None:
+        """Hold an optional pre-loaded reranker and the lock its load needs.
+
+        Args:
+            gpu_lock: The process's GPU lock, or ``None`` when the caller has
+                no GPU serialisation.
+            reranker: An already-loaded reranker to serve without loading.
+            on_load: Called with each freshly loaded reranker while the lock
+                is still held.
+        """
+        self._lock = gpu_lock if gpu_lock is not None else threading.Lock()
+        self._reranker = reranker
+        self._on_load = on_load
+
+    @property
+    def loaded(self) -> CrossEncoder | None:
+        """Return the cached reranker, or ``None`` when none is loaded."""
+        return self._reranker
+
+    def get(self) -> CrossEncoder:
+        """Return the cached reranker, loading it under the lock on first use.
+
+        Raises:
+            RuntimeError: If no CUDA GPU is available.
+            ModelSnapshotError: If the model cache holds no snapshot of the
+                reranker that passes its check.
+        """
+        reranker = self._reranker
+        if reranker is not None:
+            return reranker
+        with timed_gpu_lock(self._lock):
+            return self.load_locked()
+
+    def load_locked(self) -> CrossEncoder:
+        """Return the cached reranker, loading it; the caller holds the lock.
+
+        Raises:
+            RuntimeError: If the lock is not held, or no CUDA GPU is available.
+            ModelSnapshotError: If the model cache holds no snapshot of the
+                reranker that passes its check.
+        """
+        # A plain lock records no owner, so this proves only that someone
+        # holds it; it still rejects a load reached with no lock at all.
+        if not self._lock.locked():
+            raise RuntimeError("the reranker loads only while the GPU lock is held")
+        reranker = self._reranker
+        if reranker is not None:
+            return reranker
+        from .config._settings import get_config
+
+        reranker = load_reranker()
+        self._reranker = reranker
+        logger.info(
+            "CrossEncoder reranker loaded on %s: %s",
+            str(getattr(reranker, "device", "unknown")),
+            get_config().reranker_model,
+        )
+        if self._on_load is not None:
+            self._on_load(reranker)
+        return reranker
+
+    def clear(self) -> None:
+        """Drop the cached reranker so its device memory can be released."""
+        self._reranker = None
 
 
 def _sparse_tensor_to_results(

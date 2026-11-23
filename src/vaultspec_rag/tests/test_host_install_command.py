@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from ..operator_state._provisioning import CU130_INDEX_STRATEGY, host_install_command
-from ..torch_config._index import CU130_INDEX_URL
+from ..operator_state._provisioning import CUDA_INDEX_STRATEGY, host_install_command
+from ..torch_config._index import CUDA_INDEX_URL
 
 pytestmark = pytest.mark.unit
 
@@ -25,7 +25,7 @@ def test_a_cuda_platform_install_pins_the_cuda_index(platform_name: str) -> None
     # Mutation proof: adding the index arguments only on "linux" failed the
     # "win32" case on this assertion.
     command = host_install_command(platform_name)
-    assert f"--index {CU130_INDEX_URL} --index-strategy {CU130_INDEX_STRATEGY}" in (
+    assert f"--index {CUDA_INDEX_URL} --index-strategy {CUDA_INDEX_STRATEGY}" in (
         command
     )
     assert '"vaultspec-rag[gpu,mcp]"' in command

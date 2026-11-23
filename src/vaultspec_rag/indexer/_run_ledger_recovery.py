@@ -30,13 +30,12 @@ if TYPE_CHECKING:
 
     from ._publication_proof import ProofCompatibilityKey
     from ._run_ledger_models import (
-        GenerationRow,
         PublicationMutationUnit,
         PublicationProof,
         PublicationReceipt,
         RunGeneration,
-        RunSignature,
     )
+    from ._run_ledger_schema import GenerationRow
 
 
 def _retained_after_restoration(
@@ -88,8 +87,6 @@ class RunLedgerRecoveryMethods:
             generation_id: str,
             key: ProofCompatibilityKey,
             proof: PublicationProof,
-            *,
-            rebuild_signature: RunSignature | None = None,
         ) -> RunGeneration: ...
 
     def generation_storage_reset_paths(self, generation_id: str) -> tuple[str, ...]:

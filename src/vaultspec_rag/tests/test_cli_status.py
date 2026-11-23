@@ -1102,15 +1102,15 @@ class TestTheReceiptLineOnStatus:
     ) -> None:
         """Nothing to act on is nothing to say."""
         from ..cli import _status
-        from ..operator_state._provisioning import CU130_INDEX_STRATEGY
-        from ..torch_config._index import CU130_INDEX_URL
+        from ..operator_state._provisioning import CUDA_INDEX_STRATEGY
+        from ..torch_config._index import CUDA_INDEX_URL
 
         interpreter = self._tool_environment(
             tmp_path,
             '[tool]\nrequirements = [{ name = "vaultspec-rag" }]\n\n'
             "[tool.options]\n"
-            f'index = [{{ url = "{CU130_INDEX_URL}" }}]\n'
-            f'index-strategy = "{CU130_INDEX_STRATEGY}"\n',
+            f'index = [{{ url = "{CUDA_INDEX_URL}" }}]\n'
+            f'index-strategy = "{CUDA_INDEX_STRATEGY}"\n',
         )
         monkeypatch.setattr(
             "vaultspec_rag.cli._process._resolve_daemon_interpreter",

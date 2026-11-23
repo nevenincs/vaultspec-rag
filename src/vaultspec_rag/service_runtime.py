@@ -48,7 +48,7 @@ from .config._types import EnvVar
 from .operator_state._compute import ProbeDepth
 from .operator_state._installation import DRIVER_CHECK_COMMAND, ComputeCapability
 from .operator_state._provisioning import (
-    CU130_INDEX_STRATEGY,
+    CUDA_INDEX_STRATEGY,
     HOST_PYTHON,
     host_install_command,
 )
@@ -57,7 +57,7 @@ from .operator_state._topology import (
     classify_environment,
     environment_root,
 )
-from .torch_config._index import CU130_INDEX_URL
+from .torch_config._index import CUDA_INDEX_URL
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -554,9 +554,9 @@ def install_arguments(
     if platform_name in {"win32", "linux"}:
         arguments += (
             "--index",
-            CU130_INDEX_URL,
+            CUDA_INDEX_URL,
             "--index-strategy",
-            CU130_INDEX_STRATEGY,
+            CUDA_INDEX_STRATEGY,
         )
     return arguments
 

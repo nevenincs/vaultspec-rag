@@ -42,8 +42,9 @@ from .._source_types import (
 )
 from ..indexer._run_ledger_models import RunAuthority
 from ..operator_state._models import ServiceStateReport
-from ..serviceclient._search_transport import document_search_filters, try_http_search
+from ..serviceclient._search_transport import try_http_search
 from ..serviceclient._transport import (
+    DocumentSearchFilters,
     _try_http_admin,
     _try_http_clean,
     _try_http_code_file,
@@ -188,6 +189,8 @@ FreshnessWaitSeconds = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 _CALLER_SEARCH_ERROR_CODES = frozenset(
     {
         "invalid_filter_for_search_type",
+        "unknown_filter_key",
+        "extractor_prefix_unbounded",
         "invalid_prefer_value",
         "unknown_source_type",
         UNSUPPORTED_FEEDBACK_ERROR,
@@ -499,11 +502,20 @@ async def search_documents(  # noqa: PLR0913 - MCP exposes the stable flat tool 
     extractor_id: str | None = None,
     extractor_version: str | None = None,
     locator_kind: str | None = None,
+    extractor_prefix: str | None = None,
+    metadata_filters: dict[str, list[str]] | None = None,
     freshness_policy: FreshnessWaitPolicy = FreshnessWaitPolicy.IMMEDIATE,
     freshness_wait_seconds: FreshnessWaitSeconds | None = None,
     project_root: str | None = None,
 ) -> SearchResults:
-    """Search independently indexed extracted-document content."""
+    """Search independently indexed extracted-document content.
+
+    extractor_id and locator_kind accept a comma-separated any-of list.
+    extractor_prefix keeps every extractor id equal to a dotted prefix or
+    below it (a.b matches a.b.c, not a.bc). metadata_filters maps a metadata
+    key the project declares filterable to the values any of which must match.
+    An undeclared key is refused with unknown_filter_key.
+    """
     port = _require_port()
     result = await _delegate(
         partial(
@@ -515,11 +527,13 @@ async def search_documents(  # noqa: PLR0913 - MCP exposes the stable flat tool 
             _resolve_project_root(project_root),
             freshness_policy=freshness_policy.value,
             freshness_wait_seconds=freshness_wait_seconds,
-            document_filters=document_search_filters(
+            document_filters=DocumentSearchFilters(
                 source_path=source_path,
                 extractor_id=extractor_id,
                 extractor_version=extractor_version,
                 locator_kind=locator_kind,
+                extractor_prefix=extractor_prefix,
+                metadata_filters=metadata_filters,
             ),
         )
     )
@@ -551,6 +565,8 @@ async def search_combined(  # noqa: PLR0913 - MCP exposes each owned filter expl
     extractor_id: str | None = None,
     extractor_version: str | None = None,
     locator_kind: str | None = None,
+    extractor_prefix: str | None = None,
+    metadata_filters: dict[str, list[str]] | None = None,
     freshness_policy: FreshnessWaitPolicy = FreshnessWaitPolicy.IMMEDIATE,
     freshness_wait_seconds: FreshnessWaitSeconds | None = None,
     project_root: str | None = None,
@@ -594,11 +610,13 @@ async def search_combined(  # noqa: PLR0913 - MCP exposes each owned filter expl
             date=date,
             tag=tag,
             intent=intent,
-            document_filters=document_search_filters(
+            document_filters=DocumentSearchFilters(
                 source_path=source_path,
                 extractor_id=extractor_id,
                 extractor_version=extractor_version,
                 locator_kind=locator_kind,
+                extractor_prefix=extractor_prefix,
+                metadata_filters=metadata_filters,
             ),
         )
     )
@@ -742,9 +760,14 @@ async def _clean_source(
     source: object,
     project_root: str | None,
 ) -> dict[str, Any]:
-    """Delegate one targeted clean and retain every domain outcome."""
+    """Delegate one targeted clean and return the service's outcome unchanged.
+
+    A clean that failed in every domain is still the service's structured
+    answer: each domain carries its typed refusal kind, detail and
+    remediation, and an exception string would keep none of them.
+    """
     port = _require_port()
-    result = await _delegate(
+    return await _delegate(
         partial(
             _try_http_clean,
             _canonical_tool_source(source),
@@ -752,11 +775,6 @@ async def _clean_source(
             _resolve_project_root(project_root),
         )
     )
-    if result.get("ok") is False and result.get("partial") is not True:
-        error = str(result.get("error") or "clean_failed")
-        message = str(result.get("message") or "The clean request failed.")
-        raise RuntimeError(f"{error}: {message}")
-    return result
 
 
 @mcp.tool(title="Clean document index", annotations=_CLEAN)

@@ -95,6 +95,8 @@ class JobErrorKind(StrEnum):
     LEDGER_CONTENDED = "ledger_contended"
     INGEST_VERIFICATION_FAILED = "ingest_verification_failed"
     FULL_REINDEX_REQUIRED = "full_reindex_required"
+    INDEX_TRANSITION = "index_transition"
+    SERVED_POINTER_UNVERIFIABLE = "served_pointer_unverifiable"
 
 
 _REMEDIATION: Final = MappingProxyType(
@@ -177,6 +179,19 @@ _REMEDIATION: Final = MappingProxyType(
         JobErrorKind.FULL_REINDEX_REQUIRED: (
             "the requested incremental operation cannot safely reconcile this index; "
             "explicitly request a rebuild for the affected source and project"
+        ),
+        JobErrorKind.INDEX_TRANSITION: (
+            "an explicit rebuild reset this source while the run was writing, so "
+            "nothing it wrote after the reset is served; automatic updates retry "
+            "on their own, and a rebuild another rebuild replaced needs a new "
+            "rebuild request"
+        ),
+        JobErrorKind.SERVED_POINTER_UNVERIFIABLE: (
+            "the project's served code pointer is unreadable or names a "
+            "collection this project does not own, so nothing was deleted; "
+            "inspect the pointer file named in the detail, delete it if it is "
+            "corrupt or names another project's collection, then retry and "
+            "rebuild the code index"
         ),
     }
 )

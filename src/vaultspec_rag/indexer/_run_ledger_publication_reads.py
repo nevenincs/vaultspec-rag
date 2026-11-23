@@ -21,7 +21,6 @@ from ._publication_proof import (
 from ._run_ledger_models import (
     FETCH_BATCH,
     FinalizationPhase,
-    GenerationRow,
     PublicationProof,
     PublicationReceipt,
     RunLedgerCorruptionError,
@@ -58,7 +57,8 @@ if TYPE_CHECKING:
     import sqlite3
     from pathlib import Path
 
-    from ._run_ledger_models import RunGeneration, RunSignature
+    from ._run_ledger_models import RunGeneration
+    from ._run_ledger_schema import GenerationRow
 
 
 class RunLedgerPublicationReadMethods:
@@ -76,8 +76,6 @@ class RunLedgerPublicationReadMethods:
             generation_id: str,
             key: ProofCompatibilityKey,
             proof: PublicationProof,
-            *,
-            rebuild_signature: RunSignature | None = None,
         ) -> RunGeneration: ...
 
     def _require_effective_read_authority(

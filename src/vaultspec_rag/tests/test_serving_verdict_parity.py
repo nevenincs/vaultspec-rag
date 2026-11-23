@@ -26,7 +26,7 @@ import pytest
 
 from ..cli._service_start import _daemon_is_serving
 from ..qdrant_runtime._constants import QdrantRuntimeState
-from ..server._lifespan import _service_health_status
+from ..server._health import _service_health_status
 from ..service import ServiceHealth
 from ._quiesce_helpers import running_quiesce_snapshot
 
@@ -142,5 +142,5 @@ def test_a_job_history_fault_is_not_an_infrastructure_fault() -> None:
     payload = _health_payload(reg_health, state)
     # The daemon is degraded by history alone; the CLI must still serve.
     payload["status"] = "degraded"
-    payload["degraded_reasons"] = ["the latest indexing job failed: other"]
+    payload["degraded_reasons"] = ["1 project index run failed: /w/demo (code: other)"]
     assert _daemon_is_serving(payload) is True

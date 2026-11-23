@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..._source_types import PublicSourceType
 from ...indexer import DocumentIndexer
 from ...progress import NullProgressReporter
 from ...search import VaultSearcher
@@ -34,7 +35,7 @@ def test_document_and_combined_search_use_real_content_and_stable_selection(
             encoding="utf-8",
         )
 
-    store.drop_document_table()
+    store.discard_source_storage(PublicSourceType.DOCUMENT)
     store.ensure_document_table()
     try:
         indexer = DocumentIndexer(
@@ -78,5 +79,5 @@ def test_document_and_combined_search_use_real_content_and_stable_selection(
         assert len(first) == 3
         assert any(result.source == "document" for result in first)
     finally:
-        store.drop_document_table()
+        store.discard_source_storage(PublicSourceType.DOCUMENT)
         store.ensure_document_table()

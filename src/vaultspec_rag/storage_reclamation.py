@@ -4,26 +4,20 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import store_schema
 from ._timestamps import parse_iso_timestamp
 from .storage_archive import archive_prefix, sweep_archive
 from .storage_reconciliation import ReconcileBatch, reconcile_collections
-from .storage_survey_ops import (
-    DeleteResult,
-    delete_prefix,
-    gather_survey,
-)
+from .storage_survey_ops import delete_prefix, gather_survey
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable
     from datetime import datetime
+    from pathlib import Path
 
     from qdrant_client import QdrantClient
 
-    from .generation_survey import RootGenerations
     from .storage_survey import NamespaceSurvey
 
 logger = logging.getLogger(__name__)
@@ -511,9 +505,6 @@ class MaintenanceResult:
         surveys: The full classified survey the cycle ran on, handed back
             so the daemon can publish it as the survey snapshot instead of
             paying the footprint walk twice.
-        generations: Per-collection outcomes from the superseded-generation
-            pass. Empty when no root is carrying any, which is the normal
-            state for a tree nobody has rebuilt since publication changed.
         reconcile: The geometry-reconcile pass, or ``None`` when the stage
             is disabled. Its reclaimed bytes are tracked separately from
             ``reclaimed_bytes`` because reconcile releases preallocation
@@ -530,7 +521,6 @@ class MaintenanceResult:
     dangling_bytes: int
     surveys: list[NamespaceSurvey] = field(default_factory=list)
     reconcile: ReconcileBatch | None = None
-    generations: list[DeleteResult] = field(default_factory=list)
 
 
 def _archive_and_settle(
@@ -720,63 +710,6 @@ def _pre_drop_reclaim_gate(
     return observed
 
 
-def _reclaim_generations_for_cycle(
-    client: QdrantClient,
-    *,
-    surveys: list[NamespaceSurvey],
-    now: datetime,
-    policy: ReclaimPolicy,
-    dry_run: bool,
-) -> list[DeleteResult]:
-    """Run the superseded-generation pass for one maintenance cycle.
-
-    Separated from the orphan pass because the two answer different
-    questions. An orphan is a namespace whose root vanished; a superseded
-    generation belongs to a root that is alive and well and simply publishes
-    somewhere else now. They share a cycle, not a rule.
-
-    Reader liveness comes from the project registry when one exists in this
-    process. Where it does not - an operator running maintenance out of band -
-    every root reports a reader, so the pass defers rather than acting on an
-    absence of evidence it has no way to gather.
-    """
-    from .generation_stamps import load_generation_stamps, record_generation_stamps
-
-    roots = {
-        survey.root: f"{survey.prefix}{store_schema.CODE_COLLECTION}"
-        for survey in surveys
-        if survey.root
-    }
-    if not roots:
-        return []
-
-    def _reader_present(root: str) -> bool:
-        try:
-            from .registry import get_registry
-        except ImportError:  # pragma: no cover - registry always importable
-            return True
-        try:
-            return get_registry().has_live_lease(Path(root))
-        except (OSError, RuntimeError):
-            # Cannot establish that nothing holds it, so treat it as held.
-            return True
-
-    results, advanced = reclaim_superseded_generations(
-        GenerationReclaimRequest(
-            client=client,
-            roots=roots,
-            stamps=load_generation_stamps(),
-            now=now,
-            grace_hours=policy.grace_hours_data,
-            reader_present=_reader_present,
-            dry_run=dry_run or policy.max_per_cycle <= 0,
-        )
-    )
-    if not dry_run:
-        record_generation_stamps(advanced)
-    return results
-
-
 @dataclass(frozen=True)
 class MaintenanceCycleRequest:
     """All dependencies and controls for one scheduled maintenance cycle."""
@@ -861,13 +794,6 @@ def run_maintenance_cycle(
         policy=request.policy,
         last_indexed=last_indexed,
     )
-    generations = _reclaim_generations_for_cycle(
-        request.client,
-        surveys=surveys,
-        now=request.now,
-        policy=request.policy,
-        dry_run=request.dry_run,
-    )
     applied: list[ReclaimDecision] = []
     archived: list[Path] = []
     reclaimed = 0
@@ -923,196 +849,4 @@ def run_maintenance_cycle(
         ),
         surveys=surveys,
         reconcile=reconcile,
-        generations=generations,
     )
-
-
-def _evaluate_generation_reports(
-    reports: tuple[RootGenerations, ...],
-    *,
-    stamps: Mapping[str, str],
-    now: datetime,
-    grace_hours: float,
-    reader_present: Callable[[str], bool],
-) -> tuple[list[DeleteResult], list[str], list[str], list[str]]:
-    """Decide reclaim/hold/skip for every unreferenced generation, per root.
-
-    Returns ``(results, droppable, held, unreferenced)``.
-    """
-    from .generation_survey import GenerationReclaimContext, decide_generation_reclaim
-
-    results: list[DeleteResult] = []
-    droppable: list[str] = []
-    held: list[str] = []
-    unreferenced: list[str] = []
-    for report in reports:
-        has_reader = reader_present(report.root)
-        for collection in report.unreferenced:
-            unreferenced.append(collection)
-            decision = decide_generation_reclaim(
-                collection,
-                GenerationReclaimContext(
-                    stamps=stamps,
-                    now=now,
-                    grace_hours=grace_hours,
-                    reader_present=has_reader,
-                    # survey_generations already omitted any root whose pointer it
-                    # could not read, so every collection reaching here came from a
-                    # root whose served name was legible at decision time.
-                    pointer_verifiable=True,
-                ),
-            )
-            if decision.action == "held":
-                held.append(collection)
-            if decision.droppable:
-                droppable.append(collection)
-            else:
-                results.append(
-                    DeleteResult(collection, "skipped", reason=decision.reason)
-                )
-    return results, droppable, held, unreferenced
-
-
-def _hold_unreported_root_generations(
-    roots: Mapping[str, str],
-    live: list[str],
-    reported: set[str],
-    held: list[str],
-) -> None:
-    """Reset the clock for generations whose root pointer was unreadable."""
-    for root, derived in roots.items():
-        if root in reported:
-            continue
-        held.extend(name for name in live if name.startswith(derived))
-
-
-def _drop_generation_collections(
-    client: QdrantClient,
-    droppable: list[str],
-    held: list[str],
-    *,
-    dry_run: bool,
-) -> tuple[list[DeleteResult], set[str]]:
-    """Drop each droppable generation; a failed drop rejoins the held set.
-
-    The whole transport class is named, not the builtins alone. This is a
-    per-collection loop, so a server that stops answering part-way through it
-    used to abort the pass - and with it the cycle it runs at the head of,
-    before a single orphan had been considered.
-    """
-    from ._qdrant_transport import TRANSPORT_FAILURES
-
-    results: list[DeleteResult] = []
-    dropped: set[str] = set()
-    for collection in droppable:
-        if dry_run:
-            results.append(DeleteResult(collection, "would_remove", [collection]))
-            continue
-        try:
-            from ._qdrant_local_lifetime import close_local_collection
-
-            close_local_collection(client, collection)
-            client.delete_collection(collection_name=collection)
-        except TRANSPORT_FAILURES as exc:
-            results.append(DeleteResult(collection, "failed", reason=str(exc)))
-            held.append(collection)
-            continue
-        results.append(DeleteResult(collection, "removed", [collection]))
-        dropped.add(collection)
-    return results, dropped
-
-
-@dataclass(frozen=True)
-class GenerationReclaimRequest:
-    """All evidence and controls for one superseded-generation pass."""
-
-    client: QdrantClient
-    roots: Mapping[str, str]
-    stamps: Mapping[str, str]
-    now: datetime
-    grace_hours: float
-    reader_present: Callable[[str], bool]
-    dry_run: bool
-
-
-def reclaim_superseded_generations(
-    request: GenerationReclaimRequest,
-) -> tuple[list[DeleteResult], dict[str, str]]:
-    """Drop code generations no root serves any more, and advance their clocks.
-
-    Read-and-drop only. Every gate lives in ``decide_generation_reclaim``; this
-    gathers the evidence that gate needs and acts on nothing it did not
-    approve.
-
-    The served pointer is resolved HERE, per root, at the moment of the
-    decision - never carried in from a survey gathered earlier in the cycle. A
-    collection can become the served one between a gather and a drop, and a
-    stale name would walk past every gate while pointing at a live index.
-
-    Returns the per-collection outcomes and the advanced stamp map. The caller
-    persists the stamps; nothing is written here beyond the drops themselves,
-    so a failure part-way leaves the clocks untouched rather than crediting a
-    window that did not run.
-
-    A server that cannot answer ends this pass, never the cycle around it.
-    This pass runs first, so an escape from either of its two server calls
-    aborted the tick before any orphan was considered - a slow generation
-    listing suppressing the reclamation the cycle exists to do.
-
-    Args:
-        client: Qdrant client for the managed server.
-        roots: Root path to that root's derived code collection name.
-        stamps: Collection to ``first_seen_unreferenced`` ISO timestamp.
-        now: The evaluation clock (timezone-aware).
-        grace_hours: Continuous unreferenced hours before a drop is allowed.
-        reader_present: Predicate answering whether a root has a live lease.
-        dry_run: When True, plan and mutate nothing.
-    """
-    from ._qdrant_transport import TRANSPORT_FAILURES
-    from .generation_survey import advance_generation_stamps, survey_generations
-
-    try:
-        live = [c.name for c in request.client.get_collections().collections]
-    except TRANSPORT_FAILURES:
-        # Nothing can be decided without the live set: which generations a
-        # root still serves, which are unreferenced, and which stamps name
-        # collections that no longer exist all read from it. The clocks are
-        # handed back untouched rather than emptied, because the caller
-        # persists this map wholesale and an empty one would restart every
-        # window on a read that failed.
-        logger.warning(
-            "generation pass skipped: collection listing unavailable",
-            exc_info=True,
-        )
-        return [], dict(request.stamps)
-    reports = survey_generations(request.roots, live)
-    results, droppable, held, unreferenced = _evaluate_generation_reports(
-        reports,
-        stamps=request.stamps,
-        now=request.now,
-        grace_hours=request.grace_hours,
-        reader_present=request.reader_present,
-    )
-
-    # A root omitted from the report had an unreadable pointer, so any
-    # generation of it that exists must have its clock reset rather than keep
-    # accumulating a window it did not continuously earn.
-    reported = {report.root for report in reports}
-    _hold_unreported_root_generations(request.roots, live, reported, held)
-
-    drop_results, dropped = _drop_generation_collections(
-        request.client, droppable, held, dry_run=request.dry_run
-    )
-    results.extend(drop_results)
-
-    # A dropped collection keeps no clock: it no longer exists, and a stamp for
-    # it would outlive it as debris that never expires. A failed drop is not
-    # dropped, so it stays in the held set and its window restarts.
-    advanced = advance_generation_stamps(
-        request.stamps,
-        unreferenced=(name for name in unreferenced if name not in dropped),
-        held=[*held, *dropped],
-        now_iso=request.now.isoformat(),
-        live=live,
-    )
-    return results, advanced

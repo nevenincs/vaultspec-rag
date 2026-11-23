@@ -120,7 +120,12 @@ A connected server publishes twelve tools. Six read:
   the `exclude_domains`, `only_domains`, and `include_domains` arguments. See
   [Filter noise by domain](search-and-index.md#filter-noise-by-domain).
 - `search_documents` searches extracted documents, meaning preprocessed
-  non-source content, as an independent domain.
+  non-source content, as an independent domain. `extractor_id` and
+  `locator_kind` take a comma-separated list, `extractor_prefix` narrows to a
+  dotted extractor family, and `metadata_filters` maps each declared metadata
+  key to a list of values, any of which matches. `search_combined` accepts the
+  same arguments with `include_documents=true`. An undeclared key returns the
+  tool error `unknown_filter_key`.
 - `search_combined` defaults to relevant ADRs and code, ranked together. Set
   `include_documents=true` to search all three domains and all vault record types.
   Explicit `doc_type` or inline `type:plan` overrides the ADR default. Each search

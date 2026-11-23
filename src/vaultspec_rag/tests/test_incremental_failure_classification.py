@@ -213,14 +213,14 @@ def test_exception_after_publication_preserves_success(
     original_count = case.indexer.store.count_code
     parent_id = case.checkpoint.generation_id
 
-    def count_after_publication(collection: str | None = None) -> int:
+    def count_after_publication() -> int:
         checkpoint = case.checkpoint
         if (
             checkpoint.generation_id != parent_id
             and checkpoint.generation.terminal_state is RunTerminalState.SUCCEEDED
         ):
             raise error
-        return original_count(collection=collection)
+        return original_count()
 
     monkeypatch.setattr(case.indexer.store, "count_code", count_after_publication)
     with pytest.raises(JobError) as caught:

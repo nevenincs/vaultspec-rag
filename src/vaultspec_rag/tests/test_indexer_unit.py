@@ -133,6 +133,55 @@ class TestIndexResult:
         assert result.total == 100
         assert result.device == "cuda"
 
+    def test_duration_is_measured_on_the_monotonic_clock(self) -> None:
+        """A run's duration is elapsed time on the clock a wall step cannot move.
+
+        The start mark is moved 2.5 s into the past on the real monotonic
+        clock and the run is finished immediately, so the duration must land
+        just above 2500 ms. Mutation: measuring either end of the run with
+        ``time.time`` pairs a wall-clock reading with a monotonic one, which is
+        off by the system's uptime from the epoch and fails the window below.
+        """
+        from ..embeddings import EmbeddingModel
+        from ..indexer import _vault_prep
+
+        model = EmbeddingModel.__new__(EmbeddingModel)
+        model._device = "cuda"
+
+        started = _vault_prep.index_run_started() - 2.5
+        result = _vault_prep.finished_index_result(
+            started,
+            _vault_prep.IndexRunCounts(added=2),
+            _vault_prep.IndexRunTelemetry(),
+            model=model,
+            total=2,
+        )
+
+        assert 2500 <= result.duration_ms < 4500
+
+    def test_skip_count_is_derived_from_the_failures(self) -> None:
+        """Every source reports one skip per listed preprocess failure."""
+        from ..embeddings import EmbeddingModel
+        from ..indexer import _vault_prep
+
+        model = EmbeddingModel.__new__(EmbeddingModel)
+        model._device = "cuda"
+
+        result = _vault_prep.finished_index_result(
+            _vault_prep.index_run_started(),
+            _vault_prep.IndexRunCounts(),
+            _vault_prep.IndexRunTelemetry(
+                preprocess_failures=("a.pdf: timeout", "b.pdf: refused")
+            ),
+            model=model,
+            total=0,
+        )
+
+        assert result.preprocess_skipped == 2
+        assert result.preprocess_failures == ["a.pdf: timeout", "b.pdf: refused"]
+        assert result.device == "cuda"
+        assert result.drift is None
+
 
 class TestPrepareDocument:
     def test_prepares_valid_document(self, synthetic_vault: CorpusManifest) -> None:
@@ -676,7 +725,7 @@ class TestVaultragignore:
             tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
         )
 
-        files = indexer.scan_files()
+        files = indexer._scan_codebase()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
         assert "main.py" in rel
         assert "generated.py" not in rel
@@ -692,7 +741,7 @@ class TestVaultragignore:
             tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
         )
 
-        files = indexer.scan_files()
+        files = indexer._scan_codebase()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
         assert "app.py" in rel
 
@@ -711,7 +760,7 @@ class TestVaultragignore:
             options=CodebaseIndexer.Options(extra_excludes=["temp.py"]),
         )
 
-        files = indexer.scan_files()
+        files = indexer._scan_codebase()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
         assert "main.py" in rel
         assert "temp.py" not in rel
@@ -731,7 +780,7 @@ class TestVaultragignore:
             tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
         )
 
-        files = indexer.scan_files()
+        files = indexer._scan_codebase()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
         assert "secret.py" not in rel, (
             ".vaultragignore negation must not override .gitignore"
@@ -757,7 +806,7 @@ class TestVaultragignore:
             tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
         )
 
-        files = indexer.scan_files()
+        files = indexer._scan_codebase()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
         assert "main.py" in rel
         assert "foo.test.py" not in rel
@@ -778,24 +827,11 @@ class TestVaultragignore:
             tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
         )
 
-        files = indexer.scan_files()
+        files = indexer._scan_codebase()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
         assert "main.py" in rel
         assert "build_output.py" not in rel
         assert "vendor_lib.py" not in rel
-
-    @pytest.mark.unit
-    def test_scan_files_matches_scan_codebase(self, tmp_path: Path):
-        """scan_files() returns the same result as _scan_codebase()."""
-        from ..indexer import CodebaseIndexer
-
-        (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
-
-        indexer = CodebaseIndexer(
-            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
-        )
-
-        assert indexer.scan_files() == indexer._scan_codebase()
 
     @pytest.mark.unit
     def test_vaultragignore_directory_exclusion(self, tmp_path: Path):
@@ -812,7 +848,7 @@ class TestVaultragignore:
             tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
         )
 
-        files = indexer.scan_files()
+        files = indexer._scan_codebase()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
         assert "main.py" in rel
         assert "vendor/lib.py" not in rel

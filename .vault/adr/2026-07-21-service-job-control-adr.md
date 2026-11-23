@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#service-job-control'
 date: '2026-07-21'
-modified: '2026-10-12'
-body_hash: 'sha256:be21286f79a83f96f56066c3b00d9b463bdddc1abae77aa884a1d2f576ae8bf0'
+modified: '2026-11-20'
+body_hash: 'sha256:edfd8ab40bcbc269453aaebb8447d76e2566e6e39b2b1d315caa5ba16d3618d7'
 related:
   - "[[2026-07-21-service-job-control-research]]"
   - "[[2026-07-21-service-job-control-reference]]"
@@ -14,6 +14,7 @@ related:
   - "[[2026-06-30-mcp-search-scope-adr]]"
   - "[[2026-07-21-index-backpressure-storage-hygiene-adr]]"
   - '[[2026-10-12-destructive-rebuild-lifecycle-adr]]'
+  - '[[2026-11-20-job-admission-visibility-adr]]'
 ---
 
 # `service-job-control` adr: `desired-state control for indexing jobs` | (**status:** `accepted`)
@@ -67,11 +68,15 @@ indexing job.
 
 ## Constraints
 
+### 2026-11-20: bounded job wait route
+
+`2026-11-20-job-admission-visibility-adr` adds one read route and one `server job` verb. `GET /jobs/{job_id}/wait?until=admitted|finished&timeout=<seconds>` is read-only, token-gated and bounded: the timeout defaults to 30 seconds and is capped at 120 seconds, and expiry answers 200 with `reached: false`. `server job wait` adapts it with one JSON envelope on every exit path. `/jobs` gains a service-side `waiting` filter applied before pagination. Lifecycle states, desired states, control routes and the MCP scope are unchanged; MCP gains no wait tool.
+
 ### 2026-10-12: reset-first rebuild and progressive search
 
 The user authorized reset-first rebuilds with concurrent search on 2026-10-12. `2026-10-12-destructive-rebuild-lifecycle-adr` replaces the Control boundary paragraph that protects a clean rebuild from drop through full publication and the corresponding long-control-latency consequence. Protect reset and each indivisible mutation/commit only. Once the empty target is ready, cooperative pause or cancellation may stop at a durable unit boundary, release resources, and leave current rebuild points searchable with incomplete readiness. Resume or linked retry explicitly binds the same rebuild generation; a fresh rebuild resets again. A reset interrupted before confirmation replays idempotently. There is no recovery fallback to the discarded old index. Desired-state ownership, acknowledgement after unwind, immutable terminal history, and all ordinary job APIs remain binding.
 
-### Retained original ruling, subject to the amendment above
+### Retained original ruling, subject to the amendments above
 
 - The accepted asynchronous-indexing decision remains binding: submission stays
   non-blocking and the service retains strong references to live work. `JobManager` becomes

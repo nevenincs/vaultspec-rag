@@ -166,6 +166,26 @@ def _running_service_record(
         yield record_path
 
 
+@contextlib.contextmanager
+def _live_status_service(
+    status_dir: Path,
+    contract_server: _ContractServer,
+    *,
+    drop: tuple[str, ...] = (),
+) -> typing.Generator[int]:
+    """Serve the shared status contract behind a live-looking service record.
+
+    Takes the already-constructed server so each caller keeps its own typed
+    ``_status_contract_server`` arguments, and owns the teardown of both the
+    server thread and the status-directory isolation.
+    """
+    with (
+        _serving(contract_server) as port,
+        _running_service_record(status_dir, port, drop=drop),
+    ):
+        yield port
+
+
 def _no_service() -> DataPlaneService:
     """Return the data-plane resolution a client sees when no daemon is up.
 
@@ -524,6 +544,8 @@ def _status_contract_jobs_payload(
         "returned": len(jobs),
         "summary": {
             "running": running_count,
+            "working": running_count,
+            "waiting": 0,
             "phases": phases,
         },
     }
@@ -888,6 +910,10 @@ def _jobs_empty_contract_server() -> tuple[
                 "filters": {
                     "limit": int(query.get("limit", ["20"])[0]),
                     "phase": query.get("phase", [None])[0],
+                    "state": query.get("state", [None])[0],
+                    "waiting": {"true": True, "false": False}.get(
+                        query.get("waiting", [""])[0].lower()
+                    ),
                     "source": query.get("source", [None])[0],
                     "trigger": query.get("trigger", [None])[0],
                     "query": query.get("query", [None])[0],
@@ -1048,6 +1074,7 @@ __all__ = [
     "_jobs_empty_contract_server",
     "_jobs_populated_contract_server",
     "_label_values",
+    "_live_status_service",
     "_logs_contract_server",
     "_no_service",
     "_parsed_json_object",

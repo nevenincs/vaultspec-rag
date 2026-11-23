@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from . import store_schema
 from ._qdrant_local_lifetime import close_local_collection
-from ._store_models import code_collection_matches_derived, read_served_pointer
+from ._store_models import (
+    code_collection_matches_derived,
+    established_served_code_collection,
+)
+from ._store_writes import hold_within_budget
 
 if TYPE_CHECKING:
     import pathlib
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Generator, Iterable, Sequence
     from contextlib import AbstractContextManager
 
     from qdrant_client import QdrantClient
@@ -24,6 +29,7 @@ if TYPE_CHECKING:
 
     from ._source_types import PublicSourceType
     from ._store_locks import ReentrantLock
+    from ._store_writes import StoreWritePolicy
 
 
 logger = logging.getLogger(__name__)
@@ -83,6 +89,32 @@ class _VaultCollectionMixin:
         ) -> None: ...
 
         def _point_lock(self, collection: str) -> AbstractContextManager[object]: ...
+
+        def _lock_for(self, collection: str) -> ReentrantLock: ...
+
+        def _retried[T](self, description: str, op: Callable[[int], T]) -> T: ...
+
+    # The metadata keys this root declares filterable. Empty until a caller
+    # that has read the root's declaration hands it over; an immutable default
+    # so an instance assignment never shares state between stores.
+    _document_metadata_keys: tuple[store_schema.DeclaredMetadataKey, ...] = ()
+
+    def declare_document_metadata_keys(
+        self, keys: Iterable[store_schema.DeclaredMetadataKey]
+    ) -> None:
+        """Make *keys* the declared filterable metadata keys of this root.
+
+        A changed declaration releases the document collection's ensure latch,
+        so the next ensure creates the index of each newly declared key and
+        drops the index of each key no longer declared. The stored metadata is
+        never touched, so a change needs no rebuild.
+        """
+        declared = tuple(sorted(set(keys)))
+        with self._lifecycle_lock:
+            if declared == self._document_metadata_keys:
+                return
+            self._document_metadata_keys = declared
+            self._ensured.pop(self.DOCUMENT_TABLE_NAME, None)
 
     def _ensure_collection(self, name: str) -> None:
         """Create a collection with dense + sparse vectors if it doesn't exist.
@@ -200,15 +232,28 @@ class _VaultCollectionMixin:
             if not self._server_mode:
                 close_local_collection(self.client, name)
             self.client.delete_collection(name)
-        if not self._server_mode:
-            import pathlib as _pathlib
+        self._refuse_surviving_local_directory(name)
 
-            collection_dir = _pathlib.Path(self.db_path) / "collection" / name
-            if collection_dir.exists():
-                raise RuntimeError(
-                    f"local collection directory survived delete_collection: "
-                    f"{collection_dir}; same-name recreate would resurrect points"
-                )
+    def _refuse_surviving_local_directory(self, name: str) -> None:
+        """Raise when *name*'s on-disk directory exists in local mode.
+
+        A local create under a name whose directory exists re-reads the
+        storage in it, so a directory outliving its collection would bring
+        the deleted points back. Server mode keeps no local directory.
+
+        Raises:
+            RuntimeError: the directory exists.
+        """
+        if self._server_mode:
+            return
+        import pathlib as _pathlib
+
+        collection_dir = _pathlib.Path(self.db_path) / "collection" / name
+        if collection_dir.exists():
+            raise RuntimeError(
+                f"local collection directory survived delete_collection: "
+                f"{collection_dir}; same-name recreate would resurrect points"
+            )
 
     def _drop_collection(self, collection: str) -> None:
         """Drop one collection if it exists and clear its ensured latch.
@@ -223,62 +268,40 @@ class _VaultCollectionMixin:
                 logger.info("Dropped collection '%s'", collection)
             self._ensured[collection] = False
 
-    def drop_table(self) -> None:
-        """Drop the vault_docs collection if it exists."""
-        self._drop_collection(self.TABLE_NAME)
+    def _code_collection(self) -> str:
+        """Return the code collection this store reads and writes.
 
-    def _code_collection(self, collection: str | None) -> str:
-        """Return the code collection a call targets.
-
-        Defaults to the served name, so every existing caller keeps reading
-        and writing exactly where it did. A rebuild passes its generation
-        collection instead, which is what lets it populate a replacement while
-        the served one keeps answering searches.
-
-        The target is a per-call argument rather than instance state because
-        one store is shared between search and indexing: rebinding it on the
-        instance would drag concurrent readers onto the half-built generation.
+        The derived name, or the historical generation a root's pointer still
+        names until an explicit code reset discards it. Checked on every call
+        so a name outside this root's code namespace never reaches storage.
         """
-        target = self.CODE_TABLE_NAME if collection is None else collection
+        target = self.CODE_TABLE_NAME
         if not code_collection_matches_derived(target, self.DERIVED_CODE_TABLE_NAME):
             raise ValueError("collection must be a root-owned code collection")
         return target
 
-    def drop_code_table(self, collection: str | None = None) -> None:
-        """Drop a code collection if it exists, defaulting to the served one."""
-        if collection is None:
-            pointer = read_served_pointer(self.root_dir, self.DERIVED_CODE_TABLE_NAME)
-            if not pointer.verifiable:
-                raise RuntimeError(
-                    "cannot drop code without a verifiable served pointer"
-                )
-            collection = pointer.collection or self.DERIVED_CODE_TABLE_NAME
-        self._drop_collection(self._code_collection(collection))
-
-    def drop_document_table(self) -> None:
-        """Drop only the independently owned document collection."""
-        self._drop_collection(self.DOCUMENT_TABLE_NAME)
-
     def owned_code_collections(self) -> tuple[str, ...]:
         """Return every existing code collection this root owns.
 
-        The derived base name, whatever the pointer serves, and any
-        generation-suffixed name the writer minted here - decided by the one
-        predicate the drop enforces, so this cannot name a collection a drop
-        would refuse or miss one it would accept. An interrupted rebuild
-        leaves such a generation behind, which is why reading only the served
-        name is not a reading of this root's code namespace.
+        The derived name and every historical generation name a build before
+        the canonical layout minted from it, whether a pointer still serves it
+        or an interrupted build left it behind. One exact predicate decides
+        membership, so a name that merely shares the derived prefix is never
+        enumerated and a reset never touches it.
+
+        A pointer naming this root's code collection under the other backend
+        does not block enumeration: that collection lives in the other
+        backend's storage, so it is never enumerated here and never dropped.
 
         Raises:
-            RuntimeError: the served pointer is unreadable, so what this root
-                serves is not established. The reset refuses on the same
-                reading rather than guessing.
+            ServedPointerUnverifiableError: the served pointer is unreadable,
+                so what this root serves is not established. The reset
+                refuses on the same reading rather than guessing.
         """
         derived = self.DERIVED_CODE_TABLE_NAME
-        if not read_served_pointer(self.root_dir, derived).verifiable:
-            raise RuntimeError(
-                "cannot enumerate code collections without a verifiable served pointer"
-            )
+        # Called for its refusal: the served name, once established, is
+        # always among the names the predicate below enumerates.
+        established_served_code_collection(self.root_dir, derived)
         return tuple(
             sorted(
                 name
@@ -287,37 +310,149 @@ class _VaultCollectionMixin:
             )
         )
 
-    def reset_source(self, source: PublicSourceType) -> list[str]:
-        """Invalidate selected proofs and recreate storage under a writer lease."""
-        from ._publication_state import clear_publication_state
-        from ._source_types import PublicSourceType
+    def owned_source_collections(self, source: PublicSourceType) -> tuple[str, ...]:
+        """Return every existing collection a reset of *source* discards.
 
-        sources = (
-            (PublicSourceType.VAULT, PublicSourceType.CODE, PublicSourceType.DOCUMENT)
-            if source is PublicSourceType.COMBINED
-            else (source,)
-        )
-        code_target = None
-        if PublicSourceType.CODE in sources:
-            pointer = read_served_pointer(self.root_dir, self.DERIVED_CODE_TABLE_NAME)
-            if not pointer.verifiable:
+        Vault and documents own one collection each. Code owns the derived
+        name and every historical generation collection of this root, as
+        :meth:`owned_code_collections` enumerates them.
+
+        Raises:
+            ServedPointerUnverifiableError: code's served pointer is
+                unverifiable, so its ownership is not established and nothing
+                may be discarded.
+        """
+        from ._source_types import PublicSourceType as _Source
+
+        if source is _Source.CODE:
+            return self.owned_code_collections()
+        canonical = self._canonical_source_collection(source)
+        return (canonical,) if self._collection_exists(canonical) else ()
+
+    def _canonical_source_collection(self, source: PublicSourceType) -> str:
+        from ._source_types import PublicSourceType as _Source
+
+        if source is _Source.CODE:
+            return self.DERIVED_CODE_TABLE_NAME
+        if source is _Source.VAULT:
+            return self.TABLE_NAME
+        if source is _Source.DOCUMENT:
+            return self.DOCUMENT_TABLE_NAME
+        raise ValueError("a reset names one concrete source")
+
+    @contextmanager
+    def held_for_reset(
+        self,
+        source: PublicSourceType,
+        policy: StoreWritePolicy | None,
+    ) -> Generator[None]:
+        """Hold every lock a reset of *source* takes, before the reset begins.
+
+        The lifecycle lock comes first and then each collection the reset
+        drops or recreates, in name order, so the documented order holds and
+        the reset's own drop and recreate only re-enter locks already held:
+        nothing inside the reset waits on a lock. While a collection is busy
+        the lifecycle lock is released between attempts, so a queued reset
+        never stalls another store's lifecycle work or a health read. With a
+        run's *policy* every attempt delivers its pause or cancel and expires
+        at its no-progress deadline, so a reset queued behind a holder that
+        never lets go stops before recording any intent.
+
+        The collections to lock are listed before any lock is held, so they
+        are listed again once the lifecycle lock is held; a set that changed
+        in between would be discarded without every collection's lock.
+
+        Raises:
+            RuntimeError: the collections *source* owns changed while the
+                locks were being taken. Nothing was recorded or discarded.
+        """
+        collections = self._reset_collections(source)
+        locks: list[ReentrantLock] = [self._lifecycle_lock]
+        if not self._server_mode:
+            locks.extend(self._lock_for(collection) for collection in collections)
+        with hold_within_budget(
+            locks, policy, description=f"{source.value} reset locks"
+        ):
+            held_for = self._reset_collections(source)
+            if held_for != collections:
                 raise RuntimeError(
-                    "cannot clean code without a verifiable served pointer"
+                    f"{source.value} collections changed while the reset took "
+                    f"its locks: locked {', '.join(collections)}, now "
+                    f"{', '.join(held_for)}; no reset began"
                 )
-            code_target = pointer.collection or self.DERIVED_CODE_TABLE_NAME
-        for selected in sources:
-            clear_publication_state(self.root_dir, selected, self.backend_identity)
-        for selected in sources:
-            if selected is PublicSourceType.VAULT:
-                self.drop_table()
-                self.ensure_table()
-            elif selected is PublicSourceType.CODE:
-                self.drop_code_table(code_target)
-                self.ensure_code_table(code_target)
-            else:
-                self.drop_document_table()
-                self.ensure_document_table()
-        return [selected.value for selected in sources]
+            yield
+
+    def _reset_collections(self, source: PublicSourceType) -> list[str]:
+        """Name every collection a reset of *source* locks, in lock order."""
+        return sorted(
+            {
+                *self.owned_source_collections(source),
+                self._canonical_source_collection(source),
+            }
+        )
+
+    def discard_source_storage(self, source: PublicSourceType) -> None:
+        """Hard-delete every collection *source* owns and verify none survived.
+
+        Each drop closes local handles and checks the on-disk directory is
+        gone, so a later same-name create cannot resurrect a discarded point.
+        The canonical collection's directory is checked even when the backend
+        no longer lists it, because that is the name the reset recreates.
+        Ensure latches and conformance verdicts of the dropped collections go
+        with them, because both describe storage that no longer exists.
+
+        Raises:
+            RuntimeError: the backend still lists a discarded collection, the
+                canonical collection's local directory survived, or code's
+                served pointer is unverifiable.
+        """
+        owned = self.owned_source_collections(source)
+        for collection in owned:
+            self._drop_collection(collection)
+        with self._lifecycle_lock:
+            for collection in owned:
+                self._conformance.pop(collection, None)
+        survivors = self.owned_source_collections(source)
+        if survivors:
+            raise RuntimeError(
+                f"{source.value} reset left collections in storage: "
+                + ", ".join(survivors)
+            )
+        self._refuse_surviving_local_directory(
+            self._canonical_source_collection(source)
+        )
+
+    def recreate_empty_source(self, source: PublicSourceType) -> None:
+        """Create *source*'s canonical collection and prove it holds nothing.
+
+        Raises:
+            RuntimeError: the recreated collection already holds points, so a
+                deletion did not take and replacement writes would mix with
+                discarded content.
+        """
+        from ._source_types import PublicSourceType as _Source
+
+        collection = self._canonical_source_collection(source)
+        if source is _Source.CODE:
+            self.ensure_code_table()
+        elif source is _Source.VAULT:
+            self.ensure_table()
+        else:
+            self.ensure_document_table()
+        with self._point_lock(collection):
+            surviving = self._retried(
+                f"count {collection}",
+                lambda timeout: (
+                    self.client.count(
+                        collection_name=collection, exact=True, timeout=timeout
+                    ).count
+                ),
+            )
+        if surviving:
+            raise RuntimeError(
+                f"recreated {source.value} collection {collection} holds "
+                f"{surviving} points; discarded content survived the reset"
+            )
 
     def _record_manifest(self) -> None:
         """Record this root in the storage manifest (server mode only).
@@ -398,6 +533,40 @@ class _VaultCollectionMixin:
                 fname,
                 models.PayloadSchemaType.INTEGER,
             )
+        if collection == self.DOCUMENT_TABLE_NAME:
+            self._drop_undeclared_metadata_indexes(collection, keyword_fields)
+
+    def _drop_undeclared_metadata_indexes(
+        self, collection: str, keyword_fields: Sequence[str]
+    ) -> None:
+        """Drop each metadata index whose key is no longer declared.
+
+        Only indexes under a metadata prefix follow the declaration, so no
+        other index is ever dropped here. Dropping an index deletes no payload;
+        re-declaring the key builds it again. Local mode keeps no payload
+        indexes, so it reports none and nothing is dropped.
+        """
+        declared = frozenset(keyword_fields)
+        live = self._retried(
+            f"read payload indexes of {collection}",
+            lambda _timeout: tuple(
+                self.client.get_collection(collection).payload_schema or {}
+            ),
+        )
+        for field in live:
+            if field in declared or not field.startswith(
+                store_schema.METADATA_INDEX_PREFIXES
+            ):
+                continue
+            self._retried(
+                f"drop payload index {collection}.{field}",
+                lambda timeout, field=field: self.client.delete_payload_index(
+                    collection_name=collection,
+                    field_name=field,
+                    timeout=timeout,
+                ),
+            )
+            logger.info("Dropped undeclared metadata index %s.%s", collection, field)
 
     def _ensure_table(
         self,
@@ -551,9 +720,9 @@ class _VaultCollectionMixin:
     def conformance_verdicts(self) -> dict[str, store_schema.ConformanceVerdict]:
         """Return cached verdicts for this store's currently served collections.
 
-        A private build or retained superseded code generation does not describe
-        current service conformance. Its cached verdict remains available to the
-        collection's ensure path. Health never re-probes the backend here.
+        A historical code generation a reset is discarding does not describe
+        current service conformance, so only the served names report. Health
+        never re-probes the backend here.
         """
         with self._lifecycle_lock:
             served = (self.TABLE_NAME, self.CODE_TABLE_NAME, self.DOCUMENT_TABLE_NAME)
@@ -576,7 +745,7 @@ class _VaultCollectionMixin:
             store_schema.VAULT_INTEGER_INDEXES,
         )
 
-    def code_collection_exists(self, collection: str | None = None) -> bool:
+    def code_collection_exists(self) -> bool:
         """Return whether the code collection currently exists in storage.
 
         Read-only existence probe for callers that must distinguish an
@@ -584,10 +753,9 @@ class _VaultCollectionMixin:
         namespace) from an empty one before trusting prior-run evidence
         that claims storage-confirmed writes.
         """
-        _target = self._code_collection(collection)
-        return self._collection_exists(_target)
+        return self._collection_exists(self._code_collection())
 
-    def ensure_code_table(self, collection: str | None = None) -> None:
+    def ensure_code_table(self) -> None:
         """Create the codebase_docs collection and its declared payload indexes.
 
         ``node_type`` is in the KEYWORD set so the MCP
@@ -596,17 +764,19 @@ class _VaultCollectionMixin:
         exclude/only pushdown - the index that first made reaching an existing
         collection matter.
         """
-        _target = self._code_collection(collection)
         self._ensure_table(
-            _target,
+            self._code_collection(),
             store_schema.CODE_KEYWORD_INDEXES,
             store_schema.CODE_INTEGER_INDEXES,
         )
 
     def ensure_document_table(self) -> None:
-        """Create the document collection and its declared payload indexes."""
+        """Create the document collection and its declared payload indexes.
+
+        The keyword set includes one nested index per declared metadata key.
+        """
         self._ensure_table(
             self.DOCUMENT_TABLE_NAME,
-            store_schema.DOCUMENT_KEYWORD_INDEXES,
+            store_schema.document_keyword_indexes(self._document_metadata_keys),
             store_schema.DOCUMENT_INTEGER_INDEXES,
         )

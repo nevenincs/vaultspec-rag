@@ -38,9 +38,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from sentence_transformers import CrossEncoder
-
-    from .embeddings import EmbeddingModel
+    from .embeddings import EmbeddingModel, LazyReranker
     from .job_manager.manager import JobManager
     from .job_manager.models import QuiescedResumeResult
 
@@ -52,7 +50,7 @@ class GPUResidencyMixin:
     _gpu_owner_anchor: Path | None
     _gpu_residency_recipe: GPUResidencyRecipe | None
     _model: EmbeddingModel | None
-    _reranker: CrossEncoder | None
+    _reranker: LazyReranker
     _lock: threading.RLock
     _quiesce_controller: ServiceQuiesceController
     _resource_transition: ResourceTransitionOperation | None
@@ -64,8 +62,6 @@ class GPUResidencyMixin:
         def create_job_manager(self) -> JobManager: ...
 
         def _load_model(self, model_name: str | None = None) -> None: ...
-
-        def _get_reranker(self) -> CrossEncoder: ...
 
     def quiesce_resources(self, *, timeout_seconds: float) -> QuiesceTransition:
         """Drain and detach GPU residency through the registry's one façade."""
@@ -351,7 +347,7 @@ class GPUResidencyMixin:
                 slot.compute_runtime is not None for slot in self._projects.values()
             )
             model_detached = self._model is not None
-            reranker_detached = self._reranker is not None
+            reranker_detached = self._reranker.loaded is not None
             recipe = self._gpu_residency_recipe
             self._gpu_residency_recipe = GPUResidencyRecipe(
                 model_name=recipe.model_name if recipe is not None else None,
@@ -361,7 +357,7 @@ class GPUResidencyMixin:
             for slot in self._projects.values():
                 slot.compute_runtime = None
             self._model = None
-            self._reranker = None
+            self._reranker.clear()
         # Releasing reads the CUDA allocator, which loads torch on first use. A
         # pause that detached no model, reranker, or slot runtime freed nothing
         # on the device: there is no cache to flush, no baseline to re-measure,
@@ -428,7 +424,7 @@ class GPUResidencyMixin:
             if recipe is None:
                 return False
             return (recipe.restore_model and self._model is None) or (
-                recipe.restore_reranker and self._reranker is None
+                recipe.restore_reranker and self._reranker.loaded is None
             )
 
     def _restore_gpu_residency(self, *, admission_epoch: int) -> GPURebuildEvidence:
@@ -439,11 +435,11 @@ class GPUResidencyMixin:
                 if recipe is not None and recipe.restore_model:
                     self._load_model(recipe.model_name)
                     if recipe.restore_reranker:
-                        self._get_reranker()
+                        self._reranker.load_locked()
             with self._lock:
                 lazy_slot_count = len(self._projects)
                 model_rebuilt = self._model is not None
-                reranker_rebuilt = self._reranker is not None
+                reranker_rebuilt = self._reranker.loaded is not None
         except Exception as exc:
             self._clear_partial_gpu_dependencies()
             raise GPUResidencyTransitionError("GPU dependency rebuild failed") from exc
@@ -497,7 +493,7 @@ class GPUResidencyMixin:
             for slot in self._projects.values():
                 slot.compute_runtime = None
             self._model = None
-            self._reranker = None
+            self._reranker.clear()
         self._release_gpu_residency()
 
     # -- per-project slots -------------------------------------------------

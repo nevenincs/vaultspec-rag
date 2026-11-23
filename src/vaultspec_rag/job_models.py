@@ -690,6 +690,12 @@ class JobSnapshot:
     #: it; together with the admission stamp this splits a job's wall
     #: clock into admission wait, lock wait, and work.
     gpu_lock_wait_seconds: float | None = None
+    #: The rebuild generation this request owns, recorded by its first
+    #: attempt before that generation's reset and carried by every resume,
+    #: restore and linked retry. ``None`` until a rebuild attempt opens one,
+    #: and for every non-rebuild job. A later attempt continues exactly this
+    #: generation; a new request never inherits it, so it resets again.
+    rebuild_generation_id: str | None = None
 
     def __post_init__(self) -> None:
         _require_str("id", self.id)
@@ -704,6 +710,7 @@ class JobSnapshot:
         )
         _require_json_telemetry_block("reuse", self.reuse)
         _require_json_telemetry_block("drift", self.drift)
+        _require_str("rebuild_generation_id", self.rebuild_generation_id, optional=True)
 
     def to_dict(self) -> dict[str, object]:
         """Return the stable JSON-ready resource representation."""
@@ -759,6 +766,7 @@ class JobSnapshot:
             "resilience": _resilience_to_dict(self.resilience),
             "reuse": dict(self.reuse) if self.reuse is not None else None,
             "drift": dict(self.drift) if self.drift is not None else None,
+            "rebuild_generation_id": self.rebuild_generation_id,
         }
 
 

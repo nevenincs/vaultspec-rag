@@ -26,7 +26,7 @@ from .._store_search import HybridSearchRequest
 from ..search import DocumentSearchResult, SearchResult
 from ..search._outcomes import COMBINED_SEARCH_FAILED, CombinedSearchOutcome
 from ..server._routes_search import _search_response_status
-from ..server._search_availability import storage_conformance_refusal_fact
+from ..server._search_availability import storage_refusal_fact
 from ..server._search_readiness import ReadinessRevisionSnapshot, ReadinessSourceKey
 from ..server._search_route_availability import (
     SearchAvailabilityRequestFacts,
@@ -388,8 +388,10 @@ def test_combined_count_refusal_uses_the_same_typed_source_fact(
                 method,
                 count,
             )
-        counts, failures, facts, timings = _public_search._count_combined_domains(
-            tmp_path, registry, include_documents=True
+        counts, failures, facts, timings, _fences = (
+            _public_search._count_combined_domains(
+                tmp_path, registry, include_documents=True
+            )
         )
         assert source not in counts
         assert f"{source}_indexed_count" not in timings
@@ -428,10 +430,12 @@ def test_failure_fact_preserves_bounded_evidence_but_replaces_readiness(
     original = replace(
         _current_fact("document"), wait_policy=FreshnessWaitPolicy.BOUNDED
     )
-    fact = storage_conformance_refusal_fact(
-        error_type("incompatible actual document vectors"), original, root=tmp_path
+    fact = storage_refusal_fact(
+        error_type("incompatible actual document vectors"),
+        original,
+        root=tmp_path,
+        job_snapshot=(),
     )
-    assert fact is not None
     assert fact.generation == original.generation
     assert fact.evidence == original.evidence
     assert fact.wait_policy == original.wait_policy

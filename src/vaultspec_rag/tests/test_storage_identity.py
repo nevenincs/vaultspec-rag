@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, TypedDict, Unpack
 import pytest
 
 from .. import store_schema
+from .._source_types import PublicSourceType
 from .._store_models import root_collection_prefix
 from ..storage_identity import load_identity, record_identity, sidecar_path
 from ..storage_manifest import (
@@ -431,15 +432,15 @@ class TestStoreVerifiesOnEnsure:
         from ..store_runtime import StorageGeometryError, StorageModelError
 
         methods = {
-            "vault": ("ensure_table", "drop_table", "TABLE_NAME"),
-            "code": ("ensure_code_table", "drop_code_table", "CODE_TABLE_NAME"),
+            "vault": ("ensure_table", PublicSourceType.VAULT, "TABLE_NAME"),
+            "code": ("ensure_code_table", PublicSourceType.CODE, "CODE_TABLE_NAME"),
             "document": (
                 "ensure_document_table",
-                "drop_document_table",
+                PublicSourceType.DOCUMENT,
                 "DOCUMENT_TABLE_NAME",
             ),
         }
-        ensure_name, drop_name, collection_name = methods[domain]
+        ensure_name, source, collection_name = methods[domain]
         store = self._open(tmp_path)
         local_dir = store.db_path
         collection = cast("str", getattr(store, collection_name))
@@ -471,7 +472,7 @@ class TestStoreVerifiesOnEnsure:
                 ensure()
             except StorageGeometryError as exc:
                 assert isinstance(exc, StorageModelError)
-                cast("Callable[[], None]", getattr(reopened, drop_name))()
+                reopened.discard_source_storage(source)
                 ensure()
             else:
                 pytest.fail("sparse incompatibility did not reach clean recovery")
@@ -561,13 +562,14 @@ def _seed_nonconforming_namespaces(root: Path) -> None:
 def _code_replacement(
     store: VaultStore,
 ) -> Generator[tuple[CodebaseIndexer, CodeRunCheckpoint, str]]:
-    """Populate a real shadow generation without loading or forwarding a model."""
+    """Reset code and confirm one replacement write without loading a model."""
     from .._store_models import CodeChunk
     from ..config._settings import get_config
     from ..embeddings import EmbeddingModel
     from ..indexer import CodebaseIndexer
     from ..indexer._content_policy import RootContentPolicy, SourceProfileVersion
     from ..indexer._generation_lifecycle import CodeGenerationOpenRequest
+    from ..indexer._rebuild_lifecycle import reset_selected_sources
     from ..indexer._resolved_policy import (
         IndexPolicyResolutionOptions,
         resolve_index_policy,
@@ -608,8 +610,10 @@ def _code_replacement(
                 authority=RunAuthority.REBUILD,
             )
         )
-        target = indexer._lifecycle.active_build_target
-        assert target is not None
+        reset_selected_sources(
+            store, PublicSourceType.CODE, generation_id=checkpoint.generation_id
+        )
+        target = store.CODE_TABLE_NAME
         source = store.root_dir / "module.py"
         digest = hashlib.blake2b(source.read_bytes()).hexdigest()
         chunk = CodeChunk(
@@ -631,7 +635,6 @@ def _code_replacement(
             partial(
                 store.upsert_code_chunks,
                 [chunk],
-                collection=target,
                 write_policy=checkpoint.run_policy.store_write_policy,
             ),
             checkpoint.mutation_lifecycle_for_units((unit,)),
@@ -640,55 +643,46 @@ def _code_replacement(
         yield indexer, checkpoint, target
 
 
-def test_served_verdicts_switch_only_at_verified_publication(
+def test_reset_replaces_the_code_verdict_and_publication_keeps_it(
     tmp_path: Path, clean_config: None
 ) -> None:
-    """Catch both all-cache projection and selecting an unserved build early."""
+    """The reset discards a nonconforming code collection; siblings keep theirs."""
     del clean_config
     from .._publication_state import acquire_publication_snapshot
-    from .._source_types import PublicSourceType
-    from .._store_models import read_served_code_collection
+    from .._store_models import read_served_pointer
     from ..indexer._run_ledger_models import RunTerminalState
     from ..progress import NullProgressReporter
     from ..store_runtime import VaultStore
 
     _seed_nonconforming_namespaces(tmp_path)
-    with (
-        VaultStore(tmp_path, embedding_dim=2) as store,
-        _code_replacement(store) as (
-            indexer,
-            checkpoint,
-            target,
-        ),
-    ):
-        old = store.CODE_TABLE_NAME
+    with VaultStore(tmp_path, embedding_dim=2) as store:
+        store.ensure_table()
+        store.ensure_code_table()
+        store.ensure_document_table()
         unchanged = {store.TABLE_NAME, store.DOCUMENT_TABLE_NAME}
-        before = store.conformance_verdicts()
-        assert set(before) == unchanged | {old}, "private build became served"
-        assert before[old].verdict == store_schema.NONCONFORMING
-        assert store._conformance[target].verdict == store_schema.CONFORMING
-        indexer._lifecycle.publish(
-            checkpoint,
-            build_target=target,
-            reporter=NullProgressReporter(),
-            phase_label="CPU verified replacement",
-        )
-        after = store.conformance_verdicts()
-        assert set(after) == unchanged | {target}, "superseded verdict still served"
-        assert after[target].verdict == store_schema.CONFORMING
-        assert all(after[name] == before[name] for name in unchanged)
-        assert store._conformance[old] == before[old], "retained evidence was erased"
-        assert store.client.count(collection_name=old).count == 1
-        assert store.client.count(collection_name=target).count == 1
-        assert read_served_code_collection(tmp_path) == target
-        assert (
-            checkpoint.ledger.generation(checkpoint.generation_id).terminal_state
-            is RunTerminalState.SUCCEEDED
-        )
-        snapshot = acquire_publication_snapshot(tmp_path, PublicSourceType.CODE)
-        assert snapshot.proof.generation_id == checkpoint.generation_id
-        assert snapshot.proof.aggregate.retained_points == 1
-        snapshot.validate()
+        seeded = store.conformance_verdicts()
+        assert seeded[store.CODE_TABLE_NAME].verdict == store_schema.NONCONFORMING
+        with _code_replacement(store) as (indexer, checkpoint, target):
+            during = store.conformance_verdicts()
+            assert set(during) == unchanged | {target}
+            assert during[target].verdict == store_schema.CONFORMING
+            assert all(during[name] == seeded[name] for name in unchanged)
+            indexer._lifecycle.publish(
+                checkpoint,
+                reporter=NullProgressReporter(),
+                phase_label="CPU verified replacement",
+            )
+            assert store.conformance_verdicts() == during
+            assert store.client.count(collection_name=target).count == 1
+            assert read_served_pointer(tmp_path) == (None, True)
+            assert (
+                checkpoint.ledger.generation(checkpoint.generation_id).terminal_state
+                is RunTerminalState.SUCCEEDED
+            )
+            snapshot = acquire_publication_snapshot(tmp_path, PublicSourceType.CODE)
+            assert snapshot.proof.generation_id == checkpoint.generation_id
+            assert snapshot.proof.aggregate.retained_points == 1
+            snapshot.validate()
 
 
 def test_served_verdict_projection_obeys_lifecycle_lock(

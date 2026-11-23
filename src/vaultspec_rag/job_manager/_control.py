@@ -395,18 +395,25 @@ class JobManagerControl(JobManagerQuiesceControl):
             )
         if schedule_dispatch and dispatch_after_transition:
             self._schedule_dispatch(job_id)
-        if (
-            self._on_controller_target is not None
-            and not controller_target.state.is_terminal
-        ):
-            try:
-                self._on_controller_target(controller_target)
-            except Exception:
-                logger.exception(
-                    "controller target notification failed after persistence",
-                    extra={"job_id": controller_target.id},
-                )
+        self._notify_controller_target(controller_target)
         return outcome
+
+    def _notify_controller_target(self, target: JobSnapshot) -> None:
+        """Project one persisted, nonterminal corpus intent to search readiness.
+
+        Runs after persistence and outside the manager lock. A failed
+        notification is logged rather than raised: the intent is already
+        durable, and readiness restores it from durable state on its own.
+        """
+        if self._on_controller_target is None or target.state.is_terminal:
+            return
+        try:
+            self._on_controller_target(target)
+        except Exception:
+            logger.exception(
+                "controller target notification failed after persistence",
+                extra={"job_id": target.id},
+            )
 
     def _schedule_dispatch(
         self,
@@ -886,6 +893,8 @@ class JobManagerControl(JobManagerQuiesceControl):
                 initiator=initiator or parent.snapshot.initiator,
                 runtime=self._process_runtime_snapshot(),
                 resources=JobResourceSnapshot(started=None, finished=None),
+                # A linked retry continues the rebuild its parent owned.
+                rebuild_generation_id=parent.snapshot.rebuild_generation_id,
             )
             managed = ManagedJob(
                 snapshot=retried,

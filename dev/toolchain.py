@@ -691,6 +691,10 @@ TEST = Verb(
                 ),
                 _pytest("-q", "-m", "subprocess_gpu"),
             ),
+            # Both selections run whatever the first reports: a red resident
+            # tier must not leave the spawned-service tier unmeasured, and the
+            # first non-zero code still decides the exit status.
+            keep_going=True,
             lane=True,
             gate=CUDA_GATE,
         ),

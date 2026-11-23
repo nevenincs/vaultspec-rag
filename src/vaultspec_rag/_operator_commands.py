@@ -34,11 +34,13 @@ __all__ = [
     "preprocess_list_command",
     "preprocess_status_command",
     "server_doctor_command",
+    "server_job_resume_command",
     "server_jobs_command",
     "server_start_command",
     "server_status_command",
     "server_stop_command",
     "server_updates_prune_command",
+    "server_updates_start_command",
 ]
 
 
@@ -120,6 +122,11 @@ def server_jobs_command(
     return command + port_option(port)
 
 
+def server_job_resume_command(job_id: str, port: object | None = None) -> str:
+    """Return the ``server job resume`` invocation that resumes *job_id*."""
+    return f"vaultspec-rag server job resume {job_id}{port_option(port)}"
+
+
 def preprocess_status_command() -> str:
     """Return the ``preprocess status`` invocation that explains this root's hooks."""
     return "vaultspec-rag preprocess status"
@@ -193,6 +200,16 @@ def server_stop_command(port: object | None = None) -> str:
 def server_updates_prune_command(port: object | None = None) -> str:
     """Return the ``server updates prune`` invocation that drops missing roots."""
     return f"vaultspec-rag server updates prune{port_option(port)}"
+
+
+def server_updates_start_command(root: str, port: object | None = None) -> str:
+    """Return the ``server updates start`` invocation that resumes *root*.
+
+    It is the only command that clears an operator's stop for a root.
+    """
+    return (
+        f"vaultspec-rag server updates start {_shell_argument(root)}{port_option(port)}"
+    )
 
 
 def server_restart_remedy(port: object | None = None) -> str:

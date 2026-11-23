@@ -13,12 +13,13 @@ related:
   - '[[2026-09-23-status-messages-adr]]'
   - '[[2026-10-12-destructive-rebuild-lifecycle-adr]]'
   - '[[2026-10-26-stale-search-hits-adr]]'
+  - '[[2026-11-20-search-readiness-contract-empty-while-updating-adr]]'
 supersedes:
   - '2026-06-11-search-freshness-and-empty-results-adr'
   - '2026-07-21-search-index-availability-adr'
-modified: '2026-10-26'
+modified: '2026-11-20'
 body_schema: 'body-v2'
-body_hash: 'sha256:c43dd1a6f485b02b21d1ccb35a317b10c12bd899ecfcdf41162edf33c589ca20'
+body_hash: 'sha256:1d431d2ea938371923e752011dad336abf728429a587a519402f037102d7506a'
 ---
 
 # `search-readiness-contract` adr: `canonical search readiness and bounded freshness waits` | (**status:** `accepted`)
@@ -61,7 +62,7 @@ and the cross-surface inventory are in `2026-09-08-search-readiness-contract-res
 
 The user confirmed on 2026-10-12 that rebuilding must continue to serve indexing and search. `2026-10-12-destructive-rebuild-lifecycle-adr` replaces any implication below that only a previously completed generation can supply useful updating results. During an explicit rebuild the old index is deleted; the serving generation is the new partial build and is separate from completed publication. Compatible nonempty current-epoch results remain successful with `availability=usable`, `freshness=updating`, and `absence_authority=non_authoritative`. A request crossing reset returns a bounded retry or typed transition rather than old-generation results.
 
-The existing non-authoritative empty-result rule, combined-source accounting, immediate default, caller-selected bounded freshness waits, and service-owned classification remain binding. Partial completeness state persists across job failure or pause; job terminality never manufactures an authoritative empty result. An open publication receipt cannot become a whole-rebuild search blockade.
+The non-authoritative empty-result rule as amended on 2026-11-20 below, combined-source accounting, immediate default, caller-selected bounded freshness waits, and service-owned classification remain binding. Partial completeness state persists across job failure or pause; job terminality never manufactures an authoritative empty result. An open publication receipt cannot become a whole-rebuild search blockade.
 
 ### 2026-10-26: per-hit disk freshness is independent of publication readiness
 
@@ -69,7 +70,15 @@ The user authorized bounded verification of final delivered hits on 2026-10-26. 
 
 Confirmed stale hits remain useful successful results with their indexed snippets and order. The service additionally projects supervised repair state and actionable `rebuild_required` remediation when bounded recovery proves it cannot proceed; adapters transport those canonical diagnostics. Per-hit currency cannot certify whole-corpus absence or publication completion.
 
-### Retained original ruling, subject to the amendment above
+### 2026-11-20: empty results while an index job runs are non-authoritative success
+
+The user instructed on 2026-11-20 that search stays available while indexing: an empty result during a job returns 200 with an updating, non-authoritative marker. `2026-11-20-search-readiness-contract-empty-while-updating-adr` records the ruling and its compatibility notes. It replaces the rule below that empty results are success only under authoritative absence.
+
+An empty result is success when the source is `availability=usable` and an active index job matches its root and source (`freshness=updating`, reason `index_updating`), whatever the job's mode. The response carries `results: []`, the readiness block with `absence_authority=non_authoritative`, an `empty` block with reason `index_updating`, and an `index_state` whose `status` is `updating` or `rebuilding` with bounded matching jobs. It never claims authoritative absence.
+
+Every other non-authoritative empty answer keeps its typed failure: a source never built, a missing collection, rebuild required or refused, a deleted root, capacity or backend refusal, a bounded wait timeout, and an unverifiable source with no active job. Combined search applies the rule per constituent: an empty combined answer is success only when no constituent failed and every non-authoritative constituent is in the updating-usable case. The bounded freshness policy still waits for certified publication.
+
+### Retained original ruling, subject to the amendments above
 
 - Reuse canonical job, generation, controller, integrity, and combined-outcome authorities; do not
   create another registry, generation verdict, or adapter classifier.

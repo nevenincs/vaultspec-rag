@@ -1,7 +1,7 @@
 """Manage the direct ``torch`` dependency in a consumer's pyproject.
 
 uv applies ``[tool.uv.sources]`` only to direct dependencies, so the
-cu130 source pin is a no-op until ``torch`` appears as a direct dep.
+CUDA source pin is a no-op until ``torch`` appears as a direct dep.
 This submodule detects that condition across every dependency surface
 (PEP 621 / 735, uv dev-deps, Poetry, PDM, Hatch) and, when rag manages
 it, adds or removes the direct entry under a marker key.
@@ -233,7 +233,7 @@ def has_direct_torch_dep(pyproject: Path) -> tuple[bool, str]:
     """Return ``(present, location)`` for a direct ``torch`` dependency.
 
     uv silently ignores ``[tool.uv.sources]`` entries for purely-
-    transitive packages. The cu130 source pin therefore only takes
+    transitive packages. The CUDA source pin therefore only takes
     effect once ``torch`` appears as a direct dep of the consumer
     project. This helper lets the install flow surface a warning when
     the patch will be a no-op.

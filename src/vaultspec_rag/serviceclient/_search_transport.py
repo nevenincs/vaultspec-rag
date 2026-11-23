@@ -43,28 +43,6 @@ def get_search_timeout(timeout: float | None) -> float:
     )
 
 
-def document_search_filters(
-    *,
-    source_path: str | None,
-    extractor_id: str | None,
-    extractor_version: str | None,
-    locator_kind: str | None,
-) -> DocumentSearchFilters:
-    """Return the document filter mapping the service accepts.
-
-    Three call sites - the CLI search verb and both MCP document tools - built
-    this dict from the same four arguments. The keys are the schema's
-    DOCUMENT_FILTER_KEYS; what was copied is the projection of arguments onto
-    them, so a fifth filter would have had to be remembered in three places.
-    """
-    return {
-        "source_path": source_path,
-        "extractor_id": extractor_id,
-        "extractor_version": extractor_version,
-        "locator_kind": locator_kind,
-    }
-
-
 def probe_unavailable(kind: str, exc: Exception) -> dict[str, object]:
     """Describe a failed caller-owned diagnostic probe."""
     logger.debug("%s diagnostic probe failed: %s", kind, exc, exc_info=True)
@@ -100,38 +78,33 @@ def _build_http_search_payload(
         if source is PublicSourceType.COMBINED
         else None,
     }
-    if source in {PublicSourceType.CODE, PublicSourceType.COMBINED}:
-        selected_filters.update(
-            {
-                "language": request.language,
-                "path": request.path,
-                "node_type": request.node_type,
-                "function_name": request.function_name,
-                "class_name": request.class_name,
-            }
-        )
-        if request.include_paths:
-            payload["include_paths"] = list(request.include_paths)
-        if request.exclude_paths:
-            payload["exclude_paths"] = list(request.exclude_paths)
-        # Tri-state: only send when the caller set it explicitly, so the server
-        # resolves the configured default when it is absent.
-        if request.dedup_locales is not None:
-            payload["dedup_locales"] = bool(request.dedup_locales)
-        if request.prefer is not None:
-            payload["prefer"] = request.prefer
-    if source in {PublicSourceType.VAULT, PublicSourceType.COMBINED}:
-        selected_filters.update(
-            {
-                "doc_type": request.doc_type,
-                "feature": request.feature,
-                "date": request.date,
-                "tag": request.tag,
-                "intent": request.intent,
-            }
-        )
-    if source in {PublicSourceType.DOCUMENT, PublicSourceType.COMBINED}:
-        selected_filters.update(request.document_filters or {})
+    # Every filter the caller set is sent whatever the source: the service
+    # owns the refusal of a filter the search type cannot apply.
+    selected_filters.update(
+        {
+            "language": request.language,
+            "path": request.path,
+            "node_type": request.node_type,
+            "function_name": request.function_name,
+            "class_name": request.class_name,
+            "doc_type": request.doc_type,
+            "feature": request.feature,
+            "date": request.date,
+            "tag": request.tag,
+            "intent": request.intent,
+            **(request.document_filters or {}),
+        }
+    )
+    if request.include_paths:
+        payload["include_paths"] = list(request.include_paths)
+    if request.exclude_paths:
+        payload["exclude_paths"] = list(request.exclude_paths)
+    # Tri-state: only send when the caller set it explicitly, so the server
+    # resolves the configured default when it is absent.
+    if request.dedup_locales is not None:
+        payload["dedup_locales"] = bool(request.dedup_locales)
+    if request.prefer is not None:
+        payload["prefer"] = request.prefer
     for key, value in selected_filters.items():
         if value is not None:
             payload[key] = value
@@ -265,13 +238,30 @@ def _optional_document_filters_search_field(
         )
     raw_mapping = cast("dict[object, object]", value)
     if not all(
-        isinstance(k, str) and (v is None or isinstance(v, str))
+        isinstance(k, str)
+        and (
+            v is None
+            or isinstance(v, str)
+            or (k == "metadata_filters" and _is_metadata_mapping(v))
+        )
         for k, v in raw_mapping.items()
     ):
         raise TypeError(
             f"try_http_search argument {key!r} must be a string-keyed mapping"
         )
     return cast("DocumentSearchFilters", raw_mapping)
+
+
+def _is_metadata_mapping(value: object) -> bool:
+    """Whether *value* maps string keys to lists of strings."""
+    if not isinstance(value, dict):
+        return False
+    for key, values in cast("dict[object, object]", value).items():
+        if not isinstance(key, str) or not isinstance(values, list):
+            return False
+        if not all(isinstance(item, str) for item in cast("list[object]", values)):
+            return False
+    return True
 
 
 def _search_request_from_arguments(
@@ -325,14 +315,11 @@ def _search_request_from_arguments(
 def _validate_search_request(
     request: SearchCallRequest,
 ) -> tuple[PublicSourceType | None, dict[str, object] | None]:
-    """Resolve the source and reject unsupported search-filter combinations."""
-    from ..search._validation import (
-        InvalidFilterForSearchTypeError,
-        InvalidPreferValueError,
-        SearchFilterOptions,
-        validate_search_filters,
-    )
+    """Resolve the source and refuse feedback the source cannot honour.
 
+    Filters are not judged here: the service owns that refusal, so every
+    adapter renders one answer for one condition.
+    """
     try:
         source = parse_source_type(request.search_type, allow_aliases=True)
     except SourceTypeParseError as exc:
@@ -342,40 +329,6 @@ def _validate_search_request(
     )
     if refusal is not None:
         return None, refusal
-    try:
-        validate_search_filters(
-            source.value,
-            SearchFilterOptions(
-                language=request.language,
-                path=request.path,
-                node_type=request.node_type,
-                function_name=request.function_name,
-                class_name=request.class_name,
-                doc_type=request.doc_type,
-                feature=request.feature,
-                date=request.date,
-                tag=request.tag,
-                include_paths=request.include_paths,
-                exclude_paths=request.exclude_paths,
-                dedup_locales=request.dedup_locales,
-                prefer=request.prefer,
-                source_path=(request.document_filters or {}).get("source_path"),
-                extractor_id=(request.document_filters or {}).get("extractor_id"),
-                extractor_version=(request.document_filters or {}).get(
-                    "extractor_version"
-                ),
-                locator_kind=(request.document_filters or {}).get("locator_kind"),
-            ),
-            include_documents=request.include_documents,
-        )
-    except InvalidFilterForSearchTypeError as exc:
-        return None, {
-            "ok": False,
-            "error": "invalid_filter_for_search_type",
-            "message": str(exc),
-        }
-    except InvalidPreferValueError as exc:
-        return None, {"ok": False, "error": "invalid_prefer_value", "message": str(exc)}
     return source, None
 
 

@@ -19,10 +19,10 @@ from ..indexer._vault_indexer import VaultIndexer
 from ..job_models import JobSource
 from ..progress import NullProgressReporter
 from ..service import ProjectSlot, ServiceRegistry
-from ..store_runtime import configured_backend_identity
 from ._config_fixtures import reset_config
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
     from pathlib import Path
 
     from ..embeddings import EmbeddingModel
@@ -31,15 +31,15 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 
-def _backend(root: Path) -> Mock:
-    store = Mock()
-    store.root_dir = root
-    store.backend_identity = configured_backend_identity(root)
-    store.count.return_value = 0
-    store.get_chunk_counts.return_value = {}
-    store.get_stored_chunk_ordinals.return_value = {}
-    store.delete_prechunk_vault_points.return_value = 0
-    return store
+@pytest.fixture
+def store(tmp_path: Path) -> Generator[VaultStore]:
+    """Open a real local store for *tmp_path* with two-wide dense vectors."""
+    from ..config._settings import get_config
+    from ..store_runtime import VaultStore
+
+    get_config({"qdrant_url": None, "embedding_dimension": 2, "sparse_enabled": False})
+    with VaultStore(tmp_path.resolve(), embedding_dim=2) as opened:
+        yield opened
 
 
 def _no_encode(request: object) -> dict[str, int]:
@@ -48,16 +48,17 @@ def _no_encode(request: object) -> dict[str, int]:
 
 
 def _empty_indexer(
-    root: Path,
+    store: VaultStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> VaultIndexer:
-    # Only model/store work is substituted. Discovery, checkpoint, receipts,
-    # public full/scoped entry and durable publication remain production code.
-    root.joinpath(".vault").mkdir()
+    # Only model work is substituted. Discovery, checkpoint, receipts, the
+    # store, public full/scoped entry and durable publication stay production.
+    root = store.root_dir
+    root.joinpath(".vault").mkdir(exist_ok=True)
     indexer = VaultIndexer(
         root,
         cast("EmbeddingModel", Mock(device="cpu")),
-        cast("VaultStore", _backend(root)),
+        store,
     )
     monkeypatch.setattr(indexer, "_resolve_reuse", lambda: (None, None))
     for module in (_vault_indexer, _vault_incremental):
@@ -67,12 +68,12 @@ def _empty_indexer(
 
 @pytest.mark.parametrize("operation", ["full", "incremental", "scoped"])
 async def test_actual_vault_publication_wakes_the_pending_target_after_durable(
-    tmp_path: Path,
+    store: VaultStore,
     monkeypatch: pytest.MonkeyPatch,
     operation: str,
 ) -> None:
-    root = tmp_path.resolve()
-    indexer = _empty_indexer(root, monkeypatch)
+    root = store.root_dir
+    indexer = _empty_indexer(store, monkeypatch)
     indexer.full_index(reporter=NullProgressReporter())
     registry = ServiceRegistry()
     registry.start_readiness(asyncio.get_running_loop())
@@ -120,12 +121,11 @@ async def test_actual_vault_publication_wakes_the_pending_target_after_durable(
 
 @pytest.mark.parametrize("boundary", ["proof", "generation"])
 async def test_failed_vault_publication_emits_no_notification(
-    tmp_path: Path,
+    store: VaultStore,
     monkeypatch: pytest.MonkeyPatch,
     boundary: str,
 ) -> None:
-    root = tmp_path.resolve()
-    indexer = _empty_indexer(root, monkeypatch)
+    indexer = _empty_indexer(store, monkeypatch)
     events: list[str] = []
 
     def notify(root: Path, generation: str) -> None:
@@ -151,6 +151,7 @@ async def test_failed_vault_publication_emits_no_notification(
 
 async def test_actual_runtime_construction_wires_vault_publication(
     tmp_path: Path,
+    store: VaultStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(EnvVar.RERANKER_ENABLED.value, "0")
@@ -164,7 +165,7 @@ async def test_actual_runtime_construction_wires_vault_publication(
         self._model = model
 
     monkeypatch.setattr(ServiceRegistry, "_load_model", load_model)
-    slot = ProjectSlot(cast("VaultStore", _backend(tmp_path)), GraphCache())
+    slot = ProjectSlot(store, GraphCache())
     try:
         runtime = registry._create_compute_runtime(tmp_path, slot, None)
         callback = runtime.vault_indexer._publish_readiness

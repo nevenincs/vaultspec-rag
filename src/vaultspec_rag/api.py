@@ -24,12 +24,14 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from .indexer import IndexResult
-    from .indexer._codebase_indexer import CodeIndexPreflight, ContentScanResult
+    from .indexer._codebase_indexer import CodeIndexPreflight
+    from .indexer._content_discovery import ContentScanResult
     from .indexer._content_policy import RootContentPolicy
     from .indexer._document_indexer import (
         DocumentIndexPreflight,
         DocumentScopedPreflight,
     )
+    from .indexer._run_ledger_models import RunAuthority
     from .operator_state._models import ComputeReport, InstallationReport
     from .progress import ProgressReporter
     from .search import SearchResult
@@ -229,21 +231,53 @@ def _preflight_document_scope(
     ).preflight_changed_paths(changed_paths)
 
 
-def _admits_first_build(
+@dataclass(frozen=True, slots=True)
+class _AdmittedRun:
+    """What one in-process index request runs once admission has decided."""
+
+    rebuild: bool
+    first_build: bool
+
+    @property
+    def authority(self) -> RunAuthority:
+        from .indexer._run_ledger_models import RunAuthority
+
+        return RunAuthority.REBUILD if self.rebuild else RunAuthority.PUBLICATION
+
+
+def _admit_run(
     root_dir: pathlib.Path,
     source: PublicSourceType,
-) -> bool:
-    """Whether this in-process request runs *source*'s first full build.
+    *,
+    rebuild: bool,
+) -> _AdmittedRun:
+    """Admit one in-process index request exactly as the service admits a job.
 
-    The same admission the service uses, asked directly: an incremental
-    request for a source that has never been built has no publication to
-    reconcile against, so it runs the first build instead of refusing. One
+    The service's own admission is asked, not restated: an incremental
+    request for a source that has never been built runs its first full
+    build, and one whose published proof provably cannot parent it is
+    refused here, before any model, lease or checkpoint is touched. One
     reading per selected source, so a root with a built vault and an unbuilt
     code index gets the right answer for each.
-    """
-    from ._job_admission import admits_first_build
 
-    return admits_first_build(root_dir, source, initiator_kind="api")
+    Raises:
+        IncompatibleIncrementalError: an incremental code or document request
+            whose published proof was written under a different policy.
+    """
+    from ._job_admission import index_job_spec
+    from .indexer._run_ledger_models import RunAuthority
+    from .job_models import JobMode, JobSource
+
+    spec = index_job_spec(
+        root_dir,
+        source=JobSource(source.value),
+        clean=rebuild,
+        authority=RunAuthority.REBUILD if rebuild else RunAuthority.PUBLICATION,
+        initiator_kind="api",
+    )
+    return _AdmittedRun(
+        rebuild=spec.mode is JobMode.REBUILD, first_build=spec.is_first_build
+    )
 
 
 def index(
@@ -277,36 +311,27 @@ def index(
     """
     root = _resolve(root_dir)
     rep = reporter if reporter is not None else NullProgressReporter()
+    admitted = _admit_run(root, PublicSourceType.VAULT, rebuild=full or clean)
     registry = get_registry()
     result: IndexResult | None = None
-    first_build = not (full or clean) and _admits_first_build(
-        root, PublicSourceType.VAULT
-    )
     with registry.compute_lease(root, model_name=model_name) as lease:
-        from .indexer._run_ledger_models import RunAuthority
-
-        authority = (
-            RunAuthority.REBUILD
-            if (full or clean or first_build)
-            else RunAuthority.PUBLICATION
-        )
         runtime = lease.runtime
         result = (
             runtime.vault_indexer.full_index(
-                clean=clean or first_build,
+                clean=clean or admitted.first_build,
                 reporter=rep,
-                authority=authority,
+                authority=admitted.authority,
             )
-            if (full or clean or first_build)
+            if admitted.rebuild
             else runtime.vault_indexer.incremental_index(
                 reporter=rep,
-                authority=authority,
+                authority=admitted.authority,
             )
         )
         registry.peek_project(root).graph_cache.invalidate()
     if result is None:
         raise RuntimeError("vault indexing lease ended without a result")
-    result.first_build = first_build
+    result.first_build = admitted.first_build
     return result
 
 
@@ -331,37 +356,30 @@ def index_codebase(
         options = CodeIndexOptions()
     root = _resolve(root_dir)
     rep = options.reporter if options.reporter is not None else NullProgressReporter()
+    admitted = _admit_run(
+        root, PublicSourceType.CODE, rebuild=options.full or options.clean
+    )
     preflight = _preflight_code_index(root, extra_excludes=options.extra_excludes)
     registry = get_registry()
     result: IndexResult | None = None
-    first_build = not (options.full or options.clean) and _admits_first_build(
-        root, PublicSourceType.CODE
-    )
     with registry.compute_lease(root, model_name=options.model_name) as lease:
-        from .indexer._run_ledger_models import RunAuthority
-
-        authority = (
-            RunAuthority.REBUILD
-            if (options.full or options.clean or first_build)
-            else RunAuthority.PUBLICATION
-        )
         runtime = lease.runtime
-        if options.full or options.clean or first_build:
+        if admitted.rebuild:
             result = runtime.code_indexer.full_index(
-                clean=options.clean or first_build,
+                clean=options.clean or admitted.first_build,
                 reporter=rep,
                 preflight=preflight,
-                authority=authority,
+                authority=admitted.authority,
             )
         else:
             result = runtime.code_indexer.incremental_index(
                 reporter=rep,
                 preflight=preflight,
-                authority=authority,
+                authority=admitted.authority,
             )
     if result is None:
         raise RuntimeError("code indexing lease ended without a result")
-    result.first_build = first_build
+    result.first_build = admitted.first_build
     return result
 
 
@@ -376,6 +394,18 @@ def index_documents(
         raise ValueError("scoped document indexing cannot be full or clean")
     root = _resolve(root_dir)
     rep = options.reporter if options.reporter is not None else NullProgressReporter()
+    # A scoped request names its own changed paths, which is the bounded
+    # automatic shape: it never escalates, whatever the source's history, but
+    # is refused like any incremental run its published proof cannot parent.
+    if options.changed_paths is None:
+        admitted = _admit_run(
+            root, PublicSourceType.DOCUMENT, rebuild=options.full or options.clean
+        )
+    else:
+        from ._job_admission import refuse_incompatible_incremental
+
+        refuse_incompatible_incremental(root, PublicSourceType.DOCUMENT)
+        admitted = _AdmittedRun(rebuild=False, first_build=False)
     preflight = (
         _preflight_document_index(
             root,
@@ -392,44 +422,30 @@ def index_documents(
     )
     registry = get_registry()
     result: IndexResult | None = None
-    # A scoped request names its own changed paths, which is the bounded
-    # automatic shape: it never escalates, whatever the source's history.
-    first_build = (
-        options.changed_paths is None
-        and not (options.full or options.clean)
-        and _admits_first_build(root, PublicSourceType.DOCUMENT)
-    )
     with registry.compute_lease(root, model_name=options.model_name) as lease:
-        from .indexer._run_ledger_models import RunAuthority
-
-        authority = (
-            RunAuthority.REBUILD
-            if (options.full or options.clean or first_build)
-            else RunAuthority.PUBLICATION
-        )
         runtime = lease.runtime
-        if options.full or options.clean or first_build:
+        if admitted.rebuild:
             # The scoped-indexing guard above already raises when
             # ``options.full or options.clean`` and ``changed_paths`` is set,
             # and a scoped request is never a first build, so reaching here
             # means ``preflight`` came from ``_preflight_document_index``,
             # never ``_preflight_document_scope``.
             result = runtime.document_indexer.full_index(
-                clean=options.clean or first_build,
+                clean=options.clean or admitted.first_build,
                 reporter=rep,
                 preflight=cast("DocumentIndexPreflight", preflight),
-                authority=authority,
+                authority=admitted.authority,
             )
         else:
             result = runtime.document_indexer.incremental_index(
                 reporter=rep,
                 changed_paths=options.changed_paths,
                 preflight=preflight,
-                authority=authority,
+                authority=admitted.authority,
             )
     if result is None:
         raise RuntimeError("document indexing lease ended without a result")
-    result.first_build = first_build
+    result.first_build = admitted.first_build
     return result
 
 
@@ -502,40 +518,12 @@ def search_vault(request: VaultSearchRequest) -> list[SearchResult]:
 
     Returns:
         Ranked list of SearchResult objects.
-    """
-    from .search import SearchFilterOptions, validate_search_filters
 
-    validate_search_filters(
-        "vault",
-        SearchFilterOptions(
-            doc_type=request.doc_type,
-            feature=request.feature,
-            date=request.date,
-            tag=request.tag,
-        ),
-    )
-    root = _resolve(request.root_dir)
-    registry = get_registry()
-    # An empty or unbuilt vault index needs no query encoding: short-circuit
-    # to an empty result without loading the GPU model (so an empty search is
-    # cheap and works on a CPU-only host).
-    if registry.vault_doc_count(root) == 0:
-        return []
-    results: list[SearchResult] | None = None
-    with registry.search_lease(root) as lease:
-        results = lease.searcher.search_vault(
-            request.query,
-            top_k=request.top_k,
-            doc_type=request.doc_type,
-            feature=request.feature,
-            date=request.date,
-            tag=request.tag,
-            intent=request.intent,
-            like_ids=request.like_ids,
-            unlike_ids=request.unlike_ids,
-        )
-    if results is None:
-        raise RuntimeError("vault search lease ended without a result")
+    Raises:
+        IndexTransitionError: the vault index was being reset for a rebuild
+            while this search read it.
+    """
+    results, _timings = search_vault_timed(request)
     return results
 
 
@@ -554,10 +542,26 @@ def search_vault_timed(
             feature=request.feature,
             date=request.date,
             tag=request.tag,
+            intent=request.intent,
         ),
     )
+    from ._publication_state import read_current_epoch
+
     root = _resolve(request.root_dir)
     active_registry = registry if registry is not None else get_registry()
+    return read_current_epoch(
+        root,
+        PublicSourceType.VAULT,
+        lambda: _search_vault_storage(request, root, active_registry),
+    )
+
+
+def _search_vault_storage(
+    request: VaultSearchRequest,
+    root: pathlib.Path,
+    active_registry: ServiceRegistry,
+) -> tuple[list[SearchResult], dict[str, float]]:
+    """Count and search the vault collection as it stands now."""
     # Empty/unbuilt index: return an empty result without loading the model.
     indexed_count = active_registry.vault_doc_count(root)
     if indexed_count == 0:
@@ -599,53 +603,12 @@ def search_codebase(request: CodebaseSearchRequest) -> list[SearchResult]:
 
     Returns:
         Ranked list of SearchResult objects.
-    """
-    from .search import SearchFilterOptions, validate_search_filters
 
-    validate_search_filters(
-        "code",
-        SearchFilterOptions(
-            language=request.language,
-            path=request.path,
-            node_type=request.node_type,
-            function_name=request.function_name,
-            class_name=request.class_name,
-            include_paths=request.include_paths,
-            exclude_paths=request.exclude_paths,
-            dedup_locales=request.dedup_locales,
-            prefer=request.prefer,
-            exclude_domains=request.exclude_domains,
-            only_domains=request.only_domains,
-            include_domains=request.include_domains,
-        ),
-    )
-    root = _resolve(request.root_dir)
-    registry = get_registry()
-    # Empty/unbuilt code index: return an empty result without loading the model.
-    if registry.code_chunk_count(root) == 0:
-        return []
-    results: list[SearchResult] | None = None
-    with registry.search_lease(root) as lease:
-        results = lease.searcher.search_codebase(
-            request.query,
-            top_k=request.top_k,
-            language=request.language,
-            path=request.path,
-            node_type=request.node_type,
-            function_name=request.function_name,
-            class_name=request.class_name,
-            include_paths=request.include_paths,
-            exclude_paths=request.exclude_paths,
-            dedup_locales=request.dedup_locales,
-            prefer=request.prefer,
-            exclude_domains=request.exclude_domains,
-            only_domains=request.only_domains,
-            include_domains=request.include_domains,
-            like_ids=request.like_ids,
-            unlike_ids=request.unlike_ids,
-        )
-    if results is None:
-        raise RuntimeError("code search lease ended without a result")
+    Raises:
+        IndexTransitionError: the code index was being reset for a rebuild
+            while this search read it.
+    """
+    results, _timings = search_codebase_timed(request)
     return results
 
 
@@ -700,8 +663,23 @@ def search_codebase_timed(
             include_domains=request.include_domains,
         ),
     )
+    from ._publication_state import read_current_epoch
+
     root = _resolve(request.root_dir)
     active_registry = registry if registry is not None else get_registry()
+    return read_current_epoch(
+        root,
+        PublicSourceType.CODE,
+        lambda: _search_code_storage(request, root, active_registry),
+    )
+
+
+def _search_code_storage(
+    request: CodebaseSearchRequest,
+    root: pathlib.Path,
+    active_registry: ServiceRegistry,
+) -> tuple[list[SearchResult], dict[str, float]]:
+    """Count and search the code collection as it stands now."""
     from ._index_breadth import acquire_code_breadth_snapshot_if_proven
 
     # A read, so an unreadable proof is an absence rather than a refusal: a
@@ -831,10 +809,17 @@ def clean(
     Returns:
         List of cleared source labels (e.g. ['vault', 'codebase']).
     """
+    import uuid
+
+    from .indexer._rebuild_lifecycle import reset_selected_sources
+
     source_type = parse_source_type(clean_type, allow_aliases=True)
     root = _resolve(root_dir)
     with registry.lease_maintenance_store(root) as store:
-        return store.reset_source(source_type)
+        states = reset_selected_sources(
+            store, source_type, generation_id=uuid.uuid4().hex
+        )
+    return [state.source_type.value for state in states]
 
 
 def get_status(root_dir: pathlib.Path) -> dict[str, object]:
@@ -1351,6 +1336,7 @@ def get_service_state(
     from .indexer._preprocess_config import root_hook_state
     from .operator_state._models import RootFeatures, ServiceStateReport
     from .qdrant_runtime._supervise import runtime_state
+    from .watcher_intent import auto_update_state
 
     hooks, rule_count = root_hook_state(root, cfg.preprocess_mode)
     report = ServiceStateReport(
@@ -1360,6 +1346,7 @@ def get_service_state(
             preprocess_hooks=hooks,
             preprocess_rule_count=rule_count,
             watcher_running=str(root) in watching,
+            auto_update=auto_update_state(root),
         ),
         index=index_data,
         projects=projects_data,

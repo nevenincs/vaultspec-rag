@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#install-cuda'
 date: 2026-04-22
-modified: '2026-09-23'
-body_hash: 'sha256:3727f6c9af7e687dc61ca7d33505c0c26aa95d8f9c44896e4b0d5f6d5746ba7c'
+modified: '2026-11-21'
+body_hash: 'sha256:8de31b82470bf49918bf16e322fa1507af7be09834c86834bf5adb74e740cc50'
 related:
   - '[[2026-04-22-install-cuda-research]]'
   - '[[2026-04-12-vaultspec-rag-install-adr]]'
@@ -530,3 +530,7 @@ pipelines. The current CI for rag itself exercises both branches.
   (currently rag's own tests and CI) tolerate additive changes.
 - Line 1652 in `cli.py` moves from a bare print-and-exit to the
   central helper — cleans up a divergence that pre-dated this ADR.
+
+## Amendment
+
+Amended 2026-11-21 under the user's direction to track the latest CUDA build. Wherever this record names the `cu130` index, the `pytorch-cu130` index name or the `cu130` backend, the project now pins the `cu134` build (`pytorch-cu134`, `https://download.pytorch.org/whl/cu134`, torch 2.15.0). The decision itself is unchanged: the index name, URL and backend derive from one constant, `CUDA_BACKEND` in `src/vaultspec_rag/torch_config/_index.py`, so a later move to a newer build edits one line.

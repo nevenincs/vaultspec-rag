@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, NamedTuple, cast
 import pydantic
 
 from .._job_errors import JobErrorKind
-from .._job_values import text
+from .._job_values import count, mapping, text
 from .._operator_commands import (
     IndexCommandOptions,
     index_command,
@@ -62,12 +62,11 @@ __all__ = [
     "DOMAIN_INDEX_FAMILY",
     "DegradedFinding",
     "_failed_job_total",
+    "_failing_project_label",
     "_format_started_label",
     "_format_status_duration",
     "_get_token_label",
     "_held_by_borrower",
-    "_last_failure_job_id",
-    "_last_failure_label",
     "_model_ready_label",
     "_network_label",
     "_plain_status_label",
@@ -234,30 +233,37 @@ def _status_is_held(health: dict[str, object] | None) -> bool:
 
 
 class _JobCounts(NamedTuple):
-    """The three counts every busy, queue, and processed row is derived from."""
+    """The counts every busy, queue, and processed row is read from.
+
+    ``working`` and ``waiting`` are the service's own split of ``running``;
+    nothing here subtracts one count from another.
+    """
 
     running: int
-    queued: int
-    active: int
+    working: int
+    waiting: int
 
 
 def _job_counts(jobs: dict[str, object] | None) -> _JobCounts | None:
     """Read the job counts once for every row that reports on them.
 
-    ``None`` means the service reported no jobs at all, which each caller
-    renders as an absence rather than as an idle service - the distinction the
-    availability flag exists to carry.
+    ``None`` means the service reported no jobs at all, or reported running
+    jobs without saying which of them work and which wait. Each caller renders
+    that as an absence rather than as an idle service - the distinction the
+    availability flag exists to carry - because the split is the service's to
+    state and is never worked out from the other counts.
     """
     if not isinstance(jobs, dict) or jobs.get("available") is not True:
         return None
-    running = jobs.get("running")
-    queued = jobs.get("queued")
-    running_count = running if isinstance(running, int) else 0
-    queued_count = queued if isinstance(queued, int) else 0
+    running = count(jobs.get("running")) or 0
+    working = count(jobs.get("working"))
+    waiting = count(jobs.get("waiting"))
+    if running > 0 and working is None and waiting is None:
+        return None
     return _JobCounts(
-        running=running_count,
-        queued=queued_count,
-        active=max(0, running_count - queued_count),
+        running=running,
+        working=working or 0,
+        waiting=waiting or 0,
     )
 
 
@@ -273,19 +279,19 @@ def _status_busy_label(jobs: dict[str, object] | None) -> str:
         return NOT_REPORTED
     if counts.running <= 0:
         # Work stopped by a pause is not work the service does not have. Held
-        # jobs report neither running nor queued, so reading only those two
-        # counts rendered a service holding real work as "idle".
+        # jobs are neither working nor waiting, so reading only those counts
+        # rendered a service holding real work as "idle".
         held = _held_job_total(jobs)
         if held > 0:
             return f"{_counted_unit(held, 'job')} held by the pause"
         return "idle"
-    # Nothing active while jobs are running means every one of them is queued
-    # behind the writer, which is a wait rather than work in progress.
-    if counts.active <= 0:
-        return f"{_counted_unit(counts.queued, 'job')} waiting to write"
-    processing = f"processing {_counted_unit(counts.active, 'job')}"
-    if counts.queued > 0:
-        return f"{processing}; {counts.queued} waiting"
+    # Nothing working while jobs are running means every one of them waits, which
+    # is not work in progress.
+    if counts.working <= 0:
+        return f"{_counted_unit(counts.waiting, 'job')} waiting"
+    processing = f"processing {_counted_unit(counts.working, 'job')}"
+    if counts.waiting > 0:
+        return f"{processing}; {counts.waiting} waiting"
     return processing
 
 
@@ -295,12 +301,12 @@ def _status_queue_label(jobs: dict[str, object] | None) -> str:
         return NOT_REPORTED
     if counts.running <= 0:
         return "nothing waiting"
-    if counts.queued > 0:
+    if counts.waiting > 0:
         return (
-            f"{_counted_unit(counts.queued, 'waiting job')}; "
-            f"{_counted_unit(counts.active, 'active job')}"
+            f"{_counted_unit(counts.waiting, 'waiting job')}; "
+            f"{_counted_unit(counts.working, 'active job')}"
         )
-    return f"nothing waiting; {_counted_unit(counts.running, 'active job')}"
+    return f"nothing waiting; {_counted_unit(counts.working, 'active job')}"
 
 
 def _job_phase_counts(jobs: dict[str, object] | None) -> dict[str, object]:
@@ -328,8 +334,8 @@ def _status_jobs_label(jobs: dict[str, object] | None) -> str:
     done = _job_phase_counts(jobs).get("done")
     finished_count = done if isinstance(done, int) else 0
     return (
-        f"{finished_count} finished, {counts.active} active, "
-        f"{counts.queued} waiting, {_failed_job_total(jobs)} failed"
+        f"{finished_count} finished, {counts.working} active, "
+        f"{counts.waiting} waiting, {_failed_job_total(jobs)} failed"
     )
 
 
@@ -406,14 +412,21 @@ def health_section(health: dict[str, object] | None, key: str) -> dict[str, obje
     return cast("dict[str, object]", section) if isinstance(section, dict) else {}
 
 
-def _last_failed_record(health: dict[str, object] | None) -> dict[str, object]:
-    record = health_section(health, "jobs").get("last_failed")
-    return cast("dict[str, object]", record) if isinstance(record, dict) else {}
+def _failing_entries(health: dict[str, object] | None) -> list[dict[str, object]]:
+    """Return the failing project indexes the service named, in its order.
 
-
-def _last_failure_job_id(health: dict[str, object] | None) -> str:
-    job_id = _last_failed_record(health).get("id")
-    return job_id.strip() if isinstance(job_id, str) else ""
+    The service folds job history per project and source, bounds the list,
+    and orders it degrading first, newest first. An entry this build cannot
+    address by job id is dropped rather than rendered without a remedy.
+    """
+    entries = mapping(health_section(health, "jobs").get("failing")).get("entries")
+    if not isinstance(entries, list):
+        return []
+    return [
+        entry
+        for entry in (mapping(item) for item in cast("list[object]", entries))
+        if text(entry.get("id")).strip()
+    ]
 
 
 def _short_job_id(job_id: str) -> str:
@@ -432,11 +445,6 @@ def _job_age_label(finished_at: object, *, now: float) -> str:
     return f", {_format_status_duration(elapsed)} ago"
 
 
-def _error_kind(record: dict[str, object]) -> str:
-    kind = record.get("error_kind")
-    return kind if isinstance(kind, str) and kind else ""
-
-
 def _failed_job_identity(
     record: dict[str, object],
     *,
@@ -451,35 +459,50 @@ def _failed_job_identity(
     job_id = record.get("id")
     if not isinstance(job_id, str) or not job_id.strip():
         return ""
-    kind = _error_kind(record)
+    kind = text(record.get("error_kind"))
     kind_text = f" ({kind})" if with_kind and kind else ""
     age = _job_age_label(record.get("finished_at"), now=now)
     return f"job {_short_job_id(job_id.strip())}{kind_text}{age}"
 
 
-def _last_failure_label(
+def _failing_project_label(
     health: dict[str, object] | None,
     *,
     now: float | None = None,
 ) -> str:
-    """Describe the latest reported job failure, or return an empty string."""
+    """Describe the first failing project index listed, or return ``""``.
+
+    The entry may no longer degrade health; it is still the operator's
+    newest unresolved failure, so it is named either way.
+    """
+    entries = _failing_entries(health)
+    if not entries:
+        return ""
     observed_at = time.time() if now is None else now
-    return _failed_job_identity(
-        _last_failed_record(health),
-        now=observed_at,
-        with_kind=True,
-    )
+    record = entries[0]
+    identity = _failed_job_identity(record, now=observed_at, with_kind=True)
+    project_root = text(record.get("project_root"))
+    return f"{identity} in {project_root}" if project_root else identity
 
 
 def _failed_job_finding(
     health: dict[str, object] | None,
     now: float,
 ) -> DegradedFinding | None:
-    record = _last_failed_record(health)
-    job_id = _last_failure_job_id(health)
-    if not job_id:
+    """Name the first failing project index that degrades health.
+
+    Only a degrading entry explains a ``job_failed`` verdict. A listed entry
+    past the degradation window is history and is named by the failure
+    follow-up instead.
+    """
+    degrading = [
+        entry for entry in _failing_entries(health) if entry.get("degrading") is True
+    ]
+    if not degrading:
         return None
-    kind = _error_kind(record)
+    record = degrading[0]
+    job_id = text(record.get("id")).strip()
+    kind = text(record.get("error_kind"))
     # The service serves every project, so a rebuild is named only with the
     # project it belongs to; run anywhere else it would rebuild the wrong one.
     project_root = record.get("project_root")
@@ -488,9 +511,17 @@ def _failed_job_finding(
         if isinstance(project_root, str) and project_root
         else ""
     )
+    reported = count(
+        mapping(health_section(health, "jobs").get("failing")).get("degrading")
+    )
+    more = (reported or len(degrading)) - 1
+    identity = _failed_job_identity(record, now=now, with_kind=False)
+    where = (
+        f" in {project_root}" if isinstance(project_root, str) and project_root else ""
+    )
     return DegradedFinding(
-        cause=f"an indexing job failed{f': {kind}' if kind else ''}",
-        detail=_failed_job_identity(record, now=now, with_kind=False),
+        cause=f"a project's index run failed{f': {kind}' if kind else ''}",
+        detail=f"{identity}{where}" + (f"; {more} more failing" if more > 0 else ""),
         command=rebuild or f"vaultspec-rag server logs --job-id {job_id}",
         family=DegradationReason.JOB_FAILED,
     )
@@ -725,7 +756,7 @@ def _domain_cause(record: dict[str, object]) -> str:
         else "an index job"
     )
     phrase, _ = _DOMAIN_REASONS.get(reason, (f"reported {reason}", ""))
-    kind = _error_kind(record)
+    kind = text(record.get("error_kind"))
     return f"{domain} {phrase}{f': {kind}' if kind else ''}"
 
 
@@ -748,7 +779,7 @@ def _rebuild_remedy(
     """
     source = record.get("source")
     if (
-        _error_kind(record) == JobErrorKind.FULL_REINDEX_REQUIRED.value
+        text(record.get("error_kind")) == JobErrorKind.FULL_REINDEX_REQUIRED.value
         and isinstance(source, str)
         and source in _REBUILDABLE_SOURCES
     ):

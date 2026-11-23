@@ -83,6 +83,7 @@ class RunPolicy:
         "_run_control",
         "_store_write_policy",
         "_timeout_seconds",
+        "_write_fence",
     )
 
     def __init__(
@@ -111,9 +112,11 @@ class RunPolicy:
         self._durable_progress_observer: Callable[[RunPolicySnapshot], None] | None = (
             None
         )
+        self._write_fence: Callable[[], None] | None = None
         self._store_write_policy = StoreWritePolicy(
             remaining_seconds=self.remaining_seconds,
             wait=self.wait,
+            admit_write=self.admit_write,
         )
 
     @classmethod
@@ -151,6 +154,23 @@ class RunPolicy:
         with self._run_control.protected():
             yield
         self.checkpoint(f"{label} exit")
+
+    def fence_writes(self, validate: Callable[[], None]) -> None:
+        """Bind the check every later store write of this attempt must pass.
+
+        *validate* raises when the attempt's reset epoch is no longer the
+        source's current one. Binding again replaces the check, which is how
+        a rebuild moves its fence onto the epoch its own reset recorded.
+        """
+        with self._lock:
+            self._write_fence = validate
+
+    def admit_write(self) -> None:
+        """Raise before a store write the attempt's reset epoch no longer owns."""
+        with self._lock:
+            validate = self._write_fence
+        if validate is not None:
+            validate()
 
     def remaining_seconds(self) -> float:
         """Return live budget, zero after completion, or the latched expiry."""

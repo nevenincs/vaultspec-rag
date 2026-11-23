@@ -95,6 +95,27 @@ def _admit_attempt_mode(
     return clean
 
 
+def _run_claimed_rebuild[T](
+    context: JobAttemptContext,
+    rebuild: Callable[[], T],
+) -> T:
+    """Run one rebuild attempt under the rebuild its durable job owns.
+
+    The claim is read when the attempt runs, not when it is bound, so a
+    resumed, restored or retried attempt continues the generation an earlier
+    attempt recorded, and a new job - which has recorded none - resets again.
+    """
+    from .indexer._rebuild_lifecycle import RebuildClaim, rebuild_claim
+
+    snapshot = context.manager.get(context.job_id)
+    claim = RebuildClaim(
+        generation_id=None if snapshot is None else snapshot.rebuild_generation_id,
+        bind=context.bind_rebuild_generation,
+    )
+    with bind_context(rebuild_claim, claim):
+        return rebuild()
+
+
 def _bind_index_attempt(
     context: JobAttemptContext,
     dispatch: _AttemptDispatch,
@@ -105,8 +126,9 @@ def _bind_index_attempt(
 ) -> Callable[[], IndexResult]:
     """Bind source execution to persisted authority, independent of attempt lineage.
 
-    A resumed rebuild retains replacement authority. Each source checkpoint
-    decides whether its compatible generation can resume confirmed work.
+    A resumed rebuild retains replacement authority and runs under the
+    rebuild generation its job recorded, so it continues that generation's
+    confirmed work; a new rebuild job has none recorded and resets again.
     """
     from .indexer import CodebaseIndexer, DocumentIndexer
     from .indexer._codebase_indexer import CodeIndexPreflight
@@ -118,12 +140,16 @@ def _bind_index_attempt(
             raise RuntimeError("code attempt requires its admitted preflight")
         if clean:
             return partial(
-                indexer.full_index,
-                clean=clean,
-                reporter=reporter,
-                preflight=preflight,
-                authority=dispatch.authority,
-                run_control=context.control,
+                _run_claimed_rebuild,
+                context,
+                partial(
+                    indexer.full_index,
+                    clean=clean,
+                    reporter=reporter,
+                    preflight=preflight,
+                    authority=dispatch.authority,
+                    run_control=context.control,
+                ),
             )
         return partial(
             indexer.incremental_index,
@@ -137,12 +163,16 @@ def _bind_index_attempt(
             raise RuntimeError("document attempt requires its admitted preflight")
         if clean:
             return partial(
-                indexer.full_index,
-                clean=clean,
-                reporter=reporter,
-                preflight=preflight,
-                authority=dispatch.authority,
-                run_control=context.control,
+                _run_claimed_rebuild,
+                context,
+                partial(
+                    indexer.full_index,
+                    clean=clean,
+                    reporter=reporter,
+                    preflight=preflight,
+                    authority=dispatch.authority,
+                    run_control=context.control,
+                ),
             )
         return partial(
             indexer.incremental_index,
@@ -153,11 +183,15 @@ def _bind_index_attempt(
         )
     if clean:
         return partial(
-            indexer.full_index,
-            clean=clean,
-            reporter=reporter,
-            authority=dispatch.authority,
-            run_control=context.control,
+            _run_claimed_rebuild,
+            context,
+            partial(
+                indexer.full_index,
+                clean=clean,
+                reporter=reporter,
+                authority=dispatch.authority,
+                run_control=context.control,
+            ),
         )
     return partial(
         indexer.incremental_index,

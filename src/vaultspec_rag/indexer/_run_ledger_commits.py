@@ -45,12 +45,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-    from ._run_ledger_models import (
-        GenerationRow,
-        PublicationProof,
-        RunGeneration,
-        RunSignature,
-    )
+    from ._run_ledger_models import PublicationProof, RunGeneration
+    from ._run_ledger_schema import GenerationRow
 
 
 class _CommitUnitRow(TypedDict):
@@ -557,8 +553,6 @@ class RunLedgerCommitMethods:
             generation_id: str,
             key: ProofCompatibilityKey,
             proof: PublicationProof,
-            *,
-            rebuild_signature: RunSignature | None = None,
         ) -> RunGeneration: ...
 
     def prepare_publication_mutation(

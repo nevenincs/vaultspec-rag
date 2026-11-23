@@ -129,7 +129,7 @@ class TestInterruptedJobDegradationSplit:
         """
         del isolated_status_dir
         from ..jobs import restore_interrupted
-        from ..server._lifespan import _jobs_health
+        from ..server._health import _jobs_health
 
         reset()
         try:
@@ -153,7 +153,7 @@ class TestInterruptedJobDegradationSplit:
         # below, so widening the health selector breaks the property this test
         # defends rather than an incidental consequence of it.
         assert degraded_reasons == []
-        assert jobs_health["last_failed"] is None
+        assert cast("dict[str, object]", jobs_health["failing"])["total"] == 0
 
 
 class TestPersistenceFailureClassification:

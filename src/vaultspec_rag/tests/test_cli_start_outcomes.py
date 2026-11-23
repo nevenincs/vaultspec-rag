@@ -175,7 +175,7 @@ class TestStartFailureOutcomes:
                 "degradations": [
                     {
                         "reason": "job_failed",
-                        "detail": "the latest indexing job failed: other",
+                        "detail": "1 project index run failed: /w/demo (code: other)",
                     }
                 ],
             }
@@ -214,7 +214,9 @@ class TestStartFailureOutcomes:
         assert data["status"] == "started"
         # The degradation travels with the success rather than being dropped.
         assert data["health"] == "degraded"
-        assert data["degraded_reasons"] == ["the latest indexing job failed: other"]
+        assert data["degraded_reasons"] == [
+            "1 project index run failed: /w/demo (code: other)"
+        ]
 
 
 def _visible(rendered: str) -> str:

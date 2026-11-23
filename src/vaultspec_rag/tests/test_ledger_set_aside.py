@@ -11,12 +11,9 @@ import pytest
 from .._store_writes import workspace_volume_path
 from ..indexer._codebase_indexer import CodebaseIndexer
 from ..indexer._document_indexer import DocumentIndexer
-from ..indexer._run_ledger_models import (
-    SCHEMA_VERSION,
-    RunAuthority,
-    index_run_ledger_path,
-)
+from ..indexer._run_ledger_models import RunAuthority, index_run_ledger_path
 from ..indexer._run_ledger_runtime import RunLedger, set_aside_unsupported_ledger
+from ..indexer._run_ledger_schema import SCHEMA_VERSION
 from ..indexer._vault_indexer import VaultIndexer
 from ..progress import NullProgressReporter
 from ._sqlite_state import assert_sqlite_unchanged, sqlite_contents
@@ -175,9 +172,12 @@ def test_publication_authority_never_sets_a_ledger_aside(
     before = sqlite_contents(path)
     run = build(root, RunAuthority.PUBLICATION)
 
-    with pytest.raises(_StandInReachedError):
+    # A full index is a rebuild, so publication authority is refused before
+    # the ledger is touched. Mutation: dropping the authority check let the
+    # run reach the stand-in after setting the ledger aside, and failed the
+    # ``pytest.raises``; restoring it passed.
+    with pytest.raises(PermissionError, match="requires rebuild authority"):
         run()
 
-    # Mutation: dropping the rebuild-authority condition moves the ledger here.
     assert _set_aside_siblings(path) == []
     assert_sqlite_unchanged(path, before)

@@ -253,7 +253,7 @@ def _verify_offline_service_startup(log_path: Path, stages: list[str]) -> str:
     output = _service_output(log_path)
     expected_markers = ["EmbeddingModel loaded"]
     if bool(get_config().reranker_enabled):
-        expected_markers.append("Shared CrossEncoder loaded on")
+        expected_markers.append("CrossEncoder reranker loaded on")
     missing_markers = [marker for marker in expected_markers if marker not in output]
     hf_endpoint = (os.environ.get(HF_ENDPOINT_ENV) or "https://huggingface.co").rstrip(
         "/"

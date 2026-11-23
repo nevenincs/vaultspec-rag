@@ -15,13 +15,13 @@ import pytest
 
 from tools.binaries.build_pyapp import PYTHON_VERSION
 from tools.binaries.torch_channel import (
-    INDEX_NAME,
     TORCH_PLATFORM_TAGS,
     TorchChannelError,
     index_url,
     pip_extra_args,
     wheel_url,
 )
+from vaultspec_rag.torch_config._index import CUDA_INDEX_NAME
 from vaultspec_rag.torch_config._lockfile import locked_torch_version
 
 pytestmark = pytest.mark.unit
@@ -45,7 +45,7 @@ def test_windows_is_pinned_because_pypi_ships_no_gpu_build_there() -> None:
     args = pip_extra_args("x86_64-pc-windows-msvc", PYTHON_VERSION)
 
     assert args is not None
-    assert args.startswith("torch @ https://download.pytorch.org/whl/cu130/")
+    assert args.startswith("torch @ https://download.pytorch.org/whl/cu134/")
     assert "win_amd64" in args
 
 
@@ -78,7 +78,7 @@ def test_macos_is_never_pinned(target: str) -> None:
 def test_the_pin_names_no_index_so_nothing_else_moves_off_pypi() -> None:
     """A direct reference, never ``--extra-index-url``.
 
-    The cu130 index mirrors numpy, jinja2, certifi, filelock and other
+    The CUDA index mirrors numpy, jinja2, certifi, filelock and other
     dependencies of this project, and uv gives an extra index priority over
     the default. Passing the index as a flag would silently source those from
     download.pytorch.org - which is why the project marks the index
@@ -98,7 +98,9 @@ def test_the_pin_tracks_the_project_config_rather_than_restating_it() -> None:
     root = Path(__file__).resolve().parents[3]
     config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
     declared = [
-        index for index in config["tool"]["uv"]["index"] if index["name"] == INDEX_NAME
+        index
+        for index in config["tool"]["uv"]["index"]
+        if index["name"] == CUDA_INDEX_NAME
     ]
 
     assert len(declared) == 1

@@ -135,7 +135,14 @@ def _jobs_http_server(
 @contextlib.contextmanager
 def _canonical_resilience_server(
     tmp_path: Path,
+    *,
+    registry: ServiceRegistry | None = None,
 ) -> Generator[tuple[int, str]]:
+    """Serve the real HTTP app over loopback; yield its port and token.
+
+    *registry* is the service registry the routes use; a test that must hold
+    one of its leases while a route runs passes its own.
+    """
     status_dir = tmp_path / "resilience-status"
     status_dir.mkdir()
     port = free_loopback_port()
@@ -167,7 +174,7 @@ def _canonical_resilience_server(
                 create_http_app(
                     ServerRouteRuntime(
                         token=token,
-                        registry=ServiceRegistry(),
+                        registry=registry or ServiceRegistry(),
                         port=port,
                     ),
                     lifespan=None,

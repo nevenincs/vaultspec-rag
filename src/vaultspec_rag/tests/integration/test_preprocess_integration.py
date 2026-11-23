@@ -606,7 +606,7 @@ class TestPreprocessEndToEnd:
             os.environ[setup.env_key] = "off"
             reset_config()
             setup.source.write_bytes(b"\x00\x02 changed binary")
-            scan = setup.indexer.scan_content()
+            scan = setup.indexer.preflight_content().scan
             sample = next(item for item in scan.samples if item.path == "doc.pdf")
             assert (
                 scan.preprocess_mode,
@@ -734,7 +734,7 @@ class TestPreprocessEndToEnd:
                 encoding="utf-8",
             )
             setup.source.write_bytes(b"\x00\x02 changed binary")
-            scan = setup.indexer.scan_content()
+            scan = setup.indexer.preflight_content().scan
             sample = next(item for item in scan.samples if item.path == "doc.pdf")
             assert (
                 scan.preprocess_mode,

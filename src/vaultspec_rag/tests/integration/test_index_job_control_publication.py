@@ -17,7 +17,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ..._job_errors import JobError, JobErrorKind
-from ..._store_models import generation_code_collection, read_served_code_collection
+from ..._source_types import PublicSourceType
+from ..._store_models import read_served_pointer
 from ...embeddings import EmbeddingModel  # noqa: TC001
 from ...indexer import CodebaseIndexer
 from ...job_control import (
@@ -89,16 +90,10 @@ def test_clean_rebuild_reencodes_when_collection_vanished_under_the_ledger(
         committed = interrupted.ledger.committed_unit_count(interrupted.generation_id)
         assert committed > 0, "the crash must land after storage-confirmed progress"
 
-        # The storage-delete equivalent: the private collection carrying this
+        # The storage-delete equivalent: the collection carrying this
         # interrupted generation vanishes out-of-band while the per-root run
-        # ledger (index_runs.sqlite3) stays behind.  A clean rebuild writes
-        # beside the served collection, so deleting the served default would
-        # leave the ledger's actual backing collection intact.
-        interrupted_collection = generation_code_collection(
-            store.DERIVED_CODE_TABLE_NAME,
-            interrupted.generation_id,
-        )
-        store.drop_code_table(interrupted_collection)
+        # ledger (index_runs.sqlite3) stays behind.
+        store.discard_source_storage(PublicSourceType.CODE)
 
         result = indexer.full_index(
             clean=True,
@@ -150,7 +145,7 @@ def test_incremental_requires_rebuild_when_collection_vanished_under_metadata(
 
         # The storage-delete equivalent: the collection vanishes out-of-band
         # while the canonical per-root run ledger stays behind.
-        store.drop_code_table()
+        store.discard_source_storage(PublicSourceType.CODE)
 
         with pytest.raises(JobError) as refusal:
             indexer.incremental_index(
@@ -173,24 +168,22 @@ def test_incremental_requires_rebuild_when_collection_vanished_under_metadata(
     _assert_code_resources_released()
 
 
-def test_an_interrupted_rebuild_leaves_the_served_index_fully_readable(
+def test_an_interrupted_rebuild_leaves_no_old_publication_behind(
     tmp_path: Path,
     index_control_model: EmbeddingModel,
 ) -> None:
-    """A rebuild interrupted mid-build must not cost the served index a point.
+    """A rebuild interrupted mid-build has already discarded the old index.
 
-    This is what building beside the served collection buys. Before, a clean
-    rebuild dropped first and repopulated after, so an interruption left a
-    fragment beneath a sidecar describing the whole corpus - the latch that
-    made every later run reconcile the entire tree.
+    The reset runs before the first replacement write, so an interruption
+    leaves only the rebuild's own confirmed points and no certified
+    publication. A later rebuild resumes that work and certifies the same
+    canonical collection.
 
-    The interruption uses the real cooperative-cancel path a job uses, and the
-    cancel point is past where the old destructive rebuild reached its drop.
-
-    Proven able to fail: reverting the clean branch to the old destructive path
-    - targeting the served collection and dropping it up front - empties it
-    here and fails the served-count assertion with 0 == 24.
+    The interruption uses the real cooperative-cancel path a job uses.
     """
+    from ..._publication_state import acquire_publication_snapshot
+    from ...indexer._publication_proof import ProofMissingError
+
     paths = _write_code_files(tmp_path, 24, "interrupted-rebuild")
 
     with VaultStore(tmp_path, embedding_dim=index_control_model.dimension) as store:
@@ -206,7 +199,6 @@ def test_an_interrupted_rebuild_leaves_the_served_index_fully_readable(
             preflight=indexer.preflight_content(),
         )
         assert published.added > 0
-        served_before = store.CODE_TABLE_NAME
 
         with contextlib.suppress(CancelRequested):
             indexer.full_index(
@@ -216,21 +208,19 @@ def test_an_interrupted_rebuild_leaves_the_served_index_fully_readable(
                 run_control=CancelAfterCheckpoints(40),
             )
 
-        # The served collection answered throughout and still holds everything
-        # the previous publication claimed.
-        assert store.count_code(served_before) == published.added
-        # The pointer never moved, so a reader still resolves the old
-        # collection rather than the abandoned generation.
-        assert read_served_code_collection(tmp_path) in (None, served_before)
+        with pytest.raises(ProofMissingError):
+            acquire_publication_snapshot(tmp_path, PublicSourceType.CODE)
+        assert store.count_code() < published.added
 
-        # A later completed rebuild publishes and the pointer moves.
         rebuilt = indexer.full_index(
             clean=True,
             reporter=NullProgressReporter(),
             preflight=indexer.preflight_content(),
         )
-        assert rebuilt.added > 0
-        assert read_served_code_collection(tmp_path) == store.CODE_TABLE_NAME
+        assert rebuilt.total > 0
+        assert store.CODE_TABLE_NAME == store.DERIVED_CODE_TABLE_NAME
+        assert store.owned_code_collections() == (store.DERIVED_CODE_TABLE_NAME,)
+        assert read_served_pointer(tmp_path) == (None, True)
         assert_current_code_state(indexer, store, paths, "interrupted-rebuild")
     _assert_code_resources_released()
 
@@ -306,7 +296,7 @@ def _assert_replayed_store(
     source = PublicSourceType(source_name)
     collection = {
         PublicSourceType.VAULT: store.TABLE_NAME,
-        PublicSourceType.CODE: store._code_collection(None),
+        PublicSourceType.CODE: store.CODE_TABLE_NAME,
         PublicSourceType.DOCUMENT: store.DOCUMENT_TABLE_NAME,
     }[source]
     records, offset = store._scroll(

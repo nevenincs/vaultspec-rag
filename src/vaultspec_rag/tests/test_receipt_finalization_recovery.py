@@ -12,15 +12,11 @@ import pytest
 from .. import store_schema
 from .._store_models import (
     CodeChunk,
-    DocumentChunk,
-    DocumentLocator,
-    DocumentPayload,
     resolve_served_code_collection,
 )
 from ..config._types import EnvVar
 from ..indexer._checkpoint_common import classify_interrupted_generation
 from ..indexer._content_policy import RootContentPolicy, SourceProfileVersion
-from ..indexer._document_identity import document_point_id
 from ..indexer._generation_lifecycle import (
     CodeGenerationBindings,
     CodeGenerationLifecycle,
@@ -37,6 +33,7 @@ from ..indexer._streaming_types import CodeFileSegment
 from ..progress import NullProgressReporter
 from ..store_runtime import VaultStore
 from ._config_fixtures import reset_config
+from ._ledger_fixtures import continue_rebuild
 from ._run_ledger_test_support import ledger_test_digest, ledger_test_signature
 
 if TYPE_CHECKING:
@@ -78,7 +75,7 @@ def _checkpoint(
 ) -> CodeRunCheckpoint:
     run_policy = RunPolicy(no_progress_timeout_seconds=60)
     generation = CodeRunCheckpoint.start_compatible_generation(
-        ledger, signature, authority, run_policy
+        ledger, signature, authority
     )
     receipt = CodeRunCheckpoint.open_publication_receipt(ledger, generation, authority)
     return CodeRunCheckpoint(
@@ -100,8 +97,6 @@ def _write(
     checkpoint: CodeRunCheckpoint,
     store: VaultStore,
     path: str,
-    *,
-    collection: str | None = None,
 ) -> None:
     content = "value = 1\n"
     (store.root_dir / path).write_text(content, encoding="utf-8")
@@ -119,7 +114,7 @@ def _write(
     lifecycle = checkpoint.mutation_lifecycle(checkpoint.unit_for(segment, digest))
     if lifecycle is not None:
         assert lifecycle.prepare()
-    store.upsert_code_chunks([chunk], write_policy=None, collection=collection)
+    store.upsert_code_chunks([chunk], write_policy=None)
     if lifecycle is not None:
         lifecycle.mark_applied()
         lifecycle.confirm()
@@ -174,73 +169,50 @@ def test_code_lifecycle_resumes_after_exact_receipt_commit(
     assert recovery_code_store.count_code() == 2
 
 
-def test_private_code_rebuild_resumes_pointer_after_proof_commit(
+def test_code_rebuild_resumes_publication_after_proof_commit(
     tmp_path: Path, recovery_code_store: VaultStore
 ) -> None:
+    """A rebuild interrupted after its proof commit finishes in place.
+
+    The rebuild reset its source under its own generation before writing, so
+    the resumed attempt keeps that work and certifies the same collection.
+    """
+    from .._source_types import PublicSourceType
+    from ..indexer._run_ledger_models import SourceResetPhase
+
     ledger, parent = _published(tmp_path, recovery_code_store)
-    old_collection = recovery_code_store.CODE_TABLE_NAME
     signature = replace(parent.generation.signature, clean=True)
     checkpoint = _checkpoint(ledger, signature, RunAuthority.REBUILD)
+    reset = ledger.begin_source_reset(
+        PublicSourceType.CODE,
+        signature.root_identity,
+        signature.backend_identity,
+        checkpoint.generation_id,
+    )
+    recovery_code_store.discard_source_storage(PublicSourceType.CODE)
+    reset = ledger.advance_source_reset(reset, SourceResetPhase.DISCARDED)
+    recovery_code_store.recreate_empty_source(PublicSourceType.CODE)
+    ledger.advance_source_reset(reset, SourceResetPhase.COMPLETE)
+    _write(checkpoint, recovery_code_store, "replacement.py")
+    checkpoint.publish_proof_transition()
+    classify_interrupted_generation(
+        ledger, checkpoint.generation, RuntimeError("interrupted after proof")
+    )
+    with continue_rebuild(checkpoint.generation_id):
+        resumed = _checkpoint(ledger, signature, RunAuthority.REBUILD)
     lifecycle = CodeGenerationLifecycle(
         CodeGenerationBindings(tmp_path, ledger.path.parent, recovery_code_store)
     )
-    target = lifecycle.build_collection(checkpoint)
-    assert target is not None
-    _write(checkpoint, recovery_code_store, "replacement.py", collection=target)
-    content = "value = 1\n"
-    fingerprint = ledger_test_digest(content)
-    locator = DocumentLocator("line", 1)
-    origin = DocumentChunk(
-        document_point_id(
-            source_path="replacement.py",
-            unit_ordinal=0,
-            content_fingerprint=fingerprint,
-            locator=locator,
-        ),
-        DocumentPayload(
-            "replacement.py",
-            0,
-            fingerprint,
-            content,
-            locator=locator,
-            extractor_id="plain-text",
-            extractor_version="1",
-        ),
-        vector=[0.5] * 8,
-    )
-    recovery_code_store.upsert_document_content_chunks([origin], write_policy=None)
-    checkpoint.publish_proof_transition()
-    classify_interrupted_generation(
-        ledger, checkpoint.generation, RuntimeError("interrupted before pointer")
-    )
-    resumed = _checkpoint(ledger, signature, RunAuthority.REBUILD)
 
-    assert old_collection == recovery_code_store.CODE_TABLE_NAME
-    assert (
-        resolve_served_code_collection(
-            tmp_path, recovery_code_store.DERIVED_CODE_TABLE_NAME
-        )
-        == old_collection
-    )
+    assert resumed.generation_id == checkpoint.generation_id
     assert recovery_code_store.count_code() == 1
-    assert recovery_code_store.count_document() == 1
-
     assert lifecycle.publish_pending_finalization(
         resumed, reporter=NullProgressReporter()
     )
 
-    assert (
-        resolve_served_code_collection(
-            tmp_path, recovery_code_store.DERIVED_CODE_TABLE_NAME
-        )
-        == target
-    )
-    assert target == recovery_code_store.CODE_TABLE_NAME
-    # Mutation proof: dropping the old served table before pointer publication
-    # failed this collection-existence assertion; restoring it passed.
-    assert recovery_code_store.client.collection_exists(old_collection)
-    assert recovery_code_store.client.count(old_collection, exact=True).count == 1
+    canonical = recovery_code_store.DERIVED_CODE_TABLE_NAME
+    assert resolve_served_code_collection(tmp_path, canonical) == canonical
+    assert canonical == recovery_code_store.CODE_TABLE_NAME
     assert recovery_code_store.count_code() == 1
-    # Mutation proof: removing the post-pointer route pass failed this origin
-    # count assertion (1 instead of 0); restoring it passed.
-    assert recovery_code_store.count_document() == 0
+    published = ledger.generation(checkpoint.generation_id)
+    assert published.complete

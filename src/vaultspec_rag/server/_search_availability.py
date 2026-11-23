@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 from qdrant_client.http.exceptions import UnexpectedResponse
 
-from .._root_identity import canonical_root_key
+from .._operator_commands import server_job_resume_command
+from .._root_identity import canonical_root_key_or_none
 from .._search_state import (
     MAX_SEARCH_EVIDENCE_ITEMS,
     AbsenceAuthority,
@@ -25,7 +25,11 @@ from .._search_state import (
 from ..job_models import JobMode, JobOperation, JobState
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
+    from .._publication_state import IndexTransitionError, UnfinishedResetError
     from .._source_types import IndexSource
+    from ..store_runtime import StorageGeometryError
 
 __all__ = [
     "CanonicalSearchEvidence",
@@ -33,7 +37,7 @@ __all__ = [
     "SearchStatusCode",
     "classify_qdrant_collection_disappearance",
     "classify_search_response",
-    "storage_conformance_refusal_fact",
+    "storage_refusal_fact",
 ]
 
 # One declaration of the convergence-mode vocabulary; the transport owns it.
@@ -76,6 +80,7 @@ class CanonicalSearchEvidence:
     """Explicit collection and publication evidence available at classification."""
 
     served_generation: str | None = None
+    observed_generation: str | None = None
     desired_generation: str | None = None
     publication_revision: int | None = None
     desired_revision: int | None = None
@@ -88,6 +93,7 @@ class CanonicalSearchEvidence:
     def __post_init__(self) -> None:
         GenerationEvidence(
             served_generation=self.served_generation,
+            observed_generation=self.observed_generation,
             desired_generation=self.desired_generation,
             served_revision=self.publication_revision,
             desired_revision=self.desired_revision,
@@ -133,32 +139,117 @@ class SearchAvailabilityContext:
     canonical_evidence: CanonicalSearchEvidence = CanonicalSearchEvidence()
 
 
-def storage_conformance_refusal_fact(
-    exc: Exception,
+def storage_refusal_fact(
+    exc: StorageGeometryError | IndexTransitionError,
     source_fact: SearchSourceFact,
     *,
     root: Path,
+    job_snapshot: Sequence[object],
     port: int | None = None,
-) -> SearchSourceFact | None:
-    """Replace preflight readiness only for a typed compatibility refusal.
+) -> SearchSourceFact:
+    """Replace preflight readiness with the fact a typed storage refusal states.
 
-    Storage compatibility refusals require an explicit rebuild. Other failures
-    remain under their existing error policy rather than gaining rebuild authority.
-    Captured publication identities and bounded evidence remain diagnostic facts.
+    - A storage compatibility refusal requires an explicit rebuild and is not
+      retryable.
+    - A reset that crossed the read is running now, so it is retryable.
+    - A reset found unfinished is classified by the job that owns it in
+      *job_snapshot*: retryable while that job runs, a resume while it is
+      paused, and a rebuild when no live job owns it, because nothing will
+      ever finish it and a retry can never succeed.
+
+    Captured publication identities and bounded evidence remain diagnostic
+    facts.
     """
+    from .._publication_state import UnfinishedResetError
     from ..store_runtime import StorageGeometryError
 
-    if not isinstance(exc, StorageGeometryError):
-        return None
-    reason = SearchReasonCode.REBUILD_REQUIRED
+    reason = SearchReasonCode.INDEX_TRANSITION
+    freshness = SearchFreshness.UPDATING
+    retryable = True
+    remediation = reason.remediation(source_fact.source, port=port, target=str(root))
+    if isinstance(exc, StorageGeometryError):
+        retryable = False
+        reason = SearchReasonCode.REBUILD_REQUIRED
+        freshness = SearchFreshness.REBUILD_REQUIRED
+        remediation = reason.remediation(
+            source_fact.source, port=port, target=str(root)
+        )
+    elif isinstance(exc, UnfinishedResetError):
+        owner = _reset_owner(job_snapshot, exc, root=root)
+        if owner is None:
+            retryable = False
+            reason = SearchReasonCode.REBUILD_REQUIRED
+            freshness = SearchFreshness.REBUILD_REQUIRED
+            rebuild = reason.remediation(
+                source_fact.source, port=port, target=str(root)
+            )
+            remediation = (
+                f"No index job owns rebuild generation "
+                f"{exc.fence.generation_id}, so its unfinished reset will not "
+                f"complete. Start a new rebuild with `{rebuild}`."
+            )
+        elif owner.state is JobState.PAUSED:
+            retryable = False
+            remediation = (
+                f"Rebuild job {owner.id} is paused before its reset finished. "
+                f"Resume it with `{server_job_resume_command(owner.id, port)}`."
+            )
     return replace(
         source_fact,
         availability=SearchAvailability.UNAVAILABLE,
-        freshness=SearchFreshness.REBUILD_REQUIRED,
+        freshness=freshness,
         absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
         reason_code=reason,
-        retryable=False,
-        remediation=reason.remediation(source_fact.source, port=port, target=str(root)),
+        retryable=retryable,
+        remediation=remediation,
+    )
+
+
+def _reset_owner(
+    job_snapshot: Sequence[object],
+    exc: UnfinishedResetError,
+    *,
+    root: Path,
+) -> _MatchingJob | None:
+    """Return the active job that will finish or replace *exc*'s reset.
+
+    The job that recorded the reset's generation owns it. Failing that, an
+    active rebuild of the same root and source will reset the source again,
+    so its reset replaces the unfinished one.
+    """
+    requested_root = canonical_root_key_or_none(root)
+    source = cast("IndexSource", exc.source.value)
+    for candidate in job_snapshot:
+        if not isinstance(candidate, Mapping):
+            continue
+        record = cast("Mapping[str, object]", candidate)
+        generation = record.get("rebuild_generation_id")
+        state = _normalized_active_state(record.get("state"))
+        job_id = record.get("id")
+        if (
+            generation is not None
+            and generation == exc.fence.generation_id
+            and state is not None
+            and isinstance(job_id, str)
+        ):
+            spec = record.get("spec")
+            mode = (
+                _normalized_mode(cast("Mapping[str, object]", spec).get("mode"))
+                if isinstance(spec, Mapping)
+                else None
+            )
+            return _MatchingJob(id=job_id, state=state, mode=mode or JobMode.REBUILD)
+    if requested_root is None:
+        return None
+    return next(
+        (
+            match
+            for match in _matching_jobs(
+                job_snapshot, requested_root=requested_root, source=source
+            )
+            if match.mode is JobMode.REBUILD
+        ),
+        None,
     )
 
 
@@ -173,17 +264,6 @@ class _MatchingJob:
     def to_reference(self) -> MatchingIndexJobReference:
         """Return immutable public job-reference evidence."""
         return MatchingIndexJobReference(id=self.id, state=self.state, mode=self.mode)
-
-
-def _normalized_root(value: object) -> str | None:
-    if not isinstance(value, (str, Path)):
-        return None
-    if isinstance(value, str) and not value.strip():
-        return None
-    try:
-        return canonical_root_key(Path(value).expanduser())
-    except (OSError, RuntimeError, ValueError):
-        return None
 
 
 def _normalized_mode(value: object) -> JobMode | None:
@@ -214,7 +294,7 @@ def _canonical_match(
         return None
     if spec.get("operation") != JobOperation.INDEX or spec.get("source") != source:
         return None
-    if _normalized_root(spec.get("project_root")) != requested_root:
+    if canonical_root_key_or_none(spec.get("project_root")) != requested_root:
         return None
     mode = _normalized_mode(spec.get("mode"))
     if mode is None:
@@ -401,6 +481,7 @@ def _project_source_fact(
         absence_authority=authority,
         generation=GenerationEvidence(
             served_generation=canonical.served_generation,
+            observed_generation=canonical.observed_generation,
             desired_generation=canonical.desired_generation,
             served_revision=canonical.publication_revision,
             desired_revision=canonical.desired_revision,
@@ -437,6 +518,30 @@ def _index_not_built(context: SearchAvailabilityContext) -> bool:
     )
 
 
+def _job_index_state(
+    context: SearchAvailabilityContext,
+    *,
+    matching_jobs: Sequence[MatchingIndexJobReference],
+    matching_jobs_truncated: bool,
+    rebuilding: bool,
+    source_fact: SearchSourceFact,
+) -> dict[str, object]:
+    """Return the index status and bounded job evidence for an affected source."""
+    return {
+        "status": (
+            SearchIndexStatus.UNAVAILABLE
+            if context.canonical_evidence.collection_present is False
+            else SearchIndexStatus.MISSING
+            if source_fact.reason_code == SearchReasonCode.INDEX_NOT_BUILT
+            else SearchIndexStatus.REBUILDING
+            if rebuilding
+            else SearchIndexStatus.UPDATING
+        ).value,
+        "matching_jobs": [job.to_dict() for job in matching_jobs],
+        "matching_jobs_truncated": matching_jobs_truncated,
+    }
+
+
 def _build_index_unavailable_response(
     context: SearchAvailabilityContext,
     *,
@@ -452,18 +557,13 @@ def _build_index_unavailable_response(
         "indexed_target_root": context.index_state["indexed_target_root"],
         "requested_target_root": context.index_state["requested_target_root"],
         "target_matches": context.index_state["target_matches"],
-        "status": (
-            SearchIndexStatus.UNAVAILABLE
-            if context.canonical_evidence.collection_present is False
-            else SearchIndexStatus.MISSING
-            if source_fact.reason_code == SearchReasonCode.INDEX_NOT_BUILT
-            else SearchIndexStatus.REBUILDING
-            if rebuilding
-            else SearchIndexStatus.UPDATING
-        ).value,
-        "matching_jobs": [job.to_dict() for job in matching_jobs],
-        "matching_jobs_truncated": matching_jobs_truncated,
-    }
+    } | _job_index_state(
+        context,
+        matching_jobs=matching_jobs,
+        matching_jobs_truncated=matching_jobs_truncated,
+        rebuilding=rebuilding,
+        source_fact=source_fact,
+    )
     # The breadth verdict rides through the unavailability rewrite untouched:
     # an index mid-change is exactly when a caller needs to know whether the
     # collection it just read was reconcilable with its publication.
@@ -541,7 +641,7 @@ def classify_search_response(
     context: SearchAvailabilityContext,
 ) -> SearchResponseClassification:
     """Classify one response and preserve one bounded before/after evidence set."""
-    normalized_root = _normalized_root(context.requested_root)
+    normalized_root = canonical_root_key_or_none(context.requested_root)
     matches = (
         _combined_matches(
             context.before_snapshot,
@@ -560,10 +660,37 @@ def classify_search_response(
     source_fact = _project_source_fact(context, matches)
 
     results = result.get("results")
-    if (
-        isinstance(results, list)
-        and not results
-        and (matches or source_fact.reason_code == SearchReasonCode.INDEX_NOT_BUILT)
+    empty = isinstance(results, list) and not results
+    if empty and source_fact.serves_updating_empty:
+        # A usable source answered while a job changes it: the empty answer
+        # succeeds, and the job evidence marks its absence non-authoritative.
+        index_state = result.get("index_state")
+        response = (
+            result
+            if not isinstance(index_state, dict)
+            else result
+            | {
+                "index_state": cast("dict[str, object]", index_state)
+                | _job_index_state(
+                    context,
+                    matching_jobs=matching_jobs,
+                    matching_jobs_truncated=matching_jobs_truncated,
+                    rebuilding=rebuilding,
+                    source_fact=source_fact,
+                )
+            }
+        )
+        return SearchResponseClassification(
+            response=response,
+            status_code=200,
+            matching_jobs=matching_jobs,
+            matching_jobs_truncated=matching_jobs_truncated,
+            rebuilding=rebuilding,
+            availability_cause=None,
+            source_fact=source_fact,
+        )
+    if empty and (
+        matches or source_fact.reason_code == SearchReasonCode.INDEX_NOT_BUILT
     ):
         response = _build_index_unavailable_response(
             context,

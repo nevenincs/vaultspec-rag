@@ -77,11 +77,11 @@ class _VaultIngestMixin:
         @staticmethod
         def _stable_id(string_id: str) -> int: ...
 
-        def _code_collection(self, collection: str | None) -> str: ...
+        def _code_collection(self) -> str: ...
 
         def ensure_table(self) -> None: ...
 
-        def ensure_code_table(self, collection: str | None = None) -> None: ...
+        def ensure_code_table(self) -> None: ...
 
         def ensure_document_table(self) -> None: ...
 
@@ -263,7 +263,6 @@ class _VaultIngestMixin:
         *,
         write_policy: StoreWritePolicy | None,
         wait: bool = True,
-        collection: str | None = None,
     ) -> None:
         """Insert or update codebase chunks by ``id``.
 
@@ -277,7 +276,7 @@ class _VaultIngestMixin:
                 or terminal metadata publish. Ignored by the embedded
                 backend, which applies synchronously.
         """
-        _target = self._code_collection(collection)
+        _target = self._code_collection()
         if not chunks:
             return
 
@@ -295,7 +294,7 @@ class _VaultIngestMixin:
                 ),
             )
 
-        self.ensure_code_table(_target)
+        self.ensure_code_table()
         with self._point_write_lock(_target, write_policy):
             self._guarded_upsert(
                 _target,
@@ -516,63 +515,63 @@ class _VaultIngestMixin:
         )
         logger.info("Deleted %d document(s)", len(ids))
 
-    def delete_code_chunks(self, ids: list[str], collection: str | None = None) -> None:
-        """Remove code chunks by their ``id`` values.
+    def _delete_point_ids(
+        self,
+        collection: str,
+        ids: Sequence[str],
+        *,
+        ensure: Callable[[], None] | None,
+    ) -> None:
+        """Delete exactly the points whose ids are *ids* from *collection*.
 
-        Args:
-            ids: List of chunk IDs to delete.
+        Deleting by id, never by payload, is what keeps sibling chunks of the
+        same file in place. *ensure* creates the collection before the delete;
+        ``None`` means an absent collection is already reconciled and is
+        never recreated.
         """
-        _target = self._code_collection(collection)
         if not ids:
             return
+        if ensure is None:
+            if not self._collection_exists(collection):
+                return
+        else:
+            ensure()
         from qdrant_client import models
 
-        self.ensure_code_table(_target)
-        with self._point_lock(_target):
-            point_ids: list[int | str | UUID] = [self._stable_id(i) for i in ids]
-            self._delete_points(
-                collection_name=_target,
-                points_selector=models.PointIdsList(points=point_ids),
-            )
-        logger.info("Deleted %d code chunk(s)", len(ids))
-
-    def delete_document_content_chunks(self, ids: list[str]) -> None:
-        """Remove document-native chunks by their deterministic IDs."""
-        if not ids:
-            return
-        from qdrant_client import models
-
-        self.ensure_document_table()
         point_ids: list[int | str | UUID] = [self._stable_id(value) for value in ids]
-        with self._point_lock(self.DOCUMENT_TABLE_NAME):
+        with self._point_lock(collection):
             self._delete_points(
-                collection_name=self.DOCUMENT_TABLE_NAME,
+                collection_name=collection,
                 points_selector=models.PointIdsList(points=point_ids),
             )
-        logger.info("Deleted %d document chunk(s)", len(ids))
+        logger.info("Deleted %d point(s) from %s", len(ids), collection)
 
     def delete_publication_points(
-        self, source: PublicSourceType, ids: list[str]
+        self,
+        source: PublicSourceType,
+        ids: Sequence[str],
     ) -> None:
-        """Replay exact journaled deletions without deleting sibling chunks."""
+        """Delete exact point ids from one source without touching sibling chunks.
+
+        Args:
+            source: The source whose collection holds the points.
+            ids: Point identities to delete.
+
+        Raises:
+            ValueError: *source* is not one concrete source.
+        """
         from ._source_types import PublicSourceType
 
         if source is PublicSourceType.CODE:
-            self.delete_code_chunks(ids)
+            self._delete_point_ids(
+                self._code_collection(), ids, ensure=self.ensure_code_table
+            )
         elif source is PublicSourceType.DOCUMENT:
-            self.delete_document_content_chunks(ids)
+            self._delete_point_ids(
+                self.DOCUMENT_TABLE_NAME, ids, ensure=self.ensure_document_table
+            )
         elif source is PublicSourceType.VAULT:
-            if not ids:
-                return
-            from qdrant_client import models
-
-            self.ensure_table()
-            with self._point_lock(self.TABLE_NAME):
-                point_ids: list[int | str | UUID] = [self._stable_id(i) for i in ids]
-                self._delete_points(
-                    collection_name=self.TABLE_NAME,
-                    points_selector=models.PointIdsList(points=point_ids),
-                )
+            self._delete_point_ids(self.TABLE_NAME, ids, ensure=self.ensure_table)
         else:
             raise ValueError("publication deletion requires one concrete source")
 
@@ -587,16 +586,4 @@ class _VaultIngestMixin:
         """
         if collection not in {self.CODE_TABLE_NAME, self.DOCUMENT_TABLE_NAME}:
             raise ValueError("migration origin is not an active content projection")
-        if not ids or not self._collection_exists(collection):
-            return
-        from qdrant_client import models
-
-        with self._point_lock(collection):
-            point_ids: list[int | str | UUID] = [
-                self._stable_id(value) for value in ids
-            ]
-            self._delete_points(
-                collection_name=collection,
-                points_selector=models.PointIdsList(points=point_ids),
-            )
-        logger.info("Deleted %d confirmed migration origin point(s)", len(ids))
+        self._delete_point_ids(collection, ids, ensure=None)

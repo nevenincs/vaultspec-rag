@@ -1096,3 +1096,58 @@ def test_retry_state_survives_its_root_being_deleted(tmp_path: Path) -> None:
     assert failed.consecutive_failures == 1
     assert watcher_retry_state_path(root, WatcherSource.CODE).is_file()
     assert not root.exists()
+
+
+def _reset_fence_errors() -> list[BaseException]:
+    from ..indexer._rebuild_lifecycle import RebuildSupersededError
+    from ..indexer._run_ledger_models import SourceResetEpochError
+
+    fenced = SourceResetEpochError("code was reset (epoch 2) after this work began")
+    return [
+        fenced,
+        RebuildSupersededError("code rebuild generation g1 was replaced"),
+        # A managed job's failure reaches the policy as its recorded text.
+        RuntimeError(str(fenced)),
+    ]
+
+
+@pytest.mark.parametrize(
+    "error", _reset_fence_errors(), ids=["fence", "superseded", "recorded-text"]
+)
+def test_a_reset_fence_defers_scope_without_counting_a_failure(
+    tmp_path: Path, error: BaseException
+) -> None:
+    """A writer a rebuild's reset stopped is deferred, never failed.
+
+    The rebuild owns the source, so retrying at once would meet the same
+    fence: the next attempt waits the base delay. Repeating the fence past the
+    failure threshold neither counts a failure nor opens the circuit, and the
+    exact pending scope survives for the rebuild's successor to reconcile.
+
+    Mutation: removing the ``INDEX_TRANSITION`` branch of ``record_failure``
+    classified the fence as a non-retryable failure and failed the
+    ``consecutive_failures == 1`` assertion; releasing with ``defer=False``
+    left the next attempt admissible at once and failed the
+    ``next_retry_at == now + 10.0`` assertion. Restoring each passed.
+    """
+    policy = _policy(tmp_path / "code.json", tmp_path)
+    _mark_scope(policy, now=0.0)
+    _fail_once(policy, TimeoutError("timed out"), now=0.0, random_unit=0.5)
+
+    now = 20.0
+    for _ in range(4):
+        admitted = policy.admit(now=now)
+        assert admitted.attempt_generation is not None
+        state = policy.record_failure(
+            error, admitted.attempt_generation, now=now, random_unit=0.5
+        )
+        assert state.consecutive_failures == 1
+        assert state.last_error_kind is JobErrorKind.TIMEOUT
+        assert state.circuit_state is WatcherCircuitState.CLOSED
+        assert state.convergence_pending
+        assert [item.relative_path for item in state.pending_paths] == ["src/a.py"]
+        assert state.next_retry_at == now + 10.0
+        early = policy.admit(now=now + 5.0)
+        assert not early.admitted
+        assert early.reason == "retry delay active"
+        now += 10.0
