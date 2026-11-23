@@ -105,9 +105,10 @@ class TestGraphCacheConcurrency:
     def test_concurrent_get_single_construction(self, tmp_path: Path):
         root = _make_vault_dir(tmp_path)
         cache = GraphCache(ttl_seconds=10.0)
-        # Pre-build, then force stale by backdating _built_at
+        # Pre-build, then force stale by backdating _built_at past the
+        # lifetime. Never to zero: the monotonic clock starts near boot.
         cache.get(root)
-        cache._built_at = 0.0
+        cache._built_at -= 11.0
 
         results: list[object] = []
         barrier = threading.Barrier(8)
@@ -231,7 +232,10 @@ class TestNonblockingGraphRefresh:
         cache = GraphCache(ttl_seconds=300)
         if expired:
             assert cache.get(root) is not None
-            cache._built_at = 0.0
+            # Relative to the build, never to zero: the monotonic clock starts
+            # near a machine's boot, and on one up for less than the lifetime
+            # a zero reads as still fresh.
+            cache._built_at -= 301.0
         searcher = VaultSearcher.__new__(VaultSearcher)
         searcher._graph_provider = lambda: cache.get(root, wait=False)
         searcher.root_dir = root

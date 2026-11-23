@@ -794,6 +794,11 @@ def pytest_collection_modifyitems(
     from vaultspec_rag.tests._tier_gate import enforce_tiers
 
     enforce_tiers(items)
+    # Only the suite itself is cut. A test that starts a pytest session of its
+    # own, rooted in a directory it wrote, hands the shard down with the rest
+    # of its environment, and that session's one file must still run.
+    if config.rootpath.resolve() != Path(__file__).resolve().parent:
+        return
     try:
         shard = selected_shard(os.environ)
     except ValueError as error:
