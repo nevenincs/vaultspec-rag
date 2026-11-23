@@ -15,6 +15,7 @@ import pytest
 from dev.gate_scope import (
     FULL,
     MEASURING_JOBS,
+    MISSING_ATTEMPTS,
     POLL_ATTEMPTS,
     PROOF,
     RELEASE_BOT,
@@ -313,6 +314,45 @@ def test_a_parent_that_never_settles_is_reported_running() -> None:
     routes = _push_run(PARENT, status="in_progress", conclusion="")
     assert wait_for_push_gate(_api(routes), PARENT, sleeps.append) == "running"
     assert len(sleeps) == POLL_ATTEMPTS - 1
+
+
+def test_a_parent_with_no_gate_is_reported_missing_early() -> None:
+    """A gate that was never started cannot hold the job for the whole wait.
+
+    Mutation proof: reporting an absent run as ``running`` failed this on the
+    returned state after the full wait; restoring ``missing`` passed.
+    """
+    sleeps: list[float] = []
+    routes = {
+        f"{GATE_RUNS}?head_sha={PARENT}&event=push&per_page=10": {"workflow_runs": []}
+    }
+    assert wait_for_push_gate(_api(routes), PARENT, sleeps.append) == "missing"
+    assert len(sleeps) == MISSING_ATTEMPTS - 1
+
+
+def test_a_gate_that_appears_late_is_still_waited_for() -> None:
+    """The grace covers a push whose gate GitHub has not listed yet."""
+    answers = iter(
+        [
+            {"workflow_runs": []},
+            _push_run(PARENT)[f"{GATE_RUNS}?head_sha={PARENT}&event=push&per_page=10"],
+        ]
+    )
+    assert (
+        wait_for_push_gate(lambda _path: next(answers), PARENT, _no_sleep) == "success"
+    )
+
+
+def test_a_version_bump_over_an_ungated_parent_measures() -> None:
+    """Mutation proof: treating ``missing`` as proven failed this on ``proof``;
+    restoring the success comparison passed.
+    """
+    routes = {
+        **_landed(VERSION_ONLY),
+        f"{GATE_RUNS}?head_sha={PARENT}&event=push&per_page=10": {"workflow_runs": []},
+        **_pr_runs(),
+    }
+    assert _decide_push(routes) == FULL
 
 
 @pytest.mark.parametrize(

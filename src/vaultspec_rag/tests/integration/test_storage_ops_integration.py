@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 
     from ...qdrant_runtime._supervise import QdrantSupervisor
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.unit]
 
 # Valid namespacing prefixes are r + 12 hex + _ (blake2b digest_size=6).
 _UNKNOWN_PREFIX = "rdeadbeefcafe_"
@@ -63,9 +63,14 @@ def _qdrant_binary() -> Path:  # pyright: ignore[reportUnusedFunction]
 
 
 def _drop_all_collections(url: str) -> None:
-    """Remove every collection on the server, whoever created it."""
+    """Remove every collection on the server, whoever created it.
 
-    client = open_server_client(url)
+    Housekeeping between tests, on a server other tests' work is loading at the
+    same moment, so each request gets a minute rather than the client's own
+    few seconds: a slow drop here is not what any of these tests measures.
+    """
+
+    client = open_server_client(url, timeout=60)
     try:
         for collection in client.get_collections().collections:
             client.delete_collection(collection.name)

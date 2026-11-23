@@ -11,9 +11,9 @@ related:
   - '[[2026-09-29-release-pr-identity-adr]]'
 supersedes:
   - '2026-09-21-automatic-merge-gate-adr'
-modified: '2026-10-30'
+modified: '2026-11-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:8d25f9db3a231b031f513484ae4bb9305b3832f370584de9c3e95f5ded5a10f8'
+body_hash: 'sha256:53ff3eb7c870c2a0049c2a2ad2374f8fd76dfdda29ca0be8bf85af3a44776e7e'
 ---
 
 # `automatic-merge-gate` adr: `Merge starts an autonomous verified release` | (**status:** `accepted`)
@@ -24,7 +24,7 @@ The release proposal could offer merge after only light lint, while its PR check
 
 ## Considerations
 
-Authorized 2026-10-09: the maintainer requested the flow be fixed using Core orchestration, emphasized real Merge Gate and Dev Server proof before release PR merge, and explicitly selected "Release PR merge is the only human action". This authorizes automatic cut initiation and replacement of the independent manual release-pin review.
+Authorized 2026-10-09: the maintainer requested the flow be fixed using Core orchestration, emphasized real Merge Gate proof before release PR merge, and explicitly selected "Release PR merge is the only human action". This authorizes automatic cut initiation and replacement of the independent manual release-pin review.
 
 The draft-first release standard, native four-target and accelerator proof, fork containment, pinned toolchain binaries, and split OIDC/deploy credentials remain binding.
 
@@ -36,7 +36,7 @@ The draft-first release standard, native four-target and accelerator proof, fork
 
 ## Constraints
 
-Release Please dispatches full checks and the canonical Dev Server workflow after the final proposal branch write. A light or skipped result cannot authorize a release proposal. The required aggregate reuses only the full exact-SHA proof and includes Dev Server success. Held bot PR checks are released automatically after that proof.
+Release Please dispatches full checks after the final proposal branch write. A light or skipped result cannot authorize a release proposal. The required aggregate reuses only the full exact-SHA proof. Held bot PR checks are released automatically after that proof.
 
 A maintainer merge starts candidate selection automatically. Full exact-commit checks and both accelerator tiers must pass before tag creation; the release cut proof amendment of 2026-10-26 below states how a version-only release head meets the first of these. Candidate, cut, or required publication handoff failures report failure; no normal transition requires dispatch by a person. Manual dispatch remains recovery only.
 
@@ -44,7 +44,7 @@ Artifact provenance replaces the human catalog-review stop. Only immutable publi
 
 ## Implementation
 
-Adopt Core's push-driven candidate/cut topology and full proposal dispatch. Include the canonical Dev Server dispatch's exact-SHA result in the required gate. Replace the manual pin catalog owner with a single workflow-bound provenance verifier used by draft admission, package-index admission and public acquisition. Keep wheel/sdist identity, checksum completeness, native evidence and draft-first publication.
+Adopt Core's push-driven candidate/cut topology and full proposal dispatch. Replace the manual pin catalog owner with a single workflow-bound provenance verifier used by draft admission, package-index admission and public acquisition. Keep wheel/sdist identity, checksum completeness, native evidence and draft-first publication.
 
 This supersedes the manual-cut/light-release-branch and held-run constraints in `2026-09-21-automatic-merge-gate-adr`. It amends only the release-product provenance and human review handoff in `2026-10-02-monitor-delivery-adr`; independently reviewed committed pins remain required for provisioned compiler/runtime tools. `2026-09-30-release-standard-adr` remains unchanged.
 
@@ -54,7 +54,7 @@ The maintainer's merge approves the release source and workflow. GitHub/Sigstore
 
 ## Consequences
 
-One human release action remains. Release PRs wait for real full checks and Dev Server proof. Build/publication failures leave a draft and report failure. Old releases without attestations fail the new public acquisition verifier; they are not silently admitted from live checksums. Attestation availability and the admitted runner fleet become part of the release trust boundary. Administrator bypass remains a separate repository setting and is not changed by workflow code.
+One human release action remains. Release PRs wait for real full checks. Build/publication failures leave a draft and report failure. Old releases without attestations fail the new public acquisition verifier; they are not silently admitted from live checksums. Attestation availability and the admitted runner fleet become part of the release trust boundary. Administrator bypass remains a separate repository setting and is not changed by workflow code.
 
 ## Ready pull-request proof, amended 2026-10-13
 
@@ -79,10 +79,8 @@ full proof of its own generated branch after the final write.
 
 Every trusted ready PR update runs full lint, both Linux Python versions,
 the Windows correctness suite, dependency audit and the three CodeQL languages.
-The aggregate also requires the canonical Dev Server result on the same SHA.
 A skipped untrusted aggregate uses a different context from the required check,
 so it cannot satisfy protection. No light input or job can authorize merge.
-The shared Dev Server template follows the same author restriction.
 Manual accelerator CI selects both macOS and CUDA by default; macOS suite and
 setup failures are gating. Hardware remains in its trusted schedule, dispatch
 and release lanes. The administrator bypass is removed from protect-main.
@@ -99,14 +97,11 @@ Unrelated-label successes preserve the existing full-proof chain on the same SHA
 ## Release proposal identity amendment, 2026-10-18
 
 Amended under the fleet release-pipeline standard authorized by the
-maintainer. The release-branch dispatches of the merge gate and the Dev Server
-check are withdrawn: a dispatched run's checks attach to no pull request, so
+maintainer. The release-branch dispatch of the merge gate is withdrawn: a dispatched run's checks attach to no pull request, so
 the required check never reported on release PR #596 and the cut could not
 merge it. The release App writes the proposal in one commit, as
 `2026-09-29-release-pr-identity-adr` decides, and the proposal's own
-pull-request events run the full gate and the Dev Server check. The required
-aggregate still reads the Dev Server verdict on the exact SHA, now from the
-newest run on that commit whatever event started it. Every other constraint
+pull-request events run the full gate. Every other constraint
 above stands.
 
 ## Release cut proof amendment, 2026-10-26
@@ -128,7 +123,7 @@ aggregate check name, so a check verdict alone does not prove the suites. It
 re-runs the dependency audit on the release head, because advisories can be
 published against the unchanged lock between the merge and the cut. Both
 accelerator tiers still prove the release head itself before any tag exists,
-and the Dev Server and provenance constraints above are unchanged.
+and the provenance constraints above are unchanged.
 
 Grounding: `.github/workflows/release-please.yml` job `prove-gate`;
 `dev/guards/test_ci_release_please_prs.py`;
@@ -161,3 +156,34 @@ above; such a commit has no same-tree pull-request proof and so measures in full
 
 Grounding: `dev/gate_scope.py`; `.github/workflows/merge-gate.yml` job `scope`;
 `dev/guards/test_gate_scope.py`.
+
+## Hosted measurement amendment, 2026-11-23
+
+Amended on the maintainer's explicit instructions of 2026-11-23: move every job
+that needs no accelerator to GitHub-hosted runners, finish a pull request's
+measurement in under fifteen minutes, keep in the accelerator lane only tests
+that need the physical accelerator, and remove the frontend lifecycle check
+from the repository and from merge readiness.
+
+Lint, both Linux interpreter suites, the Windows suite, the dependency audit
+and code scanning run on hosted runners, all at once. The suites are cut into
+shards by test file, three per Linux interpreter and six on Windows, so the
+slowest shard is what a pull request waits for; every file belongs to exactly
+one shard and each sharded job runs every index. The required aggregate names
+each of those jobs and passes only when all of them did. This supersedes the
+self-hosted placement of the measuring jobs, and widens the hosted exception
+this record granted the waiting jobs and the Windows suite to every job that
+needs no accelerator.
+
+The `integration` tier means a test that needs the physical accelerator
+through a real loaded model. A test that uses real tools, processes or the
+network without one belongs to the accelerator-free lane and runs in the
+hosted shards.
+
+Merge readiness no longer reads any workflow other than the merge gate.
+
+Grounding: `.github/workflows/merge-gate.yml` jobs `lint`, `tests`,
+`tests-windows`, `dependency-audit`, `code-scanning` and `gate`;
+`src/vaultspec_rag/tests/_shards.py`; `dev/guards/test_ci_shards.py`;
+`dev/gate_scope.py`. Run 45206919914 measured a pull request in nine minutes
+on hosted runners, against hours queued on one self-hosted host.

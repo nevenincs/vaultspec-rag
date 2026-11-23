@@ -82,7 +82,13 @@ MAYBE: Tri = "maybe"
 _UNKNOWN = object()
 
 #: ``runs-on`` label substrings that name a platform, most specific first.
-_PLATFORMS = (("windows", "windows"), ("macos", "macos"), ("linux", "linux"))
+#: A hosted Linux image is named for its distribution, not for its kernel.
+_PLATFORMS = (
+    ("windows", "windows"),
+    ("macos", "macos"),
+    ("linux", "linux"),
+    ("ubuntu", "linux"),
+)
 
 #: A justfile recipe header: a name at column zero, optionally parameterised.
 _RECIPE_HEADER = re.compile(r"^([a-zA-Z0-9_][a-zA-Z0-9_-]*)")

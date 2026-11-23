@@ -4,9 +4,9 @@ tags:
   - '#index'
   - '#monitor-tooling'
 date: '2026-09-30'
-modified: '2026-09-30'
+modified: '2026-11-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:727ece4aeb0a6b37bd38e7e5705f9ddc9f2d5d423fc4f599fc846a693e2d10cb'
+body_hash: 'sha256:9ec05718bf1ca13412a67fcbcbab4484cf68c801446d84b710dea91627724ca7'
 related:
   - '[[2026-09-30-monitor-tooling-adr]]'
   - '[[2026-09-30-monitor-tooling-reference]]'
@@ -20,8 +20,8 @@ Auto-generated index of all documents tagged with `#monitor-tooling`.
 
 ### adr
 
-- `2026-09-30-monitor-tooling-adr` - `monitor-tooling` adr: `Monitor frontend home and shared devserver contract` | (**status:** `accepted`)
+- `2026-09-30-monitor-tooling-adr` - `monitor-tooling` adr: `Monitor frontend home` | (**status:** `accepted`)
 
 ### reference
 
-- `2026-09-30-monitor-tooling-reference` - `monitor-tooling` reference: `Shared frontend harness and port registry`
+- `2026-09-30-monitor-tooling-reference` - `monitor-tooling` reference: `Retired frontend lifecycle research`

@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#service-token-identity'
 date: '2026-05-31'
-modified: '2026-10-04'
-body_hash: 'sha256:b0fce31851c9d387a2752ae279148c6799677207a08a862ceceb316a1aea3e09'
+modified: '2026-11-23'
+body_hash: 'sha256:9155647057742b572e4ec4b433963dda843c80b76dcf9454f9258e64226bba20'
 related:
   - '[[2026-05-31-service-token-identity-research]]'
   - '[[2026-07-24-service-quiesce-adr]]'
@@ -25,7 +25,7 @@ Two truth-lying surfaces in `cli.py`:
 
 - `_health_probe(port)` accepts any HTTP 200. A crashed daemon
   whose port was rebound by another HTTP server (test fixture,
-  local dev server, anything) shows `Health: ready` against the
+  another local process, anything) shows `Health: ready` against the
   wrong service (gh #125).
 
 Both close with one mechanism: a per-process token written to

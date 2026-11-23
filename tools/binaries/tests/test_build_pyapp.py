@@ -13,6 +13,8 @@ from __future__ import annotations
 import ast
 import inspect
 import re
+import subprocess
+import sys
 import textwrap
 import zipfile
 from typing import TYPE_CHECKING, Any
@@ -441,3 +443,57 @@ def test_no_call_site_runs_a_packaged_tool_as_a_script(repo_root: Path) -> None:
         "these call sites run a packaged tool by file path, which cannot "
         f"resolve its own package: {offenders}"
     )
+
+
+def test_every_spawned_tool_imports_on_a_bare_interpreter(repo_root: Path) -> None:
+    """Every tool a recipe or workflow spawns must import with no environment.
+
+    The release runs these on an interpreter that has no project installed, so
+    a tool reaches the package only through the checkout's own source tree.
+    Each is imported here in a fresh interpreter with site-packages switched
+    off, which is the one condition the suite's own environment hides: there
+    the package is installed and every import resolves regardless.
+
+    That is not hypothetical: the channel-pointer validator imported the
+    package before anything had put the source tree on the path, and a release
+    published with its Scoop and Homebrew pointers still naming the previous
+    version.
+
+    Mutation: remove the source-tree insertion from ``tools/__init__.py``; this
+    fails naming every spawned tool. Restored, it passes.
+    """
+    sources = [
+        repo_root / "justfile",
+        *sorted((repo_root / ".github" / "workflows").glob("*.yml")),
+    ]
+    modules = sorted(
+        {
+            module
+            for path in sources
+            for module in re.findall(
+                r"python3?\s+(?:-I\s+)?-m\s+(tools\.[\w.]+)",
+                path.read_text(encoding="utf-8"),
+            )
+        }
+    )
+    assert modules, "no spawned tool was found; refusing to pass vacuously"
+    failures = {}
+    for module in modules:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-S",
+                "-c",
+                "import importlib, sys; sys.path.insert(0, sys.argv[1]); "
+                "importlib.import_module(sys.argv[2])",
+                str(repo_root),
+                module,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            failures[module] = result.stderr.strip().splitlines()[-1]
+    assert not failures, f"these tools cannot import bare: {failures}"

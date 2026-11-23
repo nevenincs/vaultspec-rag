@@ -379,6 +379,8 @@ def test_selected_qdrant_fixture_refuses_without_provisioning_before_test_body(
     host_storage_dir = tmp_path / "unprovisioned-host-storage"
     environment = os.environ.copy()
     environment.pop("VAULTSPEC_RAG_QDRANT_BINARY", None)
+    # What a launching session hands its workers would provision this one.
+    environment.pop("_VAULTSPEC_RAG_PYTEST_HOST_QDRANT", None)
     environment.pop("PYTEST_CURRENT_TEST", None)
     environment["VAULTSPEC_RAG_STATUS_DIR"] = str(host_status_dir)
     environment["VAULTSPEC_RAG_QDRANT_STORAGE_DIR"] = str(host_storage_dir)

@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.unit]
 
 
 def test_code_discovery_measures_only_admitted_source_dimensions(

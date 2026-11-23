@@ -285,15 +285,13 @@ not compile sources or require a checkout, Node or Bun. A monitor that cannot
 be obtained, or that fails, fails the coupled start and cleans up the frontend
 child, and the next start obtains and verifies it again.
 
-For a standalone development monitor, use the shared harness below.
-
 From a source checkout with the Node/npm versions pinned in `.nvmrc` and
 `package.json`, run:
 
 ```bash
 just init-monitor
 just build-monitor
-just dev
+npm run dev
 ```
 
 `just build-monitor` builds the frontend, compiles the native monitor from it
@@ -302,23 +300,18 @@ installs it where this checkout's service and its lifecycle tests find it. A
 checkout that has run it starts the service and runs the accelerator-free
 lifecycle tests with nothing exported. The CI test jobs run the same recipe.
 
-Open the `Monitor:` access link the dev server logs when it starts listening;
-`just dev logs` shows it again. The monitor automatically connects to the local
+`npm run dev` serves the monitor from source. Open the `Monitor:` access link
+it logs when it starts listening. The monitor automatically connects to the local
 service recorded in the managed status directory. It has no login form,
 credential prompt, or admin role: the link's capability is the only caller
 credential. The standalone monitor has its own lifecycle.
 A stopped service shows a connection
 message and retains any previous observations with their timestamps.
 
-The packaged monitor, dev and preview bind to `127.0.0.1`. Dev and preview use
-their strict declared ports. The shared
-`just dev` harness attaches to a healthy owned server and recreates a stale,
-degraded, or foreign server on that port. Its canonical **Dev server** workflow
-runs `just dev ci` to verify start, reattach, and stop.
+The packaged monitor, the source build and the preview bind to `127.0.0.1`,
+each on its strict declared port.
 
-The devservers repository owns the local reverse proxy at
-`https://vaultspec-rag-monitor.localhost`; append the logged link's
-`#capability=...` fragment to that address. Every monitor request requires a
+Every monitor request requires a
 loopback client and a local Host, with a matching browser Origin when supplied.
 Every read and control under `/api/monitor/` also requires the capability as a
 bearer credential, and is refused with 401 before the monitor reads the service
@@ -349,7 +342,6 @@ manually paused.
 
 The built preview at `http://127.0.0.1:5421` uses the same automatic local
 connection. Serving the static assets alone does not provide that connection.
-Use `just dev stop` to stop this checkout's browser servers.
 
 ## Control one job
 

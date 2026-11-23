@@ -45,7 +45,7 @@ from ...serviceclient._discovery import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.unit]
 
 _DEAD_PID = 2_000_000_000
 
@@ -121,6 +121,10 @@ class TestExistingServiceRunningUnlink:
 class TestBreakawayFallback:
     """``_spawn_windows`` fails loudly rather than spawning a doomed daemon."""
 
+    @pytest.mark.skipif(
+        sys.platform != "win32",
+        reason="the Windows spawn path passes creation flags no other platform takes",
+    )
     def test_fail_loud_when_spawn_cannot_detach(self, tmp_path: Path) -> None:
         """When the spawn cannot succeed, the Windows path raises
         DaemonBreakawayError instead of silently producing a shell-bound daemon.
@@ -128,22 +132,13 @@ class TestBreakawayFallback:
         Driven with a real ``subprocess.Popen`` against a non-existent
         executable so both the breakaway attempt and the console-detached
         fallback raise a real ``OSError`` - exercising the exact escalation the
-        remediation introduced, on the real win32 code path. On non-Windows the
-        function is not the spawn path used, so the assertion is scoped to
-        win32 where the regression lives.
+        remediation introduced, on the real win32 code path.
         """
         log_path = tmp_path / "svc.log"
         log_fd = os.open(str(log_path), os.O_WRONLY | os.O_CREAT, 0o600)
         try:
             cmd = [str(tmp_path / "does-not-exist-interpreter"), "-m", "noop"]
-            if sys.platform == "win32":
-                with pytest.raises(DaemonBreakawayError):
-                    _spawn_windows(cmd, dict(os.environ), log_fd, cwd=tmp_path)
-            else:
-                # Off-Windows, _spawn_windows still escalates an unspawnable
-                # command (no breakaway/detach available) to the loud error,
-                # which is the contract under test: never a silent doomed spawn.
-                with pytest.raises((DaemonBreakawayError, OSError)):
-                    _spawn_windows(cmd, dict(os.environ), log_fd, cwd=tmp_path)
+            with pytest.raises(DaemonBreakawayError):
+                _spawn_windows(cmd, dict(os.environ), log_fd, cwd=tmp_path)
         finally:
             os.close(log_fd)

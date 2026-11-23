@@ -142,7 +142,7 @@ def _grpc_listing_status(grpc_port: int, api_key: str | None) -> grpc.StatusCode
 class TestManagedDataPlaneRequiresTheKey:
     """The real pinned binary, started the way the daemon starts it."""
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     def test_neither_protocol_answers_a_local_process_without_the_key(
         self,
         tmp_path: Path,
@@ -185,7 +185,7 @@ class TestManagedDataPlaneRequiresTheKey:
             finally:
                 owner.stop()
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     def test_attach_is_refused_when_the_owner_credential_is_unusable(
         self,
         tmp_path: Path,
@@ -222,7 +222,7 @@ class TestManagedDataPlaneRequiresTheKey:
 
 
 class TestVerifiedAttach:
-    @pytest.mark.integration
+    @pytest.mark.unit
     def test_attaches_to_healthy_owned_capable_server(
         self,
         tmp_path: Path,

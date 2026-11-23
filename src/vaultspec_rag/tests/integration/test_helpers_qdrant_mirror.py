@@ -24,7 +24,7 @@ from ._helpers import _service_env
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.unit]
 
 
 def test_service_env_mirrors_provisioned_binary_with_verification(

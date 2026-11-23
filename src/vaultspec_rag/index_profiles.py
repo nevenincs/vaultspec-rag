@@ -23,6 +23,7 @@ __all__ = [
     "SupportProfileLimits",
     "get_index_support_profile",
     "index_support_profile_status",
+    "measured_ram_floor",
     "validate_profile_admission",
 ]
 
@@ -407,6 +408,20 @@ def _smaller_disk_profile(
     return min(usable, key=lambda candidate: candidate.minimum_free_disk_bytes)
 
 
+def measured_ram_floor(profile: IndexSupportProfile) -> int:
+    """Return the least measured memory that meets *profile*'s requirement.
+
+    A requirement is stated the way machines are sold, and a machine sold with
+    that much memory never reports all of it: firmware and integrated graphics
+    keep a share back, so its measured total sits a little under the round
+    figure. Compared exactly, a profile that requires 16 GiB refuses every
+    16 GB host, with a message saying it requires 16.0 GiB and found 16.0 GiB.
+    One sixteenth covers what such hosts hold back without admitting the next
+    size down.
+    """
+    return profile.minimum_ram_bytes - profile.minimum_ram_bytes // 16
+
+
 def validate_profile_admission(
     profile_name: str,
     domain: IndexDomain,
@@ -434,7 +449,7 @@ def validate_profile_admission(
             f"profile {profile.name!r} does not support "
             f"backend {environment.backend!r}",
         )
-    if environment.available_ram_bytes < profile.minimum_ram_bytes:
+    if environment.available_ram_bytes < measured_ram_floor(profile):
         raise JobError(
             JobErrorKind.PROFILE_REQUIREMENTS_NOT_MET,
             f"profile {profile.name!r} requires "

@@ -84,6 +84,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator
     from pathlib import Path
 
+    from ..native_binary._report import ProvisionReport
     from ..qdrant_runtime._provision import _InstallRequest
     from ._http_stubs import QuietHandler
 
@@ -813,29 +814,44 @@ class TestFreeSpace:
         archive = build_archive(asset, {binary_filename(): executable})
         assert len(archive) < 1 << 20
         source = sources.serve(lambda handler: send_bytes(handler, archive))
-        # Short by half the executable: far more than the estimate needs, far
-        # less than the extraction does.
-        reserve = _a_volume_this_short(version_dir, 128 << 20, needs=len(executable))
         staged: list[str] = []
 
         def recording(directory: Path, label: str) -> tuple[Path, IO[bytes]]:
             staged.append(label)
             return open_staging(directory, label)
 
-        request = replace(
-            install_request(
-                source.url(f"/{asset}"),
-                version_dir,
-                asset=asset,
-                pinned_archive=archive,
-            ),
-            executable_sha256=sha256_hex(executable),
-            previously="healthy",
-            reserve_bytes=reserve,
-            open_staging=recording,
-        )
+        # The volume is the real one, shared with every other test writing at
+        # this moment. One that writes a hundred megabytes between the
+        # reading below and the install moves the refusal forward to the
+        # arrival estimate, which is not the refusal under test, so the
+        # reading is taken again rather than the race being reported.
+        def attempt() -> ProvisionReport:
+            staged.clear()
+            # Short by half the executable: far more than the estimate needs,
+            # far less than the extraction does.
+            reserve = _a_volume_this_short(
+                version_dir, 128 << 20, needs=len(executable)
+            )
+            return _install(
+                replace(
+                    install_request(
+                        source.url(f"/{asset}"),
+                        version_dir,
+                        asset=asset,
+                        pinned_archive=archive,
+                    ),
+                    executable_sha256=sha256_hex(executable),
+                    previously="healthy",
+                    reserve_bytes=reserve,
+                    open_staging=recording,
+                )
+            )
 
-        report = _install(request)
+        report = attempt()
+        for _again in range(2):
+            if staged or report.action != ProvisionAction.FAILED:
+                break
+            report = attempt()
 
         assert report.action == ProvisionAction.FAILED, report.message
         assert "Not enough free space" in report.message

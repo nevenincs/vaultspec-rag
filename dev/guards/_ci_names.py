@@ -43,7 +43,6 @@ class Workflow(StrEnum):
     PUBLISH = "publish.yml"
     CHANNELS = "channels.yml"
     CODE_HEALTH = "code-health.yml"
-    DEVSERVER = "devserver.yml"
     NOTIFY_MARKETING = "notify-marketing.yml"
     NOTIFY_MARKETING_RETRY = "notify-marketing-retry.yml"
 
@@ -83,7 +82,6 @@ GATE_NAME_EXPRESSION = (
 
 # Shared workflows retain their owner's name in every consumer repository.
 SHARED_WORKFLOW_NAMES = {
-    Workflow.DEVSERVER: "Dev server",
     Workflow.NOTIFY_MARKETING: "Notify Marketing",
 }
 

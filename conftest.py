@@ -279,6 +279,11 @@ def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
     )
 
 
+#: The binary and manifest of the host's managed Qdrant install, as captured
+#: by the process that launched the session, for the workers it starts.
+_HOST_QDRANT_ENV = "_VAULTSPEC_RAG_PYTEST_HOST_QDRANT"
+
+
 def _capture_host_provisioned_qdrant() -> tuple[Path, Path] | None:
     """Capture the real managed Qdrant install before pytest redirects it.
 
@@ -287,7 +292,18 @@ def _capture_host_provisioned_qdrant() -> tuple[Path, Path] | None:
     still names it, and retain only its binary and manifest paths. Only a
     downloaded install that passes the production pre-execution check is
     captured, and the supervisor checks the mirrored copy again at every spawn.
+
+    A distributed worker starts after that redirect, so it cannot resolve the
+    install for itself and would report a provisioned machine as bare. It
+    takes the paths the launching process captured instead, handed down in
+    the environment.
     """
+    inherited = os.environ.get(_HOST_QDRANT_ENV)
+    if inherited is not None:
+        binary, _, manifest = inherited.partition(os.pathsep)
+        if Path(binary).is_file() and Path(manifest).is_file():
+            return Path(binary), Path(manifest)
+        return None
     from vaultspec_rag.qdrant_runtime._constants import (
         MANIFEST_FILENAME,
         QDRANT_SERVER_VERSION,
@@ -316,6 +332,10 @@ def _capture_host_provisioned_qdrant() -> tuple[Path, Path] | None:
 
 
 _HOST_PROVISIONED_QDRANT = _capture_host_provisioned_qdrant()
+if _HOST_PROVISIONED_QDRANT is not None:
+    os.environ[_HOST_QDRANT_ENV] = os.pathsep.join(
+        str(path) for path in _HOST_PROVISIONED_QDRANT
+    )
 
 
 @pytest.fixture(scope="session")
@@ -774,21 +794,42 @@ def _atexit_reclaim_singleton_root() -> None:
         )
 
 
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
     """Refuse any collected test that declares no tier, or two lanes.
 
     Every collected test is checked, not only the selected ones: a run narrowed
     by a marker expression deselects exactly the tests that declare nothing, so
     checking the selection would let an untiered test through every run that
-    could have caught it.
+    could have caught it. A shard is narrowed only after that check, for the
+    same reason.
 
     Raises:
-        pytest.UsageError: When a collected test declares no tier, or declares
-            the fast tier alongside a slow one.
+        pytest.UsageError: When a collected test declares no tier, declares
+            the fast tier alongside a slow one, or the requested shard is
+            malformed.
     """
+    from vaultspec_rag.tests._shards import selected_shard, shard_of
     from vaultspec_rag.tests._tier_gate import enforce_tiers
 
     enforce_tiers(items)
+    # Only the suite itself is cut. A test that starts a pytest session of its
+    # own, rooted in a directory it wrote, hands the shard down with the rest
+    # of its environment, and that session's one file must still run.
+    if config.rootpath.resolve() != Path(__file__).resolve().parent:
+        return
+    try:
+        shard = selected_shard(os.environ)
+    except ValueError as error:
+        raise pytest.UsageError(str(error)) from error
+    if shard is None:
+        return
+    index, count = shard
+    dropped = [item for item in items if shard_of(item.nodeid, count) != index]
+    if dropped:
+        config.hook.pytest_deselected(items=dropped)
+        items[:] = [item for item in items if shard_of(item.nodeid, count) == index]
 
 
 def pytest_collection_finish(session: pytest.Session) -> None:

@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
     from qdrant_client.http.models import SparseVectorParams, VectorParams
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.unit]
 
 
 @pytest.fixture

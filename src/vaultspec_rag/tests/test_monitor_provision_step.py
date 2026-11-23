@@ -36,6 +36,7 @@ from ..monitor_runtime._resolve import MonitorSource
 from ..operator_state._hardware import read_hardware
 from ..operator_state._installation import ComputeCapability
 from ..operator_state._service_environment import ServiceEnvironment
+from ._model_cache_seed import seed_model_cache
 from ._provision_fixtures import result_for
 from ._separate_installation import INSTALLED_FROM_A_WHEEL, build_installation
 from .conftest import SERVING_HARDWARE, managed_env
@@ -44,6 +45,21 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
+
+
+@pytest.fixture(autouse=True)
+def cached_models(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Give every start sequence here a model cache that is already complete.
+
+    The model step runs first in the sequence these tests drive, and none of
+    them is about fetching models: on a host whose cache is empty each would
+    download every configured model, gigabytes of them, to reach the step
+    under test. The cache location is exported as well as set, for the
+    sequences that run in an interpreter of their own.
+    """
+    cache = seed_model_cache(monkeypatch, tmp_path / "hf-cache")
+    monkeypatch.setenv(EnvVar.HF_HUB_CACHE.value, str(cache))
+
 
 #: The judgement a host start has made by the time it reaches the step.
 _HOST_READY = ServiceEnvironment("", ComputeCapability.READY)

@@ -17,17 +17,13 @@ The recipes:
 | `just init-check`  | Reports whether the worktree is initialized. Mutates nothing. |
 
 The monitor frontend is provisioned separately with `just init-monitor`
-(`npm ci`, after stopping its managed dev and preview servers); Python-only
-CI jobs do not need Node. `just init-node` reports
-that separate entry point. Run `just dev` to start or attach to the monitor,
-`just dev status` to inspect it, and `just dev stop` to stop it.
+(`npm ci`); Python-only CI jobs do not need Node. `just init-node` reports
+that separate entry point.
 `just check-monitor` runs frontend lint, formatting, types and build.
 The application's root is `src/monitor`; it currently contains an empty HTML
-entry. Ports and proxy names are declared in the root `package.json`.
+entry. Its host and ports are declared in the root `package.json`.
 
-The shared proxy supplies `https://vaultspec-rag-monitor.localhost/`. Trust
-its local certificate authority with `portless trust` in an interactive
-terminal if your browser does not already trust it. The monitor binds to
+The monitor binds to
 `127.0.0.1` and admits only loopback clients at local hosts. Direct Tailnet and
 Tailscale Serve exposure are unsupported. Use an authenticated SSH tunnel for
 remote access, and keep the local proxy restricted to local clients.

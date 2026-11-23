@@ -21,6 +21,7 @@ from ._service_jobs_support import (
     _jobs_http_server,
     _JobsHTTPHandler,
     _label_values,
+    _plain_lines,
     runner,
 )
 
@@ -122,7 +123,10 @@ def test_jobs_job_id_detail_uses_precise_process_label(
     assert values["Address"] == f"http://127.0.0.1:{port}"
     assert values["Status"] == "active"
     assert values["Project"] == "proj-a"
-    assert values["Path"] == str(tmp_path / "proj-a")
+    # The one value long enough to wrap, and a console that does not take the
+    # width above breaks the line after its label, so it is read across lines.
+    unwrapped = "".join("".join(_plain_lines(result.output)).split())
+    assert "Path:" + "".join(str(tmp_path / "proj-a").split()) in unwrapped
     assert values["Job process id"] == "123"
     assert values["User"] == "operator"
     assert values["Started by"] == "automatic updates"

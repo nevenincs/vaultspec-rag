@@ -860,7 +860,11 @@ def _restore_junction(path: Path, target: str) -> None:
         check=False,
         capture_output=True,
         env=environment,
-        timeout=15,
+        # The work is instant; the wait is for the interpreter to start, which
+        # on a machine under load has taken longer than a quarter of a minute.
+        # This runs while an install is being rolled back, where giving up
+        # early leaves the junction unrestored.
+        timeout=60,
     )
     if completed.returncode != 0:
         stderr = completed.stderr.decode("utf-8", errors="replace")

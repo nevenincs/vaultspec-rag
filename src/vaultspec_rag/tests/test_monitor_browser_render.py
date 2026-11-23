@@ -32,18 +32,48 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 
+#: Seconds a page load may take before it is a failure: debugger discovery and
+#: up to three loads, each 45 s to be answered, 45 s for the document and 10 s
+#: for its first draw.
+_LOAD_SECONDS = 330.0
+
+
 class Browser:
+    """One driver process: a Vite server and an installed browser on its page."""
+
     def __init__(
-        self, process: subprocess.Popen[str], answers: queue.Queue[str]
+        self,
+        process: subprocess.Popen[str],
+        answers: queue.Queue[str],
+        diagnostics: Path,
     ) -> None:
         self.process = process
         self.answers = answers
+        self.diagnostics = diagnostics
 
-    def command(self, operation: str, **params: object) -> object:
+    def _answer(self, seconds: float) -> str:
+        """Return the driver's next answer, or fail with what it wrote.
+
+        A driver that has exited answers nothing more, so its exit ends the
+        wait instead of the whole allowance being spent on it.
+        """
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            try:
+                return self.answers.get(timeout=1)
+            except queue.Empty:
+                if self.process.poll() is not None and self.answers.empty():
+                    break
+        written = self.diagnostics.read_text(encoding="utf-8", errors="replace")
+        pytest.fail(f"The browser driver did not answer: {written}")
+
+    def command(
+        self, operation: str, *, answer_seconds: float = 60.0, **params: object
+    ) -> object:
         assert self.process.stdin is not None
         self.process.stdin.write(json.dumps({"operation": operation, **params}) + "\n")
         self.process.stdin.flush()
-        answer = json.loads(self.answers.get(timeout=60))
+        answer = json.loads(self._answer(answer_seconds))
         assert answer["ok"], answer.get("message")
         return answer.get("value")
 
@@ -55,25 +85,49 @@ class Browser:
     def evaluate(self, expression: str) -> object:
         return self.command("evaluate", expression=expression)
 
-    def wait_ready(self, diagnostic_path: Path) -> None:
-        try:
-            # Startup includes debugger discovery and up to three page loads
-            # (45 s for the document plus 10 s for its first draw each). The
-            # command-response budget would kill the second permitted attempt.
-            ready = json.loads(self.answers.get(timeout=300))
-        except queue.Empty:
-            diagnostic = diagnostic_path.read_text(encoding="utf-8", errors="replace")
-            pytest.fail(f"Browser startup did not complete: {diagnostic}")
+    def wait_ready(self) -> None:
+        ready = json.loads(self._answer(_LOAD_SECONDS))
         assert ready["ready"] is True
         # innerText forces layout, which can block while Vite compiles Carbon's
         # stylesheet on a cold CI worker. Wait without requesting layout first.
         self.wait("document.readyState === 'complete'")
 
+    def retarget(self, status_directory: Path) -> None:
+        """Load the page afresh against the service *status_directory* names."""
+        environment = {
+            name: value
+            for name, value in os.environ.items()
+            if name.startswith(("VAULTSPEC_RAG_", "_VAULTSPEC_RAG_"))
+        }
+        # The monitor finds its service through the status directory, never
+        # through a port it was handed.
+        environment.pop("VAULTSPEC_RAG_PORT", None)
+        environment["VAULTSPEC_RAG_STATUS_DIR"] = str(status_directory)
+        self.command("retarget", answer_seconds=_LOAD_SECONDS, environment=environment)
+        self.wait("document.readyState === 'complete'")
 
-@pytest.fixture
-def rendered_monitor(
-    monitor_http: tuple[int, Path], tmp_path: Path
-) -> Iterator[Browser]:
+    def close(self) -> None:
+        process = self.process
+        if process.poll() is None and process.stdin:
+            process.stdin.write('{"operation":"close"}\n')
+            process.stdin.flush()
+        try:
+            process.wait(timeout=12)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=10)
+        if process.stdin:
+            process.stdin.close()
+        if process.stdout:
+            process.stdout.close()
+
+
+def _start_browser(directory: Path) -> Browser:
+    """Start the driver in *directory* and wait for its first page.
+
+    It starts against a status directory that names no service; each test
+    then points it at the one it stands up.
+    """
     root = Path(__file__).resolve().parents[3]
     node = shutil.which("node")
     assert node is not None, "the enrolled monitor Node runtime is required"
@@ -83,16 +137,19 @@ def rendered_monitor(
         pytest.skip(str(error))
     if not (root / "node_modules/vite").is_dir():
         pytest.skip("run just init-monitor before installed-browser checks")
+    unserved = directory / "status"
+    unserved.mkdir(parents=True, exist_ok=True)
     environment = dict(os.environ)
     environment.pop("VAULTSPEC_RAG_PORT", None)
-    environment["VAULTSPEC_RAG_STATUS_DIR"] = str(monitor_http[1])
-    with (tmp_path / "browser-errors.log").open("w", encoding="utf-8") as errors:
+    environment["VAULTSPEC_RAG_STATUS_DIR"] = str(unserved)
+    diagnostics = directory / "browser-errors.log"
+    with diagnostics.open("a", encoding="utf-8") as errors:
         process = subprocess.Popen(
             [
                 node,
                 str(root / "dev/monitor-browser.mjs"),
                 executable,
-                str(tmp_path / "profile"),
+                str(directory / f"profile-{uuid.uuid4().hex}"),
             ],
             cwd=root,
             env=environment,
@@ -103,44 +160,81 @@ def rendered_monitor(
             encoding="utf-8",
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
-        assert process.stdout is not None
-        answers: queue.Queue[str] = queue.Queue()
+    assert process.stdout is not None
+    answers: queue.Queue[str] = queue.Queue()
+    output = process.stdout
 
-        def read_answers() -> None:
-            assert process.stdout is not None
-            for line in process.stdout:
-                if line.startswith("{"):
-                    answers.put(line)
+    def read_answers() -> None:
+        for line in output:
+            if line.startswith("{"):
+                answers.put(line)
 
-        threading.Thread(target=read_answers, daemon=True).start()
-        try:
-            browser = Browser(process, answers)
-            browser.wait_ready(tmp_path / "browser-errors.log")
-            yield browser
-        finally:
-            if process.poll() is None:
-                try:
-                    artifact = Browser(process, answers)
-                    body = artifact.evaluate("document.body?.innerText")
-                    (tmp_path / "rendered-body.txt").write_text(
-                        str(body), encoding="utf-8"
-                    )
-                    (tmp_path / "rendered-evidence.json").write_text(
-                        json.dumps(artifact.command("evidence")), encoding="utf-8"
-                    )
-                except (AssertionError, queue.Empty, BrokenPipeError):
-                    pass
-            if process.poll() is None and process.stdin:
-                process.stdin.write('{"operation":"close"}\n')
-                process.stdin.flush()
+    threading.Thread(target=read_answers, daemon=True).start()
+    browser = Browser(process, answers, diagnostics)
+    try:
+        browser.wait_ready()
+    except BaseException:
+        browser.close()
+        raise
+    return browser
+
+
+class _SharedBrowser:
+    """The one driver every test in this module renders through.
+
+    Starting a server and a browser costs each test tens of seconds and the
+    tests themselves a few, so the pair is started once and each test gets the
+    page loaded afresh. A test that leaves the driver dead does not take the
+    rest of the module with it: the next one starts another.
+    """
+
+    def __init__(self, directory: Path) -> None:
+        self._directory = directory
+        self._browser: Browser | None = None
+
+    def current(self) -> Browser:
+        browser = self._browser
+        if browser is None or browser.process.poll() is not None:
+            if browser is not None:
+                browser.close()
+            browser = self._browser = _start_browser(self._directory)
+        return browser
+
+    def close(self) -> None:
+        if self._browser is not None:
+            self._browser.close()
+            self._browser = None
+
+
+@pytest.fixture(scope="module")
+def monitor_browser(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[_SharedBrowser]:
+    shared = _SharedBrowser(tmp_path_factory.mktemp("monitor-browser"))
+    try:
+        yield shared
+    finally:
+        shared.close()
+
+
+@pytest.fixture
+def rendered_monitor(
+    monitor_browser: _SharedBrowser, monitor_http: tuple[int, Path], tmp_path: Path
+) -> Iterator[Browser]:
+    browser = monitor_browser.current()
+    browser.retarget(monitor_http[1])
+    try:
+        yield browser
+    finally:
+        if browser.process.poll() is None:
             try:
-                process.wait(timeout=12)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=10)
-            if process.stdin:
-                process.stdin.close()
-            process.stdout.close()
+                body = browser.evaluate("document.body?.innerText")
+                (tmp_path / "rendered-body.txt").write_text(str(body), encoding="utf-8")
+                (tmp_path / "rendered-evidence.json").write_text(
+                    json.dumps(browser.command("evidence")), encoding="utf-8"
+                )
+            except (AssertionError, BrokenPipeError, pytest.fail.Exception):
+                pass
 
 
 def _click(browser: Browser, label: str) -> None:

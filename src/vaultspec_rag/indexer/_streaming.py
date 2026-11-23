@@ -95,7 +95,16 @@ def _release_cuda_cache() -> None:
     growing unboundedly as per-batch activation buffers accumulate -
     the root cause of the 24 GB RSS leak documented in issue #68.
     Safe no-op when torch is unavailable.
+
+    A process that never imported torch holds no allocator blocks, so it
+    returns before the accelerator is asked for: resolving one claims the
+    machine's GPU first, and a flush must never be what takes ownership.
     """
+    import sys
+
+    if "torch" not in sys.modules:
+        return
+
     from .._gpu import load_accelerator
 
     try:

@@ -7,7 +7,6 @@ name: RAG Merge Gate
 # The scope job decides what is left to measure: a commit whose tree a pull
 # request already passed runs only the audit and code scanning, and a version
 # bump over a proven parent runs nothing. Anything unclear measures in full.
-# The aggregate also requires the canonical Dev Server verdict on the same SHA.
 on:
   pull_request:
     branches: [main]
@@ -104,10 +103,9 @@ jobs:
     # what "everything" means.
     needs: scope
     if: needs.scope.outputs.suites == 'full'
-    timeout-minutes: 160
-    runs-on: [self-hosted, Linux, X64, build]
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
     env:
-      CI_EXEC_BUDGET_MINUTES: 40
       # The type checkers read torch's and the model libraries' annotations,
       # so this job installs those packages - but not the CUDA runtime, which
       # nothing here imports and which is most of the stack's size.
@@ -153,11 +151,11 @@ jobs:
         run: just check-all
 
   tests:
-    name: "Test: Correctness suite (Linux, ${{ matrix.python-version }})"
+    name: "Test: Correctness suite (Linux, ${{ matrix.python-version }}, ${{ matrix.shard }}/3)"
     needs: scope
     if: needs.scope.outputs.suites == 'full'
-    timeout-minutes: 165
-    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
     strategy:
       # Both interpreters run to completion: when only one line breaks, the
       # failure is the whole signal, and cancelling the other hides whether
@@ -165,8 +163,12 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.13", "3.14"]
+        # The suite is measured in thirds, on three machines at once, so the
+        # slowest third is what a pull request waits for. Every test file
+        # belongs to exactly one shard.
+        shard: [1, 2, 3]
     env:
-      CI_EXEC_BUDGET_MINUTES: 45
+      VAULTSPEC_RAG_TEST_SHARD: ${{ matrix.shard }}/3
       # `.python-version` pins the dev interpreter to the floor, and uv reads
       # it in preference to whatever actions/setup-python put on PATH. Without
       # this the 3.14 leg would silently sync and test 3.13 — a green matrix
@@ -211,12 +213,18 @@ jobs:
       - name: Build and install the monitor the lifecycle tests run
         run: just build-monitor
 
-      # Four workers. The store-heavy tests carry deadlines of
-      # their own, and with one worker per core several of them ran at or past
-      # those deadlines and a different one failed from run to run. Measured
-      # here, this bound takes a third to a half off all of them but the
-      # slowest, which it leaves where it was, and adds about six minutes to
-      # the job.
+      # Several suites attach to, supervise and restart a real Qdrant server.
+      # They refuse to run against anything but the pinned, verified binary.
+      # The product's own install verb fetches it only for an environment
+      # that can run the service, which this one, built without the
+      # inference stack, is not: the recipe runs the same step directly.
+      - name: Provision the pinned Qdrant binary the store suites start
+        run: just provision-qdrant
+
+      # Four workers, one per core of the machine. The store-heavy tests carry
+      # deadlines of their own, and more workers than cores ran several of
+      # them at or past those deadlines, a different one failing from run to
+      # run.
       - name: Run tests
         env:
           PYTEST_XDIST_AUTO_NUM_WORKERS: "4"
@@ -231,12 +239,21 @@ jobs:
   # uv fetches the interpreter named by UV_PYTHON, which is what the suite
   # runs under.
   tests-windows:
-    name: "Test: Full suite (Windows)"
+    name: "Test: Full suite (Windows, ${{ matrix.shard }}/6)"
     needs: scope
     if: needs.scope.outputs.suites == 'full'
-    timeout-minutes: 136
+    timeout-minutes: 25
     runs-on: windows-2025
+    strategy:
+      # Every shard runs to completion: the shards hold different tests, so
+      # cancelling the rest on one failure hides every other failure.
+      fail-fast: false
+      matrix:
+        # Sixths, on six machines at once. The suite takes about twice as
+        # long here as on Linux, on two workers, so it is cut finer.
+        shard: [1, 2, 3, 4, 5, 6]
     env:
+      VAULTSPEC_RAG_TEST_SHARD: ${{ matrix.shard }}/6
       UV_PYTHON: "3.13"
     steps:
       - name: Checkout
@@ -282,6 +299,14 @@ jobs:
       - name: Build and install the monitor the lifecycle tests run
         run: just build-monitor
 
+      # Several suites attach to, supervise and restart a real Qdrant server.
+      # They refuse to run against anything but the pinned, verified binary.
+      # The product's own install verb fetches it only for an environment
+      # that can run the service, which this one, built without the
+      # inference stack, is not: the recipe runs the same step directly.
+      - name: Provision the pinned Qdrant binary the store suites start
+        run: just provision-qdrant
+
       # Two workers leave scheduling capacity for native monitors, browsers
       # and owner-witness children alongside pytest.
       - name: Run full test suite
@@ -295,10 +320,8 @@ jobs:
     # against an unchanged tree, so reused proof runs this again.
     needs: scope
     if: needs.scope.outputs.suites == 'full' || needs.scope.outputs.suites == 'reused'
-    timeout-minutes: 135
-    runs-on: [self-hosted, Linux, X64]
-    env:
-      CI_EXEC_BUDGET_MINUTES: 15
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -336,10 +359,8 @@ jobs:
     # branch's code-scanning view, so reused proof runs this again.
     needs: scope
     if: needs.scope.outputs.suites == 'full' || needs.scope.outputs.suites == 'reused'
-    runs-on: [self-hosted, Linux, X64, build]
-    timeout-minutes: 150
-    env:
-      CI_EXEC_BUDGET_MINUTES: 30
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       security-events: write
@@ -424,38 +445,6 @@ jobs:
           gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/$PR/labels/$FULL_RUN_LABEL" --silent \
             || gh api "repos/$GITHUB_REPOSITORY/issues/$PR/labels" --jq 'any(.[]; .name == env.FULL_RUN_LABEL) | not' | grep -qx true
 
-      - name: Require the dev server proof on this exact commit
-        if: >-
-          github.event_name == 'workflow_dispatch' ||
-          github.event_name == 'push' || github.event_name == 'pull_request'
-        env:
-          PROOF_SHA: ${{ github.event.pull_request.head.sha || inputs.ref || github.sha }}
-        run: |
-          set -euo pipefail
-          # Every measuring job checks out inputs.ref. A branch or tag name can
-          # move between those checkouts and this query, so only a commit SHA
-          # ties the proof to the code that was measured.
-          if ! [[ "$PROOF_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::ref '$PROOF_SHA' is not a full commit SHA; dispatch the gate with the exact commit to prove"
-            exit 1
-          fi
-          # The check runs separately in the canonical workflow, from its own
-          # push or pull-request event; a dispatch
-          # proves a commit one of those events already ran on. Poll only the
-          # newest run on this SHA, whatever started it, and never reuse an
-          # older green.
-          for _ in $(seq 1 180); do
-            state=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/devserver.yml/runs?head_sha=$PROOF_SHA&per_page=100" \
-              --jq '.workflow_runs | sort_by(.id) | last | "\(.status // "missing") \(.conclusion // "none")"')
-            case "$state" in
-              "completed success") exit 0 ;;
-              completed*) echo "::error::Dev Server for $PROOF_SHA ended $state"; exit 1 ;;
-            esac
-            sleep 10
-          done
-          echo "::error::Dev Server did not prove $PROOF_SHA within thirty minutes"
-          exit 1
-
       - name: Every full check passed on this commit
         run: |
           set -euo pipefail
@@ -480,10 +469,10 @@ jobs:
           require_full_run() {
             local jobs
             jobs=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$1/jobs?filter=all&per_page=100" \
-              --jq '.jobs[] | select(.name == "Check: Full lint (Linux)" or .name == "Test: Correctness suite (Linux, 3.13)" or .name == "Test: Correctness suite (Linux, 3.14)" or .name == "Test: Full suite (Windows)" or .name == "Check: Dependency advisories (Linux)" or .name == "Check: Code scanning (Linux, actions)" or .name == "Check: Code scanning (Linux, javascript-typescript)" or .name == "Check: Code scanning (Linux, python)") | [.name, .run_attempt, .id, .conclusion] | @tsv') || return 1
+              --jq '.jobs[] | select(.name == "Check: Full lint (Linux)" or .name == "Test: Correctness suite (Linux, 3.13, 1/3)" or .name == "Test: Correctness suite (Linux, 3.13, 2/3)" or .name == "Test: Correctness suite (Linux, 3.13, 3/3)" or .name == "Test: Correctness suite (Linux, 3.14, 1/3)" or .name == "Test: Correctness suite (Linux, 3.14, 2/3)" or .name == "Test: Correctness suite (Linux, 3.14, 3/3)" or .name == "Test: Full suite (Windows, 1/6)" or .name == "Test: Full suite (Windows, 2/6)" or .name == "Test: Full suite (Windows, 3/6)" or .name == "Test: Full suite (Windows, 4/6)" or .name == "Test: Full suite (Windows, 5/6)" or .name == "Test: Full suite (Windows, 6/6)" or .name == "Check: Dependency advisories (Linux)" or .name == "Check: Code scanning (Linux, actions)" or .name == "Check: Code scanning (Linux, javascript-typescript)" or .name == "Check: Code scanning (Linux, python)") | [.name, .run_attempt, .id, .conclusion] | @tsv') || return 1
             # Combine every page, with the newest attempt first for each name.
             printf '%s\n' "$jobs" | sort -t $'\t' -k1,1 -k2,2nr -k3,3nr | \
-              awk -F '\t' '!seen[$1]++ { count++; if ($4 != "skipped") measured=1; if ($4 != "success") failed=1 } END { if (count && !measured) exit 2; exit(failed || count != 8) }'
+              awk -F '\t' '!seen[$1]++ { count++; if ($4 != "skipped") measured=1; if ($4 != "success") failed=1 } END { if (count && !measured) exit 2; exit(failed || count != 17) }'
           }
           full="${LINT} ${TESTS} ${WINDOWS} ${AUDIT} ${SCANNING}"
           if [ "${full}" = "success success success success success" ]; then
@@ -515,7 +504,7 @@ jobs:
           # A label arriving with the commit starts this run beside the one that
           # measures it. Wait for that verdict: reporting red now would replace
           # the required check with a failure nothing measured. Ninety minutes,
-          # which with the dev server wait stays under this job's ceiling.
+          # which stays under this job's ceiling.
           for _ in $(seq 1 180); do
             previous_runs=$(gh api --paginate \
               "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?head_sha=$HEAD_SHA&status=completed&per_page=100" \

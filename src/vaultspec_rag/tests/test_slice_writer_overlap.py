@@ -196,7 +196,7 @@ def _stream(
 class TestVaultEncodeUpsertOverlap:
     """The vault path must overlap slice N's upsert with slice N+1's encode."""
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     def test_next_slice_encode_starts_while_prior_upsert_is_in_flight(
         self,
         tmp_path: Path,
@@ -220,7 +220,7 @@ class TestVaultEncodeUpsertOverlap:
             assert overlapped, "no encode started while an upsert was in flight"
             assert set(counts.values()) == {1}
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     def test_exactly_one_writer_thread_and_encode_stays_on_the_caller(
         self,
         tmp_path: Path,
@@ -238,7 +238,7 @@ class TestVaultEncodeUpsertOverlap:
             # The caller stays the only encode (GPU-consumer) thread.
             assert set(encoder.encode_threads) == {caller}
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     def test_slices_are_stored_in_encode_order(self, tmp_path: Path) -> None:
         with _SlowUpsertStore(tmp_path, latency_seconds=0.05) as store:
             encoder = _RecordingEncoder()
@@ -257,7 +257,7 @@ class TestVaultEncodeUpsertOverlap:
                 _expected_ids(texts) for texts in encoder.encoded_slices
             ]
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     def test_a_writer_failure_fails_the_run(self, tmp_path: Path) -> None:
         with _FailingUpsertStore(tmp_path) as store:
             encoder = _RecordingEncoder()
@@ -396,7 +396,7 @@ class TestSliceWriterContract:
         assert "store" not in events
         assert events == ["prepare", "acknowledged"]
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     def test_code_and_document_slices_drive_lifecycle_and_code_barrier(
         self,
         tmp_path: Path,

@@ -268,7 +268,7 @@ def resume_run(tmp_path: Path, clean_config: None) -> Generator[_ResumeRun]:
         )
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 @pytest.mark.parametrize(
     "committed",
     [(), (0,), (0, 1), (0, 1, 2, 3, 4, 5), (1, 3, 5, 7), (3, 7), tuple(range(8))],

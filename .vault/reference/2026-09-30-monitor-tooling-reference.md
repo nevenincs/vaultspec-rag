@@ -3,70 +3,21 @@ tags:
   - '#reference'
   - '#monitor-tooling'
 date: '2026-09-30'
-modified: '2026-10-30'
+modified: '2026-11-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:096565bb89435c5625678ec7e6c4a1cc46d1caef08edd4628d5f1374446b11a6'
+body_hash: 'sha256:ec2fcc1ef726a91560c984771995257e247075ec0accf933ab9bb82497137a03'
 related: []
 ---
 
-# `monitor-tooling` reference: `Shared frontend harness and port registry`
-
-Sources: `devservers/` at commit
-`4b25caa896e59bedc51848e8b85b370307b0426a`, and
-`vaultspec-marketing/` at commit
-`af28bc0639e25d68c4ec2719459a21ac83632c74`.
+# `monitor-tooling` reference: `Retired frontend lifecycle research`
 
 ## Summary
 
-The authorized trust correction is committed in
-`devservers/` at
-`b15e302441c426ba3604ec8ce2178bcfe8b394af`.
-Its template admits a ready owner/collaborator pull request or a same-repository
-pull request explicitly labeled by a person. Forks and bot labels do not admit
-untrusted authors: `devservers/dev/devserver.py:119`.
-This consumer adopts that script and template byte-for-byte. The main registry
-will report template drift until the upstream feature branch lands; no default
-branch was changed.
+This record described a shared frontend lifecycle tool that the repository no
+longer carries. The tool, its workflow, its recipes and its parity guard were
+removed on 2026-11-23 on the maintainer's explicit instruction, and nothing in
+the repository depends on what was recorded here.
 
-- The frontend manifest owns the name, twenty-port block and service ports.
-  The parser discovers only root manifests and manifests one directory below
-  the repository root: `devservers/dev/devserver.py:197`.
-  A manifest solely in `src/monitor` would not be enrolled. A root manifest
-  can instead point Vite at that application directory.
-- The canonical script pins React and react-dom 19.3.0, Vite 8.3.1 and
-  plugin-react 6.1.1. It renders the lifecycle recipe and workflow and checks
-  exact manifest and lockfile versions, recipe text, workflow text and port
-  literals: `devservers/dev/devserver.py:69`,
-  `devservers/dev/devserver.py:1049`.
-- Registry discovery falls back to main when a requested worktree is absent.
-  Cross checks reject overlapping blocks, duplicate names, reserved services
-  and Windows exclusions:
-  `devservers/tools/common.py:49`,
-  `devservers/tools/registry.py:63`.
-  On 2026-09-30, `just ports --worktree monitor --json` showed 5420-5439
-  available and one unrelated cadrumo-marketing workflow drift finding.
-- The sync tool installs the script and rendered workflow without rewriting
-  unrelated recipes: `devservers/tools/sync.py:28`.
-- Vite reads declared ports and enables strictPort in both development and
-  preview: `vaultspec-marketing/web/vite.config.ts:423`.
-  Its frontend uses npm, ESLint with typescript-eslint and React Hooks rules,
-  and strict TypeScript:
-  `vaultspec-marketing/web/package.json:1`,
-  `vaultspec-marketing/web/eslint.config.js:1`,
-  `vaultspec-marketing/web/tsconfig.json:1`.
-- The harness starts Vite with explicit strict ports, reattaches by identity
-  and fingerprint, and aliases the route through portless. State lives outside
-  checkouts: `devservers/dev/devserver.py:484`,
-  `devservers/dev/devserver.py:600`,
-  `devservers/dev/devserver.py:756`.
-  CI proves start, reattach and stop:
-  `devservers/dev/devserver.py:1126`.
-- Tailnet HTTPS maps declared ports at a fixed offset, but its generator reads
-  main checkouts only:
-  `devservers/tools/tailnet.py:32`.
-  A feature-worktree mapping therefore needs an explicit tailscale serve
-  command until the declaration lands on main.
-- The shared script's owner uses Ruff with a 120-column limit and a narrower
-  rule set: `devservers/pyproject.toml:24`.
-  Applying RAG's current Ruff configuration to the canonical script reports
-  101 findings. Altering the copy would violate byte parity.
+The decisions that remain in force about the monitor's frontend home, its
+pinned stack and its manifest-declared ports are in
+`2026-09-30-monitor-tooling-adr`.

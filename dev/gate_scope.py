@@ -43,9 +43,12 @@ SCOPE_JOB = "Check: Proof scope (Linux)"
 MEASURING_JOBS = frozenset(
     {
         "Check: Full lint (Linux)",
-        "Test: Correctness suite (Linux, 3.13)",
-        "Test: Correctness suite (Linux, 3.14)",
-        "Test: Full suite (Windows)",
+        *(
+            f"Test: Correctness suite (Linux, {python}, {shard}/3)"
+            for python in ("3.13", "3.14")
+            for shard in (1, 2, 3)
+        ),
+        *(f"Test: Full suite (Windows, {shard}/6)" for shard in range(1, 7)),
         "Check: Dependency advisories (Linux)",
         "Check: Code scanning (Linux, actions)",
         "Check: Code scanning (Linux, javascript-typescript)",
@@ -72,6 +75,12 @@ VERSION_LINE_ONLY = frozenset({"pyproject.toml", "uv.lock"})
 #: two hours, under the jobs' own ceilings.
 POLL_ATTEMPTS = 120
 POLL_SECONDS = 60
+
+#: Attempts a parent with no push gate at all is given before it is reported
+#: ``missing``. A push starts its gate within seconds and the parent landed
+#: before the commit asking, so a run still absent after five minutes is not
+#: coming, and waiting the full two hours for it only delays the same answer.
+MISSING_ATTEMPTS = 5
 
 #: The compare endpoint lists at most this many files, so a response this long
 #: may be hiding the file that disqualifies it.
@@ -132,14 +141,15 @@ def non_version_change(files: list[dict[str, Any]]) -> str | None:
 def push_gate_state(api: Api, sha: str) -> str:
     """Return the state of the newest push gate on *sha*.
 
-    One of ``success``, ``running`` or the conclusion it ended with. Only a
-    push run proves a commit that landed, and the newest one decides.
+    One of ``success``, ``running``, ``missing`` when the commit has no push
+    gate at all, or the conclusion it ended with. Only a push run proves a
+    commit that landed, and the newest one decides.
     """
     runs = api(
         f"actions/workflows/{GATE_WORKFLOW}/runs?head_sha={sha}&event=push&per_page=10"
     )["workflow_runs"]
     if not runs:
-        return "running"
+        return "missing"
     newest = max(runs, key=lambda run: (run["created_at"], run["id"]))
     if newest["status"] != "completed":
         return "running"
@@ -149,11 +159,18 @@ def push_gate_state(api: Api, sha: str) -> str:
 def wait_for_push_gate(
     api: Api, sha: str, sleep: Callable[[float], None] = time.sleep
 ) -> str:
-    """Return the settled state of *sha*'s push gate, or ``running`` on timeout."""
+    """Return the settled state of *sha*'s push gate.
+
+    ``running`` when a gate that exists outlasts the wait, and ``missing`` when
+    none has appeared within :data:`MISSING_ATTEMPTS`.
+    """
     state = "running"
     for attempt in range(POLL_ATTEMPTS):
         state = push_gate_state(api, sha)
-        if state != "running":
+        if state == "missing":
+            if attempt >= MISSING_ATTEMPTS - 1:
+                return state
+        elif state != "running":
             return state
         if attempt < POLL_ATTEMPTS - 1:
             sleep(POLL_SECONDS)

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import math
-import threading
 import time
 import warnings
 from contextlib import contextmanager, nullcontext
@@ -21,6 +20,7 @@ from ._job_errors import JobError, JobErrorKind
 from ._store_locks import (
     FileLock,
     ReentrantLock,
+    StoreLock,
     VaultStoreLockedError,
     acquire_collection_locks,
     acquire_collection_locks_bounded,
@@ -357,11 +357,11 @@ class VaultStore(
         # handles its own concurrency, so server-mode point operations
         # take no lock at all. The lock dict is keyed by the resolved
         # (possibly prefixed) collection names assigned above.
-        self._lifecycle_lock = threading.RLock()
+        self._lifecycle_lock: ReentrantLock = StoreLock()
         self._collection_locks: dict[str, ReentrantLock] = {
-            self.TABLE_NAME: threading.RLock(),
-            self.CODE_TABLE_NAME: threading.RLock(),
-            self.DOCUMENT_TABLE_NAME: threading.RLock(),
+            self.TABLE_NAME: StoreLock(),
+            self.CODE_TABLE_NAME: StoreLock(),
+            self.DOCUMENT_TABLE_NAME: StoreLock(),
         }
         self._client: QdrantClient | None = None
 
@@ -675,7 +675,7 @@ class VaultStore(
         this runs on paths that already hold a collection lock, and acquiring
         the lifecycle lock beneath one would invert the documented order.
         """
-        return self._collection_locks.setdefault(collection, threading.RLock())
+        return self._collection_locks.setdefault(collection, StoreLock())
 
     def _point_lock(self, collection: str) -> AbstractContextManager[object]:
         """Return the point-operation guard for *collection*.

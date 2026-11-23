@@ -37,7 +37,7 @@ from ._install_helpers import (
 )
 
 pytestmark = [
-    pytest.mark.integration,
+    pytest.mark.unit,
     pytest.mark.usefixtures("isolated_mcp_trust_home"),
 ]
 

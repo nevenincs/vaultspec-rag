@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     import pathlib
     from collections.abc import Generator, Mapping
+    from contextlib import AbstractContextManager
     from types import TracebackType
 
 # Storage paths this process currently holds an exclusive handle on, keyed by
@@ -46,6 +47,94 @@ class ReentrantLock(Protocol):
     def acquire(self, *, timeout: float = -1.0) -> bool: ...
 
     def release(self) -> None: ...
+
+    def reserved(self) -> AbstractContextManager[None]: ...
+
+
+class StoreLock:
+    """A reentrant lock a waiter can reserve ahead of everyone not yet holding it.
+
+    A plain reentrant lock is not fair: a holder that releases it and takes it
+    again at once can keep doing so indefinitely, and a waiter that must take
+    its locks in order - and so cannot simply sit on this one - never finds it
+    free at the instant it looks. A reservation closes that gap without the
+    waiter holding anything: while one stands, a thread that does not already
+    hold the lock waits before taking it, the present holder finishes
+    undisturbed, and the reserving thread then finds the lock free whenever it
+    comes back for it.
+
+    A reservation is not a hold. It excludes nobody from any other lock, and
+    whoever takes it must drop it whenever it stops making progress, because a
+    thread kept waiting here may be holding the lock the reserver needs next.
+    """
+
+    def __init__(self) -> None:
+        self._inner = threading.RLock()
+        self._state = threading.Condition(threading.Lock())
+        self._owner: int | None = None
+        self._depth = 0
+        self._reservers: dict[int, int] = {}
+
+    def acquire(self, *, timeout: float = -1.0) -> bool:
+        """Take the lock, waiting out another thread's reservation first."""
+        me = threading.get_ident()
+        deadline = None if timeout < 0.0 else time.monotonic() + timeout
+        with self._state:
+            # The holder re-enters past a reservation: making it wait would
+            # leave the reserver waiting on the very lock it is kept from.
+            while self._owner != me and self._reservers and me not in self._reservers:
+                remaining = None if deadline is None else deadline - time.monotonic()
+                if remaining is not None and remaining <= 0.0:
+                    return False
+                self._state.wait(remaining)
+        remaining = -1.0 if deadline is None else max(0.0, deadline - time.monotonic())
+        if not self._inner.acquire(timeout=remaining):
+            return False
+        with self._state:
+            self._owner = me
+            self._depth += 1
+        return True
+
+    def release(self) -> None:
+        """Release one level of this thread's hold."""
+        with self._state:
+            if self._owner != threading.get_ident():
+                raise RuntimeError(
+                    "cannot release a store lock this thread does not hold"
+                )
+            self._depth -= 1
+            if self._depth == 0:
+                self._owner = None
+        self._inner.release()
+
+    @contextmanager
+    def reserved(self) -> Generator[None]:
+        """Keep every thread that does not hold the lock from taking it."""
+        me = threading.get_ident()
+        with self._state:
+            self._reservers[me] = self._reservers.get(me, 0) + 1
+        try:
+            yield
+        finally:
+            with self._state:
+                count = self._reservers[me] - 1
+                if count:
+                    self._reservers[me] = count
+                else:
+                    del self._reservers[me]
+                    self._state.notify_all()
+
+    def __enter__(self) -> bool:
+        return self.acquire()
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        _exc_value: BaseException | None,
+        _traceback: TracebackType | None,
+        /,
+    ) -> None:
+        self.release()
 
 
 @contextmanager

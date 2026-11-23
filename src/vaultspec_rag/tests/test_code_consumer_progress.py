@@ -812,7 +812,7 @@ def _consume_replay_progress(
     return consumer_run, job_id, completed_at_advancement
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 @pytest.mark.parametrize(
     "committed",
     [(), (0,), (0, 1), (0, 1, 2, 3, 4, 5), (1, 3, 5, 7), (3, 7), tuple(range(8))],
@@ -852,7 +852,7 @@ def test_replayed_complete_files_count_once_after_confirmation(
     assert not resume_run.checkpoint.ingestion_complete
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 def test_replayed_final_marker_counts_each_path_only_once(
     resume_run: _ResumeRun,
 ) -> None:
@@ -869,7 +869,7 @@ def test_replayed_final_marker_counts_each_path_only_once(
     assert consumer.total == [0] and not resume_run.encoder.texts
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 def test_changed_digest_is_counted_after_new_confirmation(
     resume_run: _ResumeRun,
 ) -> None:
@@ -897,7 +897,7 @@ def test_changed_digest_is_counted_after_new_confirmation(
     )
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("indices", "message"),
     [
@@ -924,7 +924,7 @@ def test_invalid_replay_stream_cannot_seed_file_progress(
     assert not confirmations and not consumer.completed_file_paths
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 def test_oversized_committed_final_cannot_advance_progress(
     resume_run: _ResumeRun,
 ) -> None:
@@ -952,7 +952,7 @@ def test_oversized_committed_final_cannot_advance_progress(
     assert not confirmations and not consumer.completed_file_paths
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 @pytest.mark.parametrize("outcome", ["empty", "blank", "skipped", "vanished"])
 @pytest.mark.parametrize("retained", [False, True], ids=["fresh", "resumed"])
 def test_resolved_zero_chunk_files_count_after_durable_outcome(
@@ -1016,7 +1016,7 @@ def test_resolved_zero_chunk_files_count_after_durable_outcome(
     assert consumer.total == [4] and len(resume_run.encoder.texts) == 4
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 @pytest.mark.parametrize("failure", ["extraction", "ledger"])
 def test_failed_zero_chunk_outcomes_do_not_advance_progress(
     resume_run: _ResumeRun, monkeypatch: pytest.MonkeyPatch, failure: str
@@ -1046,7 +1046,7 @@ def test_failed_zero_chunk_outcomes_do_not_advance_progress(
     assert not resume_run.encoder.texts
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 def test_producer_and_consumer_publish_file_progress_in_order(
     resume_run: _ResumeRun, monkeypatch: pytest.MonkeyPatch
 ) -> None:

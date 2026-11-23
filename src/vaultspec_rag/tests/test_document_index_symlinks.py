@@ -351,7 +351,7 @@ def test_incremental_selection_refuses_to_digest_a_link(tmp_path: Path) -> None:
         _indexer(tmp_path)._select_incremental_paths((alias,), previous, scoped=False)
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 def test_incremental_removes_points_of_document_replaced_by_link(
     tmp_path: Path, forwardless_model: EmbeddingModel
 ) -> None:

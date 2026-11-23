@@ -176,7 +176,7 @@ def _round_trip_source(
     )
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 @pytest.mark.parametrize("outcome", ["unchanged", "changed", "round_trip", "removed"])
 def test_resumed_pipeline_retains_only_live_committed_ids(
     tmp_path: Path, clean_config: None, outcome: str
@@ -332,7 +332,7 @@ def test_resumed_partial_edit_preserves_confirmed_shared_chunk_ids(
         )
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 @pytest.mark.parametrize("with_survivor", [False, True])
 def test_reopened_pipeline_excludes_durable_deletion_identities(
     tmp_path: Path, clean_config: None, with_survivor: bool

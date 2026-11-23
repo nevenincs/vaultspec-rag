@@ -22,7 +22,7 @@ from .._preprocess_approval import approve_preprocess_policy
 if TYPE_CHECKING:
     from ...indexer._content_discovery import AdmissionSample, ContentScanResult
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.unit]
 
 
 def _admission_json(scan: ContentScanResult) -> dict[str, object]:

@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     from ...qdrant_runtime._resolve import QdrantIdentity
 
 pytestmark = [
-    pytest.mark.integration,
+    pytest.mark.unit,
     pytest.mark.skipif(
         not sys.platform.startswith("linux"),
         reason="only Linux creates the server from an open descriptor",

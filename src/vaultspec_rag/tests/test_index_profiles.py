@@ -19,6 +19,7 @@ from ..index_profiles import (
     SupportMeasurement,
     get_index_support_profile,
     index_support_profile_status,
+    measured_ram_floor,
     validate_profile_admission,
 )
 from ..indexer._chunk_worker import chunk_and_hash_file
@@ -245,7 +246,7 @@ def test_profile_rejects_backend_host_and_disk_before_corpus() -> None:
     profile = get_index_support_profile("managed-service")
     checks = (
         ("local", profile.minimum_ram_bytes, profile.minimum_free_disk_bytes),
-        ("server", profile.minimum_ram_bytes - 1, profile.minimum_free_disk_bytes),
+        ("server", measured_ram_floor(profile) - 1, profile.minimum_free_disk_bytes),
         ("server", profile.minimum_ram_bytes, profile.minimum_free_disk_bytes - 1),
     )
     expected = (
@@ -494,7 +495,7 @@ def test_ram_refusal_reports_units_not_raw_bytes() -> None:
             SupportMeasurement(1, 1),
             _environment(
                 "server",
-                profile.minimum_ram_bytes - 1,
+                measured_ram_floor(profile) - 1,
                 _volume(profile.minimum_free_disk_bytes),
             ),
         )
@@ -502,6 +503,27 @@ def test_ram_refusal_reports_units_not_raw_bytes() -> None:
     detail = raised.value.detail
     assert str(profile.minimum_ram_bytes) not in detail
     assert "16.0 GiB RAM" in detail
+
+
+def test_a_host_sold_with_the_required_memory_is_admitted() -> None:
+    """A 16 GB machine reports a little under 16 GiB, and meets a 16 GiB profile.
+
+    Mutation: comparing the measurement against the stated requirement exactly
+    failed this with ``profile_requirements_not_met``, the refusal saying it
+    requires 16.0 GiB and the host reports 16.0 GiB; restoring the measured
+    floor passed.
+    """
+    profile = get_index_support_profile("managed-service")
+    nominal = profile.minimum_ram_bytes - 64 * 1024**2
+
+    admitted = validate_profile_admission(
+        profile.name,
+        IndexDomain.CODE,
+        SupportMeasurement(1, 1),
+        _environment("server", nominal, _volume(profile.minimum_free_disk_bytes)),
+    )
+
+    assert admitted is profile
 
 
 def test_profile_status_keeps_all_resource_dimensions_per_domain() -> None:

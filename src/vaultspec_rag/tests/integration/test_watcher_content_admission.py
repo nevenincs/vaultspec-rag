@@ -26,7 +26,7 @@ from ...watcher_policy import is_code_change
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.unit]
 
 _EVENT_TIMEOUT_SECONDS = 5.0
 

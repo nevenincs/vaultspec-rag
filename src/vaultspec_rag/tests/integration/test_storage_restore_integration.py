@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 
     from ...qdrant_runtime._supervise import QdrantSupervisor
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.unit]
 
 
 @pytest.fixture(scope="module")

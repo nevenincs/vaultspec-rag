@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
     from ..._source_types import IndexSource
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.unit
 
 
 def _route_documents(root: Path) -> None:
