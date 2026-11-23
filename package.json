@@ -7,35 +7,13 @@
     "node": ">=26.10.0 <27",
     "npm": ">=12.1.0 <13"
   },
-  "portless": {
-    "name": "vaultspec-rag-monitor",
-    "appPort": 5420
-  },
-  "devserver": {
-    "block": [
-      5420,
-      5439
-    ],
+  "monitor": {
     "host": "127.0.0.1",
+    "port": 5420,
+    "previewPort": 5421,
     "allowedHosts": [
       ".localhost"
-    ],
-    "services": {
-      "preview": {
-        "port": 5421,
-        "run": [
-          "npm",
-          "run",
-          "preview",
-          "--",
-          "--port",
-          "{port}",
-          "--strictPort",
-          "--host",
-          "{host}"
-        ]
-      }
-    }
+    ]
   },
   "scripts": {
     "postinstall": "patch-package --error-on-fail",

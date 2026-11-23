@@ -292,8 +292,6 @@ tmp_path_retention_policy = "failed"
 [tool.ruff]
 line-length = 88
 target-version = "py313"
-# The shared lifecycle script is checked under its owner's configuration.
-extend-exclude = ["dev/devserver.py"]
 
   [tool.ruff.lint]
   # NOTE: preview is deliberately OFF here — enabling it globally changes the
@@ -356,9 +354,6 @@ python-version = "3.13"
 # would reject signal.SIGKILL.
 python-platform = "all"
 root = [".", "src", "dev"]
-
-[tool.ty.src]
-exclude = ["dev/devserver.py"]
 
 # Strict-mode type checking — now GATING (the burndown reached zero on
 # 2026-06-10). Both `ty` and basedpyright gate in CI and `just check-all`. Run this

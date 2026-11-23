@@ -4,7 +4,7 @@ import { defineConfig } from "vite";
 import manifest from "./package.json" with { type: "json" };
 import { localServicePlugin } from "./src/monitor/server/vite-plugin.ts";
 
-const { devserver, portless } = manifest;
+const { monitor } = manifest;
 
 export default defineConfig({
   root: fileURLToPath(new URL("./src/monitor", import.meta.url)),
@@ -19,15 +19,15 @@ export default defineConfig({
     },
   },
   server: {
-    host: devserver.host,
-    port: portless.appPort,
+    host: monitor.host,
+    port: monitor.port,
     strictPort: true,
-    allowedHosts: devserver.allowedHosts,
+    allowedHosts: monitor.allowedHosts,
   },
   preview: {
-    host: devserver.host,
-    port: devserver.services.preview.port,
+    host: monitor.host,
+    port: monitor.previewPort,
     strictPort: true,
-    allowedHosts: devserver.allowedHosts,
+    allowedHosts: monitor.allowedHosts,
   },
 });

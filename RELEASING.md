@@ -3,7 +3,7 @@
 This is the maintainer runbook for publishing the Python package, standalone
 binary bundles, and package-manager pointers. The release pipeline is
 autonomous after a maintainer merges the release PR. The proposal must pass full
-checks and Dev Server proof before merge; no further dispatch or pin review is needed.
+checks before merge; no further dispatch or pin review is needed.
 This document records
 the artifact contract, the gates a release must pass before it is published at
 all, and the recovery paths when a lane stalls.
@@ -67,11 +67,10 @@ is dispatched explicitly by the lane before it, in this order:
 1. `release-please.yml` opens and updates the release PR from conventional
    commits on pushes to `main`, as the `nevenincs-release` GitHub App. The
    version bump, changelog, manifest and `uv.lock` change land in one commit, and
-   the PR's own events run the merge gate and the canonical Dev Server check. The
+   the PR's own events run the merge gate. The
    gate's scope job skips the suites only when the proposal is current with main,
    changes nothing but version files, and main's push gate passed. Anything else
-   measures in full. The required aggregate includes the actual Dev Server verdict
-   on the exact SHA.
+   measures in full.
 1. Merging that PR starts the cut automatically. It requires the merged commit to
    change only version files over a parent whose push gate passed, audits the lock
    again, and runs both accelerator tiers, then has release-please force the tag
@@ -139,8 +138,8 @@ rerun for the same tag.
 1. Merge feature work to `main` with conventional commit messages such as
    `feat:`, `fix:`, or `perf:`.
 1. Review the release PR's version, changelog, manifest and lockfile. Wait for
-   full lint, both Linux interpreters, Windows tests, dependency audit and Dev Server
-   proof. The release App's PR starts those checks itself; no label, dispatch
+   full lint, both Linux interpreters, Windows tests and the dependency audit.
+   The release App's PR starts those checks itself; no label, dispatch
    or workflow approval is needed.
 1. Press the release PR's merge button. This is the only human release action.
    The merge starts exact-commit checks, CUDA/MPS proof, tag/draft creation,

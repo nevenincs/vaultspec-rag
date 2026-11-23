@@ -19,8 +19,8 @@ pytestmark = [pytest.mark.unit, pytest.mark.repo]
 def test_every_workflow_name_starts_with_the_product() -> None:
     """Owned workflows use the product; shared workflows use their exact name.
 
-    Verified: renaming devserver.yml's workflow to an arbitrary name failed
-    here; restoring it passed. The parity guard also checks its full content.
+    Verified: renaming a shared workflow to an arbitrary name failed here;
+    restoring it passed.
     """
     findings = [
         f"{workflow}: {name!r}"

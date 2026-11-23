@@ -7,7 +7,6 @@ name: RAG Merge Gate
 # The scope job decides what is left to measure: a commit whose tree a pull
 # request already passed runs only the audit and code scanning, and a version
 # bump over a proven parent runs nothing. Anything unclear measures in full.
-# The aggregate also requires the canonical Dev Server verdict on the same SHA.
 on:
   pull_request:
     branches: [main]
@@ -442,38 +441,6 @@ jobs:
           gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/$PR/labels/$FULL_RUN_LABEL" --silent \
             || gh api "repos/$GITHUB_REPOSITORY/issues/$PR/labels" --jq 'any(.[]; .name == env.FULL_RUN_LABEL) | not' | grep -qx true
 
-      - name: Require the dev server proof on this exact commit
-        if: >-
-          github.event_name == 'workflow_dispatch' ||
-          github.event_name == 'push' || github.event_name == 'pull_request'
-        env:
-          PROOF_SHA: ${{ github.event.pull_request.head.sha || inputs.ref || github.sha }}
-        run: |
-          set -euo pipefail
-          # Every measuring job checks out inputs.ref. A branch or tag name can
-          # move between those checkouts and this query, so only a commit SHA
-          # ties the proof to the code that was measured.
-          if ! [[ "$PROOF_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::ref '$PROOF_SHA' is not a full commit SHA; dispatch the gate with the exact commit to prove"
-            exit 1
-          fi
-          # The check runs separately in the canonical workflow, from its own
-          # push or pull-request event; a dispatch
-          # proves a commit one of those events already ran on. Poll only the
-          # newest run on this SHA, whatever started it, and never reuse an
-          # older green.
-          for _ in $(seq 1 180); do
-            state=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/devserver.yml/runs?head_sha=$PROOF_SHA&per_page=100" \
-              --jq '.workflow_runs | sort_by(.id) | last | "\(.status // "missing") \(.conclusion // "none")"')
-            case "$state" in
-              "completed success") exit 0 ;;
-              completed*) echo "::error::Dev Server for $PROOF_SHA ended $state"; exit 1 ;;
-            esac
-            sleep 10
-          done
-          echo "::error::Dev Server did not prove $PROOF_SHA within thirty minutes"
-          exit 1
-
       - name: Every full check passed on this commit
         run: |
           set -euo pipefail
@@ -533,7 +500,7 @@ jobs:
           # A label arriving with the commit starts this run beside the one that
           # measures it. Wait for that verdict: reporting red now would replace
           # the required check with a failure nothing measured. Ninety minutes,
-          # which with the dev server wait stays under this job's ceiling.
+          # which stays under this job's ceiling.
           for _ in $(seq 1 180); do
             previous_runs=$(gh api --paginate \
               "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?head_sha=$HEAD_SHA&status=completed&per_page=100" \

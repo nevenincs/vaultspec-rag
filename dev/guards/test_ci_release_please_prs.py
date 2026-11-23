@@ -17,7 +17,6 @@ pytestmark = [pytest.mark.unit, pytest.mark.repo]
 RELEASE_WORKFLOW = "release-please.yml"
 GATE_WORKFLOW = "merge-gate.yml"
 REF_EXPRESSION = "${{ inputs.ref || github.sha }}"
-DEV_PROOF_STEP = "Require the dev server proof on this exact commit"
 
 #: The release App token's exact inputs. The client id is a variable and the
 #: key a secret; the token gets only the two grants a proposal writes with.
@@ -121,7 +120,6 @@ def test_nothing_else_writes_or_dispatches_for_the_proposal() -> None:
                 f"{job.job_id}: {step.get('name')!r} runs {banned}"
                 for banned in (
                     "gh workflow run merge-gate.yml",
-                    "gh workflow run devserver.yml",
                     "git push",
                     "github-actions[bot]",
                 )
@@ -268,25 +266,15 @@ def test_every_gate_checkout_uses_the_requested_ref() -> None:
     )
 
 
-def test_readiness_requires_the_dev_server_on_the_exact_commit() -> None:
-    """The required aggregate includes the canonical exact-SHA dev proof.
+def test_readiness_requires_every_measuring_job_to_pass() -> None:
+    """The required aggregate passes only when every measuring job did.
 
-    A dispatch carries no Dev Server run of its own, so the
-    proof reads the newest run on the commit whatever event started it.
-
-    Mutation proof: dropping the dev proof's SHA filter failed proof admission
-    (exit 1); restoring an ``event=`` filter failed the any-event assertion;
-    exact restoration passed (exit 0).
+    Mutation proof: accepting a job that did not succeed failed this on the
+    verdict assertion (exit 1); exact restoration passed (exit 0).
     """
     raw = workflows.document(GATE_WORKFLOW)["jobs"]["gate"]
     assert raw["permissions"]["actions"] == "write"
     steps = {step.get("name"): step for step in raw["steps"]}
-    proof = str(steps[DEV_PROOF_STEP]["run"])
-    assert "head_sha=$PROOF_SHA" in proof
-    assert "event=" not in proof, "a dispatch would wait on no run"
-    assert '"completed success") exit 0' in proof
-    assert "completed*)" in proof and "exit 1" in proof
-    assert "github.event_name == 'pull_request'" in str(steps[DEV_PROOF_STEP]["if"])
     verdict = str(steps["Every full check passed on this commit"]["run"])
     assert 'if ($4 != "success") failed=1' in verdict
     assert f"exit(failed || count != {len(MEASURING_JOBS)})" in verdict

@@ -30,7 +30,7 @@ type Options = {
 
 function options(args: string[]): Options {
   const result = {
-    port: manifest.portless.appPort,
+    port: manifest.monitor.port,
     managed: false,
     version: false,
     json: false,
@@ -84,7 +84,7 @@ async function bind(server: Server, selected: Options): Promise<number> {
   for (let port = selected.port; port <= 65535; port++) {
     try {
       await requireLoopbackPort(port);
-      await listen(server, port, manifest.devserver.host);
+      await listen(server, port, manifest.monitor.host);
       return port;
     } catch (error) {
       if (

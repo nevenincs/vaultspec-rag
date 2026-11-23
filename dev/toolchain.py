@@ -263,7 +263,6 @@ DEPS = Verb(
 #: calls could not guarantee.
 LINT_ALL = (
     "python",
-    "devserver",
     "monitor",
     "type",
     "links",
@@ -305,27 +304,6 @@ LINT = Verb(
             "type",
             "Check types across the package and the release tooling.",
             (uv_run("python", "-m", "ty", "check", *PYTHON_PATHS),),
-        ),
-        Target(
-            "devserver",
-            "Check the shared lifecycle script under its owner's rules.",
-            (
-                uv_run(
-                    "ruff",
-                    "check",
-                    "--config",
-                    "devserver-ruff.toml",
-                    "dev/devserver.py",
-                ),
-                uv_run(
-                    "ruff",
-                    "format",
-                    "--check",
-                    "--config",
-                    "devserver-ruff.toml",
-                    "dev/devserver.py",
-                ),
-            ),
         ),
         Target(
             "monitor",

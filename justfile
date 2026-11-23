@@ -7,8 +7,6 @@
 #  so `just --list` is the complete surface and tab completion reaches every
 #  one of them. Run `just` for the annotated recipe list, grouped by
 #  CONSEQUENCE.
-#  The shared frontend `just dev` recipe accepts the workstation's lifecycle
-#  verbs and service names.
 #
 #  PLATFORM AGNOSTIC BY CONSTRUCTION. Every recipe body below is a single
 #  command with no shell branching, no pipes, no conditionals, and no `sh`
@@ -77,21 +75,10 @@ dev := "uv run --no-sync python -m dev"
 default:
     @just --list
 
-[doc('Dev server: start or attach, sanitize, health-check, evict occupiers (up|restart|stop|status|logs|check|ci)')]
-[group('dev')]
-dev target="up" *args="":
-    @uv run --script dev/devserver.py {{ target }} {{ args }}
-
 # Install the committed frontend dependency tree.
 [group('setup')]
 init-monitor:
-    @uv run --script dev/devserver.py stop all
     npm ci
-
-# Check the shared lifecycle script under its owner's rules.
-[group('check')]
-check-devserver:
-    {{dev}} lint devserver
 
 # Run every frontend gate used by CI.
 [group('check')]
