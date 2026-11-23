@@ -20,10 +20,8 @@ concurrency:
 jobs:
   notify:
     name: "Build: Notify marketing (Linux)"
-    runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 125
-    env:
-      CI_EXEC_BUDGET_MINUTES: 5
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - name: Signal the complete release to marketing
         shell: bash

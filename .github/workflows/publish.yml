@@ -56,10 +56,8 @@ concurrency:
 jobs:
   resolve-target:
     name: "Check: Release commit (Linux)"
-    timeout-minutes: 130
-    runs-on: [self-hosted, Linux, X64, build]
-    env:
-      CI_EXEC_BUDGET_MINUTES: 10
+    timeout-minutes: 10
+    runs-on: ubuntu-24.04
     # The step below creates the draft release when one is missing.
     permissions:
       contents: write
@@ -148,12 +146,10 @@ jobs:
   # the platform they were compiled for.
   frontend:
     name: "Build: Monitor frontend (Linux)"
-    timeout-minutes: 140
+    timeout-minutes: 20
     needs: resolve-target
     if: ${{ inputs.stage != 'package-index' }}
-    runs-on: [self-hosted, Linux, X64, build]
-    env:
-      CI_EXEC_BUDGET_MINUTES: 20
+    runs-on: ubuntu-24.04
     outputs:
       artifact: ${{ steps.identity.outputs.artifact }}
       frontend_sha256: ${{ steps.identity.outputs.frontend_sha256 }}
@@ -228,7 +224,7 @@ jobs:
   # build job below hashes exactly these artifacts into the package.
   monitor:
     name: "Build: Native monitor (${{ matrix.name }})"
-    timeout-minutes: 210
+    timeout-minutes: 90
     needs: [resolve-target, frontend]
     if: ${{ inputs.stage != 'package-index' }}
     strategy:
@@ -238,20 +234,18 @@ jobs:
       matrix:
         include:
           - name: linux-x86_64
-            runner: [self-hosted, Linux, X64, build]
+            runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
           - name: windows-x86_64
-            runner: [self-hosted, Windows, X64]
+            runner: windows-2025
             target: x86_64-pc-windows-msvc
           - name: linux-aarch64
-            runner: [self-hosted, Linux, ARM64]
+            runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
           - name: macos-arm64
-            runner: [self-hosted, macOS, ARM64]
+            runner: macos-15
             target: aarch64-apple-darwin
     runs-on: ${{ matrix.runner }}
-    env:
-      CI_EXEC_BUDGET_MINUTES: 90
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -313,7 +307,7 @@ jobs:
 
   build:
     name: "Build: Python package (Linux)"
-    timeout-minutes: 210
+    timeout-minutes: 90
     needs: [resolve-target, monitor]
     # Every release-stage job descends from this one, so the package-index
     # stage skips the whole build chain by skipping it. The two jobs above
@@ -321,9 +315,8 @@ jobs:
     if: ${{ inputs.stage != 'package-index' }}
     outputs:
       sha: ${{ needs.resolve-target.outputs.sha }}
-    runs-on: [self-hosted, Linux, X64, build]
+    runs-on: ubuntu-24.04
     env:
-      CI_EXEC_BUDGET_MINUTES: 90
       # Building the sdist and wheel imports nothing from the local inference
       # stack, so `just init` leaves torch and its CUDA runtime out.
       VAULTSPEC_INIT_GPU_STACK: "none"
@@ -397,11 +390,11 @@ jobs:
 
   smoke-test:
     name: "Test: Package smoke (Linux, ${{ matrix.python-version }})"
-    timeout-minutes: 140
+    timeout-minutes: 20
     needs: build
     outputs:
       sha: ${{ needs.build.outputs.sha }}
-    runs-on: [self-hosted, Linux, X64, build]
+    runs-on: ubuntu-24.04
     strategy:
       # One artifact, every supported interpreter. A leg that fails is the
       # signal; cancelling the others hides whether the break is version-specific.
@@ -413,7 +406,6 @@ jobs:
         # — the exact failure a single-version smoke test ships green.
         python-version: ["3.13", "3.14"]
     env:
-      CI_EXEC_BUDGET_MINUTES: 20
       # `--isolated` does not stop uv reading `.python-version` from the
       # checkout, which pins the floor. Without this the 3.14 leg would
       # silently smoke-test 3.13 and report success for a version it never ran.
@@ -468,7 +460,7 @@ jobs:
 
   github-release:
     name: "Build: Release assets (Linux)"
-    timeout-minutes: 135
+    timeout-minutes: 15
     # `frontend` for the digest every published monitor embeds, which the
     # dispatch below hands to the archive gates. It is upstream of the build
     # this job already waits for, so naming it adds no wait.
@@ -476,9 +468,7 @@ jobs:
     outputs:
       sha: ${{ needs.smoke-test.outputs.sha }}
     # Needs `gh` and `sha256sum`.
-    runs-on: [self-hosted, Linux, X64, build]
-    env:
-      CI_EXEC_BUDGET_MINUTES: 15
+    runs-on: ubuntu-24.04
     # Attaches the packages, then dispatches Binaries.
     permissions:
       contents: write
@@ -585,10 +575,10 @@ jobs:
   # provenance, and hands exactly those bytes to the upload job below.
   admit-package-index:
     name: "Check: Package index admission (Linux)"
-    timeout-minutes: 135
+    timeout-minutes: 15
     needs: resolve-target
     if: ${{ inputs.stage == 'package-index' }}
-    runs-on: [self-hosted, Linux, X64, build]
+    runs-on: ubuntu-24.04
     outputs:
       wheel_sha256: ${{ steps.admit.outputs.wheel_sha256 }}
       sdist_sha256: ${{ steps.admit.outputs.sdist_sha256 }}
@@ -597,7 +587,6 @@ jobs:
       contents: write
       attestations: read
     env:
-      CI_EXEC_BUDGET_MINUTES: 15
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ needs.resolve-target.outputs.tag }}
       TARGET_SHA: ${{ needs.resolve-target.outputs.sha }}
@@ -695,10 +684,10 @@ jobs:
   # publisher (publish.yml, environment pypi) unchanged.
   publish-pypi:
     name: "Build: Package index release (Linux)"
-    timeout-minutes: 135
+    timeout-minutes: 15
     needs: [resolve-target, admit-package-index]
     if: ${{ inputs.stage == 'package-index' }}
-    runs-on: [self-hosted, Linux, X64, build]
+    runs-on: ubuntu-24.04
     # Carried forward so the publication job below never re-resolves the tag:
     # the release it publishes must be the one this job uploaded from.
     outputs:
@@ -716,7 +705,6 @@ jobs:
       id-token: write
       contents: read
     env:
-      CI_EXEC_BUDGET_MINUTES: 15
       TAG: ${{ needs.resolve-target.outputs.tag }}
       WHEEL_SHA256: ${{ needs.admit-package-index.outputs.wheel_sha256 }}
       SDIST_SHA256: ${{ needs.admit-package-index.outputs.sdist_sha256 }}
@@ -769,16 +757,15 @@ jobs:
   # lanes that carry credentials of their own.
   publish-release:
     name: "Build: Release publication (Linux)"
-    timeout-minutes: 130
+    timeout-minutes: 10
     needs: publish-pypi
-    runs-on: [self-hosted, Linux, X64, build]
+    runs-on: ubuntu-24.04
     permissions:
       # Flipping the draft is a write to the release; the dispatches below are
       # writes to the Actions API.
       contents: write
       actions: write
     env:
-      CI_EXEC_BUDGET_MINUTES: 10
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ needs.publish-pypi.outputs.tag }}
     steps:

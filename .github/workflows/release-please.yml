@@ -22,10 +22,8 @@ jobs:
     name: "Build: Release proposal (Linux)"
     needs: candidate
     if: github.event_name == 'push' && !needs.candidate.outputs.sha
-    timeout-minutes: 130
-    runs-on: [self-hosted, Linux, X64, build]
-    env:
-      CI_EXEC_BUDGET_MINUTES: 10
+    timeout-minutes: 10
+    runs-on: ubuntu-24.04
     # Every write here goes through the release App's token, never this job's.
     permissions:
       contents: read
@@ -132,7 +130,7 @@ jobs:
     name: "Check: Release parent proof"
     needs: candidate
     if: needs.candidate.outputs.sha != ''
-    timeout-minutes: 130
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -153,10 +151,9 @@ jobs:
   prove-gate:
     name: "Test: Release gate"
     needs: [candidate, prove-parent]
-    timeout-minutes: 135
-    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 15
+    runs-on: ubuntu-24.04
     env:
-      CI_EXEC_BUDGET_MINUTES: 15
       # The audit reads the lock; it needs no inference stack.
       VAULTSPEC_INIT_GPU_STACK: "none"
     permissions:
@@ -204,10 +201,9 @@ jobs:
   cut:
     name: "Build: Release cut (Linux)"
     needs: [candidate, prove-gate, prove-hardware]
-    timeout-minutes: 130
-    runs-on: [self-hosted, Linux, X64, build]
+    timeout-minutes: 10
+    runs-on: ubuntu-24.04
     env:
-      CI_EXEC_BUDGET_MINUTES: 10
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       NUMBER: ${{ needs.candidate.outputs.number }}
       SHA: ${{ needs.candidate.outputs.sha }}
