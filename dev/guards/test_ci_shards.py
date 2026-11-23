@@ -29,7 +29,7 @@ def _test_files() -> list[str]:
     )
 
 
-@pytest.mark.parametrize("count", [1, 3, 5])
+@pytest.mark.parametrize("count", [1, 3, 6])
 def test_every_file_belongs_to_exactly_one_shard(count: int) -> None:
     """Mutation proof: returning a shard above *count* for some files failed
     this on the range assertion; restoring the modulus passed.

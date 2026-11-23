@@ -18,7 +18,7 @@ from ._install_helpers import (
 if TYPE_CHECKING:
     from ...commands._models import InstallReport
 
-pytestmark = [pytest.mark.unit]
+pytestmark = [pytest.mark.integration]
 
 
 class TestProvisioningReport:

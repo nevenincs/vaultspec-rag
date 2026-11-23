@@ -254,8 +254,8 @@ log_cli_level = "INFO"
 log_file = ".pytest-tmp/test-debug.log"
 log_file_level = "DEBUG"
 markers = [
-  "unit: fast tests with no external dependencies",
-  "integration: requires CLI tools and network",
+  "unit: needs no accelerator; may use real tools, processes and the network",
+  "integration: needs the physical accelerator, through a real loaded model",
   "cuda: requires serialized access to a real CUDA device",
   "mps: requires Apple silicon and runs the real model stack through MPS",
   "subprocess_gpu: CLI subprocess tests that load their own GPU models (run separately from integration)",

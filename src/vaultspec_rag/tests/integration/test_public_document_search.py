@@ -20,7 +20,7 @@ from ._helpers import _document_policy
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = pytest.mark.unit
+pytestmark = pytest.mark.integration
 
 
 def test_empty_document_and_combined_search_need_no_model(tmp_path: Path) -> None:

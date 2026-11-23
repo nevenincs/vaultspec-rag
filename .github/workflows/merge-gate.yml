@@ -214,6 +214,12 @@ jobs:
       - name: Build and install the monitor the lifecycle tests run
         run: just build-monitor
 
+      # Several suites attach to, supervise and restart a real Qdrant server.
+      # They refuse to run against anything but the pinned, verified binary,
+      # so it is provisioned here rather than found by luck.
+      - name: Provision the pinned Qdrant binary the store suites start
+        run: uv run --no-sync vaultspec-rag server qdrant install
+
       # Four workers, one per core of the machine. The store-heavy tests carry
       # deadlines of their own, and more workers than cores ran several of
       # them at or past those deadlines, a different one failing from run to
@@ -232,7 +238,7 @@ jobs:
   # uv fetches the interpreter named by UV_PYTHON, which is what the suite
   # runs under.
   tests-windows:
-    name: "Test: Full suite (Windows, ${{ matrix.shard }}/5)"
+    name: "Test: Full suite (Windows, ${{ matrix.shard }}/6)"
     needs: scope
     if: needs.scope.outputs.suites == 'full'
     timeout-minutes: 25
@@ -242,11 +248,11 @@ jobs:
       # cancelling the rest on one failure hides every other failure.
       fail-fast: false
       matrix:
-        # Fifths, on five machines at once. The suite takes about twice as
+        # Sixths, on six machines at once. The suite takes about twice as
         # long here as on Linux, on two workers, so it is cut finer.
-        shard: [1, 2, 3, 4, 5]
+        shard: [1, 2, 3, 4, 5, 6]
     env:
-      VAULTSPEC_RAG_TEST_SHARD: ${{ matrix.shard }}/5
+      VAULTSPEC_RAG_TEST_SHARD: ${{ matrix.shard }}/6
       UV_PYTHON: "3.13"
     steps:
       - name: Checkout
@@ -291,6 +297,12 @@ jobs:
 
       - name: Build and install the monitor the lifecycle tests run
         run: just build-monitor
+
+      # Several suites attach to, supervise and restart a real Qdrant server.
+      # They refuse to run against anything but the pinned, verified binary,
+      # so it is provisioned here rather than found by luck.
+      - name: Provision the pinned Qdrant binary the store suites start
+        run: uv run --no-sync vaultspec-rag server qdrant install
 
       # Two workers leave scheduling capacity for native monitors, browsers
       # and owner-witness children alongside pytest.
@@ -486,10 +498,10 @@ jobs:
           require_full_run() {
             local jobs
             jobs=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$1/jobs?filter=all&per_page=100" \
-              --jq '.jobs[] | select(.name == "Check: Full lint (Linux)" or .name == "Test: Correctness suite (Linux, 3.13, 1/3)" or .name == "Test: Correctness suite (Linux, 3.13, 2/3)" or .name == "Test: Correctness suite (Linux, 3.13, 3/3)" or .name == "Test: Correctness suite (Linux, 3.14, 1/3)" or .name == "Test: Correctness suite (Linux, 3.14, 2/3)" or .name == "Test: Correctness suite (Linux, 3.14, 3/3)" or .name == "Test: Full suite (Windows, 1/5)" or .name == "Test: Full suite (Windows, 2/5)" or .name == "Test: Full suite (Windows, 3/5)" or .name == "Test: Full suite (Windows, 4/5)" or .name == "Test: Full suite (Windows, 5/5)" or .name == "Check: Dependency advisories (Linux)" or .name == "Check: Code scanning (Linux, actions)" or .name == "Check: Code scanning (Linux, javascript-typescript)" or .name == "Check: Code scanning (Linux, python)") | [.name, .run_attempt, .id, .conclusion] | @tsv') || return 1
+              --jq '.jobs[] | select(.name == "Check: Full lint (Linux)" or .name == "Test: Correctness suite (Linux, 3.13, 1/3)" or .name == "Test: Correctness suite (Linux, 3.13, 2/3)" or .name == "Test: Correctness suite (Linux, 3.13, 3/3)" or .name == "Test: Correctness suite (Linux, 3.14, 1/3)" or .name == "Test: Correctness suite (Linux, 3.14, 2/3)" or .name == "Test: Correctness suite (Linux, 3.14, 3/3)" or .name == "Test: Full suite (Windows, 1/6)" or .name == "Test: Full suite (Windows, 2/6)" or .name == "Test: Full suite (Windows, 3/6)" or .name == "Test: Full suite (Windows, 4/6)" or .name == "Test: Full suite (Windows, 5/6)" or .name == "Test: Full suite (Windows, 6/6)" or .name == "Check: Dependency advisories (Linux)" or .name == "Check: Code scanning (Linux, actions)" or .name == "Check: Code scanning (Linux, javascript-typescript)" or .name == "Check: Code scanning (Linux, python)") | [.name, .run_attempt, .id, .conclusion] | @tsv') || return 1
             # Combine every page, with the newest attempt first for each name.
             printf '%s\n' "$jobs" | sort -t $'\t' -k1,1 -k2,2nr -k3,3nr | \
-              awk -F '\t' '!seen[$1]++ { count++; if ($4 != "skipped") measured=1; if ($4 != "success") failed=1 } END { if (count && !measured) exit 2; exit(failed || count != 16) }'
+              awk -F '\t' '!seen[$1]++ { count++; if ($4 != "skipped") measured=1; if ($4 != "success") failed=1 } END { if (count && !measured) exit 2; exit(failed || count != 17) }'
           }
           full="${LINT} ${TESTS} ${WINDOWS} ${AUDIT} ${SCANNING}"
           if [ "${full}" = "success success success success success" ]; then

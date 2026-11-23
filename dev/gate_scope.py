@@ -48,7 +48,7 @@ MEASURING_JOBS = frozenset(
             for python in ("3.13", "3.14")
             for shard in (1, 2, 3)
         ),
-        *(f"Test: Full suite (Windows, {shard}/5)" for shard in range(1, 6)),
+        *(f"Test: Full suite (Windows, {shard}/6)" for shard in range(1, 7)),
         "Check: Dependency advisories (Linux)",
         "Check: Code scanning (Linux, actions)",
         "Check: Code scanning (Linux, javascript-typescript)",
