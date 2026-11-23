@@ -136,4 +136,5 @@ def test_the_cli_passes_the_refusal_through_unchanged(
     assert human.exit_code == 1
     assert "Code: full_reindex_required" in human.stdout
     assert "Next actions:" in human.stdout
-    assert "--rebuild --type document" in human.stdout
+    # The console wraps the command wherever the project path leaves it room.
+    assert "--rebuild --type document" in " ".join(human.stdout.split())
