@@ -56,14 +56,23 @@ class Browser:
         return self.command("evaluate", expression=expression)
 
     def wait_ready(self, diagnostic_path: Path) -> None:
-        try:
-            # Startup includes debugger discovery and up to three page loads
-            # (45 s for the document plus 10 s for its first draw each). The
-            # command-response budget would kill the second permitted attempt.
-            ready = json.loads(self.answers.get(timeout=300))
-        except queue.Empty:
+        # Startup includes debugger discovery and up to three page loads (45 s
+        # to be answered, 45 s for the document and 10 s for its first draw,
+        # each). The command-response budget would kill the second permitted
+        # attempt. A driver that has exited answers nothing more, so its exit
+        # ends the wait instead of the whole budget being spent on it.
+        deadline = time.monotonic() + 330
+        answer: str | None = None
+        while answer is None and time.monotonic() < deadline:
+            try:
+                answer = self.answers.get(timeout=1)
+            except queue.Empty:
+                if self.process.poll() is not None and self.answers.empty():
+                    break
+        if answer is None:
             diagnostic = diagnostic_path.read_text(encoding="utf-8", errors="replace")
             pytest.fail(f"Browser startup did not complete: {diagnostic}")
+        ready = json.loads(answer)
         assert ready["ready"] is True
         # innerText forces layout, which can block while Vite compiles Carbon's
         # stylesheet on a cold CI worker. Wait without requesting layout first.

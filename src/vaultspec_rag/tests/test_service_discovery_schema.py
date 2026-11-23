@@ -237,7 +237,7 @@ class TestDiscoverySchema:
         ready_path = status_dir / "merge-ready"
         result_path = status_dir / "merge-result"
         script = (
-            "import sys;"
+            "import sys,time;"
             "from pathlib import Path;"
             "from vaultspec_rag.serviceclient._discovery import "
             "_merge_service_status;"
@@ -252,7 +252,9 @@ class TestDiscoverySchema:
             "require_existing=True,timeout=5.0)\n"
             " except FileNotFoundError:\n"
             "  result.write_text(f'deleted:{i}',encoding='utf-8');break\n"
-            " i+=1\n"
+            # The lock is polled, not queued for. A publisher that retakes it
+            # with no pause leaves the deleter no gap to find it free in.
+            " i+=1;time.sleep(0.005)\n"
             "else:\n"
             " result.write_text('never-deleted',encoding='utf-8')\n"
         )

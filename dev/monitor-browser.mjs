@@ -190,7 +190,10 @@ try {
   };
   for (let attempt = 1; ; attempt += 1) {
     const before = errors.length;
-    await send("Page.navigate", { url });
+    // Answered once the server has begun responding, which on a cold server
+    // waits for its first compile: the document's own budget, not the ten
+    // seconds an ordinary command gets.
+    await send("Page.navigate", { url }, 45000);
     if (
       (await reaches("document.readyState === 'complete'", 45000)) &&
       (await reaches(drawn, 10000))
