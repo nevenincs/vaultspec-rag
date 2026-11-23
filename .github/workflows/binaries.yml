@@ -67,10 +67,8 @@ jobs:
   # it must resolve on the public remote to exactly the commit requested.
   validate:
     name: "Check: Release request (Linux)"
-    timeout-minutes: 130
-    runs-on: [self-hosted, Linux, X64, build]
-    env:
-      CI_EXEC_BUDGET_MINUTES: 10
+    timeout-minutes: 10
+    runs-on: ubuntu-24.04
     outputs:
       sha: ${{ steps.commit.outputs.sha }}
     steps:
@@ -144,15 +142,13 @@ jobs:
     # `monitor` runs for a rehearsal only, and a skipped dependency would
     # otherwise skip this job for every release.
     if: ${{ always() && needs.validate.result == 'success' && (needs.monitor.result == 'success' || needs.monitor.result == 'skipped') }}
-    timeout-minutes: 150
+    timeout-minutes: 30
     name: "Check: Release wheel (Linux)"
-    runs-on: [self-hosted, Linux, X64, build]
+    runs-on: ubuntu-24.04
     permissions:
       # A draft release is listed only to a token that may write releases, so
       # reading the wheel off the draft takes this grant. Nothing is written.
       contents: write
-    env:
-      CI_EXEC_BUDGET_MINUTES: 30
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -318,10 +314,8 @@ jobs:
     needs: validate
     if: ${{ inputs.rehearse }}
     name: "Build: Common monitor frontend (Linux)"
-    timeout-minutes: 140
-    runs-on: [self-hosted, Linux, X64, build]
-    env:
-      CI_EXEC_BUDGET_MINUTES: 20
+    timeout-minutes: 20
+    runs-on: ubuntu-24.04
     outputs:
       artifact: ${{ steps.identity.outputs.artifact }}
       frontend_sha256: ${{ steps.identity.outputs.frontend_sha256 }}
@@ -378,26 +372,24 @@ jobs:
     needs: [validate, frontend]
     if: ${{ inputs.rehearse }}
     name: "Build: Rehearsed native monitor (${{ matrix.name }})"
-    timeout-minutes: 210
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: linux-x86_64
-            runner: [self-hosted, Linux, X64, build]
+            runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
           - name: windows-x86_64
-            runner: [self-hosted, Windows, X64]
+            runner: windows-2025
             target: x86_64-pc-windows-msvc
           - name: linux-aarch64
-            runner: [self-hosted, Linux, ARM64]
+            runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
           - name: macos-arm64
-            runner: [self-hosted, macOS, ARM64]
+            runner: macos-15
             target: aarch64-apple-darwin
     runs-on: ${{ matrix.runner }}
-    env:
-      CI_EXEC_BUDGET_MINUTES: 90
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -471,13 +463,13 @@ jobs:
           # detail: it is asserted against the produced artifact and checked
           # again against the published binary by the acquisition lane.
           - name: linux-x86_64
-            runner: [self-hosted, Linux, X64, build]
+            runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
           - name: windows-x86_64
-            runner: [self-hosted, Windows, X64]
+            runner: windows-2025
             target: x86_64-pc-windows-msvc
           - name: linux-aarch64
-            runner: [self-hosted, Linux, ARM64]
+            runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
           # Apple silicon is a supported accelerator, not an absent one: the
           # MPS backend carries the dense, sparse and reranker models, and the
@@ -487,13 +479,11 @@ jobs:
           # torch pin either, because the wheel default PyPI publishes for
           # darwin is the one carrying MPS.
           - name: macos-arm64
-            runner: [self-hosted, macOS, ARM64]
+            runner: macos-15
             target: aarch64-apple-darwin
     # Artifact builds run only for release events and explicit release repair.
-    timeout-minutes: 210
+    timeout-minutes: 90
     runs-on: ${{ matrix.runner }}
-    env:
-      CI_EXEC_BUDGET_MINUTES: 90
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -595,14 +585,12 @@ jobs:
     name: "Build: Release provenance (Linux)"
     needs: [validate, build]
     if: ${{ always() && !inputs.rehearse && needs.validate.result == 'success' && needs.build.result == 'success' }}
-    timeout-minutes: 150
-    runs-on: [self-hosted, Linux, X64, build]
+    timeout-minutes: 30
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       id-token: write
       attestations: write
-    env:
-      CI_EXEC_BUDGET_MINUTES: 30
     steps:
       # No checkout or project code runs beside the signing grant.
       - name: Download the native-proven archives into a fresh directory
@@ -644,15 +632,13 @@ jobs:
           subject-path: ${{ steps.subjects.outputs.paths }}
 
   release:
-    timeout-minutes: 150
+    timeout-minutes: 30
     name: "Build: Release attachment (Linux)"
     needs: [validate, build, frontend, attest]
     # `frontend` runs for a rehearsal only, so a skip there is expected; its
     # digest reaches a release through the dispatch that started this run.
     if: ${{ always() && needs.validate.result == 'success' && needs.build.result == 'success' && (needs.frontend.result == 'success' || needs.frontend.result == 'skipped') && (needs.attest.result == 'success' || inputs.rehearse) }}
-    runs-on: [self-hosted, Linux, X64, build]
-    env:
-      CI_EXEC_BUDGET_MINUTES: 30
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
@@ -853,11 +839,11 @@ jobs:
   # gone with the state it managed: a draft is already invisible to `latest`,
   # and an incomplete one stays a draft.
   verify-release-assets:
-    timeout-minutes: 150
+    timeout-minutes: 30
     name: "Check: Release proven (Linux)"
     needs: [validate, release, frontend]
     if: ${{ always() && needs.validate.result == 'success' && !inputs.rehearse }}
-    runs-on: [self-hosted, Linux, X64, build]
+    runs-on: ubuntu-24.04
     permissions:
       # Reads the release and downloads its assets; it edits nothing. A draft
       # is listed only to a token that may write releases, so the read takes
@@ -866,7 +852,6 @@ jobs:
       actions: write
       attestations: read
     env:
-      CI_EXEC_BUDGET_MINUTES: 30
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ inputs.tag }}
       TARGET_SHA: ${{ needs.validate.outputs.sha }}
