@@ -214,10 +214,12 @@ jobs:
         run: just build-monitor
 
       # Several suites attach to, supervise and restart a real Qdrant server.
-      # They refuse to run against anything but the pinned, verified binary,
-      # so it is provisioned here rather than found by luck.
+      # They refuse to run against anything but the pinned, verified binary.
+      # The product's own install verb fetches it only for an environment
+      # that can run the service, which this one, built without the
+      # inference stack, is not: the recipe runs the same step directly.
       - name: Provision the pinned Qdrant binary the store suites start
-        run: uv run --no-sync vaultspec-rag server qdrant install
+        run: just provision-qdrant
 
       # Four workers, one per core of the machine. The store-heavy tests carry
       # deadlines of their own, and more workers than cores ran several of
@@ -298,10 +300,12 @@ jobs:
         run: just build-monitor
 
       # Several suites attach to, supervise and restart a real Qdrant server.
-      # They refuse to run against anything but the pinned, verified binary,
-      # so it is provisioned here rather than found by luck.
+      # They refuse to run against anything but the pinned, verified binary.
+      # The product's own install verb fetches it only for an environment
+      # that can run the service, which this one, built without the
+      # inference stack, is not: the recipe runs the same step directly.
       - name: Provision the pinned Qdrant binary the store suites start
-        run: uv run --no-sync vaultspec-rag server qdrant install
+        run: just provision-qdrant
 
       # Two workers leave scheduling capacity for native monitors, browsers
       # and owner-witness children alongside pytest.

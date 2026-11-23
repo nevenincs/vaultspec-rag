@@ -174,6 +174,11 @@ init-check:
 warm-models:
     uv run --no-sync python -m dev.warm_models
 
+# Install the pinned Qdrant server the store suites start.
+[group('setup')]
+provision-qdrant:
+    uv run --no-sync python -m dev.provision_qdrant
+
 # Resolve the development environment from the lock.
 [group('setup')]
 deps-sync:

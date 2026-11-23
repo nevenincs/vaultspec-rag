@@ -56,6 +56,10 @@ _SET_BY_A_PARENT_PROCESS: Final[dict[str, str]] = {
         "the test harness, on the collect-only child it asks whether a GPU "
         "tier is selected"
     ),
+    "_VAULTSPEC_RAG_PYTEST_HOST_QDRANT": (
+        "the test harness, on the workers it starts, naming the managed "
+        "Qdrant install it captured before redirecting its directories"
+    ),
     "PYTEST_XDIST_WORKER": "pytest-xdist, on each worker",
     "HOME": "the operating system, in every process's environment",
     "USERPROFILE": "the operating system, in every process's environment on Windows",
