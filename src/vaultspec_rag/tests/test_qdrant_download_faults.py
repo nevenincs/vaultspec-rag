@@ -84,6 +84,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator
     from pathlib import Path
 
+    from ..native_binary._report import ProvisionReport
     from ..qdrant_runtime._provision import _InstallRequest
     from ._http_stubs import QuietHandler
 
@@ -824,28 +825,33 @@ class TestFreeSpace:
         # reading below and the install moves the refusal forward to the
         # arrival estimate, which is not the refusal under test, so the
         # reading is taken again rather than the race being reported.
-        for _attempt in range(3):
+        def attempt() -> ProvisionReport:
             staged.clear()
             # Short by half the executable: far more than the estimate needs,
             # far less than the extraction does.
             reserve = _a_volume_this_short(
                 version_dir, 128 << 20, needs=len(executable)
             )
-            request = replace(
-                install_request(
-                    source.url(f"/{asset}"),
-                    version_dir,
-                    asset=asset,
-                    pinned_archive=archive,
-                ),
-                executable_sha256=sha256_hex(executable),
-                previously="healthy",
-                reserve_bytes=reserve,
-                open_staging=recording,
+            return _install(
+                replace(
+                    install_request(
+                        source.url(f"/{asset}"),
+                        version_dir,
+                        asset=asset,
+                        pinned_archive=archive,
+                    ),
+                    executable_sha256=sha256_hex(executable),
+                    previously="healthy",
+                    reserve_bytes=reserve,
+                    open_staging=recording,
+                )
             )
-            report = _install(request)
+
+        report = attempt()
+        for _again in range(2):
             if staged or report.action != ProvisionAction.FAILED:
                 break
+            report = attempt()
 
         assert report.action == ProvisionAction.FAILED, report.message
         assert "Not enough free space" in report.message

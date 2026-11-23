@@ -21,6 +21,7 @@ from ._cli_helpers import (
     app,
     runner,
 )
+from ._model_cache_seed import seed_model_cache
 
 if TYPE_CHECKING:
     from ..commands._models import InstallReport, UninstallReport
@@ -535,6 +536,16 @@ class TestInstallExitCodes:
     terminal states the user did not opt into. Issue #83 finding 3
     "Bonus" item.
     """
+
+    @pytest.fixture(autouse=True)
+    def cached_models(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Give each install a model cache that is already complete.
+
+        These cases are about the exit code the torch step earns. An install
+        on a host also verifies its models, and on a host whose cache is
+        empty it would download every one of them to get there.
+        """
+        seed_model_cache(monkeypatch, tmp_path / "hf-cache")
 
     @staticmethod
     def _make_pyproject(tmp_path: Path, body: str) -> Path:

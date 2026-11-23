@@ -81,7 +81,8 @@ def test_every_shard_a_job_declares_has_a_leg() -> None:
     for workflow in sorted(path.name for path in directory.glob("*.yml")):
         jobs = cast("dict[str, dict[str, Any]]", workflows.document(workflow)["jobs"])
         for job_id, job in jobs.items():
-            template = str((job.get("env") or {}).get(SHARD_ENV, ""))
+            env = cast("dict[str, object]", job.get("env") or {})
+            template = str(env.get(SHARD_ENV, ""))
             if not template:
                 continue
             sharded += 1
