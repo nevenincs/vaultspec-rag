@@ -71,12 +71,14 @@ _SET_BY_A_PARENT_PROCESS: Final[dict[str, str]] = {
 
 #: Environment accesses whose key cannot be read off the source. Each was read
 #: and found to pass on only names declared elsewhere: the first restores the
-#: variables the session saved, the second tests whichever switch it is handed,
-#: the third points the user's home at a throwaway directory and puts back the
-#: two variables it names.
+#: variables the session saved, the second replaces the product's settings in
+#: the browser driver with the ones a test hands it, the third tests whichever
+#: switch it is handed, the fourth points the user's home at a throwaway
+#: directory and puts back the two variables it names.
 _REVIEWED_DYNAMIC_SITES: Final = frozenset(
     {
         "conftest.py::pytest_unconfigure",
+        "dev/monitor-browser.mjs::<script>",
         "dev/init/__main__.py::_truthy",
         "src/vaultspec_rag/commands/_mcp_host_state.py::_user_home",
     }
