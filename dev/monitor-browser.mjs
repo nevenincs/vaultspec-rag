@@ -188,32 +188,35 @@ try {
     }
     return false;
   };
-  for (let attempt = 1; ; attempt += 1) {
-    const before = errors.length;
-    // Answered once the server has begun responding, which on a cold server
-    // waits for its first compile: the document's own budget, not the ten
-    // seconds an ordinary command gets.
-    await send("Page.navigate", { url }, 45000);
-    if (
-      (await reaches("document.readyState === 'complete'", 45000)) &&
-      (await reaches(drawn, 10000))
-    )
-      break;
-    const recorded = errors
-      .slice(before)
-      .map((error) =>
-        typeof error === "string"
-          ? error
-          : (error.errorText ?? `HTTP ${error.status} ${error.url}`),
+  const load = async () => {
+    for (let attempt = 1; ; attempt += 1) {
+      const before = errors.length;
+      // Answered once the server has begun responding, which on a cold server
+      // waits for its first compile: the document's own budget, not the ten
+      // seconds an ordinary command gets.
+      await send("Page.navigate", { url }, 45000);
+      if (
+        (await reaches("document.readyState === 'complete'", 45000)) &&
+        (await reaches(drawn, 10000))
       )
-      .join(", ");
-    const summary = recorded || "nothing was drawn";
-    if (attempt === 3)
-      throw new Error(`The monitor page did not load: ${summary}`);
-    process.stderr.write(`page load ${attempt} discarded: ${summary}\n`);
-    errors.splice(before);
-    network.length = 0;
-  }
+        break;
+      const recorded = errors
+        .slice(before)
+        .map((error) =>
+          typeof error === "string"
+            ? error
+            : (error.errorText ?? `HTTP ${error.status} ${error.url}`),
+        )
+        .join(", ");
+      const summary = recorded || "nothing was drawn";
+      if (attempt === 3)
+        throw new Error(`The monitor page did not load: ${summary}`);
+      process.stderr.write(`page load ${attempt} discarded: ${summary}\n`);
+      errors.splice(before);
+      network.length = 0;
+    }
+  };
+  await load();
   process.stdout.write(`${JSON.stringify({ ready: true })}\n`);
   const input = createInterface({ input: process.stdin });
   for await (const line of input) {
@@ -266,6 +269,34 @@ try {
           backgroundTarget = undefined;
           await send("Page.bringToFront");
         }
+      } else if (command.operation === "retarget") {
+        // One server and one browser serve a run of checks. Each check names
+        // the status directory of the service it stands up and gets the page
+        // loaded afresh against it, with nothing of the check before it left:
+        // no page, no stored preference, no viewport, no recorded request.
+        // The product's own settings are replaced whole, because the server
+        // hands this process's environment to every helper it starts and a
+        // setting left from the check before would point that helper at
+        // directories this check does not own.
+        for (const name of Object.keys(process.env))
+          if (/^_?VAULTSPEC_RAG_/.test(name)) delete process.env[name];
+        Object.assign(process.env, command.environment);
+        if (backgroundTarget) {
+          await send("Target.closeTarget", { targetId: backgroundTarget });
+          backgroundTarget = undefined;
+          await send("Page.bringToFront");
+        }
+        await send("Emulation.clearDeviceMetricsOverride");
+        await send("Page.navigate", { url: "about:blank" }, 45000);
+        await send("Storage.clearDataForOrigin", {
+          origin: new URL(url).origin,
+          storageTypes: "all",
+        });
+        errors.length = 0;
+        network.length = 0;
+        requested.clear();
+        await load();
+        value = true;
       } else if (command.operation === "evidence") value = { errors, network };
       else if (command.operation === "close") {
         closing = true;

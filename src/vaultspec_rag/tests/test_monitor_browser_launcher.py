@@ -165,8 +165,8 @@ def test_a_page_whose_script_failed_to_load_is_loaded_again(tmp_path: Path) -> N
     with _served(dropped=1) as page:
         url = f"http://127.0.0.1:{page.server_address[1]}/"
         with _launched(url, tmp_path) as (process, answers, log):
-            browser = Browser(process, answers)
-            browser.wait_ready(log)
+            browser = Browser(process, answers, log)
+            browser.wait_ready()
 
             drawn = browser.evaluate(_DRAWN)
             evidence = cast("dict[str, object]", browser.command("evidence"))
