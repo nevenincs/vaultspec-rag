@@ -279,6 +279,11 @@ def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
     )
 
 
+#: The binary and manifest of the host's managed Qdrant install, as captured
+#: by the process that launched the session, for the workers it starts.
+_HOST_QDRANT_ENV = "_VAULTSPEC_RAG_PYTEST_HOST_QDRANT"
+
+
 def _capture_host_provisioned_qdrant() -> tuple[Path, Path] | None:
     """Capture the real managed Qdrant install before pytest redirects it.
 
@@ -287,7 +292,18 @@ def _capture_host_provisioned_qdrant() -> tuple[Path, Path] | None:
     still names it, and retain only its binary and manifest paths. Only a
     downloaded install that passes the production pre-execution check is
     captured, and the supervisor checks the mirrored copy again at every spawn.
+
+    A distributed worker starts after that redirect, so it cannot resolve the
+    install for itself and would report a provisioned machine as bare. It
+    takes the paths the launching process captured instead, handed down in
+    the environment.
     """
+    inherited = os.environ.get(_HOST_QDRANT_ENV)
+    if inherited is not None:
+        binary, _, manifest = inherited.partition(os.pathsep)
+        if Path(binary).is_file() and Path(manifest).is_file():
+            return Path(binary), Path(manifest)
+        return None
     from vaultspec_rag.qdrant_runtime._constants import (
         MANIFEST_FILENAME,
         QDRANT_SERVER_VERSION,
@@ -316,6 +332,10 @@ def _capture_host_provisioned_qdrant() -> tuple[Path, Path] | None:
 
 
 _HOST_PROVISIONED_QDRANT = _capture_host_provisioned_qdrant()
+if _HOST_PROVISIONED_QDRANT is not None:
+    os.environ[_HOST_QDRANT_ENV] = os.pathsep.join(
+        str(path) for path in _HOST_PROVISIONED_QDRANT
+    )
 
 
 @pytest.fixture(scope="session")
