@@ -337,6 +337,17 @@ def client_installation(monkeypatch: pytest.MonkeyPatch) -> None:
     pin_install_role(monkeypatch, InstallRole.CLIENT)
 
 
+def release_owner_anchor(anchor: Path) -> None:
+    """Let go of the ownership claim this process took on *anchor*, if any."""
+    from .. import _gpu_owner
+    from .._anchor_claim import release_anchor_claim
+
+    with _gpu_owner._guard:
+        descriptor = _gpu_owner._held.pop(str(anchor), None)
+    if descriptor is not None:
+        release_anchor_claim(descriptor, pid_record=True)
+
+
 @pytest.fixture
 def private_owner_anchor(tmp_path: Path) -> Generator[Path]:
     """A GPU owner anchor of this test's own, for a registry that lends through it.
@@ -348,15 +359,9 @@ def private_owner_anchor(tmp_path: Path) -> Generator[Path]:
     resident service holds - is never asked. An ownership claim lasts until the
     process exits, so the one this process took here is let go at teardown.
     """
-    from .. import _gpu_owner
-    from .._anchor_claim import release_anchor_claim
-
     anchor = tmp_path / "gpu-owner.lock"
     yield anchor
-    with _gpu_owner._guard:
-        descriptor = _gpu_owner._held.pop(str(anchor), None)
-    if descriptor is not None:
-        release_anchor_claim(descriptor, pid_record=True)
+    release_owner_anchor(anchor)
 
 
 @pytest.fixture(autouse=True)

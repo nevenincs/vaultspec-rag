@@ -8,14 +8,16 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
 
 from .._production_service import production_service
+from ..conftest import release_owner_anchor
 from ..corpus import build_synthetic_vault
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
     from pathlib import Path
 
     from pytest import TempPathFactory
@@ -62,19 +64,55 @@ def _run_cli(
     )
 
 
-def _seed_cli_publication(root: str, source: str) -> None:
-    """Establish rebuild authority before testing an incremental CLI."""
-    baseline = _run_cli(
-        "--target",
-        root,
-        "index",
-        "--type",
-        source,
-        "--rebuild",
-        "--borrow-gpu",
-        cwd=root,
-    )
-    assert baseline.returncode == 0, f"stderr: {baseline.stderr}"
+class _IndexRuns(NamedTuple):
+    """The two local index runs every test below reads."""
+
+    rebuild: subprocess.CompletedProcess[str]
+    incremental: subprocess.CompletedProcess[str]
+
+
+@pytest.fixture(scope="module")
+def index_runs(
+    cli_vault: Path, tmp_path_factory: TempPathFactory
+) -> Generator[_IndexRuns]:
+    """Index the vault locally twice: a rebuild, then an incremental pass.
+
+    Each local index run is a process that loads the model set for itself, the
+    costliest thing in this module by far, so the two runs happen once and
+    every test reads what they printed and what they left indexed.
+
+    Local GPU indexing is reached the way an operator reaches it: ``index``
+    delegates to a running service, and running the work locally instead
+    requires ``--borrow-gpu`` plus a live compatible service to quiesce. So the
+    real authenticated route host stands up in this process and is published
+    through the production discovery writer at the status dir the subprocess
+    reads; the subprocess's own coordinator discovers it, pauses it, and only
+    then indexes. Nothing is rehearsed: a refusal from the borrower gate
+    reaches no summary at all and fails every assertion below. The host is
+    gone before any search runs: search is service-first, and a discoverable
+    host with no project loaded would answer the query itself and return
+    nothing, which is a different subject from the local ranked search.
+    """
+    root = str(cli_vault)
+    anchor = tmp_path_factory.mktemp("cli-owner") / "gpu-owner.lock"
+    try:
+        with production_service(cli_vault, gpu_owner_anchor=anchor):
+            rebuild = _run_cli(
+                "--target",
+                root,
+                "index",
+                "--type",
+                "all",
+                "--rebuild",
+                "--borrow-gpu",
+                cwd=root,
+            )
+            incremental = _run_cli(
+                "--target", root, "index", "--type", "all", "--borrow-gpu", cwd=root
+            )
+        yield _IndexRuns(rebuild, incremental)
+    finally:
+        release_owner_anchor(anchor)
 
 
 class TestCLIStatus:
@@ -104,137 +142,41 @@ class TestCLIStatus:
 
 @pytest.mark.subprocess_gpu
 class TestCLIIndex:
-    """Tests for ``vaultspec-rag index``.
+    """Tests for ``vaultspec-rag index`` run locally under a GPU borrow."""
 
-    Marked ``subprocess_gpu`` - index subprocesses load GPU models.
-
-    Local GPU indexing is reached the way an operator reaches it: ``index``
-    delegates to a running service, and running the work locally instead
-    requires ``--borrow-gpu`` plus a live compatible service to quiesce. Each
-    test therefore stands up the real authenticated route host in this process
-    and publishes it through the production discovery writer at the status dir
-    the subprocess reads, so the subprocess's own coordinator discovers it,
-    pauses it, and only then runs the indexing these tests assert on. Nothing
-    is rehearsed: a refusal from the borrower gate reaches no summary at all
-    and fails every assertion below.
-    """
-
-    @pytest.mark.timeout(300)
-    def test_index_vault_produces_summary(
-        self, cli_vault: Path, private_owner_anchor: Path
-    ) -> None:
-        """``vaultspec-rag index --type vault`` should print a summary."""
-        root = str(cli_vault)
-        with production_service(cli_vault, gpu_owner_anchor=private_owner_anchor):
-            _seed_cli_publication(root, "vault")
-            result = _run_cli(
-                "--target",
-                root,
-                "index",
-                "--type",
-                "vault",
-                "--borrow-gpu",
-                cwd=root,
-            )
-        assert result.returncode == 0, f"stderr: {result.stderr}"
-        assert "Indexing summary" in result.stdout
-
-    @pytest.mark.timeout(300)
-    def test_index_rebuild_flag_works(
-        self, cli_vault: Path, private_owner_anchor: Path
-    ) -> None:
-        """``vaultspec-rag index --type vault --rebuild`` exits zero."""
-        root = str(cli_vault)
-        with production_service(cli_vault, gpu_owner_anchor=private_owner_anchor):
-            result = _run_cli(
-                "--target",
-                root,
-                "index",
-                "--type",
-                "vault",
-                "--rebuild",
-                "--borrow-gpu",
-                cwd=root,
-            )
+    def test_a_rebuild_indexes_both_sources(self, index_runs: _IndexRuns) -> None:
+        """``index --type all --rebuild`` exits zero and reports each source."""
+        result = index_runs.rebuild
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert "Vault" in result.stdout
-
-    @pytest.mark.timeout(300)
-    def test_index_code_produces_summary(
-        self, cli_vault: Path, private_owner_anchor: Path
-    ) -> None:
-        """``vaultspec-rag index --type code`` prints summary."""
-        root = str(cli_vault)
-        with production_service(cli_vault, gpu_owner_anchor=private_owner_anchor):
-            _seed_cli_publication(root, "code")
-            result = _run_cli(
-                "--target",
-                root,
-                "index",
-                "--type",
-                "code",
-                "--borrow-gpu",
-                cwd=root,
-            )
-        assert result.returncode == 0, f"stderr: {result.stderr}"
-        assert "Indexing summary" in result.stdout
         assert "Source code" in result.stdout
 
-    @pytest.mark.timeout(300)
-    def test_index_all_produces_both_rows(
-        self, cli_vault: Path, private_owner_anchor: Path
+    def test_an_incremental_pass_prints_a_summary_of_both_sources(
+        self, index_runs: _IndexRuns
     ) -> None:
-        """``vaultspec-rag index --type all`` shows Vault and Codebase."""
-        root = str(cli_vault)
-        with production_service(cli_vault, gpu_owner_anchor=private_owner_anchor):
-            result = _run_cli(
-                "--target",
-                root,
-                "index",
-                "--type",
-                "all",
-                "--borrow-gpu",
-                cwd=root,
-            )
+        """``index --type all`` over a published index prints its summary."""
+        result = index_runs.incremental
         assert result.returncode == 0, f"stderr: {result.stderr}"
+        assert "Indexing summary" in result.stdout
         assert "Vault" in result.stdout
         assert "Source code" in result.stdout
 
 
 @pytest.mark.subprocess_gpu
 class TestCLISearch:
-    """Tests for ``vaultspec-rag search``.
+    """Tests for ``vaultspec-rag search`` answered locally.
 
-    Marked ``subprocess_gpu`` - these spawn CLI subprocesses that load
-    their own GPU models (~1.9 GB VRAM). They MUST run in a separate
-    pytest session from tests that use the ``embedding_model`` fixture,
-    otherwise combined VRAM exceeds 16 GB and crashes on RTX 4080.
-
-    Run with: ``pytest -m subprocess_gpu``
+    Each search is a process that loads its own models, so these must not share
+    a session with tests that hold a model set resident.
     """
 
     @pytest.mark.timeout(300)
     def test_search_vault_returns_results(
-        self, cli_vault: Path, private_owner_anchor: Path
+        self, cli_vault: Path, index_runs: _IndexRuns
     ) -> None:
         """``vaultspec-rag search`` should return ranked results."""
+        assert index_runs.rebuild.returncode == 0, index_runs.rebuild.stderr
         root = str(cli_vault)
-        # Ensure indexed first. Local indexing needs the borrower lease, which
-        # needs a live compatible service to quiesce, so the real route host
-        # stands up for the index and is gone before the search: search is
-        # service-first, and a discoverable host with no project loaded would
-        # answer the query itself and return nothing, which is a different
-        # subject from the local ranked search asserted below.
-        with production_service(cli_vault, gpu_owner_anchor=private_owner_anchor):
-            _run_cli(
-                "--target",
-                root,
-                "index",
-                "--type",
-                "vault",
-                "--borrow-gpu",
-                cwd=root,
-            )
         result = _run_cli(
             "--target",
             root,
