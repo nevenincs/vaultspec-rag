@@ -329,14 +329,22 @@ class ServiceRegistry(
 
     @property
     def model(self) -> EmbeddingModel:
-        """Return the shared embedding model, loading it on first use.
+        """Return the shared embedding model.
 
         A service started without prewarm holds no model until work asks for
-        one. The caller already holds the admission that work runs under.
+        one, and loads it here; the caller already holds the admission that
+        work runs under.
+
+        Raises:
+            RuntimeError: If prewarm is on and ``load_model()`` has not been
+                called.
         """
-        if self._model is None:
+        if self._model is None and not self._prewarm:
             self._load_model()
-        return require_present(self._model, "EmbeddingModel failed to load")
+        return require_present(
+            self._model,
+            "EmbeddingModel not loaded - call load_model() first",
+        )
 
     @property
     def gpu_lock(self) -> threading.Lock:

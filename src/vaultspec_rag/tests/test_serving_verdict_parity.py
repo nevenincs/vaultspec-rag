@@ -37,6 +37,7 @@ def _registry_health(*, model_loaded: bool) -> ServiceHealth:
     """The mapping `ServiceRegistry.health` returns, in its declared type."""
     return ServiceHealth(
         model_loaded=model_loaded,
+        model_on_demand=False,
         reranker_loaded=True,
         project_count=1,
         projects=["main"],
