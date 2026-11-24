@@ -62,15 +62,19 @@ def _qdrant_binary() -> Path:  # pyright: ignore[reportUnusedFunction]
     return resolved.path
 
 
+#: Seconds one request to the shared server may take. Other tests' work loads
+#: the same server at the same moment, and the client's own few seconds turn
+#: that load into a timeout no test here is about.
+_REQUEST_SECONDS = 60
+
+
 def _drop_all_collections(url: str) -> None:
     """Remove every collection on the server, whoever created it.
 
-    Housekeeping between tests, on a server other tests' work is loading at the
-    same moment, so each request gets a minute rather than the client's own
-    few seconds: a slow drop here is not what any of these tests measures.
+    Housekeeping between tests; a slow drop is not what any of them measures.
     """
 
-    client = open_server_client(url, timeout=60)
+    client = open_server_client(url, timeout=_REQUEST_SECONDS)
     try:
         for collection in client.get_collections().collections:
             client.delete_collection(collection.name)
@@ -135,7 +139,7 @@ def test_survey_classifies_live_orphaned_unknown(
     tmp_path: Path,
 ) -> None:
 
-    client = open_server_client(ops_qdrant.url)
+    client = open_server_client(ops_qdrant.url, timeout=_REQUEST_SECONDS)
     try:
         live_root = tmp_path / "live"
         live_root.mkdir()
@@ -168,7 +172,7 @@ def test_delete_refuses_unknown_then_prune_keeps_it(
     tmp_path: Path,
 ) -> None:
 
-    client = open_server_client(ops_qdrant.url)
+    client = open_server_client(ops_qdrant.url, timeout=_REQUEST_SECONDS)
     try:
         gone_root = tmp_path / "gone2"
         gone_root.mkdir()
@@ -209,7 +213,7 @@ def test_prune_removes_only_orphaned_never_live_or_unknown(
     namespaces all present, prune removes only the orphaned one - the live and
     unknown namespaces survive untouched."""
 
-    client = open_server_client(ops_qdrant.url)
+    client = open_server_client(ops_qdrant.url, timeout=_REQUEST_SECONDS)
     try:
         live_root = tmp_path / "live"
         gone_root = tmp_path / "gone"
@@ -272,7 +276,7 @@ def test_ensure_table_records_manifest_and_survey_shows_live(
         prefix = root_collection_prefix(root)
         assert prefix in load_manifest(), "ensure_table must record the manifest"
 
-        client = open_server_client(ops_qdrant.url)
+        client = open_server_client(ops_qdrant.url, timeout=_REQUEST_SECONDS)
         try:
             surveys = {s.prefix: s for s in gather_survey(client)}
             assert surveys[prefix].status == "live"
@@ -292,7 +296,7 @@ def test_migrate_remaps_name_and_copies_points(
     ops_qdrant: QdrantSupervisor,
 ) -> None:
 
-    client = open_server_client(ops_qdrant.url)
+    client = open_server_client(ops_qdrant.url, timeout=_REQUEST_SECONDS)
     try:
         _make_collection(client, "vault_docs")  # bare local-style source
         name_map = {"vault_docs": "rdeadbeefcafe_vault_docs"}
@@ -335,7 +339,7 @@ def test_reconcile_drops_stale_manifest_against_live_server(
 
     from ...storage_manifest import load_manifest, reconcile_manifest
 
-    client = open_server_client(ops_qdrant.url)
+    client = open_server_client(ops_qdrant.url, timeout=_REQUEST_SECONDS)
     try:
         # stale: root gone, no backing collection.
         stale_root = tmp_path / "stale"
@@ -379,7 +383,7 @@ def test_migrate_then_rekey_manifest_records_new_backend(
 
     from ...storage_manifest import load_manifest, record_root, rekey_prefix
 
-    client = open_server_client(ops_qdrant.url)
+    client = open_server_client(ops_qdrant.url, timeout=_REQUEST_SECONDS)
     try:
         root = tmp_path / "movable"
         root.mkdir()
@@ -412,7 +416,7 @@ def test_delete_rejects_noncanonical_prefix_even_with_allow_unknown(
     with allow_unknown, so a crafted prefix can never startswith-match and wipe
     foreign roots."""
 
-    client = open_server_client(ops_qdrant.url)
+    client = open_server_client(ops_qdrant.url, timeout=_REQUEST_SECONDS)
     try:
         _make_collection(client, "raaaaaaaaaaaa_vault_docs")
         _make_collection(client, "rbbbbbbbbbbbb_vault_docs")
@@ -434,7 +438,7 @@ def test_migrate_copies_multiple_pages(
     """M6: migrate pages through more points than one batch and count-verifies."""
     from qdrant_client import models
 
-    client = open_server_client(ops_qdrant.url)
+    client = open_server_client(ops_qdrant.url, timeout=_REQUEST_SECONDS)
     try:
         src = "raaaaaaaaaaaa_vault_docs"
         client.create_collection(
@@ -843,7 +847,9 @@ def test_reconcile_requires_valid_manifest_attribution(
             document["roots"]["rNOTHEX000000_"] = document["roots"].pop(foreign_prefix)
         path.write_text(json.dumps(document), encoding="utf-8")
 
-    with closing(open_server_client(ops_qdrant.url)) as client:
+    with closing(
+        open_server_client(ops_qdrant.url, timeout=_REQUEST_SECONDS)
+    ) as client:
         for name in (control, foreign):
             _make_legacy_collection(client, name, segments=6, points=1)
         assert [e.collection for e in read_geometry(client, None)] == [control]
@@ -895,7 +901,9 @@ def test_reconcile_requires_exact_names_and_preserves_attributed_generations(
     if root_status == "orphaned":
         root.rmdir()
 
-    with closing(open_server_client(ops_qdrant.url)) as client:
+    with closing(
+        open_server_client(ops_qdrant.url, timeout=_REQUEST_SECONDS)
+    ) as client:
         for name in (base, generation, *unknown_names):
             _make_legacy_collection(client, name, segments=6)
         assert [e.collection for e in read_geometry(client, None)] == [base, generation]
@@ -949,7 +957,9 @@ def test_reconcile_revalidates_attribution_before_update(
         else:
             manifest_path().write_text("{", encoding="utf-8")
 
-    with closing(open_server_client(ops_qdrant.url)) as client:
+    with closing(
+        open_server_client(ops_qdrant.url, timeout=_REQUEST_SECONDS)
+    ) as client:
         _make_legacy_collection(client, name, segments=6)
         assert [e.collection for e in read_geometry(client, None)] == [name]
         batch = reconcile_collections(
@@ -981,7 +991,9 @@ def test_direct_reconcile_rejects_unknown_collection(
     from ...storage_reconciliation import GeometryEntry, reconcile_collection
 
     name = f"{_UNKNOWN_PREFIX}vault_docs"
-    with closing(open_server_client(ops_qdrant.url)) as client:
+    with closing(
+        open_server_client(ops_qdrant.url, timeout=_REQUEST_SECONDS)
+    ) as client:
         _make_legacy_collection(client, name, segments=6)
         entry = GeometryEntry(name, segment_target=6, segments=6, footprint_bytes=None)
         result = reconcile_collection(
@@ -1013,7 +1025,9 @@ def test_maintenance_reconcile_leaves_foreign_geometry_untouched(
     prefix = record_root(tmp_path, backend="server").prefix
     owned = f"{prefix}vault_docs"
     foreign = f"{_UNKNOWN_PREFIX}vault_docs"
-    with closing(open_server_client(ops_qdrant.url)) as client:
+    with closing(
+        open_server_client(ops_qdrant.url, timeout=_REQUEST_SECONDS)
+    ) as client:
         for name in (owned, foreign):
             _make_legacy_collection(client, name, segments=6)
         result = run_maintenance_cycle(
@@ -1061,9 +1075,11 @@ def test_reconcile_refuses_manifest_from_another_backend(
     prefix = record_root(tmp_path, backend="server").prefix
     name = f"{prefix}vault_docs"
     with (
-        closing(open_server_client(ops_qdrant.url)) as managed,
+        closing(
+            open_server_client(ops_qdrant.url, timeout=_REQUEST_SECONDS)
+        ) as managed,
         contextmanager(serve_qdrant)(_qdrant_binary, tmp_path / "external") as external,
-        closing(open_server_client(external.url)) as foreign,
+        closing(open_server_client(external.url, timeout=_REQUEST_SECONDS)) as foreign,
     ):
         for client in (managed, foreign):
             _make_legacy_collection(client, name, segments=6)
@@ -1299,7 +1315,7 @@ def test_real_migrate_then_carry_stamps_the_remapped_target(
     from ...storage_migration import carry_migrated_identity
     from ...store_schema import STORAGE_SCHEMA_VERSION, CollectionIdentity
 
-    client = open_server_client(ops_qdrant.url)
+    client = open_server_client(ops_qdrant.url, timeout=_REQUEST_SECONDS)
     try:
         root = tmp_path / "moved"
         local_dir = root / ".vaultspec-rag" / "qdrant"
