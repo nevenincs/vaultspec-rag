@@ -34,7 +34,11 @@ from pathlib import Path
 root = Path(sys.argv[1])
 descendant = subprocess.Popen(
     [sys._base_executable, '-c', 'import time; time.sleep(60)'])
-(root / 'descendant.pid').write_text(str(descendant.pid))
+# Written whole, then moved into place: the reader takes the file's
+# existence as readiness, and a file that exists before its contents do
+# reads as an empty pid.
+(root / 'descendant.pid.part').write_text(str(descendant.pid))
+os.replace(root / 'descendant.pid.part', root / 'descendant.pid')
 while not (root / 'witnessed').exists():
     time.sleep(.01)
 if sys.argv[2] == 'parent_exited':
