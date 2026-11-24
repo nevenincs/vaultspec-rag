@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.9](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.6.8...vaultspec-rag-v0.6.9) (2026-11-24)
+
+
+### Bug Fixes
+
+* **ci:** give hosted images what the native monitor proof needs ([#662](https://github.com/nevenincs/vaultspec-rag/issues/662)) ([c74f272](https://github.com/nevenincs/vaultspec-rag/commit/c74f2723be3f68c405a7aa72f7d956b78fb63f8e))
+
 ## [0.6.8](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.6.7...vaultspec-rag-v0.6.8) (2026-11-23)
 
 
