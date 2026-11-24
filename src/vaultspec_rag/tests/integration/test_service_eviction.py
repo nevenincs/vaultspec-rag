@@ -297,8 +297,11 @@ def test_lru_cap_evicts_oldest(tmp_path: Path) -> None:
             wait_for_exit(pid, timeout=15.0)
 
 
-def test_log_rotation_creates_backups(tmp_path: Path) -> None:
-    """A small max_bytes drives multiple rotations and bounded backup count."""
+def test_log_rotation_bounds_backups_and_keeps_writing_the_active_file(
+    tmp_path: Path,
+) -> None:
+    """A small max_bytes rotates into a bounded set of backups, and what is
+    logged after a rollover lands in the active file, not in a backup."""
     overrides = {
         "VAULTSPEC_RAG_MANAGED_LOG_MAX_BYTES": "4096",
         "VAULTSPEC_RAG_MANAGED_LOG_BACKUP_COUNT": "2",
@@ -345,54 +348,8 @@ def test_log_rotation_creates_backups(tmp_path: Path) -> None:
             assert rotated_2.exists(), "second backup absent once the sink settled"
             # backup_count=2 means .3 must not exist.
             assert not log_path.with_name(log_path.name + ".3").exists()
-        finally:
-            _terminate_pid(pid)
-            wait_for_exit(pid, timeout=15.0)
 
-
-def test_log_rotation_post_rollover_writes_to_active(tmp_path: Path) -> None:
-    """New log records after rollover land in the active file, not the backup."""
-    overrides = {
-        "VAULTSPEC_RAG_MANAGED_LOG_MAX_BYTES": "4096",
-        "VAULTSPEC_RAG_MANAGED_LOG_BACKUP_COUNT": "3",
-        "VAULTSPEC_RAG_LOG_LEVEL": "DEBUG",
-        "VAULTSPEC_RAG_LOCAL_ONLY": "1",
-    }
-    with _service_env(tmp_path, overrides):
-        log_path = tmp_path / "service.log"
-        service = start_service_on_free_port(log_path)
-        port, pid = service.port, service.pid
-        try:
-            proj = _make_vault_project(tmp_path / "postroll", label="postroll")
-
-            # 1-2: drive a bounded burst to force rollover, then stop before
-            # looking. The drain reads in chunks of min(64 KiB, max_bytes), so
-            # at this max_bytes every chunk fills a whole generation and the
-            # sink is mid-rollover almost continuously while traffic flows. The
-            # first backup does not exist between the backup shift and the
-            # active replace, so polling it under sustained load samples its
-            # absence far more often than its presence - which is what made the
-            # old drive-until-observed loop report "never happened" after
-            # hundreds of successful rollovers. Quiesce, then observe.
-            rotated_1 = log_path.with_name(log_path.name + ".1")
-            for i in range(60):
-                _run(
-                    _call_tool(
-                        port,
-                        "search_vault",
-                        {
-                            "query": f"pre rollover {i}",
-                            "top_k": 1,
-                            "project_root": str(proj),
-                        },
-                    ),
-                )
-            deadline = time.monotonic() + 15.0
-            while time.monotonic() < deadline and not rotated_1.exists():
-                time.sleep(0.1)
-            assert rotated_1.exists(), "rollover never happened"
-
-            # 3-5: drive one lightweight access-log record carrying a unique
+            # Then drive one lightweight access-log record carrying a unique
             # marker. A successful GET to a polled route is deliberately
             # dropped from the access stream, and the drop is decided on the
             # path with its query string removed, so a marker cannot ride one -
@@ -417,7 +374,7 @@ def test_log_rotation_post_rollover_writes_to_active(tmp_path: Path) -> None:
                     break
                 time.sleep(0.1)
 
-            # 6: marker appears in active file, NOT in .1 backup.
+            # The marker is in the active file and not in the first backup.
             rotated_bytes = rotated_1.read_bytes()
             assert marker.encode() in active_bytes
             assert marker.encode() not in rotated_bytes
