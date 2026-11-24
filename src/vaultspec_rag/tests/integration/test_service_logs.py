@@ -61,7 +61,7 @@ if TYPE_CHECKING:
         def close(self) -> None: ...
 
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.unit]
 runner = CliRunner()
 
 

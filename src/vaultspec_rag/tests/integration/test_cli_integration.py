@@ -118,7 +118,7 @@ def index_runs(
 class TestCLIStatus:
     """Tests for ``vaultspec-rag status``."""
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     @pytest.mark.timeout(60)
     def test_status_shows_gpu_info(self, cli_vault: Path) -> None:
         """``vaultspec-rag status`` names the compute this machine offers."""
@@ -128,7 +128,7 @@ class TestCLIStatus:
         assert "Compute: " in result.stdout
         assert "Unavailable" not in result.stdout
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     @pytest.mark.timeout(60)
     def test_status_shows_document_counts(self, cli_vault: Path) -> None:
         """``vaultspec-rag status`` should show document count digits."""

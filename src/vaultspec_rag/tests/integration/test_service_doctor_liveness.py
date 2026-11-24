@@ -34,7 +34,7 @@ from .._ports import free_loopback_port
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.unit]
 
 runner = CliRunner()
 

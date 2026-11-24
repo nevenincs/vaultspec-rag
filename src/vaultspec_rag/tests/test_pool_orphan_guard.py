@@ -132,7 +132,7 @@ def _kill_worker(pid: int) -> None:
         psutil.Process(pid).kill()
 
 
-@pytest.mark.robustness
+@pytest.mark.unit
 def test_pool_workers_do_not_survive_a_hard_killed_owner(
     tmp_path: pathlib.Path,
 ) -> None:
