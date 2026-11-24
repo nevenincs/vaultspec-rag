@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.10](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.6.9...vaultspec-rag-v0.6.10) (2026-11-24)
+
+
+### Features
+
+* **service:** optional prewarm; one shared test service, fewer model loads, balanced shards ([#664](https://github.com/nevenincs/vaultspec-rag/issues/664)) ([5ee490d](https://github.com/nevenincs/vaultspec-rag/commit/5ee490da2d8847e001f94c8eb19f9e3e45513466))
+
 ## [0.6.9](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.6.8...vaultspec-rag-v0.6.9) (2026-11-24)
 
 
