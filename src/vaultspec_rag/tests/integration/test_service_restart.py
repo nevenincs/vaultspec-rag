@@ -23,7 +23,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, NamedTuple, cast
 
 import pytest
 
@@ -36,7 +36,7 @@ from .._session_job_anchor import anchor_spawned_process_to_session
 from ..conftest import managed_env
 from ._helpers import _poll_health
 from ._service_lifecycle_helpers import _port_is_listening, _service_processes_on_port
-from .conftest import _live_service_context
+from .conftest import _attach_live_service, _live_service_context
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Mapping
@@ -192,9 +192,25 @@ def _keep_with_session(status: dict[str, object]) -> int:
     return cast("int", status["pid"])
 
 
-@contextmanager
-def _running_service(tmp_path: Path) -> Generator[int]:
-    """Run a real daemon on a port of its own, and clean up after a restart.
+class _Service(NamedTuple):
+    """The one daemon the restart cases share, and where it keeps its state."""
+
+    port: int
+    status_dir: Path
+
+
+@pytest.fixture(scope="module")
+def _restart_daemon(  # pyright: ignore[reportUnusedFunction]
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Generator[tuple[int, Path, dict[str, str | None]]]:
+    """Start one real daemon for every case that restarts a running service.
+
+    Starting a daemon loads the model set, which is most of what a case here
+    costs, and a restart leaves a serving daemon behind it. So the cases run
+    as one sequence on one daemon, each taking the service as the case before
+    left it: refused, then restarted, then stopped and restarted, then stopped
+    for good beside a borrower. They are written in that order and each states
+    the service it expects to find.
 
     A restart replaces the daemon and may leave a monitor that has outlived its
     owner, which the daemon teardown alone does not reap. Whatever is recorded
@@ -203,17 +219,32 @@ def _running_service(tmp_path: Path) -> Generator[int]:
     environment: dict[str, str | None] = {}
     port = 0
     try:
-        with _live_service_context(tmp_path) as (port, _status_dir, applied):
-            environment = applied
-            yield port
+        with _live_service_context(tmp_path_factory.mktemp("restart")) as service:
+            port, _status_dir, environment = service
+            yield service
     finally:
         if environment:
             with managed_env(**environment):
-                # A restart that the test did not expect replaced the daemon
-                # the fixture started; the replacement is stopped here too.
+                # A restart replaced the daemon the fixture started; the
+                # replacement is stopped here too.
                 if port and _port_is_listening(port):
                     _cli("stop", port)
                 stop_recorded_monitor()
+
+
+@pytest.fixture
+def service(
+    _restart_daemon: tuple[int, Path, dict[str, str | None]],
+) -> Generator[_Service]:
+    """Point this case at the shared daemon's own directories."""
+    with _attach_live_service(_restart_daemon) as (port, status_dir):
+        yield _Service(port, status_dir)
+
+
+def _serving(port: int) -> dict[str, object]:
+    """The discovery record of the daemon a case expects to find serving."""
+    assert _port_is_listening(port), "the case before left no service running"
+    return _discovery()
 
 
 @contextmanager
@@ -247,182 +278,6 @@ def _unrelated_process() -> Generator[subprocess.Popen[bytes]]:
         if process.stdin is not None:
             process.stdin.close()
         process.wait(timeout=30)
-
-
-@pytest.mark.timeout(900)
-def test_a_running_service_restarts_and_keeps_its_monitor(tmp_path: Path) -> None:
-    """A restart replaces the daemon, and the open monitor page stays connected.
-
-    The proof is the monitor itself, not the envelope's word for it: the
-    restarted daemon records the very process, and the very access link, the
-    first daemon had.
-
-    Mutations it catches: dropping the monitor release leaves the envelope
-    reporting the monitor as not kept and fails that assertion; claiming it
-    kept without releasing it reports it kept, and fails the monitor process
-    comparison instead. Each fails alone, and restoring the verb passes.
-    """
-    with _running_service(tmp_path) as port:
-        before = _discovery()
-        old_pid = cast("int", before["pid"])
-        monitor_pid = cast("int", before["monitor_pid"])
-        link = before["monitor_url"]
-        assert pid_alive(monitor_pid)
-
-        outcome = _cli("restart", port)
-
-        assert outcome.returncode == 0, outcome.describe()
-        envelope = outcome.envelope
-        data = outcome.data
-        assert envelope["command"] == "service.restart"
-        assert envelope["ok"] is True
-        assert data["status"] == "restarted"
-        assert data["monitor_kept"] is True
-        assert data["port"] == port
-        after = _discovery()
-        new_pid = _keep_with_session(after)
-        assert new_pid != old_pid
-        assert not pid_alive(old_pid)
-        assert _poll_health(port)["pid"] == new_pid
-        assert after["monitor_pid"] == monitor_pid
-        assert pid_alive(monitor_pid)
-        assert after["monitor_url"] == link
-        assert data["monitor_url"] == link
-
-
-@pytest.mark.timeout(900)
-def test_a_restart_brings_the_service_back_on_the_port_it_ran_on(
-    tmp_path: Path,
-) -> None:
-    """With no port given, the replacement comes back where the service ran.
-
-    The configured port names another free port, so a start step left to its
-    own default would bring the service back somewhere else. Mutation it
-    catches: handing the start step the caller's port rather than the running
-    service's, which starts the replacement on the configured port and fails
-    the port assertion.
-    """
-    from .._ports import free_loopback_port
-
-    with _running_service(tmp_path) as port:
-        elsewhere = free_loopback_port()
-        assert elsewhere != port
-
-        try:
-            outcome = _cli("restart", elsewhere, explicit_port=False)
-
-            assert outcome.returncode == 0, outcome.describe()
-            assert outcome.data["status"] == "restarted"
-            assert outcome.data["port"] == port
-            new_pid = _keep_with_session(_discovery())
-            assert _poll_health(port)["pid"] == new_pid
-            assert not _port_is_listening(elsewhere)
-        finally:
-            # A restart that came back on the wrong port left a daemon there,
-            # with its monitor; it must not outlive the test that found it.
-            if _port_is_listening(elsewhere):
-                _cli("stop", elsewhere)
-
-
-@pytest.mark.timeout(900)
-def test_a_stopped_service_is_started_by_a_restart(tmp_path: Path) -> None:
-    """A restart of a service that is not running starts it, and says started.
-
-    The service is stopped for real first. With nothing running there is no
-    monitor to keep, so the restart reports the monitor as not kept and the
-    start step's own monitor link is the one it passes on.
-
-    Mutation it catches: reporting every restart as one that stopped a running
-    service says restarted for started and fails the status assertion.
-    """
-    with _running_service(tmp_path) as port:
-        old_pid = cast("int", _discovery()["pid"])
-        stopped = _cli("stop", port)
-        assert stopped.returncode == 0, stopped.describe()
-        assert stopped.data["status"] == "stopped"
-        assert not pid_alive(old_pid)
-
-        outcome = _cli("restart", port)
-
-        assert outcome.returncode == 0, outcome.describe()
-        data = outcome.data
-        assert outcome.envelope["command"] == "service.restart"
-        assert outcome.envelope["ok"] is True
-        assert data["status"] == "started"
-        assert data["monitor_kept"] is False
-        assert data["port"] == port
-        after = _discovery()
-        new_pid = _keep_with_session(after)
-        assert new_pid != old_pid
-        assert _poll_health(port)["pid"] == new_pid
-        assert data["monitor_url"] == after["monitor_url"]
-
-
-@pytest.mark.timeout(900)
-def test_a_refused_stop_gives_the_released_monitor_back(tmp_path: Path) -> None:
-    """A restart whose stop is refused leaves the daemon serving with its monitor.
-
-    The restart runs under a status directory whose record names a live process
-    that is not the service, which is how a record looks once its pid has been
-    reused. The service is found through the machine's own pointer, so the
-    monitor is released to it, and the stop step then refuses to end a process
-    it cannot identify. The release is watched while it stands, and the
-    restart must end it.
-
-    Mutations it catches: dropping the release fails the assertion that the
-    monitor was ever released, so the take-back below cannot pass for want of
-    anything to take back; dropping the take-back leaves the release standing
-    and fails the ownership record assertion. Restoring the verb passes.
-    """
-    with _running_service(tmp_path) as port, _unrelated_process() as stranger:
-        before = _discovery()
-        pid = cast("int", before["pid"])
-        monitor_pid = cast("int", before["monitor_pid"])
-        link = before["monitor_url"]
-        elsewhere = tmp_path / "elsewhere"
-        elsewhere.mkdir()
-        record = elsewhere / "service.json"
-        record.write_text(
-            json.dumps({"pid": stranger.pid, "port": port}), encoding="utf-8"
-        )
-        released: list[dict[str, object]] = []
-
-        def watch_the_release() -> None:
-            ownership = _monitor_record(tmp_path)
-            if (
-                ownership is not None
-                and cast("float", ownership["handoff_until"]) > time.time()
-            ):
-                released.append(ownership)
-
-        outcome = _cli(
-            "restart",
-            port,
-            explicit_port=False,
-            env={EnvVar.STATUS_DIR.value: str(elsewhere)},
-            watch=watch_the_release,
-        )
-
-        assert outcome.returncode == 1, outcome.describe()
-        envelope = outcome.envelope
-        assert envelope["command"] == "service.restart"
-        assert envelope["ok"] is False
-        assert envelope["error"] == "restart_stop_failed"
-        assert envelope["message"] == "Service stop skipped"
-        assert released, "the restart never released the monitor"
-        assert released[0]["access"] == link
-        assert record.is_file()
-        assert pid_alive(pid)
-        assert pid_alive(stranger.pid)
-        assert _poll_health(port)["pid"] == pid
-        ownership = _monitor_record(tmp_path)
-        assert ownership is not None
-        assert ownership["handoff_until"] == 0.0
-        assert ownership["access"] == ""
-        assert pid_alive(monitor_pid)
-        published = _after_next_heartbeat(_discovery()["last_heartbeat"])
-        assert published.get("monitor_pid") == monitor_pid
-        assert published.get("monitor_url") == link
 
 
 @pytest.mark.usefixtures("isolated_singleton_dirs")
@@ -476,8 +331,170 @@ def test_a_refused_start_fails_the_restart_at_its_start() -> None:
 
 
 @pytest.mark.timeout(900)
+def test_a_refused_stop_gives_the_released_monitor_back(
+    service: _Service, tmp_path: Path
+) -> None:
+    """A restart whose stop is refused leaves the daemon serving with its monitor.
+
+    The restart runs under a status directory whose record names a live process
+    that is not the service, which is how a record looks once its pid has been
+    reused. The service is found through the machine's own pointer, so the
+    monitor is released to it, and the stop step then refuses to end a process
+    it cannot identify. The release is watched while it stands, and the
+    restart must end it.
+
+    Mutations it catches: dropping the release fails the assertion that the
+    monitor was ever released, so the take-back below cannot pass for want of
+    anything to take back; dropping the take-back leaves the release standing
+    and fails the ownership record assertion. Restoring the verb passes.
+    """
+    port = service.port
+    with _unrelated_process() as stranger:
+        before = _serving(port)
+        pid = cast("int", before["pid"])
+        monitor_pid = cast("int", before["monitor_pid"])
+        link = before["monitor_url"]
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        record = elsewhere / "service.json"
+        record.write_text(
+            json.dumps({"pid": stranger.pid, "port": port}), encoding="utf-8"
+        )
+        released: list[dict[str, object]] = []
+
+        def watch_the_release() -> None:
+            ownership = _monitor_record(service.status_dir)
+            if (
+                ownership is not None
+                and cast("float", ownership["handoff_until"]) > time.time()
+            ):
+                released.append(ownership)
+
+        outcome = _cli(
+            "restart",
+            port,
+            explicit_port=False,
+            env={EnvVar.STATUS_DIR.value: str(elsewhere)},
+            watch=watch_the_release,
+        )
+
+        assert outcome.returncode == 1, outcome.describe()
+        envelope = outcome.envelope
+        assert envelope["command"] == "service.restart"
+        assert envelope["ok"] is False
+        assert envelope["error"] == "restart_stop_failed"
+        assert envelope["message"] == "Service stop skipped"
+        assert released, "the restart never released the monitor"
+        assert released[0]["access"] == link
+        assert record.is_file()
+        assert pid_alive(pid)
+        assert pid_alive(stranger.pid)
+        assert _poll_health(port)["pid"] == pid
+        ownership = _monitor_record(service.status_dir)
+        assert ownership is not None
+        assert ownership["handoff_until"] == 0.0
+        assert ownership["access"] == ""
+        assert pid_alive(monitor_pid)
+        published = _after_next_heartbeat(_discovery()["last_heartbeat"])
+        assert published.get("monitor_pid") == monitor_pid
+        assert published.get("monitor_url") == link
+
+
+@pytest.mark.timeout(900)
+def test_a_running_service_restarts_on_its_own_port_and_keeps_its_monitor(
+    service: _Service,
+) -> None:
+    """A restart replaces the daemon where it ran, with its monitor connected.
+
+    The proof of the monitor is the monitor itself, not the envelope's word
+    for it: the restarted daemon records the very process, and the very access
+    link, the first daemon had. No port is given, and the configured port
+    names another free port, so a start step left to its own default would
+    bring the service back somewhere else.
+
+    Mutations it catches: dropping the monitor release leaves the envelope
+    reporting the monitor as not kept and fails that assertion; claiming it
+    kept without releasing it reports it kept, and fails the monitor process
+    comparison instead; handing the start step the caller's port rather than
+    the running service's starts the replacement on the configured port and
+    fails the port assertion. Each fails alone, and restoring the verb passes.
+    """
+    from .._ports import free_loopback_port
+
+    port = service.port
+    before = _serving(port)
+    old_pid = cast("int", before["pid"])
+    monitor_pid = cast("int", before["monitor_pid"])
+    link = before["monitor_url"]
+    assert pid_alive(monitor_pid)
+    elsewhere = free_loopback_port()
+    assert elsewhere != port
+
+    try:
+        outcome = _cli("restart", elsewhere, explicit_port=False)
+
+        assert outcome.returncode == 0, outcome.describe()
+        envelope = outcome.envelope
+        data = outcome.data
+        assert envelope["command"] == "service.restart"
+        assert envelope["ok"] is True
+        assert data["status"] == "restarted"
+        assert data["monitor_kept"] is True
+        assert data["port"] == port
+        after = _discovery()
+        new_pid = _keep_with_session(after)
+        assert new_pid != old_pid
+        assert not pid_alive(old_pid)
+        assert _poll_health(port)["pid"] == new_pid
+        assert not _port_is_listening(elsewhere)
+        assert after["monitor_pid"] == monitor_pid
+        assert pid_alive(monitor_pid)
+        assert after["monitor_url"] == link
+        assert data["monitor_url"] == link
+    finally:
+        # A restart that came back on the wrong port left a daemon there,
+        # with its monitor; it must not outlive the test that found it.
+        if _port_is_listening(elsewhere):
+            _cli("stop", elsewhere)
+
+
+@pytest.mark.timeout(900)
+def test_a_stopped_service_is_started_by_a_restart(service: _Service) -> None:
+    """A restart of a service that is not running starts it, and says started.
+
+    The service is stopped for real first. With nothing running there is no
+    monitor to keep, so the restart reports the monitor as not kept and the
+    start step's own monitor link is the one it passes on.
+
+    Mutation it catches: reporting every restart as one that stopped a running
+    service says restarted for started and fails the status assertion.
+    """
+    port = service.port
+    old_pid = cast("int", _serving(port)["pid"])
+    stopped = _cli("stop", port)
+    assert stopped.returncode == 0, stopped.describe()
+    assert stopped.data["status"] == "stopped"
+    assert not pid_alive(old_pid)
+
+    outcome = _cli("restart", port)
+
+    assert outcome.returncode == 0, outcome.describe()
+    data = outcome.data
+    assert outcome.envelope["command"] == "service.restart"
+    assert outcome.envelope["ok"] is True
+    assert data["status"] == "started"
+    assert data["monitor_kept"] is False
+    assert data["port"] == port
+    after = _discovery()
+    new_pid = _keep_with_session(after)
+    assert new_pid != old_pid
+    assert _poll_health(port)["pid"] == new_pid
+    assert data["monitor_url"] == after["monitor_url"]
+
+
+@pytest.mark.timeout(900)
 def test_a_restart_during_a_borrow_stops_and_relays_the_start_refusal(
-    tmp_path: Path,
+    service: _Service,
 ) -> None:
     """A restart beside a live borrower stops the service, then says why no start.
 
@@ -492,24 +509,24 @@ def test_a_restart_during_a_borrow_stops_and_relays_the_start_refusal(
     from ...gpu_borrow_lease import borrower_lease_holder_pid
     from ..test_gpu_borrow_lease import _borrower_process
 
-    with _running_service(tmp_path) as port:
-        old_pid = cast("int", _discovery()["pid"])
-        with _borrower_process() as borrower:
-            holder = borrower_lease_holder_pid(borrower.capability)
-            outcome = _cli("restart", port)
+    port = service.port
+    old_pid = cast("int", _serving(port)["pid"])
+    with _borrower_process() as borrower:
+        holder = borrower_lease_holder_pid(borrower.capability)
+        outcome = _cli("restart", port)
 
-        assert holder is not None
-        assert outcome.returncode == 1, outcome.describe()
-        envelope = outcome.envelope
-        assert envelope["command"] == "service.restart"
-        assert envelope["ok"] is False
-        assert envelope["error"] == "restart_start_failed"
-        message = cast("str", envelope["message"])
-        assert f"(pid {holder})" in message
-        assert "Wait for the borrower to finish, or stop it" in message
-        assert not pid_alive(old_pid)
-        assert not _port_is_listening(port)
-        assert borrower.capability not in outcome.stdout + outcome.stderr
-        # The monitor was released for a daemon that never came; nothing will
-        # adopt it, so it is ended here rather than outliving the service.
-        stop_recorded_monitor()
+    assert holder is not None
+    assert outcome.returncode == 1, outcome.describe()
+    envelope = outcome.envelope
+    assert envelope["command"] == "service.restart"
+    assert envelope["ok"] is False
+    assert envelope["error"] == "restart_start_failed"
+    message = cast("str", envelope["message"])
+    assert f"(pid {holder})" in message
+    assert "Wait for the borrower to finish, or stop it" in message
+    assert not pid_alive(old_pid)
+    assert not _port_is_listening(port)
+    assert borrower.capability not in outcome.stdout + outcome.stderr
+    # The monitor was released for a daemon that never came; nothing will
+    # adopt it, so it is ended here rather than outliving the service.
+    stop_recorded_monitor()
