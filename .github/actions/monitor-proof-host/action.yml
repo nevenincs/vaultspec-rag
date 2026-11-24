@@ -13,7 +13,14 @@ runs:
     - name: Install a browser where the image has none
       if: runner.os == 'Linux' && runner.arch == 'ARM64'
       shell: bash
-      run: npx --yes playwright@1.56.1 install --with-deps chromium
+      env:
+        # A package install that stops to ask a question waits for an answer
+        # nobody is there to give.
+        DEBIAN_FRONTEND: noninteractive
+        NEEDRESTART_MODE: a
+      run: |
+        timeout 600 npx --yes playwright@1.56.1 install chromium
+        timeout 600 sudo -E env "PATH=$PATH" npx --yes playwright@1.56.1 install-deps chromium
 
     # The proof first watches its own network control fail to connect from
     # each of these two paths, so a rule that does not take effect here fails
