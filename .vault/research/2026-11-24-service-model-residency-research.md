@@ -8,6 +8,7 @@ body_schema: 'body-v2'
 body_hash: 'sha256:e031dbda05dd165de3471472e566e8d305b0e6efca5f6230a607f397f0a3f9b0'
 related: []
 ---
+
 # `service-model-residency` research: `Where the accelerator lane spends its time`
 
 ## Question

@@ -3,42 +3,16 @@ tags:
   - '#exec'
   - '#destructive-rebuild-lifecycle'
 date: '2026-10-12'
-modified: '2026-11-21'
+modified: '2026-11-24'
 body_schema: 'body-v2'
-body_hash: 'sha256:2f064d00a206bdc94580e200dbda6dcd83e3dcca0b187f08954a7ac977ac872b'
+body_hash: 'sha256:35db3b6b51a2b889f5ff0b214d66c5fc530cfa2242b244242a4f3f6892cf82bb'
 related:
   - "[[2026-10-12-destructive-rebuild-lifecycle-plan]]"
 ---
 
-<!-- Machine-owned, whole file: `vaultspec-core vault exec log` creates it
-     on first use and appends every row; never hand-edit it. Add no
-     frontmatter fields. Wiki-links belong in `related:` only.
-
-     ONE ledger per plan, the only execution artifact. Each row's first
-     column names its Step. -->
-
 # `destructive-rebuild-lifecycle` ledger
 
 ## Changes
-
-<!-- MECHANICAL LOG, append-only, one row per path touched per Step, written
-     by `--row`:
-       - `S##` `A` `path`   added
-       - `S##` `M` `path`   modified
-       - `S##` `D` `path`   deleted
-       - `S##` `R` `old` -> `new`   renamed
-     Paths are repo-relative, in backticks. No prose: the Step row states the
-     intent and the commit carries the diff.
-
-     Optional per-Step rows, written by `--verify` and `--by`:
-       - `S##` `verify:` `<command>` -> `pass` | `fail`
-       - `S##` `by:` `<persona>`
-
-     Rows are appended in Step order and never rewritten. Only rows in this
-     section register a Step as covered. `--note` adds a `## Notes` section
-     ONLY on exception (data loss, skipped work, a scaffold left in code, a
-     persistent failure), one `S##`-prefixed line each; it is otherwise
-     omitted. -->
 
 - `S01` `A` `src/vaultspec_rag/indexer/_rebuild_lifecycle.py`
 - `S01` `A` `src/vaultspec_rag/indexer/_run_ledger_source_resets.py`

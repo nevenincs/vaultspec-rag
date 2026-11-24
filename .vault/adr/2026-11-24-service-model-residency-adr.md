@@ -12,6 +12,7 @@ related:
   - "[[2026-05-30-service-lifecycle-adr]]"
   - '[[2026-11-24-service-model-residency-research]]'
 ---
+
 # `service-model-residency` adr: `Optional prewarm and idle model release` | (**status:** `accepted`)
 
 ## Problem Statement
