@@ -529,6 +529,9 @@ jobs:
           package-manager-cache: false
           node-version-file: .nvmrc
 
+      - name: Prepare the host for the native monitor proof
+        uses: ./.github/actions/monitor-proof-host
+
       - name: Set up just
         uses: taiki-e/install-action@6012bba2f8e3e666a2b212f8823c06831704ce92 # just
         with:

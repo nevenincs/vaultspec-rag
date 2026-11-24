@@ -1,0 +1,32 @@
+name: Prepare the host for the native monitor proof
+description: >-
+  Give a hosted image what the native monitor proof expects of the host that
+  runs it: an installed Chromium-family browser, and on Windows a directory in
+  which outbound traffic is denied to the two programs the proof places there.
+
+runs:
+  using: composite
+  steps:
+    # The hosted Linux ARM64 image carries no browser; every other image does.
+    # The proof never downloads one itself, so it is installed here, with the
+    # system libraries it links against.
+    - name: Install a browser where the image has none
+      if: runner.os == 'Linux' && runner.arch == 'ARM64'
+      shell: bash
+      run: npx --yes playwright@1.56.1 install --with-deps chromium
+
+    # The proof first watches its own network control fail to connect from
+    # each of these two paths, so a rule that does not take effect here fails
+    # the proof instead of passing it unprotected.
+    - name: Deny outbound traffic to the proof's two program paths
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $directory = Join-Path $env:RUNNER_TEMP 'outbound-denied'
+        New-Item -ItemType Directory -Force -Path $directory | Out-Null
+        Set-NetFirewallProfile -All -Enabled True
+        foreach ($name in 'monitor.exe', 'network-control.exe') {
+          New-NetFirewallRule -DisplayName outbound-denied -Direction Outbound `
+            -Action Block -Profile Any -Program (Join-Path $directory $name) | Out-Null
+        }
+        "MONITOR_OUTBOUND_DENIED_DIR=$directory" >> $env:GITHUB_ENV

@@ -308,7 +308,8 @@ program paths inside it. A proof copies the pinned network control into both pat
 fail to connect, having first connected from an ordinary path. Only then does
 the monitor take its path, so it runs under a denial that run watched work.
 
-`MONITOR_OUTBOUND_DENIED_DIR` names that directory. No workflow here sets it.
+`MONITOR_OUTBOUND_DENIED_DIR` names that directory. The workflows that run the
+proof create it and its two rules on the Windows image before the proof starts.
 
 To run the Windows proof locally, create the two rules once from
 an elevated PowerShell session and set the variable to the directory:
