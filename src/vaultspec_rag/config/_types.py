@@ -53,6 +53,7 @@ class EnvVar(StrEnum):
     MONITOR_DOWNLOAD_HOSTS = "VAULTSPEC_RAG_MONITOR_DOWNLOAD_HOSTS"
     LOG_LEVEL = "VAULTSPEC_RAG_LOG_LEVEL"
     SERVICE_IDLE_TTL_SECONDS = "VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS"
+    SERVICE_PREWARM = "VAULTSPEC_RAG_SERVICE_PREWARM"
     SERVICE_MAX_PROJECTS = "VAULTSPEC_RAG_SERVICE_MAX_PROJECTS"
     # Client-side request bounds. Registered here so this enum stays the one
     # authoritative list of settings; the thin client parses them leniently

@@ -161,6 +161,7 @@ def test_quiesced_search_returns_the_retryable_envelope_for_every_source(
     assert registry.snapshot() == []
     assert registry.health() == {
         "model_loaded": False,
+        "model_on_demand": False,
         "reranker_loaded": False,
         "project_count": 0,
         "projects": [],

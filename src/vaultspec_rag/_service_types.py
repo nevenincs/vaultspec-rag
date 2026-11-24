@@ -89,9 +89,14 @@ class ServiceHealth(TypedDict):
     what the ensure path already judged, so a health poll never probes the
     backend; collections nobody has opened, and those judged unverifiable, are
     absent rather than listed as problems.
+
+    ``model_on_demand`` is true while no model is resident because none has
+    been asked for yet: the service was started without prewarm and will
+    load on first use. That is a healthy service, not one missing its models.
     """
 
     model_loaded: bool
+    model_on_demand: bool
     reranker_loaded: bool
     project_count: int
     projects: list[str]

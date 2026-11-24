@@ -404,6 +404,41 @@ async def service_lifespan(app: Starlette) -> AsyncGenerator[None]:
         raise
 
 
+async def _prewarm_models(
+    discovery: _DiscoveryPublisher, registry: ServiceRegistry
+) -> None:
+    """Load the model set before the service reports ready."""
+    from ..config._settings import get_config
+
+    # Load models (raises RuntimeError if no CUDA via _check_rag_deps). This is
+    # the longest cold-start stage - every pinned weight file is hashed before
+    # it is read - so the spinner names it, then names the reranker separately.
+    # Nothing is downloaded here: a model the cache cannot supply stops startup
+    # with the command that fetches it.
+    t0 = time.perf_counter()
+    reranker_enabled = bool(get_config().reranker_enabled)
+    # load_model brings up the dense and sparse encoders (two models); the
+    # reranker, when enabled, is the third. Publishing done/total against that
+    # count gives the start spinner a determinate "N of M" signal.
+    model_total = 3 if reranker_enabled else 2
+    # Advance the count at each real boundary so the signal is genuinely
+    # determinate: 0 before load, 2 once the dense+sparse encoders are up, and
+    # the terminal total when every model is loaded.
+    discovery.publish_phase(
+        "warming", detail="loading models", done=0, total=model_total
+    )
+    await _run_in_thread(registry.load_model)
+    if reranker_enabled:
+        discovery.publish_phase(
+            "warming", detail="loading the reranker", done=2, total=model_total
+        )
+        await _run_in_thread(registry.get_reranker)
+    discovery.publish_phase(
+        "warming", detail="models ready", done=model_total, total=model_total
+    )
+    logger.info("All models loaded in %.2fs", time.perf_counter() - t0)
+
+
 async def _start_components(
     discovery: _DiscoveryPublisher,
     registry: ServiceRegistry,
@@ -517,33 +552,12 @@ async def _start_components(
 
     await _run_in_thread(load_auto_update_store)
 
-    # Load models (raises RuntimeError if no CUDA via _check_rag_deps). This is
-    # the longest cold-start stage - every pinned weight file is hashed before
-    # it is read - so the spinner names it, then names the reranker separately.
-    # Nothing is downloaded here: a model the cache cannot supply stops startup
-    # with the command that fetches it.
-    t0 = time.perf_counter()
-    reranker_enabled = bool(get_config().reranker_enabled)
-    # load_model brings up the dense and sparse encoders (two models); the
-    # reranker, when enabled, is the third. Publishing done/total against that
-    # count gives the start spinner a determinate "N of M" signal.
-    model_total = 3 if reranker_enabled else 2
-    # Advance the count at each real boundary so the signal is genuinely
-    # determinate: 0 before load, 2 once the dense+sparse encoders are up, and
-    # the terminal total when every model is loaded.
-    discovery.publish_phase(
-        "warming", detail="loading models", done=0, total=model_total
-    )
-    await _run_in_thread(registry.load_model)
-    if reranker_enabled:
-        discovery.publish_phase(
-            "warming", detail="loading the reranker", done=2, total=model_total
-        )
-        await _run_in_thread(registry.get_reranker)
-    discovery.publish_phase(
-        "warming", detail="models ready", done=model_total, total=model_total
-    )
-    logger.info("All models loaded in %.2fs", time.perf_counter() - t0)
+    # A start that declined prewarm loads nothing here: the first work that
+    # needs a model loads it, and the service is healthy without one meanwhile.
+    if get_config().service_prewarm:
+        await _prewarm_models(discovery, registry)
+    else:
+        logger.info("Prewarm is off; models load on first use")
 
     _m._lifecycle_log("startup", pid=os.getpid())
 

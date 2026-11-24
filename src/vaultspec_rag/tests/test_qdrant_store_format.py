@@ -478,6 +478,7 @@ class TestQuarantineReachesHealth:
     def _health(**overrides: object) -> ServiceHealth:
         base: dict[str, object] = {
             "model_loaded": True,
+            "model_on_demand": False,
             "reranker_loaded": True,
             "project_count": 1,
             "projects": ["/proj"],
@@ -708,6 +709,7 @@ class TestMigrationReachesHealth:
     def _health(**overrides: object) -> ServiceHealth:
         base: dict[str, object] = {
             "model_loaded": True,
+            "model_on_demand": False,
             "reranker_loaded": True,
             "project_count": 1,
             "projects": ["/proj"],

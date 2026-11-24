@@ -416,6 +416,10 @@ class VaultSpecConfigWrapper:
         "mcp_port": 8766,
         "log_level": "WARNING",
         "service_idle_ttl_seconds": 1800,
+        # Whether a service start loads the model set before it reports
+        # ready. Off, the service is up in seconds and the first search or
+        # index work that needs a model waits for the load instead.
+        "service_prewarm": True,
         "service_max_projects": 16,
         # Client-side request bounds, in seconds. The search bound is generous
         # because a cold rebuild-class query can sit behind model load; the
@@ -1373,6 +1377,7 @@ class VaultSpecConfigWrapper:
     index_reuse_enabled: bool
     mcp_port: int
     service_idle_ttl_seconds: int
+    service_prewarm: bool
     service_max_projects: int
     service_search_timeout_seconds: float
     search_freshness_wait_max_seconds: float

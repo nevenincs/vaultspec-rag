@@ -31,6 +31,7 @@ def _health(**overrides: object) -> ServiceHealth:
     """Build a registry health dict, overriding named fields."""
     base: dict[str, object] = {
         "model_loaded": True,
+        "model_on_demand": False,
         "reranker_loaded": True,
         "project_count": 1,
         "projects": ["/proj"],
