@@ -113,6 +113,7 @@ class _PreparedServiceRequest:
     #: what a flag decided from it and nothing else.
     backend: BackendDecision
     preprocess_forward: Literal["off"] | None
+    prewarm: bool | None
     json_mode: bool
     #: The workspace this invocation resolved. The daemon never opens a
     #: workspace .env of its own, so any credential one holds has to be
@@ -262,6 +263,17 @@ class _ServiceStartOptions:
             help=(
                 "Minimum wait before automatically updating a project again, "
                 "in seconds."
+            ),
+        ),
+    ] = None
+    prewarm: Annotated[
+        bool | None,
+        typer.Option(
+            "--prewarm/--no-prewarm",
+            help=(
+                "Load the models before the service reports ready (default: "
+                "enabled). Without it the service starts in seconds and the "
+                "first search or index work waits for the load."
             ),
         ),
     ] = None
@@ -983,6 +995,7 @@ def _spawn_prepared_service(request: _PreparedServiceRequest) -> int:
             qdrant=request.backend.qdrant,
             local_only=request.backend.local_only,
             preprocess_mode=request.preprocess_forward,
+            prewarm=request.prewarm,
             root=request.root,
             interpreter=request.interpreter,
         )
@@ -1098,6 +1111,7 @@ def service_start(ctx: typer.Context, options: _ServiceStartOptions) -> None:
             repeat_update_delay_s=options.repeat_update_delay_s,
             backend=backend,
             preprocess_forward=preprocess_forward,
+            prewarm=options.prewarm,
             json_mode=json_mode,
             root=resolved_root,
             interpreter=selected.interpreter,

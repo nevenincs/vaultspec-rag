@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
 runner = CliRunner()
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.unit]
 
 
 def _json_envelopes(output: str) -> list[dict[str, object]]:

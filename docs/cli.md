@@ -511,6 +511,7 @@ None.
 | `--updates`, `--no-updates` | boolean | no | - | Enable or disable automatic index updates when files change (default: enabled). |
 | `--update-delay-ms` | int | no | - | Delay before indexing a burst of file changes, in milliseconds. |
 | `--repeat-update-delay-s` | float | no | - | Minimum wait before automatically updating a project again, in seconds. |
+| `--prewarm`, `--no-prewarm` | boolean | no | - | Load the models before the service reports ready (default: enabled). Without it the service starts in seconds and the first search or index work waits for the load. |
 | `--local-only` | boolean | no | off | Keep the index in an on-disk store instead of the Qdrant server, for CI, offline or small projects. |
 | `--qdrant`, `--no-qdrant` | boolean | no | - | Use the managed Qdrant server for this start even when --local-only was saved, without changing the saved choice. |
 | `--qdrant-auto-provision`, `--no-qdrant-auto-provision` | boolean | no | - | Download the Qdrant server when it is missing (default). With --no-qdrant-auto-provision, start stops and prints the install command instead. Overrides VAULTSPEC_RAG_QDRANT_AUTO_PROVISION for this run. |

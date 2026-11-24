@@ -29,7 +29,7 @@ from .._mcp_consent import approve_core_launches
 if TYPE_CHECKING:
     from collections.abc import Generator
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.unit]
 
 # Path to RAG's bundled seed sources (relative to repo root)
 _REPO_ROOT = Path(__file__).resolve().parents[4]

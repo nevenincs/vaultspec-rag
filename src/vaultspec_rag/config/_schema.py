@@ -349,6 +349,7 @@ ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     # ``configure_logging`` itself resolves rather than a second,
     # unvalidated read of the same variable.
     "service_idle_ttl_seconds": EnvVar.SERVICE_IDLE_TTL_SECONDS,
+    "service_prewarm": EnvVar.SERVICE_PREWARM,
     "service_max_projects": EnvVar.SERVICE_MAX_PROJECTS,
     "service_search_timeout_seconds": EnvVar.SERVICE_SEARCH_TIMEOUT,
     "search_freshness_wait_max_seconds": EnvVar.SEARCH_FRESHNESS_WAIT_MAX_SECONDS,

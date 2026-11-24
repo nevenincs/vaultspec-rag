@@ -39,7 +39,7 @@ def _initial_health_verdict(reg_health: ServiceHealth, *, held: bool) -> HealthV
     """
     if held:
         return HealthVerdict.PAUSED
-    if reg_health["model_loaded"]:
+    if reg_health["model_loaded"] or reg_health["model_on_demand"]:
         return HealthVerdict.READY
     return HealthVerdict.DEGRADED if _m._start_time > 0 else HealthVerdict.ERROR
 
@@ -62,8 +62,9 @@ def _service_health_status(
     held = quiesce.state is not QuiesceState.RUNNING
     status = _initial_health_verdict(reg_health, held=held)
     degradations: list[Degradation] = []
-    # Absent models are a fault only when nobody asked for them to be absent.
-    if not reg_health["model_loaded"] and not held:
+    # Absent models are a fault only when nobody asked for them to be absent:
+    # a pause releases them, and a start without prewarm has yet to load them.
+    if not (reg_health["model_loaded"] or reg_health["model_on_demand"] or held):
         degradations.append(
             Degradation(
                 reason=DegradationReason.MODELS_NOT_LOADED,

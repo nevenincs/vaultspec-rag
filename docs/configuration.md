@@ -264,6 +264,7 @@ Setting only one of the two is refused, for every command, before the command ru
 | `VAULTSPEC_RAG_LOG_FILE`                 | path    | `service.log`      | Resident service log filename inside the status dir                                | `--log-file`   |
 | `VAULTSPEC_RAG_PORT`                     | integer | `8766`             | HTTP service port and MCP fast path                                                | `--port`       |
 | `VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS` | integer | `1800`             | Seconds an idle project slot stays resident before eviction                        | -              |
+| `VAULTSPEC_RAG_SERVICE_PREWARM`          | boolean | `1` (true)         | Load the models at start; off loads them on first use                              | -              |
 | `VAULTSPEC_RAG_SERVICE_MAX_PROJECTS`     | integer | `16`               | Maximum simultaneously cached project slots                                        | -              |
 | `VAULTSPEC_RAG_ADMIN_TIMEOUT`            | float   | `30`               | Client connection and read budget for lifecycle and admin calls (seconds)          | -              |
 | `VAULTSPEC_RAG_REINDEX_TIMEOUT`          | float   | `900`              | Client budget for `/reindex`, which admits every domain before it queues (seconds) | -              |

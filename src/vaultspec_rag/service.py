@@ -96,6 +96,7 @@ class ServiceRegistry(
         cfg = get_config()
         self._gpu_owner_anchor = gpu_owner_anchor
         self._model: EmbeddingModel | None = None
+        self._prewarm = bool(cfg.service_prewarm)
         self._projects: dict[Path, ProjectSlot] = {}
         # A reservation owns one bounded project seat while its root's store
         # is being constructed.  It is deliberately separate from
@@ -330,9 +331,16 @@ class ServiceRegistry(
     def model(self) -> EmbeddingModel:
         """Return the shared embedding model.
 
+        A service started without prewarm holds no model until work asks for
+        one, and loads it here; the caller already holds the admission that
+        work runs under.
+
         Raises:
-            RuntimeError: If ``load_model()`` has not been called.
+            RuntimeError: If prewarm is on and ``load_model()`` has not been
+                called.
         """
+        if self._model is None and not self._prewarm:
+            self._load_model()
         return require_present(
             self._model,
             "EmbeddingModel not loaded - call load_model() first",
@@ -1323,6 +1331,7 @@ class ServiceRegistry(
         count = len(stores)
         return {
             "model_loaded": self._model is not None,
+            "model_on_demand": self._model is None and not self._prewarm,
             "reranker_loaded": self._reranker.loaded is not None,
             "project_count": count,
             "projects": project_list,

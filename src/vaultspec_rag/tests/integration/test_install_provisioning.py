@@ -10,7 +10,9 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ...commands._install import install_run
+from ...config._types import EnvVar
 from .._provision_fixtures import result_for
+from ..conftest import managed_env
 from ._install_helpers import (
     _CONSUMER_PYPROJECT,
 )
@@ -22,21 +24,38 @@ pytestmark = [pytest.mark.integration]
 
 
 class TestProvisioningReport:
-    @pytest.fixture()
+    @pytest.fixture(scope="class")
     def provisioned_report(
-        self, fresh_workspace: Path, isolated_status_dir: Path
+        self, tmp_path_factory: pytest.TempPathFactory
     ) -> InstallReport:
-        _ = isolated_status_dir
-        (fresh_workspace / "pyproject.toml").write_text(
+        """Install once into a workspace of its own; every test reads the report.
+
+        A provisioning install takes about a minute and the tests below only
+        read what it reported, so it runs once. The home and the managed
+        service directory are redirected for the length of the install, so
+        what it records lands in neither the operator's nor another test's.
+        """
+        root = tmp_path_factory.mktemp("provisioned")
+        workspace = root / "workspace"
+        home = root / "mcp-home"
+        status_dir = root / "managed"
+        for directory in (workspace, home, status_dir):
+            directory.mkdir()
+        (workspace / "pyproject.toml").write_text(
             _CONSUMER_PYPROJECT, encoding="utf-8", newline=""
         )
-        return install_run(
-            path=fresh_workspace,
-            provision=True,
-            local_only=True,
-            provision_skip={"models"},
-            assume_yes=True,
-        )
+        with managed_env(
+            USERPROFILE=str(home),
+            HOME=str(home),
+            **{EnvVar.STATUS_DIR.value: str(status_dir)},
+        ):
+            return install_run(
+                path=workspace,
+                provision=True,
+                local_only=True,
+                provision_skip={"models"},
+                assume_yes=True,
+            )
 
     def test_report_carries_a_provisioning_outcome(
         self, provisioned_report: InstallReport

@@ -47,7 +47,7 @@ if TYPE_CHECKING:
 runner = CliRunner()
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 def test_reconcile_rejects_live_legacy_status_without_singleton_owner(
     tmp_path: Path,
 ) -> None:
@@ -83,7 +83,7 @@ def test_reconcile_rejects_live_legacy_status_without_singleton_owner(
         assert pid_alive(pid)
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 @pytest.mark.parametrize("missing_field", ["pid", "service_token"])
 def test_reconcile_rejects_machine_pointer_with_incomplete_identity(
     tmp_path: Path,
@@ -378,7 +378,7 @@ _FORCED_DAEMON_EXIT_WITNESS = "Forcing daemon process exit after bounded shutdow
 _LOSING_DAEMON_EXIT_BOUND_SECONDS = 180.0
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 @pytest.mark.timeout(300)
 def test_race_losing_daemon_self_exits(tmp_path: Path) -> None:
     """A daemon that loses the machine-singleton claim forces its own exit.

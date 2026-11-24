@@ -31,6 +31,7 @@ def _health(**overrides: object) -> ServiceHealth:
     """Build a registry health dict, overriding named fields."""
     base: dict[str, object] = {
         "model_loaded": True,
+        "model_on_demand": False,
         "reranker_loaded": True,
         "project_count": 1,
         "projects": ["/proj"],
@@ -52,6 +53,34 @@ class TestHealthAuthorsTheVerdict:
         )
         assert status == "ready"
         assert reasons == []
+
+    def test_a_service_awaiting_its_first_load_is_ready(self) -> None:
+        """A start without prewarm holds no model yet, and nothing is wrong.
+
+        Mutation it catches: reading readiness from model residency alone
+        reports this service degraded with ``models_not_loaded``, which sends
+        an operator to repair a service that is working as asked. Observed
+        failing on the status assertion with that mutation, passing restored.
+        """
+        status, reasons = _service_health_status(
+            _health(model_loaded=False, model_on_demand=True),
+            _local_qdrant(),
+            running_quiesce_snapshot(),
+        )
+        assert status == "ready"
+        assert reasons == []
+
+    def test_models_absent_from_a_prewarmed_service_are_a_fault(self) -> None:
+        """Without the on-demand state, absent models still read as a fault.
+
+        Mutation it catches: treating every absence as on-demand reports a
+        service whose load failed as ready. Observed failing on the reason
+        assertion with that mutation, passing restored.
+        """
+        _status, reasons = _service_health_status(
+            _health(model_loaded=False), _local_qdrant(), running_quiesce_snapshot()
+        )
+        assert [reason.reason for reason in reasons] == ["models_not_loaded"]
 
     def test_nonconforming_collection_degrades_the_service(self) -> None:
         """The whole point: a wrong-model index must stop reading as healthy.

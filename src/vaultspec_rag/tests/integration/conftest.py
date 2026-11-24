@@ -11,7 +11,7 @@ import os
 import signal
 import sys
 import time
-from contextlib import contextmanager, suppress
+from contextlib import ExitStack, contextmanager, suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypedDict, cast
 
@@ -831,31 +831,81 @@ def _attach_live_service(
         yield port, status_dir
 
 
-@pytest.fixture(scope="module")
+#: The last selected test that attaches to the shared daemon, which is where
+#: the daemon is stopped.
+_LAST_SHARED_DAEMON_TEST = pytest.StashKey[str]()
+
+
+def _shares_the_daemon(item: pytest.Item) -> bool:
+    return "live_service" in getattr(item, "fixturenames", ())
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Run the modules that share the daemon one after another, first.
+
+    The daemon is started once for all of them, so it has to be stopped once
+    they are done and before the modules that start, stop and reap services of
+    their own, which must find no daemon they did not start. Whole modules
+    move, in the order they were collected, so nothing module-scoped is split.
+    """
+    sharing = {
+        item.nodeid.partition("::")[0] for item in items if _shares_the_daemon(item)
+    }
+    items.sort(key=lambda item: item.nodeid.partition("::")[0] not in sharing)
+
+
+def pytest_collection_finish(session: pytest.Session) -> None:
+    """Record where the shared daemon's last consumer is, once selection is final."""
+    consumers = [item.nodeid for item in session.items if _shares_the_daemon(item)]
+    if consumers:
+        session.config.stash[_LAST_SHARED_DAEMON_TEST] = consumers[-1]
+
+
+class _SharedDaemon:
+    """The one plain daemon of the session, started at its first consumer."""
+
+    def __init__(self, tmp_path_factory: TempPathFactory) -> None:
+        self._tmp_path_factory = tmp_path_factory
+        self._running = ExitStack()
+        self._service: tuple[int, Path, dict[str, str | None]] | None = None
+
+    def service(self) -> tuple[int, Path, dict[str, str | None]]:
+        if self._service is None:
+            self._service = self._running.enter_context(
+                _shared_live_service(
+                    self._tmp_path_factory, "live-service", watch=False
+                )
+            )
+        return self._service
+
+    def stop(self) -> None:
+        self._service = None
+        self._running.close()
+
+
+@pytest.fixture(scope="session")
 def _live_service_daemon(  # pyright: ignore[reportUnusedFunction]
     tmp_path_factory: TempPathFactory,
-) -> Generator[tuple[int, Path, dict[str, str | None]]]:
-    """Hold one cache-prepared, offline real service for each consumer module.
-
-    Module scope keeps a consumer near its daemon and prevents an unrelated
-    lifecycle test from invalidating a process retained across most of the
-    serialized integration suite. Tests within a module still share one spawn.
-    """
-    with _shared_live_service(
-        tmp_path_factory,
-        "live-service",
-        watch=False,
-    ) as service:
-        yield service
+) -> Generator[_SharedDaemon]:
+    """Hold one cache-prepared, offline real service for every consumer module."""
+    daemon = _SharedDaemon(tmp_path_factory)
+    try:
+        yield daemon
+    finally:
+        daemon.stop()
 
 
 @pytest.fixture
 def live_service(
-    _live_service_daemon: tuple[int, Path, dict[str, str | None]],
+    request: pytest.FixtureRequest,
+    _live_service_daemon: _SharedDaemon,
 ) -> Generator[tuple[int, Path]]:
     """Provide a cache-prepared, offline real service with bounded startup."""
-    with _attach_live_service(_live_service_daemon) as service:
+    with _attach_live_service(_live_service_daemon.service()) as service:
         yield service
+    last = request.config.stash.get(_LAST_SHARED_DAEMON_TEST, None)
+    if request.node.nodeid == last:
+        _live_service_daemon.stop()
 
 
 @pytest.fixture(scope="module")
