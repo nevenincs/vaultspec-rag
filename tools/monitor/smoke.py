@@ -305,7 +305,19 @@ def exercise_monitor(
     ready = output_line(process).strip()
     prefix = "vaultspec.monitor.ready "
     if not ready.startswith(prefix):
-        raise RuntimeError(f"The monitor readiness protocol failed: {ready}")
+        # A monitor that exits before it reports ready says why on stderr,
+        # and that is the only account of the failure there will be.
+        try:
+            code = process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            code = None
+        said = (
+            process.stderr.read()[-2000:] if code is not None and process.stderr else ""
+        )
+        raise RuntimeError(
+            f"The monitor readiness protocol failed: {ready!r} "
+            f"(exit code {code}): {said.strip()}"
+        )
     access = urlsplit(ready.removeprefix(prefix))
     port = access.port
     capability = access.fragment.removeprefix("capability=")
