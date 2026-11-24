@@ -37,6 +37,22 @@ pytestmark = [pytest.mark.unit]
 runner = CliRunner()
 
 
+def test_declined_prewarm_translates_to_daemon_env() -> None:
+    env = _build_service_child_env(_ServiceChildEnvRequest(prewarm=False))
+    assert env[EnvVar.SERVICE_PREWARM.value] == "0"
+
+
+def test_requested_prewarm_translates_to_daemon_env() -> None:
+    env = _build_service_child_env(_ServiceChildEnvRequest(prewarm=True))
+    assert env[EnvVar.SERVICE_PREWARM.value] == "1"
+
+
+def test_start_offers_the_prewarm_choice() -> None:
+    result = runner.invoke(app, ["server", "start", "--help"])
+    assert result.exit_code == 0, result.output
+    assert "--no-prewarm" in result.output
+
+
 def test_local_only_true_translates_to_daemon_env() -> None:
     env = _build_service_child_env(_ServiceChildEnvRequest(local_only=True))
     assert env[EnvVar.LOCAL_ONLY.value] == "1"

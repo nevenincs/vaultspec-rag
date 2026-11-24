@@ -322,6 +322,7 @@ class _ServiceChildEnvOptions(TypedDict, total=False):
     qdrant: bool | None
     local_only: bool | None
     preprocess_mode: Literal["off"] | None
+    prewarm: bool | None
     root: Path | None
 
 
@@ -333,6 +334,7 @@ class _ServiceChildEnvRequest:
     qdrant: bool | None = None
     local_only: bool | None = None
     preprocess_mode: Literal["off"] | None = None
+    prewarm: bool | None = None
     root: Path | None = None
 
 
@@ -390,6 +392,8 @@ def _build_service_child_env(
         local_only: Tri-state local-backend opt-out; ``None`` leaves it
             unset so an operator-set ``VAULTSPEC_RAG_LOCAL_ONLY`` survives.
         preprocess_mode: ``"off"`` forwards ``VAULTSPEC_RAG_PREPROCESS=off``.
+        prewarm: Whether the daemon loads its models before it reports
+            ready; ``None`` leaves the configured choice in force.
             ``None`` leaves it unset so an operator-set preprocess env
             survives.
         root: The workspace this command line resolved, whose ``.env`` may
@@ -430,6 +434,8 @@ def _build_service_child_env(
         env[EnvVar.LOCAL_ONLY.value] = "1" if local_only else "0"
     if preprocess_mode == "off":
         env[EnvVar.PREPROCESS.value] = "off"
+    if request.prewarm is not None:
+        env[EnvVar.SERVICE_PREWARM.value] = "1" if request.prewarm else "0"
     _anchor_relative_directories(env)
     return env
 
@@ -603,6 +609,7 @@ def _spawn_service(
                 qdrant=options.get("qdrant"),
                 local_only=options.get("local_only"),
                 preprocess_mode=options.get("preprocess_mode"),
+                prewarm=options.get("prewarm"),
                 root=options.get("root"),
             ),
             options.get("timeout"),
