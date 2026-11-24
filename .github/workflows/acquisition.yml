@@ -126,6 +126,8 @@ jobs:
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
+      - name: Prepare the host for the native monitor proof
+        uses: ./.github/actions/monitor-proof-host
       - name: Record native isolation capabilities
         shell: bash
         run: |

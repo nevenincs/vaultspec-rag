@@ -1,0 +1,52 @@
+name: Prepare the host for the native monitor proof
+description: >-
+  Give a hosted image what the native monitor proof expects of the host that
+  runs it: an installed Chromium-family browser, and on Windows a directory in
+  which outbound traffic is denied to the two programs the proof places there.
+
+runs:
+  using: composite
+  steps:
+    # The hosted Linux ARM64 image carries no browser; every other image does.
+    # The proof never downloads one itself, so one pinned build is fetched
+    # here, checked against its digest before it is unpacked, and put where
+    # the proof looks for an installed browser. A browser unpacked outside a
+    # system package has no AppArmor profile, so its own sandbox needs
+    # unprivileged user namespaces allowed on this throwaway machine.
+    - name: Install a browser where the image has none
+      if: runner.os == 'Linux' && runner.arch == 'ARM64'
+      shell: bash
+      env:
+        DEBIAN_FRONTEND: noninteractive
+        NEEDRESTART_MODE: a
+        BUILD: "1194"
+        SHA256: 54685f7ce2045e91f07b7fa4cab0ca3390b12773eae4777ca4ae676d3e9d4ef2
+      run: |
+        set -euo pipefail
+        archive="${RUNNER_TEMP}/chromium-linux-arm64.zip"
+        curl --fail --silent --show-error --location --proto '=https' --max-time 600           --output "${archive}"           "https://cdn.playwright.dev/dbazure/download/playwright/builds/chromium/${BUILD}/chromium-linux-arm64.zip"
+        echo "${SHA256}  ${archive}" | sha256sum --check --strict
+        destination="${HOME}/.cache/ms-playwright/chromium-${BUILD}"
+        mkdir -p "${destination}"
+        unzip -q "${archive}" -d "${destination}"
+        test -x "${destination}/chrome-linux/chrome"
+        sudo -E timeout 600 apt-get update --quiet
+        sudo -E timeout 600 apt-get install --yes --quiet --no-install-recommends           libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64           libcairo2 libcups2t64 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0t64           libnspr4 libnss3 libpango-1.0-0 libx11-6 libxcb1 libxcomposite1           libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxrandr2
+        sudo sysctl --write kernel.apparmor_restrict_unprivileged_userns=0
+        "${destination}/chrome-linux/chrome" --version
+
+    # The proof first watches its own network control fail to connect from
+    # each of these two paths, so a rule that does not take effect here fails
+    # the proof instead of passing it unprotected.
+    - name: Deny outbound traffic to the proof's two program paths
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $directory = Join-Path $env:RUNNER_TEMP 'outbound-denied'
+        New-Item -ItemType Directory -Force -Path $directory | Out-Null
+        Set-NetFirewallProfile -All -Enabled True
+        foreach ($name in 'monitor.exe', 'network-control.exe') {
+          New-NetFirewallRule -DisplayName outbound-denied -Direction Outbound `
+            -Action Block -Profile Any -Program (Join-Path $directory $name) | Out-Null
+        }
+        "MONITOR_OUTBOUND_DENIED_DIR=$directory" >> $env:GITHUB_ENV
